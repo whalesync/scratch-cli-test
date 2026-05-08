@@ -24,6 +24,7 @@ interface WorkspaceContentProps {
   onPublishFile?: (relativePath: string) => void;
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
+  validateEnabled?: boolean;
 }
 
 const MIN_SIDEBAR_WIDTH = 220;
@@ -40,6 +41,7 @@ export function WorkspaceContent({
   onPublishFile,
   activateGlobalFilter,
   onActivateGlobalFilterConsumed,
+  validateEnabled = false,
 }: WorkspaceContentProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -161,6 +163,7 @@ export function WorkspaceContent({
         onPublishFile={onPublishFile}
         activateGlobalFilter={activateGlobalFilter}
         onActivateGlobalFilterConsumed={onActivateGlobalFilterConsumed}
+        validate={validateEnabled}
       />
     </Box>
   );

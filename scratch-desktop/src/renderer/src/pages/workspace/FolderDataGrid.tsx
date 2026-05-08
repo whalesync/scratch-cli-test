@@ -36,7 +36,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
 import { createFallbackTableView, getByPath } from '../../../../shared/schema-columns';
-import type { ValidationResultRow } from '../../../../shared/validation-types';
+// ValidationResultRow is no longer used — validation data comes from diffData.validationByCell
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
@@ -72,6 +72,15 @@ interface DiffRow {
   __raw: Record<string, unknown>;
 }
 
+interface CellValidationEntry {
+  field_path: string;
+  validator_kind: string;
+  level: string;
+  message?: string | null;
+  description?: string | null;
+  fixable: boolean;
+}
+
 interface DiffGridResult {
   rows: DiffRow[];
   columns: ColumnDefinition[];
@@ -89,6 +98,10 @@ interface DiffGridResult {
   filterCounts: { unreviewed: number; unpublished: number; errors: number };
   focusColumnIds: { unreviewed: string[]; unpublished: string[]; errors: string[] };
   invalidJsonFiles: InvalidJsonFileListEntry[];
+  staleCount: number;
+  validationByCell: Record<string, CellValidationEntry[]>;
+  totalErrorCount: number;
+  totalProblemsStaleCount: number;
 }
 
 type FilterKind = 'unreviewed' | 'unpublished' | 'has-problems';
@@ -98,6 +111,8 @@ type GridFilter =
   | { scope: 'global'; kind: FilterKind }
   | { scope: 'column'; kind: FilterKind; columnId: string; columnTitle: string }
   | { scope: 'text'; columnId: string; columnTitle: string; value: string };
+
+const EMPTY_FILTERS: GridFilter[] = [];
 
 interface CellPopoverState {
   col: number;
@@ -118,7 +133,7 @@ interface ValidationHoverState {
   col: number;
   row: number;
   bounds: { x: number; y: number; width: number; height: number };
-  entries: ValidationResultRow[];
+  entries: CellValidationEntry[];
 }
 
 interface FolderDataGridProps {
@@ -132,6 +147,8 @@ interface FolderDataGridProps {
   /** When set, activates the given filter once the folder is ready. Increment trigger to re-trigger. */
   activateGlobalFilter?: { kind: FilterKind; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
+  /** When true, paginate-records will run validators on stale records for the current page. */
+  validate?: boolean;
 }
 
 type GridLoadMode = 'idle' | 'blocking' | 'refreshing';
@@ -741,12 +758,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     onDataRefresh,
     activateGlobalFilter,
     onActivateGlobalFilterConsumed,
+    validate = false,
   } = props;
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
-  const [validationByCell, setValidationByCell] = useState<Map<string, ValidationResultRow[]>>(new Map());
-  const [validationRefreshKey, setValidationRefreshKey] = useState(0);
   const [loadingMode, setLoadingMode] = useState<GridLoadMode>('idle');
-  const [validationLoading, setValidationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorQueryKey, setErrorQueryKey] = useState<string | null>(null);
   const [resolvedQueryKey, setResolvedQueryKey] = useState<string | null>(null);
@@ -771,6 +786,23 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [viewSource, setViewSource] = useState<string>('Generated');
   const [availableViewNames, setAvailableViewNames] = useState<string[]>([]);
 
+  // Derive per-cell validation map from diffData — keyed by validationCellKey(filename, fieldPath).
+  // This replaces the old async getFolderValidationResults flow; errors now come back with each page.
+  const validationByCell = useMemo(() => {
+    const map = new Map<string, CellValidationEntry[]>();
+    const rowErrors = diffData?.validationByCell;
+    if (!rowErrors) return map;
+    for (const [filename, errors] of Object.entries(rowErrors)) {
+      for (const error of errors) {
+        const key = validationCellKey(filename, error.field_path);
+        const existing = map.get(key) ?? [];
+        existing.push(error);
+        map.set(key, existing);
+      }
+    }
+    return map;
+  }, [diffData]);
+
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const gridRef = useRef<DataEditorRef | null>(null);
@@ -782,9 +814,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [invalidJsonModalOpen, setInvalidJsonModalOpen] = useState(false);
   const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | 'discard' | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [indexingProgress, setIndexingProgress] = useState<string | null>(null);
   const loadGenerationRef = useRef(0);
-  const validationLoadGenerationRef = useRef(0);
   const didMountDataRefreshRef = useRef(false);
+  // Tracks the last folder for which the per-folder state reset (page/sort/filters) has been
+  // applied. Until the reset effect runs, queryKey uses defaults so the state flush doesn't
+  // produce a different queryKey and trigger a second blocking load.
+  const lastResetFolderRef = useRef<string | null>(null);
   const hasCurrentQueryDataRef = useRef(false);
   const currentQueryRef = useRef<GridQueryState | null>(null);
   // Refs for the activateGlobalFilter prop — allow effects to read the latest value without dep-array churn.
@@ -795,17 +831,26 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // Set when a filter activation arrives before data loads; cleared once column narrowing is applied.
   const pendingColumnNarrowRef = useRef(false);
 
+  // True when the folder just changed but the per-folder state reset hasn't been applied yet.
+  // When pending, use query defaults so the reset's state flush lands on the same queryKey.
+  const folderPending = selectedFolderPath !== lastResetFolderRef.current;
+  const qPage = folderPending ? 1 : page;
+  const qSortColumn = folderPending ? null : sort.column;
+  const qSortDirection = folderPending ? null : sort.direction;
+  const qActiveFilters = folderPending || activeFilters.length === 0 ? EMPTY_FILTERS : activeFilters;
+
   const queryKey = useMemo(
     () =>
       JSON.stringify({
         selectedFolderPath,
         workspacePath,
-        page,
-        sortColumn: sort.column,
-        sortDirection: sort.direction,
-        activeFilters,
+        page: qPage,
+        sortColumn: qSortColumn,
+        sortDirection: qSortDirection,
+        activeFilters: qActiveFilters,
+        validate,
       }),
-    [activeFilters, page, selectedFolderPath, sort.column, sort.direction, workspacePath],
+    [qActiveFilters, qPage, qSortColumn, qSortDirection, selectedFolderPath, validate, workspacePath],
   );
 
   const hasCurrentQueryData = diffData !== null && resolvedQueryKey === queryKey;
@@ -817,12 +862,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       key: queryKey,
       selectedFolderPath,
       workspacePath,
-      page,
-      sortColumn: sort.column,
-      sortDirection: sort.direction,
-      activeFilters,
+      page: qPage,
+      sortColumn: qSortColumn,
+      sortDirection: qSortDirection,
+      activeFilters: qActiveFilters,
     }),
-    [activeFilters, page, queryKey, selectedFolderPath, sort.column, sort.direction, workspacePath],
+    [qActiveFilters, qPage, qSortColumn, qSortDirection, queryKey, selectedFolderPath, workspacePath],
   );
 
   const wrapperRef = useCallback((el: HTMLDivElement | null) => {
@@ -849,6 +894,20 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   useEffect(() => {
     currentQueryRef.current = currentQuery;
   });
+
+  useEffect(() => {
+    if (!isBlockingLoad) {
+      setIndexingProgress(null);
+      return;
+    }
+    return window.scratchDesktop.onGridProgress((line) => {
+      const match = /\[\w+\]\s*(.+)/.exec(line);
+      setIndexingProgress(match ? `Reindexing: ${match[1]}` : line);
+    });
+  }, [isBlockingLoad]);
+
+  const validateRef = useRef(validate);
+  validateRef.current = validate;
 
   const loadDiffData = useCallback(async (mode: 'blocking' | 'refreshing', currentQueryState: GridQueryState) => {
     const {
@@ -886,6 +945,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         sortBy: sortColumn ?? undefined,
         sortOrder: sortDirection ?? undefined,
         filters: nextActiveFilters,
+        validate: validateRef.current,
       });
       if (generation !== loadGenerationRef.current) {
         return;
@@ -913,66 +973,35 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
   }, []);
 
+  // When validation is disabled, clear any active has-problems filter.
+  useEffect(() => {
+    if (!validate) {
+      setActiveFilters((prev) => prev.filter((f) => !(f.scope === 'global' && f.kind === 'has-problems')));
+    }
+  }, [validate]);
+
   // Load data for query changes and explicit user-triggered reloads.
   useEffect(() => {
     void loadDiffData('blocking', currentQuery);
   }, [currentQuery, loadDiffData, reloadKey]);
 
-  useEffect(() => {
-    if (!selectedFolderPath || !workspacePath || !diffData) {
-      validationLoadGenerationRef.current += 1;
-      setValidationByCell(new Map());
-      return;
-    }
-
-    const generation = ++validationLoadGenerationRef.current;
-    setValidationLoading(true);
-    void window.scratchFiles
-      .getFolderValidationResults(workspacePath, selectedFolderPath)
-      .then((results) => {
-        if (generation !== validationLoadGenerationRef.current) {
-          return;
-        }
-        const newEntries = new Map<string, ValidationResultRow[]>();
-        for (const result of results) {
-          if (!result.file_name) {
-            continue;
-          }
-          const key = validationCellKey(result.file_name, result.field_path);
-          const entries = newEntries.get(key) ?? [];
-          entries.push(result);
-          newEntries.set(key, entries);
-        }
-        setValidationByCell(newEntries);
-        setValidationLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (generation !== validationLoadGenerationRef.current) {
-          return;
-        }
-        console.debug('[FolderDataGrid] failed to load validation results:', error);
-        setValidationByCell(new Map());
-        setValidationLoading(false);
-      });
-  }, [diffData, selectedFolderPath, validationRefreshKey, workspacePath]);
-
   // Keep the current rows painted during passive background refreshes (e.g. app focus).
-  // currentQuery is intentionally NOT in the dep array — we read it via ref so this effect
-  // only fires when dataRefreshKey changes, never on user-initiated query changes. Without
-  // this separation, both effects would fire on every filter/sort/page change and the
-  // second (refreshing) call would race and cancel the first (blocking) one.
+  // currentQuery and selectedFolderPath are intentionally NOT in the dep array — we read them
+  // via refs so this effect only fires when dataRefreshKey changes, never on folder switches or
+  // user-initiated query changes. Folder switches are handled by the main load effect above.
+  // Without this separation, both effects would fire on every folder switch and the second
+  // (refreshing) call would race and cancel the first (blocking) one.
   useEffect(() => {
     if (!didMountDataRefreshRef.current) {
       didMountDataRefreshRef.current = true;
       return;
     }
-    if (!selectedFolderPath || !workspacePath) {
+    const q = currentQueryRef.current;
+    if (!q?.selectedFolderPath || !q?.workspacePath) {
       return;
     }
-    if (currentQueryRef.current) {
-      void loadDiffData('refreshing', currentQueryRef.current);
-    }
-  }, [dataRefreshKey, loadDiffData, selectedFolderPath, workspacePath]);
+    void loadDiffData('refreshing', q);
+  }, [dataRefreshKey, loadDiffData]);
 
   // Apply pending column narrowing after new data loads (used when folder changed with activateGlobalFilter).
   useEffect(() => {
@@ -986,6 +1015,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // Reset state when folder changes. If activateGlobalFilter is pending, apply it here and
   // set pendingColumnNarrowRef so column focusing happens once the new data resolves.
   useEffect(() => {
+    // Mark reset as applied before state updates so the next render's queryKey matches the
+    // initial render's queryKey (both use defaults), preventing a second blocking load.
+    lastResetFolderRef.current = selectedFolderPath ?? null;
     const pending = activateGlobalFilterRef.current;
     const shouldApply =
       pending !== null && pending !== undefined && pending.trigger > lastConsumedFilterTriggerRef.current;
@@ -1618,7 +1650,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       void window.scratchFiles
         .acceptCellInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
         .then(() => {
-          setValidationRefreshKey((k) => k + 1);
+          refreshGridDataInBackground();
         })
         .catch((err: unknown) => {
           console.error(`[acceptCellChange] ${logLabel} failed:`, err);
@@ -1631,7 +1663,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [closeGridEditorChrome, refreshGridData, schema, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, refreshGridData, refreshGridDataInBackground, schema, selectedFolderPath, workspacePath],
   );
 
   const undoApprovedGridCellChange = useCallback(
@@ -1644,13 +1676,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         .undoApprovedCellChange(selectedFolderPath, workspacePath, filename, fieldName)
         .then(() => {
           closeGridEditorChrome();
-          refreshGridData();
+          refreshGridDataInBackground();
         })
         .catch((err: unknown) => {
           console.error('[undoApprovedCellChange] undo failed:', err);
         });
     },
-    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const discardUnreviewedGridCellChange = useCallback(
@@ -1663,13 +1695,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, dirtyValue)
         .then(() => {
           closeGridEditorChrome();
-          refreshGridData();
+          refreshGridDataInBackground();
         })
         .catch((err: unknown) => {
           console.error('[acceptCellChange] discard unreviewed failed:', err);
         });
     },
-    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const acceptGridFieldChanges = useCallback(
@@ -2455,15 +2487,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               disabled={disableGlobalFilterPills}
               onClick={() => handleGlobalFilterToggle('unpublished')}
             />
-            {(filterCounts?.errors ?? 0) > 0 && (
+            {validate && (
               <FilterPill
                 label="Problems"
                 count={filterCounts?.errors ?? 0}
                 active={hasGlobalFilter('has-problems')}
                 bulletColor="var(--mantine-color-red-6)"
-                disabled={disableGlobalFilterPills}
+                disabled={disableGlobalFilterPills || (filterCounts?.errors ?? 0) === 0}
                 onClick={() => handleGlobalFilterToggle('has-problems')}
               />
+            )}
+            {validate && (diffData?.totalProblemsStaleCount ?? 0) > 0 && (
+              <Text12Regular c="var(--fg-muted)">
+                {diffData!.totalProblemsStaleCount} record{diffData!.totalProblemsStaleCount === 1 ? '' : 's'} need
+                validation
+              </Text12Regular>
             )}
             {activeColumnFilters.map((filter) => (
               <ActiveFilterChip
@@ -2536,7 +2574,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               </Popover.Dropdown>
             </Popover>
             <Divider orientation="vertical" />
-            <Tooltip label="Refresh data and validation">
+            <Tooltip label="Refresh data">
               <ActionIcon
                 size="sm"
                 variant="subtle"
@@ -2545,12 +2583,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   void trackRefreshFolderDataGrid(workspaceId, selectedFolderPath);
                   onDataRefresh();
                 }}
-                disabled={validationLoading || loadingMode === 'blocking'}
+                disabled={loadingMode === 'blocking'}
               >
-                <RotateCcw
-                  size={14}
-                  style={validationLoading ? { animation: 'scratch-icon-spin 1s linear infinite' } : undefined}
-                />
+                <RotateCcw size={14} />
               </ActionIcon>
             </Tooltip>
           </Group>
@@ -2564,8 +2599,22 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       )}
 
       {selectedFolderPath && showBlockingLoader && (
-        <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Box
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}
+        >
           <Loader size="sm" />
+          {indexingProgress && (
+            <Text13Regular c="dimmed" style={{ fontFamily: 'monospace', fontSize: 11 }}>
+              {indexingProgress}
+            </Text13Regular>
+          )}
         </Box>
       )}
 

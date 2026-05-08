@@ -224,7 +224,14 @@ export function PendingWorkspaceCard({
   );
 }
 
-/** Backwards-compatible alias used by the cloud download flow. */
-export function DownloadingWorkspaceCard({ workspace, inGroup }: { workspace: Workspace; inGroup?: boolean }) {
-  return <PendingWorkspaceCard workspace={workspace} label="Downloading…" color="yellow" inGroup={inGroup} />;
+export function DownloadingWorkspaceCard({
+  workspace,
+  inGroup,
+  label = 'Downloading…',
+}: {
+  workspace: Workspace;
+  inGroup?: boolean;
+  label?: string;
+}) {
+  return <PendingWorkspaceCard workspace={workspace} label={label} color="yellow" inGroup={inGroup} />;
 }

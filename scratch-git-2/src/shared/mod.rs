@@ -1,3 +1,4 @@
+pub mod folder_index;
 pub mod git_path;
 pub mod index;
 pub mod json_path;

@@ -13,13 +13,13 @@ import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } fro
 import {
   acceptCellChange,
   acceptCellInputText,
-  countWorkspaceFiles,
   getFolderMetadata,
   listFiles,
   listFolders,
   readBatch,
   readConnectionViewByName,
   readDiffGridDataPage,
+  readDiffGridDataPageV2,
   readDiffRecordData,
   readFileContent,
   readFileTextRaw,
@@ -34,7 +34,7 @@ import {
 } from './local-files';
 import {
   acceptFieldChanges,
-  assertIndexTables,
+  clearFolderIndex,
   deleteLocalPublishPlans,
   discardCreatedRecord as discardCreatedRecordViaCli,
   getFolderValidationResults,
@@ -44,7 +44,8 @@ import {
   listLocalPublishPlans,
   listUnpushedChanges,
   listUnreviewedChanges,
-  refreshRecordIndex,
+  reindexFiles,
+  reindexFolderIndex,
   rejectFieldChanges,
   restoreDeletedRecord as restoreDeletedRecordViaCli,
   runScratchmd,
@@ -349,6 +350,9 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
+      // Disable web security in dev so the renderer (served from localhost:5173)
+      // can reach the production API without CORS blocking preflight requests.
+      webSecurity: !is.dev,
     },
   });
   logPerf('main createBrowserWindow', performance.now() - windowStart);
@@ -410,35 +414,25 @@ async function withFilePathInternalMutation<T>(filePath: string, action: () => P
   return withWorkspaceInternalMutation(workspacePath, action);
 }
 
-async function refreshRecordIndexForWorkspace(
-  workspacePath: string,
-  opts?: { rebuild?: boolean; paths?: string[] },
-): Promise<void> {
-  await refreshRecordIndex(workspacePath, opts);
-}
-
-async function prepareWorkspaceIndex(workspacePath: string): Promise<void> {
-  await assertIndexTables(workspacePath);
-  await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
-}
-
-async function refreshRecordIndexForFilePath(filePath: string): Promise<void> {
-  const workspacePath = await findWorkspaceRootForPath(filePath);
-  if (!workspacePath) {
-    return;
+/** Reindex the folder-index for every leaf folder in the workspace. */
+async function reindexAllFolderIndexes(workspacePath: string): Promise<void> {
+  const folders = await listFolders(workspacePath);
+  for (const folder of folders) {
+    const relFolder = relative(workspacePath, folder.path);
+    await reindexFolderIndex(workspacePath, relFolder);
   }
-  const recordPath = relative(workspacePath, filePath).replace(/\\/g, '/');
-  await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
 }
 
-async function refreshRecordIndexForRecord(
-  workspacePath: string,
-  folderPath: string,
-  filename: string,
-  rebuild = false,
-): Promise<void> {
-  const recordPath = toWorkspaceRecordPath(workspacePath, folderPath, filename);
-  await refreshRecordIndexForWorkspace(workspacePath, { rebuild, paths: [recordPath] });
+/** Derive the workspace-relative folder from a workspace-relative record path. */
+function folderFromRecordPath(recordPath: string): string {
+  const parts = recordPath.split('/');
+  return parts.slice(0, -1).join('/');
+}
+
+/** Derive the bare filename from a workspace-relative record path. */
+function filenameFromRecordPath(recordPath: string): string {
+  const parts = recordPath.split('/');
+  return parts[parts.length - 1] ?? recordPath;
 }
 
 function startWorkspaceInternalLiveCommand(
@@ -508,17 +502,7 @@ ipcMain.handle('scratch:get-workspaces-registry', async () => {
   const start = performance.now();
   const rawEntries = await readWorkspaceRegistry();
   const entries = await pruneStaleWorkspaceRegistryEntries(rawEntries);
-  const result = await Promise.all(
-    entries.map(async (entry) => {
-      try {
-        const fileCount = await countWorkspaceFiles(entry.path);
-        return { ...entry, fileCount };
-      } catch (error) {
-        console.debug('[scratch] countWorkspaceFiles failed:', entry.path, error);
-        return { ...entry, fileCount: 0 };
-      }
-    }),
-  );
+  const result = entries.map((entry) => ({ ...entry, fileCount: 0 }));
   logPerf('main ipc getWorkspacesRegistry', performance.now() - start);
   return result;
 });
@@ -541,33 +525,37 @@ ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: stri
 );
 ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
   const result = await runScratchmd(['workspaces', 'unsync', workbookId, '--yes']);
-  await workspaceFileWatchService.clearWorkspaceFileWatch();
+  workspaceFileWatchService.clearWorkspaceFileWatch();
   return result;
 });
-ipcMain.handle('scratch:prepare-workspace-index', async (_, workspacePath: string) => {
-  await prepareWorkspaceIndex(workspacePath);
+ipcMain.handle('scratch:prepare-workspace-index', async () => {
+  // No-op: the folder-index seeds itself lazily on first run_query call.
+});
+ipcMain.handle('scratch:reindex-workspace', async (_, workbookId: string) => {
+  const entries = await readWorkspaceRegistry();
+  const entry = entries.find((e) => e.id === workbookId);
+  if (!entry) return;
+  await reindexAllFolderIndexes(entry.path);
 });
 ipcMain.handle(
-  'scratch:refresh-paths',
-  async (_, workspacePath: string, folderPaths: string[], singleFile?: string) => {
-    return withWorkspaceInternalMutation(workspacePath, async () => {
-      if (singleFile) {
-        await refreshRecordIndex(workspacePath, { paths: [relative(workspacePath, singleFile)] });
-      } else {
-        if (folderPaths.length === 0) return { success: true };
-        await refreshRecordIndex(workspacePath, { folders: folderPaths });
-      }
-      return { success: true };
-    });
+  'scratch:clear-folder-index',
+  async (_, workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> => {
+    return clearFolderIndex(workspacePath, folderPath);
   },
 );
+ipcMain.handle('scratch:refresh-paths', () => {
+  // No-op: working-tree changes are detected automatically by find_stale_working
+  // on the next paginate-records call. Dirty/master mutations trigger explicit
+  // reindex-table calls at the IPC handler that performed the mutation.
+  return { success: true };
+});
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   const args = ['files', 'accept-all'];
   if (folderPath) args.push('--folder', folderPath);
   return withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmdCapture(args, workspacePath);
     if (result.exitCode === 0) {
-      await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+      await reindexAllFolderIndexes(workspacePath);
     }
     return result;
   });
@@ -578,7 +566,7 @@ ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, f
   return withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmdCapture(args, workspacePath);
     if (result.exitCode === 0) {
-      await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+      await reindexAllFolderIndexes(workspacePath);
     }
     return result;
   });
@@ -587,25 +575,24 @@ ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordP
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmdCapture(['files', 'accept', recordPath], workspacePath);
     if (result.exitCode === 0) {
-      await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
+      // accept moves working → dirty; dirty changed so hot path won't detect it
+      await reindexFiles(workspacePath, folderFromRecordPath(recordPath), [filenameFromRecordPath(recordPath)]);
     }
     return result;
   }),
 );
 ipcMain.handle('scratch:reject-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await runScratchmdCapture(['files', 'reject', recordPath], workspacePath);
-    if (result.exitCode === 0) {
-      await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
-    }
-    return result;
+    // reject reverts working only; hot path detects working-tree changes automatically
+    return runScratchmdCapture(['files', 'reject', recordPath], workspacePath);
   }),
 );
 ipcMain.handle('scratch:discard-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmdCapture(['files', 'discard', recordPath], workspacePath);
     if (result.exitCode === 0) {
-      await refreshRecordIndexForWorkspace(workspacePath, { paths: [recordPath] });
+      // discard resets both dirty and working to master; dirty changed so hot path won't detect it
+      await reindexFiles(workspacePath, folderFromRecordPath(recordPath), [filenameFromRecordPath(recordPath)]);
     }
     return result;
   }),
@@ -623,7 +610,7 @@ ipcMain.handle('scratch:delete-local-publish-plans', async (_, workspacePath: st
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmd(['files', 'upload'], workspacePath);
-    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    await reindexAllFolderIndexes(workspacePath);
     return result;
   }),
 );
@@ -634,7 +621,7 @@ ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string
   }
   return withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await runScratchmd(args, workspacePath);
-    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    await reindexAllFolderIndexes(workspacePath);
     return result;
   });
 });
@@ -668,11 +655,12 @@ ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string)
   ]),
 );
 ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
-  const config = await readWorkspaceConfig(workspacePath);
-  await workspaceFileWatchService.watchWorkspaceFiles(event.sender, workspacePath, config.connections);
+  const folders = await listFolders(workspacePath);
+  const folderPaths = folders.map((f) => f.path);
+  return workspaceFileWatchService.watchWorkspaceFiles(event.sender, workspacePath, folderPaths);
 });
-ipcMain.handle('scratch:clear-workspace-file-watch', async () => {
-  await workspaceFileWatchService.clearWorkspaceFileWatch();
+ipcMain.handle('scratch:clear-workspace-file-watch', () => {
+  workspaceFileWatchService.clearWorkspaceFileWatch();
 });
 ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
   void shell.openPath(folderPath);
@@ -831,7 +819,6 @@ ipcMain.handle('files:read-file-text-raw', async (_, filePath: string) => readFi
 ipcMain.handle('files:write-file-text-raw', async (_, filePath: string, contents: string) =>
   withFilePathInternalMutation(filePath, async () => {
     const result = await writeFileTextRaw(filePath, contents);
-    await refreshRecordIndexForFilePath(filePath);
     return result;
   }),
 );
@@ -869,7 +856,7 @@ ipcMain.handle('files:read-folder-statuses', async (_, folderPath: string, works
 ipcMain.handle(
   'files:read-diff-grid-data',
   async (
-    _,
+    event,
     folderPath: string,
     workspacePath: string,
     opts?: {
@@ -878,8 +865,19 @@ ipcMain.handle(
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
       filters?: DiffGridFilter[];
+      validate?: boolean;
     },
-  ) => readDiffGridDataPage(folderPath, workspacePath, opts ?? {}),
+  ) => {
+    const fn = process.env.SCRATCH_USE_SQLITE_GRID === '0' ? readDiffGridDataPage : readDiffGridDataPageV2;
+    // folder_index (used by read-records) and record_index (used by refresh-record-index) are
+    // separate SQLite files — no locking conflict, so we don't need to wait for the rebuild.
+    const onProgress = (line: string): void => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('scratch:grid-progress', line);
+      }
+    };
+    return fn(folderPath, workspacePath, opts ?? {}, onProgress);
+  },
 );
 ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, workspacePath: string, filename: string) =>
   readDiffRecordData(folderPath, workspacePath, filename),
@@ -899,7 +897,7 @@ ipcMain.handle(
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
       const result = await acceptCellInputText(folderPath, workspacePath, filename, fieldName, value);
-      await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+      await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),
 );
@@ -908,7 +906,7 @@ ipcMain.handle(
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
       const result = await acceptCellChange(folderPath, workspacePath, filename, fieldName, value);
-      await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+      await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),
 );
@@ -917,7 +915,7 @@ ipcMain.handle(
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
       const result = await undoApprovedCellChange(folderPath, workspacePath, filename, fieldName);
-      await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
+      await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),
 );
@@ -927,7 +925,6 @@ ipcMain.handle('files:restore-deleted-record', async (_, folderPath: string, wor
       workspacePath,
       toWorkspaceRecordPath(workspacePath, folderPath, filename),
     );
-    await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
     return result;
   }),
 );
@@ -937,21 +934,28 @@ ipcMain.handle('files:discard-created-record', async (_, folderPath: string, wor
       workspacePath,
       toWorkspaceRecordPath(workspacePath, folderPath, filename),
     );
-    await refreshRecordIndexForRecord(workspacePath, folderPath, filename);
     return result;
   }),
 );
 ipcMain.handle('files:accept-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await acceptFieldChanges(workspacePath, folderPath, fieldName);
-    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    // result.paths has workspace-relative paths; all in the same folder
+    if (result.paths.length > 0) {
+      const folder = folderFromRecordPath(result.paths[0]);
+      await reindexFiles(workspacePath, folder, result.paths.map(filenameFromRecordPath));
+    }
     return result;
   }),
 );
 ipcMain.handle('files:reject-field-changes', async (_, folderPath: string, workspacePath: string, fieldName: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
     const result = await rejectFieldChanges(workspacePath, folderPath, fieldName);
-    await refreshRecordIndexForWorkspace(workspacePath, { rebuild: true });
+    // result.paths has workspace-relative paths; all in the same folder
+    if (result.paths.length > 0) {
+      const folder = folderFromRecordPath(result.paths[0]);
+      await reindexFiles(workspacePath, folder, result.paths.map(filenameFromRecordPath));
+    }
     return result;
   }),
 );

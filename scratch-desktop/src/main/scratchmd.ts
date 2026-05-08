@@ -76,7 +76,11 @@ function getScratchmdBinaryPath(): string {
 
 // ── Core spawn helpers ──
 
-export function runScratchmdCapture(args: string[], cwd?: string): Promise<ScratchmdResult> {
+export function runScratchmdCapture(
+  args: string[],
+  cwd?: string,
+  onProgress?: (line: string) => void,
+): Promise<ScratchmdResult> {
   return new Promise((resolve, reject) => {
     const binary = getScratchmdBinaryPath();
     console.log('Running scratchmd command', binary, args);
@@ -88,13 +92,26 @@ export function runScratchmdCapture(args: string[], cwd?: string): Promise<Scrat
 
     let stdout = '';
     let stderr = '';
+    let stderrBuf = '';
 
     child.stdout.on('data', (chunk: Buffer | string) => {
       stdout += chunk.toString();
     });
 
     child.stderr.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      if (args.includes('--debug')) {
+        console.debug('[scratchmd]', text.trimEnd());
+      }
+      if (onProgress) {
+        stderrBuf += text;
+        const lines = stderrBuf.split('\n');
+        stderrBuf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.trim()) onProgress(line);
+        }
+      }
     });
 
     child.on('error', (error: NodeJS.ErrnoException) => {
@@ -114,8 +131,12 @@ export function runScratchmdCapture(args: string[], cwd?: string): Promise<Scrat
   });
 }
 
-export async function runScratchmdJson<T>(args: string[], cwd?: string): Promise<T> {
-  const result = await runScratchmdCapture(args, cwd);
+export async function runScratchmdJson<T>(
+  args: string[],
+  cwd?: string,
+  onProgress?: (line: string) => void,
+): Promise<T> {
+  const result = await runScratchmdCapture(args, cwd, onProgress);
   if (result.exitCode !== 0) {
     const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
     throw new Error(message);
@@ -138,25 +159,104 @@ export async function runScratchmd(args: string[], cwd?: string): Promise<{ stdo
   throw new Error(message);
 }
 
-export async function refreshRecordIndex(
+/** Reindex the folder-index table for a single workspace-relative folder path. */
+export async function reindexFolderIndex(
   workspacePath: string,
-  opts?: { rebuild?: boolean; paths?: string[]; folders?: string[] },
+  folder: string,
 ): Promise<{ stdout: string; stderr: string }> {
-  const args = ['refresh-record-index'];
-  if (opts?.rebuild) {
-    args.push('--rebuild');
-  }
-  for (const path of opts?.paths ?? []) {
-    args.push('--path', path);
-  }
-  for (const folder of opts?.folders ?? []) {
-    args.push('--folder', folder);
-  }
+  return runScratchmd(['reindex-table', '--folder', folder], workspacePath);
+}
+
+/**
+ * Reindex specific files within a folder: reads all three tree versions, updates the
+ * base row (approved/unapproved flags, mtime/size) and all active field columns.
+ * Much cheaper than reindexFolderIndex for targeted dirty/master mutations on known files.
+ */
+export async function reindexFiles(
+  workspacePath: string,
+  folder: string,
+  filenames: string[],
+  opts?: { validate?: boolean },
+): Promise<{ stdout: string; stderr: string }> {
+  const args = ['reindex-files', '--folder', folder];
+  for (const f of filenames) args.push('--file', f);
+  if (opts?.validate) args.push('--validate');
   return runScratchmd(args, workspacePath);
 }
 
-export async function assertIndexTables(workspacePath: string): Promise<{ stdout: string; stderr: string }> {
-  return runScratchmd(['assert-index-tables'], workspacePath);
+export interface ReadRecordsFolderSummary {
+  total: number;
+  approved_changes: number;
+  unapproved_changes: number;
+  working_only: number;
+  dirty_only: number;
+  master_only: number;
+}
+
+export interface ReadRecordsParseError {
+  filename: string;
+  error: string;
+}
+
+export interface ValidationError {
+  field_path: string;
+  validator_kind: string;
+  level: string;
+  message?: string;
+  description?: string;
+  fixable: boolean;
+}
+
+export interface ReadRecordsResult {
+  filenames: string[];
+  filtered_total: number;
+  summary: ReadRecordsFolderSummary;
+  parse_errors: ReadRecordsParseError[];
+  stale_count: number;
+  row_errors: Record<string, ValidationError[]>;
+  total_error_count: number;
+  total_problems_stale_count: number;
+}
+
+export type ReadRecordsFilterOp =
+  | { op: 'hasWorking' }
+  | { op: 'hasDirty' }
+  | { op: 'hasMaster' }
+  | { op: 'approvedChanges' }
+  | { op: 'unapprovedChanges' }
+  | { op: 'hasErrors' }
+  | { op: 'eq' | 'lt' | 'gt' | 'contains'; field: string; value: string };
+
+export interface ReadRecordsOptions {
+  folder: string;
+  offset?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  filters?: ReadRecordsFilterOp[];
+  dbPath?: string;
+  reindex?: boolean;
+  validate?: boolean;
+}
+
+export async function readRecords(
+  workspacePath: string,
+  opts: ReadRecordsOptions,
+  onProgress?: (line: string) => void,
+): Promise<ReadRecordsResult> {
+  const args = ['paginate-records', '--folder', opts.folder];
+  if (opts.offset !== undefined) args.push('--offset', String(opts.offset));
+  if (opts.limit !== undefined) args.push('--limit', String(opts.limit));
+  if (opts.sortBy) args.push('--sort-by', opts.sortBy);
+  if (opts.sortOrder) args.push('--sort-order', opts.sortOrder);
+  for (const f of opts.filters ?? []) {
+    args.push('--filter', JSON.stringify(f));
+  }
+  if (opts.dbPath) args.push('--db-path', opts.dbPath);
+  if (opts.reindex) args.push('--reindex');
+  if (opts.validate) args.push('--validate');
+  args.push('--debug');
+  return runScratchmdJson<ReadRecordsResult>(args, workspacePath, onProgress);
 }
 
 // ── Streaming helpers ──
@@ -512,6 +612,11 @@ export async function getFolderValidationResults(
   } catch {
     return [];
   }
+}
+
+export async function clearFolderIndex(workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> {
+  const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
+  return runScratchmdJson<{ rows_cleared: number }>(['clear-folder-index', '--folder', relFolder], workspacePath);
 }
 
 export async function getFilenamesWithErrors(

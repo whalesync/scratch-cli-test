@@ -12,7 +12,6 @@ use crate::shared::record_index::{
     self, RefreshOptions, RefreshSummary, StaleRecord, StatusCandidate,
 };
 use crate::shared::validators;
-use crate::shared::validators::VALIDATION_RESULTS_TABLE;
 use serde::Serialize;
 
 pub fn build_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
@@ -261,7 +260,7 @@ pub fn list_stale_records_command(
     Ok(())
 }
 
-pub fn refresh_record_index_command(
+pub fn refresh_problem_record_index_command(
     workspace_start: &std::path::Path,
     connection_filter: Option<&str>,
     input_paths: &[String],
@@ -457,7 +456,9 @@ pub fn dump_validations_command(
     Ok(())
 }
 
-pub fn assert_index_tables_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
+pub fn assert_problem_index_tables_command(
+    workspace_start: &std::path::Path,
+) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
@@ -474,6 +475,189 @@ pub fn assert_index_tables_command(workspace_start: &std::path::Path) -> anyhow:
         record_index::assert_index_tables_exist(&db_path)?;
     }
 
+    Ok(())
+}
+
+pub fn index_field_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+    column: &str,
+    debug: bool,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    crate::shared::folder_index::index_field_with_progress(
+        &workspace_dir,
+        folder,
+        column,
+        None,
+        debug,
+    )
+}
+
+pub fn clear_column_index_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+    column: &str,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let result =
+        crate::shared::folder_index::clear_column_index(&workspace_dir, folder, column, None)?;
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
+pub fn clear_folder_index_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let result = crate::shared::folder_index::clear_folder_index(&workspace_dir, folder, None)?;
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
+pub fn find_stale_working_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let filenames = crate::shared::folder_index::find_stale_working(&workspace_dir, folder, None)?;
+    println!("{}", serde_json::to_string(&filenames)?);
+    Ok(())
+}
+
+pub fn find_stale_columns_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+    columns: &[String],
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let filenames =
+        crate::shared::folder_index::find_stale_columns(&workspace_dir, folder, columns, None)?;
+    println!("{}", serde_json::to_string(&filenames)?);
+    Ok(())
+}
+
+pub fn find_stale_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+    columns: &[String],
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let report = crate::shared::folder_index::find_stale(&workspace_dir, folder, columns, None)?;
+    println!("{}", serde_json::to_string(&report)?);
+    Ok(())
+}
+
+pub fn reindex_table_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+    debug: bool,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let rows = crate::shared::folder_index::reindex_table(&workspace_dir, folder, None, debug)?;
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({ "rows": rows }))?
+    );
+    Ok(())
+}
+
+pub fn reindex_workspace_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    if workspace_marker.connections.is_empty() {
+        anyhow::bail!(
+            "No connections found in {}. Run 'scratchmd workspaces init' first.",
+            workspace_dir.display()
+        );
+    }
+
+    let mut total_rows = 0usize;
+    let mut total_folders = 0usize;
+
+    for connection in &workspace_marker.connections {
+        let conn_dir_name = &connection.dir_name;
+        let working_dir = workspace_dir.join(conn_dir_name);
+        if !working_dir.exists() {
+            eprintln!(
+                "  {} — working directory not found, skipping",
+                conn_dir_name
+            );
+            continue;
+        }
+
+        // Enumerate immediate subfolders (data folders) in the connection directory.
+        let subfolders: Vec<String> = match std::fs::read_dir(&working_dir) {
+            Ok(entries) => entries
+                .flatten()
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect(),
+            Err(_) => {
+                eprintln!("  {} — could not read directory, skipping", conn_dir_name);
+                continue;
+            }
+        };
+
+        for subfolder in &subfolders {
+            let folder = format!("{conn_dir_name}/{subfolder}");
+            eprint!("  reindexing {}... ", folder);
+            match crate::shared::folder_index::reindex_table(&workspace_dir, &folder, None, false) {
+                Ok(rows) => {
+                    eprintln!("{rows} rows");
+                    total_rows += rows;
+                    total_folders += 1;
+                }
+                Err(e) => {
+                    eprintln!("ERROR: {e}");
+                }
+            }
+        }
+    }
+
+    eprintln!("\nDone. {total_rows} rows across {total_folders} folder(s).");
+    Ok(())
+}
+
+pub fn reindex_files_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+    files: &[String],
+    validate: bool,
+    debug: bool,
+) -> anyhow::Result<()> {
+    if files.is_empty() {
+        anyhow::bail!("provide at least one --file argument");
+    }
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    crate::shared::folder_index::reindex_files(&workspace_dir, folder, files, None, debug)?;
+    if validate {
+        crate::shared::folder_index::validate_files(&workspace_dir, folder, files, None, debug)?;
+    }
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({ "reindexed": files.len() }))?
+    );
+    Ok(())
+}
+
+pub fn reindex_files_columns_command(
+    workspace_start: &std::path::Path,
+    folder: &str,
+    files: &[String],
+    debug: bool,
+) -> anyhow::Result<()> {
+    if files.is_empty() {
+        anyhow::bail!("provide at least one --file argument");
+    }
+    let workspace_dir = resolve_workspace(workspace_start)?;
+    crate::shared::folder_index::reindex_files_columns(&workspace_dir, folder, files, None, debug)?;
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({ "reindexed": files.len() }))?
+    );
     Ok(())
 }
 
@@ -803,7 +987,7 @@ fn is_record_candidate_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        list_stale_records_command, read_workspace_marker, refresh_record_index_command,
+        list_stale_records_command, read_workspace_marker, refresh_problem_record_index_command,
         resolve_selected_path, selected_paths_by_connection,
     };
     use crate::config::markers;
@@ -830,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_record_index_command_bootstraps_connection_db() {
+    fn refresh_problem_record_index_command_bootstraps_connection_db() {
         let tmp = TempDir::new().unwrap();
         let workspace = tmp.path();
         fs::create_dir_all(workspace.join(".scratch")).unwrap();
@@ -871,7 +1055,7 @@ connections:
             ],
         );
 
-        refresh_record_index_command(workspace, None, &[], &[], false, false).unwrap();
+        refresh_problem_record_index_command(workspace, None, &[], &[], false, false).unwrap();
 
         let marker = read_workspace_marker(workspace).unwrap();
         let repo_path = &marker.connections[0].repo_path;
@@ -924,7 +1108,7 @@ connections:
             ],
         );
 
-        refresh_record_index_command(workspace, None, &[], &[], false, false).unwrap();
+        refresh_problem_record_index_command(workspace, None, &[], &[], false, false).unwrap();
         write_file(
             &dirty_dir.join("posts/one.json"),
             "{\"id\":1,\"name\":\"updated\"}",
@@ -1006,22 +1190,15 @@ pub fn get_folder_validation_results_command(
     folder_path_arg: &str,
 ) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
-    let workspace_marker = read_workspace_marker(&workspace_dir)?;
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
     let slash = folder_path_arg.find('/').ok_or_else(|| {
         anyhow::anyhow!("folder path must be '<connection>/<folder>', got: {folder_path_arg}")
     })?;
     let connection_name = &folder_path_arg[..slash];
-    let folder_path = &folder_path_arg[slash + 1..];
 
-    let connection = workspace_marker
-        .connections
-        .iter()
-        .find(|c| c.dir_name == connection_name)
-        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
-
-    let db_path = layout.index_db_path(&connection.repo_path);
+    let db_path = workspace_dir
+        .join(".repos")
+        .join(format!("{connection_name}.db"));
     if !db_path.exists() {
         println!("[]");
         return Ok(());
@@ -1029,18 +1206,17 @@ pub fn get_folder_validation_results_command(
 
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
-    validators::ensure_validation_schema(&conn)?;
 
     let mut stmt = conn
-        .prepare(&format!(
-            "SELECT file_name, field_path, validator_kind, level, message, description, fixable \
-             FROM {VALIDATION_RESULTS_TABLE} \
-             WHERE folder_path = ?1"
-        ))
+        .prepare(
+            "SELECT filename, field_path, validator_kind, level, message, description, fixable \
+             FROM validation_results \
+             WHERE folder_path = ?1",
+        )
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let rows: Vec<ValidationResultRow> = stmt
-        .query_map(rusqlite::params![folder_path], |row| {
+        .query_map(rusqlite::params![folder_path_arg], |row| {
             Ok(ValidationResultRow {
                 file_name: Some(row.get(0)?),
                 field_path: row.get(1)?,
@@ -1072,22 +1248,15 @@ pub fn get_filenames_with_errors_command(
     folder_path_arg: &str,
 ) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
-    let workspace_marker = read_workspace_marker(&workspace_dir)?;
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
     let slash = folder_path_arg.find('/').ok_or_else(|| {
         anyhow::anyhow!("folder path must be '<connection>/<folder>', got: {folder_path_arg}")
     })?;
     let connection_name = &folder_path_arg[..slash];
-    let folder_path = &folder_path_arg[slash + 1..];
 
-    let connection = workspace_marker
-        .connections
-        .iter()
-        .find(|c| c.dir_name == connection_name)
-        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
-
-    let db_path = layout.index_db_path(&connection.repo_path);
+    let db_path = workspace_dir
+        .join(".repos")
+        .join(format!("{connection_name}.db"));
     if !db_path.exists() {
         println!("{{\"filenames\":[],\"field_paths\":[]}}");
         return Ok(());
@@ -1095,17 +1264,16 @@ pub fn get_filenames_with_errors_command(
 
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
-    validators::ensure_validation_schema(&conn)?;
 
     let mut stmt = conn
-        .prepare(&format!(
-            "SELECT DISTINCT file_name, field_path FROM {VALIDATION_RESULTS_TABLE} \
-             WHERE folder_path = ?1"
-        ))
+        .prepare(
+            "SELECT DISTINCT filename, field_path FROM validation_results \
+             WHERE folder_path = ?1",
+        )
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let rows = stmt
-        .query_map(rusqlite::params![folder_path], |row| {
+        .query_map(rusqlite::params![folder_path_arg], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|e| anyhow::anyhow!("query failed: {e}"))?
@@ -1139,20 +1307,26 @@ struct FolderValidationStat {
 
 /// Return error/warning counts grouped by connection and folder across all connections.
 ///
-/// Output: JSON array of `{ connection, folder_path, errors, warnings }`.
+/// Reads from the folder-index SQLite databases (`.repos/<dir_name>.db`) which are
+/// populated by `paginate-records --validate`. Each folder table has `has_errors` for
+/// the total record count and a shared `validation_results` table for per-level counts.
+///
+/// Output: JSON array of `{ connection, folder_path, errors, warnings, records }`.
 /// Folders with zero violations are omitted.
 pub fn get_validation_stats_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
     let mut stats: Vec<FolderValidationStat> = Vec::new();
 
     for connection in &workspace_marker.connections {
-        if connection.repo_path.is_empty() || connection.dir_name.is_empty() {
+        if connection.dir_name.is_empty() {
             continue;
         }
-        let db_path = layout.index_db_path(&connection.repo_path);
+        // Folder-index DB is keyed by the connection's display name, not repo_path.
+        let db_path = workspace_dir
+            .join(".repos")
+            .join(format!("{}.db", &connection.dir_name));
         if !db_path.exists() {
             continue;
         }
@@ -1160,39 +1334,60 @@ pub fn get_validation_stats_command(workspace_start: &std::path::Path) -> anyhow
             Ok(c) => c,
             Err(_) => continue,
         };
-        if validators::ensure_validation_schema(&conn).is_err() {
-            continue;
-        }
 
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT folder_path, \
-                        SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END), \
-                        SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END), \
-                        COUNT(DISTINCT file_name) \
-                 FROM {VALIDATION_RESULTS_TABLE} \
-                 GROUP BY folder_path \
-                 ORDER BY folder_path"
-            ))
-            .map_err(|e| anyhow::anyhow!("failed to prepare stats query: {e}"))?;
+        // Enumerate all folders that have any validation violation recorded.
+        let mut folder_stmt = match conn
+            .prepare("SELECT DISTINCT folder_path FROM validation_results ORDER BY folder_path")
+        {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let folder_paths: Vec<String> = folder_stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| anyhow::anyhow!("failed to query validation_results: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
 
-        let folder_rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            })
-            .map_err(|e| anyhow::anyhow!("stats query failed: {e}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow::anyhow!("stats row read failed: {e}"))?;
+        for full_folder_path in folder_paths {
+            let records: i64 = conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT filename) FROM validation_results WHERE folder_path = ?1",
+                    rusqlite::params![full_folder_path],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
 
-        for (folder_path, errors, warnings, records) in folder_rows {
+            if records == 0 {
+                continue;
+            }
+
+            let errors: i64 = conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT filename) FROM validation_results \
+                     WHERE folder_path = ?1 AND level = 'error'",
+                    rusqlite::params![full_folder_path],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+
+            let warnings: i64 = conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT filename) FROM validation_results \
+                     WHERE folder_path = ?1 AND level = 'warning'",
+                    rusqlite::params![full_folder_path],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+
+            // Strip the leading connection prefix for the UI (e.g. "conn/public/posts" → "public/posts").
+            let sub_path = match full_folder_path.find('/') {
+                Some(idx) => full_folder_path[idx + 1..].to_string(),
+                None => String::new(),
+            };
+
             stats.push(FolderValidationStat {
                 connection: connection.dir_name.clone(),
-                folder_path,
+                folder_path: sub_path,
                 errors,
                 warnings,
                 records,
@@ -1213,8 +1408,6 @@ pub fn get_folder_validation_sample_command(
     folder_path_arg: &str,
 ) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
-    let workspace_marker = read_workspace_marker(&workspace_dir)?;
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
     let slash = folder_path_arg.find('/').ok_or_else(|| {
         anyhow::anyhow!("folder path must be '<connection>/<folder>', got: {folder_path_arg}")
@@ -1222,13 +1415,10 @@ pub fn get_folder_validation_sample_command(
     let connection_name = &folder_path_arg[..slash];
     let folder_path = &folder_path_arg[slash + 1..];
 
-    let connection = workspace_marker
-        .connections
-        .iter()
-        .find(|c| c.dir_name == connection_name)
-        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
-
-    let db_path = layout.index_db_path(&connection.repo_path);
+    // Folder-index DB is keyed by the connection's display name.
+    let db_path = workspace_dir
+        .join(".repos")
+        .join(format!("{connection_name}.db"));
     if !db_path.exists() {
         println!("[]");
         return Ok(());
@@ -1236,20 +1426,21 @@ pub fn get_folder_validation_sample_command(
 
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
-    validators::ensure_validation_schema(&conn)?;
+
+    let full_folder = format!("{connection_name}/{folder_path}");
 
     let mut stmt = conn
-        .prepare(&format!(
-            "SELECT file_name, field_path, validator_kind, level, message, description, fixable \
-             FROM {VALIDATION_RESULTS_TABLE} \
+        .prepare(
+            "SELECT filename, field_path, validator_kind, level, message, description, fixable \
+             FROM validation_results \
              WHERE folder_path = ?1 \
-             ORDER BY level DESC, file_name, field_path \
-             LIMIT 20"
-        ))
+             ORDER BY level DESC, filename, field_path \
+             LIMIT 20",
+        )
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let sample_rows: Vec<ValidationResultRow> = stmt
-        .query_map(rusqlite::params![folder_path], |row| {
+        .query_map(rusqlite::params![full_folder], |row| {
             Ok(ValidationResultRow {
                 file_name: Some(row.get(0)?),
                 field_path: row.get(1)?,
@@ -1277,29 +1468,23 @@ pub fn get_validation_results_command(
     record_path: &str,
 ) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
-    let workspace_marker = read_workspace_marker(&workspace_dir)?;
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
-    // Split "<connection>/<folder...>/<filename>" into components.
+    // Split "<connection>/<folder...>/<filename>" into (connection, folder_path, filename).
     let slash = record_path.find('/').ok_or_else(|| {
-        anyhow::anyhow!("record path must be '<connection>/<file>', got: {record_path}")
+        anyhow::anyhow!("record path must be '<connection>/<folder>/<file>', got: {record_path}")
     })?;
     let connection_name = &record_path[..slash];
-    let rest = &record_path[slash + 1..]; // "public/posts/post-2.json"
+    let rest = &record_path[slash + 1..];
 
-    let (folder_path, file_name) = match rest.rfind('/') {
+    let (folder_subpath, file_name) = match rest.rfind('/') {
         Some(pos) => (&rest[..pos], &rest[pos + 1..]),
         None => ("", rest),
     };
+    let full_folder = format!("{connection_name}/{folder_subpath}");
 
-    let connection = workspace_marker
-        .connections
-        .iter()
-        .find(|c| c.dir_name == connection_name)
-        .ok_or_else(|| anyhow::anyhow!("Connection '{connection_name}' not found in workspace"))?;
-
-    let db_path = layout.index_db_path(&connection.repo_path);
-
+    let db_path = workspace_dir
+        .join(".repos")
+        .join(format!("{connection_name}.db"));
     if !db_path.exists() {
         println!("[]");
         return Ok(());
@@ -1307,18 +1492,17 @@ pub fn get_validation_results_command(
 
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
-    validators::ensure_validation_schema(&conn)?;
 
     let mut stmt = conn
-        .prepare(&format!(
+        .prepare(
             "SELECT field_path, validator_kind, level, message, description, fixable \
-             FROM {VALIDATION_RESULTS_TABLE} \
-             WHERE folder_path = ?1 AND file_name = ?2"
-        ))
+             FROM validation_results \
+             WHERE folder_path = ?1 AND filename = ?2",
+        )
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let rows: Vec<ValidationResultRow> = stmt
-        .query_map(rusqlite::params![folder_path, file_name], |row| {
+        .query_map(rusqlite::params![full_folder, file_name], |row| {
             Ok(ValidationResultRow {
                 file_name: None,
                 field_path: row.get(0)?,

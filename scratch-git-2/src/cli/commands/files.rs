@@ -234,7 +234,7 @@ struct RemoteDiscardResult {
     remote_discarded_paths: Vec<String>,
 }
 
-fn refresh_record_index_for_ctx(
+fn refresh_problem_record_index_for_ctx(
     ctx: &ConnectionContext,
     rel_paths: &[String],
     rebuild: bool,
@@ -672,7 +672,7 @@ fn run_discard_all(
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
             let result = discard_all_single_repo(&ctx, Some(repo_folder.as_str()))?;
-            refresh_record_index_for_ctx(&ctx, &result.discarded_paths, true)?;
+            refresh_problem_record_index_for_ctx(&ctx, &result.discarded_paths, true)?;
             results.push(result);
         }
         None => {
@@ -681,7 +681,7 @@ fn run_discard_all(
                     println!("Discarding changes in {}...", ctx.conn_dir_name);
                 }
                 let result = discard_all_single_repo(ctx, None)?;
-                refresh_record_index_for_ctx(ctx, &result.discarded_paths, true)?;
+                refresh_problem_record_index_for_ctx(ctx, &result.discarded_paths, true)?;
                 results.push(result);
             }
         }
@@ -747,7 +747,7 @@ fn run_accept_all(
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
             let result = accept_all_single_repo(&ctx, Some(repo_folder.as_str()))?;
-            refresh_record_index_for_ctx(&ctx, &result.accepted_paths, true)?;
+            refresh_problem_record_index_for_ctx(&ctx, &result.accepted_paths, true)?;
             results.push(result);
         }
         None => {
@@ -756,7 +756,7 @@ fn run_accept_all(
                     println!("Accepting changes in {}...", ctx.conn_dir_name);
                 }
                 let result = accept_all_single_repo(ctx, None)?;
-                refresh_record_index_for_ctx(ctx, &result.accepted_paths, true)?;
+                refresh_problem_record_index_for_ctx(ctx, &result.accepted_paths, true)?;
                 results.push(result);
             }
         }
@@ -887,7 +887,7 @@ fn run_accept(
         update_dirty_worktree_index(ctx, &new_dirty_hash)?;
         update_reviewed_dirty(ctx, &new_dirty_hash)?;
         let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
-        refresh_record_index_for_ctx(ctx, &rel_paths, path_pairs.len() > 1)?;
+        refresh_problem_record_index_for_ctx(ctx, &rel_paths, path_pairs.len() > 1)?;
 
         all_accepted.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
@@ -1067,7 +1067,7 @@ fn run_discard(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result
             skipped_any = true;
             continue;
         }
-        refresh_record_index_for_ctx(ctx, &result.discarded_paths, path_pairs.len() > 1)?;
+        refresh_problem_record_index_for_ctx(ctx, &result.discarded_paths, path_pairs.len() > 1)?;
         for rel in &result.discarded_paths {
             if let Some(input) = input_by_rel.get(rel.as_str()) {
                 all_discarded.push((*input).to_string());
@@ -1166,7 +1166,7 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     )?;
     update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
     update_reviewed_dirty(&ctx, &new_dirty_hash)?;
-    refresh_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
     if json {
         println!(
@@ -1263,7 +1263,7 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
         update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
         update_reviewed_dirty(&ctx, &new_dirty_hash)?;
     }
-    refresh_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
     if json {
         println!(
@@ -1322,7 +1322,7 @@ fn run_restore_deleted_record(
             .map(|(_, rel_path)| rel_path.clone())
             .collect();
         restore_deleted_records_locally(ctx, &rel_paths)?;
-        refresh_record_index_for_ctx(ctx, &rel_paths, false)?;
+        refresh_problem_record_index_for_ctx(ctx, &rel_paths, false)?;
         all_restored.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
 
@@ -1384,7 +1384,7 @@ async fn run_discard_created_record(
             .collect();
 
         discard_created_records_locally(ctx, &rel_paths)?;
-        refresh_record_index_for_ctx(ctx, &rel_paths, false)?;
+        refresh_problem_record_index_for_ctx(ctx, &rel_paths, false)?;
         result
             .changed_paths
             .extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
@@ -2107,7 +2107,7 @@ fn download_single_repo(
     reconcile_data_folder_dirs(&ctx.dirty_dir, data_folders)?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
     update_reviewed_dirty(ctx, &new_dirty_hash)?;
-    refresh_record_index_for_ctx(ctx, &[], true)?;
+    refresh_problem_record_index_for_ctx(ctx, &[], true)?;
 
     Ok(result)
 }
@@ -2205,7 +2205,7 @@ fn upload_single_repo(
             apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &remote_map)?;
             update_dirty_worktree_index(ctx, &remote_hash)?;
             update_reviewed_dirty(ctx, &remote_hash)?;
-            refresh_record_index_for_ctx(ctx, &[], true)?;
+            refresh_problem_record_index_for_ctx(ctx, &[], true)?;
             return Ok(UploadResult {
                 status: "up_to_date".to_string(),
                 messages,
@@ -2232,7 +2232,7 @@ fn upload_single_repo(
                 apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &merged)?;
                 update_dirty_worktree_index(ctx, &new_dirty_hash)?;
                 update_reviewed_dirty(ctx, &new_dirty_hash)?;
-                refresh_record_index_for_ctx(ctx, &[], true)?;
+                refresh_problem_record_index_for_ctx(ctx, &[], true)?;
                 result.files_plan = plan_file_count;
                 result.messages = messages;
                 return Ok(result);

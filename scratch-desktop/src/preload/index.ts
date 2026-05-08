@@ -79,6 +79,9 @@ const scratchDesktop = {
   removeWorkspace: (workbookId: string): Promise<void> => invoke('scratch:remove-workspace', workbookId),
   prepareWorkspaceIndex: (workspacePath: string): Promise<void> =>
     invoke('scratch:prepare-workspace-index', workspacePath),
+  reindexWorkspace: (workbookId: string): Promise<void> => invoke('scratch:reindex-workspace', workbookId),
+  clearFolderIndex: (workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> =>
+    invoke('scratch:clear-folder-index', workspacePath, folderPath),
   refreshPaths: (workspacePath: string, paths: string[], singleFile?: string): Promise<void> =>
     invoke('scratch:refresh-paths', workspacePath, paths, singleFile),
   acceptAllChanges: (
@@ -175,7 +178,8 @@ const scratchDesktop = {
   openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
   toggleDevTools: (): Promise<void> => invoke('scratch:toggle-devtools'),
   getAppVersion: (): Promise<string> => invoke('scratch:get-app-version'),
-  watchWorkspaceFiles: (workspacePath: string): Promise<void> => invoke('scratch:watch-workspace-files', workspacePath),
+  watchWorkspaceFiles: (workspacePath: string): Promise<string[]> =>
+    invoke('scratch:watch-workspace-files', workspacePath),
   clearWorkspaceFileWatch: (): Promise<void> => invoke('scratch:clear-workspace-file-watch'),
   updater: {
     checkNow: (): Promise<void> => invoke('updater:check-now'),
@@ -229,6 +233,15 @@ const scratchDesktop = {
     ipcRenderer.on(CONNECTION_FILE_CHANGED_EVENT_CHANNEL, listener);
     return () => {
       ipcRenderer.removeListener(CONNECTION_FILE_CHANGED_EVENT_CHANNEL, listener);
+    };
+  },
+  onGridProgress: (callback: (line: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, line: string): void => {
+      callback(line);
+    };
+    ipcRenderer.on('scratch:grid-progress', listener);
+    return () => {
+      ipcRenderer.removeListener('scratch:grid-progress', listener);
     };
   },
 };

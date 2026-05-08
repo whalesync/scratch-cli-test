@@ -1,13 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
 import type { WebContents } from 'electron';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { WorkspaceFilesChangedEvent } from '../../shared/workspace-file-watch';
 import { WorkspaceFileWatchService } from '../workspace-file-watch';
-
-// Mock runScratchmd so validation tests don't spawn the CLI binary.
-vi.mock('../scratchmd', () => ({
-  runScratchmd: vi.fn().mockResolvedValue(undefined),
-}));
 
 // ─── flush payload helpers ────────────────────────────────────────────────────
 
@@ -98,87 +93,5 @@ describe('WorkspaceFileWatchService — flushPendingChanges payload', () => {
     const { received, flush } = makeService();
     flush();
     expect(received).toHaveLength(0);
-  });
-});
-
-// ─── dirty-flag concurrency ───────────────────────────────────────────────────
-
-describe('WorkspaceFileWatchService — runValidationForPaths dirty flag', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
-
-  afterEach(() => {
-    vi.resetAllMocks();
-  });
-
-  it('runs validation immediately when idle', async () => {
-    const { runScratchmd } = await import('../scratchmd');
-    vi.mocked(runScratchmd).mockResolvedValue(undefined);
-
-    const service = new WorkspaceFileWatchService();
-    await service.runValidationForPaths('/workspace', ['/workspace/conn-a']);
-
-    expect(vi.mocked(runScratchmd)).toHaveBeenCalledOnce();
-    expect(vi.mocked(runScratchmd)).toHaveBeenCalledWith(
-      ['refresh-record-index', '--path', '/workspace/conn-a'],
-      '/workspace',
-    );
-  });
-
-  it('queues a second call that arrives while the first is running, then drains', async () => {
-    const { runScratchmd } = await import('../scratchmd');
-
-    let firstResolve!: () => void;
-    vi.mocked(runScratchmd)
-      .mockImplementationOnce(() => new Promise<void>((r) => (firstResolve = r)))
-      .mockResolvedValueOnce(undefined);
-
-    const service = new WorkspaceFileWatchService();
-
-    // Start first run — does not complete yet.
-    const firstRun = service.runValidationForPaths('/workspace', ['/workspace/conn-a']);
-
-    // Second call arrives while first is in-flight — should be queued, not dropped.
-    void service.runValidationForPaths('/workspace', ['/workspace/conn-b']);
-
-    // Only the first CLI call should have started.
-    expect(vi.mocked(runScratchmd)).toHaveBeenCalledTimes(1);
-
-    // Unblock the first run.
-    firstResolve();
-    await firstRun;
-
-    // After first completes the queued paths should have been drained.
-    expect(vi.mocked(runScratchmd)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(runScratchmd).mock.calls[1]).toEqual([
-      ['refresh-record-index', '--path', '/workspace/conn-b'],
-      '/workspace',
-    ]);
-  });
-
-  it('merges multiple queued paths into one subsequent run', async () => {
-    const { runScratchmd } = await import('../scratchmd');
-
-    let firstResolve!: () => void;
-    vi.mocked(runScratchmd)
-      .mockImplementationOnce(() => new Promise<void>((r) => (firstResolve = r)))
-      .mockResolvedValueOnce(undefined);
-
-    const service = new WorkspaceFileWatchService();
-    const firstRun = service.runValidationForPaths('/workspace', ['/workspace/conn-a']);
-
-    // Two more calls arrive while first is in-flight.
-    void service.runValidationForPaths('/workspace', ['/workspace/conn-b']);
-    void service.runValidationForPaths('/workspace', ['/workspace/conn-c']);
-
-    firstResolve();
-    await firstRun;
-
-    // Both queued paths should appear in a single second CLI invocation.
-    expect(vi.mocked(runScratchmd)).toHaveBeenCalledTimes(2);
-    const secondCallArgs = vi.mocked(runScratchmd).mock.calls[1][0];
-    expect(secondCallArgs).toContain('/workspace/conn-b');
-    expect(secondCallArgs).toContain('/workspace/conn-c');
   });
 });

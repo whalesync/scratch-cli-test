@@ -43,6 +43,8 @@ export function WorkspacePage() {
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
+  const [watchingEnabled, setWatchingEnabled] = useState(true);
+  const [validateEnabled, setValidateEnabled] = useState(false);
   const [gridFilterActivation, setGridFilterActivation] = useState<{
     kind: 'has-problems';
     trigger: number;
@@ -55,7 +57,6 @@ export function WorkspacePage() {
   const lastFocusSyncAtRef = useRef(0);
   const previousFolderCountRef = useRef<number | null>(null);
   const previousConnectionCountRef = useRef<number | null>(null);
-  const preparedIndexPathRef = useRef<string | null>(null);
   const selectedFolderPathRef = useRef(selectedFolderPath);
   selectedFolderPathRef.current = selectedFolderPath;
 
@@ -154,6 +155,23 @@ export function WorkspacePage() {
   const handleDataRefresh = useCallback(() => {
     setDataRefreshKey((current) => current + 1);
   }, []);
+
+  const handleToggleWatching = useCallback(async () => {
+    if (!localPath) return;
+    const next = !watchingEnabled;
+    setWatchingEnabled(next);
+    if (next) {
+      const watched = await window.scratchDesktop.watchWorkspaceFiles(localPath);
+      const folderNames = watched.map((p) => p.replace(localPath + '/', '')).join(', ');
+      notifications.show({
+        message: `Watching on${folderNames ? `: ${folderNames}` : ''}`,
+        color: 'blue',
+      });
+    } else {
+      await window.scratchDesktop.clearWorkspaceFileWatch();
+      notifications.show({ message: 'Watching off', color: 'orange' });
+    }
+  }, [localPath, watchingEnabled]);
 
   const handleReDownload = useCallback(async () => {
     if (!localPath || reDownloading) return;
@@ -272,70 +290,49 @@ export function WorkspacePage() {
     };
   }, [id, workspaceId, fetchWorkspace, handleDataRefresh]);
 
-  useEffect(() => {
-    if (!localPath) {
-      void window.scratchDesktop.clearWorkspaceFileWatch();
-      return;
-    }
+  // TODO: re-enable file watching + problem index refresh
+  // useEffect(() => {
+  //   if (!localPath || !watchingEnabled) {
+  //     void window.scratchDesktop.clearWorkspaceFileWatch();
+  //     return;
+  //   }
+  //   const unsubscribe = window.scratchDesktop.onWorkspaceFilesChanged((event) => {
+  //     if (event.workspacePath !== localPath) return;
+  //     if (event.source === 'external') {
+  //       const currentFolder = selectedFolderPathRef.current;
+  //       void window.scratchDesktop
+  //         .refreshPaths(event.workspacePath, event.changedFolderPaths, event.singleFile)
+  //         .catch((error: unknown) => { console.debug('[workspace] failed to refresh paths:', error); })
+  //         .then(() => {
+  //           const affectedFolder = event.singleFile ? parentDirectoryPath(event.singleFile) : null;
+  //           const changedFolders = affectedFolder ? [affectedFolder] : event.changedFolderPaths;
+  //           if (currentFolder && changedFolders.some((f) => f === currentFolder)) handleDataRefresh();
+  //         });
+  //     }
+  //   });
+  //   void window.scratchDesktop.watchWorkspaceFiles(localPath).catch((error: unknown) => {
+  //     console.debug('[workspace] failed to start workspace file watch:', error);
+  //   });
+  //   return () => { unsubscribe(); void window.scratchDesktop.clearWorkspaceFileWatch(); };
+  // }, [handleDataRefresh, localPath, watchingEnabled]);
 
-    const unsubscribe = window.scratchDesktop.onWorkspaceFilesChanged((event) => {
-      if (event.workspacePath !== localPath) {
-        return;
-      }
+  // TODO: re-enable watch reconcile on data refresh
+  // useEffect(() => {
+  //   if (!localPath || !watchingEnabled) return;
+  //   void window.scratchDesktop.watchWorkspaceFiles(localPath).catch((error: unknown) => {
+  //     console.debug('[workspace] failed to reconcile workspace file watch roots:', error);
+  //   });
+  // }, [dataRefreshKey, localPath, watchingEnabled]);
 
-      if (event.source === 'external') {
-        const currentFolder = selectedFolderPathRef.current;
-        // Update the index for all affected folders first, then refresh the grid.
-        // Refreshing before the index is updated would reload stale validation results.
-        void window.scratchDesktop
-          .refreshPaths(event.workspacePath, event.changedFolderPaths, event.singleFile)
-          .catch((error: unknown) => {
-            console.debug('[workspace] failed to refresh paths after external change:', error);
-          })
-          .then(() => {
-            const affectedFolder = event.singleFile ? parentDirectoryPath(event.singleFile) : null;
-            const changedFolders = affectedFolder ? [affectedFolder] : event.changedFolderPaths;
-            if (currentFolder && changedFolders.some((f) => f === currentFolder)) {
-              handleDataRefresh();
-            }
-          });
-      }
-    });
-
-    void window.scratchDesktop.watchWorkspaceFiles(localPath).catch((error: unknown) => {
-      console.debug('[workspace] failed to start workspace file watch:', error);
-    });
-
-    return () => {
-      unsubscribe();
-      void window.scratchDesktop.clearWorkspaceFileWatch();
-    };
-  }, [handleDataRefresh, localPath]);
-
-  useEffect(() => {
-    if (!localPath) {
-      return;
-    }
-
-    void window.scratchDesktop.watchWorkspaceFiles(localPath).catch((error: unknown) => {
-      console.debug('[workspace] failed to reconcile workspace file watch roots:', error);
-    });
-  }, [dataRefreshKey, localPath]);
-
-  useEffect(() => {
-    if (!localPath || preparedIndexPathRef.current === localPath) {
-      return;
-    }
-
-    preparedIndexPathRef.current = localPath;
-    void window.scratchDesktop
-      .prepareWorkspaceIndex(localPath)
-      .then(handleDataRefresh)
-      .catch((error: unknown) => {
-        preparedIndexPathRef.current = null;
-        console.warn('[workspace] failed to prepare workspace index:', error);
-      });
-  }, [handleDataRefresh, localPath]);
+  // TODO: re-enable problem index preparation
+  // useEffect(() => {
+  //   if (!localPath || preparedIndexPathRef.current === localPath) return;
+  //   preparedIndexPathRef.current = localPath;
+  //   void window.scratchDesktop.prepareWorkspaceIndex(localPath).catch((error: unknown) => {
+  //     preparedIndexPathRef.current = null;
+  //     console.warn('[workspace] failed to prepare workspace index:', error);
+  //   });
+  // }, [localPath]);
 
   if (loading) {
     return (
@@ -433,6 +430,10 @@ export function WorkspacePage() {
           void trackPullAll(workspace.id);
           setPullAllModalOpen(true);
         }}
+        watchingEnabled={watchingEnabled}
+        onToggleWatching={() => void handleToggleWatching()}
+        validateEnabled={validateEnabled}
+        onToggleValidate={() => setValidateEnabled((v) => !v)}
       />
       <WorkspaceContent
         workspace={workspace}
@@ -447,6 +448,7 @@ export function WorkspacePage() {
         }}
         activateGlobalFilter={gridFilterActivation}
         onActivateGlobalFilterConsumed={() => setGridFilterActivation(null)}
+        validateEnabled={validateEnabled}
       />
     </Box>
   );

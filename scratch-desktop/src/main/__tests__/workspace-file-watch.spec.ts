@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp } from 'fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { resolveWorkspaceWatchRoots, shouldIgnoreWorkspaceWatchPath } from '../workspace-file-watch';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WorkspaceFileWatchService } from '../workspace-file-watch';
 
 const tempDirs: string[] = [];
 
@@ -14,29 +14,69 @@ afterEach(async () => {
   );
 });
 
-describe('workspace file watch helpers', () => {
-  it('ignores scratch internals, dotfiles, and editor temp files', () => {
-    expect(shouldIgnoreWorkspaceWatchPath('/tmp/workspace/.scratch/.scratchmd')).toBe(true);
-    expect(shouldIgnoreWorkspaceWatchPath('/tmp/workspace/conn/.git/index')).toBe(true);
-    expect(shouldIgnoreWorkspaceWatchPath('/tmp/workspace/conn/.DS_Store')).toBe(true);
-    expect(shouldIgnoreWorkspaceWatchPath('/tmp/workspace/conn/post-1.json.swp')).toBe(true);
-    expect(shouldIgnoreWorkspaceWatchPath('/tmp/workspace/conn/public/post-1.json')).toBe(false);
-  });
-
-  it('resolves only existing unique connection roots', async () => {
+describe('WorkspaceFileWatchService', () => {
+  it('watches exact folder paths and skips non-existent ones', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'spinner-watch-'));
     tempDirs.push(workspaceRoot);
 
-    await mkdir(join(workspaceRoot, 'Connection A'), { recursive: true });
-    await mkdir(join(workspaceRoot, 'Connection B'), { recursive: true });
+    const folderA = join(workspaceRoot, 'conn', 'public', 'posts');
+    await mkdir(folderA, { recursive: true });
 
-    const roots = await resolveWorkspaceWatchRoots(workspaceRoot, [
-      { dirName: 'Connection B' },
-      { dirName: 'Connection A' },
-      { dirName: 'Connection A' },
-      { dirName: 'Missing Connection' },
+    const service = new WorkspaceFileWatchService();
+    const mockWebContents = { send: vi.fn(), isDestroyed: () => false } as never;
+
+    const watched = await service.watchWorkspaceFiles(mockWebContents, workspaceRoot, [
+      folderA,
+      join(workspaceRoot, 'conn', 'public', 'missing'),
     ]);
 
-    expect(roots).toEqual([join(workspaceRoot, 'Connection A'), join(workspaceRoot, 'Connection B')]);
+    expect(watched).toEqual([folderA]);
+    expect(service.getWatchedFolders()).toEqual([folderA]);
+
+    service.clearWorkspaceFileWatch();
+  });
+
+  it('is a no-op if folder list has not changed', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'spinner-watch-'));
+    tempDirs.push(workspaceRoot);
+
+    const folderA = join(workspaceRoot, 'conn', 'posts');
+    await mkdir(folderA, { recursive: true });
+
+    const service = new WorkspaceFileWatchService();
+    const mockWebContents = { send: vi.fn(), isDestroyed: () => false } as never;
+
+    const first = await service.watchWorkspaceFiles(mockWebContents, workspaceRoot, [folderA]);
+    const second = await service.watchWorkspaceFiles(mockWebContents, workspaceRoot, [folderA]);
+
+    expect(first).toEqual([folderA]);
+    expect(second).toEqual([folderA]);
+
+    service.clearWorkspaceFileWatch();
+  });
+
+  it('fires a debounced IPC event when a file changes', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'spinner-watch-'));
+    tempDirs.push(workspaceRoot);
+
+    const folderA = join(workspaceRoot, 'conn', 'posts');
+    await mkdir(folderA, { recursive: true });
+
+    const service = new WorkspaceFileWatchService();
+    const mockWebContents = { send: vi.fn(), isDestroyed: () => false } as never;
+
+    await service.watchWorkspaceFiles(mockWebContents, workspaceRoot, [folderA]);
+
+    await writeFile(join(folderA, 'test.json'), '{}');
+
+    // wait for debounce
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    expect(mockWebContents.send).toHaveBeenCalledWith(
+      expect.stringContaining('workspace-files-changed'),
+      expect.objectContaining({ workspacePath: workspaceRoot }),
+    );
+
+    service.clearWorkspaceFileWatch();
   });
 });

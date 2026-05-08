@@ -1,6 +1,7 @@
 import { Text12Regular, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, UnstyledButton } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { trackPullTable } from '../../lib/posthog';
@@ -106,7 +107,7 @@ interface FolderTreeNodeProps {
   onSelectFolder: (folderPath: string) => void;
   isDevToolsEnabled: boolean;
   onShowColumnDefs?: (folderPath: string) => void;
-  workspacePath: string | null;
+  onClearFolderIndex?: (folderPath: string) => void;
   dataFolderByLocalPath: Map<string, DataFolder>;
   dataFoldersByConnection: Map<string, DataFolder[]>;
   onRequestPull: (request: PullRequest) => void;
@@ -119,7 +120,7 @@ function FolderTreeNodeRow({
   onSelectFolder,
   isDevToolsEnabled,
   onShowColumnDefs,
-  workspacePath,
+  onClearFolderIndex,
   dataFolderByLocalPath,
   dataFoldersByConnection,
   onRequestPull,
@@ -164,8 +165,8 @@ function FolderTreeNodeRow({
           id: 'dev-tools',
           label: 'Dev Tools',
           submenu: [
-            { id: 'open-views-folder', label: 'Open Views Folder' },
-            { id: 'column-defs', label: 'Column Definitions (legacy)…' },
+            { id: 'column-defs', label: 'Column Definitions…' },
+            { id: 'clear-index', label: 'Clear Index' },
           ],
         });
       }
@@ -187,12 +188,8 @@ function FolderTreeNodeRow({
         }
         if (id === 'reveal') void window.scratchDesktop.showInFolder(path);
         if (id === 'terminal') void window.scratchDesktop.openInTerminal(path);
-        if (id === 'open-views-folder' && workspacePath) {
-          const relPath = path.startsWith(workspacePath) ? path.slice(workspacePath.length + 1) : path;
-          const viewsFolder = `${workspacePath}/.scratch/connections/scratch/${relPath}/views`;
-          void window.scratchDesktop.showInFolder(viewsFolder);
-        }
         if (id === 'column-defs') onShowColumnDefs?.(path);
+        if (id === 'clear-index') onClearFolderIndex?.(path);
       });
     },
     [
@@ -202,9 +199,9 @@ function FolderTreeNodeRow({
       isDevToolsEnabled,
       node.folder,
       node.name,
+      onClearFolderIndex,
       onRequestPull,
       onShowColumnDefs,
-      workspacePath,
     ],
   );
 
@@ -299,7 +296,7 @@ function FolderTreeNodeRow({
               onSelectFolder={onSelectFolder}
               isDevToolsEnabled={isDevToolsEnabled}
               onShowColumnDefs={onShowColumnDefs}
-              workspacePath={workspacePath}
+              onClearFolderIndex={onClearFolderIndex}
               dataFolderByLocalPath={dataFolderByLocalPath}
               dataFoldersByConnection={dataFoldersByConnection}
               onRequestPull={onRequestPull}
@@ -383,6 +380,19 @@ export function FolderTree({
     [workspaceId],
   );
 
+  const handleClearFolderIndex = useCallback(
+    (folderPath: string) => {
+      if (!workspacePath) return;
+      void window.scratchDesktop.clearFolderIndex(workspacePath, folderPath).then(({ rows_cleared }) => {
+        notifications.show({
+          message: `Cleared ${rows_cleared.toLocaleString()} row${rows_cleared === 1 ? '' : 's'} from index`,
+          color: 'orange',
+        });
+      });
+    },
+    [workspacePath],
+  );
+
   return (
     <>
       {rootChildren.map((node) => (
@@ -394,7 +404,7 @@ export function FolderTree({
           onSelectFolder={onSelectFolder}
           isDevToolsEnabled={isDevToolsEnabled}
           onShowColumnDefs={handleShowColumnDefs}
-          workspacePath={workspacePath}
+          onClearFolderIndex={handleClearFolderIndex}
           dataFolderByLocalPath={dataFolderByLocalPath}
           dataFoldersByConnection={dataFoldersByConnection}
           onRequestPull={handlePullRequest}

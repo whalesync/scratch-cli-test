@@ -58,6 +58,8 @@ interface ScratchDesktopAPI {
   ) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
   prepareWorkspaceIndex: (workspacePath: string) => Promise<void>;
+  reindexWorkspace: (workbookId: string) => Promise<void>;
+  clearFolderIndex: (workspacePath: string, folderPath: string) => Promise<{ rows_cleared: number }>;
   refreshPaths: (workspacePath: string, paths: string[], singleFile?: string) => Promise<void>;
   acceptAllChanges: (
     workspacePath: string,
@@ -127,11 +129,12 @@ interface ScratchDesktopAPI {
   openInTerminal: (folderPath: string) => Promise<void>;
   toggleDevTools: () => Promise<void>;
   getAppVersion: () => Promise<string>;
-  watchWorkspaceFiles: (workspacePath: string) => Promise<void>;
+  watchWorkspaceFiles: (workspacePath: string) => Promise<string[]>;
   clearWorkspaceFileWatch: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
   onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void) => () => void;
   onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void) => () => void;
+  onGridProgress: (callback: (line: string) => void) => () => void;
   updater: {
     checkNow: () => Promise<void>;
     quitAndInstall: () => Promise<void>;
@@ -253,6 +256,7 @@ interface ScratchFilesAPI {
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
       filters?: DiffGridFilter[];
+      validate?: boolean;
     },
   ) => Promise<{
     rows: Array<
@@ -285,6 +289,20 @@ interface ScratchFilesAPI {
       reviewedFilePath: string;
       publishedFilePath: string;
     }>;
+    staleCount: number;
+    totalErrorCount: number;
+    totalProblemsStaleCount: number;
+    validationByCell: Record<
+      string,
+      Array<{
+        field_path: string;
+        validator_kind: string;
+        level: string;
+        message?: string;
+        description?: string;
+        fixable: boolean;
+      }>
+    >;
   }>;
   readDiffRecordData: (
     folderPath: string,

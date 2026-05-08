@@ -489,10 +489,33 @@ fn collect_configs_recursive(
     Ok(())
 }
 
+/// One pending DB write produced by the parallel validation phase.
+struct PendingResult {
+    folder_path: String,
+    file_name: String,
+    field_path: String,
+    validator_kind: String,
+    level: String,
+    message: Option<String>,
+    description: Option<String>,
+    fixable: bool,
+}
+
+/// Work item built during the serial collection phase.
+struct WorkItem {
+    folder_path: String,
+    file_name: String,
+    /// Schema loaded once per folder in the serial phase.
+    schema: Option<serde_json::Value>,
+}
+
 /// Apply all validators to all records under `dirty_dir`.
 /// `workspace_dir` is used to resolve `python:` script paths.
 /// `scratch_dir` is used to load `schema.json` for record-scoped validators.
 /// `master_dir` is used to load the master-branch version of each record.
+///
+/// Records are validated in parallel using rayon; DB writes are serialised
+/// on the calling thread afterwards (rusqlite `Connection` is not `Send`).
 fn validate_records(
     dirty_dir: &Path,
     workspace_dir: &Path,
@@ -502,62 +525,101 @@ fn validate_records(
     conn: &Connection,
     selected_paths: Option<&std::collections::HashSet<String>>,
 ) -> anyhow::Result<()> {
-    for (folder_path, entries) in configs {
+    use rayon::prelude::*;
+
+    // Phase 1 (serial): enumerate work items, loading schema once per folder.
+    let mut work_items: Vec<WorkItem> = Vec::new();
+    for (folder_path, _entries) in configs {
         let folder_dir = if folder_path.is_empty() {
             dirty_dir.to_path_buf()
         } else {
             dirty_dir.join(folder_path)
         };
 
-        // Load schema.json once per folder (absence is silently tolerated).
         let schema = load_schema_for_folder(scratch_dir, folder_path);
-
-        // Collect record files in this folder.
         let record_files = collect_record_files_in_folder(&folder_dir)?;
 
-        for file_name in &record_files {
+        for file_name in record_files {
             let rel_path = if folder_path.is_empty() {
                 file_name.clone()
             } else {
                 format!("{folder_path}/{file_name}")
             };
-
-            // If a path filter is active, skip unselected records.
             if let Some(selected) = selected_paths {
                 if !selected.contains(&rel_path) {
                     continue;
                 }
             }
+            work_items.push(WorkItem {
+                folder_path: folder_path.clone(),
+                file_name,
+                schema: schema.clone(),
+            });
+        }
+    }
 
-            let record_path = folder_dir.join(file_name);
+    // Phase 2 (parallel): load each record file and run its validators.
+    let results: Vec<anyhow::Result<Vec<PendingResult>>> = work_items
+        .par_iter()
+        .map(|item| {
+            let folder_dir = if item.folder_path.is_empty() {
+                dirty_dir.to_path_buf()
+            } else {
+                dirty_dir.join(&item.folder_path)
+            };
+
+            let record_path = folder_dir.join(&item.file_name);
             let bytes = match std::fs::read(&record_path) {
                 Ok(b) => b,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Vec::new());
+                }
                 Err(err) => {
                     return Err(anyhow::anyhow!(
                         "failed to read {}: {err}",
                         record_path.display()
-                    ))
+                    ));
                 }
             };
             let record: serde_json::Value = serde_json::from_slice(&bytes)
                 .with_context(|| format!("failed to parse JSON in {}", record_path.display()))?;
 
-            // Load master record for readonly checks (absent file = new record = None).
-            let master_record = load_master_record(master_dir, folder_path, file_name);
+            let master_record = load_master_record(master_dir, &item.folder_path, &item.file_name);
+
+            let entries = configs
+                .get(&item.folder_path)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
 
             apply_validators_to_record(
-                conn,
-                folder_path,
-                file_name,
+                &item.folder_path,
+                &item.file_name,
                 &record,
                 master_record.as_ref(),
-                schema.as_ref(),
+                item.schema.as_ref(),
                 entries,
                 workspace_dir,
+            )
+        })
+        .collect();
+
+    // Phase 3 (serial): flush violations to SQLite.
+    for result in results {
+        for v in result? {
+            upsert_result(
+                conn,
+                &v.folder_path,
+                &v.file_name,
+                &v.field_path,
+                &v.validator_kind,
+                &v.level,
+                v.message.as_deref(),
+                v.description.as_deref(),
+                v.fixable,
             )?;
         }
     }
+
     Ok(())
 }
 
@@ -625,9 +687,9 @@ fn load_master_record(
     }
 }
 
-/// Apply the validator entries for one record file and persist results.
+/// Apply the validator entries for one record file and return all violations.
+/// Does not touch the database — the caller serialises writes.
 fn apply_validators_to_record(
-    conn: &Connection,
     folder_path: &str,
     file_name: &str,
     record: &serde_json::Value,
@@ -635,7 +697,9 @@ fn apply_validators_to_record(
     schema: Option<&serde_json::Value>,
     entries: &[ValidatorEntry],
     workspace_dir: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<PendingResult>> {
+    let mut pending = Vec::new();
+
     // Sort by order if present (stable sort keeps original order for ties).
     let mut sorted: Vec<&ValidatorEntry> = entries.iter().collect();
     sorted.sort_by_key(|e| e.order.unwrap_or(0));
@@ -672,17 +736,16 @@ fn apply_validators_to_record(
                     args: entry.params.clone(),
                 };
                 if let Some(result) = dispatch_validator(&entry.validator, &ctx, workspace_dir)? {
-                    upsert_result(
-                        conn,
-                        folder_path,
-                        file_name,
-                        field_path,
-                        &entry.validator,
-                        result.level.as_str(),
-                        result.message.as_deref(),
-                        result.description.as_deref(),
-                        result.fixable,
-                    )?;
+                    pending.push(PendingResult {
+                        folder_path: folder_path.to_string(),
+                        file_name: file_name.to_string(),
+                        field_path: field_path.clone(),
+                        validator_kind: entry.validator.clone(),
+                        level: result.level.as_str().to_string(),
+                        message: result.message,
+                        description: result.description,
+                        fixable: result.fixable,
+                    });
                 }
             }
             (_, Some(_fields)) => {
@@ -705,23 +768,22 @@ fn apply_validators_to_record(
                 };
                 let violations = dispatch_record_validator(&entry.validator, &record_ctx)?;
                 for v in violations {
-                    upsert_result(
-                        conn,
-                        folder_path,
-                        file_name,
-                        &v.field_path,
-                        &entry.validator,
-                        v.level.as_str(),
-                        v.message.as_deref(),
-                        v.description.as_deref(),
-                        v.fixable,
-                    )?;
+                    pending.push(PendingResult {
+                        folder_path: folder_path.to_string(),
+                        file_name: file_name.to_string(),
+                        field_path: v.field_path,
+                        validator_kind: entry.validator.clone(),
+                        level: v.level.as_str().to_string(),
+                        message: v.message,
+                        description: v.description,
+                        fixable: v.fixable,
+                    });
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(pending)
 }
 
 /// Dispatch to a validator by kind string.

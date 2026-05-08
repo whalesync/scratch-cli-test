@@ -2,7 +2,15 @@ import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
 import { Group, Loader, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
-import { CloudDownload, CloudUpload, Download, HardDriveDownload as DownloadIcon } from 'lucide-react';
+import {
+  CloudDownload,
+  CloudUpload,
+  Download,
+  HardDriveDownload as DownloadIcon,
+  Eye,
+  EyeOff,
+  ShieldCheck,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
@@ -22,6 +30,10 @@ interface WorkspaceHeaderProps {
   onReDownload: () => void;
   onPublishAll: () => void;
   onPullAll: () => void;
+  watchingEnabled?: boolean;
+  onToggleWatching?: () => void;
+  validateEnabled?: boolean;
+  onToggleValidate?: () => void;
 }
 
 const RE_DOWNLOAD_TOOLTIP = 'Re-download latest file updates from Scratch Web';
@@ -40,6 +52,10 @@ export function WorkspaceHeader({
   onReDownload,
   onPublishAll,
   onPullAll,
+  watchingEnabled,
+  onToggleWatching,
+  validateEnabled,
+  onToggleValidate,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
   const { user } = useCurrentUser();
@@ -65,6 +81,26 @@ export function WorkspaceHeader({
         </IconButtonGhost>
         <WorkspaceSwitcher currentWorkspaceId={workspace.id} currentWorkspaceName={workspace.name} />
         {user?.isAdmin && localPath && <ValidationStatsDrawer workspacePath={localPath} />}
+        {localPath && onToggleWatching !== undefined && (
+          <Tooltip
+            label={watchingEnabled ? 'Watching files (click to stop)' : 'Not watching files (click to start)'}
+            position="bottom"
+          >
+            <IconButtonGhost size="compact-xs" onClick={() => void onToggleWatching()}>
+              {watchingEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
+            </IconButtonGhost>
+          </Tooltip>
+        )}
+        {localPath && onToggleValidate !== undefined && (
+          <Tooltip
+            label={validateEnabled ? 'Validation on (click to disable)' : 'Validation off (click to enable)'}
+            position="bottom"
+          >
+            <IconButtonGhost size="compact-xs" onClick={onToggleValidate} c={validateEnabled ? 'blue' : undefined}>
+              <ShieldCheck size={12} />
+            </IconButtonGhost>
+          </Tooltip>
+        )}
       </Group>
 
       {/* Action buttons */}

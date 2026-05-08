@@ -1,4 +1,4 @@
-import React from 'react';
+import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 
 // Mantine styles
@@ -6,7 +6,7 @@ import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
 
 // Fonts (replacing next/font/google)
-import '@fontsource-variable/funnel-display';
+// import '@fontsource-variable/funnel-display';
 import '@fontsource/geist-mono/400.css';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -21,8 +21,8 @@ import { logPerf } from './lib/perf';
 
 const renderStart = performance.now();
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+  <StrictMode>
     <App />
-  </React.StrictMode>,
+  </StrictMode>,
 );
 logPerf('renderer reactRoot render', performance.now() - renderStart);
