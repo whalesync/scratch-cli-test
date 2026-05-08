@@ -691,7 +691,8 @@ ipcMain.on(
       label: string;
       type?: 'separator';
       danger?: boolean;
-      submenu?: Array<{ id: string; label: string }>;
+      enabled?: boolean;
+      submenu?: Array<{ id: string; label: string; checked?: boolean }>;
     }>,
   ) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -701,14 +702,18 @@ ipcMain.on(
       if (item.submenu) {
         return {
           label: item.label,
+          enabled: item.enabled,
           submenu: item.submenu.map((sub) => ({
             label: sub.label,
+            type: sub.checked !== undefined ? 'checkbox' : undefined,
+            checked: sub.checked,
             click: () => event.sender.send('scratch:native-context-menu-click', sub.id),
           })),
         };
       }
       return {
         label: item.label,
+        enabled: item.enabled,
         click: () => event.sender.send('scratch:native-context-menu-click', item.id),
       };
     });

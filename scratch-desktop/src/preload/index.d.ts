@@ -118,7 +118,8 @@ interface ScratchDesktopAPI {
       id: string;
       label: string;
       type?: 'separator';
-      submenu?: Array<{ id: string; label: string }>;
+      enabled?: boolean;
+      submenu?: Array<{ id: string; label: string; checked?: boolean }>;
     }>,
     onClick: (id: string) => void,
   ) => void;

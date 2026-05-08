@@ -30,13 +30,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type {
-  TablePropertyType,
-  TableView,
-  TableViewBannerGroup,
-  TableViewCol,
-  TableViewSubfield,
-} from '@spinner/shared-types';
+import type { TablePropertyType, TableView, TableViewBannerGroup, TableViewCol } from '@spinner/shared-types';
 import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
@@ -48,9 +42,9 @@ import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
+import { EditPropertyDialog } from './EditPropertyDialog';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
-import { FolderGridHeaderMenu } from './FolderGridHeaderMenu';
 import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
 import { RecordDetailView } from './RecordDetailView';
 
@@ -98,15 +92,6 @@ interface DiffGridResult {
 
 type FilterKind = 'unreviewed' | 'unpublished' | 'has-problems';
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
-
-interface HeaderMenuState {
-  columnId: string;
-  columnTitle: string;
-  columnDescription: string;
-  bounds: Rectangle;
-  subfields?: TableViewSubfield[];
-  selectedSubfield?: number;
-}
 
 type GridFilter =
   | { scope: 'global'; kind: FilterKind }
@@ -773,7 +758,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [detailFocusFieldName, setDetailFocusFieldName] = useState<string | null>(null);
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState(1);
-  const [headerMenu, setHeaderMenu] = useState<HeaderMenuState | null>(null);
   const [gridSelection, setGridSelection] = useState<GridSelection | undefined>(undefined);
   const [activeEditorDiffKind, setActiveEditorDiffKind] = useState<EditorOverlayDiffKind | null>(null);
   const [editingCell, setEditingCell] = useState<Item | null>(null);
@@ -792,6 +776,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const cellPopoverRef = useRef<HTMLDivElement | null>(null);
   const [hoveredRowIdx, setHoveredRowIdx] = useState<number | null>(null);
   const [inspectButtonRect, setInspectButtonRect] = useState<{ x: number; y: number; height: number } | null>(null);
+  const [editPropertyCol, setEditPropertyCol] = useState<TableViewCol | null>(null);
   const [invalidJsonModalOpen, setInvalidJsonModalOpen] = useState(false);
   const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | 'discard' | null>(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
@@ -1015,7 +1000,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setDetailFocusFieldName(null);
     setHoveredRowIdx(null);
     setInspectButtonRect(null);
-    setHeaderMenu(null);
     setGridSelection(undefined);
     setActiveEditorDiffKind(null);
     setEditingCell(null);
@@ -1312,6 +1296,37 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       setVisibleColumnIds((prev) => (prev ? [...prev, path] : [...effectiveVisibleColumns, path]));
     },
     [tableView, flatViewCols, effectiveVisibleColumns],
+  );
+
+  /** Save handler for the Edit Property dialog. */
+  const handleSaveProperty = useCallback(
+    (original: TableViewCol, updated: TableViewCol) => {
+      if (!tableView) return;
+      const updatedCols = tableView.cols.map((item) => {
+        if (item.kind === 'banner-group') {
+          return { ...item, cols: item.cols.map((col) => (col.path === original.path ? updated : col)) };
+        }
+        return item.kind === 'col' && item.path === original.path ? updated : item;
+      });
+      setTableView({ ...tableView, cols: updatedCols });
+      if (original.path !== updated.path) {
+        setVisibleColumnIds((prev) => {
+          if (!prev) return prev;
+          return prev.map((id) => (id === original.path ? updated.path : id));
+        });
+      }
+      setEditPropertyCol(null);
+    },
+    [tableView],
+  );
+
+  /** Open the Edit Property dialog from the column picker. */
+  const handleEditPropertyFromPicker = useCallback(
+    (columnId: string) => {
+      const vc = viewColMap.get(columnId);
+      setEditPropertyCol(vc ?? { kind: 'col', path: columnId });
+    },
+    [viewColMap],
   );
 
   /** Toggle visibility of an existing column from the JSON view tooltip. */
@@ -1651,81 +1666,85 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
   );
 
-  const acceptGridFieldChanges = useCallback(() => {
-    if (!selectedFolderPath || !workspacePath || !headerMenu) {
-      return;
-    }
+  const acceptGridFieldChanges = useCallback(
+    (columnId: string, columnTitle: string) => {
+      if (!selectedFolderPath || !workspacePath) {
+        return;
+      }
 
-    const { columnId, columnTitle } = headerMenu;
-    closeGridEditorChrome();
+      closeGridEditorChrome();
 
-    void window.scratchFiles
-      .acceptFieldChanges(selectedFolderPath, workspacePath, columnId)
-      .then((result) => {
-        refreshGridData();
-        if (result.status === 'no_changes') {
+      void window.scratchFiles
+        .acceptFieldChanges(selectedFolderPath, workspacePath, columnId)
+        .then((result) => {
+          refreshGridData();
+          if (result.status === 'no_changes') {
+            notifications.show({
+              color: 'gray',
+              title: 'Nothing to approve',
+              message: `No field changes to approve for "${columnTitle}".`,
+            });
+            return;
+          }
+
+          const fileCount = result.filesAccepted ?? result.paths.length;
           notifications.show({
-            color: 'gray',
-            title: 'Nothing to approve',
-            message: `No field changes to approve for "${columnTitle}".`,
+            color: 'green',
+            title: 'Field approved',
+            message: `Approved ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
           });
-          return;
-        }
-
-        const fileCount = result.filesAccepted ?? result.paths.length;
-        notifications.show({
-          color: 'green',
-          title: 'Field approved',
-          message: `Approved ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
-        });
-      })
-      .catch((err: unknown) => {
-        console.error('[acceptFieldChanges] field approve failed:', err);
-        notifications.show({
-          color: 'red',
-          title: 'Failed to approve field',
-          message: err instanceof Error ? err.message : 'Unknown error',
-        });
-      });
-  }, [closeGridEditorChrome, headerMenu, refreshGridData, selectedFolderPath, workspacePath]);
-
-  const rejectGridFieldChanges = useCallback(() => {
-    if (!selectedFolderPath || !workspacePath || !headerMenu) {
-      return;
-    }
-
-    const { columnId, columnTitle } = headerMenu;
-    closeGridEditorChrome();
-
-    void window.scratchFiles
-      .rejectFieldChanges(selectedFolderPath, workspacePath, columnId)
-      .then((result) => {
-        refreshGridData();
-        if (result.status === 'no_changes') {
+        })
+        .catch((err: unknown) => {
+          console.error('[acceptFieldChanges] field approve failed:', err);
           notifications.show({
-            color: 'gray',
-            title: 'Nothing to discard',
-            message: `No field changes to discard for "${columnTitle}".`,
+            color: 'red',
+            title: 'Failed to approve field',
+            message: err instanceof Error ? err.message : 'Unknown error',
           });
-          return;
-        }
+        });
+    },
+    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+  );
 
-        const fileCount = result.filesRejected ?? result.paths.length;
-        notifications.show({
-          color: 'green',
-          title: 'Field discarded',
-          message: `Discarded ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
+  const rejectGridFieldChanges = useCallback(
+    (columnId: string, columnTitle: string) => {
+      if (!selectedFolderPath || !workspacePath) {
+        return;
+      }
+
+      closeGridEditorChrome();
+
+      void window.scratchFiles
+        .rejectFieldChanges(selectedFolderPath, workspacePath, columnId)
+        .then((result) => {
+          refreshGridData();
+          if (result.status === 'no_changes') {
+            notifications.show({
+              color: 'gray',
+              title: 'Nothing to discard',
+              message: `No field changes to discard for "${columnTitle}".`,
+            });
+            return;
+          }
+
+          const fileCount = result.filesRejected ?? result.paths.length;
+          notifications.show({
+            color: 'green',
+            title: 'Field discarded',
+            message: `Discarded ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
+          });
+        })
+        .catch((err: unknown) => {
+          console.error('[rejectFieldChanges] field reject failed:', err);
+          notifications.show({
+            color: 'red',
+            title: 'Failed to discard field',
+            message: err instanceof Error ? err.message : 'Unknown error',
+          });
         });
-      })
-      .catch((err: unknown) => {
-        console.error('[rejectFieldChanges] field reject failed:', err);
-        notifications.show({
-          color: 'red',
-          title: 'Failed to discard field',
-          message: err instanceof Error ? err.message : 'Unknown error',
-        });
-      });
-  }, [closeGridEditorChrome, headerMenu, refreshGridData, selectedFolderPath, workspacePath]);
+    },
+    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+  );
 
   const handleBulkAction = useCallback(
     async (action: 'approve' | 'reject' | 'discard') => {
@@ -1913,7 +1932,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   );
 
   const openHeaderMenu = useCallback(
-    (colIndex: number, bounds: Rectangle) => {
+    (colIndex: number) => {
       if (colIndex === 0) return; // Status column
       const column = columns[colIndex];
       if (!column) {
@@ -1921,23 +1940,144 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
 
       const colId = String(column.id);
+      const colTitle = column.title;
       const viewCol = viewColMap.get(colId);
       closeGridEditorChrome();
-      setHeaderMenu({
-        columnId: colId,
-        columnTitle: column.title,
-        columnDescription: columnDescriptionsMap.get(colId) ?? '',
-        bounds,
-        subfields: viewCol?.subfields,
-        selectedSubfield: viewCol?.selectedSubfield,
+
+      const isTitleColumn = colId === titleColumnId;
+
+      const items: Array<{
+        id: string;
+        label: string;
+        type?: 'separator';
+        enabled?: boolean;
+        submenu?: Array<{ id: string; label: string; checked?: boolean }>;
+      }> = [];
+
+      // Hide column (disabled for the title column)
+      items.push({ id: 'hide', label: 'Hide column', enabled: !isTitleColumn });
+
+      // Show field submenu (only when subfields exist)
+      const subfields = viewCol?.subfields;
+      if (subfields && subfields.length > 0) {
+        const selectedIdx = viewCol?.selectedSubfield;
+        items.push({
+          id: 'show-field',
+          label: 'Show field',
+          submenu: [
+            { id: 'subfield:all', label: 'All', checked: selectedIdx === undefined },
+            ...subfields.map((sf, idx) => ({
+              id: `subfield:${idx}`,
+              label: sf.name ?? sf.relativePath,
+              checked: selectedIdx === idx,
+            })),
+          ],
+        });
+      }
+
+      items.push({ id: 'sep-1', label: '', type: 'separator' });
+
+      // Sort
+      items.push({ id: 'sort-asc', label: 'Sort A \u2192 Z' });
+      items.push({ id: 'sort-desc', label: 'Sort Z \u2192 A' });
+
+      items.push({ id: 'sep-2', label: '', type: 'separator' });
+
+      // Approve / Reject
+      items.push({ id: 'approve', label: 'Approve all' });
+      items.push({ id: 'reject', label: 'Reject all' });
+
+      items.push({ id: 'sep-3', label: '', type: 'separator' });
+
+      // Filters
+      items.push({ id: 'filter-unreviewed', label: 'Filter to "Needs Review"' });
+      items.push({ id: 'filter-approved', label: 'Filter to "Approved"' });
+
+      items.push({ id: 'sep-4', label: '', type: 'separator' });
+
+      // Edit column
+      items.push({ id: 'edit-column', label: 'Edit Column\u2026' });
+
+      window.scratchDesktop.showNativeContextMenu(items, (id) => {
+        if (id === 'edit-column') {
+          const vc = viewColMap.get(colId);
+          setEditPropertyCol(vc ?? { kind: 'col', path: colId });
+        } else if (id === 'hide') {
+          setVisibleColumnIds(effectiveVisibleColumns.filter((c) => c !== colId));
+        } else if (id === 'sort-asc') {
+          setSort({ column: colId, direction: 'asc' });
+        } else if (id === 'sort-desc') {
+          setSort({ column: colId, direction: 'desc' });
+        } else if (id === 'approve') {
+          acceptGridFieldChanges(colId, colTitle);
+        } else if (id === 'reject') {
+          rejectGridFieldChanges(colId, colTitle);
+        } else if (id === 'filter-unreviewed') {
+          setActiveFilters((current) => {
+            const withoutSameColumn = current.filter(
+              (filter) => !(filter.scope === 'column' && filter.columnId === colId),
+            );
+            return [
+              ...withoutSameColumn,
+              { scope: 'column', kind: 'unreviewed' as FilterKind, columnId: colId, columnTitle: colTitle },
+            ];
+          });
+        } else if (id === 'filter-approved') {
+          setActiveFilters((current) => {
+            const withoutSameColumn = current.filter(
+              (filter) => !(filter.scope === 'column' && filter.columnId === colId),
+            );
+            return [
+              ...withoutSameColumn,
+              { scope: 'column', kind: 'unpublished' as FilterKind, columnId: colId, columnTitle: colTitle },
+            ];
+          });
+        } else if (id === 'subfield:all') {
+          if (tableView) {
+            const updatedCols = tableView.cols.map((item) => {
+              if (item.kind === 'banner-group') {
+                return {
+                  ...item,
+                  cols: item.cols.map((col) => (col.path === colId ? { ...col, selectedSubfield: undefined } : col)),
+                };
+              }
+              return item.path === colId ? { ...item, selectedSubfield: undefined } : item;
+            });
+            setTableView({ ...tableView, cols: updatedCols });
+          }
+        } else if (id.startsWith('subfield:')) {
+          const index = parseInt(id.slice('subfield:'.length), 10);
+          if (tableView && !isNaN(index)) {
+            const updatedCols = tableView.cols.map((item) => {
+              if (item.kind === 'banner-group') {
+                return {
+                  ...item,
+                  cols: item.cols.map((col) => (col.path === colId ? { ...col, selectedSubfield: index } : col)),
+                };
+              }
+              return item.path === colId ? { ...item, selectedSubfield: index } : item;
+            });
+            setTableView({ ...tableView, cols: updatedCols });
+          }
+        }
       });
     },
-    [closeGridEditorChrome, columnDescriptionsMap, columns, viewColMap],
+    [
+      acceptGridFieldChanges,
+      closeGridEditorChrome,
+      columns,
+      effectiveVisibleColumns,
+      rejectGridFieldChanges,
+      tableView,
+      titleColumnId,
+      viewColMap,
+    ],
   );
 
   const onHeaderMenuClick = useCallback(
-    (colIndex: number, bounds: Rectangle) => {
-      openHeaderMenu(colIndex, bounds);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    (colIndex: number, _bounds: Rectangle) => {
+      openHeaderMenu(colIndex);
     },
     [openHeaderMenu],
   );
@@ -1945,7 +2085,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const onHeaderContextMenu = useCallback(
     (colIndex: number, event: HeaderClickedEventArgs) => {
       event.preventDefault();
-      openHeaderMenu(colIndex, event.bounds);
+      openHeaderMenu(colIndex);
     },
     [openHeaderMenu],
   );
@@ -2087,7 +2227,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   const onCellClicked = useCallback(
     (cell: Item) => {
-      setHeaderMenu(null);
       if (cell[0] === 0) {
         setGridSelection({
           current: undefined,
@@ -2162,7 +2301,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const onCellActivated = useCallback(
     ([col, row]: Item) => {
       if (col === 0) return; // Status column
-      setHeaderMenu(null);
       const r = pagedRows[row] as DiffRow | undefined;
       const colId = columns[col]?.id;
       if (!r || !colId) return;
@@ -2247,76 +2385,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
     },
     [activeFilters, approvedColumnIds, errorsColumnIds, titleColumnId, unreviewedColumnIds],
-  );
-
-  const handleAddColumnFilter = useCallback(
-    (kind: FilterKind) => {
-      if (!headerMenu) {
-        return;
-      }
-
-      setActiveFilters((current) => {
-        const withoutSameColumn = current.filter(
-          (filter) => !(filter.scope === 'column' && filter.columnId === headerMenu.columnId),
-        );
-        return [
-          ...withoutSameColumn,
-          {
-            scope: 'column',
-            kind,
-            columnId: headerMenu.columnId,
-            columnTitle: headerMenu.columnTitle,
-          },
-        ];
-      });
-    },
-    [headerMenu],
-  );
-
-  const handleSelectSubfield = useCallback(
-    (index: number | undefined) => {
-      if (!headerMenu || !tableView) return;
-      const colPath = headerMenu.columnId;
-      const updatedCols = tableView.cols.map((item) => {
-        if (item.kind === 'banner-group') {
-          return {
-            ...item,
-            cols: item.cols.map((col) => (col.path === colPath ? { ...col, selectedSubfield: index } : col)),
-          };
-        }
-        return item.path === colPath ? { ...item, selectedSubfield: index } : item;
-      });
-      setTableView({ ...tableView, cols: updatedCols });
-    },
-    [headerMenu, tableView],
-  );
-
-  const handleApplyTextFilter = useCallback(
-    (value: string) => {
-      if (!headerMenu) {
-        return;
-      }
-
-      const nextValue = value.trim();
-      setActiveFilters((current) => {
-        const withoutSameColumnText = current.filter(
-          (filter) => !(filter.scope === 'text' && filter.columnId === headerMenu.columnId),
-        );
-        if (nextValue.length === 0) {
-          return withoutSameColumnText;
-        }
-        return [
-          ...withoutSameColumnText,
-          {
-            scope: 'text',
-            columnId: headerMenu.columnId,
-            columnTitle: headerMenu.columnTitle,
-            value: nextValue,
-          },
-        ];
-      });
-    },
-    [headerMenu],
   );
 
   const handleRemoveFilter = useCallback((filterToRemove: GridFilter) => {
@@ -2457,6 +2525,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   activeViewName={viewSource}
                   availableViewNames={availableViewNames}
                   onSwitchView={handleSwitchView}
+                  onEditProperty={handleEditPropertyFromPicker}
                 />
               </Popover.Dropdown>
             </Popover>
@@ -2584,29 +2653,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 <StyledLucideIcon Icon={Maximize2} size={12} c="var(--fg-muted)" strokeWidth={2} />
               </UnstyledButton>
             )}
-            <FolderGridHeaderMenu
-              columnId={headerMenu?.columnId ?? ''}
-              columnTitle={headerMenu?.columnTitle ?? ''}
-              columnDescription={headerMenu?.columnDescription ?? ''}
-              bounds={headerMenu?.bounds ?? null}
-              initialFilterValue={
-                headerMenu == null
-                  ? ''
-                  : (activeFilters.find(
-                      (filter): filter is Extract<GridFilter, { scope: 'text' }> =>
-                        filter.scope === 'text' && filter.columnId === headerMenu.columnId,
-                    )?.value ?? '')
-              }
-              subfields={headerMenu?.subfields}
-              selectedSubfield={headerMenu?.selectedSubfield}
-              onSelectSubfield={handleSelectSubfield}
-              onShowNeedsReview={() => handleAddColumnFilter('unreviewed')}
-              onShowApproved={() => handleAddColumnFilter('unpublished')}
-              onApplyTextFilter={handleApplyTextFilter}
-              onApproveField={acceptGridFieldChanges}
-              onRejectField={rejectGridFieldChanges}
-              onClose={() => setHeaderMenu(null)}
-            />
             {detailRowIndex !== null && selectedFolderPath && workspacePath && (
               <RecordDetailView
                 rows={pagedRows}
@@ -2789,6 +2835,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           </Box>
         </>
       )}
+
+      <EditPropertyDialog
+        opened={editPropertyCol !== null}
+        col={editPropertyCol}
+        schema={schema}
+        onSave={handleSaveProperty}
+        onClose={() => setEditPropertyCol(null)}
+      />
 
       <InvalidJsonFilesModal
         opened={invalidJsonModalOpen}
