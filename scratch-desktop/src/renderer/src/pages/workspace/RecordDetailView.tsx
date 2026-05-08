@@ -19,7 +19,7 @@ import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coe
 import { getByPath } from '../../../../shared/schema-columns';
 import type { ValidationEntry, ValidationResultRow } from '../../../../shared/validation-types';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
-import { ScratchJsonCodeMirror } from '../../components/ScratchJsonCodeMirror';
+import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
 import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
@@ -76,6 +76,14 @@ interface RecordDetailViewProps {
   columnDescriptions?: Map<string, string>;
   /** Set of field paths that should be treated as read-only (derived from the view). */
   readonlyFields?: Set<string>;
+  /**
+   * Map from column ID to effective display path, accounting for selected subfields.
+   * E.g. if the `title` column has subfield `raw` selected, this maps `"title"` → `"title.raw"`.
+   * Falls back to the column ID itself when not present.
+   */
+  columnEffectivePaths?: Map<string, string>;
+  /** Map from column path to banner-group name (for visual grouping in the detail view). */
+  columnGroups?: Map<string, string>;
   onSelectIndex: (index: number) => void;
   onClose: () => void;
   onRecordChanged?: () => void;
@@ -85,6 +93,14 @@ interface RecordDetailViewProps {
   initialFocusedFieldName?: string;
   /** Incremented by the parent when external file changes are detected, triggering a reload. */
   dataRefreshKey?: number;
+  /** When set, hovering JSON keys in raw view shows column add/toggle tooltips. */
+  onAddColumn?: (path: string) => void;
+  /** Toggle visibility of an existing column. */
+  onToggleColumnVisible?: (path: string) => void;
+  /** All column paths in the view (visible + hidden). */
+  allColumnPaths?: Set<string>;
+  /** Column paths currently visible in the grid. */
+  visibleColumnPaths?: Set<string>;
 }
 
 function rowHasUnreviewedChanges(
@@ -243,6 +259,12 @@ export const RecordDetailView = memo(function RecordDetailView({
   onPublishFile,
   initialFocusedFieldName,
   dataRefreshKey,
+  onAddColumn,
+  onToggleColumnVisible,
+  allColumnPaths,
+  visibleColumnPaths,
+  columnEffectivePaths,
+  columnGroups,
 }: RecordDetailViewProps) {
   const [viewRaw, setViewRaw] = useState(false);
   const [rawEditorOpen, setRawEditorOpen] = useState(false);
@@ -291,6 +313,11 @@ export const RecordDetailView = memo(function RecordDetailView({
   const displayData = recordData?.displayData ?? null;
 
   const rawJsonText = useMemo(() => (displayData ? JSON.stringify(displayData, null, 2) : ''), [displayData]);
+
+  const columnHover = useMemo<ColumnHoverCallbacks | undefined>(() => {
+    if (!onAddColumn || !onToggleColumnVisible || !allColumnPaths || !visibleColumnPaths) return undefined;
+    return { onAddColumn, onToggleColumnVisible, allColumns: allColumnPaths, visibleColumns: visibleColumnPaths };
+  }, [onAddColumn, onToggleColumnVisible, allColumnPaths, visibleColumnPaths]);
 
   const selectedFilename = (() => {
     const row = rows[selectedIndex];
@@ -655,29 +682,42 @@ export const RecordDetailView = memo(function RecordDetailView({
     const recordColumnIdSet = new Set(recordData.columns.map((c) => c.id));
     const readOnlyFields =
       readonlyFieldsProp ?? new Set(recordData.columns.filter((c) => c.attributes.readOnly).map((c) => c.id));
-    const visibleFields = columnOrder.filter((fieldName) => recordColumnIdSet.has(fieldName));
+    // Show all columns from columnOrder — don't filter against recordData.columns.
+    // Fields with subfields (e.g. title: {raw, rendered}) may not appear in the CLI's
+    // flat column list but are still readable via getByPath on the display data.
+    const visibleFields = columnOrder.filter((fieldName) => {
+      const value = getByPath(displayData, fieldName);
+      return recordColumnIdSet.has(fieldName) || value !== undefined;
+    });
+    const columnOrderSet = new Set(columnOrder);
     const hiddenFields = showAllFields
-      ? recordData.columns.map((c) => c.id).filter((id) => !columnOrder.includes(id))
+      ? recordData.columns.map((c) => c.id).filter((id) => !columnOrderSet.has(id))
       : [];
     const orderedFields = [...visibleFields, ...hiddenFields];
 
     return orderedFields.map((fieldName) => {
-      const isUnreviewed = changedFields.has(fieldName);
-      const isUnpublished = unpublishedFields.has(fieldName);
+      // Use the effective path (accounting for selected subfield) for value display,
+      // but keep fieldName as the column ID for diff tracking and edit operations.
+      const effectivePath = columnEffectivePaths?.get(fieldName) ?? fieldName;
+      const isUnreviewed = changedFields.has(fieldName) || changedFields.has(effectivePath);
+      const isUnpublished = !isUnreviewed && (unpublishedFields.has(fieldName) || unpublishedFields.has(effectivePath));
+      const diffKey =
+        changedFields.has(effectivePath) || unpublishedFields.has(effectivePath) ? effectivePath : fieldName;
       const isReadOnly = readOnlyFields.has(fieldName);
       const isEditable = !isDeleted && !isReadOnly;
       const diffKind = isUnreviewed ? 'unreviewed' : isUnpublished ? 'unpublished' : null;
-      const value = toDisplayString(getByPath(displayData, fieldName));
+      const value = toDisplayString(getByPath(displayData, effectivePath));
       const fromValue = isUnreviewed
-        ? toDisplayString(recordData.row.__fromFields[fieldName])
+        ? toDisplayString(recordData.row.__fromFields[diffKey])
         : isUnpublished
-          ? toDisplayString(recordData.row.__masterFields[fieldName])
+          ? toDisplayString(recordData.row.__masterFields[diffKey])
           : '';
 
       return {
         fieldName,
         displayLabel: columnLabels?.get(fieldName) ?? fieldName,
         description: columnDescriptions?.get(fieldName),
+        groupName: columnGroups?.get(fieldName),
         value,
         fromValue,
         diffKind,
@@ -686,15 +726,16 @@ export const RecordDetailView = memo(function RecordDetailView({
         referenceValue: diffKind !== null ? fromValue : undefined,
         readOnly: isReadOnly,
         onClick: isEditable ? () => beginFieldEdit(fieldName) : undefined,
-        onEditCommit: isEditable ? (nextValue: string) => commitFieldEdit(fieldName, value, nextValue) : undefined,
+        onEditCommit: isEditable ? (nv: string) => commitFieldEdit(effectivePath, value, nv) : undefined,
         onEditCancel: isEditable ? () => cancelFieldEdit(fieldName) : undefined,
-        onApprove: isDeleted || !isUnreviewed ? undefined : () => handleAcceptCellChange(fieldName, value, 'approve'),
+        onApprove:
+          isDeleted || !isUnreviewed ? undefined : () => handleAcceptCellChange(effectivePath, value, 'approve'),
         onUndo: isDeleted
           ? undefined
           : isUnreviewed
-            ? () => handleDiscardUnreviewedCellChange(fieldName, fromValue)
+            ? () => handleDiscardUnreviewedCellChange(effectivePath, fromValue)
             : isUnpublished
-              ? () => handleUndoApprovedCellChange(fieldName)
+              ? () => handleUndoApprovedCellChange(effectivePath)
               : undefined,
       };
     });
@@ -711,6 +752,8 @@ export const RecordDetailView = memo(function RecordDetailView({
     readonlyFieldsProp,
     recordData,
     showAllFields,
+    columnEffectivePaths,
+    columnGroups,
     handleAcceptCellChange,
     handleDiscardUnreviewedCellChange,
     handleUndoApprovedCellChange,
@@ -1205,7 +1248,7 @@ export const RecordDetailView = memo(function RecordDetailView({
               }}
             >
               <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-                <ScratchJsonCodeMirror value={rawJsonText} readOnly />
+                <ScratchJsonCodeMirror value={rawJsonText} readOnly columnHover={columnHover} />
               </Box>
             </Box>
           )}

@@ -30,7 +30,13 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type { TableView, TableViewCol } from '@spinner/shared-types';
+import type {
+  TablePropertyType,
+  TableView,
+  TableViewBannerGroup,
+  TableViewCol,
+  TableViewSubfield,
+} from '@spinner/shared-types';
 import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
@@ -98,6 +104,8 @@ interface HeaderMenuState {
   columnTitle: string;
   columnDescription: string;
   bounds: Rectangle;
+  subfields?: TableViewSubfield[];
+  selectedSubfield?: number;
 }
 
 type GridFilter =
@@ -312,8 +320,13 @@ function drawWordDiffText(
 
 // ── Helpers ──
 
-function toDisplayString(value: unknown): string {
+function toDisplayString(value: unknown, propertyType?: TablePropertyType): string {
   if (value == null) return '';
+  if (propertyType === 'date' && (typeof value === 'string' || typeof value === 'number')) {
+    const d = new Date(value);
+    if (!isNaN(d.getTime()))
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return JSON.stringify(value);
@@ -484,30 +497,75 @@ function getCellDiffState(row: DiffRow, fieldName: string, viewCol: TableViewCol
   ) {
     return { diffKind: null, fromValue: '', classification: null };
   }
-  const isUnreviewed = row.__changedFields.includes(fieldName);
-  const isUnpublished = !isUnreviewed && row.__unpublishedFields.includes(fieldName);
+  // __changedFields / __unpublishedFields contain leaf-level paths (e.g. "title.raw").
+  // When the column has a selected subfield, check the effective path too.
+  const effectivePath = resolveEffectivePath(fieldName, viewCol);
+  const isUnreviewed =
+    row.__changedFields.includes(fieldName) ||
+    (effectivePath !== fieldName && row.__changedFields.includes(effectivePath));
+  const isUnpublished =
+    !isUnreviewed &&
+    (row.__unpublishedFields.includes(fieldName) ||
+      (effectivePath !== fieldName && row.__unpublishedFields.includes(effectivePath)));
+  // Use the path that actually appears in the diff arrays for value lookups.
+  const diffKey = row.__changedFields.includes(effectivePath)
+    ? effectivePath
+    : row.__unpublishedFields.includes(effectivePath)
+      ? effectivePath
+      : fieldName;
   if (isUnreviewed) {
-    const rawFrom = row.__fromFields[fieldName];
+    const rawFrom = row.__fromFields[diffKey];
     return {
       diffKind: 'unreviewed',
       fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), viewCol),
+      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, effectivePath), viewCol),
     };
   }
   if (isUnpublished) {
-    const rawFrom = row.__masterFields[fieldName];
+    const rawFrom = row.__masterFields[diffKey];
     return {
       diffKind: 'unpublished',
       fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), viewCol),
+      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, effectivePath), viewCol),
     };
   }
   return { diffKind: null, fromValue: '', classification: null };
 }
 
-function inferCellKind(value: unknown): GridCellKind {
-  if (typeof value === 'boolean') return GridCellKind.Boolean;
-  if (typeof value === 'number') return GridCellKind.Number;
+/** When a subfield is selected on a view column, returns the full dot-path to the subfield; otherwise the root colId. */
+function resolveEffectivePath(colId: string, viewCol: TableViewCol | undefined): string {
+  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
+    return `${colId}.${viewCol.subfields[viewCol.selectedSubfield].relativePath}`;
+  }
+  return colId;
+}
+
+/** Returns true if the column (or the currently selected subfield) is readonly. */
+function isColumnReadonly(viewCol: TableViewCol | undefined): boolean {
+  if (viewCol?.readonly) return true;
+  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
+    return viewCol.subfields[viewCol.selectedSubfield].readonly === true;
+  }
+  return false;
+}
+
+/** Returns the effective TablePropertyType, preferring the active subfield's type when one is selected. */
+function resolveEffectiveType(viewCol: TableViewCol | undefined): TablePropertyType | undefined {
+  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
+    return viewCol.subfields[viewCol.selectedSubfield].type ?? viewCol.type;
+  }
+  return viewCol?.type;
+}
+
+function inferCellKind(value: unknown, propertyType?: TablePropertyType): GridCellKind {
+  if (propertyType === 'checkbox') return GridCellKind.Boolean;
+  if (propertyType === 'number') return GridCellKind.Number;
+  if (propertyType === 'url') return GridCellKind.Uri;
+  // Fall back to runtime type detection when view type is unset or generic
+  if (propertyType == null || propertyType === 'string' || propertyType === 'object') {
+    if (typeof value === 'boolean') return GridCellKind.Boolean;
+    if (typeof value === 'number') return GridCellKind.Number;
+  }
   return GridCellKind.Text;
 }
 
@@ -1049,6 +1107,41 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     };
   }, [selectedFolderPath, workspacePath]);
 
+  // Re-read schema and view from disk when a connection file changes (dev-time hot reload).
+  useEffect(() => {
+    if (!window.scratchDesktop?.onConnectionFileChanged) return;
+    if (!selectedFolderPath || !workspacePath) return;
+
+    const unsubscribe = window.scratchDesktop.onConnectionFileChanged(() => {
+      // Reload schema + view metadata from disk.
+      void window.scratchFiles
+        .getFolderMetadata(selectedFolderPath, workspacePath)
+        .then((meta) => {
+          setSchema(meta.schema);
+          setAvailableViewNames(meta.availableViewNames ?? []);
+
+          if (viewSource === 'Generated') {
+            // Regenerate fallback view from the (possibly updated) schema.
+            setTableView(meta.schema ? createFallbackTableView(meta.schema) : null);
+          } else {
+            // Re-read the named view from disk.
+            void window.scratchFiles
+              .readConnectionView(selectedFolderPath, workspacePath, viewSource)
+              .then((view) => {
+                if (view) {
+                  setTableView(view);
+                  setVisibleColumnIds(null);
+                }
+              })
+              .catch((err: unknown) => console.debug('Failed to reload view on file change:', err));
+          }
+        })
+        .catch((err: unknown) => console.debug('Failed to reload folder metadata on file change:', err));
+    });
+
+    return unsubscribe;
+  }, [viewSource, selectedFolderPath, workspacePath]);
+
   useEffect(() => {
     if (!cellPopover) {
       return;
@@ -1142,13 +1235,37 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return map;
   }, [flatViewCols]);
 
+  /** Map from column path → group name for banner-group columns. */
+  const columnGroupMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!tableView) return map;
+    for (const item of tableView.cols) {
+      if (item.kind === 'banner-group') {
+        for (const col of item.cols) {
+          map.set(col.path, item.name);
+        }
+      }
+    }
+    return map;
+  }, [tableView]);
+
+  const hasAnyGroups = columnGroupMap.size > 0;
+
+  /** Column groups for ColumnPickerMenu — derived from banner-group items in the view. */
+  const columnGroups = useMemo(() => {
+    if (!tableView) return [];
+    return tableView.cols
+      .filter((item): item is TableViewBannerGroup => item.kind === 'banner-group')
+      .map((group) => ({ name: group.name, columnIds: group.cols.map((c) => c.path) }));
+  }, [tableView]);
+
   const titleColumnId = useMemo(() => flatViewCols[0]?.path ?? null, [flatViewCols]);
 
   /** Set of field paths that are read-only according to the view, for RecordDetailView. */
   const readonlyFields = useMemo(() => {
     const set = new Set<string>();
     for (const col of flatViewCols) {
-      if (col.readonly) set.add(col.path);
+      if (isColumnReadonly(col)) set.add(col.path);
     }
     return set;
   }, [flatViewCols]);
@@ -1185,11 +1302,49 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     [visibleColumnIds, flatViewCols],
   );
 
+  /** Add a new column from the JSON view by its dot-path. */
+  const handleAddColumn = useCallback(
+    (path: string) => {
+      if (!tableView) return;
+      if (flatViewCols.some((c) => c.path === path)) return;
+      const newCol: TableViewCol = { kind: 'col', path };
+      setTableView({ ...tableView, cols: [...tableView.cols, newCol] });
+      setVisibleColumnIds((prev) => (prev ? [...prev, path] : [...effectiveVisibleColumns, path]));
+    },
+    [tableView, flatViewCols, effectiveVisibleColumns],
+  );
+
+  /** Toggle visibility of an existing column from the JSON view tooltip. */
+  const handleToggleColumnVisible = useCallback(
+    (path: string) => {
+      const isVisible = effectiveVisibleColumns.includes(path);
+      if (isVisible) {
+        setVisibleColumnIds(effectiveVisibleColumns.filter((c) => c !== path));
+      } else {
+        setVisibleColumnIds([...effectiveVisibleColumns, path]);
+      }
+    },
+    [effectiveVisibleColumns],
+  );
+
+  const allColumnPathsSet = useMemo(() => new Set(flatViewCols.map((c) => c.path)), [flatViewCols]);
+  const visibleColumnPathsSet = useMemo(() => new Set(effectiveVisibleColumns), [effectiveVisibleColumns]);
+
   /** Map from column ID to display label (for column picker, header menu, etc.) */
   const columnLabelsMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const col of flatViewCols) {
       if (col.name) map.set(col.path, col.name);
+    }
+    return map;
+  }, [flatViewCols]);
+
+  /** Map from column ID to effective display path, accounting for selected subfields. */
+  const columnEffectivePathsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const col of flatViewCols) {
+      const effective = resolveEffectivePath(col.path, col);
+      if (effective !== col.path) map.set(col.path, effective);
     }
     return map;
   }, [flatViewCols]);
@@ -1224,16 +1379,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       .map((name) => {
         const viewCol = viewColMap.get(name);
         const displayName = viewCol?.name ?? name;
+        const group = columnGroupMap.get(name);
         return {
           id: name,
           title: displayName,
           width: columnWidths[name] ?? Math.max(120, Math.min(250, displayName.length * 9 + 40)),
           hasMenu: true,
           menuIcon: GridColumnMenuIcon.Dots,
+          ...(group ? { group } : {}),
         };
       });
     return [statusColumn, ...dataCols];
-  }, [allColumnIds, viewColMap, columnWidths, effectiveVisibleColumns, statusColumn]);
+  }, [allColumnIds, columnGroupMap, viewColMap, columnWidths, effectiveVisibleColumns, statusColumn]);
 
   /** Column IDs that should be focused for Needs review, across the current non-global query. */
   const unreviewedColumnIds: string[] = useMemo(() => {
@@ -1242,8 +1399,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     for (const row of diffData.rows) {
       for (const field of row.__changedFields) set.add(field);
     }
-    return allColumnIds.filter((c) => set.has(c));
-  }, [allColumnIds, diffData]);
+    return allColumnIds.filter((c) => set.has(c) || set.has(resolveEffectivePath(c, viewColMap.get(c))));
+  }, [allColumnIds, diffData, viewColMap]);
 
   /** Column IDs that should be focused for Approved, across the current non-global query. */
   const approvedColumnIds: string[] = useMemo(() => {
@@ -1252,14 +1409,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     for (const row of diffData.rows) {
       for (const field of row.__unpublishedFields) set.add(field);
     }
-    return allColumnIds.filter((c) => set.has(c));
-  }, [allColumnIds, diffData]);
+    return allColumnIds.filter((c) => set.has(c) || set.has(resolveEffectivePath(c, viewColMap.get(c))));
+  }, [allColumnIds, diffData, viewColMap]);
 
   /** Column IDs that should be focused for Has errors, across the current non-global query. */
   const errorsColumnIds: string[] = useMemo(() => {
     if (!diffData) return [];
-    return allColumnIds.filter((c) => diffData.focusColumnIds.errors.includes(c));
-  }, [allColumnIds, diffData]);
+    const errorSet = new Set<string>(diffData.focusColumnIds.errors);
+    return allColumnIds.filter((c) => errorSet.has(c) || errorSet.has(resolveEffectivePath(c, viewColMap.get(c))));
+  }, [allColumnIds, diffData, viewColMap]);
 
   // Stable refs for column-narrowing values used inside effects that fire on unrelated deps.
   const errorsColumnIdsRef = useRef(errorsColumnIds);
@@ -1327,12 +1485,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return null;
       }
 
+      const effectivePath = resolveEffectivePath(columnId, viewColMap.get(columnId));
       return {
         col,
         row,
         filename: record.__filename,
-        fieldName: columnId,
-        value: toDisplayString(getByPath(record.__raw, columnId)),
+        fieldName: effectivePath,
+        value: toDisplayString(getByPath(record.__raw, effectivePath)),
         fromValue,
         diffKind,
         classification,
@@ -1673,9 +1832,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const rowBg = getRowTint(status);
       const rowTextColor = getRowTextColor(status);
       const viewCol = viewColMap.get(colId);
-      const isReadOnly = viewCol?.readonly === true;
+      const isReadOnly = isColumnReadonly(viewCol);
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
-      const val = getByPath(r.__raw, colId);
+      const effectivePath = resolveEffectivePath(colId, viewCol);
+      const val = getByPath(r.__raw, effectivePath);
       const { diffKind } = getCellDiffState(r, colId, viewCol);
       const diffTheme =
         diffKind === 'unreviewed'
@@ -1688,45 +1848,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const allowOverlay =
         !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
 
-      if (col === 1) {
-        const kind = inferCellKind(val);
-        if (kind === GridCellKind.Boolean) {
-          return {
-            kind,
-            data: typeof val === 'boolean' ? val : undefined,
-            allowOverlay: false as const,
-            copyData: toDisplayString(val),
-            themeOverride,
-          };
-        }
-        if (kind === GridCellKind.Number) {
-          return {
-            kind,
-            data: val == null ? undefined : Number(val),
-            displayData: toDisplayString(val),
-            allowOverlay,
-            copyData: toDisplayString(val),
-            themeOverride,
-          };
-        }
-        const display = toDisplayString(val);
-        return {
-          kind: GridCellKind.Text as const,
-          data: display,
-          displayData: display,
-          allowOverlay,
-          copyData: display,
-          themeOverride,
-        };
-      }
-
-      const kind = inferCellKind(val);
+      const colType = resolveEffectiveType(viewCol);
+      const kind = inferCellKind(val, colType);
       if (kind === GridCellKind.Boolean) {
         return {
           kind,
           data: typeof val === 'boolean' ? val : undefined,
           allowOverlay: false as const,
-          copyData: toDisplayString(val),
+          copyData: toDisplayString(val, colType),
           themeOverride,
         };
       }
@@ -1734,13 +1863,23 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return {
           kind,
           data: val == null ? undefined : Number(val),
-          displayData: toDisplayString(val),
+          displayData: toDisplayString(val, colType),
           allowOverlay,
-          copyData: toDisplayString(val),
+          copyData: toDisplayString(val, colType),
           themeOverride,
         };
       }
-      const display = toDisplayString(val);
+      if (kind === GridCellKind.Uri) {
+        const display = toDisplayString(val, colType);
+        return {
+          kind,
+          data: display,
+          allowOverlay,
+          copyData: display,
+          themeOverride,
+        };
+      }
+      const display = toDisplayString(val, colType);
       return {
         kind: GridCellKind.Text as const,
         data: display,
@@ -1781,15 +1920,19 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return;
       }
 
+      const colId = String(column.id);
+      const viewCol = viewColMap.get(colId);
       closeGridEditorChrome();
       setHeaderMenu({
-        columnId: String(column.id),
+        columnId: colId,
         columnTitle: column.title,
-        columnDescription: columnDescriptionsMap.get(String(column.id)) ?? '',
+        columnDescription: columnDescriptionsMap.get(colId) ?? '',
         bounds,
+        subfields: viewCol?.subfields,
+        selectedSubfield: viewCol?.selectedSubfield,
       });
     },
-    [closeGridEditorChrome, columnDescriptionsMap, columns],
+    [closeGridEditorChrome, columnDescriptionsMap, columns, viewColMap],
   );
 
   const onHeaderMenuClick = useCallback(
@@ -2052,9 +2195,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return;
       }
 
-      acceptGridCellChange(r.__filename, colId, editableCellToString(newValue), 'grid overlay save');
+      const fieldPath = resolveEffectivePath(colId, viewColMap.get(colId));
+      acceptGridCellChange(r.__filename, fieldPath, editableCellToString(newValue), 'grid overlay save');
     },
-    [acceptGridCellChange, columns, pagedRows],
+    [acceptGridCellChange, columns, pagedRows, viewColMap],
   );
 
   const onFinishedEditing = useCallback(() => {
@@ -2127,6 +2271,24 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       });
     },
     [headerMenu],
+  );
+
+  const handleSelectSubfield = useCallback(
+    (index: number | undefined) => {
+      if (!headerMenu || !tableView) return;
+      const colPath = headerMenu.columnId;
+      const updatedCols = tableView.cols.map((item) => {
+        if (item.kind === 'banner-group') {
+          return {
+            ...item,
+            cols: item.cols.map((col) => (col.path === colPath ? { ...col, selectedSubfield: index } : col)),
+          };
+        }
+        return item.path === colPath ? { ...item, selectedSubfield: index } : item;
+      });
+      setTableView({ ...tableView, cols: updatedCols });
+    },
+    [headerMenu, tableView],
   );
 
   const handleApplyTextFilter = useCallback(
@@ -2290,6 +2452,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   unreviewedColumnIds={unreviewedColumnIds}
                   approvedColumnIds={approvedColumnIds}
                   columnLabels={columnLabelsMap}
+                  columnGroups={columnGroups}
                   onChangeVisible={setVisibleColumnIds}
                   activeViewName={viewSource}
                   availableViewNames={availableViewNames}
@@ -2384,6 +2547,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 onColumnResize={onColumnResize}
                 drawCell={drawCell}
                 verticalBorder={(col) => col !== 0}
+                groupHeaderHeight={hasAnyGroups ? 28 : 0}
                 rowMarkers="none"
                 freezeColumns={titleColumnId && columns[1]?.id === titleColumnId ? 2 : 1}
               />
@@ -2433,6 +2597,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                         filter.scope === 'text' && filter.columnId === headerMenu.columnId,
                     )?.value ?? '')
               }
+              subfields={headerMenu?.subfields}
+              selectedSubfield={headerMenu?.selectedSubfield}
+              onSelectSubfield={handleSelectSubfield}
               onShowNeedsReview={() => handleAddColumnFilter('unreviewed')}
               onShowApproved={() => handleAddColumnFilter('unpublished')}
               onApplyTextFilter={handleApplyTextFilter}
@@ -2470,6 +2637,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev))
                 }
                 onPublishFile={props.onPublishFile}
+                onAddColumn={handleAddColumn}
+                onToggleColumnVisible={handleToggleColumnVisible}
+                allColumnPaths={allColumnPathsSet}
+                visibleColumnPaths={visibleColumnPathsSet}
+                columnEffectivePaths={columnEffectivePathsMap}
+                columnGroups={columnGroupMap}
               />
             )}
           </Box>

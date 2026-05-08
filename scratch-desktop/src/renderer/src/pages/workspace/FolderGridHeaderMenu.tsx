@@ -1,7 +1,10 @@
 import type { Rectangle } from '@glideapps/glide-data-grid';
 import { Box, Divider, Portal, Stack, TextInput } from '@mantine/core';
+import type { TableViewSubfield } from '@spinner/shared-types';
+import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Text12Medium, Text12Regular, Text9Regular, TextMono9Regular } from '../../components/base/text';
+import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
 interface FolderGridHeaderMenuProps {
   columnId: string;
@@ -9,6 +12,9 @@ interface FolderGridHeaderMenuProps {
   columnDescription: string;
   bounds: Rectangle | null;
   initialFilterValue: string;
+  subfields?: TableViewSubfield[];
+  selectedSubfield?: number;
+  onSelectSubfield?: (index: number | undefined) => void;
   onShowNeedsReview: () => void;
   onShowApproved: () => void;
   onApplyTextFilter: (value: string) => void;
@@ -23,6 +29,9 @@ export function FolderGridHeaderMenu({
   columnDescription,
   bounds,
   initialFilterValue,
+  subfields,
+  selectedSubfield,
+  onSelectSubfield,
   onShowNeedsReview,
   onShowApproved,
   onApplyTextFilter,
@@ -102,6 +111,32 @@ export function FolderGridHeaderMenu({
           )}
         </Stack>
         <Stack gap={4} p={8}>
+          {subfields && subfields.length > 0 && onSelectSubfield && (
+            <>
+              <MenuSectionLabel>Show</MenuSectionLabel>
+              <MenuOption
+                label="All"
+                checked={selectedSubfield == null}
+                onClick={() => {
+                  onSelectSubfield(undefined);
+                  onClose();
+                }}
+              />
+              {subfields.map((sf, idx) => (
+                <MenuOption
+                  key={idx}
+                  label={sf.name ?? sf.relativePath}
+                  checked={selectedSubfield === idx}
+                  onClick={() => {
+                    onSelectSubfield(idx);
+                    onClose();
+                  }}
+                />
+              ))}
+              <Divider my={4} />
+            </>
+          )}
+
           <MenuAction onClick={onClose}>Sort A {'\u2192'} Z</MenuAction>
           <MenuAction onClick={onClose}>Sort Z {'\u2192'} A</MenuAction>
 
@@ -204,6 +239,43 @@ function MenuAction({
       }}
     >
       <Text12Regular c="inherit">{children}</Text12Regular>
+    </Box>
+  );
+}
+
+function MenuOption({ label, checked, onClick }: { label: string; checked: boolean; onClick: () => void }) {
+  return (
+    <Box
+      component="button"
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        width: '100%',
+        border: 0,
+        borderRadius: 8,
+        backgroundColor: checked ? 'var(--bg-selected)' : 'transparent',
+        color: 'var(--mantine-color-text)',
+        cursor: 'pointer',
+        padding: '7px 8px',
+        textAlign: 'left',
+      }}
+    >
+      <Box
+        style={{
+          width: 14,
+          height: 14,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {checked && <StyledLucideIcon Icon={Check} size={12} c="var(--fg-primary)" />}
+      </Box>
+      <Text12Regular c="inherit">{label}</Text12Regular>
     </Box>
   );
 }

@@ -8,6 +8,14 @@ import { useDevTools } from '../../hooks/use-dev-tools';
 
 type ColumnPreset = 'all' | 'none' | 'needs-review' | 'approved';
 
+interface ColumnGroup {
+  name: string;
+  columnIds: string[];
+}
+
+/** A top-level item in the reorderable list: either a standalone column or a group of columns. */
+type DisplayItem = { kind: 'column'; columnId: string } | { kind: 'group'; group: ColumnGroup };
+
 interface ColumnPickerMenuProps {
   /** All available column IDs, in schema order. */
   allColumns: string[];
@@ -21,6 +29,8 @@ interface ColumnPickerMenuProps {
   approvedColumnIds: string[];
   /** Map from column ID to display label. Falls back to the raw ID when missing. */
   columnLabels?: Map<string, string>;
+  /** Banner groups from the view — columns within groups are rendered together. */
+  columnGroups?: ColumnGroup[];
   onChangeVisible: (columnIds: string[]) => void;
   /** Name of the active view (for dev widget). */
   activeViewName?: string;
@@ -30,6 +40,19 @@ interface ColumnPickerMenuProps {
   onSwitchView?: (viewName: string) => void;
 }
 
+/** Flatten display items back into a column ID array. */
+function flattenItems(items: DisplayItem[]): string[] {
+  const result: string[] = [];
+  for (const item of items) {
+    if (item.kind === 'column') {
+      result.push(item.columnId);
+    } else {
+      result.push(...item.group.columnIds);
+    }
+  }
+  return result;
+}
+
 export function ColumnPickerMenu({
   allColumns,
   visibleColumns,
@@ -37,6 +60,7 @@ export function ColumnPickerMenu({
   unreviewedColumnIds,
   approvedColumnIds,
   columnLabels,
+  columnGroups,
   onChangeVisible,
   activeViewName,
   availableViewNames,
@@ -46,6 +70,26 @@ export function ColumnPickerMenu({
   const [search, setSearch] = useState('');
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  const hasGroups = (columnGroups?.length ?? 0) > 0;
+
+  /** Set of all column IDs that belong to any group. */
+  const groupedColumnSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of columnGroups ?? []) {
+      for (const id of g.columnIds) set.add(id);
+    }
+    return set;
+  }, [columnGroups]);
+
+  /** Map from column ID → group it belongs to. */
+  const columnToGroup = useMemo(() => {
+    const map = new Map<string, ColumnGroup>();
+    for (const g of columnGroups ?? []) {
+      for (const id of g.columnIds) map.set(id, g);
+    }
+    return map;
+  }, [columnGroups]);
 
   // Reorderable columns = visible minus title column
   const reorderableColumns = useMemo(
@@ -64,6 +108,35 @@ export function ColumnPickerMenu({
     });
   }, [allColumns, columnLabels, search]);
 
+  const filteredSet = useMemo(() => new Set(filteredColumns), [filteredColumns]);
+
+  /**
+   * Build display items from the visible reorderable columns.
+   * Consecutive columns that belong to the same group are collapsed into a single group item.
+   */
+  const displayItems: DisplayItem[] = useMemo(() => {
+    if (!hasGroups) {
+      return reorderableColumns.filter((c) => filteredSet.has(c)).map((c) => ({ kind: 'column', columnId: c }));
+    }
+
+    const items: DisplayItem[] = [];
+    const seenGroups = new Set<string>();
+
+    for (const colId of reorderableColumns) {
+      if (!filteredSet.has(colId)) continue;
+      const group = columnToGroup.get(colId);
+      if (group) {
+        if (!seenGroups.has(group.name)) {
+          seenGroups.add(group.name);
+          items.push({ kind: 'group', group });
+        }
+      } else {
+        items.push({ kind: 'column', columnId: colId });
+      }
+    }
+    return items;
+  }, [columnToGroup, filteredSet, hasGroups, reorderableColumns]);
+
   const toggleColumn = useCallback(
     (columnId: string) => {
       if (columnId === titleColumnId) return;
@@ -71,6 +144,20 @@ export function ColumnPickerMenu({
         onChangeVisible(visibleColumns.filter((c) => c !== columnId));
       } else {
         onChangeVisible([...visibleColumns, columnId]);
+      }
+    },
+    [titleColumnId, visibleSet, visibleColumns, onChangeVisible],
+  );
+
+  const toggleGroup = useCallback(
+    (group: ColumnGroup) => {
+      const allVisible = group.columnIds.every((id) => visibleSet.has(id));
+      if (allVisible) {
+        const toHide = new Set(group.columnIds.filter((id) => id !== titleColumnId));
+        onChangeVisible(visibleColumns.filter((c) => !toHide.has(c)));
+      } else {
+        const toAdd = group.columnIds.filter((id) => !visibleSet.has(id));
+        onChangeVisible([...visibleColumns, ...toAdd]);
       }
     },
     [titleColumnId, visibleSet, visibleColumns, onChangeVisible],
@@ -104,15 +191,12 @@ export function ColumnPickerMenu({
     [allColumns, titleColumnId, unreviewedColumnIds, approvedColumnIds, onChangeVisible],
   );
 
-  // Drag-and-drop reorder
-  const onDragStart = useCallback(
-    (e: React.DragEvent, idx: number) => {
-      if (reorderableColumns[idx] === titleColumnId) return;
-      setDragIdx(idx);
-      e.dataTransfer.effectAllowed = 'move';
-    },
-    [reorderableColumns, titleColumnId],
-  );
+  // ── Drag-and-drop on display items ──
+
+  const onDragStart = useCallback((e: React.DragEvent, idx: number) => {
+    setDragIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
 
   const onDragOver = useCallback((e: React.DragEvent, idx: number) => {
     e.preventDefault();
@@ -128,20 +212,36 @@ export function ColumnPickerMenu({
         setDragOverIdx(null);
         return;
       }
-      const next = [...reorderableColumns];
+      const next = [...displayItems];
       const [moved] = next.splice(dragIdx, 1);
       next.splice(dropIdx, 0, moved);
-      onChangeVisible(titleColumnId ? [titleColumnId, ...next] : next);
+      const flat = flattenItems(next);
+      onChangeVisible(titleColumnId ? [titleColumnId, ...flat] : flat);
       setDragIdx(null);
       setDragOverIdx(null);
     },
-    [dragIdx, reorderableColumns, titleColumnId, onChangeVisible],
+    [displayItems, dragIdx, titleColumnId, onChangeVisible],
   );
 
   const onDragEnd = useCallback(() => {
     setDragIdx(null);
     setDragOverIdx(null);
   }, []);
+
+  // ── Render ──
+
+  const titleRow =
+    titleColumnId && allColumns.includes(titleColumnId) && filteredSet.has(titleColumnId) ? (
+      <ColumnRow
+        key={titleColumnId}
+        columnId={titleColumnId}
+        label={columnLabels?.get(titleColumnId)}
+        checked={true}
+        disabled={true}
+        draggable={false}
+        onToggle={() => {}}
+      />
+    ) : null;
 
   return (
     <Stack gap="xs">
@@ -184,56 +284,138 @@ export function ColumnPickerMenu({
           overflowX: 'hidden',
         }}
       >
-        {/* Title column — always first, not toggleable (only show if it's a real data column) */}
-        {titleColumnId &&
-          allColumns.includes(titleColumnId) &&
-          (!search.trim() ||
-            (columnLabels?.get(titleColumnId) ?? titleColumnId).toLowerCase().includes(search.trim().toLowerCase()) ||
-            titleColumnId.toLowerCase().includes(search.trim().toLowerCase())) && (
-            <ColumnRow
-              columnId={titleColumnId}
-              label={columnLabels?.get(titleColumnId)}
-              checked={true}
-              disabled={true}
-              draggable={false}
-              onToggle={() => {}}
-            />
-          )}
+        {titleRow}
 
-        {/* Remaining columns in display order (visible first for reorder, then hidden) */}
-        {reorderableColumns
-          .filter((c) => filteredColumns.includes(c))
-          .map((columnId, idx) => (
-            <ColumnRow
-              key={columnId}
-              columnId={columnId}
-              label={columnLabels?.get(columnId)}
-              checked={true}
-              disabled={false}
-              draggable={true}
-              highlight={dragOverIdx === idx && dragIdx !== idx}
-              onToggle={() => toggleColumn(columnId)}
-              onDragStart={(e) => onDragStart(e, idx)}
-              onDragOver={(e) => onDragOver(e, idx)}
-              onDrop={(e) => onDrop(e, idx)}
-              onDragEnd={onDragEnd}
-            />
-          ))}
+        {/* Visible items (reorderable) */}
+        {displayItems.map((item, idx) => {
+          if (item.kind === 'column') {
+            return (
+              <ColumnRow
+                key={item.columnId}
+                columnId={item.columnId}
+                label={columnLabels?.get(item.columnId)}
+                checked={true}
+                disabled={false}
+                draggable={true}
+                highlight={dragOverIdx === idx && dragIdx !== idx}
+                onToggle={() => toggleColumn(item.columnId)}
+                onDragStart={(e) => onDragStart(e, idx)}
+                onDragOver={(e) => onDragOver(e, idx)}
+                onDrop={(e) => onDrop(e, idx)}
+                onDragEnd={onDragEnd}
+              />
+            );
+          }
 
-        {/* Hidden columns */}
-        {filteredColumns
-          .filter((c) => c !== titleColumnId && !visibleSet.has(c))
-          .map((columnId) => (
-            <ColumnRow
-              key={columnId}
-              columnId={columnId}
-              label={columnLabels?.get(columnId)}
-              checked={false}
-              disabled={false}
-              draggable={false}
-              onToggle={() => toggleColumn(columnId)}
-            />
-          ))}
+          // Group item: group header row (draggable) + indented children (not individually draggable)
+          const group = item.group;
+          const allVisible = group.columnIds.every((id) => visibleSet.has(id));
+          const someVisible = group.columnIds.some((id) => visibleSet.has(id));
+          return (
+            <Box key={`group:${group.name}`}>
+              <ColumnRow
+                columnId={group.name}
+                label={group.name}
+                checked={allVisible}
+                indeterminate={someVisible && !allVisible}
+                disabled={false}
+                draggable={true}
+                highlight={dragOverIdx === idx && dragIdx !== idx}
+                onToggle={() => toggleGroup(group)}
+                onDragStart={(e) => onDragStart(e, idx)}
+                onDragOver={(e) => onDragOver(e, idx)}
+                onDrop={(e) => onDrop(e, idx)}
+                onDragEnd={onDragEnd}
+              />
+              {group.columnIds
+                .filter((id) => filteredSet.has(id))
+                .map((columnId) => (
+                  <ColumnRow
+                    key={columnId}
+                    columnId={columnId}
+                    label={columnLabels?.get(columnId)}
+                    checked={visibleSet.has(columnId)}
+                    disabled={false}
+                    draggable={false}
+                    indented={true}
+                    onToggle={() => toggleColumn(columnId)}
+                  />
+                ))}
+            </Box>
+          );
+        })}
+
+        {/* Hidden items (not currently visible) */}
+        {hasGroups
+          ? // Render hidden ungrouped columns, then hidden groups
+            (() => {
+              const elements: React.ReactNode[] = [];
+
+              // Hidden ungrouped columns
+              filteredColumns
+                .filter((c) => c !== titleColumnId && !visibleSet.has(c) && !groupedColumnSet.has(c))
+                .forEach((columnId) => {
+                  elements.push(
+                    <ColumnRow
+                      key={columnId}
+                      columnId={columnId}
+                      label={columnLabels?.get(columnId)}
+                      checked={false}
+                      disabled={false}
+                      draggable={false}
+                      onToggle={() => toggleColumn(columnId)}
+                    />,
+                  );
+                });
+
+              // Hidden groups (groups where no column is visible and not already in displayItems)
+              for (const group of columnGroups ?? []) {
+                const anyVisible = group.columnIds.some((id) => visibleSet.has(id));
+                if (anyVisible) continue; // Already in displayItems
+                const groupColsFiltered = group.columnIds.filter((id) => filteredSet.has(id));
+                if (groupColsFiltered.length === 0) continue;
+                elements.push(
+                  <Box key={`group:${group.name}`}>
+                    <ColumnRow
+                      columnId={group.name}
+                      label={group.name}
+                      checked={false}
+                      disabled={false}
+                      draggable={false}
+                      onToggle={() => toggleGroup(group)}
+                    />
+                    {groupColsFiltered.map((columnId) => (
+                      <ColumnRow
+                        key={columnId}
+                        columnId={columnId}
+                        label={columnLabels?.get(columnId)}
+                        checked={false}
+                        disabled={false}
+                        draggable={false}
+                        indented={true}
+                        onToggle={() => toggleColumn(columnId)}
+                      />
+                    ))}
+                  </Box>,
+                );
+              }
+
+              return <>{elements}</>;
+            })()
+          : // No groups — flat hidden list
+            filteredColumns
+              .filter((c) => c !== titleColumnId && !visibleSet.has(c))
+              .map((columnId) => (
+                <ColumnRow
+                  key={columnId}
+                  columnId={columnId}
+                  label={columnLabels?.get(columnId)}
+                  checked={false}
+                  disabled={false}
+                  draggable={false}
+                  onToggle={() => toggleColumn(columnId)}
+                />
+              ))}
       </Stack>
 
       {isDevToolsEnabled && onSwitchView && (
@@ -245,7 +427,7 @@ export function ColumnPickerMenu({
             </Text12Regular>
             <NativeSelect
               size="xs"
-              value={activeViewName ?? 'Generated'}
+              value={activeViewName ?? 'Generated (legacy)'}
               onChange={(e) => onSwitchView(e.currentTarget.value)}
               data={viewSourceOptions(availableViewNames)}
               styles={{
@@ -276,8 +458,10 @@ function ColumnRow({
   columnId,
   label,
   checked,
+  indeterminate,
   disabled,
   draggable,
+  indented,
   highlight,
   onToggle,
   onDragStart,
@@ -288,8 +472,10 @@ function ColumnRow({
   columnId: string;
   label?: string;
   checked: boolean;
+  indeterminate?: boolean;
   disabled: boolean;
   draggable: boolean;
+  indented?: boolean;
   highlight?: boolean;
   onToggle: () => void;
   onDragStart?: (e: React.DragEvent) => void;
@@ -309,6 +495,7 @@ function ColumnRow({
         alignItems: 'center',
         gap: 6,
         padding: '5px 4px',
+        paddingLeft: indented ? 20 : 4,
         borderRadius: 6,
         borderTop: highlight ? '2px solid var(--mantine-color-blue-4)' : '2px solid transparent',
         cursor: draggable ? 'grab' : undefined,
@@ -318,6 +505,7 @@ function ColumnRow({
       <Checkbox
         size="xs"
         checked={checked}
+        indeterminate={indeterminate}
         disabled={disabled}
         onChange={onToggle}
         styles={{ input: { cursor: disabled ? 'default' : 'pointer' } }}

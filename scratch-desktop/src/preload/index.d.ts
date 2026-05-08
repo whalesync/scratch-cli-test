@@ -3,7 +3,7 @@ import type { TableView } from '@spinner/shared-types';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
-import type { WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
+import type { ConnectionFileChangedEvent, WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 
 type ScratchCommandEvent =
   | {
@@ -129,6 +129,7 @@ interface ScratchDesktopAPI {
   clearWorkspaceFileWatch: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
   onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void) => () => void;
+  onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void) => () => void;
   updater: {
     checkNow: () => Promise<void>;
     quitAndInstall: () => Promise<void>;

@@ -58,7 +58,12 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import type { WebContents } from 'electron';
 import { stat } from 'fs/promises';
 import { basename, dirname, join } from 'path';
-import { WORKSPACE_FILE_WATCH_EVENT_CHANNEL, type WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
+import {
+  CONNECTION_FILE_CHANGED_EVENT_CHANNEL,
+  WORKSPACE_FILE_WATCH_EVENT_CHANNEL,
+  type ConnectionFileChangedEvent,
+  type WorkspaceFilesChangedEvent,
+} from '../shared/workspace-file-watch';
 import { runScratchmd } from './scratchmd';
 
 const WATCH_DEBOUNCE_MS = 500;
@@ -126,6 +131,9 @@ function sameRoots(a: string[], b: string[]): boolean {
 
 export class WorkspaceFileWatchService {
   private watcher: FSWatcher | null = null;
+  private connectionWatcher: FSWatcher | null = null;
+  private connectionFlushTimer: NodeJS.Timeout | null = null;
+  private pendingConnectionPath: string | null = null;
   private activeWorkspacePath: string | null = null;
   private activeRoots: string[] = [];
   private subscriber: WebContents | null = null;
@@ -182,6 +190,33 @@ export class WorkspaceFileWatchService {
     });
 
     this.watcher = watcher;
+
+    // Watch .scratch/connections/scratch/ for schema and view file changes (dev-time hot reload).
+    const scratchConnectionsDir = join(workspacePath, '.scratch', 'connections', 'scratch');
+    let scratchDirExists = false;
+    try {
+      const s = await stat(scratchConnectionsDir);
+      scratchDirExists = s.isDirectory();
+    } catch {
+      // .scratch/connections/scratch/ doesn't exist yet.
+    }
+
+    if (scratchDirExists) {
+      const connectionWatcher = chokidar.watch(scratchConnectionsDir, {
+        ignoreInitial: true,
+        persistent: true,
+        ignored: (filePath: string) => {
+          const name = basename(filePath);
+          return name === '.DS_Store';
+        },
+      });
+
+      connectionWatcher.on('all', (_eventName, changedPath) => {
+        this.enqueueConnectionChange(workspacePath, changedPath);
+      });
+
+      this.connectionWatcher = connectionWatcher;
+    }
   }
 
   async clearWorkspaceFileWatch(): Promise<void> {
@@ -333,14 +368,47 @@ export class WorkspaceFileWatchService {
     return (this.internalMutationUntil.get(workspacePath) ?? 0) > Date.now();
   }
 
+  private enqueueConnectionChange(workspacePath: string, changedPath: string): void {
+    if (!this.activeWorkspacePath || this.activeWorkspacePath !== workspacePath) return;
+
+    this.pendingConnectionPath = changedPath;
+
+    if (this.connectionFlushTimer) clearTimeout(this.connectionFlushTimer);
+    this.connectionFlushTimer = setTimeout(() => {
+      this.flushConnectionChange();
+    }, 300);
+  }
+
+  private flushConnectionChange(): void {
+    this.connectionFlushTimer = null;
+
+    if (!this.activeWorkspacePath || !this.pendingConnectionPath) return;
+    if (!this.subscriber || this.subscriber.isDestroyed()) {
+      this.pendingConnectionPath = null;
+      return;
+    }
+
+    const payload: ConnectionFileChangedEvent = {
+      workspacePath: this.activeWorkspacePath,
+      filePath: this.pendingConnectionPath,
+    };
+    this.pendingConnectionPath = null;
+    this.subscriber.send(CONNECTION_FILE_CHANGED_EVENT_CHANNEL, payload);
+  }
+
   private async closeWatcher(): Promise<void> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
+    if (this.connectionFlushTimer) {
+      clearTimeout(this.connectionFlushTimer);
+      this.connectionFlushTimer = null;
+    }
 
     this.pendingPaths.clear();
     this.pendingHasExternal = false;
+    this.pendingConnectionPath = null;
     this.activeWorkspacePath = null;
     this.activeRoots = [];
 
@@ -348,6 +416,11 @@ export class WorkspaceFileWatchService {
       const watcher = this.watcher;
       this.watcher = null;
       await watcher.close();
+    }
+    if (this.connectionWatcher) {
+      const connectionWatcher = this.connectionWatcher;
+      this.connectionWatcher = null;
+      await connectionWatcher.close();
     }
   }
 }

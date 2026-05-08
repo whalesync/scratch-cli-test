@@ -6,3 +6,10 @@ export type WorkspaceFilesChangedEvent = {
   singleFile?: string;
   changedFolderPaths: string[];
 };
+
+export const CONNECTION_FILE_CHANGED_EVENT_CHANNEL = 'scratch:connection-file-changed';
+
+export type ConnectionFileChangedEvent = {
+  workspacePath: string;
+  filePath: string;
+};

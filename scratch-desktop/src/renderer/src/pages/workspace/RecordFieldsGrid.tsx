@@ -1,6 +1,6 @@
 import { ActionIcon, Box, Group, Portal, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
 import { Minimize2, TriangleAlertIcon } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
 import { Text12Medium, Text12Regular, Text9Regular, TextMono9Regular } from '../../components/base/text';
@@ -20,6 +20,8 @@ export interface RecordFieldRow {
   displayLabel?: string;
   /** Optional description shown below the field name. Hidden if it matches displayLabel or fieldName. */
   description?: string;
+  /** When set, this field belongs to the named banner group. */
+  groupName?: string;
   value: string;
   fromValue?: string;
   diffKind: FieldValueDiffKind;
@@ -475,70 +477,90 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {rows.map((row) => (
-            <Table.Tr key={row.fieldName}>
-              <Table.Td style={{ width: 280, height: 40 }} py="xs">
-                <Group w="100%" align="top">
-                  <Stack gap="xs" flex={1}>
-                    <Text12Medium
-                      c="var(--fg-primary)"
-                      style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
-                    >
-                      {row.displayLabel ?? row.fieldName}
-                    </Text12Medium>
-                    {row.displayLabel !== row.fieldName && (
-                      <TextMono9Regular c="var(--fg-secondary)">{row.fieldName}</TextMono9Regular>
-                    )}
-                    {row.description &&
-                      row.description !== row.fieldName &&
-                      row.description !== (row.displayLabel ?? row.fieldName) && (
-                        <Text9Regular c="var(--fg-secondary)">{row.description}</Text9Regular>
-                      )}
-                  </Stack>
-                  {validationWarnings?.has(row.fieldName) &&
-                    (() => {
-                      const vs = validationWarnings.get(row.fieldName)!;
-                      const hasErr = vs.some((v) => v.level === 'error');
-                      if (vs.length === 0) return null;
-                      return (
-                        <ValidationTooltip violations={vs}>
-                          <Box
-                            w={16}
-                            h={16}
-                            c={hasErr ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
-                          >
-                            <TriangleAlertIcon size={16} />
+          {rows.map((row, idx) => {
+            const groupName = row.groupName;
+            const prevGroup = idx > 0 ? rows[idx - 1].groupName : undefined;
+            const isGroupStart = groupName != null && groupName !== prevGroup;
+            const isInGroup = groupName != null;
+
+            const groupBarStyle = isInGroup ? { borderLeft: '6px solid var(--fg-divider)' } : undefined;
+
+            return (
+              <React.Fragment key={row.fieldName}>
+                {isGroupStart && (
+                  <Table.Tr style={{ borderLeft: '6px solid var(--fg-divider)' }}>
+                    <Table.Td colSpan={2} style={{ paddingTop: 12, paddingBottom: 8 }}>
+                      <Text9Regular c="var(--fg-muted)" fw={700} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                        {groupName}
+                      </Text9Regular>
+                    </Table.Td>
+                  </Table.Tr>
+                )}
+                <Table.Tr style={groupBarStyle}>
+                  <Table.Td style={{ width: 280, height: 40 }} py="xs">
+                    <Group w="100%" align="top">
+                      <Stack gap="xs" flex={1}>
+                        <Text12Medium
+                          c="var(--fg-primary)"
+                          style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
+                        >
+                          {row.displayLabel ?? row.fieldName}
+                        </Text12Medium>
+                        {row.displayLabel !== row.fieldName && (
+                          <TextMono9Regular c="var(--fg-secondary)">{row.fieldName}</TextMono9Regular>
+                        )}
+                        {row.description &&
+                          row.description !== row.fieldName &&
+                          row.description !== (row.displayLabel ?? row.fieldName) && (
+                            <Text9Regular c="var(--fg-secondary)">{row.description}</Text9Regular>
+                          )}
+                      </Stack>
+                      {validationWarnings?.has(row.fieldName) &&
+                        (() => {
+                          const vs = validationWarnings.get(row.fieldName)!;
+                          const hasErr = vs.some((v) => v.level === 'error');
+                          if (vs.length === 0) return null;
+                          return (
+                            <ValidationTooltip violations={vs}>
+                              <Box
+                                w={16}
+                                h={16}
+                                c={hasErr ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
+                              >
+                                <TriangleAlertIcon size={16} />
+                              </Box>
+                            </ValidationTooltip>
+                          );
+                        })()}
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <Box style={{ borderLeft: `4px solid ${diffBorderColor(row.diffKind)}` }}>
+                      {row.editing ? (
+                        <Box style={{ display: 'grid', gap: 6 }}>
+                          <Box ref={setEditingAnchorEl}>
+                            <FieldEditor row={row} />
                           </Box>
-                        </ValidationTooltip>
-                      );
-                    })()}
-                </Group>
-              </Table.Td>
-              <Table.Td>
-                <Box style={{ borderLeft: `4px solid ${diffBorderColor(row.diffKind)}` }}>
-                  {row.editing ? (
-                    <Box style={{ display: 'grid', gap: 6 }}>
-                      <Box ref={setEditingAnchorEl}>
-                        <FieldEditor row={row} />
-                      </Box>
+                        </Box>
+                      ) : (
+                        <FieldValuePanel
+                          value={row.value}
+                          fromValue={row.fromValue}
+                          diffKind={row.diffKind}
+                          displayMode={row.displayMode}
+                          onClick={row.onClick}
+                          onApprove={row.displayMode === 'diff' ? row.onApprove : undefined}
+                          onUndo={row.displayMode === 'diff' ? row.onUndo : undefined}
+                          onExpand={isMediumOrLargeChange(row) ? () => setFocusedFieldName(row.fieldName) : undefined}
+                          richDiff={isMediumOrLargeChange(row)}
+                        />
+                      )}
                     </Box>
-                  ) : (
-                    <FieldValuePanel
-                      value={row.value}
-                      fromValue={row.fromValue}
-                      diffKind={row.diffKind}
-                      displayMode={row.displayMode}
-                      onClick={row.onClick}
-                      onApprove={row.displayMode === 'diff' ? row.onApprove : undefined}
-                      onUndo={row.displayMode === 'diff' ? row.onUndo : undefined}
-                      onExpand={isMediumOrLargeChange(row) ? () => setFocusedFieldName(row.fieldName) : undefined}
-                      richDiff={isMediumOrLargeChange(row)}
-                    />
-                  )}
-                </Box>
-              </Table.Td>
-            </Table.Tr>
-          ))}
+                  </Table.Td>
+                </Table.Tr>
+              </React.Fragment>
+            );
+          })}
         </Table.Tbody>
       </Table>
       {footer}

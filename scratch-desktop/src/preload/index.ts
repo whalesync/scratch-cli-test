@@ -3,7 +3,12 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
-import { WORKSPACE_FILE_WATCH_EVENT_CHANNEL, type WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
+import {
+  CONNECTION_FILE_CHANGED_EVENT_CHANNEL,
+  WORKSPACE_FILE_WATCH_EVENT_CHANNEL,
+  type ConnectionFileChangedEvent,
+  type WorkspaceFilesChangedEvent,
+} from '../shared/workspace-file-watch';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function invoke(channel: string, ...args: unknown[]): Promise<any> {
@@ -199,6 +204,15 @@ const scratchDesktop = {
     ipcRenderer.on(WORKSPACE_FILE_WATCH_EVENT_CHANNEL, listener);
     return () => {
       ipcRenderer.removeListener(WORKSPACE_FILE_WATCH_EVENT_CHANNEL, listener);
+    };
+  },
+  onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: ConnectionFileChangedEvent): void => {
+      callback(payload);
+    };
+    ipcRenderer.on(CONNECTION_FILE_CHANGED_EVENT_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(CONNECTION_FILE_CHANGED_EVENT_CHANNEL, listener);
     };
   },
 };
