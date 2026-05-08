@@ -1,5 +1,6 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
+import type { AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
@@ -135,6 +136,10 @@ interface ScratchDesktopAPI {
     checkNow: () => Promise<void>;
     quitAndInstall: () => Promise<void>;
     subscribe: (callback: (event: UpdaterEvent) => void) => () => void;
+  };
+  lifecycle: {
+    onWillQuit: (callback: (payload: AppWillQuitPayload) => void) => () => void;
+    confirmQuit: () => void;
   };
 }
 

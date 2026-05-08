@@ -60,7 +60,7 @@ The Scratch Rest API is encapsulated in a collection of SDK objects located in t
 
 # Analytics and Tracking
 
-The client users Posthog to track user activites.
+The client uses Posthog to track user activites.
 
 - Done through the trackXXX() function defined in the `src/lib/posthog.ts` file
 - All events have an event name that should be defined in the PostHogEvents enum

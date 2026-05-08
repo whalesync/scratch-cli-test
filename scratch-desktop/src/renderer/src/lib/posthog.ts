@@ -2,7 +2,23 @@ import { User } from '../types/user';
 
 export enum PostHogEvents {
   PAGE_VIEW = '$pageview',
+  OPEN_WORKSPACE = 'open_workspace',
+  DOWNLOAD_WORKSPACE = 'download_workspace',
+  REMOVE_LOCAL_WORKSPACE = 'remove_local_workspace',
+  CREATE_WORKSPACE = 'create_workspace',
+  CANCEL_PICK_PARENT_FOLDER = 'cancel_pick_parent_folder',
+  REDOWNLOAD_WORKSPACE = 'redownload_workspace',
+  PULL_ALL = 'pull_all',
+  PULL_TABLE = 'pull_table',
+  PUBLISH_ALL = 'publish_all',
+  REFRESH_FOLDER_DATA_GRID = 'refresh_folder_data_grid',
+  APP_STARTED = 'app_started',
+  APP_EXITED = 'app_exited',
+  CHECK_FOR_UPDATES = 'check_for_updates',
+  INSTALL_UPDATE = 'install_update',
 }
+
+export type PickParentFolderFlow = 'download' | 'create';
 
 type PostHogInstance = Awaited<typeof import('posthog-js')>['default'];
 let posthogInstance: PostHogInstance | null = null;
@@ -26,9 +42,37 @@ async function getPostHog(): Promise<PostHogInstance | null> {
     disable_session_recording: true,
   });
 
-  posthog.register({ app_platform: 'desktop' });
+  // Super-properties: PostHog attaches these to every event automatically,
+  // including ones we don't route through captureEvent ($pageview, $identify).
+  const appVersion = await window.scratchDesktop.getAppVersion();
+  posthog.register({ app_platform: 'desktop', app_version: appVersion });
   posthogInstance = posthog;
   return posthog;
+}
+
+interface CaptureEventOptions {
+  /**
+   * Send the event immediately via sendBeacon, bypassing the batched queue. Used for events fired
+   * during app shutdown — sendBeacon is keepalive-aware so the request survives renderer tear-down.
+   */
+  sendImmediately?: boolean;
+}
+
+async function captureEvent(
+  eventName: PostHogEvents,
+  properties: Record<string, unknown> = {},
+  options: CaptureEventOptions = {},
+): Promise<void> {
+  try {
+    const posthog = await getPostHog();
+    posthog?.capture(
+      eventName,
+      properties,
+      options.sendImmediately ? { send_instantly: true, transport: 'sendBeacon' } : undefined,
+    );
+  } catch (e) {
+    console.error('Failed to capture PostHog event', e);
+  }
 }
 
 export async function initPostHog(): Promise<void> {
@@ -36,12 +80,65 @@ export async function initPostHog(): Promise<void> {
 }
 
 export async function trackPageView(url: string): Promise<void> {
-  try {
-    const posthog = await getPostHog();
-    posthog?.capture(PostHogEvents.PAGE_VIEW, { url });
-  } catch (e) {
-    console.error('Failed to capture PostHog event', e);
-  }
+  await captureEvent(PostHogEvents.PAGE_VIEW, { url });
+}
+
+export async function trackOpenWorkspace(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.OPEN_WORKSPACE, { workspaceId });
+}
+
+export async function trackDownloadWorkspace(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.DOWNLOAD_WORKSPACE, { workspaceId });
+}
+
+export async function trackRemoveLocalWorkspace(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.REMOVE_LOCAL_WORKSPACE, { workspaceId });
+}
+
+export async function trackCreateWorkspace(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.CREATE_WORKSPACE, { workspaceId });
+}
+
+export async function trackCancelPickParentFolder(workspaceId: string, flow: PickParentFolderFlow): Promise<void> {
+  await captureEvent(PostHogEvents.CANCEL_PICK_PARENT_FOLDER, { workspaceId, flow });
+}
+
+export async function trackRedownloadWorkspace(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.REDOWNLOAD_WORKSPACE, { workspaceId });
+}
+
+export async function trackPullAll(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.PULL_ALL, { workspaceId });
+}
+
+export async function trackPullTable(workspaceId: string, dataFolderId: string): Promise<void> {
+  await captureEvent(PostHogEvents.PULL_TABLE, { workspaceId, dataFolderId });
+}
+
+export async function trackPublishAll(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_ALL, { workspaceId });
+}
+
+export async function trackRefreshFolderDataGrid(workspaceId: string, folderPath: string | null): Promise<void> {
+  await captureEvent(PostHogEvents.REFRESH_FOLDER_DATA_GRID, { workspaceId, folderPath });
+}
+
+export async function trackAppStarted(props: { isPackaged: boolean }): Promise<void> {
+  await captureEvent(PostHogEvents.APP_STARTED, props);
+}
+
+export async function trackAppExited(props: { sessionDurationMs: number }): Promise<void> {
+  await captureEvent(PostHogEvents.APP_EXITED, props, { sendImmediately: true });
+}
+
+export async function trackCheckForUpdates(): Promise<void> {
+  await captureEvent(PostHogEvents.CHECK_FOR_UPDATES);
+}
+
+export async function trackInstallUpdate(props: { targetVersion: string }): Promise<void> {
+  // sendImmediately: quitAndInstall() restarts the app moments after the click,
+  // so we need the request to leave via sendBeacon rather than the batch queue.
+  await captureEvent(PostHogEvents.INSTALL_UPDATE, props, { sendImmediately: true });
 }
 
 export async function identifyUser(user: User, email: string | undefined): Promise<void> {

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { logPerf } from '../lib/perf';
+import { trackCancelPickParentFolder, trackDownloadWorkspace } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 
@@ -69,8 +70,12 @@ export function useWorkspaces(): UseWorkspacesResult {
     async (workspace: Workspace) => {
       try {
         const parentFolder = await window.scratchDesktop.pickParentFolder();
-        if (!parentFolder) return;
+        if (!parentFolder) {
+          void trackCancelPickParentFolder(workspace.id, 'download');
+          return;
+        }
 
+        void trackDownloadWorkspace(workspace.id);
         await window.scratchDesktop.initWorkspace(workspace.id, parentFolder);
         notifications.show({
           title: 'Download complete',

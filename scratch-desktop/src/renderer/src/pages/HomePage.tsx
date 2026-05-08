@@ -17,6 +17,13 @@ import {
   PendingWorkspaceCard,
 } from '../components/WorkspaceCard';
 import { useWorkspaces } from '../hooks/use-workspaces';
+import {
+  trackCancelPickParentFolder,
+  trackCreateWorkspace,
+  trackDownloadWorkspace,
+  trackOpenWorkspace,
+  trackRemoveLocalWorkspace,
+} from '../lib/posthog';
 import { Workspace } from '../types/workspace';
 
 function getLocalSectionLabel(): string {
@@ -147,8 +154,12 @@ export function HomePage() {
     async (workspace: Workspace) => {
       try {
         const parentFolder = await window.scratchDesktop.pickParentFolder();
-        if (!parentFolder) return;
+        if (!parentFolder) {
+          void trackCancelPickParentFolder(workspace.id, 'download');
+          return;
+        }
 
+        void trackDownloadWorkspace(workspace.id);
         setDownloadingIds((prev) => new Set(prev).add(workspace.id));
         await window.scratchDesktop.initWorkspace(workspace.id, parentFolder);
         setOptimisticLocal((prev) => [...prev.filter((w) => w.id !== workspace.id), workspace]);
@@ -173,6 +184,7 @@ export function HomePage() {
 
   const handleOpen = useCallback(
     (workspace: Workspace) => {
+      void trackOpenWorkspace(workspace.id);
       void navigate(`/workspace/${workspace.id}`);
     },
     [navigate],
@@ -184,6 +196,7 @@ export function HomePage() {
         'Remove the local copy? The remote workspace will stay — you can re-download it later.',
       );
       if (!confirmed) return;
+      void trackRemoveLocalWorkspace(workspace.id);
       setRemovingIds((prev) => new Set(prev).add(workspace.id));
       try {
         await window.scratchDesktop.removeWorkspace(workspace.id);
@@ -224,8 +237,10 @@ export function HomePage() {
       setCreating(true);
       setCreateError(null);
       const result = await window.scratchDesktop.createWorkspace(name);
+      void trackCreateWorkspace(result.id);
       const parentFolder = await window.scratchDesktop.pickParentFolder();
       if (!parentFolder) {
+        void trackCancelPickParentFolder(result.id, 'create');
         setCreateError('A local folder is required to set up the workspace.');
         return;
       }

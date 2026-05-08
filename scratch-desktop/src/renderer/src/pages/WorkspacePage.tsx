@@ -9,6 +9,7 @@ import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { jobApi } from '../lib/job-api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
+import { trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
@@ -158,6 +159,7 @@ export function WorkspacePage() {
     if (!localPath || reDownloading) return;
     try {
       setReDownloading(true);
+      if (id) void trackRedownloadWorkspace(id);
       await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'keep' });
       handleDataRefresh();
       notifications.show({
@@ -174,7 +176,7 @@ export function WorkspacePage() {
     } finally {
       setReDownloading(false);
     }
-  }, [handleDataRefresh, localPath, reDownloading]);
+  }, [handleDataRefresh, id, localPath, reDownloading]);
 
   useEffect(() => {
     focusSyncBootAtRef.current = performance.now();
@@ -423,8 +425,14 @@ export function WorkspacePage() {
         publishingAll={publishModalOpen}
         onDownload={() => void handleDownload()}
         onReDownload={() => void handleReDownload()}
-        onPublishAll={() => setPublishModalOpen(true)}
-        onPullAll={() => setPullAllModalOpen(true)}
+        onPublishAll={() => {
+          void trackPublishAll(workspace.id);
+          setPublishModalOpen(true);
+        }}
+        onPullAll={() => {
+          void trackPullAll(workspace.id);
+          setPullAllModalOpen(true);
+        }}
       />
       <WorkspaceContent
         workspace={workspace}

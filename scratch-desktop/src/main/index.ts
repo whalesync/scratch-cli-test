@@ -7,11 +7,10 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, 
 import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
 import { dirname, join, relative, resolve, sep } from 'path';
 import { performance } from 'perf_hooks';
+import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import {
-  type DiffGridFilter,
-  type FilterStatus,
   acceptCellChange,
   acceptCellInputText,
   countWorkspaceFiles,
@@ -30,6 +29,8 @@ import {
   readWorkspaceConfig,
   undoApprovedCellChange,
   writeFileTextRaw,
+  type DiffGridFilter,
+  type FilterStatus,
 } from './local-files';
 import {
   acceptFieldChanges,
@@ -982,6 +983,40 @@ void app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+// Lets the renderer capture and flush an `app_exited` PostHog event before the
+// process exits. We `preventDefault()` the first quit, ask the renderer to
+// flush, and re-quit when it confirms (or after a short timeout, so a stuck
+// renderer never blocks the user from quitting).
+let quitConfirmedByRenderer = false;
+const QUIT_FLUSH_TIMEOUT_MS = 2000;
+
+app.on('before-quit', (event) => {
+  if (quitConfirmedByRenderer) {
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return;
+  }
+  event.preventDefault();
+
+  const payload: AppWillQuitPayload = {
+    sessionDurationMs: Math.round(performance.now() - appStartTime),
+  };
+
+  let resolved = false;
+  const finish = (): void => {
+    if (resolved) return;
+    resolved = true;
+    ipcMain.removeListener(APP_QUIT_CONFIRMED_CHANNEL, finish);
+    quitConfirmedByRenderer = true;
+    app.quit();
+  };
+
+  ipcMain.once(APP_QUIT_CONFIRMED_CHANNEL, finish);
+  setTimeout(finish, QUIT_FLUSH_TIMEOUT_MS);
+  mainWindow.webContents.send(APP_WILL_QUIT_CHANNEL, payload);
 });
 
 app.on('window-all-closed', () => {

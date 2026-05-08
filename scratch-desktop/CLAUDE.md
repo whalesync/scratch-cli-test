@@ -136,7 +136,7 @@ Skipped automatically when:
 `dev-app-update.yml` in this directory points at the `desktop-test` channel. To exercise the update flow without notarization:
 
 1. Bump a `*-desktop-test` release to a higher version on GitHub (or pick an existing one).
-2. Set `package.json#version` to a value *lower* than that release.
+2. Set `package.json#version` to a value _lower_ than that release.
 3. Run a packaged build (`yarn build:linux` or `yarn build:mac:local`) and launch it. The updater is gated on `app.isPackaged`, so `yarn dev` won't trigger it — temporarily flip the guard in `updater.ts` if you need to test the IPC surface in dev.
 
 Don't test against real GitHub from CI; the vitest suite in `src/main/__tests__/updater.spec.ts` stubs `autoUpdater` instead.
@@ -153,3 +153,26 @@ When generating or changing `scratch-desktop` code, follow these constraints unl
 - **Windows and Electron options** — Do not add extra `BrowserWindow` instances for work that a hidden renderer or main-process job can do. Do not disable hardware acceleration or relaxed security flags as a performance fix without explicit user direction.
 - **Lifecycle** — Clean up subscriptions, intervals, and IPC listeners in matching teardown (`useEffect` return, window `closed`, etc.) so new code does not leak handlers across navigations or HMR.
 - **Verification** — When changing performance-sensitive paths, note in the response that dev (`yarn dev`) is noisier than production; recommend validating behavior on `yarn build` output when the change targets startup or steady-state jank.
+
+# Analytics and Tracking
+
+The desktop application uses Posthog to track user activites.
+
+- UI interactions are tracked through track\*() functions defined in the `src/renderer/src/lib/posthog.ts` file
+- Create new tracking functions when you need to track a new type of event
+- All events have an event name that should be defined in the `PostHogEvents` enum
+- Events have a properties (aka context) object of key-value pairs that provide some details about the event
+- Event contexts should track the IDs of entities being modifed or any values involved in a decision
+- Prioritize tracking events in hooks when possible, falling back to JSX elements when necessary
+- DO NOT include user data, api keys, authorization keys or tokens in event context data
+- DO NOT use the captureEvent() function directly, instead create new track() functions to encapsulate the scenario
+
+## What to track
+
+- User interactions that create, update or delete entities
+- User interactions that start workflows
+- User interactions that trigger asynchronous processes like push, pull and sync
+- Refresh buttons
+- Actions that cause the user to leave the desktop application such as Managing connections on the web application
+- When the application starts or exits
+- When a deep link is triggered in the application

@@ -40,6 +40,7 @@ import type { ValidationResultRow } from '../../../../shared/validation-types';
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { trackRefreshFolderDataGrid } from '../../lib/posthog';
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { EditPropertyDialog } from './EditPropertyDialog';
@@ -733,6 +734,7 @@ function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => 
 
 export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGridProps) {
   const {
+    workspaceId,
     selectedFolderPath,
     workspacePath,
     dataRefreshKey,
@@ -2535,7 +2537,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 size="sm"
                 variant="subtle"
                 color="gray"
-                onClick={onDataRefresh}
+                onClick={() => {
+                  void trackRefreshFolderDataGrid(workspaceId, selectedFolderPath);
+                  onDataRefresh();
+                }}
                 disabled={validationLoading || loadingMode === 'blocking'}
               >
                 <RotateCcw

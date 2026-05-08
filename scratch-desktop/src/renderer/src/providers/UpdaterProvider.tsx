@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import type { UpdaterEvent } from '../../../shared/updater-events';
 import { ButtonPrimaryLight, ButtonSecondaryGhost } from '../components/base/buttons';
 import { Text13Regular } from '../components/base/text';
+import { trackCheckForUpdates, trackInstallUpdate } from '../lib/posthog';
 
 const UPDATE_DOWNLOADED_NOTIFICATION_ID = 'updater-update-downloaded';
 const MANUAL_CHECK_NOTIFICATION_ID = 'updater-manual-check';
@@ -43,6 +44,7 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
       switch (event.type) {
         case 'checking-for-update': {
           if (event.manual) {
+            void trackCheckForUpdates();
             showManualToast({
               title: 'Checking for updates…',
               message: '',
@@ -98,6 +100,7 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
                 <Group gap="xs">
                   <ButtonPrimaryLight
                     onClick={() => {
+                      void trackInstallUpdate({ targetVersion: event.version });
                       void window.scratchDesktop?.updater.quitAndInstall();
                     }}
                   >

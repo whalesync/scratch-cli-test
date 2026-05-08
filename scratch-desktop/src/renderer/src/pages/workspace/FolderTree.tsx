@@ -3,6 +3,7 @@ import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, UnstyledButton } from '@mantine/core';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+import { trackPullTable } from '../../lib/posthog';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { DataFolder } from '../../types/workspace';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
@@ -371,6 +372,17 @@ export function FolderTree({
     setColumnDefsFolder(folderPath);
   }, []);
 
+  const handlePullRequest = useCallback(
+    (request: PullRequest) => {
+      // Single-folder pull = the "Pull This Table" context-menu action.
+      if (request.dataFolderIds.length === 1) {
+        void trackPullTable(workspaceId, request.dataFolderIds[0]);
+      }
+      setPullRequest(request);
+    },
+    [workspaceId],
+  );
+
   return (
     <>
       {rootChildren.map((node) => (
@@ -385,7 +397,7 @@ export function FolderTree({
           workspacePath={workspacePath}
           dataFolderByLocalPath={dataFolderByLocalPath}
           dataFoldersByConnection={dataFoldersByConnection}
-          onRequestPull={setPullRequest}
+          onRequestPull={handlePullRequest}
         />
       ))}
 

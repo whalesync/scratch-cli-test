@@ -1,5 +1,6 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
+import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
@@ -187,6 +188,20 @@ const scratchDesktop = {
       return () => {
         ipcRenderer.removeListener(UPDATER_EVENT_CHANNEL, listener);
       };
+    },
+  },
+  lifecycle: {
+    onWillQuit: (callback: (payload: AppWillQuitPayload) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: AppWillQuitPayload): void => {
+        callback(payload);
+      };
+      ipcRenderer.on(APP_WILL_QUIT_CHANNEL, listener);
+      return () => {
+        ipcRenderer.removeListener(APP_WILL_QUIT_CHANNEL, listener);
+      };
+    },
+    confirmQuit: (): void => {
+      ipcRenderer.send(APP_QUIT_CONFIRMED_CHANNEL);
     },
   },
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void): (() => void) => {

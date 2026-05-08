@@ -3,6 +3,7 @@ import { useWorkspaces } from '@/hooks/use-workspaces';
 import { Badge, Box, Loader, Menu, ScrollArea } from '@mantine/core';
 import { ChevronDown, HardDriveDownload as DownloadIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { trackOpenWorkspace } from '../lib/posthog';
 import { Workspace } from '../types/workspace';
 
 interface WorkspaceSwitcherProps {
@@ -17,6 +18,7 @@ export function WorkspaceSwitcher({ currentWorkspaceId, currentWorkspaceName }: 
   const handleSelect = (workspace: Workspace) => {
     if (workspace.id === currentWorkspaceId) return;
     if (downloadedWorkspaceIds.has(workspace.id)) {
+      void trackOpenWorkspace(workspace.id);
       void navigate(`/workspace/${workspace.id}`);
     } else {
       void handleDownloadAndOpen(workspace);
