@@ -16,6 +16,7 @@ import {
   listFiles,
   listFolders,
   readBatch,
+  readConnectionViewByName,
   readDiffGridDataPage,
   readDiffRecordData,
   readFileContent,
@@ -830,6 +831,9 @@ ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSi
 );
 ipcMain.handle('files:read-schema', async (_, workspacePath: string, folderName: string) =>
   readSchema(workspacePath, folderName),
+);
+ipcMain.handle('files:read-connection-view', async (_, folderPath: string, workspacePath: string, viewName: string) =>
+  readConnectionViewByName(folderPath, workspacePath, viewName),
 );
 ipcMain.handle(
   'files:read-grid-data',

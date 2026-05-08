@@ -1,4 +1,4 @@
-import type { ColumnDefinition } from './schema-columns/types';
+import type { TableViewCol } from '@spinner/shared-types';
 
 /**
  * The shape of an edit relative to the baseline value:
@@ -93,20 +93,18 @@ function classifyChangeType(fromValue: unknown, toValue: unknown): FieldChangeTy
   return kept / longer >= TWEAK_KEPT_RATIO ? 'tweak' : 'rewrite';
 }
 
-function classifyFieldSize(fromValue: unknown, toValue: unknown, colDef: ColumnDefinition | undefined): FieldSize {
-  const dataType = colDef?.dataType;
-  if (dataType === 'boolean' || dataType === 'number' || dataType === 'integer') return 'XS';
-
-  const format = colDef?.format?.toLowerCase();
-  if (format && XS_FORMAT_HINTS.has(format)) return 'XS';
+function classifyFieldSize(fromValue: unknown, toValue: unknown, col: TableViewCol | undefined): FieldSize {
+  const colType = col?.type;
+  if (colType === 'checkbox' || colType === 'number') return 'XS';
+  if (colType && XS_FORMAT_HINTS.has(colType)) return 'XS';
 
   // Use whichever side has more content so a populate or delete still gets sized
   // by the meaningful side, not the empty one.
   const len = Math.max(valueToText(fromValue).length, valueToText(toValue).length);
 
-  // Structured data (arrays, objects) doesn't render as a single token even when short,
+  // Structured data (objects) doesn't render as a single token even when short,
   // so floor it at S and let length push it up to M / L.
-  if (dataType === 'array' || dataType === 'object') {
+  if (colType === 'object') {
     if (len <= SIZE_S_MAX) return 'S';
     if (len <= SIZE_M_MAX) return 'M';
     return 'L';
@@ -126,10 +124,10 @@ function classifyFieldSize(fromValue: unknown, toValue: unknown, colDef: ColumnD
 export function classifyFieldChange(
   fromValue: unknown,
   toValue: unknown,
-  colDef: ColumnDefinition | undefined,
+  col: TableViewCol | undefined,
 ): FieldChangeClassification {
   return {
     changeType: classifyChangeType(fromValue, toValue),
-    fieldSize: classifyFieldSize(fromValue, toValue, colDef),
+    fieldSize: classifyFieldSize(fromValue, toValue, col),
   };
 }

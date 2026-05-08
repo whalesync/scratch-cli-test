@@ -12,9 +12,10 @@ import { copyFile, mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/
 import { basename, dirname, extname, join, relative, sep } from 'path';
 import { parse } from 'yaml';
 
+import type { TableView } from '@spinner/shared-types';
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
-import { buildColumnDefinitions, getByPath } from '../shared/schema-columns';
+import { buildColumnDefinitions, createFallbackTableView, getByPath } from '../shared/schema-columns';
 import { getFilenamesWithErrors, listUnpublishedChanges, listUnreviewedChanges } from './scratchmd';
 
 // ── Types (duplicated from renderer types to avoid cross-process import issues) ──
@@ -50,6 +51,8 @@ interface FolderEntry {
 interface FolderMetadata extends FolderEntry {
   schema: Record<string, unknown> | null;
   columnDefinitions: ColumnDefinition[];
+  view: TableView | null;
+  availableViewNames: string[];
 }
 
 interface ListFilesOptions {
@@ -197,6 +200,12 @@ export async function getFolderMetadata(folderPath: string, workspacePath: strin
     );
   }
 
+  const [diskView, availableViewNames] = await Promise.all([
+    readConnectionView(workspacePath, relPath),
+    listConnectionViewNames(workspacePath, relPath),
+  ]);
+  const view = diskView ?? createFallbackTableView(schema);
+
   return {
     name: folderName,
     path: folderPath,
@@ -205,6 +214,8 @@ export async function getFolderMetadata(folderPath: string, workspacePath: strin
     totalSize: meta.totalSize,
     schema,
     columnDefinitions: buildColumnDefinitions(schema),
+    view,
+    availableViewNames,
   };
 }
 
@@ -563,6 +574,39 @@ async function readConnectionSchema(workspacePath: string, relPath: string): Pro
     return JSON.parse(content) as Record<string, unknown>;
   } catch {
     return null;
+  }
+}
+
+export async function readConnectionViewByName(
+  folderPath: string,
+  workspacePath: string,
+  viewName: string,
+): Promise<TableView | null> {
+  const relPath = relative(workspacePath, folderPath);
+  return readConnectionView(workspacePath, relPath, viewName);
+}
+
+async function readConnectionView(
+  workspacePath: string,
+  relPath: string,
+  viewName: string = 'default',
+): Promise<TableView | null> {
+  try {
+    const viewPath = join(workspacePath, SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'views', `${viewName}.json`);
+    const content = await readFile(viewPath, 'utf-8');
+    return JSON.parse(content) as TableView;
+  } catch {
+    return null;
+  }
+}
+
+async function listConnectionViewNames(workspacePath: string, relPath: string): Promise<string[]> {
+  try {
+    const viewsDir = join(workspacePath, SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'views');
+    const entries = await readdir(viewsDir, { withFileTypes: true });
+    return entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name.replace(/\.json$/, ''));
+  } catch {
+    return [];
   }
 }
 

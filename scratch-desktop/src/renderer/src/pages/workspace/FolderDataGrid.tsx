@@ -30,11 +30,12 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import type { TableView, TableViewCol } from '@spinner/shared-types';
 import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
-import { getByPath } from '../../../../shared/schema-columns';
+import { createFallbackTableView, getByPath } from '../../../../shared/schema-columns';
 import type { ValidationResultRow } from '../../../../shared/validation-types';
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
@@ -471,7 +472,7 @@ interface CellDiffState {
   classification: FieldChangeClassification | null;
 }
 
-function getCellDiffState(row: DiffRow, fieldName: string, colDef: ColumnDefinition | undefined): CellDiffState {
+function getCellDiffState(row: DiffRow, fieldName: string, viewCol: TableViewCol | undefined): CellDiffState {
   // Row-level statuses (added, deleted, invalidJson) are styled at the row level — don't
   // overlay per-cell diff colours on top.
   if (
@@ -490,7 +491,7 @@ function getCellDiffState(row: DiffRow, fieldName: string, colDef: ColumnDefinit
     return {
       diffKind: 'unreviewed',
       fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), colDef),
+      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), viewCol),
     };
   }
   if (isUnpublished) {
@@ -498,7 +499,7 @@ function getCellDiffState(row: DiffRow, fieldName: string, colDef: ColumnDefinit
     return {
       diffKind: 'unpublished',
       fromValue: toDisplayString(rawFrom),
-      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), colDef),
+      classification: classifyFieldChange(rawFrom, getByPath(row.__raw, fieldName), viewCol),
     };
   }
   return { diffKind: null, fromValue: '', classification: null };
@@ -722,6 +723,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [validationHover, setValidationHover] = useState<ValidationHoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [visibleColumnIds, setVisibleColumnIds] = useState<string[] | null>(null);
+  const [tableView, setTableView] = useState<TableView | null>(null);
+  const [viewSource, setViewSource] = useState<string>('Generated');
+  const [availableViewNames, setAvailableViewNames] = useState<string[]>([]);
 
   const [gridSize, setGridSize] = useState<{ width: number; height: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -1005,21 +1009,40 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setPage(1);
   }, [activeFilters, sort]);
 
-  // Load schema when folder changes
+  // Load schema and view when folder changes
   useEffect(() => {
     if (!selectedFolderPath || !workspacePath) {
       setSchema(null);
+      setTableView(null);
+      setViewSource('Generated');
+      setAvailableViewNames([]);
       return;
     }
     let cancelled = false;
     void window.scratchFiles
       .getFolderMetadata(selectedFolderPath, workspacePath)
       .then((meta) => {
-        if (!cancelled) setSchema(meta.schema);
+        if (!cancelled) {
+          setSchema(meta.schema);
+          setAvailableViewNames(meta.availableViewNames ?? []);
+          // Always default to the generated fallback view — on-disk views are still in development.
+          if (meta.schema) {
+            setTableView(createFallbackTableView(meta.schema));
+            setViewSource('Generated');
+          } else {
+            setTableView(null);
+            setViewSource('Generated');
+          }
+        }
       })
       .catch((err) => {
         console.error('Failed to load folder metadata:', err);
-        if (!cancelled) setSchema(null);
+        if (!cancelled) {
+          setSchema(null);
+          setTableView(null);
+          setViewSource('Generated');
+          setAvailableViewNames([]);
+        }
       });
     return () => {
       cancelled = true;
@@ -1106,25 +1129,70 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
   }, [page, totalPages]);
 
-  /** Map from column ID to its ColumnDefinition for metadata lookup. */
-  const columnDefsMap = useMemo(() => {
-    const map = new Map<string, ColumnDefinition>();
-    for (const col of diffData?.columns ?? []) {
-      map.set(col.id, col);
-    }
+  /** Flatten view cols (handle banner groups) into a single ordered list. */
+  const flatViewCols: TableViewCol[] = useMemo(() => {
+    if (!tableView) return [];
+    return tableView.cols.flatMap((item) => (item.kind === 'banner-group' ? item.cols : [item]));
+  }, [tableView]);
+
+  /** Build a lookup from path → TableViewCol for rendering. */
+  const viewColMap = useMemo(() => {
+    const map = new Map<string, TableViewCol>();
+    for (const col of flatViewCols) map.set(col.path, col);
     return map;
-  }, [diffData?.columns]);
+  }, [flatViewCols]);
+
+  const titleColumnId = useMemo(() => flatViewCols[0]?.path ?? null, [flatViewCols]);
+
+  /** Set of field paths that are read-only according to the view, for RecordDetailView. */
+  const readonlyFields = useMemo(() => {
+    const set = new Set<string>();
+    for (const col of flatViewCols) {
+      if (col.readonly) set.add(col.path);
+    }
+    return set;
+  }, [flatViewCols]);
+
+  const allColumnIds = useMemo(() => flatViewCols.map((c) => c.path), [flatViewCols]);
+
+  const handleSwitchView = useCallback(
+    (viewName: string) => {
+      if (viewName === 'Generated') {
+        if (schema) {
+          setTableView(createFallbackTableView(schema));
+          setViewSource('Generated');
+          setVisibleColumnIds(null);
+        }
+        return;
+      }
+      if (!selectedFolderPath || !workspacePath) return;
+      void window.scratchFiles
+        .readConnectionView(selectedFolderPath, workspacePath, viewName)
+        .then((view) => {
+          if (view) {
+            setTableView(view);
+            setViewSource(viewName);
+            setVisibleColumnIds(null);
+          }
+        })
+        .catch((err: unknown) => console.debug('Failed to load view:', err));
+    },
+    [schema, selectedFolderPath, workspacePath],
+  );
+
+  const effectiveVisibleColumns = useMemo(
+    () => visibleColumnIds ?? flatViewCols.filter((c) => !c.hidden).map((c) => c.path),
+    [visibleColumnIds, flatViewCols],
+  );
 
   /** Map from column ID to display label (for column picker, header menu, etc.) */
   const columnLabelsMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const col of diffData?.columns ?? []) {
-      if (typeof col.id === 'string' && typeof col.displayName === 'string') {
-        map.set(col.id, col.displayName);
-      }
+    for (const col of flatViewCols) {
+      if (col.name) map.set(col.path, col.name);
     }
     return map;
-  }, [diffData?.columns]);
+  }, [flatViewCols]);
 
   /** Map from column ID to description (for header menu, detail view, etc.) */
   const columnDescriptionsMap = useMemo(() => {
@@ -1136,36 +1204,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
     return map;
   }, [diffData?.columns]);
-
-  const titleColumnId = useMemo(() => {
-    const raw = schema?.titleColumnRemoteId;
-    const colIds = diffData?.columns?.map((c) => c.id) ?? [];
-    // WORKAROUND(ryder): The titleColumnRemoteId isn't always set properly in the schema, or at least doesn't match
-    // what we are comparing it to. If it give us an invalid value, then fall back to the first column as the title.
-    if (Array.isArray(raw) && raw.length > 0 && raw.every((s) => typeof s === 'string')) {
-      const realValue = raw.join('.');
-      if (colIds.includes(realValue)) {
-        return realValue;
-      }
-    }
-    // Fallback to the first column as the title.
-    return colIds[0] ?? null;
-  }, [schema, diffData?.columns]);
-
-  /** All column IDs in schema order, with title column first. */
-  const allColumnIds: string[] = useMemo(() => {
-    const colIds = diffData?.columns?.map((c) => c.id) ?? [];
-    if (titleColumnId && colIds.includes(titleColumnId)) {
-      return [titleColumnId, ...colIds.filter((c) => c !== titleColumnId)];
-    }
-    return colIds;
-  }, [diffData?.columns, titleColumnId]);
-
-  /** The effective list of visible column IDs (defaults to all when picker hasn't been used yet). */
-  const effectiveVisibleColumns: string[] = useMemo(
-    () => visibleColumnIds ?? allColumnIds,
-    [visibleColumnIds, allColumnIds],
-  );
 
   const statusColumn: GridColumn = useMemo(
     () => ({
@@ -1184,8 +1222,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     const dataCols = ordered
       .filter((name) => visibleSet.has(name))
       .map((name) => {
-        const def = columnDefsMap.get(name);
-        const displayName = def?.displayName ?? name;
+        const viewCol = viewColMap.get(name);
+        const displayName = viewCol?.name ?? name;
         return {
           id: name,
           title: displayName,
@@ -1195,7 +1233,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         };
       });
     return [statusColumn, ...dataCols];
-  }, [allColumnIds, columnDefsMap, columnWidths, effectiveVisibleColumns, statusColumn]);
+  }, [allColumnIds, viewColMap, columnWidths, effectiveVisibleColumns, statusColumn]);
 
   /** Column IDs that should be focused for Needs review, across the current non-global query. */
   const unreviewedColumnIds: string[] = useMemo(() => {
@@ -1279,7 +1317,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return null;
       }
 
-      const { diffKind, fromValue, classification } = getCellDiffState(record, columnId, columnDefsMap.get(columnId));
+      const { diffKind, fromValue, classification } = getCellDiffState(record, columnId, viewColMap.get(columnId));
       if (diffKind === null) {
         return null;
       }
@@ -1301,7 +1339,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         bounds,
       };
     },
-    [columnDefsMap, columns, pagedRows, titleColumnId],
+    [viewColMap, columns, pagedRows, titleColumnId],
   );
 
   useEffect(() => {
@@ -1634,11 +1672,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const status = r.__rowStatus;
       const rowBg = getRowTint(status);
       const rowTextColor = getRowTextColor(status);
-      const colDef = columnDefsMap.get(colId);
-      const isReadOnly = colDef?.attributes.readOnly === true;
+      const viewCol = viewColMap.get(colId);
+      const isReadOnly = viewCol?.readonly === true;
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
       const val = getByPath(r.__raw, colId);
-      const { diffKind } = getCellDiffState(r, colId, colDef);
+      const { diffKind } = getCellDiffState(r, colId, viewCol);
       const diffTheme =
         diffKind === 'unreviewed'
           ? { bgCell: DIFF_WORKING_BG(), textDark: DIFF_WORKING_BORDER() }
@@ -1712,7 +1750,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         themeOverride,
       };
     },
-    [columnDefsMap, pagedRows, columns],
+    [viewColMap, pagedRows, columns],
   );
 
   const onHeaderClicked = useCallback(
@@ -1747,11 +1785,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       setHeaderMenu({
         columnId: String(column.id),
         columnTitle: column.title,
-        columnDescription: columnDefsMap.get(String(column.id))?.description ?? '',
+        columnDescription: columnDescriptionsMap.get(String(column.id)) ?? '',
         bounds,
       });
     },
-    [closeGridEditorChrome, columnDefsMap, columns],
+    [closeGridEditorChrome, columnDescriptionsMap, columns],
   );
 
   const onHeaderMenuClick = useCallback(
@@ -1843,7 +1881,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return;
       }
 
-      const { diffKind, fromValue, classification } = getCellDiffState(row, colId, columnDefsMap.get(colId));
+      const { diffKind, fromValue, classification } = getCellDiffState(row, colId, viewColMap.get(colId));
 
       // Small / extra-small text fields render the new value with changed words highlighted
       // blue. Boolean / Number cells fall through to glide's default rendering even when
@@ -1901,7 +1939,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         }
       }
     },
-    [columnDefsMap, columns, page, pagedRows, validationByCell],
+    [viewColMap, columns, page, pagedRows, validationByCell],
   );
 
   const onCellClicked = useCallback(
@@ -1987,7 +2025,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (!r || !colId) return;
       if (r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished' || r.__rowStatus === 'invalidJson')
         return;
-      const { diffKind } = getCellDiffState(r, colId, columnDefsMap.get(colId));
+      const { diffKind } = getCellDiffState(r, colId, viewColMap.get(colId));
       setActiveEditorDiffKind(diffKind ?? 'none');
       setEditingCell([col, row]);
       if (diffKind === null) {
@@ -1996,7 +2034,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
       setCellPopover(buildCellPopoverState(col, row));
     },
-    [buildCellPopoverState, columnDefsMap, columns, pagedRows],
+    [buildCellPopoverState, viewColMap, columns, pagedRows],
   );
 
   const onCellEdited = useCallback(
@@ -2253,6 +2291,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   approvedColumnIds={approvedColumnIds}
                   columnLabels={columnLabelsMap}
                   onChangeVisible={setVisibleColumnIds}
+                  activeViewName={viewSource}
+                  availableViewNames={availableViewNames}
+                  onSwitchView={handleSwitchView}
                 />
               </Popover.Dropdown>
             </Popover>
@@ -2410,6 +2451,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 columnOrder={effectiveVisibleColumns}
                 columnLabels={columnLabelsMap}
                 columnDescriptions={columnDescriptionsMap}
+                readonlyFields={readonlyFields}
                 initialFocusedFieldName={detailFocusFieldName ?? undefined}
                 onSelectIndex={(nextIndex) => {
                   if (nextIndex !== detailRowIndex) setDetailFocusFieldName(null);

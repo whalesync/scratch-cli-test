@@ -74,6 +74,8 @@ interface RecordDetailViewProps {
   columnLabels?: Map<string, string>;
   /** Map from column ID to description text. */
   columnDescriptions?: Map<string, string>;
+  /** Set of field paths that should be treated as read-only (derived from the view). */
+  readonlyFields?: Set<string>;
   onSelectIndex: (index: number) => void;
   onClose: () => void;
   onRecordChanged?: () => void;
@@ -233,6 +235,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   columnOrder,
   columnLabels,
   columnDescriptions,
+  readonlyFields: readonlyFieldsProp,
   onSelectIndex,
   onClose,
   onRecordChanged,
@@ -650,7 +653,8 @@ export const RecordDetailView = memo(function RecordDetailView({
     const changedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__changedFields);
     const unpublishedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__unpublishedFields);
     const recordColumnIdSet = new Set(recordData.columns.map((c) => c.id));
-    const readOnlyFields = new Set(recordData.columns.filter((c) => c.attributes.readOnly).map((c) => c.id));
+    const readOnlyFields =
+      readonlyFieldsProp ?? new Set(recordData.columns.filter((c) => c.attributes.readOnly).map((c) => c.id));
     const visibleFields = columnOrder.filter((fieldName) => recordColumnIdSet.has(fieldName));
     const hiddenFields = showAllFields
       ? recordData.columns.map((c) => c.id).filter((id) => !columnOrder.includes(id))
@@ -704,6 +708,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     displayData,
     editingFieldName,
     isDeleted,
+    readonlyFieldsProp,
     recordData,
     showAllFields,
     handleAcceptCellChange,

@@ -285,6 +285,8 @@ const scratchFiles = {
   > => invoke('files:read-batch', filePaths, opts),
   readSchema: (workspacePath: string, folderName: string): Promise<Record<string, unknown> | null> =>
     invoke('files:read-schema', workspacePath, folderName),
+  readConnectionView: (folderPath: string, workspacePath: string, viewName: string): Promise<unknown> =>
+    invoke('files:read-connection-view', folderPath, workspacePath, viewName),
   readGridData: (
     folderPath: string,
     opts?: {

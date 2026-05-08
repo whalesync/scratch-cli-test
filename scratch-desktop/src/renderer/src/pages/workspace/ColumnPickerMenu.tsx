@@ -1,9 +1,10 @@
-import { Box, Checkbox, Divider, Group, Stack, TextInput } from '@mantine/core';
+import { Box, Checkbox, Divider, Group, NativeSelect, Stack, TextInput } from '@mantine/core';
 import { GripVertical } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { ButtonSecondaryOutline } from '../../components/base/buttons';
 import { Text12Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { useDevTools } from '../../hooks/use-dev-tools';
 
 type ColumnPreset = 'all' | 'none' | 'needs-review' | 'approved';
 
@@ -21,6 +22,12 @@ interface ColumnPickerMenuProps {
   /** Map from column ID to display label. Falls back to the raw ID when missing. */
   columnLabels?: Map<string, string>;
   onChangeVisible: (columnIds: string[]) => void;
+  /** Name of the active view (for dev widget). */
+  activeViewName?: string;
+  /** Names of on-disk view files (for dev widget). */
+  availableViewNames?: string[];
+  /** Callback to switch to a different view source (for dev widget). */
+  onSwitchView?: (viewName: string) => void;
 }
 
 export function ColumnPickerMenu({
@@ -31,7 +38,11 @@ export function ColumnPickerMenu({
   approvedColumnIds,
   columnLabels,
   onChangeVisible,
+  activeViewName,
+  availableViewNames,
+  onSwitchView,
 }: ColumnPickerMenuProps) {
+  const { isDevToolsEnabled } = useDevTools();
   const [search, setSearch] = useState('');
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -224,8 +235,39 @@ export function ColumnPickerMenu({
             />
           ))}
       </Stack>
+
+      {isDevToolsEnabled && onSwitchView && (
+        <>
+          <Divider my={4} />
+          <Box px={4} pb={4}>
+            <Text12Regular c="var(--mantine-color-devTool-9)" mb={4}>
+              View source
+            </Text12Regular>
+            <NativeSelect
+              size="xs"
+              value={activeViewName ?? 'Generated'}
+              onChange={(e) => onSwitchView(e.currentTarget.value)}
+              data={viewSourceOptions(availableViewNames)}
+              styles={{
+                input: {
+                  borderColor: 'var(--mantine-color-devTool-9)',
+                  color: 'var(--mantine-color-devTool-9)',
+                },
+              }}
+            />
+          </Box>
+        </>
+      )}
     </Stack>
   );
+}
+
+function viewSourceOptions(availableViewNames?: string[]): Array<{ value: string; label: string }> {
+  const options: Array<{ value: string; label: string }> = [{ value: 'Generated', label: 'Generated' }];
+  for (const name of availableViewNames ?? []) {
+    options.push({ value: name, label: name });
+  }
+  return options;
 }
 
 // ── Sub-components ──

@@ -1,4 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
+import type { TableView } from '@spinner/shared-types';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
@@ -168,6 +169,8 @@ interface ScratchFilesAPI {
     totalSize: number;
     schema: Record<string, unknown>;
     columnDefinitions: ColumnDefinition[];
+    view: TableView | null;
+    availableViewNames: string[];
   }>;
   listFiles: (
     folderPath: string,
@@ -210,6 +213,7 @@ interface ScratchFilesAPI {
     >
   >;
   readSchema: (workspacePath: string, folderName: string) => Promise<Record<string, unknown> | null>;
+  readConnectionView: (folderPath: string, workspacePath: string, viewName: string) => Promise<TableView | null>;
   readGridData: (
     folderPath: string,
     opts?: {
