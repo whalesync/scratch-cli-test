@@ -250,8 +250,11 @@ export class SchemaHelperService {
           tableSpec.titleColumnRemoteId = nameOverride;
         }
 
-        // Write refreshed schema to git
+        // Write refreshed schema and default view to git
         await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);
+        if (tableSpec.defaultView) {
+          await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', tableSpec.defaultView);
+        }
 
         WSLogger.info({
           source: 'SchemaHelperService.refreshSchemasForConnection',

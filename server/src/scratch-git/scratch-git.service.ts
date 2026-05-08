@@ -4,6 +4,7 @@ import {
   FileDiffStatus,
   GitObjectCountsResponse,
   HasDirtyFilesResponse,
+  TableView,
   WorkbookId,
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
@@ -343,7 +344,10 @@ export class ScratchGitService {
     try {
       const normalizedFolder = folderPath.replace(/^\//, '');
       const newGitPath = `${SCRATCH_DIR}/${normalizedFolder}/${SCHEMA_FILENAME}`;
-      const file = { path: newGitPath, content: JSON.stringify(schema, null, 2) };
+      // Strip defaultView from the serialized schema — it belongs in views/default.json
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { defaultView, ...schemaWithoutView } = schema;
+      const file = { path: newGitPath, content: JSON.stringify(schemaWithoutView, null, 2) };
       const message = `Update schema for ${folderPath}`;
 
       const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
@@ -369,6 +373,32 @@ export class ScratchGitService {
         message: 'Failed to write schema to git',
         repoId,
         folderPath,
+        error,
+      });
+    }
+  }
+
+  /**
+   * Writes a TableView as `views/{viewName}.json` into `.scratch/{folderPath}/` on both branches.
+   * Non-throwing — failures are logged but do not block callers.
+   */
+  async writeViewToGit(repoId: string, folderPath: string, viewName: string, view: TableView): Promise<void> {
+    try {
+      const normalizedFolder = folderPath.replace(/^\//, '');
+      const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/views/${viewName}.json`;
+      const file = { path: gitPath, content: JSON.stringify(view, null, 2) };
+      const message = `Update ${viewName} view for ${folderPath}`;
+
+      for (const branch of [MAIN_BRANCH, DIRTY_BRANCH]) {
+        await this.commitFilesToBranch(repoId, branch, [file], message);
+      }
+    } catch (error) {
+      WSLogger.error({
+        source: 'ScratchGitService.writeViewToGit',
+        message: 'Failed to write view to git',
+        repoId,
+        folderPath,
+        viewName,
         error,
       });
     }

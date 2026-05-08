@@ -140,6 +140,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue('org/wkb/coa'),
       initRepo: jest.fn().mockResolvedValue(undefined),
       writeSchemaToGit: jest.fn().mockResolvedValue(undefined),
+      writeViewToGit: jest.fn().mockResolvedValue(undefined),
       stageFiles: jest.fn().mockResolvedValue(undefined),
       readStagedFiles: jest.fn(),
       markStagedFilesProcessed: jest.fn().mockResolvedValue(undefined),
@@ -362,6 +363,59 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             }),
           ]),
         );
+      });
+    });
+
+    describe('default view writing', () => {
+      it('should call writeViewToGit when tableSpec has a defaultView', async () => {
+        const defaultView = { name: 'Default', cols: [] };
+        const mockConnector = createMockConnector({ defaultView });
+        const params = createMockParams();
+        const dataFolder = createMockDataFolder();
+        const connectorAccount = createMockConnectorAccount();
+
+        (mockPrisma.dataFolder.findUnique as jest.Mock).mockResolvedValue(dataFolder);
+        (mockPrisma.dataFolder.update as jest.Mock).mockResolvedValue(dataFolder);
+        (mockConnectorAccountService.findOneById as jest.Mock).mockResolvedValue(connectorAccount);
+        (mockConnectorService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+        jest.spyOn(connectorRegistry, 'get').mockReturnValue(undefined);
+
+        mockConnector.pullRecordFiles.mockResolvedValue(undefined);
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+
+        await handler.run(params);
+
+        expect(mockScratchGitService.writeViewToGit).toHaveBeenCalledWith(
+          'org/wkb/coa',
+          '/Products',
+          'default',
+          defaultView,
+        );
+      });
+
+      it('should not call writeViewToGit when tableSpec has no defaultView', async () => {
+        const { mockConnector, params } = setupStandardMocks();
+
+        mockConnector.pullRecordFiles.mockResolvedValue(undefined);
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+
+        await handler.run(params);
+
+        expect(mockScratchGitService.writeViewToGit).not.toHaveBeenCalled();
       });
     });
 

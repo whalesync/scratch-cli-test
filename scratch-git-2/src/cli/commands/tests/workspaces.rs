@@ -84,8 +84,12 @@ fn include_schemas_then_sync_copies_schema_into_scratch_dir() {
         &source_dir.join(".scratch/Posts/schema.json"),
         r#"{"type":"object","properties":{"title":{"type":"string"}}}"#,
     );
+    write_file(
+        &source_dir.join(".scratch/Posts/views/default.json"),
+        r#"{"name":"Default","cols":[]}"#,
+    );
     write_file(&source_dir.join("Posts/rec1.json"), r#"{"id":"rec1"}"#);
-    commit_all(&source_dir, "initial with schema");
+    commit_all(&source_dir, "initial with schema and view");
 
     // Push to a bare repo.
     run_git(tmp.path(), &["init", "--bare", "repo.git"]);
@@ -102,7 +106,7 @@ fn include_schemas_then_sync_copies_schema_into_scratch_dir() {
         ".scratch/ should be excluded before include_schemas_in_sparse_checkout"
     );
 
-    // Include schemas and sync them.
+    // Include schemas and views, then sync them.
     include_schemas_in_sparse_checkout(&master_dir).unwrap();
     sync_schema_files_from_master_checkout(&master_dir, &scratch_dir).unwrap();
 
@@ -115,6 +119,17 @@ fn include_schemas_then_sync_copies_schema_into_scratch_dir() {
     assert_eq!(
         std::fs::read_to_string(&schema_path).unwrap(),
         r#"{"type":"object","properties":{"title":{"type":"string"}}}"#
+    );
+
+    let view_path = scratch_dir.join("Posts/views/default.json");
+    assert!(
+        view_path.exists(),
+        "views/default.json should exist at {}",
+        view_path.display()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&view_path).unwrap(),
+        r#"{"name":"Default","cols":[]}"#
     );
 }
 
@@ -150,8 +165,13 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
         &source_dir.join(".scratch/Posts/schema.json"),
         schema_content,
     );
+    let view_content = r#"{"name":"Default","cols":[]}"#;
+    write_file(
+        &source_dir.join(".scratch/Posts/views/default.json"),
+        view_content,
+    );
 
-    commit_all(&source_dir, "main: data + schema");
+    commit_all(&source_dir, "main: data + schema + view");
 
     // Create dirty branch (same tree as main — just needs the ref to exist)
     run_git(&source_dir, &["checkout", "-b", "dirty"]);
@@ -232,11 +252,29 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
         master_dir.join("Posts/hello-world.json").exists(),
         "data file should exist in master worktree"
     );
-    // .scratch/ in master contains only schema files (included via sparse-checkout add)
+    // .scratch/ in master contains schema and view files (included via sparse-checkout add)
     assert!(
         master_dir.join(".scratch/Posts/schema.json").exists(),
         "schema.json should be included in master worktree via sparse checkout"
     );
+    assert!(
+        master_dir
+            .join(".scratch/Posts/views/default.json")
+            .exists(),
+        "views/default.json should be included in master worktree via sparse checkout"
+    );
+
+    // ── Assert: view file lands in connections/scratch/ alongside schema ──
+    let view_path = workspace_dir
+        .join(".scratch/connections/scratch")
+        .join(conn_dir_name)
+        .join("Posts/views/default.json");
+    assert!(
+        view_path.exists(),
+        "views/default.json should exist at {}",
+        view_path.display()
+    );
+    assert_eq!(std::fs::read_to_string(&view_path).unwrap(), view_content,);
 
     // ── Assert: reviewed-dirty worktree exists ──
     let reviewed_dirty_dir = workspace_dir

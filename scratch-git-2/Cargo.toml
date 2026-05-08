@@ -54,3 +54,8 @@ rustpython-vm = { git = "https://github.com/whalesync/rustpython-vm-patched", re
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5.3", features = ["util"] }
+
+# Limit debug info in dev/test builds to reduce linker memory usage.
+# Without this, cold CI builds (no cargo cache) OOM during linking.
+[profile.dev]
+debug = "line-tables-only"

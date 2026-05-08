@@ -30,8 +30,7 @@ fn fixtures_dir() -> std::path::PathBuf {
 fn load_json(path: &Path) -> serde_json::Value {
     let raw = fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
-    serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("invalid JSON in {}: {e}", path.display()))
+    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("invalid JSON in {}: {e}", path.display()))
 }
 
 /// Run `scratchmd validate-record` with fully-inline JSON and return violations.

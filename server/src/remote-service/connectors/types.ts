@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import type { EntityId } from '@spinner/shared-types';
+import type { EntityId, TableView } from '@spinner/shared-types';
 import { PostgresColumnType } from '@spinner/shared-types';
 import { get, set, unset } from 'lodash';
 
@@ -120,6 +120,10 @@ export type BaseJsonTableSpec = {
   // The date and time the schema was generated
   // ISO 8601 format
   generatedAt?: string;
+
+  // Default table view definition for the desktop app.
+  // Written separately to views/default.json; stripped before writing schema.json.
+  defaultView?: TableView;
 };
 
 /**

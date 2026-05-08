@@ -484,6 +484,7 @@ fn include_schemas_in_sparse_checkout(worktree: &Path) -> anyhow::Result<()> {
             "sparse-checkout",
             "add",
             ".scratch/**/schema.json",
+            ".scratch/**/views/*.json",
         ])
         .output()
         .context("failed to run git sparse-checkout add")?;
@@ -515,7 +516,14 @@ fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow:
             continue;
         }
 
-        if !ft.is_file() || entry.file_name() != "schema.json" {
+        let file_name = entry.file_name();
+        let is_schema = file_name == "schema.json";
+        let is_view = file_name.to_str().map_or(false, |n| n.ends_with(".json"))
+            && path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map_or(false, |d| d == "views");
+        if !ft.is_file() || (!is_schema && !is_view) {
             continue;
         }
 

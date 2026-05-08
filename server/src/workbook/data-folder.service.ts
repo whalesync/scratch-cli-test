@@ -271,10 +271,13 @@ export class DataFolderService {
       include: { connectorAccount: true },
     });
 
-    // Write schema to git repo
+    // Write schema and default view to git repo
     try {
       const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
       await this.scratchGitService.writeSchemaToGit(repoId, folderPath, tableSpec);
+      if (tableSpec.defaultView) {
+        await this.scratchGitService.writeViewToGit(repoId, folderPath, 'default', tableSpec.defaultView);
+      }
     } catch (error) {
       WSLogger.error({
         source: 'DataFolderService.createFolder',
@@ -780,10 +783,13 @@ export class DataFolderService {
         tableSpec.titleColumnRemoteId = nameOverride;
       }
 
-      // Write schema to git repo
+      // Write schema and default view to git repo
       try {
         const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
         await this.scratchGitService.writeSchemaToGit(repoId, folder.path!, tableSpec);
+        if (tableSpec.defaultView) {
+          await this.scratchGitService.writeViewToGit(repoId, folder.path!, 'default', tableSpec.defaultView);
+        }
       } catch (error) {
         WSLogger.error({
           source: 'DataFolderService.fetchSchemaSpec',
