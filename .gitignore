@@ -33,6 +33,10 @@ dist/
 node_modules/
 *.tsbuildinfo
 
+# Python bytecode caches
+__pycache__/
+*.pyc
+
 # Turborepo cache.
 .turbo/
 
