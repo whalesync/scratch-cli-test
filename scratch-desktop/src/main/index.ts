@@ -1,3 +1,6 @@
+// Side-effect import: must run before any module that reads userData (e.g. auth-store).
+import './setup-userdata';
+
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { spawn } from 'child_process';
 import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, shell } from 'electron';

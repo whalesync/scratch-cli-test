@@ -100,6 +100,10 @@ src/
 7. All subsequent API requests include `Authorization: API-Token <token>` header
 8. Token expiry is checked on startup and window focus; expired tokens trigger re-auth
 
+## Dev vs Packaged userData
+
+Unpackaged builds (`yarn dev`) override Electron's `userData` to `<appData>/scratch-desktop-dev/` so they don't share auth tokens, cookies, or other state with the installed prod app at `<appData>/scratch-desktop/`. The override lives in [src/main/setup-userdata.ts](src/main/setup-userdata.ts) and is imported first in [src/main/index.ts](src/main/index.ts) — it must run before `auth-store.ts` constructs its `electron-store`, since `electron-store` captures `userData` at module-load time.
+
 ## Enabling Devtools
 
 Tools are always running when you start the app with `yarn dev`
