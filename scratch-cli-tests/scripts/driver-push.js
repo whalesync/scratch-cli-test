@@ -242,7 +242,7 @@ async function pauseIfNeeded(pause, step, label, details = []) {
 function listRecordFiles(workspaceDir) {
   const postsDir = path.join(
     workspaceDir,
-    "POSTGRES - Smoke Postgres",
+    "Smoke Postgres",
     "public",
     POSTS_TABLE_NAME,
   );

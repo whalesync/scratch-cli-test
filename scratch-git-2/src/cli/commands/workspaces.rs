@@ -343,7 +343,7 @@ async fn init(
         println!("      connections/");
         println!("      workspace/");
         for ca in &wb.connector_accounts {
-            let dir_name = connector_dir_name(&ca.service, &ca.display_name);
+            let dir_name = connector_dir_name(&ca.display_name);
             println!("    {}/", dir_name);
         }
         println!();
@@ -365,7 +365,7 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
             display_name: ca.display_name.clone(),
             service: ca.service.clone(),
             repo_path: ca.repo_path.clone(),
-            dir_name: connector_dir_name(&ca.service, &ca.display_name),
+            dir_name: connector_dir_name(&ca.display_name),
         })
         .collect();
     let org_id = derive_workbook_org_id(wb);
@@ -381,8 +381,8 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     let mut total = 0i64;
     total += init_workbook_repo(wb, &layout, token)?;
 
-    for ca in &wb.connector_accounts {
-        match setup_connection(ca, &layout, token) {
+    for (ca, entry) in wb.connector_accounts.iter().zip(connections.iter()) {
+        match setup_connection(ca, &entry.dir_name, &layout, token) {
             Ok(file_count) => total += file_count,
             Err(e) => eprintln!(
                 "  Warning: failed to set up connection {}: {e}",
@@ -584,8 +584,8 @@ fn find_existing_workspace(output_dir: &str, workbook_id: &str) -> Option<PathBu
     None
 }
 
-fn connector_dir_name(service: &str, display_name: &str) -> String {
-    markers::sanitize_filename(&format!("{} - {}", service, display_name))
+fn connector_dir_name(display_name: &str) -> String {
+    markers::sanitize_filename(display_name)
 }
 
 fn derive_workbook_repo_id(wb: &Workbook) -> Option<String> {
@@ -627,11 +627,10 @@ fn repo_path_prefix(repo_path: &str) -> Option<&str> {
 /// Returns the number of files materialized in the dirty checkout.
 pub fn setup_connection(
     ca: &ConnectorAccount,
+    dir_name: &str,
     layout: &WorkspaceLayout,
     token: &str,
 ) -> anyhow::Result<i64> {
-    let dir_name = connector_dir_name(&ca.service, &ca.display_name);
-
     if ca.git_url.is_empty() {
         anyhow::bail!("no git URL");
     }

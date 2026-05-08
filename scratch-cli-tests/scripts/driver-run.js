@@ -818,7 +818,7 @@ function getRecordIds(files) {
 }
 
 function getConnectionDir(workspaceDir) {
-  return path.join(workspaceDir, "POSTGRES - Smoke Postgres");
+  return path.join(workspaceDir, "Smoke Postgres");
 }
 
 function getMasterConnectionDir(workspaceDir) {
@@ -827,7 +827,7 @@ function getMasterConnectionDir(workspaceDir) {
     ".scratch",
     "connections",
     "master",
-    "POSTGRES - Smoke Postgres",
+    "Smoke Postgres",
   );
 }
 
@@ -837,7 +837,7 @@ function getDirtyConnectionDir(workspaceDir) {
     ".scratch",
     "connections",
     "dirty",
-    "POSTGRES - Smoke Postgres",
+    "Smoke Postgres",
   );
 }
 

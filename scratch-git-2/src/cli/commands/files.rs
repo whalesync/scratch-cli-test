@@ -438,13 +438,25 @@ async fn sync_workspace_structure(
     let layout = WorkspaceLayout::for_cli(workspace_dir);
     let mut result = WorkspaceSyncResult::default();
 
+    // If the workspace was initialized with the legacy "<Service> - <DisplayName>"
+    // pattern, keep using it for new connections so all folders in the workspace
+    // follow a single naming scheme.
+    let use_legacy = markers::workspace_uses_legacy_naming(&workspace_marker.connections);
+    let dir_name_for = |ca: &ConnectorAccount| -> String {
+        if use_legacy {
+            markers::connector_dir_name_legacy(&ca.service, &ca.display_name)
+        } else {
+            markers::connector_dir_name(&ca.display_name)
+        }
+    };
+
     // Set up new connections
     for ca in &added {
-        let dir_name = markers::connector_dir_name(&ca.service, &ca.display_name);
+        let dir_name = dir_name_for(ca);
         if !json {
             println!("Setting up new connection: {}...", dir_name);
         }
-        match super::workspaces::setup_connection(ca, &layout, token) {
+        match super::workspaces::setup_connection(ca, &dir_name, &layout, token) {
             Ok(_) => result.connections_added.push(dir_name),
             Err(e) => eprintln!(
                 "  Warning: failed to set up connection {}: {e}",
@@ -518,7 +530,7 @@ async fn sync_workspace_structure(
 
     // Add newly set up connections
     for ca in &added {
-        let dir_name = markers::connector_dir_name(&ca.service, &ca.display_name);
+        let dir_name = dir_name_for(ca);
         if result.connections_added.contains(&dir_name) {
             updated_connections.push(markers::ConnectionEntry {
                 id: ca.id.clone(),

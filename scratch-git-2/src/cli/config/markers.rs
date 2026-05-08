@@ -233,9 +233,30 @@ pub fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
-/// Build the connector directory name from service + display name.
-/// Format: "<Service> - <DisplayName>" with special chars replaced.
+/// Build the connector directory name from the connector account's display name.
 #[allow(dead_code)]
-pub fn connector_dir_name(service: &str, display_name: &str) -> String {
+pub fn connector_dir_name(display_name: &str) -> String {
+    sanitize_filename(display_name)
+}
+
+/// Legacy "<Service> - <DisplayName>" pattern. Used to keep older workspaces
+/// internally consistent when adding new connections; not used for fresh inits.
+pub fn connector_dir_name_legacy(service: &str, display_name: &str) -> String {
     sanitize_filename(&format!("{} - {}", service, display_name))
 }
+
+/// Detects whether an existing workspace was initialized with the legacy
+/// "<Service> - <DisplayName>" connector folder pattern. New connections added
+/// to such a workspace should keep using the legacy pattern so the layout on
+/// disk stays consistent.
+pub fn workspace_uses_legacy_naming(connections: &[ConnectionEntry]) -> bool {
+    connections.iter().any(|c| {
+        let legacy = connector_dir_name_legacy(&c.service, &c.display_name);
+        let current = connector_dir_name(&c.display_name);
+        c.dir_name == legacy && legacy != current
+    })
+}
+
+#[cfg(test)]
+#[path = "tests/markers.rs"]
+mod tests;

@@ -210,7 +210,7 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
 
     init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token").unwrap();
 
-    let conn_dir_name = "WORDPRESS - My CMS";
+    let conn_dir_name = "My CMS";
 
     // ── Assert: data files appear in the dirty checkout ──
     let dirty_dir = workspace_dir.join(conn_dir_name);
