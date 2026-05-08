@@ -232,6 +232,8 @@ Package prod macOS:
   variables:
     VITE_SCRATCH_API_URL: 'https://api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://app.scratch.md'
+    VITE_POSTHOG_KEY: $POSTHOG_KEY
+    VITE_POSTHOG_HOST: 'https://us.i.posthog.com'
     UPDATE_CHANNEL: 'desktop'
   needs:
     - job: Bootstrap prod desktop release
@@ -246,6 +248,8 @@ Package prod Linux:
   variables:
     VITE_SCRATCH_API_URL: 'https://api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://app.scratch.md'
+    VITE_POSTHOG_KEY: $POSTHOG_KEY
+    VITE_POSTHOG_HOST: 'https://us.i.posthog.com'
     UPDATE_CHANNEL: 'desktop'
   needs:
     - job: Bootstrap prod desktop release
@@ -260,6 +264,8 @@ Package prod Windows:
   variables:
     VITE_SCRATCH_API_URL: 'https://api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://app.scratch.md'
+    VITE_POSTHOG_KEY: $POSTHOG_KEY
+    VITE_POSTHOG_HOST: 'https://us.i.posthog.com'
     UPDATE_CHANNEL: 'desktop'
   needs:
     - job: Bootstrap prod desktop release
@@ -274,6 +280,8 @@ Package test macOS:
   variables:
     VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
+    VITE_POSTHOG_KEY: $POSTHOG_KEY_DEVELOPMENT
+    VITE_POSTHOG_HOST: 'https://us.i.posthog.com'
     UPDATE_CHANNEL: 'desktop-test'
   needs:
     - job: Bootstrap test desktop release
@@ -292,6 +300,8 @@ Package test Linux:
   variables:
     VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
+    VITE_POSTHOG_KEY: $POSTHOG_KEY_DEVELOPMENT
+    VITE_POSTHOG_HOST: 'https://us.i.posthog.com'
     UPDATE_CHANNEL: 'desktop-test'
   needs:
     - job: Bootstrap test desktop release
@@ -305,6 +315,8 @@ Package test Windows:
   variables:
     VITE_SCRATCH_API_URL: 'https://test-api.scratch.md'
     VITE_SCRATCH_WEB_URL: 'https://test.scratch.md'
+    VITE_POSTHOG_KEY: $POSTHOG_KEY_DEVELOPMENT
+    VITE_POSTHOG_HOST: 'https://us.i.posthog.com'
     UPDATE_CHANNEL: 'desktop-test'
   needs:
     - job: Bootstrap test desktop release
