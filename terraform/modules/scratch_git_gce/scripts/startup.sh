@@ -48,6 +48,11 @@ fi
 # Authenticate Docker with Artifact Registry
 gcloud auth configure-docker "$REGISTRY_HOST" --quiet
 
+# ---------- fetch runtime secrets from Secret Manager ----------
+SLACK_NOTIFICATION_WEBHOOK_URL=$(gcloud secrets versions access latest \
+  --secret=SLACK_NOTIFICATION_WEBHOOK_URL \
+  --project="$GCP_PROJECT_ID")
+
 # ---------- write env file for deploy.sh ----------
 mkdir -p "$DEPLOY_DIR"
 cat > "$DEPLOY_DIR/env.sh" << EOF
@@ -126,6 +131,7 @@ docker run -d \
   --log-opt labels=service,env,slot \
   --label service=scratch-git --label env="$GCP_PROJECT_ID" --label slot=blue \
   -e PORT=3200 -e GIT_BACKEND_PORT=3201 \
+  -e SLACK_NOTIFICATION_WEBHOOK_URL="$SLACK_NOTIFICATION_WEBHOOK_URL" \
   -v /mnt/disks/data:/data \
   "$IMAGE"
 
@@ -137,6 +143,7 @@ docker run -d \
   --log-opt labels=service,env,slot \
   --label service=scratch-git --label env="$GCP_PROJECT_ID" --label slot=green \
   -e PORT=3300 -e GIT_BACKEND_PORT=3301 \
+  -e SLACK_NOTIFICATION_WEBHOOK_URL="$SLACK_NOTIFICATION_WEBHOOK_URL" \
   -v /mnt/disks/data:/data \
   "$IMAGE"
 

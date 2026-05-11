@@ -35,6 +35,11 @@ docker system prune -af
 # ---------- pull new image ----------
 docker pull "$IMAGE"
 
+# ---------- fetch runtime secrets from Secret Manager ----------
+SLACK_NOTIFICATION_WEBHOOK_URL=$(gcloud secrets versions access latest \
+  --secret=SLACK_NOTIFICATION_WEBHOOK_URL \
+  --project="$GCP_PROJECT_ID")
+
 # ---------- start new version on the target slot ----------
 docker rm -f "scratch-git-$TARGET" 2>/dev/null || true
 
@@ -49,6 +54,7 @@ docker run -d \
   --label slot="$TARGET" \
   -e PORT=$TARGET_API \
   -e GIT_BACKEND_PORT=$TARGET_GIT \
+  -e SLACK_NOTIFICATION_WEBHOOK_URL="$SLACK_NOTIFICATION_WEBHOOK_URL" \
   -v /mnt/disks/data:/data \
   "$IMAGE"
 

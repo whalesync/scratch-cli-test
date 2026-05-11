@@ -6,6 +6,17 @@
 */
 
 ## ---------------------------------------------------------------------------------------------------------------------
+## Secret Access — allow the scratch-git service account to read the Slack webhook URL at runtime
+## ---------------------------------------------------------------------------------------------------------------------
+
+resource "google_secret_manager_secret_iam_member" "slack_notification_webhook_url" {
+  project   = var.gcp_project_id
+  secret_id = "SLACK_NOTIFICATION_WEBHOOK_URL"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.service_account_email}"
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
 ## Persistent Data Disk
 ## ---------------------------------------------------------------------------------------------------------------------
 
