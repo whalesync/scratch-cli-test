@@ -1,24 +1,36 @@
 import { Group, Modal, Stack, Text } from '@mantine/core';
-import { useCallback, useState } from 'react';
+import { ReactNode, useCallback, useState } from 'react';
 import { ButtonDangerLight, ButtonSecondaryGhost } from './base/buttons';
 
+type ConfirmModalOptions = {
+  title?: string;
+  confirmLabel?: string;
+  size?: string;
+};
+
 type ConfirmModalState = {
-  message: string;
+  body: ReactNode;
+  title: string;
+  confirmLabel: string;
+  size: string;
   onConfirm: () => void;
   onCancel: () => void;
 };
 
 export function useConfirmModal(): {
-  confirm: (message: string) => Promise<boolean>;
+  confirm: (body: ReactNode, options?: ConfirmModalOptions) => Promise<boolean>;
   confirmModal: React.ReactElement;
 } {
   const [state, setState] = useState<ConfirmModalState | null>(null);
 
   const confirm = useCallback(
-    (message: string): Promise<boolean> =>
+    (body: ReactNode, options?: ConfirmModalOptions): Promise<boolean> =>
       new Promise((resolve) => {
         setState({
-          message,
+          body,
+          title: options?.title ?? 'Confirm',
+          confirmLabel: options?.confirmLabel ?? 'Continue',
+          size: options?.size ?? 'sm',
           onConfirm: () => {
             setState(null);
             resolve(true);
@@ -33,12 +45,18 @@ export function useConfirmModal(): {
   );
 
   const confirmModal = (
-    <Modal opened={state !== null} onClose={() => state?.onCancel()} title="Confirm" size="sm" withCloseButton={false}>
+    <Modal
+      opened={state !== null}
+      onClose={() => state?.onCancel()}
+      title={state?.title ?? 'Confirm'}
+      size={state?.size ?? 'sm'}
+      withCloseButton={false}
+    >
       <Stack gap="md">
-        <Text size="sm">{state?.message}</Text>
+        {typeof state?.body === 'string' ? <Text size="sm">{state.body}</Text> : state?.body}
         <Group justify="flex-end">
           <ButtonSecondaryGhost onClick={() => state?.onCancel()}>Cancel</ButtonSecondaryGhost>
-          <ButtonDangerLight onClick={() => state?.onConfirm()}>Continue</ButtonDangerLight>
+          <ButtonDangerLight onClick={() => state?.onConfirm()}>{state?.confirmLabel}</ButtonDangerLight>
         </Group>
       </Stack>
     </Modal>

@@ -12,6 +12,26 @@ use serde::Serialize;
 use crate::shared::validators::{run_validators_dry, ValidatorEntry};
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Schema versioning
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Bumped whenever any `CREATE TABLE` definition in this file changes.
+/// Tables are physically named with the `__v<N>` suffix; on version change the
+/// sweep in `open_conn` drops everything that doesn't match, and the next
+/// pagination request rebuilds cold from the JSON files on disk. The index is
+/// derivative — JSON is authoritative — so cold rebuild is always safe.
+const INDEX_SCHEMA_VERSION: u32 = 1;
+
+fn version_suffix() -> String {
+    format!("__v{INDEX_SCHEMA_VERSION}")
+}
+
+/// Versioned name for the shared validation_results table.
+fn validation_results_table() -> String {
+    format!("validation_results{}", version_suffix())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Public types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -275,33 +295,36 @@ fn conn_name_from_folder(folder: &str) -> &str {
 }
 
 /// Derive a SQL table name from the subfolder portion of a folder path.
-/// e.g. "conn/public/posts" → "public_posts", "conn" → "root"
+/// Appends the schema version suffix so old/incompatible tables get swept on bump.
+/// e.g. "conn/public/posts" → "public_posts__v1", "conn" → "root__v1"
 fn table_name_from_folder(folder: &str) -> String {
     let normalized = folder.trim_start_matches('/');
     let sub = match normalized.find('/') {
         Some(idx) => &normalized[idx + 1..],
         None => "",
     };
-    if sub.is_empty() {
-        return "root".to_string();
-    }
-    // Replace path separators and sanitize to alphanumeric + underscore.
-    // Prefix with 't_' if the first char is not a letter (SQL safety).
-    let slug: String = sub
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if slug.starts_with(|c: char| c.is_ascii_digit()) {
-        format!("t_{slug}")
+    let base = if sub.is_empty() {
+        "root".to_string()
     } else {
-        slug
-    }
+        // Replace path separators and sanitize to alphanumeric + underscore.
+        // Prefix with 't_' if the first char is not a letter (SQL safety).
+        let slug: String = sub
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        if slug.starts_with(|c: char| c.is_ascii_digit()) {
+            format!("t_{slug}")
+        } else {
+            slug
+        }
+    };
+    format!("{base}{}", version_suffix())
 }
 
 fn resolve_db_path(workspace: &Path, folder: &str, override_path: Option<&Path>) -> PathBuf {
@@ -326,27 +349,62 @@ fn open_conn(db_path: &Path) -> anyhow::Result<Connection> {
     // WAL mode for concurrent readers; 5 s busy timeout before returning error.
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
         .context("failed to set WAL pragmas")?;
+    sweep_stale_version_tables(&conn)?;
     Ok(conn)
+}
+
+/// Drop any user table that doesn't end with the current `__v<N>` suffix.
+/// Skips `sqlite_*` (built-in) and `_`-prefixed tables (reserved for future metadata).
+/// The next `ensure_schema` call recreates the current-version tables fresh.
+fn sweep_stale_version_tables(conn: &Connection) -> anyhow::Result<()> {
+    let suffix = version_suffix();
+    let names: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table'
+               AND name NOT LIKE 'sqlite_%'
+               AND name NOT LIKE '\\_%' ESCAPE '\\'",
+        )?;
+        let rows: Vec<rusqlite::Result<String>> =
+            stmt.query_map([], |r| r.get(0))?.collect();
+        rows.into_iter().collect::<Result<_, _>>()?
+    };
+    for name in names {
+        if name.ends_with(&suffix) {
+            continue;
+        }
+        let quoted = name.replace('"', "\"\"");
+        conn.execute_batch(&format!("DROP TABLE IF EXISTS \"{quoted}\";"))
+            .with_context(|| format!("failed to drop stale-version table {name}"))?;
+    }
+    Ok(())
 }
 
 fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
     let tq = quote_ident(table);
-    // Create the main records table if it doesn't exist yet.
-    // New databases get the base columns; the migration below adds validation columns.
+
+    // Tables are versioned via `__v<N>` suffix and the sweep in `open_conn`
+    // drops anything that doesn't match, so we always create at the current schema.
+    // No incremental ALTER migrations — bump INDEX_SCHEMA_VERSION instead.
+    let vr_tq = quote_ident(&validation_results_table());
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS {tq} (
-            filename             TEXT PRIMARY KEY,
-            working_mtime        INTEGER,
-            working_size         INTEGER,
-            dirty_mtime          INTEGER,
-            dirty_size           INTEGER,
-            master_mtime         INTEGER,
-            master_size          INTEGER,
-            approvedChanges      INTEGER NOT NULL DEFAULT 0,
-            unapprovedChanges    INTEGER NOT NULL DEFAULT 0,
-            parse_error          TEXT
+            filename                  TEXT PRIMARY KEY,
+            working_mtime             INTEGER,
+            working_size              INTEGER,
+            dirty_mtime               INTEGER,
+            dirty_size                INTEGER,
+            master_mtime              INTEGER,
+            master_size               INTEGER,
+            approvedChanges           INTEGER NOT NULL DEFAULT 0,
+            unapprovedChanges         INTEGER NOT NULL DEFAULT 0,
+            parse_error               TEXT,
+            has_errors                INTEGER NOT NULL DEFAULT 0,
+            validated_mtime_working   INTEGER,
+            validated_mtime_master    INTEGER,
+            validated_mtime_validator INTEGER
         );
-        CREATE TABLE IF NOT EXISTS validation_results (
+        CREATE TABLE IF NOT EXISTS {vr_tq} (
             folder_path    TEXT NOT NULL,
             filename       TEXT NOT NULL,
             field_path     TEXT NOT NULL,
@@ -359,22 +417,6 @@ fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
         );"
     ))
     .context("failed to ensure schema")?;
-
-    // Migrate existing databases: add validation-tracking columns if missing.
-    let migrations: &[(&str, &str)] = &[
-        ("has_errors", "INTEGER NOT NULL DEFAULT 0"),
-        ("validated_mtime_working", "INTEGER"),
-        ("validated_mtime_master", "INTEGER"),
-        ("validated_mtime_validator", "INTEGER"),
-    ];
-    for (col_name, col_def) in migrations {
-        if !column_exists(conn, table, col_name)? {
-            conn.execute_batch(&format!(
-                "ALTER TABLE {tq} ADD COLUMN {col_name} {col_def};"
-            ))
-            .with_context(|| format!("failed to add column {col_name}"))?;
-        }
-    }
 
     Ok(())
 }
@@ -1101,9 +1143,10 @@ fn query_page_errors(
         return Ok(HashMap::new());
     }
     let placeholders = filenames.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let vr_tq = quote_ident(&validation_results_table());
     let sql = format!(
         "SELECT filename, field_path, validator_kind, level, message, description, fixable
-         FROM validation_results
+         FROM {vr_tq}
          WHERE folder_path = ? AND filename IN ({placeholders})
          ORDER BY filename, field_path, validator_kind"
     );
@@ -1188,6 +1231,7 @@ fn validate_page_records(
         let workspace_dir = resolve_workspace_dir(workspace);
         let total = stale_filenames.len();
         let mut done = 0usize;
+        let vr_tq = quote_ident(&validation_results_table());
 
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
@@ -1199,7 +1243,7 @@ fn validate_page_records(
 
             // Clear old errors for this record.
             tx.execute(
-                "DELETE FROM validation_results WHERE folder_path = ?1 AND filename = ?2",
+                &format!("DELETE FROM {vr_tq} WHERE folder_path = ?1 AND filename = ?2"),
                 params![folder, filename],
             )?;
 
@@ -1260,9 +1304,11 @@ fn validate_page_records(
             let has_errors = !violations.is_empty();
             for v in &violations {
                 tx.execute(
-                    "INSERT OR REPLACE INTO validation_results
-                     (folder_path, filename, field_path, validator_kind, level, message, description, fixable)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    &format!(
+                        "INSERT OR REPLACE INTO {vr_tq}
+                         (folder_path, filename, field_path, validator_kind, level, message, description, fixable)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                    ),
                     params![
                         folder,
                         filename,
@@ -1394,9 +1440,10 @@ pub fn clear_folder_index(
     // field columns (including their :mt/:sz companions and indexes) in one transaction.
     let tmp = format!("{}__clrtmp", table);
     let tq_tmp = quote_ident(&tmp);
+    let vr_tq = quote_ident(&validation_results_table());
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute(
-        "DELETE FROM validation_results WHERE folder_path = ?1",
+        &format!("DELETE FROM {vr_tq} WHERE folder_path = ?1"),
         params![folder],
     )
     .context("failed to clear validation_results for folder")?;
@@ -2089,7 +2136,7 @@ pub fn reindex_files(
         tx.commit()?;
         done += chunk.len();
         if debug {
-            eprintln!("[full]       {done}/{total}");
+            eprintln!("[full] Upgrading index {done}/{total}");
         }
     }
     Ok(())
@@ -2194,8 +2241,9 @@ pub fn reindex_table(
     ensure_schema(&conn, &table)?;
 
     // Clear stale validation results for this folder so they don't linger after a full rebuild.
+    let vr_tq = quote_ident(&validation_results_table());
     conn.execute(
-        "DELETE FROM validation_results WHERE folder_path = ?1",
+        &format!("DELETE FROM {vr_tq} WHERE folder_path = ?1"),
         rusqlite::params![folder],
     )
     .context("failed to clear validation_results before reindex")?;
@@ -2656,6 +2704,57 @@ mod tests {
         let result = run_query(&o).unwrap();
         // Lexical: "1" < "10" < "2"
         assert_eq!(result.filenames, vec!["c.json", "a.json", "b.json"]);
+    }
+
+    /// Pre-existing tables without the `__v<N>` suffix (legacy DBs) must be
+    /// dropped on `open_conn`. The next query rebuilds at the current version.
+    #[test]
+    fn test_sweep_drops_stale_version_tables() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+        write_json(&working_dir, "a.json", r#"{"title":"hello"}"#);
+
+        // Pre-create a legacy DB with an unversioned `validation_results` (missing
+        // `folder_path` so it would normally explode) plus a stray legacy data table.
+        let db_path = ws.join(".repos").join("conn.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        let legacy = rusqlite::Connection::open(&db_path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE validation_results (
+                     filename TEXT,
+                     field_path TEXT,
+                     validator_kind TEXT,
+                     message TEXT
+                 );
+                 CREATE TABLE posts (filename TEXT PRIMARY KEY, junk TEXT);
+                 INSERT INTO posts (filename, junk) VALUES ('a.json', 'stale');",
+            )
+            .unwrap();
+        drop(legacy);
+
+        // Running a query triggers open_conn → sweep → fresh ensure_schema.
+        let result = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(result.filenames, vec!["a.json"]);
+
+        // The legacy tables must be gone; only `__v1` tables remain.
+        let verify = rusqlite::Connection::open(&db_path).unwrap();
+        let table_names: Vec<String> = verify
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        for name in &table_names {
+            assert!(
+                name.ends_with("__v1"),
+                "found stale-version table after sweep: {name}"
+            );
+        }
+        // And the new versioned validation_results table exists.
+        assert!(table_names.iter().any(|n| n == "validation_results__v1"));
     }
 
     #[test]

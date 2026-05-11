@@ -901,8 +901,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       return;
     }
     return window.scratchDesktop.onGridProgress((line) => {
-      const match = /\[\w+\]\s*(.+)/.exec(line);
-      setIndexingProgress(match ? `Reindexing: ${match[1]}` : line);
+      const match = /^\[\w+\]\s*(.+)/.exec(line);
+      setIndexingProgress(match ? match[1] : line);
     });
   }, [isBlockingLoad]);
 

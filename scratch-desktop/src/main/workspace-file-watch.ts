@@ -26,7 +26,7 @@ import type { WebContents } from 'electron';
 import type { FSWatcher } from 'fs';
 import { watch as fsWatch } from 'fs';
 import { stat } from 'fs/promises';
-import { dirname, join } from 'path';
+import { dirname, join, relative } from 'path';
 import {
   CONNECTION_FILE_CHANGED_EVENT_CHANNEL,
   WORKSPACE_FILE_WATCH_EVENT_CHANNEL,
@@ -44,7 +44,7 @@ function sameRoots(a: string[], b: string[]): boolean {
 export class WorkspaceFileWatchService {
   private watchers: FSWatcher[] = [];
   private watchedFolders: string[] = [];
-  private connectionWatcher: FSWatcher | null = null;
+  private connectionWatchers: FSWatcher[] = [];
   private connectionFlushTimer: NodeJS.Timeout | null = null;
   private pendingConnectionPath: string | null = null;
   private activeWorkspacePath: string | null = null;
@@ -101,19 +101,32 @@ export class WorkspaceFileWatchService {
 
     this.watchedFolders = watched;
 
-    // Watch .scratch/connections/scratch/ for schema and view file changes (dev-time hot reload).
+    // Watch each data folder's connection-side schema and views/ directories for dev-time hot reload.
+    // Non-recursive fs.watch is reliable on macOS; recursive mode misses nested writes there.
     const scratchConnectionsDir = join(workspacePath, '.scratch', 'connections', 'scratch');
-    try {
-      const s = await stat(scratchConnectionsDir);
-      if (s.isDirectory()) {
-        this.connectionWatcher = fsWatch(scratchConnectionsDir, { recursive: true }, (_eventType, filename) => {
-          if (filename && !filename.endsWith('.DS_Store')) {
-            this.enqueueConnectionChange(workspacePath, join(scratchConnectionsDir, filename));
-          }
-        });
+    const seen = new Set<string>();
+    const connectionDirsToWatch: string[] = [];
+    for (const folder of sortedFolders) {
+      const rel = relative(workspacePath, folder);
+      for (const candidate of [join(scratchConnectionsDir, rel), join(scratchConnectionsDir, rel, 'views')]) {
+        if (!seen.has(candidate)) {
+          seen.add(candidate);
+          connectionDirsToWatch.push(candidate);
+        }
       }
-    } catch {
-      // .scratch/connections/scratch/ doesn't exist — skip silently.
+    }
+    for (const dir of connectionDirsToWatch) {
+      try {
+        const s = await stat(dir);
+        if (!s.isDirectory()) continue;
+        const watcher = fsWatch(dir, (_eventType, filename) => {
+          if (filename && filename.endsWith('.DS_Store')) return;
+          this.enqueueConnectionChange(workspacePath, filename ? join(dir, filename) : dir);
+        });
+        this.connectionWatchers.push(watcher);
+      } catch {
+        // Directory doesn't exist yet — skip silently.
+      }
     }
 
     return watched;
@@ -258,9 +271,9 @@ export class WorkspaceFileWatchService {
     }
     this.watchers = [];
 
-    if (this.connectionWatcher) {
-      this.connectionWatcher.close();
-      this.connectionWatcher = null;
+    for (const w of this.connectionWatchers) {
+      w.close();
     }
+    this.connectionWatchers = [];
   }
 }

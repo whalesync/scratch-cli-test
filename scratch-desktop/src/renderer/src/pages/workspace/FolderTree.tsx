@@ -1,9 +1,10 @@
 import { Text12Regular, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
-import { Box, UnstyledButton } from '@mantine/core';
+import { Box, List, Stack, Text, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+import { useConfirmModal } from '../../components/ConfirmModal';
 import { trackPullTable } from '../../lib/posthog';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { DataFolder } from '../../types/workspace';
@@ -380,17 +381,38 @@ export function FolderTree({
     [workspaceId],
   );
 
+  const { confirm, confirmModal } = useConfirmModal();
+
   const handleClearFolderIndex = useCallback(
-    (folderPath: string) => {
+    async (folderPath: string) => {
       if (!workspacePath) return;
-      void window.scratchDesktop.clearFolderIndex(workspacePath, folderPath).then(({ rows_cleared }) => {
-        notifications.show({
-          message: `Cleared ${rows_cleared.toLocaleString()} row${rows_cleared === 1 ? '' : 's'} from index`,
-          color: 'orange',
-        });
+      const ok = await confirm(
+        <Stack gap="sm">
+          <Text size="sm">
+            This drops the SQLite index for <strong>{folderPath}</strong>. The actual record files on disk are not
+            touched.
+          </Text>
+          <Text size="sm">What gets cleared:</Text>
+          <List size="sm" spacing={2}>
+            <List.Item>All indexed rows (filenames, working/dirty/master mtimes, change flags).</List.Item>
+            <List.Item>All cached sort/filter column values for this folder.</List.Item>
+            <List.Item>Validation results for this folder.</List.Item>
+          </List>
+          <Text size="sm">
+            The next time you open this table, pagination will hit the cold cache: the index rebuilds from the working
+            tree on the first request, which may take a few seconds on large folders. After that everything is normal.
+          </Text>
+        </Stack>,
+        { title: 'Clear folder index?', confirmLabel: 'Clear index', size: 'md' },
+      );
+      if (!ok) return;
+      const { rows_cleared } = await window.scratchDesktop.clearFolderIndex(workspacePath, folderPath);
+      notifications.show({
+        message: `Cleared ${rows_cleared.toLocaleString()} row${rows_cleared === 1 ? '' : 's'} from index`,
+        color: 'orange',
       });
     },
-    [workspacePath],
+    [workspacePath, confirm],
   );
 
   return (
@@ -404,7 +426,7 @@ export function FolderTree({
           onSelectFolder={onSelectFolder}
           isDevToolsEnabled={isDevToolsEnabled}
           onShowColumnDefs={handleShowColumnDefs}
-          onClearFolderIndex={handleClearFolderIndex}
+          onClearFolderIndex={(p) => void handleClearFolderIndex(p)}
           dataFolderByLocalPath={dataFolderByLocalPath}
           dataFoldersByConnection={dataFoldersByConnection}
           onRequestPull={handlePullRequest}
@@ -431,6 +453,8 @@ export function FolderTree({
           onDataRefresh={onDataRefresh}
         />
       )}
+
+      {confirmModal}
     </>
   );
 }
