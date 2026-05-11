@@ -365,8 +365,7 @@ fn sweep_stale_version_tables(conn: &Connection) -> anyhow::Result<()> {
                AND name NOT LIKE 'sqlite_%'
                AND name NOT LIKE '\\_%' ESCAPE '\\'",
         )?;
-        let rows: Vec<rusqlite::Result<String>> =
-            stmt.query_map([], |r| r.get(0))?.collect();
+        let rows: Vec<rusqlite::Result<String>> = stmt.query_map([], |r| r.get(0))?.collect();
         rows.into_iter().collect::<Result<_, _>>()?
     };
     for name in names {
@@ -1877,8 +1876,7 @@ pub fn find_stale_working(
 
     // Empty table = cold start (e.g. run_query created the schema but hasn't indexed yet).
     // Seed from all three trees so dirty/master-only records are included.
-    let row_count: i64 =
-        conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |r| r.get(0))?;
+    let row_count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |r| r.get(0))?;
     if row_count == 0 {
         let all: HashSet<String> = scan_json_files(&paths.working)
             .into_iter()
@@ -2159,7 +2157,9 @@ pub fn validate_files(
     let table = table_name_from_folder(folder);
     let mut conn = open_conn(&db_path)?;
     ensure_schema(&conn, &table)?;
-    validate_page_records(&mut conn, &table, filenames, &paths, workspace, folder, true, debug)?;
+    validate_page_records(
+        &mut conn, &table, filenames, &paths, workspace, folder, true, debug,
+    )?;
     Ok(())
 }
 
@@ -2741,7 +2741,9 @@ mod tests {
         // The legacy tables must be gone; only `__v1` tables remain.
         let verify = rusqlite::Connection::open(&db_path).unwrap();
         let table_names: Vec<String> = verify
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+            )
             .unwrap()
             .query_map([], |r| r.get::<_, String>(0))
             .unwrap()

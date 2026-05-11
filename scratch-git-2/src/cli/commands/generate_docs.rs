@@ -558,7 +558,9 @@ def validate(ctx):
 ```
 
 The sandbox excludes `subprocess`, `socket`, and `os.system`. C extensions
-(numpy, pandas) are not supported.
+(numpy, pandas) are not supported. The built-ins `eval`, `exec`, and the
+interactive helpers (`input`, `breakpoint`, `help`, `exit`, `quit`) are also
+stripped. Validator scripts must be 256 KB or smaller.
 
 ---
 

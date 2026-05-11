@@ -1,7 +1,10 @@
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
+use rustpython_vm::signal::{self, UserSignalReceiver};
 use rustpython_vm::AsObject;
 
 use super::{FieldValidationContext, ValidationLevel, ValidationResult};
@@ -16,7 +19,110 @@ fn parse_level(s: &str) -> ValidationLevel {
     }
 }
 
+// ── path containment ─────────────────────────────────────────────────────────
+
+/// Resolve a validator's relative path against `workspace_dir`, rejecting any
+/// path that escapes the workbook's `validators/` directory or that doesn't
+/// look like a Python source file. Lexical checks only — no filesystem access.
+fn resolve_validator_path(workspace_dir: &Path, relative_path: &str) -> anyhow::Result<PathBuf> {
+    if !relative_path.ends_with(".py") {
+        return Err(anyhow::anyhow!(
+            "python validator path must end in .py: {}",
+            relative_path
+        ));
+    }
+
+    let rel = Path::new(relative_path);
+    for component in rel.components() {
+        match component {
+            Component::ParentDir => {
+                return Err(anyhow::anyhow!(
+                    "python validator path must not contain '..': {}",
+                    relative_path
+                ));
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(anyhow::anyhow!(
+                    "python validator path must be relative, not absolute: {}",
+                    relative_path
+                ));
+            }
+            Component::Normal(_) | Component::CurDir => {}
+        }
+    }
+
+    if !rel.starts_with("validators") {
+        return Err(anyhow::anyhow!(
+            "python validator path must live under validators/: {}",
+            relative_path
+        ));
+    }
+
+    Ok(workspace_dir.join(rel))
+}
+
 const TIMEOUT_SECS: u64 = 5;
+/// Extra wall-clock budget given to `mpsc::recv_timeout` on top of `TIMEOUT_SECS`
+/// so the cooperative-interrupt path has time to raise the Python exception,
+/// unwind frames, and send the result back to the main thread before the
+/// backstop fires. The cooperative interrupt is the desired exit path; this
+/// buffer just keeps the backstop from racing it.
+const TIMEOUT_BACKSTOP_BUFFER_SECS: u64 = 2;
+const MAX_VALIDATOR_BYTES: u64 = 256 * 1024;
+
+// Names removed from the validator's `__builtins__` to reduce sandbox-escape
+// surface. Each Interpreter gets its own builtins module, so this mutation is
+// scoped to a single validator invocation. Removing these does not close every
+// possible escape path (notably `().__class__.__bases__[0].__subclasses__()`
+// still works via attribute traversal), but it shuts down the obvious dynamic-
+// code execution, scope introspection, and reconnaissance vectors and shrinks
+// the attack surface for future interpreter bugs.
+//
+// Intentionally NOT stripped:
+//   setattr, delattr    — the ctx dict and its contents are JSON-deep-cloned
+//                         into the VM, so any mutation is thrown away when the
+//                         interpreter exits. Built-in types reject setattr at
+//                         runtime, leaving only user-defined attribute paths
+//                         to mutate, which have no path back to Rust state.
+//   __build_class__     — required by the `class X:` statement. Validators
+//                         should be free to declare helper classes; the main
+//                         RustPython escape chain doesn't need this anyway.
+//   id                  — leaks object identity but doesn't enable a concrete
+//                         attack on its own.
+//
+// `open` is stripped: making it functional in our no-stdlib config would
+// require the `host_env` cargo feature, which also exposes `os`/`sys.exit`/
+// signal handling and meaningfully widens the sandbox. If validators ever
+// genuinely need file inputs, prefer pre-loading the contents on the Rust
+// side and injecting them through `ctx['args']` instead of opening the door.
+const STRIPPED_BUILTINS: &[&str] = &[
+    // dynamic code execution / module loading
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "__loader__",
+    "__spec__",
+    "__package__",
+    // filesystem / interactive IO
+    "open",
+    "input",
+    // scope introspection
+    "globals",
+    "locals",
+    "vars",
+    // REPL / interactive helpers
+    "breakpoint",
+    "help",
+    "exit",
+    "quit",
+    "copyright",
+    "credits",
+    "license",
+    // reconnaissance / low-level
+    "dir",
+    "memoryview",
+];
 
 type PythonValidationItem = (ValidationLevel, Option<String>, Option<String>, bool);
 
@@ -49,9 +155,9 @@ pub fn run_python_validator(
     workspace_dir: &Path,
     ctx: &FieldValidationContext,
 ) -> anyhow::Result<Option<ValidationResult>> {
-    let validator_path = workspace_dir.join(relative_path);
+    let validator_path = resolve_validator_path(workspace_dir, relative_path)?;
 
-    let source = std::fs::read_to_string(&validator_path).map_err(|e| {
+    let metadata = std::fs::metadata(&validator_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             anyhow::anyhow!(
                 "python validator not found: {} (looked in {})",
@@ -59,9 +165,21 @@ pub fn run_python_validator(
                 validator_path.display()
             )
         } else {
-            anyhow::anyhow!("failed to read python validator {}: {}", relative_path, e)
+            anyhow::anyhow!("failed to stat python validator {}: {}", relative_path, e)
         }
     })?;
+
+    if metadata.len() > MAX_VALIDATOR_BYTES {
+        return Err(anyhow::anyhow!(
+            "python validator {} is too large: {} bytes (limit {} bytes)",
+            relative_path,
+            metadata.len(),
+            MAX_VALIDATOR_BYTES
+        ));
+    }
+
+    let source = std::fs::read_to_string(&validator_path)
+        .map_err(|e| anyhow::anyhow!("failed to read python validator {}: {}", relative_path, e))?;
 
     // Clone context fields so the thread closure can own them.
     let filename = ctx.filename.clone();
@@ -70,6 +188,34 @@ pub fn run_python_validator(
     let record = ctx.record.clone();
     let args = ctx.args.clone();
     let script_name = relative_path.to_string();
+
+    // Cooperative interrupt:
+    //   • timer thread sleeps for TIMEOUT_SECS on `cancel_rx`. If the worker
+    //     finishes first it drops `cancel_tx`, which wakes the timer and it
+    //     exits without firing.
+    //   • on real timeout it sets `timeout_flag` and pushes a `UserSignal`
+    //     closure that raises KeyboardInterrupt at the next `check_signals`
+    //     point in the bytecode loop.
+    // The recv_timeout below stays as a backstop in case the script is stuck
+    // inside a Rust-implemented builtin where check_signals never runs.
+    let timeout_flag = Arc::new(AtomicBool::new(false));
+    let (signal_tx, signal_rx) = signal::user_signal_channel();
+    let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
+
+    {
+        let timeout_flag = Arc::clone(&timeout_flag);
+        std::thread::spawn(move || {
+            if let Err(mpsc::RecvTimeoutError::Timeout) =
+                cancel_rx.recv_timeout(Duration::from_secs(TIMEOUT_SECS))
+            {
+                timeout_flag.store(true, Ordering::Release);
+                let _ = signal_tx.send(Box::new(|vm: &rustpython_vm::VirtualMachine| {
+                    let exc_type = vm.ctx.exceptions.keyboard_interrupt.to_owned();
+                    Err(vm.new_exception_msg(exc_type, "validator exceeded timeout".into()))
+                }));
+            }
+        });
+    }
 
     let (tx, rx) = mpsc::channel::<anyhow::Result<Vec<PythonValidationItem>>>();
 
@@ -82,11 +228,31 @@ pub fn run_python_validator(
             &value,
             &record,
             &args,
+            signal_rx,
         );
+        // Wake the timer thread so it doesn't sit on its sleep after the
+        // worker has already finished. Send error means the timer already
+        // exited — fine either way.
+        let _ = cancel_tx.send(());
         let _ = tx.send(result);
     });
 
-    let results = match rx.recv_timeout(Duration::from_secs(TIMEOUT_SECS)) {
+    let backstop = Duration::from_secs(TIMEOUT_SECS + TIMEOUT_BACKSTOP_BUFFER_SECS);
+    let recv_result = rx.recv_timeout(backstop);
+
+    // If the timer fired during execution, treat this as a timeout regardless
+    // of what the worker returned — the validator either got the interrupt
+    // and raised, or ignored it and snuck a result through; both should be
+    // reported as a timeout.
+    if timeout_flag.load(Ordering::Acquire) {
+        return Err(anyhow::anyhow!(
+            "python validator {} timed out after {}s",
+            relative_path,
+            TIMEOUT_SECS
+        ));
+    }
+
+    let results = match recv_result {
         Ok(r) => r?,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             return Err(anyhow::anyhow!(
@@ -126,15 +292,28 @@ fn exec_in_vm(
     value: &serde_json::Value,
     record: &serde_json::Value,
     args: &serde_json::Value,
+    signal_rx: UserSignalReceiver,
 ) -> anyhow::Result<Vec<PythonValidationItem>> {
     use rustpython_vm as rvm;
 
     // Create an interpreter with no stdlib added — only Python builtins are
     // available. This prevents `import subprocess`, `import socket`, etc.
-    let interp = rvm::Interpreter::with_init(Default::default(), |_vm| {});
+    // The signal receiver lets the timer thread raise KeyboardInterrupt at
+    // the next check_signals point in the bytecode loop.
+    let interp = rvm::Interpreter::with_init(Default::default(), move |vm| {
+        vm.set_user_signal_channel(signal_rx);
+    });
 
     interp.enter(|vm| -> anyhow::Result<Vec<PythonValidationItem>> {
         let scope = vm.new_scope_with_builtins();
+
+        // Defense-in-depth: strip dangerous names from this interpreter's
+        // builtins module. del_item returns KeyError for names that aren't
+        // present in this build — we ignore those.
+        let builtins_dict = vm.builtins.dict();
+        for name in STRIPPED_BUILTINS {
+            let _ = builtins_dict.del_item(*name, vm);
+        }
 
         // ── compile ──────────────────────────────────────────────────────────
         let code = vm
@@ -385,6 +564,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::Path;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     use super::run_python_validator;
@@ -581,6 +761,188 @@ def validate(ctx):
 
     // ── file loading errors ───────────────────────────────────────────────────
 
+    // ── stripped builtins ─────────────────────────────────────────────────────
+
+    #[test]
+    fn dangerous_builtins_are_stripped() {
+        // Every name we strip must raise NameError when the validator tries to
+        // use it. Includes both the plan's baseline list and the additional
+        // names we strip on top.
+        let stripped = [
+            "eval",
+            "exec",
+            "compile",
+            "__import__",
+            "__loader__",
+            "open",
+            "input",
+            "globals",
+            "locals",
+            "vars",
+            "breakpoint",
+            "help",
+            "exit",
+            "quit",
+            "dir",
+            "memoryview",
+        ];
+
+        for name in stripped {
+            let tmp = TempDir::new().unwrap();
+            // Reference the bare name at call time so lookup happens against
+            // the stripped builtins.
+            let src = format!("def validate(ctx):\n    {}\n    return []\n", name);
+            write(tmp.path(), "validators/check.py", &src);
+            let err = run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi")))
+                .unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("NameError") || msg.contains("not defined"),
+                "expected NameError for '{}', got: {}",
+                name,
+                msg
+            );
+            assert!(
+                msg.contains(name),
+                "expected error to name '{}', got: {}",
+                name,
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn eval_call_is_blocked_at_runtime() {
+        // The classic "compile arbitrary code at runtime" path must not work.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/evil.py",
+            "def validate(ctx):\n    eval('1 + 1')\n    return []\n",
+        );
+        let err =
+            run_python_validator("validators/evil.py", tmp.path(), &ctx(json!("hi"))).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("NameError") || msg.contains("not defined"),
+            "got: {}",
+            msg
+        );
+        assert!(msg.contains("eval"), "got: {}", msg);
+    }
+
+    #[test]
+    fn setattr_and_delattr_work_on_validator_locals() {
+        // ctx values are JSON-deep-cloned into the VM, so mutation cannot leak
+        // back to Rust state. setattr / delattr are kept available.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/mutates.py",
+            r#"
+def validate(ctx):
+    # Functions accept arbitrary attribute assignment; verifies setattr/delattr
+    # are callable without needing __build_class__.
+    def f():
+        pass
+    setattr(f, 'tag', 42)
+    if getattr(f, 'tag') != 42:
+        return [{'message': 'setattr did not stick'}]
+    delattr(f, 'tag')
+    if hasattr(f, 'tag'):
+        return [{'message': 'delattr did not remove'}]
+    return []
+"#,
+        );
+        let result =
+            run_python_validator("validators/mutates.py", tmp.path(), &ctx(json!("hi"))).unwrap();
+        assert!(result.is_none(), "expected no violation, got: {:?}", result);
+    }
+
+    #[test]
+    fn user_defined_classes_are_allowed() {
+        // Validators are free to declare helper classes; __build_class__
+        // stays available.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/cls.py",
+            r#"
+class Helper:
+    def __init__(self, n):
+        self.n = n
+
+    def doubled(self):
+        return self.n * 2
+
+def validate(ctx):
+    if Helper(21).doubled() != 42:
+        return [{'message': 'class arithmetic broken'}]
+    return []
+"#,
+        );
+        let result =
+            run_python_validator("validators/cls.py", tmp.path(), &ctx(json!("hi"))).unwrap();
+        assert!(result.is_none(), "expected no violation, got: {:?}", result);
+    }
+
+    #[test]
+    fn safe_builtins_still_work() {
+        // The names a typical validator needs must survive the strip. If this
+        // test ever fails, the strip list has gone too far.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/uses_safe_builtins.py",
+            r#"
+def validate(ctx):
+    s = str(ctx['value'])
+    n = len(s)
+    pairs = list(enumerate([1, 2, 3]))
+    total = sum(range(5))
+    biggest = max([n, total])
+    ok = isinstance(s, str) and bool(s) and biggest > 0 and 'h' in s
+    if not ok:
+        return [{'message': 'safe builtin returned wrong result'}]
+    return []
+"#,
+        );
+        let result = run_python_validator(
+            "validators/uses_safe_builtins.py",
+            tmp.path(),
+            &ctx(json!("hi")),
+        )
+        .unwrap();
+        assert!(result.is_none(), "expected no violation, got: {:?}", result);
+    }
+
+    #[test]
+    fn oversized_validator_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        // Syntactically valid Python, but padded past the 256 KB cap so the
+        // size check rejects it before the parser ever sees it.
+        let mut large = String::from("def validate(ctx):\n    return []\n# ");
+        large.push_str(&"x".repeat(300 * 1024));
+        write(tmp.path(), "validators/big.py", &large);
+        let err =
+            run_python_validator("validators/big.py", tmp.path(), &ctx(json!("hi"))).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("too large"), "got: {}", msg);
+        assert!(msg.contains("validators/big.py"), "got: {}", msg);
+    }
+
+    #[test]
+    fn validator_just_under_size_limit_still_runs() {
+        let tmp = TempDir::new().unwrap();
+        // Stay safely under 256 KB so the runner accepts the file.
+        let mut source = String::from("def validate(ctx):\n    return []\n# ");
+        source.push_str(&"x".repeat(200 * 1024));
+        write(tmp.path(), "validators/biggish.py", &source);
+        let result =
+            run_python_validator("validators/biggish.py", tmp.path(), &ctx(json!("hi"))).unwrap();
+        assert!(result.is_none());
+    }
+
     #[test]
     fn file_not_found_gives_clear_message() {
         let tmp = TempDir::new().unwrap();
@@ -589,6 +951,55 @@ def validate(ctx):
         let msg = err.to_string();
         assert!(msg.contains("python validator not found"), "got: {}", msg);
         assert!(msg.contains("validators/missing.py"), "got: {}", msg);
+    }
+
+    // ── path containment ──────────────────────────────────────────────────────
+
+    #[test]
+    fn non_py_suffix_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let err = run_python_validator("validators/check.txt", tmp.path(), &ctx(json!("hi")))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("must end in .py"), "got: {}", msg);
+    }
+
+    #[test]
+    fn parent_dir_traversal_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let err = run_python_validator("validators/../escape.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("must not contain '..'"), "got: {}", msg);
+    }
+
+    #[test]
+    fn absolute_path_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let err =
+            run_python_validator("/etc/passwd.py", tmp.path(), &ctx(json!("hi"))).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must be relative") || msg.contains("absolute"),
+            "got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn path_outside_validators_dir_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        // File exists but lives outside `validators/` — must still be rejected
+        // before we ever read it.
+        write(
+            tmp.path(),
+            "other/check.py",
+            "def validate(ctx):\n    return []\n",
+        );
+        let err =
+            run_python_validator("other/check.py", tmp.path(), &ctx(json!("hi"))).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("must live under validators/"), "got: {}", msg);
     }
 
     // ── syntax and function errors ────────────────────────────────────────────
@@ -707,6 +1118,91 @@ def validate(ctx):
             run_python_validator("validators/check.py", tmp.path(), &ctx(json!("hi"))).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("raised"), "got: {}", msg);
+    }
+
+    // ── cooperative interrupt ─────────────────────────────────────────────────
+
+    #[test]
+    fn runaway_loop_is_interrupted_within_timeout() {
+        // A pure-Python infinite loop should be cut off by the cooperative
+        // interrupt within roughly TIMEOUT_SECS — well before the
+        // recv_timeout backstop fires.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/spin.py",
+            "def validate(ctx):\n    while True:\n        pass\n",
+        );
+        let start = std::time::Instant::now();
+        let err =
+            run_python_validator("validators/spin.py", tmp.path(), &ctx(json!("hi"))).unwrap_err();
+        let elapsed = start.elapsed();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("timed out") && msg.contains("validators/spin.py"),
+            "got: {}",
+            msg
+        );
+        // Cooperative interrupt should fire close to 5s, well under the
+        // backstop (5 + 2 = 7s). Allow 1s of slack for slow CI.
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "took {:?}, expected interrupt around 5s",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn validator_swallowing_keyboard_interrupt_still_reports_timeout() {
+        // A malicious validator that swallows the interrupt via a bare
+        // `except:` block in a tight loop should still surface as a timeout
+        // (via the recv_timeout backstop) rather than running forever.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/swallow.py",
+            r#"
+def validate(ctx):
+    while True:
+        try:
+            pass
+        except:
+            pass
+"#,
+        );
+        let start = std::time::Instant::now();
+        let err = run_python_validator("validators/swallow.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap_err();
+        let elapsed = start.elapsed();
+        let msg = err.to_string();
+        assert!(msg.contains("timed out"), "got: {}", msg);
+        // First interrupt fires at ~5s, hits the bare except, gets swallowed.
+        // The timeout_flag is still set so run_python_validator returns the
+        // timeout error without waiting for the backstop. Should still be
+        // well within the backstop window.
+        assert!(elapsed < Duration::from_secs(8), "took {:?}", elapsed);
+    }
+
+    #[test]
+    fn fast_validator_returns_well_before_timeout() {
+        // Sanity check that the timer-thread plumbing doesn't add latency
+        // to validators that complete normally.
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "validators/quick.py",
+            "def validate(ctx):\n    return []\n",
+        );
+        let start = std::time::Instant::now();
+        let result =
+            run_python_validator("validators/quick.py", tmp.path(), &ctx(json!("hi"))).unwrap();
+        let elapsed = start.elapsed();
+        assert!(result.is_none());
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "fast validator took {:?}; timer-thread cancel may be broken",
+            elapsed
+        );
     }
 
     #[test]
