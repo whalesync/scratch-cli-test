@@ -31,7 +31,7 @@ export function UserMenu() {
             onClick={() => void window.scratchDesktop.toggleDevTools()}
             c="var(--mantine-color-devTool-9)"
           >
-            Browser Dev Tools
+            Toggle Console
           </Menu.Item>
         )}
         <Menu.Item leftSection={<LogOut size={14} />} onClick={() => void logout()}>

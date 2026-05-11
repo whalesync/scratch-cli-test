@@ -48,6 +48,8 @@ import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
 import { RecordDetailView } from './RecordDetailView';
+import { UnifiedDiffToggleButton } from './UnifiedDiffMode';
+import { drawUnifiedDiffCell, UNIFIED_DIFF_ROW_HEIGHT } from './unified-diff-cell';
 
 // ── Types ──
 
@@ -813,6 +815,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [editPropertyCol, setEditPropertyCol] = useState<TableViewCol | null>(null);
   const [invalidJsonModalOpen, setInvalidJsonModalOpen] = useState(false);
   const [bulkActionConfirm, setBulkActionConfirm] = useState<'approve' | 'reject' | 'discard' | null>(null);
+  // Experimental "Unified Diffs" view mode — see UnifiedDiffMode.tsx.
+  const [unifiedDiffMode, setUnifiedDiffMode] = useState(false);
+  useEffect(() => {
+    if (unifiedDiffMode && (diffData?.filterCounts?.unreviewed ?? 0) === 0) {
+      setUnifiedDiffMode(false);
+    }
+  }, [unifiedDiffMode, diffData?.filterCounts?.unreviewed]);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [indexingProgress, setIndexingProgress] = useState<string | null>(null);
   const loadGenerationRef = useRef(0);
@@ -2211,7 +2220,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         diffKind !== null &&
         args.cell.kind === GridCellKind.Text &&
         (classification?.fieldSize === 'XS' || classification?.fieldSize === 'S');
-      if (isWordDiffCandidate) {
+      if (unifiedDiffMode) {
+        // Compute the "after" value the same way the cell popover does — via
+        // toDisplayString without a propertyType — so date/object fields render
+        // consistently with the "before" side and don't leak the cell's pre-formatted
+        // (e.g. localized date) displayData into the diff view.
+        const viewCol = viewColMap.get(colId);
+        const effectivePath = resolveEffectivePath(colId, viewCol);
+        const toValue = diffKind === 'unreviewed' ? toDisplayString(getByPath(row.__raw, effectivePath)) : undefined;
+        drawUnifiedDiffCell(args, { diffKind, fromValue, toValue, classification });
+      } else if (isWordDiffCandidate) {
         const cell = args.cell;
         const toText = 'displayData' in cell && typeof cell.displayData === 'string' ? cell.displayData : '';
         drawWordDiffText(args.ctx, args.rect, args.theme, fromValue, toText);
@@ -2260,7 +2278,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         }
       }
     },
-    [viewColMap, columns, page, pagedRows, validationByCell],
+    [viewColMap, columns, page, pagedRows, validationByCell, unifiedDiffMode],
   );
 
   const onCellClicked = useCallback(
@@ -2546,6 +2564,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 </ButtonSecondaryGhost>
               </>
             )}
+            {detailRowIndex === null && (
+              <UnifiedDiffToggleButton
+                active={unifiedDiffMode}
+                disabled={(filterCounts?.unreviewed ?? 0) === 0}
+                onToggle={() => setUnifiedDiffMode((v) => !v)}
+              />
+            )}
             <Divider orientation="vertical" />
             <Popover>
               <Popover.Target>
@@ -2677,6 +2702,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 groupHeaderHeight={hasAnyGroups ? 28 : 0}
                 rowMarkers="none"
                 freezeColumns={titleColumnId && columns[1]?.id === titleColumnId ? 2 : 1}
+                rowHeight={unifiedDiffMode ? UNIFIED_DIFF_ROW_HEIGHT : 34}
               />
             )}
             {inspectButtonRect && hoveredRowIdx !== null && (

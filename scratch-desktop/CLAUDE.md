@@ -58,6 +58,7 @@ Before implementing or modifying any React UI in the renderer, read [`UI_SYSTEM.
 - Same code style as the rest of the monorepo: Prettier with single quotes, semicolons, 120-char width, trailing commas
 - `kebab-case` filenames, `PascalCase` components/classes
 - ESLint with `typescript-eslint` type-checked rules, `react-hooks`, and `react-refresh` plugins
+- **React Fast Refresh**: a `.tsx` module that exports a component must not also export non-components (constants, plain functions, etc.) — ESLint enforces this via `react-refresh/only-export-components`. Put shared helpers, hooks, and values in a sibling `.ts` file (or a module that only exports non-components) and import them where needed.
 - Do not use `as any` — use proper type assertions (`as string`, etc.)
 - Use `console.debug` for development logging, not `console.log`
 
