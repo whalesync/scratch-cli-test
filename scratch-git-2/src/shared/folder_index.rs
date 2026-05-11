@@ -185,6 +185,86 @@ fn resolve_folder_paths(workspace: &Path, folder: &str) -> FolderPaths {
     }
 }
 
+/// Returns the path to the `schema.json` file for the given folder.
+/// Schema files live at `<workspace>/.scratch/connections/scratch/<conn>/<sub_path>/schema.json`.
+fn resolve_folder_schema_path(workspace: &Path, folder: &str) -> PathBuf {
+    let normalized = folder.trim_start_matches('/');
+    let (conn_name, sub_path) = match normalized.find('/') {
+        Some(idx) => (&normalized[..idx], &normalized[idx + 1..]),
+        None => (normalized, ""),
+    };
+    let base = workspace
+        .join(".scratch")
+        .join("connections")
+        .join("scratch")
+        .join(conn_name);
+    let dir = if sub_path.is_empty() {
+        base
+    } else {
+        base.join(sub_path)
+    };
+    dir.join("schema.json")
+}
+
+/// Load the folder's `schema.json` if present and parseable.
+fn load_folder_schema(workspace: &Path, folder: &str) -> Option<serde_json::Value> {
+    let path = resolve_folder_schema_path(workspace, folder);
+    let raw = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// True if a JSON Schema property node represents a numeric type.
+/// Handles `"type": "number" | "integer"`, the array form `"type": ["number", "null"]`,
+/// and the nullable wrapper forms `anyOf` / `oneOf` (e.g. `[{type: number}, {type: null}]`).
+fn schema_node_is_numeric(node: &serde_json::Value) -> bool {
+    if let Some(t) = node.get("type") {
+        if let Some(s) = t.as_str() {
+            return matches!(s, "number" | "integer");
+        }
+        if let Some(arr) = t.as_array() {
+            return arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|s| matches!(s, "number" | "integer"));
+        }
+    }
+    for key in ["anyOf", "oneOf"] {
+        if let Some(branches) = node.get(key).and_then(|v| v.as_array()) {
+            if branches.iter().any(schema_node_is_numeric) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True if a dot-separated json path (e.g. `"fields.price"`) resolves to a
+/// numeric property in `schema_doc`. The document may wrap the schema under a
+/// top-level `"schema"` key (the format produced by the publish pipeline).
+fn schema_path_is_numeric(schema_doc: &serde_json::Value, json_path: &str) -> bool {
+    let root = schema_doc.get("schema").unwrap_or(schema_doc);
+    let mut current = root;
+    for part in json_path.split('.') {
+        let Some(props) = current.get("properties") else {
+            return false;
+        };
+        let Some(next) = props.get(part) else {
+            return false;
+        };
+        current = next;
+    }
+    schema_node_is_numeric(current)
+}
+
+/// Convenience wrapper: load the folder schema and check the given column.
+/// Returns `false` if no schema is found — keeping TEXT affinity is the safe default.
+fn folder_column_is_numeric(workspace: &Path, folder: &str, column: &str) -> bool {
+    match load_folder_schema(workspace, folder) {
+        Some(doc) => schema_path_is_numeric(&doc, column),
+        None => false,
+    }
+}
+
 /// Extract the connection name (first path component) from a folder path.
 fn conn_name_from_folder(folder: &str) -> &str {
     let normalized = folder.trim_start_matches('/');
@@ -344,13 +424,16 @@ fn read_json(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 /// Extract a value at a dot-separated json path (e.g. "fields.title") from a
-/// parsed JSON value. Stores the result as its string representation.
+/// parsed JSON value. Returns `None` for missing paths AND for JSON `null`, so
+/// nullable fields land as SQL NULL (which sorts predictably) rather than the
+/// literal string "null".
 fn extract_json_field(val: &serde_json::Value, json_path: &str) -> Option<String> {
     // Convert "fields.title" → "/fields/title" for JSON Pointer.
     let pointer = format!("/{}", json_path.replace('.', "/"));
-    val.pointer(&pointer).map(|v| match v {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
+    val.pointer(&pointer).and_then(|v| match v {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
     })
 }
 
@@ -620,7 +703,18 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> anyhow::Result
 /// Ensure the three columns for an on-demand field exist, then refresh any stale values.
 /// Create the column + :mt + :sz columns and an index if they don't already exist.
 /// Does NOT populate any values — data population is handled by reindex_files_columns.
-fn add_field_column_if_missing(conn: &Connection, table: &str, column: &str) -> anyhow::Result<()> {
+///
+/// When `is_numeric` is true the value column is declared with REAL affinity, so
+/// SQLite stores numeric-looking text as INTEGER/REAL and `ORDER BY` produces a
+/// numeric ordering (1, 2, 10) instead of a lexical one (1, 10, 2). Existing
+/// TEXT columns from older indexes are left untouched — drop the SQLite db or
+/// run `--reindex` to pick up the new affinity.
+fn add_field_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    is_numeric: bool,
+) -> anyhow::Result<()> {
     if column_exists(conn, table, column)? {
         return Ok(());
     }
@@ -633,8 +727,9 @@ fn add_field_column_if_missing(conn: &Connection, table: &str, column: &str) -> 
         sanitize_for_index_name(table),
         sanitize_for_index_name(column)
     );
+    let col_type = if is_numeric { "REAL" } else { "TEXT" };
     conn.execute_batch(&format!(
-        "ALTER TABLE {tq} ADD COLUMN {col_q} TEXT;
+        "ALTER TABLE {tq} ADD COLUMN {col_q} {col_type};
          ALTER TABLE {tq} ADD COLUMN {mt_q} INTEGER;
          ALTER TABLE {tq} ADD COLUMN {sz_q} INTEGER;
          CREATE INDEX IF NOT EXISTS \"{idx_name}\" ON {tq} ({col_q});"
@@ -648,11 +743,14 @@ fn ensure_field_column(
     table: &str,
     column: &str,
     working_dir: &Path,
+    workspace: &Path,
+    folder: &str,
 ) -> anyhow::Result<()> {
     validate_json_path(column)?;
     let mt_col = format!("{column}:mt");
     let sz_col = format!("{column}:sz");
-    add_field_column_if_missing(conn, table, column)?;
+    let is_numeric = folder_column_is_numeric(workspace, folder, column);
+    add_field_column_if_missing(conn, table, column, is_numeric)?;
     update_stale_field_values(conn, table, column, &mt_col, &sz_col, working_dir)?;
     Ok(())
 }
@@ -789,11 +887,13 @@ fn resolve_sort_column(
     conn: &mut Connection,
     table: &str,
     working_dir: &Path,
+    workspace: &Path,
+    folder: &str,
 ) -> anyhow::Result<String> {
     match sort_by {
         "filename" | "approvedChanges" | "unapprovedChanges" => Ok(sort_by.to_string()),
         _ => {
-            ensure_field_column(conn, table, sort_by, working_dir)?;
+            ensure_field_column(conn, table, sort_by, working_dir, workspace, folder)?;
             Ok(sort_by.to_string())
         }
     }
@@ -1505,9 +1605,14 @@ pub fn index_field_with_progress(
             sanitize_for_index_name(&table),
             sanitize_for_index_name(column)
         );
+        let col_type = if folder_column_is_numeric(workspace, folder, column) {
+            "REAL"
+        } else {
+            "TEXT"
+        };
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(&format!(
-            "ALTER TABLE {tq} ADD COLUMN {col_q} TEXT;
+            "ALTER TABLE {tq} ADD COLUMN {col_q} {col_type};
              ALTER TABLE {tq} ADD COLUMN {mt_q} INTEGER;
              ALTER TABLE {tq} ADD COLUMN {sz_q} INTEGER;
              CREATE INDEX IF NOT EXISTS \"{idx_name}\" ON {tq} ({col_q});"
@@ -2164,12 +2269,14 @@ pub fn run_query(opts: &QueryOptions) -> anyhow::Result<ReadRecordsResult> {
         };
         if let Some(col) = sort_col_name {
             validate_json_path(col)?;
-            add_field_column_if_missing(&conn, &table, col)?;
+            let is_numeric = folder_column_is_numeric(&opts.workspace, &opts.folder, col);
+            add_field_column_if_missing(&conn, &table, col, is_numeric)?;
         }
         for filter in &opts.filters {
             if let FilterSpec::Field { column, .. } = filter {
                 validate_json_path(column)?;
-                add_field_column_if_missing(&conn, &table, column)?;
+                let is_numeric = folder_column_is_numeric(&opts.workspace, &opts.folder, column);
+                add_field_column_if_missing(&conn, &table, column, is_numeric)?;
             }
         }
 
@@ -2210,7 +2317,14 @@ pub fn run_query(opts: &QueryOptions) -> anyhow::Result<ReadRecordsResult> {
         }
     }
 
-    let sort_col = resolve_sort_column(&opts.sort_by, &mut conn, &table, &paths.working)?;
+    let sort_col = resolve_sort_column(
+        &opts.sort_by,
+        &mut conn,
+        &table,
+        &paths.working,
+        &opts.workspace,
+        &opts.folder,
+    )?;
 
     let (where_clause, where_params) = build_where_clause(&opts.filters)?;
     let order_str = match opts.sort_order {
@@ -2461,6 +2575,87 @@ mod tests {
         o.sort_by = "fields.title".to_string();
         let result = run_query(&o).unwrap();
         assert_eq!(result.filenames, vec!["b.json", "a.json"]); // apple < banana
+    }
+
+    /// When schema.json declares a field as `"type": "number"`, the index column
+    /// must use REAL affinity so sorting produces 1, 2, 10 rather than the lexical
+    /// 1, 10, 2.
+    #[test]
+    fn test_numeric_field_sorts_numerically() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+        let schema_dir = ws
+            .join(".scratch")
+            .join("connections")
+            .join("scratch")
+            .join("conn")
+            .join("posts");
+
+        write_json(&working_dir, "a.json", r#"{"fields":{"price":10}}"#);
+        write_json(&working_dir, "b.json", r#"{"fields":{"price":2}}"#);
+        write_json(&working_dir, "c.json", r#"{"fields":{"price":1}}"#);
+        write_json(
+            &schema_dir,
+            "schema.json",
+            r#"{"schema":{"properties":{"fields":{"properties":{"price":{"type":"number"}}}}}}"#,
+        );
+
+        let mut o = opts(&ws, "conn/posts");
+        o.sort_by = "fields.price".to_string();
+        let result = run_query(&o).unwrap();
+        assert_eq!(result.filenames, vec!["c.json", "b.json", "a.json"]); // 1 < 2 < 10
+    }
+
+    /// Same as above but with the nullable form `anyOf: [{number}, {null}]`.
+    /// JSON null values must land as SQL NULL (sorting first in ASC) — not as
+    /// the literal string "null".
+    #[test]
+    fn test_nullable_numeric_field_sorts_numerically() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+        let schema_dir = ws
+            .join(".scratch")
+            .join("connections")
+            .join("scratch")
+            .join("conn")
+            .join("posts");
+
+        write_json(&working_dir, "a.json", r#"{"fields":{"price":10}}"#);
+        write_json(&working_dir, "b.json", r#"{"fields":{"price":null}}"#);
+        write_json(&working_dir, "c.json", r#"{"fields":{"price":2}}"#);
+        write_json(
+            &schema_dir,
+            "schema.json",
+            r#"{"schema":{"properties":{"fields":{"properties":{"price":{"anyOf":[{"type":"number"},{"type":"null"}]}}}}}}"#,
+        );
+
+        let mut o = opts(&ws, "conn/posts");
+        o.sort_by = "fields.price".to_string();
+        let result = run_query(&o).unwrap();
+        // NULL first, then 2, then 10
+        assert_eq!(result.filenames, vec!["b.json", "c.json", "a.json"]);
+    }
+
+    /// Sanity check: without a schema.json the column stays TEXT and sorts lexically.
+    /// Documents the fallback behavior so a future schema-format change doesn't
+    /// silently regress non-schema folders.
+    #[test]
+    fn test_no_schema_falls_back_to_text_sort() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+
+        write_json(&working_dir, "a.json", r#"{"fields":{"price":10}}"#);
+        write_json(&working_dir, "b.json", r#"{"fields":{"price":2}}"#);
+        write_json(&working_dir, "c.json", r#"{"fields":{"price":1}}"#);
+
+        let mut o = opts(&ws, "conn/posts");
+        o.sort_by = "fields.price".to_string();
+        let result = run_query(&o).unwrap();
+        // Lexical: "1" < "10" < "2"
+        assert_eq!(result.filenames, vec!["c.json", "a.json", "b.json"]);
     }
 
     #[test]
