@@ -133,6 +133,7 @@ type BaseJsonTableSpec = {
   slugFieldPath?: string; // Lodash dot-path for filename slug (e.g. 'fieldData.slug')
   basePath?: string[]; // Root path grouping (e.g. site name, base name)
   generatedAt?: string; // ISO 8601 timestamp of schema generation
+  defaultView?: TableView; // Pre-built column layout (see Section 8)
 };
 
 // A record — just a plain JSON object
@@ -1005,6 +1006,52 @@ server/src/remote-service/connectors/library/<service-name>/
 ├── <service-name>-api-client.ts      # API client wrapper (if needed)
 ├── <service-name>-auth-parser.ts     # AuthParser (if needed)
 ├── <service-name>-types.ts           # Service-specific types
+├── <service-name>-default-view.ts    # Default view builder (see Section 8)
 ├── conversion/                       # Field type conversion utilities (if needed)
 └── __tests__/                        # Tests
 ```
+
+## 8. Default Views
+
+Every connector should provide a `defaultView` on its `BaseJsonTableSpec`. The default view controls which columns appear in the grid, their order, display names, type hints, and visibility when the user first opens a table. Without one, the client falls back to an auto-generated view that shows every field alphabetically with no type hints — not a good first impression.
+
+### Types
+
+See the types in `/packages/shared-types/src/connector/table-view.ts`. Comments there explain how and when to use them.
+
+### Overview
+
+A default view is a `TableView` object set on `tableSpec.defaultView` in your `fetchJsonTableSpec()` implementation. It is written to `views/default.json` in the workbook's git repo on every pull. Put the builder in a dedicated file (`<service-name>-default-view.ts`) and add tests in `__tests__/<service-name>-default-view.spec.ts`.
+
+
+### Design Principles
+
+**0. Make the table immediately recognizable.** The user should open this up and say "AHA! That's my data!". Ensure the first screen of ~5 columns contains real user-meaningful data and not only IDs, dates, and metadata that will be hard to relate to. Focus on columns that a user of this service will interact with frequently and identify each record in the user's mind.
+
+**1. Schema-driven, not hardcoded.** Read the TypeBox schema produced by your `fetchJsonTableSpec()` to discover fields dynamically. This way new fields added by the service appear automatically. Only use hardcoded lists for _ordering_ and _visibility_ preferences, not for defining which columns exist.
+
+**2. Priority ordering.** Define a priority list of important fields that should appear first. Fields not in the list go after, sorted in the order they appear from the server, or worst-case, alphabetically. This gives users a sensible default column order.
+
+**3. Hide less important fields.** System fields, timestamps, internal IDs, and metadata should be hidden by default. The user can always show them via the column picker. It's better to start clean and let users add columns than to overwhelm them with 40 columns.
+
+**4. Map types from schema annotations.** Use `x-scratch-connector-data-type` annotations on the schema to determine the correct `TablePropertyType`. Fall back to JSON Schema `format` hints when the annotation is missing.
+
+**5. Use subfields for compound objects.** Some fields contains multiple representations of a single value. For example, WordPress text appears as `{ raw, rendered }`, or Shopify numbers appear as `{ count, precision }`. We want the user to see these as a single column, which is populated with the user-facing "real" data. This is done with subfields. Create a subfield for each primitive field in the object, and set the `selectedSubfield` to default to the friendliest, most meaningful, most useful, hopefully-not-readonly subfield.
+
+**6. Use banner groups sparingly.** Groups add visual structure but also complexity. Use them when a service has a clear logical grouping that users expect (e.g. address fields, SEO metadata). Don't group for the sake of grouping — a flat column list is often clearer.
+
+**7. Mark readonly fields.** Read the `x-scratch-readonly` annotation from the schema and propagate it to the column. This prevents users from trying to edit computed fields.
+
+**8. Format display names.** Convert field IDs to human-readable names: `featured_media` → `Featured Media`, `fieldData.slug` → `Slug`.
+
+### Handling Nested / Expanded Fields
+
+Some connectors have nested structures that should be expanded into top-level columns. For example, WordPress has an `acf` (Advanced Custom Fields) object whose sub-properties each become their own column with a dotted path. When deciding what should be a top-level field, imagine if a user of this service will think of it as a standalone field (ex: fieldData.<fieldName> or acf.post_name), vs if they will think of it as a property of a different field (ex. feature_image.width). When there are a lot of standalone fields that still 'belong' together, consider putting them in a Banner Group.
+
+### Testing
+
+Write unit tests that build a realistic schema and verify the view output.
+
+### Reference Implementation
+
+See `library/wordpress/wordpress-default-view.ts` and its tests in `library/wordpress/__tests__/wordpress-default-view.spec.ts` for a complete example covering priority ordering, hidden fields, subfields, type mapping, and nested field expansion.

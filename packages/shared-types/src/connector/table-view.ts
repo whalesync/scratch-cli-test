@@ -10,7 +10,12 @@ export type TableView = {
   cols: (TableViewCol | TableViewBannerGroup)[];
 };
 
-/** Multiple columns are grouped together in the UI under a banner. Ex: An address split up into multiple fields. */
+/**
+ * Multiple related columns can get grouped together in the UI under a banner.
+ * - Street, City, State, Zip can be combined into a "Address" group
+ * - All of the fields from a specific WordPress plugin could be put together into a group for that plugin.
+ * Only use when the combination is structural and not thematic; don't invent concepts that aren't already meaningful to the user.
+ */
 export type TableViewBannerGroup = {
   kind: 'banner-group';
 

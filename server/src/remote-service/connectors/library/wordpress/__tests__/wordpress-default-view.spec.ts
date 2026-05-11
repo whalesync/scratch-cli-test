@@ -1,12 +1,12 @@
 import { Type } from '@sinclair/typebox';
-import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { TableViewCol, X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { buildWordPressDefaultView } from '../wordpress-default-view';
 import { WordPressDataType } from '../wordpress-types';
 
 /** Build a minimal rendered object schema (title, content, excerpt pattern). */
-function rendered(dataType: WordPressDataType = WordPressDataType.RENDERED) {
+function rendered(dataType: WordPressDataType = WordPressDataType.RENDERED, rawReadonly = false) {
   const s = Type.Object({
-    raw: Type.String({ [X_SCRATCH_READONLY]: undefined }),
+    raw: Type.String({ [X_SCRATCH_READONLY]: rawReadonly ? true : undefined }),
     rendered: Type.String({ [X_SCRATCH_READONLY]: true }),
   });
   s[X_SCRATCH_CONNECTOR_DATA_TYPE] = dataType;
@@ -44,7 +44,7 @@ function buildPostsSchema() {
     modified: field(WordPressDataType.DATETIME, { readonly: true, format: 'date-time' }),
     modified_gmt: field(WordPressDataType.DATETIME, { readonly: true, format: 'date-time' }),
     type: field(WordPressDataType.STRING, { readonly: true }),
-    guid: rendered(),
+    guid: rendered(WordPressDataType.RENDERED, true),
     format: field(WordPressDataType.ENUM),
     sticky: (() => {
       const s = Type.Boolean();
@@ -191,6 +191,19 @@ describe('buildWordPressDefaultView', () => {
     expect(content!.kind === 'col' && content!.type).toBe('richtext');
     // Content raw subfield should be 'richtext'
     expect(content!.kind === 'col' && content!.subfields![0].type).toBe('richtext');
+  });
+
+  it('should propagate readonly from schema to raw subfield', () => {
+    // guid has rawReadonly=true, so its raw subfield should be readonly
+    const guid = view.cols.find((c) => c.kind === 'col' && c.path === 'guid') as TableViewCol;
+    expect(guid).toBeDefined();
+    expect(guid.subfields).toBeDefined();
+    expect(guid.subfields![0].readonly).toBe(true);
+    expect(guid.subfields![1].readonly).toBe(true); // rendered is always readonly
+
+    // title has rawReadonly=false, so its raw subfield should not be readonly
+    const title = view.cols.find((c) => c.kind === 'col' && c.path === 'title') as TableViewCol;
+    expect(title.subfields![0].readonly).toBeUndefined();
   });
 
   it('should handle a minimal schema gracefully', () => {

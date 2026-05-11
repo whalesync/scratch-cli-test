@@ -204,8 +204,10 @@ function buildCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
   if (isRenderedObject(fieldSchema)) {
     const isInline = dataType === WordPressDataType.RENDERED_INLINE;
     const rawType: TablePropertyType = isInline ? 'string' : 'richtext';
+    const rawProps = (fieldSchema as TSchema & { properties?: Record<string, TSchema> }).properties!;
+    const rawReadonly = rawProps.raw?.[X_SCRATCH_READONLY] === true || undefined;
     const subfields: TableViewSubfield[] = [
-      { relativePath: 'raw', name: 'Raw', type: rawType },
+      { relativePath: 'raw', name: 'Raw', type: rawType, readonly: rawReadonly },
       { relativePath: 'rendered', name: 'Rendered', type: 'richtext', readonly: true },
     ];
     col.subfields = subfields;
