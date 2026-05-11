@@ -66,9 +66,9 @@ export function isChildEntity(entityType: EntityType): boolean {
  * Get parent entity type for a child entity
  */
 export function getParentEntityType(entityType: EntityType): EntityType | null {
-  const config = ENTITY_REGISTRY[entityType];
+  const config = ENTITY_REGISTRY[entityType] as Record<string, unknown>;
   if ('parent' in config && config.parent) {
-    return config.parent.entityType as EntityType;
+    return (config.parent as { entityType: string }).entityType as EntityType;
   }
   return null;
 }

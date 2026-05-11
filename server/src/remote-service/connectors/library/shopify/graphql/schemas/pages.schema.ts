@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Pages
@@ -28,6 +29,13 @@ export const PagesSchema = Type.Object(
     title: 'Pages',
   },
 );
+
+// Mark read-only fields
+PagesSchema.properties.bodySummary[X_SCRATCH_READONLY] = true;
+PagesSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+PagesSchema.properties.id[X_SCRATCH_READONLY] = true;
+PagesSchema.properties.publishedAt[X_SCRATCH_READONLY] = true;
+PagesSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Pages

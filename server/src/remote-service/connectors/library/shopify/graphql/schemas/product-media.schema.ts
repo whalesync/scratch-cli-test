@@ -70,6 +70,7 @@ export const ProductMediaSchema = Type.Object(
           id: Type.Optional(Type.String()),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           transformedSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           width: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -120,7 +121,7 @@ export const ProductMediaSchema = Type.Object(
 /**
  * GraphQL query field selection for Product Media
  */
-export const PRODUCT_MEDIA_QUERY_FIELDS = `... on MediaImage { alt createdAt fileErrors { code details message } fileStatus id image { altText height id originalSrc src transformedSrc url width } mediaContentType mediaErrors { code details message } mediaWarnings { code message } mimeType originalSource { fileSize url } preview { status } status updatedAt } ... on Video { alt createdAt duration fileErrors { code details message } fileStatus filename id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originalSource { fileSize format height mimeType url width } preview { status } sources { fileSize format height mimeType url width } status updatedAt } ... on ExternalVideo { alt createdAt embedUrl embeddedUrl fileErrors { code details message } fileStatus host id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originUrl preview { status } status updatedAt } ... on Model3d { alt createdAt fileErrors { code details message } fileStatus filename id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originalSource { filesize format mimeType url } preview { status } sources { filesize format mimeType url } status updatedAt }`;
+export const PRODUCT_MEDIA_QUERY_FIELDS = `... on MediaImage { alt createdAt fileErrors { code details message } fileStatus id image { altText height id originalSrc src thumbhash transformedSrc url width } mediaContentType mediaErrors { code details message } mediaWarnings { code message } mimeType originalSource { fileSize url } preview { status } status updatedAt } ... on Video { alt createdAt duration fileErrors { code details message } fileStatus filename id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originalSource { fileSize format height mimeType url width } preview { status } sources { fileSize format height mimeType url width } status updatedAt } ... on ExternalVideo { alt createdAt embedUrl embeddedUrl fileErrors { code details message } fileStatus host id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originUrl preview { status } status updatedAt } ... on Model3d { alt createdAt fileErrors { code details message } fileStatus filename id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originalSource { filesize format mimeType url } preview { status } sources { filesize format mimeType url } status updatedAt }`;
 
 /**
  * Entity configuration for Product Media
@@ -132,7 +133,8 @@ export const PRODUCT_MEDIA_CONFIG = {
   description: 'Images and videos attached to products',
   readOnly: false,
   columns: {
-    title: ['alt'],
+    slug: 'id',
+    title: ['id'],
   },
   parent: {
     entityType: 'products',

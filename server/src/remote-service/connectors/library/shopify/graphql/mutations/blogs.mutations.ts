@@ -16,6 +16,7 @@ export const BLOGS_CREATE_MUTATION = `mutation BlogCreate($blog: BlogCreateInput
       ${BLOGS_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -31,6 +32,7 @@ export const BLOGS_UPDATE_MUTATION = `mutation BlogUpdate($id: ID!, $blog: BlogU
       ${BLOGS_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -44,6 +46,7 @@ export const BLOGS_DELETE_MUTATION = `mutation BlogDelete($id: ID!) {
   blogDelete(id: $id) {
     deletedBlogId
     userErrors {
+      code
       field
       message
     }

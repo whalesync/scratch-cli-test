@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Customers
@@ -34,6 +35,7 @@ export const CustomersSchema = Type.Object(
           id: Type.Optional(Type.String()),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           transformedSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           width: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -92,6 +94,7 @@ export const CustomersSchema = Type.Object(
           netPaymentSet: Type.Optional(Type.Unknown()),
           nonFulfillableLineItems: Type.Optional(Type.Unknown()),
           note: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          number: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           originalTotalAdditionalFeesSet: Type.Optional(Type.Unknown()),
           originalTotalPriceSet: Type.Optional(Type.Unknown()),
           paymentCollectionDetails: Type.Optional(Type.Unknown()),
@@ -179,10 +182,35 @@ export const CustomersSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+CustomersSchema.properties.amountSpent[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.canDelete[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.dataSaleOptOut[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.displayName[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.id[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.image[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.lastOrder[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.legacyResourceId[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.lifetimeDuration[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.locale[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.mergeable[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.multipassIdentifier[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.note[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.numberOfOrders[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.productSubscriberStatus[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.state[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.statistics[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.tags[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.taxExempt[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.taxExemptions[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+CustomersSchema.properties.verifiedEmail[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Customers
  */
-export const CUSTOMERS_QUERY_FIELDS = `amountSpent { amount currencyCode } canDelete createdAt dataSaleOptOut displayName id image { altText height id originalSrc src transformedSrc url width } lastOrder { billingAddressMatchesShippingAddress canMarkAsPaid cancelReason cancelledAt capturable clientIp closed closedAt confirmationNumber confirmed createdAt currencyCode currentSubtotalLineItemsQuantity currentTotalWeight discountCode discountCodes displayFinancialStatus displayFulfillmentStatus edited estimatedTaxes fulfillable fullyPaid id legacyResourceId merchantEditable name note paymentGatewayNames poNumber presentmentCurrencyCode processedAt refundable registeredSourceUrl requiresShipping restockable returnStatus sourceIdentifier sourceName statusPageUrl subtotalLineItemsQuantity tags taxExempt taxesIncluded test totalWeight unpaid updatedAt } legacyResourceId lifetimeDuration locale mergeable { errorFields isMergeable reason } multipassIdentifier note numberOfOrders productSubscriberStatus state statistics { predictedSpendTier rfmGroup } tags taxExempt taxExemptions updatedAt verifiedEmail`;
+export const CUSTOMERS_QUERY_FIELDS = `amountSpent { amount currencyCode } canDelete createdAt dataSaleOptOut displayName id image { altText height id originalSrc src thumbhash transformedSrc url width } lastOrder { billingAddressMatchesShippingAddress canMarkAsPaid cancelReason cancelledAt capturable clientIp closed closedAt confirmationNumber confirmed createdAt currencyCode currentSubtotalLineItemsQuantity currentTotalWeight discountCode discountCodes displayFinancialStatus displayFulfillmentStatus edited estimatedTaxes fulfillable fullyPaid id legacyResourceId merchantEditable name note number paymentGatewayNames poNumber presentmentCurrencyCode processedAt refundable registeredSourceUrl requiresShipping restockable returnStatus sourceIdentifier sourceName statusPageUrl subtotalLineItemsQuantity tags taxExempt taxesIncluded test totalWeight unpaid updatedAt } legacyResourceId lifetimeDuration locale mergeable { errorFields isMergeable reason } multipassIdentifier note numberOfOrders productSubscriberStatus state statistics { predictedSpendTier rfmGroup } tags taxExempt taxExemptions updatedAt verifiedEmail`;
 
 /**
  * Entity configuration for Customers

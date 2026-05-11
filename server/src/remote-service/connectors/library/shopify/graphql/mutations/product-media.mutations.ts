@@ -15,6 +15,52 @@ export const PRODUCT_MEDIA_CREATE_MUTATION = `mutation ProductCreateMedia($input
     media {
       ${PRODUCT_MEDIA_QUERY_FIELDS}
     }
+    mediaUserErrors {
+      code
+      field
+      message
+    }
+    product {
+      bodyHtml
+      combinedListingRole
+      createdAt
+      customProductType
+      defaultCursor
+      description
+      descriptionHtml
+      descriptionPlainSummary
+      giftCardTemplateSuffix
+      handle
+      hasOnlyDefaultVariant
+      hasOutOfStockVariants
+      hasVariantsThatRequiresComponents
+      id
+      inCollection
+      isGiftCard
+      legacyResourceId
+      onlineStorePreviewUrl
+      onlineStoreUrl
+      productType
+      publicationCount
+      publishedAt
+      publishedInContext
+      publishedOnChannel
+      publishedOnCurrentChannel
+      publishedOnCurrentPublication
+      publishedOnPublication
+      requiresSellingPlan
+      sellingPlanGroupCount
+      status
+      storefrontId
+      tags
+      templateSuffix
+      title
+      totalInventory
+      totalVariants
+      tracksInventory
+      updatedAt
+      vendor
+    }
     userErrors {
       field
       message
@@ -27,7 +73,54 @@ export const PRODUCT_MEDIA_CREATE_MUTATION = `mutation ProductCreateMedia($input
  */
 export const PRODUCT_MEDIA_DELETE_MUTATION = `mutation ProductDeleteMedia($id: ID!) {
   productDeleteMedia(id: $id) {
-    deletedMediaId
+    deletedMediaIds
+    deletedProductImageIds
+    mediaUserErrors {
+      code
+      field
+      message
+    }
+    product {
+      bodyHtml
+      combinedListingRole
+      createdAt
+      customProductType
+      defaultCursor
+      description
+      descriptionHtml
+      descriptionPlainSummary
+      giftCardTemplateSuffix
+      handle
+      hasOnlyDefaultVariant
+      hasOutOfStockVariants
+      hasVariantsThatRequiresComponents
+      id
+      inCollection
+      isGiftCard
+      legacyResourceId
+      onlineStorePreviewUrl
+      onlineStoreUrl
+      productType
+      publicationCount
+      publishedAt
+      publishedInContext
+      publishedOnChannel
+      publishedOnCurrentChannel
+      publishedOnCurrentPublication
+      publishedOnPublication
+      requiresSellingPlan
+      sellingPlanGroupCount
+      status
+      storefrontId
+      tags
+      templateSuffix
+      title
+      totalInventory
+      totalVariants
+      tracksInventory
+      updatedAt
+      vendor
+    }
     userErrors {
       field
       message

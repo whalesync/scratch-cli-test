@@ -17,6 +17,7 @@
  */
 
 import axios from "axios";
+import { execSync } from "child_process";
 import * as fs from "fs";
 import {
   buildClientSchema,
@@ -114,6 +115,7 @@ function cleanAndCreateDirectories(): void {
 function writeSchemaFiles(
   outputs: TypeBoxSchemaOutput[],
   serviceName: string,
+  readOnlyFieldsMap: Map<string, string[]>,
 ): void {
   const schemasDir = path.join(OUTPUT_DIR, "schemas");
 
@@ -125,7 +127,8 @@ function writeSchemaFiles(
 
     const fileName = `${output.entityType.replace(/_/g, "-")}.schema.ts`;
     const filePath = path.join(schemasDir, fileName);
-    const content = generateSchemaFile(output, entity, serviceName);
+    const readOnlyFields = readOnlyFieldsMap.get(output.entityType);
+    const content = generateSchemaFile(output, entity, serviceName, readOnlyFields);
     fs.writeFileSync(filePath, content, "utf8");
     console.log(`  Written: ${fileName}`);
   }
@@ -288,6 +291,43 @@ SHOPIFY_CODEGEN_SHOP=mystore SHOPIFY_CODEGEN_TOKEN=xxx yarn codegen:shopify
   console.log("  Written: CLAUDE.md");
 }
 
+// ============= Helpers =============
+
+/**
+ * Extract top-level field names from a generated TypeBox schema code string.
+ * Matches the property names at the first indent level of the Type.Object({...}).
+ */
+function extractTopLevelFieldNames(schemaCode: string): string[] {
+  const fields: string[] = [];
+  // Only look at lines before the closing "}, {" that separates properties from schema options.
+  // This avoids picking up option keys like "title" or "$id" from the Type.Object options.
+  const propertiesSection = schemaCode.split(/^},\s*\{/m)[0];
+  // Match lines like "  fieldName: Type.Optional(...)" or "  fieldName: Type.String()"
+  // at exactly 2-space indent (top-level properties inside the Type.Object)
+  const regex = /^  (\w+):/gm;
+  let match;
+  while ((match = regex.exec(propertiesSection)) !== null) {
+    fields.push(match[1]);
+  }
+  return fields;
+}
+
+// ============= Formatting =============
+
+function formatGeneratedFiles(): void {
+  const serverDir = path.resolve(OUTPUT_DIR, "../../../../..");
+  console.log("\nFormatting generated files with Prettier...");
+  try {
+    execSync(`npx prettier --write "${OUTPUT_DIR}/**/*.ts"`, {
+      cwd: serverDir,
+      stdio: "inherit",
+    });
+    console.log("Formatting complete.");
+  } catch (error) {
+    console.warn("Warning: Prettier formatting failed. Generated files may have inconsistent style.", error);
+  }
+}
+
 // ============= Main =============
 
 async function main(): Promise<void> {
@@ -346,14 +386,43 @@ async function main(): Promise<void> {
   const mutationOutputs = generateMutations(schema, config.entities);
   console.log(`Generated mutations for ${mutationOutputs.length} entities.\n`);
 
+  // Build read-only fields map from mutation outputs and entity configs
+  const readOnlyFieldsMap = new Map<string, string[]>();
+  for (const schemaOutput of schemaOutputs) {
+    const entity = config.entities.find((e) => e.entityType === schemaOutput.entityType);
+    if (!entity) continue;
+
+    if (entity.readOnly) {
+      // For read-only entities, all top-level fields are readonly
+      const topLevelFields = extractTopLevelFieldNames(schemaOutput.schemaCode);
+      if (topLevelFields.length > 0) {
+        readOnlyFieldsMap.set(entity.entityType, topLevelFields);
+      }
+    } else {
+      // For writable entities, use the mutation plugin's read-only field list
+      const mutationOutput = mutationOutputs.find((m) => m.entityType === entity.entityType);
+      if (mutationOutput && mutationOutput.readOnlyFields.length > 0) {
+        // Only include fields that exist in the schema output
+        const topLevelFields = new Set(extractTopLevelFieldNames(schemaOutput.schemaCode));
+        const filteredFields = mutationOutput.readOnlyFields.filter((f) => topLevelFields.has(f));
+        if (filteredFields.length > 0) {
+          readOnlyFieldsMap.set(entity.entityType, filteredFields);
+        }
+      }
+    }
+  }
+
   // Write files
   console.log("Writing files...\n");
-  writeSchemaFiles(schemaOutputs, config.serviceName);
+  writeSchemaFiles(schemaOutputs, config.serviceName, readOnlyFieldsMap);
   writeMutationFiles(mutationOutputs, config.serviceName);
   writeMetadataFile(schemaOutputs);
   writeEntityRegistryFile(config.serviceName);
   writeMainIndexFile();
   writeClaudeMd();
+
+  // Format generated files with Prettier using the server's config
+  formatGeneratedFiles();
 
   console.log("\nDone!");
   console.log(

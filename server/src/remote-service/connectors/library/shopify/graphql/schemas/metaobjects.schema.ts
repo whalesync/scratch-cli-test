@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Metaobjects
@@ -132,6 +133,19 @@ export const MetaobjectsSchema = Type.Object(
     title: 'Metaobjects',
   },
 );
+
+// Mark read-only fields
+MetaobjectsSchema.properties.capabilities[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.createdByApp[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.definition[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.displayName[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.fields[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.handle[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.id[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.referencedBy[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.thumbnailField[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.type[X_SCRATCH_READONLY] = true;
+MetaobjectsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Metaobjects

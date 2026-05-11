@@ -15,6 +15,40 @@ export const PRODUCTS_CREATE_MUTATION = `mutation ProductCreate($product: Produc
     product {
       ${PRODUCTS_QUERY_FIELDS}
     }
+    shop {
+      analyticsToken
+      checkoutApiSupported
+      contactEmail
+      createdAt
+      currencyCode
+      customerAccounts
+      description
+      email
+      enabledPresentmentCurrencies
+      ianaTimezone
+      id
+      marketingSmsConsentEnabledAtCheckout
+      myshopifyDomain
+      name
+      orderNumberFormatPrefix
+      orderNumberFormatSuffix
+      publicationCount
+      richTextEditorUrl
+      setupRequired
+      shipsToCountries
+      shopOwnerName
+      storefrontUrl
+      taxShipping
+      taxesIncluded
+      timezoneAbbreviation
+      timezoneOffset
+      timezoneOffsetMinutes
+      transactionalSmsDisabled
+      unitSystem
+      updatedAt
+      url
+      weightUnit
+    }
     userErrors {
       field
       message
@@ -43,6 +77,45 @@ export const PRODUCTS_UPDATE_MUTATION = `mutation ProductUpdate($product: Produc
 export const PRODUCTS_DELETE_MUTATION = `mutation ProductDelete($input: ProductDeleteInput!) {
   productDelete(input: $input) {
     deletedProductId
+    productDeleteOperation {
+      deletedProductId
+      id
+      status
+    }
+    shop {
+      analyticsToken
+      checkoutApiSupported
+      contactEmail
+      createdAt
+      currencyCode
+      customerAccounts
+      description
+      email
+      enabledPresentmentCurrencies
+      ianaTimezone
+      id
+      marketingSmsConsentEnabledAtCheckout
+      myshopifyDomain
+      name
+      orderNumberFormatPrefix
+      orderNumberFormatSuffix
+      publicationCount
+      richTextEditorUrl
+      setupRequired
+      shipsToCountries
+      shopOwnerName
+      storefrontUrl
+      taxShipping
+      taxesIncluded
+      timezoneAbbreviation
+      timezoneOffset
+      timezoneOffsetMinutes
+      transactionalSmsDisabled
+      unitSystem
+      updatedAt
+      url
+      weightUnit
+    }
     userErrors {
       field
       message
@@ -89,6 +162,9 @@ export const PRODUCTS_READ_ONLY_FIELDS = new Set([
   'priceRange',
   'priceRangeV2',
   'productCategory',
+  'productComponents',
+  'productComponentsCount',
+  'productParents',
   'productPublications',
   'publicationCount',
   'publications',
@@ -117,4 +193,14 @@ export const PRODUCTS_READ_ONLY_FIELDS = new Set([
   'updatedAt',
   'variants',
   'variantsCount',
+]);
+
+/**
+ * Fields to strip on update only (required for create)
+ */
+export const PRODUCTS_STRIP_ON_UPDATE_FIELDS = new Set([
+  'claimOwnership',
+  'combinedListingRole',
+  'giftCard',
+  'productOptions',
 ]);

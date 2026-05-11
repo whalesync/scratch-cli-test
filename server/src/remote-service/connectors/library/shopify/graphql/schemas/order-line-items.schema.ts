@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Order Line Items
@@ -104,6 +105,7 @@ export const OrderLineItemsSchema = Type.Object(
           id: Type.Optional(Type.String()),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           transformedSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           width: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -117,6 +119,7 @@ export const OrderLineItemsSchema = Type.Object(
         Type.Object({
           customAttributes: Type.Optional(Type.Array(Type.Unknown())),
           id: Type.Optional(Type.String()),
+          productId: Type.Optional(Type.String()),
           quantity: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           variantId: Type.Optional(Type.String()),
@@ -174,6 +177,7 @@ export const OrderLineItemsSchema = Type.Object(
           priceRange: Type.Optional(Type.Unknown()),
           priceRangeV2: Type.Optional(Type.Unknown()),
           productCategory: Type.Optional(Type.Unknown()),
+          productComponentsCount: Type.Optional(Type.Unknown()),
           productPublications: Type.Optional(Type.Unknown()),
           productType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           publishedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -274,10 +278,12 @@ export const OrderLineItemsSchema = Type.Object(
           sellableOnlineQuantity: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           sellingPlanGroupCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           sellingPlanGroupsCount: Type.Optional(Type.Unknown()),
+          showUnitPrice: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           sku: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           taxCode: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           taxable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          unitPrice: Type.Optional(Type.Unknown()),
           unitPriceMeasurement: Type.Optional(Type.Unknown()),
           updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
         }),
@@ -293,10 +299,55 @@ export const OrderLineItemsSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+OrderLineItemsSchema.properties.canRestock[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.contract[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.currentQuantity[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.customAttributes[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.discountedTotal[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.discountedTotalSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.discountedUnitPrice[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.discountedUnitPriceAfterAllDiscountsSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.discountedUnitPriceSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.fulfillableQuantity[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.fulfillmentService[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.fulfillmentStatus[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.id[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.image[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.isGiftCard[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.lineItemGroup[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.merchantEditable[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.name[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.nonFulfillableQuantity[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.originalTotal[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.originalTotalSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.originalUnitPrice[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.originalUnitPriceSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.product[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.quantity[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.refundableQuantity[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.requiresShipping[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.restockable[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.sellingPlan[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.sku[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.taxLines[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.taxable[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.title[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.totalDiscount[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.totalDiscountSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.unfulfilledDiscountedTotal[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.unfulfilledDiscountedTotalSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.unfulfilledOriginalTotal[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.unfulfilledOriginalTotalSet[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.unfulfilledQuantity[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.variant[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.variantTitle[X_SCRATCH_READONLY] = true;
+OrderLineItemsSchema.properties.vendor[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Order Line Items
  */
-export const ORDER_LINE_ITEMS_QUERY_FIELDS = `canRestock contract { appAdminUrl createdAt currencyCode id lastBillingAttemptErrorType lastPaymentStatus lineCount nextBillingDate note revisionId status updatedAt } currentQuantity customAttributes { key value } discountedTotal discountedUnitPrice fulfillableQuantity fulfillmentService { callbackUrl fulfillmentOrdersOptIn handle id inventoryManagement permitsSkuSharing requiresShippingMethod serviceName trackingSupport type } fulfillmentStatus id image { altText height id originalSrc src transformedSrc url width } isGiftCard lineItemGroup { id quantity title variantId variantSku } merchantEditable name nonFulfillableQuantity originalTotal originalUnitPrice product { id } quantity refundableQuantity requiresShipping restockable sellingPlan { name sellingPlanId } sku taxLines { channelLiable price rate ratePercentage source title } taxable title totalDiscount unfulfilledDiscountedTotal unfulfilledOriginalTotal unfulfilledQuantity variant { id } variantTitle vendor`;
+export const ORDER_LINE_ITEMS_QUERY_FIELDS = `canRestock contract { appAdminUrl createdAt currencyCode id lastBillingAttemptErrorType lastPaymentStatus lineCount nextBillingDate note revisionId status updatedAt } currentQuantity customAttributes { key value } discountedTotal discountedUnitPrice fulfillableQuantity fulfillmentService { callbackUrl fulfillmentOrdersOptIn handle id inventoryManagement permitsSkuSharing requiresShippingMethod serviceName trackingSupport type } fulfillmentStatus id image { altText height id originalSrc src thumbhash transformedSrc url width } isGiftCard lineItemGroup { id productId quantity title variantId variantSku } merchantEditable name nonFulfillableQuantity originalTotal originalUnitPrice product { id } quantity refundableQuantity requiresShipping restockable sellingPlan { name sellingPlanId } sku taxLines { channelLiable price rate ratePercentage source title } taxable title totalDiscount unfulfilledDiscountedTotal unfulfilledOriginalTotal unfulfilledQuantity variant { id } variantTitle vendor`;
 
 /**
  * Entity configuration for Order Line Items

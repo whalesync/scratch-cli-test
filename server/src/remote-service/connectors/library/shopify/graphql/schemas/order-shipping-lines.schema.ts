@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Order Shipping Lines
@@ -98,6 +99,25 @@ export const OrderShippingLinesSchema = Type.Object(
     title: 'Order Shipping Lines',
   },
 );
+
+// Mark read-only fields
+OrderShippingLinesSchema.properties.carrierIdentifier[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.code[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.currentDiscountedPriceSet[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.custom[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.deliveryCategory[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.discountedPrice[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.discountedPriceSet[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.id[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.isRemoved[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.originalPrice[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.originalPriceSet[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.price[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.requestedFulfillmentService[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.shippingRateHandle[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.source[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.taxLines[X_SCRATCH_READONLY] = true;
+OrderShippingLinesSchema.properties.title[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Order Shipping Lines

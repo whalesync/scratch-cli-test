@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Collections
@@ -43,6 +44,7 @@ export const CollectionsSchema = Type.Object(
           id: Type.Optional(Type.String()),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           transformedSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           width: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -98,10 +100,20 @@ export const CollectionsSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+CollectionsSchema.properties.availablePublicationsCount[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.description[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.feedback[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.id[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.legacyResourceId[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.productsCount[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.resourcePublicationsCount[X_SCRATCH_READONLY] = true;
+CollectionsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Collections
  */
-export const COLLECTIONS_QUERY_FIELDS = `availablePublicationsCount { count precision } description descriptionHtml feedback { summary } handle id image { altText height id originalSrc src transformedSrc url width } legacyResourceId productsCount { count precision } resourcePublicationsCount { count precision } ruleSet { appliedDisjunctively } seo { description title } sortOrder templateSuffix title updatedAt`;
+export const COLLECTIONS_QUERY_FIELDS = `availablePublicationsCount { count precision } description descriptionHtml feedback { summary } handle id image { altText height id originalSrc src thumbhash transformedSrc url width } legacyResourceId productsCount { count precision } resourcePublicationsCount { count precision } ruleSet { appliedDisjunctively } seo { description title } sortOrder templateSuffix title updatedAt`;
 
 /**
  * Entity configuration for Collections

@@ -16,6 +16,7 @@ export const PAGES_CREATE_MUTATION = `mutation PageCreate($page: PageCreateInput
       ${PAGES_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -31,6 +32,7 @@ export const PAGES_UPDATE_MUTATION = `mutation PageUpdate($id: ID!, $page: PageU
       ${PAGES_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -44,6 +46,7 @@ export const PAGES_DELETE_MUTATION = `mutation PageDelete($id: ID!) {
   pageDelete(id: $id) {
     deletedPageId
     userErrors {
+      code
       field
       message
     }

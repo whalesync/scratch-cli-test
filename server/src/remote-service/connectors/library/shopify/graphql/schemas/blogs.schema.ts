@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Blogs
@@ -54,6 +55,15 @@ export const BlogsSchema = Type.Object(
     title: 'Blogs',
   },
 );
+
+// Mark read-only fields
+BlogsSchema.properties.articles[X_SCRATCH_READONLY] = true;
+BlogsSchema.properties.articlesCount[X_SCRATCH_READONLY] = true;
+BlogsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+BlogsSchema.properties.feed[X_SCRATCH_READONLY] = true;
+BlogsSchema.properties.id[X_SCRATCH_READONLY] = true;
+BlogsSchema.properties.tags[X_SCRATCH_READONLY] = true;
+BlogsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
 
 /**
  * GraphQL query field selection for Blogs

@@ -16,6 +16,7 @@ export const ARTICLES_CREATE_MUTATION = `mutation ArticleCreate($article: Articl
       ${ARTICLES_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -31,6 +32,7 @@ export const ARTICLES_UPDATE_MUTATION = `mutation ArticleUpdate($id: ID!, $artic
       ${ARTICLES_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -44,6 +46,7 @@ export const ARTICLES_DELETE_MUTATION = `mutation ArticleDelete($id: ID!) {
   articleDelete(id: $id) {
     deletedArticleId
     userErrors {
+      code
       field
       message
     }

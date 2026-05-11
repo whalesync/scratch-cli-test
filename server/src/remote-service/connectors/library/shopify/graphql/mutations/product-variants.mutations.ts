@@ -12,10 +12,52 @@ import { PRODUCT_VARIANTS_QUERY_FIELDS } from '../schemas/product-variants.schem
  */
 export const PRODUCT_VARIANTS_CREATE_MUTATION = `mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
   productVariantsBulkCreate(productId: $productId, variants: $variants) {
+    product {
+      bodyHtml
+      combinedListingRole
+      createdAt
+      customProductType
+      defaultCursor
+      description
+      descriptionHtml
+      descriptionPlainSummary
+      giftCardTemplateSuffix
+      handle
+      hasOnlyDefaultVariant
+      hasOutOfStockVariants
+      hasVariantsThatRequiresComponents
+      id
+      inCollection
+      isGiftCard
+      legacyResourceId
+      onlineStorePreviewUrl
+      onlineStoreUrl
+      productType
+      publicationCount
+      publishedAt
+      publishedInContext
+      publishedOnChannel
+      publishedOnCurrentChannel
+      publishedOnCurrentPublication
+      publishedOnPublication
+      requiresSellingPlan
+      sellingPlanGroupCount
+      status
+      storefrontId
+      tags
+      templateSuffix
+      title
+      totalInventory
+      totalVariants
+      tracksInventory
+      updatedAt
+      vendor
+    }
     productVariants {
       ${PRODUCT_VARIANTS_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -27,10 +69,52 @@ export const PRODUCT_VARIANTS_CREATE_MUTATION = `mutation ProductVariantsBulkCre
  */
 export const PRODUCT_VARIANTS_UPDATE_MUTATION = `mutation ProductVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
   productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+    product {
+      bodyHtml
+      combinedListingRole
+      createdAt
+      customProductType
+      defaultCursor
+      description
+      descriptionHtml
+      descriptionPlainSummary
+      giftCardTemplateSuffix
+      handle
+      hasOnlyDefaultVariant
+      hasOutOfStockVariants
+      hasVariantsThatRequiresComponents
+      id
+      inCollection
+      isGiftCard
+      legacyResourceId
+      onlineStorePreviewUrl
+      onlineStoreUrl
+      productType
+      publicationCount
+      publishedAt
+      publishedInContext
+      publishedOnChannel
+      publishedOnCurrentChannel
+      publishedOnCurrentPublication
+      publishedOnPublication
+      requiresSellingPlan
+      sellingPlanGroupCount
+      status
+      storefrontId
+      tags
+      templateSuffix
+      title
+      totalInventory
+      totalVariants
+      tracksInventory
+      updatedAt
+      vendor
+    }
     productVariants {
       ${PRODUCT_VARIANTS_QUERY_FIELDS}
     }
     userErrors {
+      code
       field
       message
     }
@@ -42,7 +126,49 @@ export const PRODUCT_VARIANTS_UPDATE_MUTATION = `mutation ProductVariantsBulkUpd
  */
 export const PRODUCT_VARIANTS_DELETE_MUTATION = `mutation ProductVariantsBulkDelete($productId: ID!, $variantsIds: [ID!]!) {
   productVariantsBulkDelete(productId: $productId, variantsIds: $variantsIds) {
+    product {
+      bodyHtml
+      combinedListingRole
+      createdAt
+      customProductType
+      defaultCursor
+      description
+      descriptionHtml
+      descriptionPlainSummary
+      giftCardTemplateSuffix
+      handle
+      hasOnlyDefaultVariant
+      hasOutOfStockVariants
+      hasVariantsThatRequiresComponents
+      id
+      inCollection
+      isGiftCard
+      legacyResourceId
+      onlineStorePreviewUrl
+      onlineStoreUrl
+      productType
+      publicationCount
+      publishedAt
+      publishedInContext
+      publishedOnChannel
+      publishedOnCurrentChannel
+      publishedOnCurrentPublication
+      publishedOnPublication
+      requiresSellingPlan
+      sellingPlanGroupCount
+      status
+      storefrontId
+      tags
+      templateSuffix
+      title
+      totalInventory
+      totalVariants
+      tracksInventory
+      updatedAt
+      vendor
+    }
     userErrors {
+      code
       field
       message
     }
@@ -70,6 +196,7 @@ export const PRODUCT_VARIANTS_READ_ONLY_FIELDS = new Set([
   'position',
   'presentmentPrices',
   'product',
+  'productParents',
   'productVariantComponents',
   'selectedOptions',
   'sellableOnlineQuantity',
@@ -80,6 +207,6 @@ export const PRODUCT_VARIANTS_READ_ONLY_FIELDS = new Set([
   'storefrontId',
   'title',
   'translations',
-  'unitPriceMeasurement',
+  'unitPrice',
   'updatedAt',
 ]);

@@ -7,7 +7,7 @@
 
 export const GENERATED_METADATA = {
   apiVersion: '2025-01',
-  generatedAt: '2026-03-05T23:39:19.800Z',
+  generatedAt: '2026-05-11T23:35:23.737Z',
   entities: [
     'products',
     'product_variants',
@@ -26,7 +26,7 @@ export const GENERATED_METADATA = {
 } as const;
 
 export const API_VERSION = '2025-01';
-export const GENERATED_AT = '2026-03-05T23:39:19.800Z';
+export const GENERATED_AT = '2026-05-11T23:35:23.737Z';
 export const GENERATED_ENTITIES = [
   'products',
   'product_variants',

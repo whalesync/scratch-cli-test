@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Products
@@ -72,6 +73,7 @@ export const ProductsSchema = Type.Object(
           id: Type.Optional(Type.String()),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           transformedSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           width: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -167,6 +169,15 @@ export const ProductsSchema = Type.Object(
     productCategory: Type.Optional(
       Type.Union([Type.Object({ productTaxonomyNode: Type.Optional(Type.Unknown()) }), Type.Null()]),
     ),
+    productComponentsCount: Type.Optional(
+      Type.Union([
+        Type.Object({
+          count: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+          precision: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]),
+    ),
     productPublications: Type.Optional(
       Type.Union([
         Type.Object({
@@ -236,10 +247,49 @@ export const ProductsSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+ProductsSchema.properties.availablePublicationsCount[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.bodyHtml[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.combinedListing[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.combinedListingRole[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.compareAtPriceRange[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.customProductType[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.description[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.descriptionPlainSummary[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.featuredImage[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.featuredMedia[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.feedback[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.hasOnlyDefaultVariant[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.hasOutOfStockVariants[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.hasVariantsThatRequiresComponents[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.id[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.isGiftCard[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.legacyResourceId[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.mediaCount[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.onlineStorePreviewUrl[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.onlineStoreUrl[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.options[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.priceRange[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.priceRangeV2[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.productCategory[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.productComponentsCount[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.productPublications[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.publishedAt[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.resourcePublicationsCount[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.sellingPlanGroupCount[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.sellingPlanGroupsCount[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.standardizedProductType[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.totalInventory[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.totalVariants[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.tracksInventory[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+ProductsSchema.properties.variantsCount[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Products
  */
-export const PRODUCTS_QUERY_FIELDS = `availablePublicationsCount { count precision } bodyHtml category { ancestorIds childrenIds fullName id isArchived isLeaf isRoot level name parentId } combinedListingRole createdAt customProductType description descriptionHtml descriptionPlainSummary featuredImage { id } featuredMedia { id } feedback { summary } giftCardTemplateSuffix handle hasOnlyDefaultVariant hasOutOfStockVariants hasVariantsThatRequiresComponents id isGiftCard legacyResourceId mediaCount { count precision } onlineStorePreviewUrl onlineStoreUrl options { id name position values } productType publishedAt requiresSellingPlan resourcePublicationsCount { count precision } sellingPlanGroupCount sellingPlanGroupsCount { count precision } seo { description title } status tags templateSuffix title totalInventory totalVariants tracksInventory updatedAt variantsCount { count precision } vendor`;
+export const PRODUCTS_QUERY_FIELDS = `availablePublicationsCount { count precision } bodyHtml category { ancestorIds childrenIds fullName id isArchived isLeaf isRoot level name parentId } combinedListingRole createdAt customProductType description descriptionHtml descriptionPlainSummary featuredImage { id } featuredMedia { id } feedback { summary } giftCardTemplateSuffix handle hasOnlyDefaultVariant hasOutOfStockVariants hasVariantsThatRequiresComponents id isGiftCard legacyResourceId mediaCount { count precision } onlineStorePreviewUrl onlineStoreUrl options { id name position values } productComponentsCount { count precision } productType publishedAt requiresSellingPlan resourcePublicationsCount { count precision } sellingPlanGroupCount sellingPlanGroupsCount { count precision } seo { description title } status tags templateSuffix title totalInventory totalVariants tracksInventory updatedAt variantsCount { count precision } vendor`;
 
 /**
  * Entity configuration for Products

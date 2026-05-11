@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Orders
@@ -68,6 +69,7 @@ export const OrdersSchema = Type.Object(
           app: Type.Optional(Type.Unknown()),
           channelDefinition: Type.Optional(Type.Unknown()),
           channelId: Type.Optional(Type.String()),
+          displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           id: Type.Optional(Type.String()),
         }),
         Type.Null(),
@@ -184,6 +186,7 @@ export const OrdersSchema = Type.Object(
       Type.Union([
         Type.Object({
           address: Type.Optional(Type.Unknown()),
+          archived: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           companyName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           id: Type.Optional(Type.String()),
@@ -221,6 +224,7 @@ export const OrdersSchema = Type.Object(
       ]),
     ),
     note: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    number: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     originalTotalAdditionalFeesSet: Type.Optional(
       Type.Union([
         Type.Object({ presentmentMoney: Type.Optional(Type.Unknown()), shopMoney: Type.Optional(Type.Unknown()) }),
@@ -351,6 +355,7 @@ export const OrdersSchema = Type.Object(
           shipping: Type.Optional(Type.Unknown()),
           subtotal: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           subtotalSet: Type.Optional(Type.Unknown()),
+          suggestedRefundMethods: Type.Optional(Type.Array(Type.Unknown())),
           suggestedTransactions: Type.Optional(Type.Array(Type.Unknown())),
           totalCartDiscountAmountSet: Type.Optional(Type.Unknown()),
           totalDutiesSet: Type.Optional(Type.Unknown()),
@@ -459,10 +464,104 @@ export const OrdersSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+OrdersSchema.properties.additionalFees[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.alerts[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.app[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.billingAddressMatchesShippingAddress[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.canMarkAsPaid[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.cancelReason[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.cancellation[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.cancelledAt[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.capturable[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.cartDiscountAmountSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.channelInformation[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.clientIp[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.closed[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.closedAt[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.confirmationNumber[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.confirmed[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currencyCode[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentCartDiscountAmountSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentShippingPriceSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentSubtotalLineItemsQuantity[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentSubtotalPriceSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentTaxLines[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentTotalAdditionalFeesSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentTotalDiscountsSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentTotalPriceSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentTotalTaxSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.currentTotalWeight[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.customAttributes[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.discountCode[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.discountCodes[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.displayFinancialStatus[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.displayFulfillmentStatus[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.edited[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.estimatedTaxes[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.exchangeV2s[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.fulfillable[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.fulfillmentsCount[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.fullyPaid[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.id[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.legacyResourceId[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.merchantBusinessEntity[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.merchantEditable[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.merchantOfRecordApp[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.name[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.netPaymentSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.nonFulfillableLineItems[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.note[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.number[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.originalTotalAdditionalFeesSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.originalTotalPriceSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.paymentCollectionDetails[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.paymentGatewayNames[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.poNumber[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.presentmentCurrencyCode[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.processedAt[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.publication[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.refundDiscrepancySet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.refundable[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.registeredSourceUrl[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.requiresShipping[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.restockable[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.retailLocation[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.returnStatus[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.risk[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.shippingLine[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.shopifyProtect[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.sourceIdentifier[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.sourceName[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.statusPageUrl[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.subtotalLineItemsQuantity[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.subtotalPriceSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.suggestedRefund[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.tags[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.taxExempt[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.taxLines[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.taxesIncluded[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.test[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalCapturableSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalCashRoundingAdjustment[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalDiscountsSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalOutstandingSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalPriceSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalReceivedSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalRefundedSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalRefundedShippingSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalShippingPriceSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalTaxSet[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.totalWeight[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.transactionsCount[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.unpaid[X_SCRATCH_READONLY] = true;
+OrdersSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Orders
  */
-export const ORDERS_QUERY_FIELDS = `additionalFees { id name } alerts { content dismissibleHandle icon severity title } app { id name } billingAddressMatchesShippingAddress canMarkAsPaid cancelReason cancelledAt capturable channelInformation { channelId id } clientIp closed closedAt confirmationNumber confirmed createdAt currencyCode currentSubtotalLineItemsQuantity currentTaxLines { channelLiable price rate ratePercentage source title } currentTotalWeight customAttributes { key value } discountCode discountCodes displayFinancialStatus displayFulfillmentStatus edited estimatedTaxes fulfillable fulfillmentsCount { count precision } fullyPaid id legacyResourceId merchantBusinessEntity { companyName displayName id primary } merchantEditable merchantOfRecordApp { id name } name note paymentCollectionDetails { additionalPaymentCollectionUrl } paymentGatewayNames poNumber presentmentCurrencyCode processedAt refundable registeredSourceUrl requiresShipping restockable retailLocation { activatable addressVerified createdAt deactivatable deactivatedAt deletable fulfillsOnlineOrders hasActiveInventory hasUnfulfilledOrders id isActive isFulfillmentService isPrimary legacyResourceId name shipsInventory updatedAt } returnStatus risk { recommendation } shippingLine { carrierIdentifier code custom deliveryCategory id isRemoved price shippingRateHandle source title } shopifyProtect { status } sourceIdentifier sourceName statusPageUrl subtotalLineItemsQuantity suggestedRefund { amount maximumRefundable subtotal totalTaxes } tags taxExempt taxLines { channelLiable price rate ratePercentage source title } taxesIncluded test totalWeight transactionsCount { count precision } unpaid updatedAt`;
+export const ORDERS_QUERY_FIELDS = `additionalFees { id name } alerts { content dismissibleHandle icon severity title } app { id name } billingAddressMatchesShippingAddress canMarkAsPaid cancelReason cancelledAt capturable channelInformation { channelId displayName id } clientIp closed closedAt confirmationNumber confirmed createdAt currencyCode currentSubtotalLineItemsQuantity currentTaxLines { channelLiable price rate ratePercentage source title } currentTotalWeight customAttributes { key value } discountCode discountCodes displayFinancialStatus displayFulfillmentStatus edited estimatedTaxes fulfillable fulfillmentsCount { count precision } fullyPaid id legacyResourceId merchantBusinessEntity { archived companyName displayName id primary } merchantEditable merchantOfRecordApp { id name } name note number paymentCollectionDetails { additionalPaymentCollectionUrl } paymentGatewayNames poNumber presentmentCurrencyCode processedAt refundable registeredSourceUrl requiresShipping restockable retailLocation { activatable addressVerified createdAt deactivatable deactivatedAt deletable fulfillsOnlineOrders hasActiveInventory hasUnfulfilledOrders id isActive isFulfillmentService isPrimary legacyResourceId name shipsInventory updatedAt } returnStatus risk { recommendation } shippingLine { carrierIdentifier code custom deliveryCategory id isRemoved price shippingRateHandle source title } shopifyProtect { status } sourceIdentifier sourceName statusPageUrl subtotalLineItemsQuantity suggestedRefund { amount maximumRefundable subtotal totalTaxes } tags taxExempt taxLines { channelLiable price rate ratePercentage source title } taxesIncluded test totalWeight transactionsCount { count precision } unpaid updatedAt`;
 
 /**
  * Entity configuration for Orders

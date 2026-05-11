@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Articles
@@ -64,6 +65,7 @@ export const ArticlesSchema = Type.Object(
           id: Type.Optional(Type.String()),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           transformedSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           width: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -85,10 +87,18 @@ export const ArticlesSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+ArticlesSchema.properties.comments[X_SCRATCH_READONLY] = true;
+ArticlesSchema.properties.commentsCount[X_SCRATCH_READONLY] = true;
+ArticlesSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+ArticlesSchema.properties.id[X_SCRATCH_READONLY] = true;
+ArticlesSchema.properties.publishedAt[X_SCRATCH_READONLY] = true;
+ArticlesSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Articles
  */
-export const ARTICLES_QUERY_FIELDS = `author { name } blog { commentPolicy createdAt handle id tags templateSuffix title updatedAt } body commentsCount { count precision } createdAt handle id image { altText height id originalSrc src transformedSrc url width } isPublished publishedAt summary tags templateSuffix title updatedAt`;
+export const ARTICLES_QUERY_FIELDS = `author { name } blog { commentPolicy createdAt handle id tags templateSuffix title updatedAt } body commentsCount { count precision } createdAt handle id image { altText height id originalSrc src thumbhash transformedSrc url width } isPublished publishedAt summary tags templateSuffix title updatedAt`;
 
 /**
  * Entity configuration for Articles

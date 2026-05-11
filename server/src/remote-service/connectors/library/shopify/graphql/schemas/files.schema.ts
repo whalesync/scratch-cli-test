@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Files
@@ -49,6 +50,7 @@ export const FilesSchema = Type.Object(
           id: Type.Optional(Type.String()),
           originalSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           src: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          thumbhash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           transformedSrc: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           width: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -122,10 +124,35 @@ export const FilesSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+FilesSchema.properties.alt[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.fileErrors[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.fileStatus[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.id[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.preview[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.mimeType[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.originalFileSize[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.url[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.image[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.mediaContentType[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.mediaErrors[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.mediaWarnings[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.originalSource[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.status[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.duration[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.filename[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.sources[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.embedUrl[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.embeddedUrl[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.host[X_SCRATCH_READONLY] = true;
+FilesSchema.properties.originUrl[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Files
  */
-export const FILES_QUERY_FIELDS = `... on GenericFile { alt createdAt fileErrors { code details message } fileStatus id mimeType originalFileSize preview { status } updatedAt url } ... on MediaImage { alt createdAt fileErrors { code details message } fileStatus id image { altText height id originalSrc src transformedSrc url width } mediaContentType mediaErrors { code details message } mediaWarnings { code message } mimeType originalSource { fileSize url } preview { status } status updatedAt } ... on Video { alt createdAt duration fileErrors { code details message } fileStatus filename id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originalSource { fileSize format height mimeType url width } preview { status } sources { fileSize format height mimeType url width } status updatedAt } ... on ExternalVideo { alt createdAt embedUrl embeddedUrl fileErrors { code details message } fileStatus host id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originUrl preview { status } status updatedAt }`;
+export const FILES_QUERY_FIELDS = `... on GenericFile { alt createdAt fileErrors { code details message } fileStatus id mimeType originalFileSize preview { status } updatedAt url } ... on MediaImage { alt createdAt fileErrors { code details message } fileStatus id image { altText height id originalSrc src thumbhash transformedSrc url width } mediaContentType mediaErrors { code details message } mediaWarnings { code message } mimeType originalSource { fileSize url } preview { status } status updatedAt } ... on Video { alt createdAt duration fileErrors { code details message } fileStatus filename id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originalSource { fileSize format height mimeType url width } preview { status } sources { fileSize format height mimeType url width } status updatedAt } ... on ExternalVideo { alt createdAt embedUrl embeddedUrl fileErrors { code details message } fileStatus host id mediaContentType mediaErrors { code details message } mediaWarnings { code message } originUrl preview { status } status updatedAt }`;
 
 /**
  * Entity configuration for Files

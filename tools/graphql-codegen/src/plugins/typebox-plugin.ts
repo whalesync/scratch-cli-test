@@ -106,6 +106,7 @@ export function generateSchemaFile(
   output: TypeBoxSchemaOutput,
   entity: EntityConfig,
   serviceName: string,
+  readOnlyFields?: string[],
 ): string {
   const pascalName = toPascalCase(output.entityType);
   const constantName = toScreamingSnakeCase(output.entityType);
@@ -162,6 +163,20 @@ export function generateSchemaFile(
     }
   }
 
+  const hasReadOnlyFields = readOnlyFields && readOnlyFields.length > 0;
+  const readOnlyImport = hasReadOnlyFields
+    ? `\nimport { X_SCRATCH_READONLY } from '@spinner/shared-types';\n`
+    : '';
+  const readOnlyAnnotations = hasReadOnlyFields
+    ? `\n\n// Mark read-only fields\n` +
+      readOnlyFields
+        .map(
+          (field) =>
+            `${pascalName}Schema.properties.${field}[X_SCRATCH_READONLY] = true;`,
+        )
+        .join("\n")
+    : '';
+
   return `/**
  * Generated TypeBox schema for ${entity.displayName}
  *
@@ -169,12 +184,12 @@ export function generateSchemaFile(
  * To regenerate, run: yarn codegen:${serviceName}
  */
 
-import { Type } from '@sinclair/typebox';
+import { Type } from '@sinclair/typebox';${readOnlyImport}
 
 /**
  * TypeBox schema for ${entity.displayName}
  */
-export const ${pascalName}Schema = ${output.schemaCode};
+export const ${pascalName}Schema = ${output.schemaCode};${readOnlyAnnotations}
 
 /**
  * GraphQL query field selection for ${entity.displayName}
