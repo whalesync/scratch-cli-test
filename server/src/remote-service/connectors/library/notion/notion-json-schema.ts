@@ -13,6 +13,7 @@ import {
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { buildNotionDefaultView } from './notion-default-view';
 
 /**
  * Read-only property types that cannot be updated via the Notion API.
@@ -36,10 +37,15 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
   const [databaseId] = id.remoteId;
 
   const propertySchemas: Record<string, TSchema> = {};
+  let titleColumnRemoteId: string[] | undefined;
 
   for (const [name, property] of Object.entries(database.properties)) {
     const propSchema = notionPropertyToJsonSchema(property);
     propertySchemas[name] = Type.Optional(propSchema);
+
+    if (property.type === 'title') {
+      titleColumnRemoteId = ['properties', name];
+    }
   }
 
   const tableTitle = database.title.map((t) => t.plain_text).join('');
@@ -132,8 +138,10 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
     name: sanitizeForTableWsId(tableTitle),
     schema,
     idColumnRemoteId: idPath('id'),
+    titleColumnRemoteId,
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildNotionDefaultView(schema),
   };
 }
 

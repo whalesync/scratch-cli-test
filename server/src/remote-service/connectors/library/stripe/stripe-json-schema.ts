@@ -1,6 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { buildStripeDefaultView } from './stripe-default-view';
 import { StripeEntityType } from './stripe-types';
 
 /**
@@ -587,5 +588,6 @@ export function buildStripeJsonTableSpec(id: EntityId, entityType: StripeEntityT
     slugFieldPath: getSlugFieldPath(entityType),
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildStripeDefaultView(schema, entityType),
   };
 }

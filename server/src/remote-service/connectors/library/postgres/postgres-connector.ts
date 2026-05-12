@@ -38,6 +38,7 @@ import {
   validateWhereFilter,
   type InformationSchemaColumn,
 } from '../pg-common';
+import { buildPgDefaultView } from '../pg-common/pg-default-view';
 import { PostgresCredentials } from './postgres-types';
 
 const READ_BATCH_SIZE = 500;
@@ -246,6 +247,7 @@ export class PostgresConnector extends Connector {
         slugFieldPath,
         basePath: [schema],
         generatedAt: new Date().toISOString(),
+        defaultView: buildPgDefaultView(tableSchema),
       };
     });
   }

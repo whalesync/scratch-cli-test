@@ -408,6 +408,7 @@ describe('Fetch → Edit → Publish Integration', () => {
         return schemas[folderPath] ?? null;
       }),
       writeSchemaToGit: jest.fn().mockResolvedValue(undefined),
+      writeViewToGit: jest.fn().mockResolvedValue(undefined),
       buildIndex: jest.fn().mockResolvedValue({ count: 0 }),
       // Staging methods for two-phase pull handler
       stageFiles: jest

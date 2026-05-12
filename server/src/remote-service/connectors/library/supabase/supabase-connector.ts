@@ -42,6 +42,7 @@ import {
   validateWhereFilter,
   type InformationSchemaColumn,
 } from '../pg-common';
+import { buildPgDefaultView } from '../pg-common/pg-default-view';
 import { SupabaseApiError } from './supabase-api-client';
 import { SupabaseAuthParser } from './supabase-auth-parser';
 import { extractProjectRef } from './supabase-setup-utils';
@@ -316,6 +317,7 @@ export class SupabaseConnector extends Connector {
         idColumnRemoteId: idPath(primaryKey),
         basePath: [schema],
         generatedAt: new Date().toISOString(),
+        defaultView: buildPgDefaultView(tableSchema),
       };
     }, resolved.connectionString);
   }

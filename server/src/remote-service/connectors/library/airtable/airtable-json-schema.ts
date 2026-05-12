@@ -14,6 +14,7 @@ import {
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
+import { buildAirtableDefaultView } from './airtable-default-view';
 import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
 
 /**
@@ -71,6 +72,7 @@ export function buildAirtableJsonTableSpec(
     mainContentColumnRemoteId,
     basePath: [base.name],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAirtableDefaultView(table, fieldProperties),
   };
 }
 
