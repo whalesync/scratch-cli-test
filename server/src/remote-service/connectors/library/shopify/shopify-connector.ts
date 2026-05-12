@@ -22,6 +22,7 @@ import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, idPath, TablePreview } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
 import { ShopifyApiClient, ShopifyError } from './shopify-api-client';
+import { buildShopifyDefaultView } from './shopify-default-view';
 import { ShopifyCredentials } from './shopify-types';
 
 const LOG_SOURCE = 'ShopifyConnector';
@@ -206,6 +207,8 @@ export class ShopifyConnector extends Connector {
       idColumnRemoteId: idPath('id'),
       generatedAt: new Date().toISOString(),
     };
+
+    spec.defaultView = buildShopifyDefaultView(resolvedSchema, entityType);
 
     // Safely access columns - TypeScript union types make direct access difficult
     const columns = config.columns as
