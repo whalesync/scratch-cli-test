@@ -55,6 +55,11 @@ describe('buildNotionDefaultView', () => {
     expect(view.name).toBe('Default');
   });
 
+  it('should place the title property first', () => {
+    const paths = view.cols.map((c) => (c as TableViewCol).path);
+    expect(paths[0]).toBe('properties.Name');
+  });
+
   it('should place property columns before fixed fields', () => {
     const paths = view.cols.map((c) => (c as TableViewCol).path);
     const namePropIdx = paths.indexOf('properties.Name');

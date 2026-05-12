@@ -1,6 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { buildMocoDefaultView } from './moco-default-view';
 import { MocoEntityType } from './moco-types';
 
 /**
@@ -440,5 +441,6 @@ export function buildMocoJsonTableSpec(id: EntityId, entityType: MocoEntityType)
     mainContentColumnRemoteId: getMainContentColumnRemoteId(entityType).slice(1),
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildMocoDefaultView(schema, entityType),
   };
 }

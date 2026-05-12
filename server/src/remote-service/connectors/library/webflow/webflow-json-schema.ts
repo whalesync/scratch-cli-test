@@ -18,6 +18,7 @@ import _ from 'lodash';
 import { Webflow } from 'webflow-api';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
+import { buildWebflowDefaultView } from './webflow-default-view';
 
 /**
  * Convert a Webflow field to a TypeBox JSON Schema.
@@ -250,6 +251,7 @@ export function buildWebflowJsonTableSpec(
     slugFieldPath: 'fieldData.slug',
     basePath: [site.displayName ?? site.shortName ?? ''],
     generatedAt: new Date().toISOString(),
+    defaultView: buildWebflowDefaultView(schema, 'collection_items'),
   };
 }
 
@@ -314,6 +316,7 @@ export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Webflow.Site
     titleColumnRemoteId: ['displayName'],
     basePath: [site.displayName ?? site.shortName ?? ''],
     generatedAt: new Date().toISOString(),
+    defaultView: buildWebflowDefaultView(schema, 'assets'),
   };
 }
 

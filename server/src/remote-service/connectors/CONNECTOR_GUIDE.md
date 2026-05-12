@@ -1053,19 +1053,21 @@ A default view is a `TableView` object set on `tableSpec.defaultView` in your `f
 
 **1. Schema-driven, not hardcoded.** Read the TypeBox schema produced by your `fetchJsonTableSpec()` to discover fields dynamically. This way new fields added by the service appear automatically. Only use hardcoded lists for _ordering_ and _visibility_ preferences, not for defining which columns exist.
 
-**2. Priority ordering.** Define a priority list of important fields that should appear first. Fields not in the list go after, sorted in the order they appear from the server, or worst-case, alphabetically. This gives users a sensible default column order.
+**2. Title column first.** The field identified by `titleColumnRemoteId` in the table spec should always be the first visible column. This is the field users recognize each record by (e.g. `name`, `email`, `title`). If the connector already has per-entity `titleFieldPath` or similar config, use it to find and prioritize that column.
 
-**3. Hide less important fields.** System fields, timestamps, internal IDs, and metadata should be hidden by default. The user can always show them via the column picker. It's better to start clean and let users add columns than to overwhelm them with 40 columns.
+**3. Priority ordering.** Define a priority list of important fields that should appear first (after the title column). Fields not in the list go after, sorted in the order they appear from the server, or worst-case, alphabetically. This gives users a sensible default column order.
 
-**4. Map types from schema annotations.** Use `x-scratch-connector-data-type` annotations on the schema to determine the correct `TablePropertyType`. Fall back to JSON Schema `format` hints when the annotation is missing.
+**4. Hide less important fields.** System fields, timestamps, internal IDs, and metadata should be hidden by default. The user can always show them via the column picker. It's better to start clean and let users add columns than to overwhelm them with 40 columns.
 
-**5. Use subfields for compound objects.** Some fields contains multiple representations of a single value. For example, WordPress text appears as `{ raw, rendered }`, or Shopify numbers appear as `{ count, precision }`. We want the user to see these as a single column, which is populated with the user-facing "real" data. This is done with subfields. Create a subfield for each primitive field in the object, and set the `selectedSubfield` to default to the friendliest, most meaningful, most useful, hopefully-not-readonly subfield.
+**5. Map types from schema annotations.** Use `x-scratch-connector-data-type` annotations on the schema to determine the correct `TablePropertyType`. Fall back to JSON Schema `format` hints when the annotation is missing.
 
-**6. Use banner groups sparingly.** Groups add visual structure but also complexity. Use them when a service has a clear logical grouping that users expect (e.g. address fields, SEO metadata). Don't group for the sake of grouping — a flat column list is often clearer.
+**6. Use subfields for compound objects.** Some fields contains multiple representations of a single value. For example, WordPress text appears as `{ raw, rendered }`, or Shopify numbers appear as `{ count, precision }`. We want the user to see these as a single column, which is populated with the user-facing "real" data. This is done with subfields. Create a subfield for each primitive field in the object, and set the `selectedSubfield` to default to the friendliest, most meaningful, most useful, hopefully-not-readonly subfield.
 
-**7. Mark readonly fields.** Read the `x-scratch-readonly` annotation from the schema and propagate it to the column. This prevents users from trying to edit computed fields.
+**7. Use banner groups sparingly.** Groups add visual structure but also complexity. Use them when a service has a clear logical grouping that users expect (e.g. address fields, SEO metadata). Don't group for the sake of grouping — a flat column list is often clearer.
 
-**8. Format display names.** Convert field IDs to human-readable names: `featured_media` → `Featured Media`, `fieldData.slug` → `Slug`.
+**8. Mark readonly fields.** Read the `x-scratch-readonly` annotation from the schema and propagate it to the column. This prevents users from trying to edit computed fields.
+
+**9. Format display names.** Convert field IDs to human-readable names: `featured_media` → `Featured Media`, `fieldData.slug` → `Slug`.
 
 ### Handling Nested / Expanded Fields
 

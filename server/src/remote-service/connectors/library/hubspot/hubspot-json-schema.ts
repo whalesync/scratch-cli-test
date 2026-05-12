@@ -4,6 +4,7 @@ import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIE
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { HubspotApiClient } from './hubspot-api-client';
+import { buildHubspotDefaultView } from './hubspot-default-view';
 import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './hubspot-types';
 
 /**
@@ -131,6 +132,7 @@ export async function buildHubspotJsonTableSpec(
     slugFieldPath: config?.titleFieldPath,
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildHubspotDefaultView(schema, config?.titleFieldPath, config?.priorityFields),
   };
 
   return { spec, propertyNames };

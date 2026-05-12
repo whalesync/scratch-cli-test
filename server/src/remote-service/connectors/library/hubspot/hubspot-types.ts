@@ -35,15 +35,21 @@ export interface HubspotObjectConfig {
   displayName: string;
   /** Dot-path into the record for the title field (used for filenames). */
   titleFieldPath: string;
+  /** Property names to show first in the default view (after the title field). */
+  priorityFields?: string[];
   /** Whether creates are disabled for this object type. */
   disabledCreates?: boolean;
 }
 
 export const OBJECT_CONFIG: Record<string, HubspotObjectConfig> = {
-  contacts: { displayName: 'Contacts', titleFieldPath: 'properties.email' },
-  companies: { displayName: 'Companies', titleFieldPath: 'properties.name' },
-  deals: { displayName: 'Deals', titleFieldPath: 'properties.dealname' },
-  tickets: { displayName: 'Tickets', titleFieldPath: 'properties.subject' },
+  contacts: { displayName: 'Contacts', titleFieldPath: 'properties.email', priorityFields: ['firstname', 'lastname'] },
+  companies: { displayName: 'Companies', titleFieldPath: 'properties.name', priorityFields: ['domain', 'industry'] },
+  deals: { displayName: 'Deals', titleFieldPath: 'properties.dealname', priorityFields: ['dealstage', 'amount'] },
+  tickets: {
+    displayName: 'Tickets',
+    titleFieldPath: 'properties.subject',
+    priorityFields: ['hs_ticket_priority', 'hs_pipeline_stage'],
+  },
   line_items: { displayName: 'Line Items', titleFieldPath: 'properties.name' },
   products: { displayName: 'Products', titleFieldPath: 'properties.name' },
   quotes: { displayName: 'Quotes', titleFieldPath: 'properties.hs_title' },

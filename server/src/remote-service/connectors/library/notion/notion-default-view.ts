@@ -86,7 +86,10 @@ export function buildNotionDefaultView(schema: TSchema): TableView {
   const propertyFields: Record<string, TSchema> =
     (propertiesSchema as TSchema & { properties?: Record<string, TSchema> })?.properties ?? {};
 
-  for (const [propName, propSchema] of Object.entries(propertyFields)) {
+  // Order properties: title property first, then the rest in schema order
+  const orderedProps = orderProperties(propertyFields);
+
+  for (const [propName, propSchema] of orderedProps) {
     cols.push(buildPropertyCol(propName, propSchema));
   }
 
@@ -102,6 +105,25 @@ export function buildNotionDefaultView(schema: TSchema): TableView {
 }
 
 // ── Helpers ──
+
+/**
+ * Order properties so the title property comes first.
+ * Finds the title by connector data type ('title') or by name ('Name', 'Title').
+ */
+function orderProperties(propertyFields: Record<string, TSchema>): [string, TSchema][] {
+  const entries = Object.entries(propertyFields);
+  const titleIdx = entries.findIndex(([name, schema]) => {
+    const inner = unwrapOptional(schema);
+    const dataType = inner?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
+    if (dataType === 'title') return true;
+    const lowerName = name.toLowerCase();
+    return lowerName === 'name' || lowerName === 'title';
+  });
+
+  if (titleIdx <= 0) return entries; // already first or not found
+  const [titleEntry] = entries.splice(titleIdx, 1);
+  return [titleEntry, ...entries];
+}
 
 /** Sort fixed fields: priority fields first (in defined order), then the rest in schema order. */
 function sortFixedFields(fieldIds: string[]): string[] {

@@ -1,4 +1,5 @@
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { buildQuickBooksDefaultView } from './quickbooks-default-view';
 import { QBO_SCHEMA_MAP } from './quickbooks-schemas';
 import { ENTITY_CONFIG, QuickBooksEntityType } from './quickbooks-types';
 
@@ -22,5 +23,6 @@ export function buildQuickBooksJsonTableSpec(id: EntityId, entityType: QuickBook
     titleColumnRemoteId: [config.titleField],
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildQuickBooksDefaultView(schema, entityType),
   };
 }
