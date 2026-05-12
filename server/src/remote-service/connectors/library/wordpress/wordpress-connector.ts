@@ -1,5 +1,5 @@
 import { TObject } from '@sinclair/typebox';
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import TurndownService from 'turndown';
@@ -132,7 +132,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     callback: (params: { files: ConnectorFile[]; connectorProgress?: WordPressDownloadProgress }) => Promise<void>,
     progress: WordPressDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const [tableId] = tableSpec.id.remoteId;
     let offset = progress?.nextOffset ?? 0;

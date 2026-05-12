@@ -1,5 +1,5 @@
 import { TObject, TSchema } from '@sinclair/typebox';
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -107,6 +107,8 @@ export class WebflowConnector extends Connector {
         },
         displayName: `Assets`,
         disabledCreates: true,
+        disabledUpdates: true,
+        disabledDeletes: true,
         parentPath: site.displayName,
         metadata: {
           siteId: site.id,
@@ -197,7 +199,7 @@ export class WebflowConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     WSLogger.info({ source: 'WebflowConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
     const [siteId, collectionId] = tableSpec.id.remoteId;

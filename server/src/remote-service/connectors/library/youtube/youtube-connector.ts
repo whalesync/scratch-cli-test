@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -129,7 +129,7 @@ export class YouTubeConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     WSLogger.info({ source: 'YouTubeConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
     await callback({ files: [], connectorProgress: progress });

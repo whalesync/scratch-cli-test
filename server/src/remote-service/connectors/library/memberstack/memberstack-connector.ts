@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { randomUUID } from 'crypto';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -85,7 +85,7 @@ export class MemberstackConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const resumeCursor = (progress as { endCursor?: string })?.endCursor ?? undefined;
 

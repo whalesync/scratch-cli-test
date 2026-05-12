@@ -1,9 +1,9 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import {
-  ConnectorPullOptions,
   createWorkbookId,
   createWorkspacePermissionId,
   DataFolderId,
+  DataFolderOptions,
   JobType,
   PullAssetsResponseDto,
   PullFilesResponseDto,
@@ -601,7 +601,7 @@ export class WorkbookService {
           folderId: firstFolder.id,
           folderName: firstFolder.name,
           connector: firstFolder.connectorService ?? 'unknown',
-          filter: (firstFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
+          filter: (firstFolder.options as unknown as DataFolderOptions)?.filter ?? null,
           status: 'pending',
           createdPaths: [],
           updatedPaths: [],

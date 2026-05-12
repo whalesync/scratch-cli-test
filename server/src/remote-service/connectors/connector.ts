@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { ConnectorPullOptions, ConnectorSettingDefinition, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorSettingDefinition, DataFolderOptions, TableDiscoveryMode } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -123,7 +123,7 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>,
     progress: TConnectorProgress,
-    options: ConnectorPullOptions,
+    options: DataFolderOptions,
   ): Promise<void>;
 
   /**

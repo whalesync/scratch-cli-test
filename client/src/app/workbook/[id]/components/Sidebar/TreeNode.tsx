@@ -22,6 +22,7 @@ import {
   type DataFolder,
   type DataFolderGroup,
   type DataFolderId,
+  type DataFolderOptions,
   type FileRefEntity,
   type WorkbookId,
 } from '@spinner/shared-types';
@@ -39,6 +40,7 @@ import {
   FilePlusIcon,
   FlaskRoundIcon,
   FolderIcon,
+  FolderLockIcon,
   ImageIcon,
   MoreHorizontalIcon,
   RefreshCwIcon,
@@ -165,7 +167,7 @@ function IntermediateFolderNode({ name, nodeId, depth, children }: IntermediateF
       >
         <Group gap={6} wrap="nowrap">
           <StyledLucideIcon Icon={isExpanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-secondary)" />
-          <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-secondary)" />
+          <StyledLucideIcon Icon={FolderIcon} size={14} c="var(--fg-secondary)" />
           <Text12Regular c="var(--fg-primary)" truncate>
             {name}
           </Text12Regular>
@@ -700,7 +702,15 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
                 c="var(--fg-secondary)"
               />
             </Box>
-            <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-secondary)" />
+            {(folder.options as DataFolderOptions | null)?.readOnly ? (
+              <Tooltip label="Read-only — pull only, never published back" position="right">
+                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <StyledLucideIcon Icon={FolderLockIcon} size={14} c="var(--fg-secondary)" />
+                </span>
+              </Tooltip>
+            ) : (
+              <StyledLucideIcon Icon={FolderIcon} size={14} c="var(--fg-secondary)" />
+            )}
             <Text12Regular c="var(--fg-primary)" truncate>
               {folder.name}
             </Text12Regular>

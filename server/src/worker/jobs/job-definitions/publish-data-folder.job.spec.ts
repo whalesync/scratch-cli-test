@@ -166,4 +166,29 @@ describe('PublishDataFolderJobHandler', () => {
       expect(lastCheckpoint.publicProgress.folders[1].status).toBe('completed');
     });
   });
+
+  describe('read-only folder enforcement (DEV-9928)', () => {
+    it('skips a read-only folder without calling the connector', async () => {
+      const folder = createMockDataFolder({ options: { readOnly: true } });
+      (mockPrisma.dataFolder.findMany as jest.Mock).mockResolvedValue([folder]);
+
+      const params = createMockParams([folder.id]);
+      await handler.run(params);
+
+      // The defensive skip runs before any connector lookup or publish call.
+      /* eslint-disable @typescript-eslint/unbound-method */
+      expect(mockConnectorAccountService.findOneById).not.toHaveBeenCalled();
+      expect(mockDataFolderPublishingService.publishAll).not.toHaveBeenCalled();
+      expect(mockScratchGitService.readSchemaFromGit).not.toHaveBeenCalled();
+      /* eslint-enable @typescript-eslint/unbound-method */
+
+      // Folder ends as completed with zero operations.
+      const checkpointCalls = params.checkpoint.mock.calls as CheckpointCall[];
+      const lastCheckpoint = checkpointCalls[checkpointCalls.length - 1][0];
+      expect(lastCheckpoint.publicProgress.folders[0].status).toBe('completed');
+      expect(lastCheckpoint.publicProgress.folders[0].creates).toBe(0);
+      expect(lastCheckpoint.publicProgress.folders[0].updates).toBe(0);
+      expect(lastCheckpoint.publicProgress.folders[0].deletes).toBe(0);
+    });
+  });
 });

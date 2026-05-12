@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -144,7 +144,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     callback: (params: { files: ConnectorFile[]; connectorProgress?: HubspotDownloadProgress }) => Promise<void>,
     progress: HubspotDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const objectType = tableSpec.id.remoteId[0];
     const propertyNames = await this.getPropertyNames(objectType);

@@ -15,7 +15,7 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
   X_SCRATCH_READONLY,
-  type ConnectorPullOptions,
+  type DataFolderOptions,
 } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -351,7 +351,7 @@ export class SupabaseConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    options: ConnectorPullOptions,
+    options: DataFolderOptions,
   ): Promise<void> {
     const rawFilter = options.filter?.trim() || undefined;
     if (rawFilter) {

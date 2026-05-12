@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -120,6 +120,8 @@ export class StripeConnector extends Connector {
       },
       displayName: ENTITY_DISPLAY_NAMES[entityType],
       disabledCreates: true as const,
+      disabledUpdates: true as const,
+      disabledDeletes: true as const,
       disabledReason: 'Stripe connector is read-only',
       metadata: {
         description: ENTITY_DESCRIPTIONS[entityType],
@@ -149,7 +151,7 @@ export class StripeConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as StripeEntityType;
     const resumeAfter = (progress as { startingAfter?: string })?.startingAfter;

@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { assertUnreachable } from 'src/utils/asserts';
@@ -138,7 +138,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: AttioDownloadProgress }) => Promise<void>,
     progress: AttioDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const parsed = parseAttioTableId(tableSpec.id);
     const resumeOffset = progress?.offset;

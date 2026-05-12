@@ -81,6 +81,7 @@ describe('PublishPlanService', () => {
 
     schemaService = {
       getDataFolderInfo: jest.fn().mockResolvedValue({ id: 'df_1', spec: { schema: {} } }),
+      refreshSchemasForConnection: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SchemaHelperService>;
 
     const assetIndexService = {
@@ -502,6 +503,55 @@ describe('PublishPlanService', () => {
       await service.buildPipeline(WORKBOOK_ID, USER_ID, undefined, PIPELINE_ID);
 
       expect(db.client.publishPlanOperation.createMany).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('read-only folder enforcement (DEV-9928)', () => {
+    const CONNECTOR_ACCOUNT_ID = 'ca_test';
+
+    it('excludes files under a read-only folder from the plan', async () => {
+      const writableFile = 'writable/article.json';
+      const readOnlyFile = 'locked/article.json';
+      const content = JSON.stringify({ title: 'Hi' });
+
+      db.client.dataFolder.findMany.mockResolvedValue([
+        { id: 'df_writable', path: '/writable', options: {} },
+        { id: 'df_locked', path: '/locked', options: { readOnly: true } },
+      ]);
+      scratchGitService.getRepoStatus.mockResolvedValue([
+        { path: writableFile, status: 'modified' },
+        { path: readOnlyFile, status: 'modified' },
+      ]);
+      scratchGitService.readRepoFilesByFolder.mockImplementation((_wkb, _branch, paths) =>
+        Promise.resolve(paths.map((p) => ({ path: p, content }))),
+      );
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, CONNECTOR_ACCOUNT_ID, PIPELINE_ID);
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{
+        phase: string;
+        filePath: string;
+      }>;
+      expect(saved.some((e) => e.filePath === writableFile)).toBe(true);
+      expect(saved.some((e) => e.filePath === readOnlyFile)).toBe(false);
+    });
+
+    it('produces no operations when every folder is read-only', async () => {
+      const readOnlyFile = 'locked/article.json';
+      const content = JSON.stringify({ title: 'Hi' });
+
+      db.client.dataFolder.findMany.mockResolvedValue([
+        { id: 'df_locked', path: '/locked', options: { readOnly: true } },
+      ]);
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: readOnlyFile, status: 'modified' }]);
+      scratchGitService.readRepoFilesByFolder.mockImplementation((_wkb, _branch, paths) =>
+        Promise.resolve(paths.map((p) => ({ path: p, content }))),
+      );
+
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, CONNECTOR_ACCOUNT_ID, PIPELINE_ID);
+
+      expect(db.client.publishPlanOperation.createMany).not.toHaveBeenCalled();
     });
   });
 });

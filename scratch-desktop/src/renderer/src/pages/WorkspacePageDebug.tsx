@@ -16,15 +16,14 @@ import {
   Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, BracesIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useConfirmModal } from '../components/ConfirmModal';
 import { LiveCommandOutput } from '../components/LiveCommandOutput';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
-import { Workspace } from '../types/workspace';
-import { AdminPlaygroundGrid } from './workspace/AdminPlaygroundGrid';
+import { DataFolder, Workspace } from '../types/workspace';
 
 interface SyncValidationResult {
   syncName: string;
@@ -56,6 +55,7 @@ export function WorkspacePageDebug() {
   const [unpushedModalOpen, setUnpushedModalOpen] = useState(false);
   const [loadingUnpushed, setLoadingUnpushed] = useState(false);
   const [unpushedEntries, setUnpushedEntries] = useState<UnreviewedChangeEntry[]>([]);
+  const [inspectedDataFolder, setInspectedDataFolder] = useState<DataFolder | null>(null);
   const [unpushedError, setUnpushedError] = useState<string | null>(null);
   const [validateModalOpen, setValidateModalOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
@@ -1143,16 +1143,20 @@ export function WorkspacePageDebug() {
         </Text>
       </Box>
 
-      <Stack gap="xs">
-        <Title order={4}>Admin Playground</Title>
-        <AdminPlaygroundGrid />
-      </Stack>
-
       {folderCount > 0 && (
         <Stack gap="xs">
           <Title order={4}>Data Folders</Title>
           {workspace.dataFolders?.map((df) => (
             <Group key={df.id} gap="xs">
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                title="Show folder JSON"
+                onClick={() => setInspectedDataFolder(df)}
+              >
+                <BracesIcon size={14} />
+              </ActionIcon>
               <Text size="sm" ff="monospace">
                 {df.path || '/'}
               </Text>
@@ -1168,6 +1172,21 @@ export function WorkspacePageDebug() {
           ))}
         </Stack>
       )}
+
+      <Modal
+        opened={inspectedDataFolder !== null}
+        onClose={() => setInspectedDataFolder(null)}
+        title={inspectedDataFolder ? `Data Folder: ${inspectedDataFolder.name}` : 'Data Folder'}
+        size="lg"
+      >
+        {inspectedDataFolder && (
+          <ScrollArea h={500}>
+            <Code block style={{ whiteSpace: 'pre-wrap' }}>
+              {JSON.stringify(inspectedDataFolder, null, 2)}
+            </Code>
+          </ScrollArea>
+        )}
+      </Modal>
     </Stack>
   );
 }

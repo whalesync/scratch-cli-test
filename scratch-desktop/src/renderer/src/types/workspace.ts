@@ -18,4 +18,5 @@ export interface DataFolder {
   connectorService: string | null;
   connectorDisplayName: string | null;
   lock: string | null;
+  options: Record<string, unknown> | null;
 }

@@ -27,11 +27,26 @@ import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { initiateOAuth } from '@/utils/oauth';
 import { RouteUrls } from '@/utils/route-urls';
 import { UserButton } from '@clerk/nextjs';
-import { ActionIcon, Box, Menu } from '@mantine/core';
+import { ActionIcon, Box, Menu, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import type { ConnectorAccount, DataFolder, DataFolderGroup, WorkbookId } from '@spinner/shared-types';
+import type {
+  ConnectorAccount,
+  DataFolder,
+  DataFolderGroup,
+  DataFolderOptions,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { AuthType } from '@spinner/shared-types';
-import { FolderIcon, LinkIcon, PlusIcon, SettingsIcon, Trash2Icon, UnlinkIcon, UserIcon } from 'lucide-react';
+import {
+  FolderIcon,
+  FolderLockIcon,
+  LinkIcon,
+  PlusIcon,
+  SettingsIcon,
+  Trash2Icon,
+  UnlinkIcon,
+  UserIcon,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -575,11 +590,20 @@ interface DataFolderRowProps {
 function DataFolderRow({ folder, workbookId, nested }: DataFolderRowProps) {
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
   const [removeOpened, { open: openRemove, close: closeRemove }] = useDisclosure(false);
+  const isReadOnly = (folder.options as DataFolderOptions | null)?.readOnly === true;
 
   return (
     <>
       <div className={`${styles.tableRow} ${nested ? styles.tableRowNested : ''}`}>
-        <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-muted)" />
+        {isReadOnly ? (
+          <Tooltip label="Read-only — pull only, never published back" position="right">
+            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+              <StyledLucideIcon Icon={FolderLockIcon} size={14} c="var(--fg-muted)" />
+            </span>
+          </Tooltip>
+        ) : (
+          <StyledLucideIcon Icon={FolderIcon} size={14} c="var(--fg-muted)" />
+        )}
         <Text13Regular c="var(--fg-primary)" style={{ flex: 1 }} truncate>
           {folder.name}
         </Text13Regular>

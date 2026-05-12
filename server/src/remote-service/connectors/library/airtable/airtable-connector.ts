@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, ConnectorSettingDefinition } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -18,7 +18,7 @@ import { AirtableApiClient } from './airtable-api-client';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
 import { AirtableSchemaParser } from './airtable-schema-parser';
 
-interface AirtablePullOptions extends ConnectorPullOptions {
+interface AirtablePullOptions extends DataFolderOptions {
   filter?: string | undefined;
   // A view ID to pull records from. If not provided, all records will be pulled.
   view?: string | undefined;

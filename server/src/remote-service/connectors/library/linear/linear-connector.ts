@@ -5,7 +5,7 @@
  * Supports CRUD for Issues and Projects; read-only for Teams, Users, Labels, and Cycles.
  */
 
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
@@ -128,7 +128,7 @@ export class LinearConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as EntityType;
 

@@ -16,6 +16,7 @@ import {
 import type {
   DataFolder,
   DataFolderId,
+  DataFolderOptions,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
   WorkbookId,
@@ -109,6 +110,11 @@ export class DataFolderController {
     }
     if (dataFolder.workbookId !== workbookId) {
       throw new BadRequestException('Data folder does not belong to this workbook');
+    }
+
+    // Read-only folders are excluded from publish flows entirely (DEV-9928).
+    if ((dataFolder.options as DataFolderOptions | null)?.readOnly) {
+      throw new BadRequestException(`Data folder "${dataFolder.name}" is read-only and cannot be published`);
     }
 
     // Check if folder is already locked by another operation

@@ -6,9 +6,16 @@ import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { fileMatchesFolder } from '@/utils/data-folder-helpers';
 import { RouteUrls } from '@/utils/route-urls';
-import { Box, Collapse, Group, Stack } from '@mantine/core';
-import type { ConnectorAccount, DataFolder, DataFolderGroup, FileDiffStatus, WorkbookId } from '@spinner/shared-types';
-import { FolderIcon, StickyNoteIcon } from 'lucide-react';
+import { Box, Collapse, Group, Stack, Tooltip } from '@mantine/core';
+import type {
+  ConnectorAccount,
+  DataFolder,
+  DataFolderGroup,
+  DataFolderOptions,
+  FileDiffStatus,
+  WorkbookId,
+} from '@spinner/shared-types';
+import { FolderIcon, FolderLockIcon, StickyNoteIcon } from 'lucide-react';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 import { ChevronToggle, DirtyBadge, FileNameCell, INDENT_PX, TreeRow } from './tree-node-primitives';
@@ -347,7 +354,15 @@ function ReviewTableNode({ folder, workbookId, connectorAccountId, dirtyFilePath
         <Group gap={6} wrap="nowrap" justify="space-between">
           <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
             <ChevronToggle isExpanded={isExpanded} onClick={handleChevronClick} />
-            <StyledLucideIcon Icon={FolderIcon} size="sm" c="var(--fg-secondary)" />
+            {(folder.options as DataFolderOptions | null)?.readOnly ? (
+              <Tooltip label="Read-only — pull only, never published back" position="right">
+                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <StyledLucideIcon Icon={FolderLockIcon} size={14} c="var(--fg-secondary)" />
+                </span>
+              </Tooltip>
+            ) : (
+              <StyledLucideIcon Icon={FolderIcon} size={14} c="var(--fg-secondary)" />
+            )}
             <Text12Regular c="var(--fg-primary)" truncate>
               {folder.name}
             </Text12Regular>

@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -211,7 +211,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
     callback: (params: { files: ConnectorFile[]; connectorProgress?: AffinityDownloadProgress }) => Promise<void>,
     progress: AffinityDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const parsed = parseAffinityTableId(tableSpec.id);
     const resumeCursor = progress?.cursor;

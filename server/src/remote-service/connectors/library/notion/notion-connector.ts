@@ -13,8 +13,8 @@ import {
 } from '@notionhq/client/build/src/api-endpoints';
 import {
   connectorMetadata,
-  ConnectorPullOptions,
   ConnectorSettingDefinition,
+  DataFolderOptions,
   TableDiscoveryMode,
 } from '@spinner/shared-types';
 import _ from 'lodash';
@@ -52,7 +52,7 @@ type NotionDownloadProgress = {
   nextCursor: string | undefined;
 };
 
-interface NotionPullOptions extends ConnectorPullOptions {
+interface NotionPullOptions extends DataFolderOptions {
   filter?: string | undefined;
   excludePageContent?: boolean | undefined;
   childContentMaxDepth?: number | undefined;

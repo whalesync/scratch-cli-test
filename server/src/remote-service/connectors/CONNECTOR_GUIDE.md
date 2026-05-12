@@ -76,7 +76,7 @@ export abstract class Connector<
 | `testConnection()`                                        | `abstract testConnection(): Promise<void>`                                                                                                                                                                                                    | Validate credentials. Throw on failure, resolve silently on success.                                                  |
 | `listTables()`                                            | `abstract listTables(): Promise<TablePreview[]>`                                                                                                                                                                                              | Return all available tables/collections                                                                               |
 | `fetchJsonTableSpec(id)`                                  | `abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>`                                                                                                                                                                       | Build the full JSON schema for a table                                                                                |
-| `pullRecordFiles(tableSpec, callback, progress, options)` | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress, options: ConnectorPullOptions): Promise<void>` | Stream all records via batched callbacks                                                                              |
+| `pullRecordFiles(tableSpec, callback, progress, options)` | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress, options: DataFolderOptions): Promise<void>` | Stream all records via batched callbacks                                                                              |
 | `pullRecordFilesByIds(tableSpec, ids, callback)`          | `abstract pullRecordFilesByIds(tableSpec: BaseJsonTableSpec, ids: string[], callback: (params: { files: ConnectorFile[] }) => Promise<void>): Promise<void>`                                                                                  | Fetch specific records by ID (bulk where supported, silently skip 404s)                                               |
 | `getBatchSize(operation)`                                 | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                                                  | Max batch size per CRUD operation (must be > 0)                                                                       |
 | `createRecords(tableSpec, files)`                         | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                                                      | Create records, return files with remote IDs assigned                                                                 |
@@ -256,7 +256,7 @@ async pullRecordFiles(
   tableSpec: BaseJsonTableSpec,
   callback: (params: { files: ConnectorFile[]; connectorProgress?: NotionDownloadProgress }) => Promise<void>,
   progress: NotionDownloadProgress,
-  options: ConnectorPullOptions,
+  options: DataFolderOptions,
 ): Promise<void> {
   let cursor: string | undefined = progress.nextCursor;
   do {
@@ -280,7 +280,7 @@ async pullRecordFiles(
   tableSpec: BaseJsonTableSpec,
   callback: (params: { files: ConnectorFile[]; connectorProgress?: WordPressDownloadProgress }) => Promise<void>,
   progress: WordPressDownloadProgress,
-  options: ConnectorPullOptions,
+  options: DataFolderOptions,
 ): Promise<void> {
   let offset = progress.nextOffset ?? 0;
   let hasMore = true;
@@ -301,7 +301,7 @@ async pullRecordFiles(
   tableSpec: BaseJsonTableSpec,
   callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
   progress: JsonSafeObject,
-  options: ConnectorPullOptions,
+  options: DataFolderOptions,
 ): Promise<void> {
   const resumeAfter = (progress as { startingAfter?: string })?.startingAfter;
 

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
+import { type DataFolderOptions, isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash';
 import { AssetIndexService } from 'src/asset/asset-index.service';
@@ -210,7 +210,10 @@ export class PublishPlanBuildService {
         where: { workbookId: wkbId, connectorAccountId },
       });
 
-      const prefixes = dataFolders
+      // Read-only folders are excluded from publish plans entirely (DEV-9928).
+      const writableFolders = dataFolders.filter((df) => !(df.options as DataFolderOptions | null)?.readOnly);
+
+      const prefixes = writableFolders
         .map((df) => df.path)
         .filter((p): p is string => !!p)
         .map((p) => (p.startsWith('/') ? p.substring(1) : p)) // Normalize: remove leading slash
@@ -219,7 +222,7 @@ export class PublishPlanBuildService {
       if (prefixes.length > 0) {
         changes = changes.filter((c) => prefixes.some((prefix) => c.path.startsWith(prefix)));
       } else {
-        // No folders? Then no changes for this connector.
+        // No writable folders? Then no changes for this connector.
         changes = [];
       }
     }
@@ -322,9 +325,12 @@ export class PublishPlanBuildService {
       if (connector.supportsFileUpload) {
         const destFolders = await this.db.client.dataFolder.findMany({
           where: { workbookId: wkbId, connectorAccountId },
-          select: { id: true, tableId: true },
+          select: { id: true, tableId: true, options: true },
         });
-        const destFolderIds = destFolders.map((df) => df.id);
+        // Asset uploads write to the remote, so skip them for read-only folders (DEV-9928).
+        const destFolderIds = destFolders
+          .filter((df) => !(df.options as DataFolderOptions | null)?.readOnly)
+          .map((df) => df.id);
         if (destFolderIds.length > 0) {
           const unuploadedAssets = await this.assetIndexService.findUnuploadedDestinationAssets(
             workbookId,

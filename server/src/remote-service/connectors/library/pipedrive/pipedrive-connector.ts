@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -104,7 +104,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     callback: (params: { files: ConnectorFile[]; connectorProgress?: PipedriveDownloadProgress }) => Promise<void>,
     progress: PipedriveDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
     const resumeCursor = (progress as { nextCursor?: string })?.nextCursor;

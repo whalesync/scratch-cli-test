@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -78,6 +78,8 @@ export class BrevoConnector extends Connector {
         id: { wsId: 'mailing_lists', remoteId: ['mailing_lists'] },
         displayName: 'Mailing Lists',
         disabledCreates: true,
+        disabledUpdates: true,
+        disabledDeletes: true,
         metadata: { description: 'Mailing lists in your Brevo account (read-only)' },
       },
     ];
@@ -103,7 +105,7 @@ export class BrevoConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const resumeOffset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
 

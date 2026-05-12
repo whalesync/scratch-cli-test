@@ -367,7 +367,7 @@ model DataFolder {
   isAssetTable Boolean @default(false)
 
   // Additional options for interacting with the connector
-  // Will be an object matching any of the Connector options interfaces such as ConnectorPullOptions.
+  // Will be an object matching the DataFolderOptions interface, plus any connector-specific keys.
   options Json? @default("{}")
 
   @@index([workbookId])

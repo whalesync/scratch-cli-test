@@ -3,6 +3,7 @@
 import { Badge } from '@/app/components/base/badge';
 import { ButtonPrimaryLight, ButtonSecondaryInline, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/app/components/base/text';
+import { CapabilityIcons } from '@/app/components/Icons/CapabilityIcons';
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
@@ -17,7 +18,13 @@ import {
   suppressFolderMutations,
   unsuppressFolderMutations,
 } from '@/stores/workbook-websocket-store';
-import { TableList, TablePreview, TableSchemaPreview, TableSearchResult } from '@/types/server-entities/table-list';
+import {
+  isTableFullyLocked,
+  TableList,
+  TablePreview,
+  TableSchemaPreview,
+  TableSearchResult,
+} from '@/types/server-entities/table-list';
 import {
   Alert,
   Box,
@@ -42,13 +49,13 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import type {
   ConnectorAccount,
-  ConnectorPullOptions,
   ConnectorSettingDefinition,
   DataFolderId,
+  DataFolderOptions,
   WorkbookId,
 } from '@spinner/shared-types';
 import { TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
-import { AlertTriangleIcon, InfoIcon, SearchIcon } from 'lucide-react';
+import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 
@@ -120,10 +127,13 @@ function TableLabel({ table }: { table: TablePreview }) {
               <AlertTriangleIcon size={14} color="var(--mantine-color-dimmed)" />
             </Tooltip>
           )}
-          {!table.disabled && table.disabledCreates && (
-            <Tooltip label={table.disabledReason ?? 'Creates are not supported'} multiline maw={250} position="right">
-              <InfoIcon size={14} color="var(--mantine-color-dimmed)" />
-            </Tooltip>
+          {!table.disabled && (
+            <CapabilityIcons
+              disabledCreates={table.disabledCreates}
+              disabledUpdates={table.disabledUpdates}
+              disabledDeletes={table.disabledDeletes}
+              size="sm"
+            />
           )}
         </Group>
         {description && <Text12Regular c="dimmed">{description}</Text12Regular>}
@@ -237,7 +247,6 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
   const supportsFilter = data?.supportsFilters ?? false;
   const supportsFieldSelection = data?.supportsFieldSelection ?? false;
   const advancedSettings = useMemo(() => data?.advancedSettings ?? [], [data?.advancedSettings]);
-  const hasConnectorOptions = advancedSettings.length > 0;
 
   // Search state for SEARCH mode
   const [searchTerm, setSearchTerm] = useState('');
@@ -282,6 +291,9 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   // Generic per-table connector options state
   const [connectorOptions, setConnectorOptions] = useState<Map<string, Record<string, unknown>>>(new Map());
+
+  // Per-table user-chosen read-only toggle (separate from connector-driven lockout)
+  const [readOnlyValues, setReadOnlyValues] = useState<Map<string, boolean>>(new Map());
 
   // Get currently linked data folders for this connector account
   const linkedFolders = useMemo(() => {
@@ -349,7 +361,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         if (!disabledTableKeys.has(key)) {
           linked.add(key);
         }
-        const folderFilter = (folder.options as ConnectorPullOptions)?.filter;
+        const folderFilter = (folder.options as DataFolderOptions)?.filter;
         if (folderFilter) {
           initialFilters.set(key, folderFilter);
         }
@@ -385,6 +397,18 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       }
     });
     setConnectorOptions(initialOptions);
+
+    // Initialize per-table read-only choice from existing folder options.
+    const initialReadOnly = new Map<string, boolean>();
+    linkedFolders.forEach((folder) => {
+      if (folder.tableId.length > 0) {
+        const key = folder.tableId.join('/');
+        const opts = (folder.options ?? {}) as DataFolderOptions;
+        initialReadOnly.set(key, Boolean(opts.readOnly));
+      }
+    });
+    setReadOnlyValues(initialReadOnly);
+
     setTriggerPull(true);
     setPartialResult(null);
   }, [opened, linkedFolders, linkedTablePreviews, disabledTableKeys, advancedSettings]);
@@ -461,25 +485,13 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     });
   }, []);
 
-  const buildOptionsForTable = useCallback(
-    (tableKey: string): Record<string, unknown> | undefined => {
-      if (advancedSettings.length === 0) return undefined;
-      const opts: Record<string, unknown> = {};
-      const tableOpts = connectorOptions.get(tableKey) ?? {};
-      for (const setting of advancedSettings) {
-        const value = tableOpts[setting.key];
-        if (setting.type === 'boolean' && value === true) {
-          opts[setting.key] = true;
-        } else if (setting.type === 'number' && value !== '' && value != null) {
-          opts[setting.key] = value;
-        } else if (setting.type === 'string' && typeof value === 'string' && value.trim()) {
-          opts[setting.key] = value.trim();
-        }
-      }
-      return opts;
-    },
-    [advancedSettings, connectorOptions],
-  );
+  const handleReadOnlyChange = useCallback((tableKey: string, value: boolean) => {
+    setReadOnlyValues((prev) => {
+      const next = new Map(prev);
+      next.set(tableKey, value);
+      return next;
+    });
+  }, []);
 
   // Compute tables to add and remove (used in step 2 display and save)
   const allKnownTables = useMemo(() => {
@@ -490,6 +502,56 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     for (const [key, t] of selectedTableMap) map.set(key, t);
     return Array.from(map.values());
   }, [isSearchMode, linkedTablePreviews, searchResultTables, selectedTableMap, availableTables]);
+
+  const tableLookup = useMemo(() => {
+    const map = new Map<string, TablePreview>();
+    for (const t of allKnownTables) map.set(t.id.remoteId.join('/'), t);
+    return map;
+  }, [allKnownTables]);
+
+  // The effective per-folder readOnly is either the user's toggle or the connector
+  // lockout (all three write capabilities disabled). The latter wins.
+  const computeEffectiveReadOnly = useCallback(
+    (tableKey: string): boolean => {
+      if (isTableFullyLocked(tableLookup.get(tableKey))) return true;
+      return readOnlyValues.get(tableKey) ?? false;
+    },
+    [tableLookup, readOnlyValues],
+  );
+
+  // Builds the folder.options blob we will send to the server for a given table.
+  // Preserves any existing options on the folder (so unrelated keys like
+  // idFieldOverride survive the round-trip) and overlays the user's read-only
+  // choice plus any advanced connector-setting values.
+  const buildOptionsForTable = useCallback(
+    (tableKey: string): Record<string, unknown> => {
+      const existing = linkedFolders.find((f) => f.tableId.join('/') === tableKey)?.options ?? {};
+      const opts: Record<string, unknown> = { ...existing };
+
+      if (computeEffectiveReadOnly(tableKey)) {
+        opts.readOnly = true;
+      } else {
+        delete opts.readOnly;
+      }
+
+      const tableOpts = connectorOptions.get(tableKey) ?? {};
+      for (const setting of advancedSettings) {
+        const value = tableOpts[setting.key];
+        if (setting.type === 'boolean' && value === true) {
+          opts[setting.key] = true;
+        } else if (setting.type === 'number' && value !== '' && value != null) {
+          opts[setting.key] = value;
+        } else if (setting.type === 'string' && typeof value === 'string' && value.trim()) {
+          opts[setting.key] = value.trim();
+        } else {
+          delete opts[setting.key];
+        }
+      }
+
+      return opts;
+    },
+    [advancedSettings, connectorOptions, linkedFolders, computeEffectiveReadOnly],
+  );
 
   const currentlyLinkedKeys = useMemo(() => new Set(linkedFolders.map((f) => f.tableId.join('/'))), [linkedFolders]);
 
@@ -578,12 +640,15 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   // Tables that remain selected (both existing and new) for step 2 display
   const selectedTablesForStep2 = useMemo(() => {
-    const tables: { tableKey: string; displayName: string; label: string; isNew: boolean; isRemoved: boolean }[] = [];
+    const tables: {
+      tableKey: string;
+      displayName: string;
+      label: string;
+      isNew: boolean;
+      isRemoved: boolean;
+      isFullyLocked: boolean;
+    }[] = [];
     const seen = new Set<string>();
-
-    // Build a lookup from allKnownTables for label resolution
-    const tableLookup = new Map<string, TablePreview>();
-    for (const t of allKnownTables) tableLookup.set(t.id.remoteId.join('/'), t);
 
     // Existing linked folders first
     linkedFolders.forEach((folder) => {
@@ -593,7 +658,14 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       const isRemoved = !selectedTableIds.has(key);
       const preview = tableLookup.get(key);
       const label = preview ? getTableLabel(preview) : folder.name;
-      tables.push({ tableKey: key, displayName: folder.name, label, isNew: false, isRemoved });
+      tables.push({
+        tableKey: key,
+        displayName: folder.name,
+        label,
+        isNew: false,
+        isRemoved,
+        isFullyLocked: isTableFullyLocked(preview),
+      });
     });
 
     // Newly added tables
@@ -607,11 +679,12 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         label: getTableLabel(table),
         isNew: true,
         isRemoved: false,
+        isFullyLocked: isTableFullyLocked(table),
       });
     });
 
     return tables;
-  }, [linkedFolders, selectedTableIds, tablesToAdd, allKnownTables, getTableLabel]);
+  }, [linkedFolders, selectedTableIds, tablesToAdd, tableLookup, getTableLabel]);
 
   const handleNext = () => {
     setStep(2);
@@ -691,20 +764,21 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         }
       }
 
-      // Update filters and connector options on existing tables that changed
+      // Update filters and connector options on existing tables that changed.
+      // The new options blob preserves existing keys, so it is safe to send
+      // whenever anything in it has changed (filter, readOnly, advanced settings).
       for (const folder of linkedFolders) {
         const folderKey = folder.tableId.join('/');
         if (!selectedTableIds.has(folderKey)) continue; // being removed
         const newFilter = filterValues.get(folderKey)?.trim() || null;
-        const existingFilter = (folder.options as ConnectorPullOptions)?.filter || null;
+        const existingFilter = (folder.options as DataFolderOptions)?.filter || null;
         const newOptions = buildOptionsForTable(folderKey);
         const filterChanged = newFilter !== existingFilter;
-        const optionsChanged =
-          hasConnectorOptions && JSON.stringify(newOptions) !== JSON.stringify(folder.options ?? {});
+        const optionsChanged = JSON.stringify(newOptions) !== JSON.stringify(folder.options ?? {});
         if (filterChanged || optionsChanged) {
           await dataFolderApi.update(folder.id, {
             filter: newFilter,
-            ...(hasConnectorOptions && { options: newOptions }),
+            options: newOptions,
           });
         }
       }
@@ -1012,13 +1086,10 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
   // Step 2: Configure table settings
   const renderStep2 = () => {
-    const hasConfigurableOptions = supportsFilter || supportsFieldSelection || hasConnectorOptions;
     return (
       <Stack gap="md">
         <Group justify="space-between" align="center">
-          <Text13Regular c="dimmed">
-            {hasConfigurableOptions ? 'Configure settings for selected tables.' : 'Review selected tables.'}
-          </Text13Regular>
+          <Text13Regular c="dimmed">Configure settings for selected tables.</Text13Regular>
           <Text12Regular c="dimmed">Step 2 of 2</Text12Regular>
         </Group>
 
@@ -1042,7 +1113,43 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                       <Text13Medium c={entry.isRemoved ? 'dimmed' : undefined}>{entry.label}</Text13Medium>
                       {entry.isRemoved && <Badge color="red">Will be removed</Badge>}
                       {entry.isNew && <Badge color="green">New</Badge>}
+                      {!entry.isRemoved && (
+                        <CapabilityIcons
+                          readOnly={entry.isFullyLocked || (readOnlyValues.get(entry.tableKey) ?? false)}
+                          disabledCreates={tableLookup.get(entry.tableKey)?.disabledCreates}
+                          disabledUpdates={tableLookup.get(entry.tableKey)?.disabledUpdates}
+                          disabledDeletes={tableLookup.get(entry.tableKey)?.disabledDeletes}
+                          size="sm"
+                        />
+                      )}
                     </Group>
+
+                    {!entry.isRemoved && (
+                      <Stack gap={4}>
+                        <Text size="sm" fw={500}>
+                          Read-only
+                        </Text>
+                        <Group gap={8} wrap="nowrap" align="center">
+                          <Tooltip
+                            label="This connector doesn't support writes to this table."
+                            disabled={!entry.isFullyLocked}
+                            position="right"
+                          >
+                            <Switch
+                              checked={entry.isFullyLocked || (readOnlyValues.get(entry.tableKey) ?? false)}
+                              disabled={entry.isFullyLocked}
+                              onChange={(e) => handleReadOnlyChange(entry.tableKey, e.currentTarget.checked)}
+                              size="xs"
+                            />
+                          </Tooltip>
+                          <Text size="xs" c="dimmed">
+                            {entry.isFullyLocked || (readOnlyValues.get(entry.tableKey) ?? false)
+                              ? `Scratch will not push changes to ${connectionName}`
+                              : `Scratch will be able to push to ${connectionName}`}
+                          </Text>
+                        </Group>
+                      </Stack>
+                    )}
 
                     {showFieldSelectors && isLoadingSchema && (
                       <Group gap="xs" py="xs">

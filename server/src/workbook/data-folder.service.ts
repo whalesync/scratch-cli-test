@@ -1,10 +1,10 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConnectorAccount, Prisma } from '@prisma/client';
 import {
-  ConnectorPullOptions,
   createDataFolderId,
   DataFolderGroup,
   DataFolderId,
+  DataFolderOptions,
   Service,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
@@ -307,7 +307,7 @@ export class DataFolderService {
             folderId: dataFolderId,
             folderName: createdDataFolder.name,
             connector: createdDataFolder.connectorService ?? 'unknown',
-            filter: (createdDataFolder.options as unknown as ConnectorPullOptions)?.filter ?? null,
+            filter: (createdDataFolder.options as unknown as DataFolderOptions)?.filter ?? null,
             status: 'pending',
             createdPaths: [],
             updatedPaths: [],

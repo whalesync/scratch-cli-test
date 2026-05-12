@@ -8,9 +8,9 @@ import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { TableList } from '@/types/server-entities/table-list';
-import { Checkbox, Group, Loader, NumberInput, Stack, Textarea, TextInput } from '@mantine/core';
-import type { ConnectorPullOptions, ConnectorSettingDefinition, DataFolder } from '@spinner/shared-types';
+import { isTableFullyLocked, TableList } from '@/types/server-entities/table-list';
+import { Checkbox, Group, Loader, NumberInput, Stack, Switch, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
+import type { DataFolderOptions, ConnectorSettingDefinition, DataFolder } from '@spinner/shared-types';
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
@@ -68,6 +68,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   const workbookId = useWorkbookUIStore((state) => state.workbookId);
   const { refresh: refreshDataFolders } = useDataFolders();
   const [filter, setFilter] = useState('');
+  const [readOnly, setReadOnly] = useState(false);
   const [loading, setLoading] = useState(false);
   const [settingValues, setSettingValues] = useState<Record<string, unknown>>({});
 
@@ -82,10 +83,19 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   const supportsFilters = tableList?.supportsFilters ?? false;
   const advancedSettings = useMemo(() => tableList?.advancedSettings ?? [], [tableList?.advancedSettings]);
 
+  // Look up this folder's TablePreview so we can detect connector-level lockout.
+  const tablePreview = useMemo(() => {
+    if (!tableList || folder.tableId.length === 0) return undefined;
+    const key = folder.tableId.join('/');
+    return tableList.tables.find((t) => t.id.remoteId.join('/') === key);
+  }, [tableList, folder.tableId]);
+  const fullyLocked = isTableFullyLocked(tablePreview);
+
   useEffect(() => {
     if (opened) {
-      const opts = (folder.options ?? {}) as ConnectorPullOptions;
+      const opts = (folder.options ?? {}) as DataFolderOptions;
       setFilter(opts.filter ?? '');
+      setReadOnly(Boolean(opts.readOnly));
 
       const values: Record<string, unknown> = {};
       for (const setting of advancedSettings) {
@@ -96,9 +106,17 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
     }
   }, [opened, folder.options, advancedSettings]);
 
-  const buildOptions = (): Record<string, unknown> | undefined => {
-    if (advancedSettings.length === 0) return undefined;
-    const opts: Record<string, unknown> = {};
+  // Build the merged options blob to send to the server. Preserves existing
+  // keys so unrelated values (idFieldOverride, nameFieldOverride) survive.
+  const buildOptions = (): Record<string, unknown> => {
+    const opts: Record<string, unknown> = { ...((folder.options ?? {}) as Record<string, unknown>) };
+
+    if (fullyLocked || readOnly) {
+      opts.readOnly = true;
+    } else {
+      delete opts.readOnly;
+    }
+
     for (const setting of advancedSettings) {
       const value = settingValues[setting.key];
       if (setting.type === 'boolean' && value === true) {
@@ -107,6 +125,8 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
         opts[setting.key] = value;
       } else if (setting.type === 'string' && typeof value === 'string' && value.trim()) {
         opts[setting.key] = value.trim();
+      } else {
+        delete opts[setting.key];
       }
     }
     return opts;
@@ -121,7 +141,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
     try {
       await dataFolderApi.update(folder.id, {
         filter: filter.trim() || null,
-        ...(advancedSettings.length > 0 && { options: buildOptions() }),
+        options: buildOptions(),
       });
       await refreshDataFolders();
       ScratchpadNotifications.success({
@@ -177,6 +197,31 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
             minRows={3}
             maxRows={6}
           />
+
+          <Stack gap={4}>
+            <Text size="sm" fw={500}>
+              Read-only
+            </Text>
+            <Group gap={8} wrap="nowrap" align="center">
+              <Tooltip
+                label="This connector doesn't support writes to this table."
+                disabled={!fullyLocked}
+                position="right"
+              >
+                <Switch
+                  checked={fullyLocked || readOnly}
+                  disabled={fullyLocked}
+                  onChange={(e) => setReadOnly(e.currentTarget.checked)}
+                  size="sm"
+                />
+              </Tooltip>
+              <Text size="xs" c="dimmed">
+                {fullyLocked || readOnly
+                  ? `Scratch will not push changes to ${folder.connectorDisplayName ?? 'the remote'}`
+                  : `Scratch will be able to push to ${folder.connectorDisplayName ?? 'the remote'}`}
+              </Text>
+            </Group>
+          </Stack>
 
           {advancedSettings.map((setting) => (
             <ConnectorSettingField

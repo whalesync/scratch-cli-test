@@ -1,8 +1,8 @@
 import { Text12Regular, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
-import { Box, List, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Box, List, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { ChevronDown, ChevronRight, EllipsisVertical, Folder } from 'lucide-react';
+import { ChevronDown, ChevronRight, EllipsisVertical, Folder, FolderLock } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { useConfirmModal } from '../../components/ConfirmModal';
 import { trackPullTable } from '../../lib/posthog';
@@ -210,6 +210,13 @@ function FolderTreeNodeRow({
   const sortedChildren = useMemo(() => Array.from(node.children.values()), [node.children]);
   const folderPath = node.fsPath ?? null;
 
+  // Look up the matching DataFolder so we can show a lock when the user has
+  // marked this folder read-only (only applies to leaves — intermediate path
+  // segments never carry the lock).
+  const leafLocalPath = node.folder ? normalizeFolderPath(node.folder.name) : null;
+  const leafDataFolder = leafLocalPath ? dataFolderByLocalPath.get(leafLocalPath) : undefined;
+  const isReadOnly = Boolean((leafDataFolder?.options as { readOnly?: boolean } | null)?.readOnly);
+
   return (
     <>
       <UnstyledButton
@@ -250,7 +257,15 @@ function FolderTreeNodeRow({
           <Box style={{ width: 12, flexShrink: 0 }} />
         )}
 
-        <StyledLucideIcon Icon={Folder} size="sm" c="var(--fg-secondary)" />
+        {isReadOnly ? (
+          <Tooltip label="Read-only — pull only, never published back" position="right">
+            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+              <StyledLucideIcon Icon={FolderLock} size={14} c="var(--fg-secondary)" />
+            </span>
+          </Tooltip>
+        ) : (
+          <StyledLucideIcon Icon={Folder} size="sm" c="var(--fg-secondary)" />
+        )}
 
         <Box style={{ flex: 1, minWidth: 0 }}>
           <Text13Regular c="var(--fg-primary)" truncate>

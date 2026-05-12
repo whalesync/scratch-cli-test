@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { type DataFolderId, JobType, type WorkbookId } from '@spinner/shared-types';
+import { type DataFolderId, type DataFolderOptions, JobType, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
 import { createRunContext } from '../base-types';
@@ -174,6 +174,18 @@ export class PublishDataFolderJobHandler implements JobHandlerBuilder<PublishDat
     for (let i = startIndex; i < dataFolders.length; i++) {
       const dataFolder = dataFolders[i];
       const currentFolder = foldersProgress[i];
+
+      // Defensive: front-line entry points already block read-only folders,
+      // but scheduled or scripted callers may still reach here. Skip silently.
+      if ((dataFolder.options as DataFolderOptions | null)?.readOnly) {
+        WSLogger.info({
+          source: 'PublishDataFolderJob',
+          message: 'Skipping folder - marked read-only',
+          dataFolderId: dataFolder.id,
+        });
+        currentFolder.status = 'completed';
+        continue;
+      }
 
       if (!dataFolder.connectorAccountId) {
         WSLogger.warn({

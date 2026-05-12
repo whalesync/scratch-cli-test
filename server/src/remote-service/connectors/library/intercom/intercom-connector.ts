@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, ConnectorSettingDefinition } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition, DataFolderOptions } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -23,7 +23,7 @@ import {
   IntercomUpdateCollectionRequest,
 } from './intercom-types';
 
-interface IntercomPullOptions extends ConnectorPullOptions {
+interface IntercomPullOptions extends DataFolderOptions {
   excludeConversationParts?: boolean | undefined;
 }
 
@@ -97,6 +97,8 @@ export class IntercomConnector extends Connector {
         id: { wsId: 'conversations', remoteId: ['conversations'] },
         displayName: 'Conversations',
         disabledCreates: true,
+        disabledUpdates: true,
+        disabledDeletes: true,
         metadata: { description: 'Conversations in your Intercom workspace (read-only)' },
       },
     ];

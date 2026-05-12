@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorPullOptions, isQuickBooksConnectorExtras } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions, isQuickBooksConnectorExtras } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -121,7 +121,7 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
     callback: (params: { files: ConnectorFile[]; connectorProgress?: QuickBooksDownloadProgress }) => Promise<void>,
     progress: QuickBooksDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.remoteId[0];
     let startPosition = progress.nextStartPosition ?? 1;

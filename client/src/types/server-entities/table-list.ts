@@ -5,9 +5,11 @@ export interface TablePreview {
   displayName: string;
   disabled?: boolean;
   disabledCreates?: boolean;
+  disabledUpdates?: boolean;
+  disabledDeletes?: boolean;
   /** Slash-separated path for grouping tables in the UI (e.g. "My Project/public") */
   parentPath?: string;
-  /** Human-readable reason why this table is disabled or has creates disabled */
+  /** Human-readable reason why this table is disabled or has writes disabled */
   disabledReason?: string;
   metadata?: Record<string, unknown>;
 }
@@ -36,4 +38,10 @@ export interface TableSchemaPreview {
   slugFieldPath?: string;
   /** @deprecated Use slugFieldPath */
   slugColumnRemoteId?: string;
+}
+
+// A table is read-only at the connector level when it disables creates, updates,
+// and deletes. In that case the UI forces the per-folder readOnly option ON.
+export function isTableFullyLocked(table: TablePreview | undefined): boolean {
+  return Boolean(table?.disabledCreates && table?.disabledUpdates && table?.disabledDeletes);
 }

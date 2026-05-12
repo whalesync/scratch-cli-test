@@ -6,7 +6,7 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, ConnectorPullOptions, isShopifyConnectorExtras } from '@spinner/shared-types';
+import { connectorMetadata, DataFolderOptions, isShopifyConnectorExtras } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -233,7 +233,7 @@ export class ShopifyConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: ConnectorPullOptions,
+    _options: DataFolderOptions,
   ): Promise<void> {
     const entityType = tableSpec.id.wsId as EntityType;
 

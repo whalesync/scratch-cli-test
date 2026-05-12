@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import {
-  type ConnectorPullOptions,
   DataFolderId,
+  type DataFolderOptions,
   type FolderError,
   JobType,
   type WorkbookId,
@@ -105,7 +105,7 @@ type FolderContext = {
   repoId: string;
   connector: Connector;
   tableSpec: BaseJsonTableSpec;
-  pullOptions: ConnectorPullOptions;
+  pullOptions: DataFolderOptions;
 };
 
 /** Result from Phase 1 fetch for a single folder. */
@@ -433,7 +433,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       throw new Error(`DataFolder ${dataFolderId} does not have a connector service`);
     }
 
-    const pullOptions: ConnectorPullOptions = (dataFolder.options as ConnectorPullOptions) ?? {};
+    const pullOptions: DataFolderOptions = (dataFolder.options as DataFolderOptions) ?? {};
 
     const decryptedConnectorAccount = await this.connectorAccountService.findOneById(dataFolder.connectorAccountId, {
       userId: data.userId,
