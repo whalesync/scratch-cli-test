@@ -16,7 +16,6 @@ import {
 import type {
   DataFolder,
   DataFolderId,
-  DataFolderOptions,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
   WorkbookId,
@@ -91,57 +90,6 @@ export class DataFolderController {
       { name: body.name, useTemplate: body.useTemplate },
       actor,
     );
-  }
-
-  @Post(':id/publish')
-  async publishSingleFolder(
-    @Param('id') id: DataFolderId,
-    @Body() body: { workbookId: string },
-    @Req() req: RequestWithUser,
-  ): Promise<{ jobId: string }> {
-    const actor = userToActor(req.user);
-    const workbookId = body.workbookId as WorkbookId;
-    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
-
-    // Verify the data folder exists and belongs to this workbook
-    const dataFolder = await this.dataFolderService.findOne(id, actor);
-    if (!dataFolder) {
-      throw new NotFoundException('Data folder not found');
-    }
-    if (dataFolder.workbookId !== workbookId) {
-      throw new BadRequestException('Data folder does not belong to this workbook');
-    }
-
-    // Read-only folders are excluded from publish flows entirely (DEV-9928).
-    if ((dataFolder.options as DataFolderOptions | null)?.readOnly) {
-      throw new BadRequestException(`Data folder "${dataFolder.name}" is read-only and cannot be published`);
-    }
-
-    // Check if folder is already locked by another operation
-    if (dataFolder.lock) {
-      throw new BadRequestException(
-        `Data folder "${dataFolder.name}" is currently locked by another ${dataFolder.lock} operation`,
-      );
-    }
-
-    // Acquire lock before enqueueing the job
-    await this.db.client.dataFolder.update({
-      where: { id },
-      data: { lock: 'publish' },
-    });
-
-    // Enqueue the publish job with single folder as array
-    const job = await this.bullEnqueuerService.enqueuePublishDataFolderJob(
-      workbookId,
-      actor,
-      [id],
-      undefined,
-      createRunContext('web'),
-    );
-
-    this.posthogService.trackPublishDataFromWorkbook(actor, workbook, { dataFolderCount: 1 });
-
-    return { jobId: job.id ?? '' };
   }
 
   @Post(':id/pull-files')

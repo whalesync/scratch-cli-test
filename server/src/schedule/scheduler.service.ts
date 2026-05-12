@@ -4,7 +4,9 @@ import { Schedule } from '@prisma/client';
 import { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { Actor } from 'src/users/types';
+import { DataFolderService } from 'src/workbook/data-folder.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScheduleService } from './schedule.service';
@@ -16,6 +18,8 @@ export class SchedulerService {
     private readonly scheduleService: ScheduleService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly db: DbService,
+    private readonly dataFolderService: DataFolderService,
+    private readonly publishPlanBuildService: PublishPlanBuildService,
   ) {
     WSLogger.info({ source: 'SchedulerService', message: 'Schedule evaluator initializing...' });
   }
@@ -168,22 +172,50 @@ export class SchedulerService {
           });
         }
         break;
-      case 'PUBLISH':
-        if (schedule.entityId) {
-          await this.bullEnqueuerService.enqueuePublishDataFolderJob(
-            workbookId,
-            actor,
-            [schedule.entityId as DataFolderId],
-            undefined,
-            runContext,
-          );
-        } else {
+      case 'PUBLISH': {
+        if (!schedule.entityId) {
           WSLogger.info({
             source: 'SchedulerService.enqueueJob',
             message: `No entity ID found for publish schedule ${schedule.id}. Skipping.`,
           });
+          break;
         }
+
+        const dataFolder = await this.dataFolderService.findOne(schedule.entityId as DataFolderId, actor);
+
+        if (!dataFolder.path || !dataFolder.connectorAccountId) {
+          WSLogger.warn({
+            source: 'SchedulerService.enqueueJob',
+            message: `Publish schedule ${schedule.id} skipped: data folder ${schedule.entityId} missing path or connectorAccountId`,
+          });
+          break;
+        }
+
+        const { pipelineId } = await this.publishPlanBuildService.createPipeline(
+          workbookId,
+          actor.userId,
+          dataFolder.connectorAccountId,
+        );
+
+        const publishJob = await this.bullEnqueuerService.enqueuePlanPipelineJob(
+          workbookId,
+          actor,
+          pipelineId,
+          dataFolder.connectorAccountId,
+          true,
+          dataFolder.path,
+          undefined,
+          undefined,
+          runContext,
+        );
+        if (publishJob.id === undefined) {
+          throw new Error(
+            `Publish job for schedule ${schedule.id} (pipeline ${pipelineId}) was enqueued without an id`,
+          );
+        }
+        await this.publishPlanBuildService.setActiveJob(pipelineId, publishJob.id.toString());
         break;
+      }
       case 'SYNC':
         await this.bullEnqueuerService.enqueueSyncDataFoldersJob(
           workbookId,

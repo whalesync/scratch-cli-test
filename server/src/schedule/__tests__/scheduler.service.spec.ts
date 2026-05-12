@@ -3,6 +3,8 @@
 import { Schedule } from '@prisma/client';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { DataFolderService } from 'src/workbook/data-folder.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScheduleService } from '../schedule.service';
 import { SchedulerService } from '../scheduler.service';
@@ -45,11 +47,14 @@ describe('SchedulerService', () => {
   let scheduleService: jest.Mocked<ScheduleService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let dbService: jest.Mocked<DbService>;
+  let dataFolderService: jest.Mocked<DataFolderService>;
+  let publishPlanBuildService: jest.Mocked<PublishPlanBuildService>;
 
   beforeEach(() => {
     // Silence logger during tests
     jest.spyOn(WSLogger, 'info').mockImplementation();
     jest.spyOn(WSLogger, 'debug').mockImplementation();
+    jest.spyOn(WSLogger, 'warn').mockImplementation();
     jest.spyOn(WSLogger, 'error').mockImplementation();
 
     scheduleService = {
@@ -63,7 +68,7 @@ describe('SchedulerService', () => {
     bullEnqueuerService = {
       enqueueSyncDataFoldersJob: jest.fn(),
       enqueuePullLinkedFolderFilesJob: jest.fn(),
-      enqueuePublishDataFolderJob: jest.fn(),
+      enqueuePlanPipelineJob: jest.fn().mockResolvedValue({ id: 'job_publish_1' }),
     } as unknown as jest.Mocked<BullEnqueuerService>;
 
     dbService = {
@@ -76,7 +81,22 @@ describe('SchedulerService', () => {
       },
     } as unknown as jest.Mocked<DbService>;
 
-    service = new SchedulerService(scheduleService, bullEnqueuerService, dbService);
+    dataFolderService = {
+      findOne: jest.fn(),
+    } as unknown as jest.Mocked<DataFolderService>;
+
+    publishPlanBuildService = {
+      createPipeline: jest.fn().mockResolvedValue({ pipelineId: 'plan_1', branchName: 'publish/u/p1' }),
+      setActiveJob: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<PublishPlanBuildService>;
+
+    service = new SchedulerService(
+      scheduleService,
+      bullEnqueuerService,
+      dbService,
+      dataFolderService,
+      publishPlanBuildService,
+    );
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -144,5 +164,57 @@ describe('SchedulerService', () => {
     expect(dbService.client.dbJob.count).not.toHaveBeenCalled();
     expect(scheduleService.atomicClaim).not.toHaveBeenCalled();
     expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
+  });
+
+  describe('PUBLISH action', () => {
+    const FOLDER_PATH = '/BLOG - Blog Posts';
+    const CONNECTOR_ACCOUNT_ID = 'ca_test-1';
+    const publishSchedule = makeSchedule({ action: 'PUBLISH', entityId: 'df_test-folder' });
+
+    it('creates a publish-v2 pipeline and enqueues a plan+run job', async () => {
+      scheduleService.findDueSchedules.mockResolvedValue([publishSchedule]);
+      scheduleService.atomicClaim.mockResolvedValue(publishSchedule);
+      scheduleService.entityExists.mockResolvedValue(true);
+      (dataFolderService.findOne as jest.Mock).mockResolvedValue({
+        id: 'df_test-folder',
+        path: FOLDER_PATH,
+        connectorAccountId: CONNECTOR_ACCOUNT_ID,
+      });
+
+      await service.evaluateSchedules();
+
+      expect(publishPlanBuildService.createPipeline).toHaveBeenCalledWith(WORKBOOK_ID, USER_ID, CONNECTOR_ACCOUNT_ID);
+      expect(bullEnqueuerService.enqueuePlanPipelineJob).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        expect.objectContaining({ userId: USER_ID, organizationId: ORG_ID }),
+        'plan_1',
+        CONNECTOR_ACCOUNT_ID,
+        true,
+        FOLDER_PATH,
+        undefined,
+        undefined,
+        expect.objectContaining({ trigger: 'scheduler' }),
+      );
+      expect(publishPlanBuildService.setActiveJob).toHaveBeenCalledWith('plan_1', 'job_publish_1');
+    });
+
+    it('skips when the data folder is missing path or connectorAccountId', async () => {
+      scheduleService.findDueSchedules.mockResolvedValue([publishSchedule]);
+      scheduleService.atomicClaim.mockResolvedValue(publishSchedule);
+      scheduleService.entityExists.mockResolvedValue(true);
+      (dataFolderService.findOne as jest.Mock).mockResolvedValue({
+        id: 'df_test-folder',
+        path: null,
+        connectorAccountId: null,
+      });
+
+      await service.evaluateSchedules();
+
+      expect(publishPlanBuildService.createPipeline).not.toHaveBeenCalled();
+      expect(bullEnqueuerService.enqueuePlanPipelineJob).not.toHaveBeenCalled();
+      expect(WSLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('missing path or connectorAccountId') }),
+      );
+    });
   });
 });

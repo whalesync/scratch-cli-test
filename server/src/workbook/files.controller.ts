@@ -189,41 +189,6 @@ export class FilesController {
   }
 
   /**
-   * Publish a file (commit to main and rebase dirty)
-   * POST /workbooks/:workbookId/files/:fileId/publish
-   */
-  @Post('publish')
-  @HttpCode(204)
-  async publishFile(
-    @Param('workbookId') workbookId: WorkbookId,
-    @Body() body: { path: string },
-    @Req() req: RequestWithUser,
-  ): Promise<void> {
-    const actor = userToActor(req.user);
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
-    const { path } = body;
-
-    try {
-      const repoId = await this.resolveConnectionRepoPathForPath(workbookId, path);
-      const fileContent = await this.scratchGitService.getRepoFile(repoId, DIRTY_BRANCH, path);
-
-      if (!fileContent) {
-        throw new Error('File not found in git dirty branch');
-      }
-
-      await this.scratchGitService.publishFile(repoId, path, fileContent.content, `Publish ${path}`);
-    } catch (e) {
-      WSLogger.error({
-        source: 'FilesController.publishFile',
-        message: 'Failed to publish file',
-        error: e,
-        workbookId,
-      });
-      throw e;
-    }
-  }
-
-  /**
    * Download all files in a data folder as a ZIP archive.
    * GET /workbooks/:workbookId/files/download?folderId=...
    */

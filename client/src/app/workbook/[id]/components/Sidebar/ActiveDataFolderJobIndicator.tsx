@@ -3,7 +3,6 @@
 import { SpinningIcon } from '@/app/components/Icons/SpinningIcon';
 import { Text12Regular } from '@/app/components/base/text';
 import { SyncDataFoldersPublicProgress } from '@/app/components/jobs/SyncStatus/SyncJobProgress';
-import { PublishRecordsPublicProgress } from '@/app/components/jobs/publish/PublishJobProgress';
 import { PullLinkedFolderFilesProgress } from '@/app/components/jobs/pull/PullJobProgress';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { Box, Group, HoverCard, Stack } from '@mantine/core';
@@ -65,23 +64,6 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
         <Text12Regular c="var(--fg-secondary)">
           {updated} / {progress.totalRequested ?? 0} files
         </Text12Regular>
-      </Stack>
-    );
-  } else if (job.type === JobType.PublishDataFolder) {
-    const progress = job.publicProgress as PublishRecordsPublicProgress;
-    const tableProgress = progress.tables.find((t) => t.id === folder.id);
-    cardContent = (
-      <Stack gap={8}>
-        <Text12Regular>Pushing changes to {folder.connectorDisplayName}</Text12Regular>
-        <Text12Regular c="var(--fg-secondary)">{progress.totalRecordsPublished} files</Text12Regular>
-        {tableProgress && (
-          <>
-            <Text12Regular c="var(--fg-secondary)">{tableProgress.status}</Text12Regular>
-            <Text12Regular c="var(--fg-secondary)">{tableProgress.creates} creates</Text12Regular>
-            <Text12Regular c="var(--fg-secondary)">{tableProgress.updates} updates</Text12Regular>
-            <Text12Regular c="var(--fg-secondary)">{tableProgress.deletes} deletes</Text12Regular>
-          </>
-        )}
       </Stack>
     );
   }

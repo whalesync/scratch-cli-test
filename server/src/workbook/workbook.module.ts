@@ -22,7 +22,6 @@ import { WorkbookController } from './workbook.controller';
 import { WorkbookDataGateway } from './workbook.gateway';
 import { WorkbookService } from './workbook.service';
 
-import { DataFolderPublishingService } from './data-folder-publishing.service';
 import { DataFolderController } from './data-folder.controller';
 import { DataFolderService } from './data-folder.service';
 import { WorkbookRepoService } from './workbook-repo.service';
@@ -53,7 +52,6 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     WorkbookDataGateway,
     FilesService,
     DataFolderService,
-    DataFolderPublishingService,
     WorkspacePermissionsService,
     WorkbookRepoService,
   ],
@@ -62,7 +60,6 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     WorkbookEventModule,
     FilesService,
     DataFolderService,
-    DataFolderPublishingService,
     WorkspacePermissionsService,
     WorkbookRepoService,
   ],

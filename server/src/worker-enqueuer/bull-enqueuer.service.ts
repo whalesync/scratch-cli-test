@@ -10,7 +10,6 @@ import { Actor } from 'src/users/types';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
-import { PublishDataFolderJobDefinition } from '../worker/jobs/job-definitions/publish-data-folder.job';
 import { PublishFromGitJobDefinition } from '../worker/jobs/job-definitions/publish-from-git.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
 import { PullFilesJobDefinition } from '../worker/jobs/job-definitions/pull-files.job';
@@ -80,39 +79,6 @@ export class BullEnqueuerService implements OnModuleDestroy {
       dataFolderIds,
       trigger: runContext.trigger,
       type: JobType.PullLinkedFolderFiles,
-      initialPublicProgress,
-    };
-    return await this.createAndEnqueue(
-      {
-        userId: actor.userId,
-        type: data.type,
-        data,
-        bullJobId: id,
-        workbookId,
-        dataFolderId: dataFolderIds.length === 1 ? dataFolderIds[0] : undefined,
-        runId: runContext.runId as RunId,
-        runContext,
-      },
-      data,
-      id,
-    );
-  }
-
-  async enqueuePublishDataFolderJob(
-    workbookId: WorkbookId,
-    actor: Actor,
-    dataFolderIds: DataFolderId[],
-    initialPublicProgress: PublishDataFolderJobDefinition['publicProgress'] | undefined,
-    runContext: RunContext,
-  ): Promise<Job> {
-    const id = `publish-${workbookId}-${createPlainId()}`;
-    const data: PublishDataFolderJobDefinition['data'] = {
-      workbookId,
-      userId: actor.userId,
-      organizationId: actor.organizationId,
-      dataFolderIds,
-      trigger: runContext.trigger,
-      type: JobType.PublishDataFolder,
       initialPublicProgress,
     };
     return await this.createAndEnqueue(

@@ -211,13 +211,6 @@ export class ScratchGitClient {
     });
   }
 
-  async publishFile(repoId: string, file: { path: string; content: string }, message: string): Promise<void> {
-    await this.callGitApi(`/api/repo/write/${this.encodeRepoId(repoId)}/publish`, 'POST', {
-      file,
-      message,
-    });
-  }
-
   async renameFiles(
     repoId: string,
     folderPath: string,

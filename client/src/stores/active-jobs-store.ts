@@ -212,7 +212,7 @@ async function notifyCompletedJobs(workbookId: string, disappearedIds: string[])
  * Returns the data folder IDs referenced in a job's publicProgress.
  *
  * - pull-linked-folder-files: single folderId
- * - publish-data-folder / sync-data-folders: tables[].id
+ * - sync-data-folders: tables[].id
  */
 export function getDataFolderIdsFromJob(job: JobEntity): string[] {
   // Prefer the canonical dataFolderId from the database

@@ -52,19 +52,6 @@ export const filesApi = {
   },
 
   /**
-   * Publish a file
-   * POST /workbooks/:workbookId/files/publish
-   */
-  publishFile: async (workbookId: WorkbookId, path: string): Promise<void> => {
-    try {
-      const axios = API_CONFIG.getAxiosInstance();
-      await axios.post(`/workbooks/${workbookId}/files/publish`, { path });
-    } catch (error) {
-      handleAxiosError(error, 'Failed to publish file');
-    }
-  },
-
-  /**
    * Get a single file by full path
    * GET /workbooks/:workbookId/files/by-path
    * @param path the full path to the file

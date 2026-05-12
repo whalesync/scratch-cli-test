@@ -112,7 +112,7 @@ export class JobService {
    */
   private static readonly JOB_TYPE_MAP: Record<string, { in: string[] } | { contains: string }> = {
     sync: { contains: 'sync' },
-    publish: { in: [JobType.Publish, JobType.PublishDataFolder, JobType.RunPipeline] },
+    publish: { in: [JobType.Publish] },
     pull: { in: [JobType.RefreshRecords, JobType.PullLinkedFolderFiles] },
     rehost: { in: [JobType.RehostAssets] },
   };

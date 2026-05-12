@@ -3,6 +3,7 @@ import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbModule } from 'src/db/db.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
+import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { WorkerEnqueuerModule } from 'src/worker-enqueuer/worker-enqueuer.module';
@@ -11,7 +12,15 @@ import { ScheduleService } from './schedule.service';
 import { SchedulerService } from './scheduler.service';
 
 @Module({
-  imports: [DbModule, MetricsModule, ScratchConfigModule, RateLimiterModule, WorkerEnqueuerModule, WorkbookModule],
+  imports: [
+    DbModule,
+    MetricsModule,
+    ScratchConfigModule,
+    RateLimiterModule,
+    WorkerEnqueuerModule,
+    WorkbookModule,
+    PublishPlanModule,
+  ],
   controllers: [ScheduleController],
   providers: [
     ScheduleService,

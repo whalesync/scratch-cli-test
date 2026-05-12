@@ -16,14 +16,12 @@ import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { SyncService } from 'src/sync/sync.service';
-import { DataFolderPublishingService } from 'src/workbook/data-folder-publishing.service';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { DeleteWorkbookJobHandler } from './jobs/job-definitions/delete-workbook.job';
-import { PublishDataFolderJobHandler } from './jobs/job-definitions/publish-data-folder.job';
 import { PublishFromGitJobHandler } from './jobs/job-definitions/publish-from-git.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
@@ -40,7 +38,6 @@ export class JobHandlerService {
     private readonly connectorAccountService: ConnectorAccountService,
     private readonly workbookEventService: WorkbookEventService,
     private readonly scratchGitService: ScratchGitService,
-    private readonly dataFolderPublishingService: DataFolderPublishingService,
     private readonly syncService: SyncService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly fileIndexService: FileIndexService,
@@ -90,18 +87,6 @@ export class JobHandlerService {
           this.fileReferenceService,
           this.assetExtractorService,
           this.assetIndexService,
-          this.postHogService,
-        ) as JobHandler<JobDefinition>;
-
-      case JobType.PublishDataFolder:
-        return new PublishDataFolderJobHandler(
-          prisma,
-          this.connectorService,
-          this.connectorAccountService,
-          this.workbookEventService,
-          this.dataFolderPublishingService,
-          this.bullEnqueuerService,
-          this.scratchGitService,
           this.postHogService,
         ) as JobHandler<JobDefinition>;
 

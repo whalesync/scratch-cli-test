@@ -8,7 +8,7 @@ import { JobType } from '@spinner/shared-types';
 
 const SCHEDULE_ACTION_TO_JOB_TYPE: Record<string, JobType> = {
   PULL: JobType.PullLinkedFolderFiles,
-  PUBLISH: JobType.PublishDataFolder,
+  PUBLISH: JobType.Publish,
   SYNC: JobType.SyncDataFolders,
 };
 
