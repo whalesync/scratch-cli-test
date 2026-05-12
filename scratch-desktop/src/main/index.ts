@@ -56,6 +56,7 @@ import {
   triggerPublishFromGit,
 } from './scratchmd';
 import { initAutoUpdater } from './updater';
+import { attachWindowStatePersistence, getRestoredWindowState } from './window-state';
 import { WorkspaceFileWatchService } from './workspace-file-watch';
 
 const appStartTime = performance.now();
@@ -341,9 +342,11 @@ function windowIconPath(): string {
 
 function createWindow(): void {
   const windowStart = performance.now();
+  const windowState = getRestoredWindowState();
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: windowState.width,
+    height: windowState.height,
+    ...(windowState.x != null && windowState.y != null ? { x: windowState.x, y: windowState.y } : {}),
     show: false,
     autoHideMenuBar: true,
     icon: windowIconPath(),
@@ -357,6 +360,8 @@ function createWindow(): void {
   });
   logPerf('main createBrowserWindow', performance.now() - windowStart);
 
+  attachWindowStatePersistence(mainWindow);
+
   mainWindow.on('closed', () => {
     void workspaceFileWatchService.clearWorkspaceFileWatch();
     mainWindow = null;
@@ -368,6 +373,9 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     logPerf('main windowReadyToShow (from app start)', performance.now() - appStartTime);
+    if (windowState.shouldMaximize) {
+      mainWindow?.maximize();
+    }
     mainWindow?.show();
     const openDevTools = process.env['OPEN_DEVTOOLS'] === '1' || is.dev;
     if (openDevTools) {
