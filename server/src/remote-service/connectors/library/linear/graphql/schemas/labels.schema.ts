@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Labels
@@ -38,6 +39,8 @@ export const LabelsSchema = Type.Object(
           retiredAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           parent: Type.Optional(Type.Unknown()),
+          resourceSections: Type.Optional(Type.Array(Type.Unknown())),
+          pinnedResources: Type.Optional(Type.Array(Type.Unknown())),
           cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleStartDay: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycleDuration: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -91,14 +94,19 @@ export const LabelsSchema = Type.Object(
           autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
           joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          ancestors: Type.Optional(Type.Array(Type.Unknown())),
+          protected: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycles: Type.Optional(Type.Unknown()),
           activeCycle: Type.Optional(Type.Unknown()),
           triageResponsibility: Type.Optional(Type.Unknown()),
           memberships: Type.Optional(Type.Unknown()),
           projects: Type.Optional(Type.Unknown()),
+          releasePipelines: Type.Optional(Type.Unknown()),
           states: Type.Optional(Type.Unknown()),
           gitAutomationStates: Type.Optional(Type.Unknown()),
           templates: Type.Optional(Type.Unknown()),
@@ -123,6 +131,7 @@ export const LabelsSchema = Type.Object(
           disableReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           calendarHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusEmoji: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusUntilAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -135,7 +144,6 @@ export const LabelsSchema = Type.Object(
           guest: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           app: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           isMentionable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueDrafts: Type.Optional(Type.Unknown()),
           drafts: Type.Optional(Type.Unknown()),
@@ -150,6 +158,7 @@ export const LabelsSchema = Type.Object(
           isMe: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           admin: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           owner: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -171,6 +180,7 @@ export const LabelsSchema = Type.Object(
           disableReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           calendarHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusEmoji: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusUntilAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -183,7 +193,6 @@ export const LabelsSchema = Type.Object(
           guest: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           app: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           isMentionable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueDrafts: Type.Optional(Type.Unknown()),
           drafts: Type.Optional(Type.Unknown()),
@@ -198,6 +207,7 @@ export const LabelsSchema = Type.Object(
           isMe: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           admin: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           owner: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -258,10 +268,28 @@ export const LabelsSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+LabelsSchema.properties.id[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.archivedAt[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.name[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.description[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.color[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.isGroup[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.lastAppliedAt[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.retiredAt[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.organization[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.team[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.creator[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.retiredBy[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.parent[X_SCRATCH_READONLY] = true;
+LabelsSchema.properties.inheritedFrom[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Labels
  */
-export const LABELS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt team { id } creator { id } retiredBy { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable isAssignable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner supportsAgentSessions inviteHash gitHubUserId } parent { id } inheritedFrom { id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt }`;
+export const LABELS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt team { id } creator { id } retiredBy { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId } parent { id } inheritedFrom { id createdAt updatedAt archivedAt name description color isGroup lastAppliedAt retiredAt }`;
 
 /**
  * Entity configuration for Labels

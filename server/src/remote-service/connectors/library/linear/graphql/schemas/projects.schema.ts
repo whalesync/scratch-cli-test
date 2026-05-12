@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Projects
@@ -57,6 +58,7 @@ export const ProjectsSchema = Type.Object(
           disableReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           calendarHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusEmoji: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusUntilAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -69,7 +71,6 @@ export const ProjectsSchema = Type.Object(
           guest: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           app: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           isMentionable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueDrafts: Type.Optional(Type.Unknown()),
           drafts: Type.Optional(Type.Unknown()),
@@ -84,6 +85,7 @@ export const ProjectsSchema = Type.Object(
           isMe: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           admin: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           owner: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -105,6 +107,7 @@ export const ProjectsSchema = Type.Object(
           disableReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           calendarHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusEmoji: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           statusUntilAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -117,7 +120,6 @@ export const ProjectsSchema = Type.Object(
           guest: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           app: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           isMentionable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueDrafts: Type.Optional(Type.Unknown()),
           drafts: Type.Optional(Type.Unknown()),
@@ -132,6 +134,7 @@ export const ProjectsSchema = Type.Object(
           isMe: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           admin: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           owner: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -223,6 +226,7 @@ export const ProjectsSchema = Type.Object(
           reactionData: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
           priorityLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           sourceComment: Type.Optional(Type.Unknown()),
+          inheritsSharedAccess: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           favorite: Type.Optional(Type.Unknown()),
           identifier: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -230,12 +234,14 @@ export const ProjectsSchema = Type.Object(
           sharedAccess: Type.Optional(Type.Unknown()),
           customerTicketCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           parent: Type.Optional(Type.Unknown()),
+          aiPromptProgresses: Type.Optional(Type.Unknown()),
           formerAttachments: Type.Optional(Type.Unknown()),
           description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           documentContent: Type.Optional(Type.Unknown()),
           reactions: Type.Optional(Type.Array(Type.Unknown())),
           needs: Type.Optional(Type.Unknown()),
           formerNeeds: Type.Optional(Type.Unknown()),
+          releases: Type.Optional(Type.Unknown()),
           syncedWith: Type.Optional(Type.Array(Type.Unknown())),
           suggestions: Type.Optional(Type.Unknown()),
           incomingSuggestions: Type.Optional(Type.Unknown()),
@@ -263,6 +269,7 @@ export const ProjectsSchema = Type.Object(
           lastAppliedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           team: Type.Optional(Type.Unknown()),
+          pipeline: Type.Optional(Type.Unknown()),
           creator: Type.Optional(Type.Unknown()),
           lastUpdatedBy: Type.Optional(Type.Unknown()),
           inheritedFrom: Type.Optional(Type.Unknown()),
@@ -344,6 +351,7 @@ export const ProjectsSchema = Type.Object(
           pullRequest: Type.Optional(Type.Unknown()),
           release: Type.Optional(Type.Unknown()),
           releasePipeline: Type.Optional(Type.Unknown()),
+          team: Type.Optional(Type.Unknown()),
           url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           detail: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -386,6 +394,8 @@ export const ProjectsSchema = Type.Object(
     ),
     progress: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     scope: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+    slackChannelId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    microsoftTeamsChannelId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     content: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     documentContent: Type.Optional(
       Type.Union([
@@ -439,10 +449,49 @@ export const ProjectsSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+ProjectsSchema.properties.archivedAt[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.autoArchivedAt[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.completedIssueCountHistory[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.completedScopeHistory[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.convertedFromIssue[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.creator[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.currentProgress[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.documentContent[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.externalLinks[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.facets[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.favorite[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.health[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.healthUpdatedAt[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.id[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.inProgressScopeHistory[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.initiativeToProjects[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.initiatives[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.issueCountHistory[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.lastAppliedTemplate[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.lastUpdate[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.lead[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.microsoftTeamsChannelId[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.needs[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.priorityLabel[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.progress[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.progressHistory[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.scope[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.scopeHistory[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.slackChannelId[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.slugId[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.startedAt[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.state[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.status[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.syncedWith[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+ProjectsSchema.properties.url[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Projects
  */
-export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable isAssignable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner supportsAgentSessions inviteHash gitHubUserId } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url progress scope content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
+export const PROJECTS_QUERY_FIELDS = `id createdAt updatedAt archivedAt updateReminderFrequencyInWeeks updateReminderFrequency frequencyResolution updateRemindersDay updateRemindersHour name description slugId icon color status { id createdAt updatedAt archivedAt name color description position type indefinite } creator { id } lead { id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId } facets { id createdAt updatedAt archivedAt sortOrder sourcePage } projectUpdateRemindersPausedUntilAt startDate startDateResolution targetDate targetDateResolution startedAt completedAt canceledAt autoArchivedAt trashed sortOrder prioritySortOrder convertedFromIssue { id createdAt updatedAt archivedAt number title priority estimate boardOrder sortOrder prioritySortOrder startedAt completedAt startedTriageAt canceledAt autoClosedAt autoArchivedAt dueDate slaStartedAt slaMediumRiskAt slaHighRiskAt slaBreachesAt slaType addedToProjectAt addedToCycleAt addedToTeamAt trashed snoozedUntilAt suggestionsGeneratedAt activitySummary labelIds previousIdentifiers subIssueSortOrder reactionData priorityLabel inheritsSharedAccess identifier url branchName customerTicketCount description } lastAppliedTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } priority lastUpdate { id createdAt updatedAt archivedAt body editedAt reactionData bodyData slugId health infoSnapshot isDiffHidden url isStale diff diffMarkdown commentCount } health healthUpdatedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress slackNewIssue slackIssueComments slackIssueStatuses labelIds favorite { id } url progress scope slackChannelId microsoftTeamsChannelId content documentContent { id createdAt updatedAt archivedAt content restoredAt } state priorityLabel syncedWith { id service }`;
 
 /**
  * Entity configuration for Projects

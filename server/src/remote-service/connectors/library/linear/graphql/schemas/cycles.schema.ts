@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Cycles
@@ -43,6 +44,8 @@ export const CyclesSchema = Type.Object(
           retiredAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           parent: Type.Optional(Type.Unknown()),
+          resourceSections: Type.Optional(Type.Array(Type.Unknown())),
+          pinnedResources: Type.Optional(Type.Array(Type.Unknown())),
           cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleStartDay: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycleDuration: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -96,14 +99,19 @@ export const CyclesSchema = Type.Object(
           autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
           joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          ancestors: Type.Optional(Type.Array(Type.Unknown())),
+          protected: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycles: Type.Optional(Type.Unknown()),
           activeCycle: Type.Optional(Type.Unknown()),
           triageResponsibility: Type.Optional(Type.Unknown()),
           memberships: Type.Optional(Type.Unknown()),
           projects: Type.Optional(Type.Unknown()),
+          releasePipelines: Type.Optional(Type.Unknown()),
           states: Type.Optional(Type.Unknown()),
           gitAutomationStates: Type.Optional(Type.Unknown()),
           templates: Type.Optional(Type.Unknown()),
@@ -184,6 +192,36 @@ export const CyclesSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+CyclesSchema.properties.id[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.archivedAt[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.number[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.name[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.description[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.startsAt[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.endsAt[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.completedAt[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.autoArchivedAt[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.issueCountHistory[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.completedIssueCountHistory[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.scopeHistory[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.completedScopeHistory[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.inProgressScopeHistory[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.team[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.progressHistory[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.currentProgress[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.inheritedFrom[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.isActive[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.isFuture[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.isPast[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.uncompletedIssuesUponClose[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.progress[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.isNext[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.isPrevious[X_SCRATCH_READONLY] = true;
+CyclesSchema.properties.links[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Cycles
  */
@@ -200,6 +238,6 @@ export const CYCLES_CONFIG = {
   readOnly: true,
   columns: {
     slug: 'number',
-    title: ['name'],
+    title: ['number'],
   },
 } as const;

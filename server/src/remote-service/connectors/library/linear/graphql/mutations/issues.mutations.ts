@@ -78,6 +78,7 @@ export const ISSUES_DELETE_MUTATION = `mutation IssueDelete($id: String!) {
       reactionData
       priorityLabel
       integrationSourceType
+      inheritsSharedAccess
       identifier
       url
       branchName
@@ -96,6 +97,7 @@ export const ISSUES_READ_ONLY_FIELDS = new Set([
   'addedToCycleAt',
   'addedToProjectAt',
   'addedToTeamAt',
+  'aiPromptProgresses',
   'archivedAt',
   'asksExternalUserRequester',
   'asksRequester',
@@ -139,6 +141,7 @@ export const ISSUES_READ_ONLY_FIELDS = new Set([
   'reactions',
   'recurringIssueTemplate',
   'relations',
+  'releases',
   'sharedAccess',
   'slaHighRiskAt',
   'slaMediumRiskAt',

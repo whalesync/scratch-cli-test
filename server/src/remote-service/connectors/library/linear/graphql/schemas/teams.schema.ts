@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Teams
@@ -38,6 +39,8 @@ export const TeamsSchema = Type.Object(
           retiredAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           parent: Type.Optional(Type.Unknown()),
+          resourceSections: Type.Optional(Type.Array(Type.Unknown())),
+          pinnedResources: Type.Optional(Type.Array(Type.Unknown())),
           cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleStartDay: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycleDuration: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -91,14 +94,19 @@ export const TeamsSchema = Type.Object(
           autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
           joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+          slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          ancestors: Type.Optional(Type.Array(Type.Unknown())),
+          protected: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
           issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
           cycles: Type.Optional(Type.Unknown()),
           activeCycle: Type.Optional(Type.Unknown()),
           triageResponsibility: Type.Optional(Type.Unknown()),
           memberships: Type.Optional(Type.Unknown()),
           projects: Type.Optional(Type.Unknown()),
+          releasePipelines: Type.Optional(Type.Unknown()),
           states: Type.Optional(Type.Unknown()),
           gitAutomationStates: Type.Optional(Type.Unknown()),
           templates: Type.Optional(Type.Unknown()),
@@ -108,6 +116,44 @@ export const TeamsSchema = Type.Object(
         }),
         Type.Null(),
       ]),
+    ),
+    resourceSections: Type.Optional(
+      Type.Array(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+            createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            archivedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            team: Type.Optional(Type.Unknown()),
+            title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            sortOrder: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            creator: Type.Optional(Type.Unknown()),
+            updatedBy: Type.Optional(Type.Unknown()),
+          }),
+          Type.Null(),
+        ]),
+      ),
+    ),
+    pinnedResources: Type.Optional(
+      Type.Array(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+            createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            archivedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            team: Type.Optional(Type.Unknown()),
+            section: Type.Optional(Type.Unknown()),
+            document: Type.Optional(Type.Unknown()),
+            entityExternalLink: Type.Optional(Type.Unknown()),
+            sortOrder: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            creator: Type.Optional(Type.Unknown()),
+            updatedBy: Type.Optional(Type.Unknown()),
+          }),
+          Type.Null(),
+        ]),
+      ),
     ),
     cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     cycleStartDay: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -146,6 +192,7 @@ export const TeamsSchema = Type.Object(
           lastAppliedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           team: Type.Optional(Type.Unknown()),
+          pipeline: Type.Optional(Type.Unknown()),
           creator: Type.Optional(Type.Unknown()),
           lastUpdatedBy: Type.Optional(Type.Unknown()),
           inheritedFrom: Type.Optional(Type.Unknown()),
@@ -172,6 +219,7 @@ export const TeamsSchema = Type.Object(
           lastAppliedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           team: Type.Optional(Type.Unknown()),
+          pipeline: Type.Optional(Type.Unknown()),
           creator: Type.Optional(Type.Unknown()),
           lastUpdatedBy: Type.Optional(Type.Unknown()),
           inheritedFrom: Type.Optional(Type.Unknown()),
@@ -198,6 +246,7 @@ export const TeamsSchema = Type.Object(
           lastAppliedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
           organization: Type.Optional(Type.Unknown()),
           team: Type.Optional(Type.Unknown()),
+          pipeline: Type.Optional(Type.Unknown()),
           creator: Type.Optional(Type.Unknown()),
           lastUpdatedBy: Type.Optional(Type.Unknown()),
           inheritedFrom: Type.Optional(Type.Unknown()),
@@ -281,8 +330,106 @@ export const TeamsSchema = Type.Object(
     autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
     joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    ancestors: Type.Optional(
+      Type.Array(
+        Type.Union([
+          Type.Object({
+            id: Type.Optional(Type.String()),
+            createdAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            updatedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            archivedAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            key: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            icon: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            color: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            retiredAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+            organization: Type.Optional(Type.Unknown()),
+            parent: Type.Optional(Type.Unknown()),
+            resourceSections: Type.Optional(Type.Array(Type.Unknown())),
+            pinnedResources: Type.Optional(Type.Array(Type.Unknown())),
+            cyclesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            cycleStartDay: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            cycleDuration: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            cycleCooldownTime: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            cycleIssueAutoAssignStarted: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            cycleIssueAutoAssignCompleted: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            cycleLockToActive: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            upcomingCycleCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            timezone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            inheritWorkflowStatuses: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            inheritIssueEstimation: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            issueEstimationType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            issueOrderingNoPriorityFirst: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            issueEstimationAllowZero: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            setIssueSortOrderOnStateChange: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            issueEstimationExtended: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            defaultIssueEstimate: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            triageEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            requirePriorityToLeaveTriage: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            defaultIssueState: Type.Optional(Type.Unknown()),
+            defaultTemplateForMembers: Type.Optional(Type.Unknown()),
+            defaultTemplateForMembersId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            defaultTemplateForNonMembers: Type.Optional(Type.Unknown()),
+            defaultTemplateForNonMembersId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            defaultProjectTemplate: Type.Optional(Type.Unknown()),
+            triageIssueState: Type.Optional(Type.Unknown()),
+            private: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            allMembersCanJoin: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            securitySettings: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
+            facets: Type.Optional(Type.Array(Type.Unknown())),
+            posts: Type.Optional(Type.Array(Type.Unknown())),
+            scimManaged: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            scimGroupName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            progressHistory: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
+            currentProgress: Type.Optional(Type.Union([Type.Unknown(), Type.Null()])),
+            draftWorkflowState: Type.Optional(Type.Unknown()),
+            startWorkflowState: Type.Optional(Type.Unknown()),
+            reviewWorkflowState: Type.Optional(Type.Unknown()),
+            mergeableWorkflowState: Type.Optional(Type.Unknown()),
+            mergeWorkflowState: Type.Optional(Type.Unknown()),
+            groupIssueHistory: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            aiThreadSummariesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            aiDiscussionSummariesEnabled: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            slackNewIssue: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            slackIssueComments: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            slackIssueStatuses: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            autoClosePeriod: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            autoCloseStateId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            autoArchivePeriod: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            autoCloseParentIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            autoCloseChildIssues: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            markedAsDuplicateWorkflowState: Type.Optional(Type.Unknown()),
+            joinByDefault: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            inheritSlackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            slackAutoCreateProjectChannel: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            cycleCalenderUrl: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            displayName: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            ancestors: Type.Optional(Type.Array(Type.Unknown())),
+            protected: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            cycles: Type.Optional(Type.Unknown()),
+            activeCycle: Type.Optional(Type.Unknown()),
+            triageResponsibility: Type.Optional(Type.Unknown()),
+            memberships: Type.Optional(Type.Unknown()),
+            projects: Type.Optional(Type.Unknown()),
+            releasePipelines: Type.Optional(Type.Unknown()),
+            states: Type.Optional(Type.Unknown()),
+            gitAutomationStates: Type.Optional(Type.Unknown()),
+            templates: Type.Optional(Type.Unknown()),
+            webhooks: Type.Optional(Type.Unknown()),
+            issueSortOrderDefaultToBottom: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+            inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          Type.Null(),
+        ]),
+      ),
+    ),
+    protected: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     issueCount: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     cycles: Type.Optional(
       Type.Union([
@@ -365,6 +512,16 @@ export const TeamsSchema = Type.Object(
         Type.Null(),
       ]),
     ),
+    releasePipelines: Type.Optional(
+      Type.Union([
+        Type.Object({
+          edges: Type.Optional(Type.Array(Type.Unknown())),
+          nodes: Type.Optional(Type.Array(Type.Unknown())),
+          pageInfo: Type.Optional(Type.Unknown()),
+        }),
+        Type.Null(),
+      ]),
+    ),
     states: Type.Optional(
       Type.Union([
         Type.Object({
@@ -414,10 +571,98 @@ export const TeamsSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+TeamsSchema.properties.id[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.archivedAt[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.name[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.key[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.description[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.icon[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.color[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.retiredAt[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.organization[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.parent[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.resourceSections[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.pinnedResources[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cyclesEnabled[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycleStartDay[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycleDuration[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycleCooldownTime[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycleIssueAutoAssignStarted[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycleIssueAutoAssignCompleted[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycleLockToActive[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.upcomingCycleCount[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.timezone[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.inheritWorkflowStatuses[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.inheritIssueEstimation[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.issueEstimationType[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.issueOrderingNoPriorityFirst[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.issueEstimationAllowZero[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.setIssueSortOrderOnStateChange[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.issueEstimationExtended[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.defaultIssueEstimate[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.triageEnabled[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.requirePriorityToLeaveTriage[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.defaultIssueState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.defaultTemplateForMembers[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.defaultTemplateForMembersId[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.defaultTemplateForNonMembers[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.defaultTemplateForNonMembersId[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.defaultProjectTemplate[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.triageIssueState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.private[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.allMembersCanJoin[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.securitySettings[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.facets[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.posts[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.scimManaged[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.scimGroupName[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.progressHistory[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.currentProgress[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.draftWorkflowState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.startWorkflowState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.reviewWorkflowState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.mergeableWorkflowState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.mergeWorkflowState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.groupIssueHistory[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.aiThreadSummariesEnabled[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.aiDiscussionSummariesEnabled[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.slackNewIssue[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.slackIssueComments[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.slackIssueStatuses[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.autoClosePeriod[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.autoCloseStateId[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.autoArchivePeriod[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.autoCloseParentIssues[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.autoCloseChildIssues[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.markedAsDuplicateWorkflowState[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.joinByDefault[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.inheritSlackAutoCreateProjectChannel[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.slackAutoCreateProjectChannel[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycleCalenderUrl[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.displayName[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.ancestors[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.protected[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.issueCount[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.cycles[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.activeCycle[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.triageResponsibility[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.memberships[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.projects[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.releasePipelines[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.states[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.gitAutomationStates[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.templates[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.webhooks[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.issueSortOrderDefaultToBottom[X_SCRATCH_READONLY] = true;
+TeamsSchema.properties.inviteHash[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Teams
  */
-export const TEAMS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name key description icon color retiredAt parent { id } cyclesEnabled cycleStartDay cycleDuration cycleCooldownTime cycleIssueAutoAssignStarted cycleIssueAutoAssignCompleted cycleLockToActive upcomingCycleCount timezone inheritWorkflowStatuses inheritIssueEstimation issueEstimationType issueOrderingNoPriorityFirst issueEstimationAllowZero setIssueSortOrderOnStateChange issueEstimationExtended defaultIssueEstimate triageEnabled requirePriorityToLeaveTriage defaultTemplateForMembers { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } defaultTemplateForMembersId defaultTemplateForNonMembers { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } defaultTemplateForNonMembersId defaultProjectTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } private allMembersCanJoin securitySettings facets { id createdAt updatedAt archivedAt sortOrder sourcePage } posts { id createdAt updatedAt archivedAt body bodyData writtenSummaryData audioSummary title slugId editedAt reactionData ttlUrl type evalLogId feedSummaryScheduleAtCreate } scimManaged scimGroupName progressHistory currentProgress groupIssueHistory aiThreadSummariesEnabled aiDiscussionSummariesEnabled slackNewIssue slackIssueComments slackIssueStatuses autoClosePeriod autoCloseStateId autoArchivePeriod autoCloseParentIssues autoCloseChildIssues joinByDefault cycleCalenderUrl displayName issueCount activeCycle { id createdAt updatedAt archivedAt number name description startsAt endsAt completedAt autoArchivedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress isActive isFuture isPast progress isNext isPrevious } triageResponsibility { id createdAt updatedAt archivedAt action } issueSortOrderDefaultToBottom inviteHash`;
+export const TEAMS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name key description icon color retiredAt parent { id } resourceSections { id createdAt updatedAt archivedAt title sortOrder } pinnedResources { id createdAt updatedAt archivedAt sortOrder } cyclesEnabled cycleStartDay cycleDuration cycleCooldownTime cycleIssueAutoAssignStarted cycleIssueAutoAssignCompleted cycleLockToActive upcomingCycleCount timezone inheritWorkflowStatuses inheritIssueEstimation issueEstimationType issueOrderingNoPriorityFirst issueEstimationAllowZero setIssueSortOrderOnStateChange issueEstimationExtended defaultIssueEstimate triageEnabled requirePriorityToLeaveTriage defaultTemplateForMembers { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } defaultTemplateForMembersId defaultTemplateForNonMembers { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } defaultTemplateForNonMembersId defaultProjectTemplate { id createdAt updatedAt archivedAt type name description icon color templateData sortOrder lastAppliedAt hasFormFields } private allMembersCanJoin securitySettings facets { id createdAt updatedAt archivedAt sortOrder sourcePage } posts { id createdAt updatedAt archivedAt body bodyData writtenSummaryData audioSummary title slugId editedAt reactionData ttlUrl type evalLogId feedSummaryScheduleAtCreate } scimManaged scimGroupName progressHistory currentProgress groupIssueHistory aiThreadSummariesEnabled aiDiscussionSummariesEnabled slackNewIssue slackIssueComments slackIssueStatuses autoClosePeriod autoCloseStateId autoArchivePeriod autoCloseParentIssues autoCloseChildIssues joinByDefault inheritSlackAutoCreateProjectChannel slackAutoCreateProjectChannel cycleCalenderUrl displayName ancestors { id createdAt updatedAt archivedAt name key description icon color retiredAt cyclesEnabled cycleStartDay cycleDuration cycleCooldownTime cycleIssueAutoAssignStarted cycleIssueAutoAssignCompleted cycleLockToActive upcomingCycleCount timezone inheritWorkflowStatuses inheritIssueEstimation issueEstimationType issueOrderingNoPriorityFirst issueEstimationAllowZero setIssueSortOrderOnStateChange issueEstimationExtended defaultIssueEstimate triageEnabled requirePriorityToLeaveTriage defaultTemplateForMembersId defaultTemplateForNonMembersId private allMembersCanJoin securitySettings scimManaged scimGroupName progressHistory currentProgress groupIssueHistory aiThreadSummariesEnabled aiDiscussionSummariesEnabled slackNewIssue slackIssueComments slackIssueStatuses autoClosePeriod autoCloseStateId autoArchivePeriod autoCloseParentIssues autoCloseChildIssues joinByDefault inheritSlackAutoCreateProjectChannel slackAutoCreateProjectChannel cycleCalenderUrl displayName protected issueCount issueSortOrderDefaultToBottom inviteHash } protected issueCount activeCycle { id createdAt updatedAt archivedAt number name description startsAt endsAt completedAt autoArchivedAt issueCountHistory completedIssueCountHistory scopeHistory completedScopeHistory inProgressScopeHistory progressHistory currentProgress isActive isFuture isPast progress isNext isPrevious } triageResponsibility { id createdAt updatedAt archivedAt action } issueSortOrderDefaultToBottom inviteHash`;
 
 /**
  * Entity configuration for Teams

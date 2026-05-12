@@ -108,6 +108,7 @@ interface FolderTreeNodeProps {
   onSelectFolder: (folderPath: string) => void;
   isDevToolsEnabled: boolean;
   onShowColumnDefs?: (folderPath: string) => void;
+  workspacePath: string | null;
   onClearFolderIndex?: (folderPath: string) => void;
   dataFolderByLocalPath: Map<string, DataFolder>;
   dataFoldersByConnection: Map<string, DataFolder[]>;
@@ -121,6 +122,7 @@ function FolderTreeNodeRow({
   onSelectFolder,
   isDevToolsEnabled,
   onShowColumnDefs,
+  workspacePath,
   onClearFolderIndex,
   dataFolderByLocalPath,
   dataFoldersByConnection,
@@ -166,7 +168,8 @@ function FolderTreeNodeRow({
           id: 'dev-tools',
           label: 'Dev Tools',
           submenu: [
-            { id: 'column-defs', label: 'Column Definitions…' },
+            { id: 'open-views-folder', label: 'Open Views Folder' },
+            { id: 'column-defs', label: 'Column Definitions (legacy)' },
             { id: 'clear-index', label: 'Clear Index' },
           ],
         });
@@ -189,6 +192,15 @@ function FolderTreeNodeRow({
         }
         if (id === 'reveal') void window.scratchDesktop.showInFolder(path);
         if (id === 'terminal') void window.scratchDesktop.openInTerminal(path);
+        if (id === 'open-views-folder') {
+          if (!workspacePath) {
+            console.error('Missing  workspacePath');
+          } else {
+            const relPath = path.startsWith(workspacePath) ? path.slice(workspacePath.length + 1) : path;
+            const viewsFolder = `${workspacePath}/.scratch/connections/scratch/${relPath}/views`;
+            void window.scratchDesktop.showInFolder(viewsFolder);
+          }
+        }
         if (id === 'column-defs') onShowColumnDefs?.(path);
         if (id === 'clear-index') onClearFolderIndex?.(path);
       });
@@ -203,6 +215,7 @@ function FolderTreeNodeRow({
       onClearFolderIndex,
       onRequestPull,
       onShowColumnDefs,
+      workspacePath,
     ],
   );
 
@@ -312,6 +325,7 @@ function FolderTreeNodeRow({
               onSelectFolder={onSelectFolder}
               isDevToolsEnabled={isDevToolsEnabled}
               onShowColumnDefs={onShowColumnDefs}
+              workspacePath={workspacePath}
               onClearFolderIndex={onClearFolderIndex}
               dataFolderByLocalPath={dataFolderByLocalPath}
               dataFoldersByConnection={dataFoldersByConnection}
@@ -442,6 +456,7 @@ export function FolderTree({
           isDevToolsEnabled={isDevToolsEnabled}
           onShowColumnDefs={handleShowColumnDefs}
           onClearFolderIndex={(p) => void handleClearFolderIndex(p)}
+          workspacePath={workspacePath}
           dataFolderByLocalPath={dataFolderByLocalPath}
           dataFoldersByConnection={dataFoldersByConnection}
           onRequestPull={handlePullRequest}

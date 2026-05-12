@@ -6,6 +6,7 @@
  */
 
 import { Type } from '@sinclair/typebox';
+import { X_SCRATCH_READONLY } from '@spinner/shared-types';
 
 /**
  * TypeBox schema for Users
@@ -23,6 +24,7 @@ export const UsersSchema = Type.Object(
     disableReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     calendarHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     statusEmoji: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     statusLabel: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     statusUntilAt: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
@@ -60,7 +62,6 @@ export const UsersSchema = Type.Object(
     guest: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     app: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     isMentionable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
-    isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     active: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     issueDrafts: Type.Optional(
       Type.Union([
@@ -138,6 +139,7 @@ export const UsersSchema = Type.Object(
     isMe: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     admin: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     owner: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    isAssignable: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     supportsAgentSessions: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     inviteHash: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     gitHubUserId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -148,10 +150,54 @@ export const UsersSchema = Type.Object(
   },
 );
 
+// Mark read-only fields
+UsersSchema.properties.id[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.createdAt[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.updatedAt[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.archivedAt[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.name[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.displayName[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.email[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.avatarUrl[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.disableReason[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.calendarHash[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.description[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.title[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.statusEmoji[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.statusLabel[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.statusUntilAt[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.timezone[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.organization[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.lastSeen[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.identityProvider[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.initials[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.avatarBackgroundColor[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.guest[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.app[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.isMentionable[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.active[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.issueDrafts[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.drafts[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.url[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.assignedIssues[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.delegatedIssues[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.createdIssues[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.createdIssueCount[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.teamMemberships[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.feedFacets[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.canAccessAnyPublicTeam[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.isMe[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.admin[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.owner[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.isAssignable[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.supportsAgentSessions[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.inviteHash[X_SCRATCH_READONLY] = true;
+UsersSchema.properties.gitHubUserId[X_SCRATCH_READONLY] = true;
+
 /**
  * GraphQL query field selection for Users
  */
-export const USERS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description statusEmoji statusLabel statusUntilAt timezone lastSeen identityProvider { id createdAt updatedAt archivedAt defaultMigrated type samlEnabled ssoEndpoint ssoBinding ssoSignAlgo ssoSigningCert issuerEntityId spEntityId priority scimEnabled ownersGroupPush adminsGroupPush guestsGroupPush allowNameChange } initials avatarBackgroundColor guest app isMentionable isAssignable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner supportsAgentSessions inviteHash gitHubUserId`;
+export const USERS_QUERY_FIELDS = `id createdAt updatedAt archivedAt name displayName email avatarUrl disableReason calendarHash description title statusEmoji statusLabel statusUntilAt timezone lastSeen identityProvider { id createdAt updatedAt archivedAt defaultMigrated type samlEnabled ssoEndpoint ssoBinding ssoSignAlgo ssoSigningCert issuerEntityId spEntityId priority scimEnabled ownersGroupPush adminsGroupPush guestsGroupPush allowNameChange } initials avatarBackgroundColor guest app isMentionable active url createdIssueCount canAccessAnyPublicTeam isMe admin owner isAssignable supportsAgentSessions inviteHash gitHubUserId`;
 
 /**
  * Entity configuration for Users

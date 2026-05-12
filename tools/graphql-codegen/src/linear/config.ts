@@ -184,7 +184,7 @@ export const LINEAR_ENTITIES: EntityConfig[] = [
     readOnly: true,
     columns: {
       slug: "number",
-      title: ["name"],
+      title: ["number"],
     },
   },
 ];
