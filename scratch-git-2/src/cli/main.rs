@@ -387,10 +387,10 @@ enum Commands {
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
         /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         folder: String,
         /// Filename(s) to reindex (may be repeated)
-        #[arg(long = "file")]
+        #[arg(long = "file", allow_hyphen_values = true)]
         files: Vec<String>,
         /// Also run validators and update has_errors / validation_results for the reindexed files
         #[arg(long)]
@@ -407,10 +407,10 @@ enum Commands {
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
         /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         folder: String,
         /// Filename(s) to reindex (may be repeated)
-        #[arg(long = "file")]
+        #[arg(long = "file", allow_hyphen_values = true)]
         files: Vec<String>,
         /// Print per-batch progress to stderr
         #[arg(long)]
