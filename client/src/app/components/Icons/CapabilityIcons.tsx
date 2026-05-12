@@ -1,5 +1,5 @@
-import { Group, Tooltip } from '@mantine/core';
-import { LockIcon, type LucideIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { Group, Stack, Tooltip } from '@mantine/core';
+import { InfoIcon, LockIcon, type LucideIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { resolveIconSize } from './sizes';
 import { StyledLucideIcon } from './StyledLucideIcon';
 
@@ -9,11 +9,11 @@ import { StyledLucideIcon } from './StyledLucideIcon';
  * Display logic:
  * - If the folder/table is effectively read-only (user choice OR all three
  *   write capabilities disabled), render only the read-only lock icon.
- * - Otherwise render one icon per disabled write capability that is set,
- *   each with a diagonal slash to convey the "disabled" state.
+ * - Otherwise, if any single write capability is disabled, render a single
+ *   info icon. The tooltip lists each disabled capability on its own row with
+ *   a small crossed-out icon and a label.
  *
- * Icons live in a single horizontal group, all using the same calmer dimmed
- * treatment introduced for DEV-9923.
+ * All icons inherit the calmer dimmed treatment introduced for DEV-9923.
  */
 export interface CapabilityIconsProps {
   /** User-chosen folder lock (DataFolder.options.readOnly). */
@@ -30,50 +30,53 @@ const ICON_COLOR = 'var(--fg-secondary)';
 const SLASH_COLOR = 'var(--mantine-color-red-5)';
 
 const READ_ONLY_TOOLTIP = 'Read-only — pull only, never published back';
-const CREATES_TOOLTIP = 'Creates disabled — new records can’t be added';
-const UPDATES_TOOLTIP = 'Updates disabled — existing records can’t be modified';
-const DELETES_TOOLTIP = 'Deletes disabled — records can’t be removed';
 
 function isFullyLocked(p: CapabilityIconsProps): boolean {
   return Boolean(p.disabledCreates && p.disabledUpdates && p.disabledDeletes);
 }
 
 /**
- * Renders a lucide icon overlaid with a diagonal slash, signalling the
- * capability is disabled. The slash uses currentColor so it inherits the
- * surrounding text color.
+ * A lucide icon overlaid with a diagonal slash. The slash uses a tinted red
+ * so it reads as a UI overlay rather than part of the SVG.
  */
-function CrossedOutIcon({ Icon, size, label }: { Icon: LucideIcon; size: number; label: string }) {
+function CrossedOutIcon({ Icon, size }: { Icon: LucideIcon; size: number }) {
   return (
-    <Tooltip label={label} position="right">
+    <span
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: size,
+        height: size,
+        color: ICON_COLOR,
+      }}
+    >
+      <Icon size={size} color="currentColor" />
       <span
+        aria-hidden
         style={{
-          position: 'relative',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: size,
-          height: size,
-          color: ICON_COLOR,
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          width: size * ((1 + Math.SQRT2) / 2),
+          height: 1,
+          background: SLASH_COLOR,
+          transform: 'translate(-50%, -50%) rotate(45deg)',
+          transformOrigin: 'center',
+          pointerEvents: 'none',
         }}
-      >
-        <Icon size={size} color="currentColor" />
-        <span
-          aria-hidden
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            width: size * ((1 + Math.SQRT2) / 2),
-            height: 1,
-            background: SLASH_COLOR,
-            transform: 'translate(-50%, -50%) rotate(45deg)',
-            transformOrigin: 'center',
-            pointerEvents: 'none',
-          }}
-        />
-      </span>
-    </Tooltip>
+      />
+    </span>
+  );
+}
+
+function CapabilityTooltipRow({ Icon, label, size }: { Icon: LucideIcon; label: string; size: number }) {
+  return (
+    <Group gap={6} wrap="nowrap" align="center">
+      <CrossedOutIcon Icon={Icon} size={size} />
+      <span>{label}</span>
+    </Group>
   );
 }
 
@@ -96,11 +99,19 @@ export function CapabilityIcons(props: CapabilityIconsProps) {
     return null;
   }
 
+  const tooltipContent = (
+    <Stack gap={4}>
+      {disabledCreates && <CapabilityTooltipRow Icon={PlusIcon} label="Creates not supported" size={px} />}
+      {disabledUpdates && <CapabilityTooltipRow Icon={PencilIcon} label="Updates not supported" size={px} />}
+      {disabledDeletes && <CapabilityTooltipRow Icon={Trash2Icon} label="Deletes not supported" size={px} />}
+    </Stack>
+  );
+
   return (
-    <Group gap={4} wrap="nowrap">
-      {disabledCreates && <CrossedOutIcon Icon={PlusIcon} size={px} label={CREATES_TOOLTIP} />}
-      {disabledUpdates && <CrossedOutIcon Icon={PencilIcon} size={px} label={UPDATES_TOOLTIP} />}
-      {disabledDeletes && <CrossedOutIcon Icon={Trash2Icon} size={px} label={DELETES_TOOLTIP} />}
-    </Group>
+    <Tooltip label={tooltipContent} position="right" withArrow multiline>
+      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+        <StyledLucideIcon Icon={InfoIcon} size={size} c={ICON_COLOR} />
+      </span>
+    </Tooltip>
   );
 }

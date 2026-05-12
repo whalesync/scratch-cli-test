@@ -70,6 +70,9 @@ describe('PublishFromGitService', () => {
             encryptedCredentials: {},
           }),
         },
+        dataFolder: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
         fileReference: {
           deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
         },
@@ -528,5 +531,49 @@ describe('PublishFromGitService', () => {
     expect(connector.deleteRecords.mock.calls).toHaveLength(0);
     expect(scratchGitService.deleteFilesFromBranch.mock.calls).toHaveLength(0);
     expect(scratchGitService.rebaseDirty.mock.calls).toHaveLength(1);
+  });
+
+  it('skips folders flagged as read-only in the database (DEV-9928)', async () => {
+    const { service, scratchGitService, connector } = makeService();
+
+    // Mark public/posts as read-only via DataFolder.options
+    const findMany = jest.fn().mockResolvedValue([{ path: '/public/posts', options: { readOnly: true } }]);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+    ((service as any).db.client.dataFolder.findMany as jest.Mock) = findMany;
+
+    scratchGitService.resolveConnectionRepoPath.mockResolvedValue('repo_1');
+    scratchGitService.getRepoFile.mockResolvedValue({
+      content: JSON.stringify({
+        planId: 'plan_ro',
+        createdAt: '2026-05-12T00:00:00.000Z',
+        connectionName: 'Postgres',
+        connectionId: 'coa_1',
+        summary: { edit: 1, create: 0, delete: 0, backfill: 0, rename: 0 },
+        tablePaths: ['public/posts'],
+      }),
+    });
+    scratchGitService.listRepoFiles.mockResolvedValue([{ type: 'directory', name: 'publish-plan-20260512' }]);
+    // listPhaseFolders would normally return the edit dir for public/posts;
+    // even if it does, the read-only filter should drop it before the connector is called.
+    scratchGitService.listRepoFilesPaginated.mockResolvedValue({
+      files: [{ name: 'record-1.json', path: '.scratch/public/posts/edit/record-1.json' }],
+    });
+    scratchGitService.getRepoFilesPaginated.mockResolvedValue({
+      files: [
+        {
+          name: 'record-1.json',
+          content: JSON.stringify({ content: { id: 1, title: 'hi' }, changedFields: { title: 'hi' } }),
+        },
+      ],
+    });
+
+    await service.runFromGit('wkb_1', 'coa_1', '.scratch/publish-plans/plan_ro');
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { workbookId: 'wkb_1', connectorAccountId: 'coa_1' } }),
+    );
+    expect(connector.updateRecords.mock.calls).toHaveLength(0);
+    expect(connector.createRecords.mock.calls).toHaveLength(0);
+    expect(connector.deleteRecords.mock.calls).toHaveLength(0);
   });
 });

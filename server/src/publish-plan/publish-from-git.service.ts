@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
+import { type DataFolderOptions, isScratchPendingPublishId, WorkbookId } from '@spinner/shared-types';
 import { cloneDeep } from 'lodash';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject, ParsedContent } from 'src/utils/objects';
@@ -128,6 +128,26 @@ export class PublishFromGitService {
   ) {}
 
   /**
+   * Return the set of normalized DataFolder paths in this workbook/connector
+   * that are marked read-only by the user (options.readOnly === true). Used
+   * to skip locked folders when running a plan built locally by the CLI.
+   */
+  private async loadReadOnlyFolderPaths(workbookId: WorkbookId, connectorAccountId: string): Promise<Set<string>> {
+    const folders = await this.db.client.dataFolder.findMany({
+      where: { workbookId, connectorAccountId },
+      select: { path: true, options: true },
+    });
+    const result = new Set<string>();
+    for (const f of folders) {
+      if (!f.path) continue;
+      if ((f.options as DataFolderOptions | null)?.readOnly) {
+        result.add(normalizeReadOnlyPath(f.path));
+      }
+    }
+    return result;
+  }
+
+  /**
    * Execute a publish plan stored in the dirty branch at `planPath`.
    *
    * @param workbookId   The workbook that owns this connector
@@ -165,6 +185,12 @@ export class PublishFromGitService {
 
     const connector = await this.resolveConnector(connectorAccountId);
     const tableSpecCache = new Map<string, BaseJsonTableSpec | null>();
+
+    // Read-only folders are excluded from publish (DEV-9928). The plan.json
+    // file is built locally by the CLI / Rust plan-builder, which today does
+    // not know about DataFolder.options. Re-check here against Postgres so
+    // user-locked folders never publish via this path either.
+    const readOnlyFolderPaths = await this.loadReadOnlyFolderPaths(workbookId, connectorAccountId);
 
     // Build hasLaterPhase by scanning backfill and delete directories
     const hasLaterPhase = await this.buildHasLaterPhase(repoId, plan.tablePaths);
@@ -218,7 +244,17 @@ export class PublishFromGitService {
         currentPhase = phase;
         await emitProgress();
 
-        const phaseFolders = await this.listPhaseFolders(repoId, plan.tablePaths, phase);
+        const rawPhaseFolders = await this.listPhaseFolders(repoId, plan.tablePaths, phase);
+        const phaseFolders = rawPhaseFolders.filter(({ tablePath }) => {
+          if (!readOnlyFolderPaths.has(normalizeReadOnlyPath(tablePath))) return true;
+          WSLogger.info({
+            source: 'PublishFromGitService.runFromGit',
+            message: `Skipping read-only folder during ${phase} phase`,
+            workbookId,
+            data: { planId: plan.planId, tablePath },
+          });
+          return false;
+        });
         if (phaseFolders.length === 0) continue;
 
         const plannedForPhase = getPlannedCountForPhase(
@@ -1023,6 +1059,17 @@ export class PublishFromGitService {
 function describeTablePath(tablePath: string): string {
   const segments = tablePath.split('/').filter(Boolean);
   return segments.at(-1) ?? tablePath;
+}
+
+/**
+ * Normalize a folder path for membership lookup in the read-only set.
+ * DataFolder.path is stored with a leading slash (e.g. "/Articles"); the plan
+ * file's tablePath uses the same shape but the dirty branch can yield variants
+ * without the leading slash. Strip both leading and trailing slashes so both
+ * sources hash to the same key.
+ */
+function normalizeReadOnlyPath(p: string): string {
+  return p.replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
 function getPlannedCountForPhase(
