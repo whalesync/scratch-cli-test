@@ -13,6 +13,7 @@ import {
   X_SCRATCH_SUGGESTED_TRANSFORMER,
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { escapePointerToken } from '../../utils/json-pointer';
 import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
 
 /**
@@ -361,7 +362,12 @@ function isAirtableColumnReadonly(field: AirtableFieldsV2): boolean {
  * @returns True if the field is readonly, false otherwise.
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Get(tableSpec.schema, `/properties/fields/properties/${field}/${X_SCRATCH_READONLY}`) === true;
+  return (
+    ValuePointer.Get(
+      tableSpec.schema,
+      `/properties/fields/properties/${escapePointerToken(field)}/${X_SCRATCH_READONLY}`,
+    ) === true
+  );
 }
 
 /**
@@ -372,8 +378,10 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): bo
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boolean {
   return (
-    ValuePointer.Has(tableSpec.schema, `/properties/fields/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !==
-    undefined
+    ValuePointer.Has(
+      tableSpec.schema,
+      `/properties/fields/properties/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
+    ) !== undefined
   );
 }
 
@@ -386,6 +394,6 @@ export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boole
 export function getForeignKeyOptions(field: string, tableSpec: BaseJsonTableSpec): ForeignKeyOptionSchema | undefined {
   return ValuePointer.Get(
     tableSpec.schema,
-    `/properties/fields/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
+    `/properties/fields/properties/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
   ) as ForeignKeyOptionSchema | undefined;
 }

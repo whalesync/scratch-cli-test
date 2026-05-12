@@ -2,6 +2,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { ForeignKeyOptionSchema, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { escapePointerToken } from '../../utils/json-pointer';
 import { AudiencefulField } from './audienceful-types';
 
 /**
@@ -162,7 +163,7 @@ function fieldTypeToSchema(field: AudiencefulField): TSchema {
  * @returns True if the field is readonly, false otherwise.
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${X_SCRATCH_READONLY}`) === true;
+  return ValuePointer.Get(tableSpec.schema, `/properties/${escapePointerToken(field)}/${X_SCRATCH_READONLY}`) === true;
 }
 
 /**
@@ -172,7 +173,10 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): bo
  * @returns True if the field is a foreign key, false otherwise.
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Has(tableSpec.schema, `/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined;
+  return (
+    ValuePointer.Has(tableSpec.schema, `/properties/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !==
+    undefined
+  );
 }
 
 /**
@@ -182,7 +186,8 @@ export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boole
  * @returns The foreign key options, or undefined if the field is not a foreign key.
  */
 export function getForeignKeyOptions(field: string, tableSpec: BaseJsonTableSpec): ForeignKeyOptionSchema | undefined {
-  return ValuePointer.Get(tableSpec.schema, `/properties/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
-    | ForeignKeyOptionSchema
-    | undefined;
+  return ValuePointer.Get(
+    tableSpec.schema,
+    `/properties/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
+  ) as ForeignKeyOptionSchema | undefined;
 }

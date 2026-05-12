@@ -10,6 +10,7 @@ import {
 } from '@spinner/shared-types';
 import { isArray } from 'lodash';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { escapePointerToken } from '../../utils/json-pointer';
 import { WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
 import { buildWordPressDefaultView } from './wordpress-default-view';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
@@ -332,7 +333,7 @@ const ACF_FIELD_PATH = '/properties/acf/properties';
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec, isAcf = false): boolean {
   const basePath = isAcf ? ACF_FIELD_PATH : FIELD_PATH;
-  return ValuePointer.Get(tableSpec.schema, `${basePath}/${field}/${X_SCRATCH_READONLY}`) === true;
+  return ValuePointer.Get(tableSpec.schema, `${basePath}/${escapePointerToken(field)}/${X_SCRATCH_READONLY}`) === true;
 }
 
 /**
@@ -344,7 +345,10 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec, isA
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec, isAcf = false): boolean {
   const basePath = isAcf ? ACF_FIELD_PATH : FIELD_PATH;
-  return ValuePointer.Has(tableSpec.schema, `${basePath}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined;
+  return (
+    ValuePointer.Has(tableSpec.schema, `${basePath}/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !==
+    undefined
+  );
 }
 
 /**
@@ -360,7 +364,8 @@ export function getForeignKeyOptions(
   isAcf = false,
 ): ForeignKeyOptionSchema | undefined {
   const basePath = isAcf ? ACF_FIELD_PATH : FIELD_PATH;
-  return ValuePointer.Get(tableSpec.schema, `${basePath}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
-    | ForeignKeyOptionSchema
-    | undefined;
+  return ValuePointer.Get(
+    tableSpec.schema,
+    `${basePath}/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
+  ) as ForeignKeyOptionSchema | undefined;
 }

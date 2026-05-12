@@ -2,6 +2,7 @@ import { Type } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { ForeignKeyOptionSchema, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { escapePointerToken } from '../../utils/json-pointer';
 
 /**
  * Build a BaseJsonTableSpec from a YouTube channel.
@@ -104,10 +105,11 @@ export function buildYouTubeJsonTableSpec(id: EntityId, channelId: string, chann
 
 /**
  * Convert a dot-notation field path (e.g. "snippet.channelId") to a JSON pointer
- * path through nested properties in the schema.
+ * path through nested properties in the schema. Each segment is RFC 6901-escaped
+ * so segments containing `/` or `~` walk to the right node.
  */
 function fieldToPointer(field: string): string {
-  return '/properties/' + field.split('.').join('/properties/');
+  return '/properties/' + field.split('.').map(escapePointerToken).join('/properties/');
 }
 
 /**

@@ -642,6 +642,29 @@ tableSpec[ASSET_TABLE] = {
 } satisfies AssetTableOptions;
 ```
 
+### Reading annotations back: escape JSON Pointer segments
+
+Connectors typically look up these annotations at publish time by building a JSON Pointer and calling `ValuePointer.Get` / `ValuePointer.Has` from `@sinclair/typebox/value` — e.g. `isReadonlyField`, `isForeignKey`, `getForeignKeyOptions`.
+
+**Any field name interpolated into a pointer path must be RFC 6901-escaped.** Per [RFC 6901 §3](https://datatracker.ietf.org/doc/html/rfc6901#section-3), `~` must be encoded as `~0` and `/` as `~1` (in that order — encode `~` first). Without this, a field whose name contains `/` or `~` (e.g. Airtable's `Date/heure de création`) walks the wrong sub-tree, `Get` returns `undefined`, the readonly/foreign-key check silently returns `false`, and the field leaks through into the write payload.
+
+Use the shared helper for every interpolated segment:
+
+```typescript
+import { escapePointerToken } from '../../utils/json-pointer';
+
+export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
+  return (
+    ValuePointer.Get(
+      tableSpec.schema,
+      `/properties/${escapePointerToken(field)}/${X_SCRATCH_READONLY}`,
+    ) === true
+  );
+}
+```
+
+If the field name is a dot-notation path through nested objects (e.g. YouTube's `snippet.channelId`), escape each segment independently before joining with `/properties/`.
+
 ## 6. Registration Checklist
 
 When adding a new connector, touch all of these:

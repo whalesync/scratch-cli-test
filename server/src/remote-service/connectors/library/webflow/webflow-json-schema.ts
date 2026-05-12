@@ -17,6 +17,7 @@ import {
 import _ from 'lodash';
 import { Webflow } from 'webflow-api';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { escapePointerToken } from '../../utils/json-pointer';
 
 /**
  * Convert a Webflow field to a TypeBox JSON Schema.
@@ -325,7 +326,9 @@ const FIELD_DATA_PATH = '/properties/fieldData/properties';
  * @returns True if the field is readonly, false otherwise.
  */
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return ValuePointer.Get(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${X_SCRATCH_READONLY}`) === true;
+  return (
+    ValuePointer.Get(tableSpec.schema, `${FIELD_DATA_PATH}/${escapePointerToken(field)}/${X_SCRATCH_READONLY}`) === true
+  );
 }
 
 /**
@@ -336,7 +339,10 @@ export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): bo
  */
 export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boolean {
   return (
-    ValuePointer.Has(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) !== undefined
+    ValuePointer.Has(
+      tableSpec.schema,
+      `${FIELD_DATA_PATH}/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
+    ) !== undefined
   );
 }
 
@@ -347,7 +353,8 @@ export function isForeignKey(field: string, tableSpec: BaseJsonTableSpec): boole
  * @returns The foreign key options, or undefined if the field is not a foreign key.
  */
 export function getForeignKeyOptions(field: string, tableSpec: BaseJsonTableSpec): ForeignKeyOptionSchema | undefined {
-  return ValuePointer.Get(tableSpec.schema, `${FIELD_DATA_PATH}/${field}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`) as
-    | ForeignKeyOptionSchema
-    | undefined;
+  return ValuePointer.Get(
+    tableSpec.schema,
+    `${FIELD_DATA_PATH}/${escapePointerToken(field)}/${X_SCRATCH_FOREIGN_KEY_OPTIONS}`,
+  ) as ForeignKeyOptionSchema | undefined;
 }

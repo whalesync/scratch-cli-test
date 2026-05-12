@@ -2,6 +2,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { escapePointerToken } from '../../utils/json-pointer';
 import { HubspotApiClient } from './hubspot-api-client';
 import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './hubspot-types';
 
@@ -154,7 +155,9 @@ function isAlwaysReadonlyPropertyName(propertyName: string): boolean {
 export function isReadonlyHubspotProperty(propertyName: string, tableSpec: BaseJsonTableSpec): boolean {
   if (isAlwaysReadonlyPropertyName(propertyName)) return true;
   return (
-    ValuePointer.Get(tableSpec.schema, `/properties/properties/properties/${propertyName}/${X_SCRATCH_READONLY}`) ===
-    true
+    ValuePointer.Get(
+      tableSpec.schema,
+      `/properties/properties/properties/${escapePointerToken(propertyName)}/${X_SCRATCH_READONLY}`,
+    ) === true
   );
 }
