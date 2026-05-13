@@ -1,8 +1,80 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
+import {
+  TransformerTypes,
+  VirtualFieldDef,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_READONLY,
+  X_SCRATCH_REMOTE_FIELD_ID,
+  X_SCRATCH_VIRTUAL_FIELDS,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AttioApiClient } from './attio-api-client';
-import { AttioAttribute, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
+import { buildAttioDefaultView, LIST_VIEW_CONFIG, OBJECT_VIEW_CONFIG } from './attio-default-view';
+import { AttioAttribute, AttioAttributeType, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
+
+/**
+ * JSONPath expression to extract the primary value from a single-element Attio
+ * value array, keyed by attribute type. Each attribute type stores its useful
+ * payload at a different key inside the array element object.
+ *
+ * Types not listed here (e.g. `interaction`) are too complex for a simple
+ * extraction and are left as raw arrays.
+ */
+const ATTIO_VALUE_EXPRESSION: Partial<Record<AttioAttributeType, string>> = {
+  text: '$[0].value',
+  number: '$[0].value',
+  checkbox: '$[0].value',
+  currency: '$[0].value',
+  date: '$[0].value',
+  timestamp: '$[0].value',
+  rating: '$[0].value',
+  domain: '$[0].domain',
+  'email-address': '$[0].email_address',
+  'phone-number': '$[0].phone_number',
+  status: '$[0].status.title',
+  select: '$[0].option.title',
+  'record-reference': '$[0].target_record_id',
+  'actor-reference': '$[0].referenced_actor_id',
+  location: '$[0].locality',
+  'personal-name': '$[*].first_name',
+};
+
+/** Build a virtual field definition for an Attio attribute, if applicable. */
+function buildVirtualField(attr: AttioAttribute): VirtualFieldDef[] | undefined {
+  const expression = ATTIO_VALUE_EXPRESSION[attr.type];
+  if (!expression) return undefined;
+
+  // Map the extracted value to a display type
+  const typeMap: Partial<Record<AttioAttributeType, string>> = {
+    text: 'string',
+    number: 'number',
+    checkbox: 'boolean',
+    currency: 'number',
+    date: 'string',
+    timestamp: 'string',
+    rating: 'number',
+    domain: 'string',
+    'email-address': 'string',
+    'phone-number': 'string',
+    status: 'string',
+    select: 'string',
+    'record-reference': 'string',
+    'actor-reference': 'string',
+    location: 'string',
+    'personal-name': 'string',
+  };
+
+  return [
+    {
+      displayLabel: attr.title,
+      type: typeMap[attr.type] ?? 'string',
+      suggestedTransformer: {
+        type: TransformerTypes.JSONPath,
+        options: { expression, arrayHandling: 'first' as const },
+      },
+    },
+  ];
+}
 
 /**
  * Build a TypeBox schema fragment for one entry in an Attio `record.values`
@@ -15,14 +87,21 @@ import { AttioAttribute, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } fro
  * The `CONNECTOR_DATA_TYPE` annotation preserves the attribute type for the
  * client UI and any future field-level transforms. `REMOTE_FIELD_ID` carries
  * the api_slug so syncs can address the field by its remote name.
+ *
+ * For types where the useful value is buried inside the array element,
+ * `X_SCRATCH_VIRTUAL_FIELDS` provides a JSONPath-based extraction so the UI
+ * and sync editor can present a clean scalar instead of the raw array.
  */
 function valueArraySchemaForAttribute(attr: AttioAttribute): TSchema {
   const valueSchema = Type.Object({}, { additionalProperties: true });
+  const virtualFields = buildVirtualField(attr);
+
   return Type.Array(valueSchema, {
     description: attr.description ?? attr.title,
     [X_SCRATCH_REMOTE_FIELD_ID]: attr.api_slug,
     [X_SCRATCH_CONNECTOR_DATA_TYPE]: attr.type,
-    ...(attr.is_archived || attr.is_system_attribute ? { [X_SCRATCH_READONLY]: true } : {}),
+    ...(attr.is_archived ? { [X_SCRATCH_READONLY]: true } : {}),
+    ...(virtualFields ? { [X_SCRATCH_VIRTUAL_FIELDS]: virtualFields } : {}),
   });
 }
 
@@ -70,6 +149,8 @@ export async function buildAttioObjectTableSpec(
     { $id: `attio/${objectSlug}`, title: display.plural },
   );
 
+  const viewConfig = OBJECT_VIEW_CONFIG[objectSlug] ?? { valuesKey: 'values' };
+
   return {
     id,
     slug: id.wsId,
@@ -82,6 +163,7 @@ export async function buildAttioObjectTableSpec(
     titleColumnRemoteId: ['values', 'name'],
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAttioDefaultView(schema, viewConfig),
   };
 }
 
@@ -133,5 +215,6 @@ export async function buildAttioListTableSpec(
     titleColumnRemoteId: ['parent_record_id'],
     basePath: ['Lists'],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAttioDefaultView(schema, LIST_VIEW_CONFIG),
   };
 }

@@ -2,6 +2,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
+import { buildAffinityDefaultView } from './affinity-default-view';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
 
 // ---------------------------------------------------------------------------
@@ -208,6 +209,7 @@ export async function buildAffinityJsonTableSpec(
     // so both have to be set to keep the picker and the workbook tree consistent.
     basePath: ['Lists'],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAffinityDefaultView(schema, titleColumnRemoteId.join('.')),
   };
 }
 
@@ -264,6 +266,7 @@ export async function buildAffinityPersonsTableSpec(
     titleColumnRemoteId: ['firstName'],
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAffinityDefaultView(schema, 'firstName'),
   };
 }
 
@@ -306,6 +309,7 @@ export async function buildAffinityCompaniesTableSpec(
     titleColumnRemoteId: ['name'],
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAffinityDefaultView(schema, 'name'),
   };
 }
 
@@ -338,6 +342,7 @@ export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTable
     titleColumnRemoteId: ['name'],
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAffinityDefaultView(schema, 'name'),
   };
 }
 
@@ -404,6 +409,7 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
     titleColumnRemoteId: ['type'],
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAffinityDefaultView(schema, 'type'),
   };
 }
 
@@ -439,5 +445,6 @@ export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSp
     titleColumnRemoteId: ['name'],
     basePath: [],
     generatedAt: new Date().toISOString(),
+    defaultView: buildAffinityDefaultView(schema, 'name'),
   };
 }
