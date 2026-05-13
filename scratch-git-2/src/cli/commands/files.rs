@@ -10,7 +10,6 @@ use crate::api::{ConnectorAccount, DataFolder};
 use crate::config::markers;
 use crate::shared::folder_index;
 use crate::shared::layout::WorkspaceLayout;
-use crate::shared::record_index::{self, RefreshOptions};
 use crate::shared::validators;
 
 type FileMap = HashMap<String, Vec<u8>>;
@@ -253,13 +252,6 @@ fn refresh_problem_record_index_for_ctx(
     } else {
         Some(rel_paths.iter().cloned().collect::<HashSet<_>>())
     };
-    record_index::refresh(
-        &ctx.dirty_dir,
-        &ctx.db_path,
-        &[],
-        RefreshOptions { rebuild },
-        selected_paths.as_ref(),
-    )?;
     if let Err(err) = validators::run_validations(
         &ctx.scratch_dir,
         &ctx.dirty_dir,
@@ -2460,7 +2452,7 @@ fn discard_all_scoped_via_index(
     let workspace_folder = format!("{}/{}", ctx.conn_dir_name, repo_folder);
 
     // Refresh stale rows so the bits reflect the current working tree.
-    let stale = folder_index::find_stale_working(workspace_dir, &workspace_folder, None)?;
+    let stale = folder_index::find_stale_files(workspace_dir, &workspace_folder, None)?;
     if !stale.is_empty() {
         folder_index::reindex_files(workspace_dir, &workspace_folder, &stale, None, false)?;
     }
@@ -2486,9 +2478,9 @@ fn discard_all_scoped_via_index(
         candidate_paths.insert(path.clone());
     }
 
-    // Confirm each candidate actually differs from main (working OR dirty side)
-    // — a stale index bit can't produce a spurious commit. The check is byte-
-    // level to match `compute_unreviewed_entries`.
+    // Confirm each candidate semantically differs from main (working OR dirty
+    // side) — a stale index bit or a whitespace-only edit-then-revert can't
+    // produce a spurious commit. Matches `reindex_files`'s bit semantic.
     let mut affected_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for path in &candidate_paths {
         let dirty_content = dirty_map.get(path.as_str());
@@ -2503,16 +2495,14 @@ fn discard_all_scoped_via_index(
                 )))
             }
         };
-        let working_differs = match (&working_content, main_content) {
-            (Some(w), Some(m)) => w != m,
-            (Some(_), None) | (None, Some(_)) => true,
-            (None, None) => false,
-        };
-        let dirty_differs = match (dirty_content, main_content) {
-            (Some(d), Some(m)) => d != m,
-            (Some(_), None) | (None, Some(_)) => true,
-            (None, None) => false,
-        };
+        let working_differs = json_content_differs(
+            working_content.as_deref(),
+            main_content.map(|v| v.as_slice()),
+        );
+        let dirty_differs = json_content_differs(
+            dirty_content.map(|v| v.as_slice()),
+            main_content.map(|v| v.as_slice()),
+        );
         if working_differs || dirty_differs {
             affected_paths.insert(path.clone());
         }
@@ -2768,36 +2758,19 @@ fn accept_all_scoped_via_index(
     repo_folder: &str,
 ) -> anyhow::Result<AcceptAllResult> {
     let workspace_folder = format!("{}/{}", ctx.conn_dir_name, repo_folder);
-    eprintln!(
-        "[accept-all] scoped path: workspace={} workspace_folder={} repo_folder={}",
-        workspace_dir.display(),
-        workspace_folder,
-        repo_folder
-    );
 
     // Make sure approvedChanges reflects the latest working-tree state — if the
     // user edited a file since the grid last refreshed, the bit may be stale.
-    let stale = folder_index::find_stale_working(workspace_dir, &workspace_folder, None)?;
-    eprintln!(
-        "[accept-all] find_stale_working returned {} file(s): {:?}",
-        stale.len(),
-        stale
-    );
+    let stale = folder_index::find_stale_files(workspace_dir, &workspace_folder, None)?;
     if !stale.is_empty() {
         folder_index::reindex_files(workspace_dir, &workspace_folder, &stale, None, false)?;
     }
 
-    let selected =
-        folder_index::select_files_with_approved_changes(workspace_dir, &workspace_folder, None)?;
-    eprintln!(
-        "[accept-all] SELECT approvedChanges=1 returned {} file(s): {:?}",
-        selected.len(),
-        selected
-    );
-    let mut candidate_rel_paths: std::collections::BTreeSet<String> = selected
-        .into_iter()
-        .map(|filename| format!("{}/{}", repo_folder, filename))
-        .collect();
+    let mut candidate_rel_paths: std::collections::BTreeSet<String> =
+        folder_index::select_files_with_approved_changes(workspace_dir, &workspace_folder, None)?
+            .into_iter()
+            .map(|filename| format!("{}/{}", repo_folder, filename))
+            .collect();
 
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
     let base_map = match base_hash.as_deref() {
@@ -2809,7 +2782,6 @@ fn accept_all_scoped_via_index(
     // for yet (e.g. a fresh workspace where this record was never seeded into
     // the SQLite cache, but the file was removed from disk). Anything in dirty's
     // folder that's missing from the working tree is a candidate deletion.
-    let before_belt = candidate_rel_paths.len();
     for path in base_map.keys() {
         if !is_data_path_in_folder(path, repo_folder) {
             continue;
@@ -2821,23 +2793,16 @@ fn accept_all_scoped_via_index(
             candidate_rel_paths.insert(path.clone());
         }
     }
-    eprintln!(
-        "[accept-all] belt-and-suspenders added {} deletion candidate(s); total now {}",
-        candidate_rel_paths.len() - before_belt,
-        candidate_rel_paths.len()
-    );
 
     if candidate_rel_paths.is_empty() {
-        eprintln!("[accept-all] no candidates — early return");
         return Ok(AcceptAllResult::default());
     }
 
     // Move base_map into accepted_map and apply only the changed entries. Cross-
-    // check each candidate against base_map (byte-level) so a stale index bit
-    // can't produce a spurious commit.
+    // check each candidate semantically against base_map so a stale index bit
+    // or a whitespace-only edit-then-revert can't produce a spurious commit.
     let mut accepted_map = base_map;
     let mut accepted_paths: Vec<String> = Vec::with_capacity(candidate_rel_paths.len());
-    let mut skipped_no_diff = 0usize;
     for rel_path in candidate_rel_paths {
         let working_path = ctx.dirty_dir.join(&rel_path);
         let working_content = match std::fs::read(&working_path) {
@@ -2849,27 +2814,12 @@ fn accept_all_scoped_via_index(
             }
         };
         let dirty_content = accepted_map.get(rel_path.as_str());
-        let actually_differs = match (&working_content, dirty_content) {
-            (Some(w), Some(d)) => w != d,
-            (Some(_), None) | (None, Some(_)) => true,
-            (None, None) => false,
-        };
-        if !actually_differs {
-            eprintln!(
-                "[accept-all] candidate {} skipped: working bytes ({}) match dirty/base bytes ({})",
-                rel_path,
-                working_content.as_ref().map_or(0, |b| b.len()),
-                dirty_content.map_or(0, |b| b.len()),
-            );
-            skipped_no_diff += 1;
+        if !json_content_differs(
+            working_content.as_deref(),
+            dirty_content.map(|v| v.as_slice()),
+        ) {
             continue;
         }
-        eprintln!(
-            "[accept-all] accepting {} (working={} bytes, base={} bytes)",
-            rel_path,
-            working_content.as_ref().map_or(0, |b| b.len()),
-            dirty_content.map_or(0, |b| b.len()),
-        );
         match working_content {
             Some(bytes) => {
                 accepted_map.insert(rel_path.clone(), bytes);
@@ -2880,12 +2830,6 @@ fn accept_all_scoped_via_index(
         }
         accepted_paths.push(rel_path);
     }
-    eprintln!(
-        "[accept-all] {} candidates → {} accepted, {} skipped (no real diff)",
-        accepted_paths.len() + skipped_no_diff,
-        accepted_paths.len(),
-        skipped_no_diff
-    );
     if accepted_paths.is_empty() {
         return Ok(AcceptAllResult::default());
     }
@@ -3529,6 +3473,30 @@ fn data_only_map(map: &FileMap) -> FileMap {
         .filter(|(path, _)| !is_scratch_path(path))
         .map(|(path, value)| (path.clone(), value.clone()))
         .collect()
+}
+
+/// Compare two optional byte slices that may be JSON records. Returns `true`
+/// if they semantically differ — i.e. presence diff, or both parseable and
+/// `serde_json::Value` inequality. Falls back to byte equality when either
+/// side fails to parse, so unparseable garbage still surfaces as a change.
+///
+/// Used by the scoped accept-all / discard-all fast paths to cross-check
+/// folder-index candidates against the in-memory git tree. Keeping this
+/// semantic mirrors `reindex_files`'s bit computation, which means a
+/// whitespace- or key-order-only edit that the user has since reverted
+/// won't be treated as a real change here either.
+fn json_content_differs(a: Option<&[u8]>, b: Option<&[u8]>) -> bool {
+    match (a, b) {
+        (None, None) => false,
+        (None, Some(_)) | (Some(_), None) => true,
+        (Some(a), Some(b)) => match (
+            serde_json::from_slice::<JsonValue>(a),
+            serde_json::from_slice::<JsonValue>(b),
+        ) {
+            (Ok(va), Ok(vb)) => va != vb,
+            _ => a != b,
+        },
+    }
 }
 
 fn compute_unreviewed_entries(

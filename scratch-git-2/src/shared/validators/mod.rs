@@ -856,19 +856,55 @@ fn upsert_result(
     Ok(())
 }
 
-/// Remove rows in validation_results whose (folder_path, file_name) is no
-/// longer present in record_index (i.e. the record file was deleted).
+/// Remove rows in `validation_results` whose record no longer exists. Source of
+/// truth is the per-folder `<sanitized_folder>__v1` tables managed by
+/// `folder_index`: a record is "alive" iff its row in that table has a
+/// non-null `dirty_mtime`.
+///
+/// One DELETE per distinct folder_path. If a folder's per-folder table doesn't
+/// exist at all (e.g. the data folder was removed), every result row for that
+/// folder_path is dropped.
 fn cleanup_stale_results(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute(
-        &format!(
-            "DELETE FROM {VALIDATION_RESULTS_TABLE} \
-         WHERE (folder_path, file_name) NOT IN \
-               (SELECT folder_path, file_name FROM {})",
-            crate::shared::record_index::RECORD_INDEX_TABLE
-        ),
-        [],
-    )
-    .map_err(|e| anyhow::anyhow!("failed to clean stale validation results: {e}"))?;
+    let folder_paths: Vec<String> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT DISTINCT folder_path FROM {VALIDATION_RESULTS_TABLE}"
+        ))?;
+        let rows: Vec<rusqlite::Result<String>> = stmt.query_map([], |row| row.get(0))?.collect();
+        rows.into_iter().collect::<Result<_, _>>()?
+    };
+
+    for folder_path in folder_paths {
+        let table_name = crate::shared::folder_index::table_name_from_folder(&folder_path);
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![&table_name],
+                |row| row.get::<_, i64>(0).map(|n| n > 0),
+            )
+            .map_err(|e| anyhow::anyhow!("failed to probe {table_name}: {e}"))?;
+
+        if !table_exists {
+            conn.execute(
+                &format!("DELETE FROM {VALIDATION_RESULTS_TABLE} WHERE folder_path = ?1"),
+                params![&folder_path],
+            )
+            .map_err(|e| {
+                anyhow::anyhow!("failed to drop orphaned validation_results for {folder_path}: {e}")
+            })?;
+            continue;
+        }
+
+        let table_q = crate::shared::folder_index::quote_ident(&table_name);
+        conn.execute(
+            &format!(
+                "DELETE FROM {VALIDATION_RESULTS_TABLE} \
+                 WHERE folder_path = ?1 \
+                   AND file_name NOT IN (SELECT filename FROM {table_q} WHERE dirty_mtime IS NOT NULL)"
+            ),
+            params![&folder_path],
+        )
+        .map_err(|e| anyhow::anyhow!("failed to clean stale validation_results for {folder_path}: {e}"))?;
+    }
     Ok(())
 }
 

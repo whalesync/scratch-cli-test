@@ -297,7 +297,7 @@ fn conn_name_from_folder(folder: &str) -> &str {
 /// Derive a SQL table name from the subfolder portion of a folder path.
 /// Appends the schema version suffix so old/incompatible tables get swept on bump.
 /// e.g. "conn/public/posts" → "public_posts__v1", "conn" → "root__v1"
-fn table_name_from_folder(folder: &str) -> String {
+pub fn table_name_from_folder(folder: &str) -> String {
     let normalized = folder.trim_start_matches('/');
     let sub = match normalized.find('/') {
         Some(idx) => &normalized[idx + 1..],
@@ -385,6 +385,15 @@ fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
     // Tables are versioned via `__v<N>` suffix and the sweep in `open_conn`
     // drops anything that doesn't match, so we always create at the current schema.
     // No incremental ALTER migrations — bump INDEX_SCHEMA_VERSION instead.
+    // Drop the obsolete record_index tables. The per-folder tables created
+    // below carry the same (folder, filename) set that record_index_v1 used to
+    // hold, so cleanup_stale_results queries those directly now.
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS record_index_v1;
+         DROP TABLE IF EXISTS record_index;",
+    )
+    .context("failed to drop legacy record_index tables")?;
+
     let vr_tq = quote_ident(&validation_results_table());
     let approved_idx = quote_ident(&format!("{table}_approved_changes_idx"));
     let unapproved_idx = quote_ident(&format!("{table}_unapproved_changes_idx"));
@@ -625,30 +634,44 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
 
         let mut parse_error: Option<String> = None;
 
-        let (working_bytes, _working_json, working_err) = read_bytes_and_json(&working_path);
+        let (_working_bytes, working_json, working_err) = read_bytes_and_json(&working_path);
         if let Some(e) = working_err {
             parse_error = Some(format!("working: {e}"));
         }
-        let (dirty_bytes, _dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
+        let (_dirty_bytes, dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
         if let Some(e) = dirty_err {
             if parse_error.is_none() {
                 parse_error = Some(format!("dirty: {e}"));
             }
         }
-        let (master_bytes, _master_json, master_err) = read_bytes_and_json(&master_path);
+        let (_master_bytes, master_json, master_err) = read_bytes_and_json(&master_path);
         if let Some(e) = master_err {
             if parse_error.is_none() {
                 parse_error = Some(format!("master: {e}"));
             }
         }
 
-        // approvedChanges/unapprovedChanges flip whenever the trees differ — by
-        // presence (add/delete) or by raw bytes. Byte comparison matches the
-        // grid's `rowHasUnreviewedChanges` and `compute_unreviewed_entries`, so
-        // a whitespace-only or key-order-only edit still surfaces as a pending
-        // change instead of silently being a no-op.
-        let approved_changes: i32 = i32::from(working_bytes != dirty_bytes);
-        let unapproved_changes: i32 = i32::from(dirty_bytes != master_bytes);
+        // approvedChanges/unapprovedChanges flip on presence diff (add/delete)
+        // OR on semantic JSON content diff. Using `serde_json::Value` equality
+        // (rather than raw bytes) means a whitespace- or key-order-only edit
+        // followed by a revert correctly clears the bit even when the editor
+        // doesn't reproduce the exact original byte stream.
+        let approved_changes: i32 = if working_stat.is_some() != dirty_stat.is_some() {
+            1
+        } else {
+            match (&working_json, &dirty_json) {
+                (Some(w), Some(d)) => i32::from(w != d),
+                _ => 0,
+            }
+        };
+        let unapproved_changes: i32 = if dirty_stat.is_some() != master_stat.is_some() {
+            1
+        } else {
+            match (&dirty_json, &master_json) {
+                (Some(d), Some(m)) => i32::from(d != m),
+                _ => 0,
+            }
+        };
 
         tx.execute(
             &format!(
@@ -1850,7 +1873,7 @@ fn get_non_core_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<St
 ///
 /// **Cold path** (table is empty or DB doesn't exist yet): scans all three trees
 /// so the initial index is seeded completely, including dirty/master-only records.
-pub fn find_stale_working(
+pub fn find_stale_files(
     workspace: &Path,
     folder: &str,
     db_path_override: Option<&Path>,
@@ -1912,7 +1935,7 @@ pub fn find_stale_working(
 
 /// Return filenames whose stored column value is stale relative to working_mtime.
 /// If `columns` is empty, all non-core columns present in the table are checked.
-pub fn find_stale_columns(
+pub fn find_column_stale_files(
     workspace: &Path,
     folder: &str,
     columns: &[String],
@@ -1975,10 +1998,10 @@ pub fn find_stale(
     columns: &[String],
     db_path_override: Option<&Path>,
 ) -> anyhow::Result<StaleReport> {
-    let base_stale = find_stale_working(workspace, folder, db_path_override)?;
+    let base_stale = find_stale_files(workspace, folder, db_path_override)?;
     let base_set: HashSet<&str> = base_stale.iter().map(|s| s.as_str()).collect();
     // Exclude base_stale files from column_stale — they'll be handled by reindex_files_full.
-    let column_stale = find_stale_columns(workspace, folder, columns, db_path_override)?
+    let column_stale = find_column_stale_files(workspace, folder, columns, db_path_override)?
         .into_iter()
         .filter(|f| !base_set.contains(f.as_str()))
         .collect();
@@ -2075,26 +2098,40 @@ pub fn reindex_files(
             let master_stat = file_mtime_size(&master_path);
 
             let mut parse_error: Option<String> = None;
-            let (working_bytes, working_json, working_err) = read_bytes_and_json(&working_path);
+            let (_working_bytes, working_json, working_err) = read_bytes_and_json(&working_path);
             if let Some(e) = working_err {
                 parse_error = Some(format!("working: {e}"));
             }
-            let (dirty_bytes, _dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
+            let (_dirty_bytes, dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
             if let Some(e) = dirty_err {
                 if parse_error.is_none() {
                     parse_error = Some(format!("dirty: {e}"));
                 }
             }
-            let (master_bytes, _master_json, master_err) = read_bytes_and_json(&master_path);
+            let (_master_bytes, master_json, master_err) = read_bytes_and_json(&master_path);
             if let Some(e) = master_err {
                 if parse_error.is_none() {
                     parse_error = Some(format!("master: {e}"));
                 }
             }
 
-            // Byte-level diff — see refresh_index for the rationale.
-            let approved: i32 = i32::from(working_bytes != dirty_bytes);
-            let unapproved: i32 = i32::from(dirty_bytes != master_bytes);
+            // Semantic JSON diff — see refresh_index for the rationale.
+            let approved: i32 = if working_stat.is_some() != dirty_stat.is_some() {
+                1
+            } else {
+                match (&working_json, &dirty_json) {
+                    (Some(w), Some(d)) => i32::from(w != d),
+                    _ => 0,
+                }
+            };
+            let unapproved: i32 = if dirty_stat.is_some() != master_stat.is_some() {
+                1
+            } else {
+                match (&dirty_json, &master_json) {
+                    (Some(d), Some(m)) => i32::from(d != m),
+                    _ => 0,
+                }
+            };
 
             // If the file is gone from all three trees, remove it from the index.
             if working_stat.is_none() && dirty_stat.is_none() && master_stat.is_none() {

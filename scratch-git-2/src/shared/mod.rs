@@ -5,5 +5,4 @@ pub mod json_path;
 pub mod layout;
 pub mod merge;
 pub mod plan_publish;
-pub mod record_index;
 pub mod validators;

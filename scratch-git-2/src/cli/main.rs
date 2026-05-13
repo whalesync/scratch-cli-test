@@ -116,44 +116,6 @@ enum Commands {
         #[arg(long)]
         connection: Option<String>,
     },
-    /// Refresh the local record index for dirty worktrees
-    #[command(name = "refresh-problem-record-index", alias = "refresh-record-index")]
-    RefreshRecordIndex {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Only refresh the named connection (case-sensitive)
-        #[arg(long)]
-        connection: Option<String>,
-        /// Refresh only this record path. Accepts absolute paths, workspace-relative
-        /// '<connection>/<path>' values, or plain relative paths when the workspace has one connection.
-        #[arg(long = "path")]
-        paths: Vec<String>,
-        /// Refresh all records in this folder. Accepts absolute paths or workspace-relative
-        /// '<connection>/<folder>' values. May be repeated. Mutually exclusive with --path.
-        #[arg(long = "folder")]
-        folders: Vec<String>,
-        /// Reconcile every record in the connection, not just changed candidates
-        #[arg(long)]
-        rebuild: bool,
-    },
-    /// List records that would be processed by refresh-record-index
-    #[command(name = "list-stale-records")]
-    ListStaleRecords {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Only inspect the named connection (case-sensitive)
-        #[arg(long)]
-        connection: Option<String>,
-        /// Restrict inspection to this record path. Accepts absolute paths, workspace-relative
-        /// '<connection>/<path>' values, or plain relative paths when the workspace has one connection.
-        #[arg(long = "path")]
-        paths: Vec<String>,
-        /// Treat the run as a full rebuild when computing stale records
-        #[arg(long)]
-        rebuild: bool,
-    },
     /// Regenerate CLAUDE.md and .scratch/docs/ in the current workspace
     #[command(name = "generate-docs")]
     GenerateDocs {
@@ -211,13 +173,6 @@ enum Commands {
         /// Workspace-relative folder path: <connection>/<folder>
         #[arg(long)]
         folder: String,
-    },
-    /// Assert derived index tables exist for all workspace connections
-    #[command(name = "assert-problem-index-tables", alias = "assert-index-tables")]
-    AssertIndexTables {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
     },
     /// Print validation config loaded from validation.json files in the workspace
     #[command(name = "dump-validations")]
@@ -318,8 +273,8 @@ enum Commands {
     },
     /// List filenames in a folder whose base index row is stale (new, changed, or deleted).
     /// Outputs a JSON array of filenames.
-    #[command(name = "find-stale-working")]
-    FindStaleWorking {
+    #[command(name = "find-stale-files")]
+    FindStaleFiles {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
@@ -330,8 +285,8 @@ enum Commands {
     /// List filenames in a folder whose indexed field column value is stale.
     /// If no --column is given, all non-core columns are checked.
     /// Outputs a JSON array of filenames.
-    #[command(name = "find-stale-columns")]
-    FindStaleColumns {
+    #[command(name = "find-column-stale-files")]
+    FindColumnStaleFiles {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
@@ -533,32 +488,6 @@ async fn main() {
             workspace,
             connection,
         } => index::dump_command(&workspace, connection.as_deref()),
-        Commands::RefreshRecordIndex {
-            workspace,
-            connection,
-            paths,
-            folders,
-            rebuild,
-        } => index::refresh_problem_record_index_command(
-            &workspace,
-            connection.as_deref(),
-            &paths,
-            &folders,
-            rebuild,
-            cli.json,
-        ),
-        Commands::ListStaleRecords {
-            workspace,
-            connection,
-            paths,
-            rebuild,
-        } => index::list_stale_records_command(
-            &workspace,
-            connection.as_deref(),
-            &paths,
-            rebuild,
-            cli.json,
-        ),
         Commands::GetValidationResults { workspace, record } => {
             index::get_validation_results_command(&workspace, &record)
         }
@@ -574,9 +503,6 @@ async fn main() {
         Commands::GetFolderValidationSample { workspace, folder } => {
             index::get_folder_validation_sample_command(&workspace, &folder)
         }
-        Commands::AssertIndexTables { workspace } => {
-            index::assert_problem_index_tables_command(&workspace)
-        }
         Commands::IndexField {
             workspace,
             folder,
@@ -591,14 +517,14 @@ async fn main() {
         Commands::ClearFolderIndex { workspace, folder } => {
             index::clear_folder_index_command(&workspace, &folder)
         }
-        Commands::FindStaleWorking { workspace, folder } => {
-            index::find_stale_working_command(&workspace, &folder)
+        Commands::FindStaleFiles { workspace, folder } => {
+            index::find_stale_files_command(&workspace, &folder)
         }
-        Commands::FindStaleColumns {
+        Commands::FindColumnStaleFiles {
             workspace,
             folder,
             columns,
-        } => index::find_stale_columns_command(&workspace, &folder, &columns),
+        } => index::find_column_stale_files_command(&workspace, &folder, &columns),
         Commands::FindStale {
             workspace,
             folder,
