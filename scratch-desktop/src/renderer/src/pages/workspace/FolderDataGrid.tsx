@@ -838,7 +838,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // Tracks which trigger value was last consumed so we don't apply the same activation twice.
   const lastConsumedFilterTriggerRef = useRef(0);
   // Set when a filter activation arrives before data loads; cleared once column narrowing is applied.
-  const pendingColumnNarrowRef = useRef(false);
+  // When a global filter is applied, the column-narrow set must come from the
+  // post-filter row set (which can include records not visible on the current
+  // page). We defer narrowing until the new data lands by stashing the kind
+  // here; the post-load effect picks it up and applies the narrow against the
+  // freshly-computed focusColumnIds.
+  const pendingColumnNarrowRef = useRef<FilterKind | null>(null);
 
   // True when the folder just changed but the per-folder state reset hasn't been applied yet.
   // When pending, use query defaults so the reset's state flush lands on the same queryKey.
@@ -1012,13 +1017,45 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     void loadDiffData('refreshing', q);
   }, [dataRefreshKey, loadDiffData]);
 
-  // Apply pending column narrowing after new data loads (used when folder changed with activateGlobalFilter).
+  // Reconcile visibleColumnIds with the focus column set on every data load.
+  //
+  // - On INITIAL narrow (pendingColumnNarrowRef set, or visibleColumnIds is
+  //   null and a global filter is active): replace visibleColumnIds with
+  //   the locked title + focus columns for the filter's kind.
+  // - On SUBSEQUENT data loads while a global filter is active (e.g. the
+  //   user paginated): additively merge any newly-discovered focus columns
+  //   into visibleColumnIds so the next page's relevant columns appear.
+  //   Existing columns aren't removed — users can still see what they had,
+  //   and pages they've already seen keep their focus visible.
   useEffect(() => {
-    if (!pendingColumnNarrowRef.current) return;
-    pendingColumnNarrowRef.current = false;
-    const ids = errorsColumnIdsRef.current;
-    const locked = titleColumnIdRef.current ? [titleColumnIdRef.current] : [];
-    setVisibleColumnIds([...locked, ...ids.filter((c) => c !== titleColumnIdRef.current)]);
+    const pendingKind = pendingColumnNarrowRef.current;
+    pendingColumnNarrowRef.current = null;
+    const activeKind = activeFiltersRef.current.find((f) => f.scope === 'global')?.kind ?? null;
+    const kind = pendingKind ?? activeKind;
+    if (!kind) return;
+
+    const ids =
+      kind === 'unreviewed'
+        ? unreviewedColumnIdsRef.current
+        : kind === 'unpublished'
+          ? approvedColumnIdsRef.current
+          : errorsColumnIdsRef.current;
+    const titleId = titleColumnIdRef.current;
+    const locked = titleId ? [titleId] : [];
+
+    setVisibleColumnIds((prev) => {
+      if (prev === null) {
+        // Initial narrow: collapse to locked + focus only.
+        return [...locked, ...ids.filter((c) => c !== titleId)];
+      }
+      // Subsequent reload with the same filter still active: extend with
+      // any focus columns we hadn't seen yet (typically appears as the user
+      // pages through and new records bring new changed-field columns).
+      const existing = new Set(prev);
+      const additions = ids.filter((c) => !existing.has(c));
+      if (additions.length === 0) return prev;
+      return [...prev, ...additions];
+    });
   }, [resolvedQueryKey]);
 
   // Reset state when folder changes. If activateGlobalFilter is pending, apply it here and
@@ -1033,7 +1070,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     if (shouldApply && pending) {
       lastConsumedFilterTriggerRef.current = pending.trigger;
       if (pending.kind === 'has-problems') {
-        pendingColumnNarrowRef.current = true;
+        pendingColumnNarrowRef.current = pending.kind;
       }
     }
     setSort({ column: null, direction: null });
@@ -1071,7 +1108,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (ids.length > 0) {
         setVisibleColumnIds([...locked, ...ids.filter((c) => c !== titleColumnIdRef.current)]);
       } else {
-        pendingColumnNarrowRef.current = true;
+        pendingColumnNarrowRef.current = 'has-problems';
       }
     }
     onActivateGlobalFilterConsumed?.();
@@ -1484,8 +1521,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // Stable refs for column-narrowing values used inside effects that fire on unrelated deps.
   const errorsColumnIdsRef = useRef(errorsColumnIds);
   errorsColumnIdsRef.current = errorsColumnIds;
+  const unreviewedColumnIdsRef = useRef(unreviewedColumnIds);
+  unreviewedColumnIdsRef.current = unreviewedColumnIds;
+  const approvedColumnIdsRef = useRef(approvedColumnIds);
+  approvedColumnIdsRef.current = approvedColumnIds;
   const titleColumnIdRef = useRef(titleColumnId);
   titleColumnIdRef.current = titleColumnId;
+  const activeFiltersRef = useRef(activeFilters);
+  activeFiltersRef.current = activeFilters;
 
   const buildValidationHoverState = useCallback(
     (col: number, row: number): ValidationHoverState | null => {
@@ -2433,14 +2476,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         setVisibleColumnIds(null);
       } else {
         setActiveFilters([...withoutGlobal, { scope: 'global', kind }]);
-        // Applying a filter narrows visible columns to the focus set.
-        const matchingCols =
-          kind === 'unreviewed' ? unreviewedColumnIds : kind === 'unpublished' ? approvedColumnIds : errorsColumnIds;
-        const locked = titleColumnId ? [titleColumnId] : [];
-        setVisibleColumnIds([...locked, ...matchingCols.filter((c) => c !== titleColumnId)]);
+        // Defer column narrowing to the post-load effect. The current
+        // focusColumnIds were computed from rows visible BEFORE the filter,
+        // which is only the current page; records on other pages with focus
+        // columns of their own would be missed. After the filter triggers a
+        // refetch, the new diffData carries focus columns derived from the
+        // full filtered set.
+        pendingColumnNarrowRef.current = kind;
       }
     },
-    [activeFilters, approvedColumnIds, errorsColumnIds, titleColumnId, unreviewedColumnIds],
+    [activeFilters],
   );
 
   const handleRemoveFilter = useCallback((filterToRemove: GridFilter) => {
