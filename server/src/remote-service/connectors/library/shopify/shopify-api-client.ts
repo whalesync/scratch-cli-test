@@ -70,6 +70,75 @@ import { API_VERSION, ENTITY_REGISTRY, EntityType } from './graphql';
 // Connection pagination size
 const CONNECTION_PAGE_SIZE = 25;
 
+// ============= SEO Metafield Support =============
+
+/**
+ * Entity types that store SEO data as metafields (global.title_tag / global.description_tag)
+ * rather than a native `seo` field. We synthesize a virtual `seo` object for these types.
+ */
+export const SEO_METAFIELD_ENTITIES = new Set(['articles', 'pages', 'blogs']);
+
+/** GraphQL fragment appended to query fields for SEO metafield entities. */
+const SEO_METAFIELD_QUERY_FRAGMENT =
+  ' seoTitle: metafield(namespace: "global", key: "title_tag") { value } seoDescription: metafield(namespace: "global", key: "description_tag") { value }';
+
+/**
+ * Reshape raw API response nodes: extract seoTitle/seoDescription aliases into a
+ * standard `seo: { title, description }` object and remove the alias fields.
+ */
+export function normalizeSeoMetafields(node: Record<string, unknown>): Record<string, unknown> {
+  const seoTitle = node.seoTitle as { value?: string } | null | undefined;
+  const seoDescription = node.seoDescription as { value?: string } | null | undefined;
+
+  const title = seoTitle?.value ?? null;
+  const description = seoDescription?.value ?? null;
+
+  if (title !== null || description !== null) {
+    node.seo = { title, description };
+  } else {
+    node.seo = null;
+  }
+
+  delete node.seoTitle;
+  delete node.seoDescription;
+  return node;
+}
+
+/**
+ * Extract `seo` from a mutation input and convert it to Shopify metafields array format.
+ * Merges with any existing `metafields` in the input. Removes `seo` from the input object.
+ */
+export function extractSeoMetafields(input: Record<string, unknown>): Record<string, unknown> {
+  const seo = input.seo as { title?: string; description?: string } | null | undefined;
+  if (seo === undefined || seo === null) {
+    delete input.seo;
+    return input;
+  }
+
+  const metafields: Array<{ namespace: string; key: string; type: string; value: string }> = [];
+
+  if (seo.title !== undefined && seo.title !== null) {
+    metafields.push({ namespace: 'global', key: 'title_tag', type: 'single_line_text_field', value: seo.title });
+  }
+  if (seo.description !== undefined && seo.description !== null) {
+    metafields.push({
+      namespace: 'global',
+      key: 'description_tag',
+      type: 'single_line_text_field',
+      value: seo.description,
+    });
+  }
+
+  delete input.seo;
+
+  if (metafields.length > 0) {
+    const existing = (input.metafields as Array<Record<string, unknown>>) ?? [];
+    input.metafields = [...existing, ...metafields];
+  }
+
+  return input;
+}
+
 const SHOPIFY_RETRY_OPTS: WithRetryOpts = {
   isRateLimited: (error) =>
     error instanceof ShopifyError &&
@@ -112,9 +181,9 @@ const QUERY_FIELDS_MAP: Record<string, string> = {
   product_variants: PRODUCT_VARIANTS_QUERY_FIELDS,
   product_media: PRODUCT_MEDIA_QUERY_FIELDS,
   collections: COLLECTIONS_QUERY_FIELDS,
-  pages: PAGES_QUERY_FIELDS,
-  blogs: BLOGS_QUERY_FIELDS,
-  articles: ARTICLES_QUERY_FIELDS,
+  pages: PAGES_QUERY_FIELDS + SEO_METAFIELD_QUERY_FRAGMENT,
+  blogs: BLOGS_QUERY_FIELDS + SEO_METAFIELD_QUERY_FRAGMENT,
+  articles: ARTICLES_QUERY_FIELDS + SEO_METAFIELD_QUERY_FRAGMENT,
   customers: CUSTOMERS_QUERY_FIELDS,
   orders: ORDERS_QUERY_FIELDS,
   order_line_items: ORDER_LINE_ITEMS_QUERY_FIELDS,
@@ -264,7 +333,18 @@ export class ShopifyApiClient {
       }
     `;
 
-    yield* this.paginatedList(queryString, rootField, pageSize, resumeCursor);
+    const needsSeoNormalization = SEO_METAFIELD_ENTITIES.has(entityType);
+    for await (const page of this.paginatedList<Record<string, unknown>>(
+      queryString,
+      rootField,
+      pageSize,
+      resumeCursor,
+    )) {
+      if (needsSeoNormalization) {
+        page.nodes.forEach(normalizeSeoMetafields);
+      }
+      yield page;
+    }
   }
 
   /**
@@ -470,6 +550,10 @@ export class ShopifyApiClient {
           }
         }
       }
+    }
+
+    if (SEO_METAFIELD_ENTITIES.has(entityType)) {
+      allNodes.forEach(normalizeSeoMetafields);
     }
 
     return allNodes;
@@ -680,9 +764,10 @@ export class ShopifyApiClient {
   // ============= Page Mutations =============
 
   private async createPage(input: ShopifyPageInput): Promise<Record<string, unknown>> {
+    const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       pageCreate: { page: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
-    }>(PAGES_CREATE_MUTATION, { page: input });
+    }>(PAGES_CREATE_MUTATION, { page: mutationInput });
 
     this.throwOnUserErrors(data.pageCreate.userErrors);
 
@@ -694,9 +779,10 @@ export class ShopifyApiClient {
   }
 
   private async updatePage(id: string, input: ShopifyPageInput): Promise<void> {
+    const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       pageUpdate: { page: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
-    }>(PAGES_UPDATE_MUTATION, { id, page: input });
+    }>(PAGES_UPDATE_MUTATION, { id, page: mutationInput });
 
     this.throwOnUserErrors(data.pageUpdate.userErrors);
   }
@@ -712,9 +798,10 @@ export class ShopifyApiClient {
   // ============= Blog Mutations =============
 
   private async createBlog(input: ShopifyBlogInput): Promise<Record<string, unknown>> {
+    const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       blogCreate: { blog: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
-    }>(BLOGS_CREATE_MUTATION, { blog: input });
+    }>(BLOGS_CREATE_MUTATION, { blog: mutationInput });
 
     this.throwOnUserErrors(data.blogCreate.userErrors);
 
@@ -726,9 +813,10 @@ export class ShopifyApiClient {
   }
 
   private async updateBlog(id: string, input: ShopifyBlogInput): Promise<void> {
+    const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       blogUpdate: { blog: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
-    }>(BLOGS_UPDATE_MUTATION, { id, blog: input });
+    }>(BLOGS_UPDATE_MUTATION, { id, blog: mutationInput });
 
     this.throwOnUserErrors(data.blogUpdate.userErrors);
   }
@@ -770,6 +858,12 @@ export class ShopifyApiClient {
       }
     }
 
+    // Convert seo to metafields
+    if (input.seo) {
+      articleInput.seo = input.seo;
+    }
+    extractSeoMetafields(articleInput);
+
     const data = await this.query<{
       articleCreate: { article: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(ARTICLES_CREATE_MUTATION, { article: articleInput });
@@ -784,9 +878,10 @@ export class ShopifyApiClient {
   }
 
   private async updateArticle(id: string, input: ShopifyArticleInput): Promise<void> {
+    const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       articleUpdate: { article: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
-    }>(ARTICLES_UPDATE_MUTATION, { id, article: input });
+    }>(ARTICLES_UPDATE_MUTATION, { id, article: mutationInput });
 
     this.throwOnUserErrors(data.articleUpdate.userErrors);
   }

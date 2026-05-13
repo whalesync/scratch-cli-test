@@ -2,6 +2,7 @@ import { Kind, TSchema } from '@sinclair/typebox';
 import {
   TablePropertyType,
   TableView,
+  TableViewBannerGroup,
   TableViewCol,
   TableViewSubfield,
   X_SCRATCH_READONLY,
@@ -30,7 +31,6 @@ const DEFAULT_PRIORITY = ['title', 'id', 'handle', 'name', 'status'];
 // Fields that should be hidden by default — complex nested objects and system fields.
 const HIDDEN_FIELDS = new Set([
   'legacyResourceId',
-  'seo',
   'feedback',
   'standardizedProductType',
   'templateSuffix',
@@ -60,11 +60,15 @@ export function buildShopifyDefaultView(schema: TSchema, entityType: string): Ta
   const fieldIds = Object.keys(properties);
   const priority = PRIORITY_FIELDS[entityType] ?? DEFAULT_PRIORITY;
   const sorted = sortFields(fieldIds, priority);
-  const cols: TableViewCol[] = [];
+  const cols: (TableViewCol | TableViewBannerGroup)[] = [];
 
   for (const fieldId of sorted) {
     const fieldSchema = properties[fieldId];
-    cols.push(buildCol(fieldId, fieldSchema));
+    if (fieldId === 'seo') {
+      cols.push(buildSeoBannerGroup(fieldSchema));
+    } else {
+      cols.push(buildCol(fieldId, fieldSchema));
+    }
   }
 
   return { name: 'Default', cols };
@@ -187,6 +191,19 @@ function detectMoneySubfields(fieldSchema: TSchema): TableViewSubfield[] | undef
     { relativePath: 'amount', name: 'Amount', type: 'number' },
     { relativePath: 'currencyCode', name: 'Currency Code', type: 'string' },
   ];
+}
+
+/** Build a banner group for the SEO field, expanding title and description into separate columns. */
+function buildSeoBannerGroup(fieldSchema: TSchema): TableViewBannerGroup {
+  const isReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true;
+  return {
+    kind: 'banner-group',
+    name: 'SEO',
+    cols: [
+      { kind: 'col', path: 'seo.title', name: 'Title', readonly: isReadonly || undefined },
+      { kind: 'col', path: 'seo.description', name: 'Description', readonly: isReadonly || undefined },
+    ],
+  };
 }
 
 /** Build a TableViewCol from a field ID and its TypeBox schema. */

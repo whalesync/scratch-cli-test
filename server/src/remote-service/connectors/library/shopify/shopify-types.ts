@@ -255,6 +255,7 @@ export interface ShopifyPageInput {
   handle?: string;
   isPublished?: boolean;
   templateSuffix?: string;
+  seo?: { title?: string; description?: string };
 }
 
 /**
@@ -264,6 +265,7 @@ export interface ShopifyBlogInput {
   title?: string;
   handle?: string;
   templateSuffix?: string;
+  seo?: { title?: string; description?: string };
 }
 
 /**
@@ -279,6 +281,7 @@ export interface ShopifyArticleInput {
   templateSuffix?: string;
   blog?: { id: string };
   author?: { name: string };
+  seo?: { title?: string; description?: string };
 }
 
 // ============= GraphQL Infrastructure =============

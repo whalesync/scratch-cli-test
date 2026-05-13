@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { TableViewCol, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { TableViewBannerGroup, TableViewCol, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { buildShopifyDefaultView } from '../shopify-default-view';
 
 describe('buildShopifyDefaultView', () => {
@@ -146,19 +146,18 @@ describe('buildShopifyDefaultView', () => {
     expect(col.type).toBe('object');
   });
 
-  it('should map nested object union to object type', () => {
-    const col = view.cols.find((c) => c.kind === 'col' && c.path === 'seo') as TableViewCol;
-    expect(col).toBeDefined();
-    expect(col.type).toBe('object');
+  it('should expand seo into a banner group', () => {
+    const group = view.cols.find((c) => c.kind === 'banner-group' && c.name === 'SEO') as TableViewBannerGroup;
+    expect(group).toBeDefined();
+    expect(group.cols).toHaveLength(2);
+    expect(group.cols[0]).toMatchObject({ kind: 'col', path: 'seo.title', name: 'Title' });
+    expect(group.cols[1]).toMatchObject({ kind: 'col', path: 'seo.description', name: 'Description' });
   });
 
   it('should hide fields in the HIDDEN_FIELDS set', () => {
     const legacyCol = view.cols.find((c) => c.kind === 'col' && c.path === 'legacyResourceId') as TableViewCol;
     expect(legacyCol).toBeDefined();
     expect(legacyCol.hidden).toBe(true);
-
-    const seoCol = view.cols.find((c) => c.kind === 'col' && c.path === 'seo') as TableViewCol;
-    expect(seoCol.hidden).toBe(true);
 
     const priceRangeCol = view.cols.find((c) => c.kind === 'col' && c.path === 'priceRange') as TableViewCol;
     expect(priceRangeCol.hidden).toBe(true);
@@ -203,9 +202,9 @@ describe('buildShopifyDefaultView', () => {
     expect(paths[3]).toBe('zebra');
   });
 
-  it('should not produce any banner groups', () => {
+  it('should produce exactly one banner group (SEO)', () => {
     const groups = view.cols.filter((c) => c.kind === 'banner-group');
-    expect(groups.length).toBe(0);
+    expect(groups.length).toBe(1);
   });
 
   describe('count object subfields', () => {

@@ -21,7 +21,7 @@ import {
 import { Service } from '../../service-constants';
 import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, idPath, TablePreview } from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
-import { ShopifyApiClient, ShopifyError } from './shopify-api-client';
+import { SEO_METAFIELD_ENTITIES, ShopifyApiClient, ShopifyError } from './shopify-api-client';
 import { buildShopifyDefaultView } from './shopify-default-view';
 import { ShopifyCredentials } from './shopify-types';
 
@@ -191,13 +191,32 @@ export class ShopifyConnector extends Connector {
 
     // Add parent foreign key to schema if this is a child entity
     const parent = 'parent' in config ? (config as { parent: { foreignKey: string } }).parent : null;
-    const resolvedSchema =
+    let resolvedSchema =
       parent?.foreignKey && schema.properties && !(parent.foreignKey in schema.properties)
         ? Type.Object(
             { ...schema.properties, [parent.foreignKey]: Type.Optional(Type.Union([Type.String(), Type.Null()])) },
             schema.$id || schema.title ? { $id: schema.$id, title: schema.title } : {},
           )
         : schema;
+
+    // Add virtual seo field for entities that store SEO as metafields
+    if (SEO_METAFIELD_ENTITIES.has(entityType) && resolvedSchema.properties && !('seo' in resolvedSchema.properties)) {
+      resolvedSchema = Type.Object(
+        {
+          ...resolvedSchema.properties,
+          seo: Type.Optional(
+            Type.Union([
+              Type.Object({
+                title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                description: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              }),
+              Type.Null(),
+            ]),
+          ),
+        },
+        resolvedSchema.$id || resolvedSchema.title ? { $id: resolvedSchema.$id, title: resolvedSchema.title } : {},
+      );
+    }
 
     const spec: BaseJsonTableSpec = {
       id,
