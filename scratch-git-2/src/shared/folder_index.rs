@@ -20,7 +20,7 @@ use crate::shared::validators::{run_validators_dry, ValidatorEntry};
 /// sweep in `open_conn` drops everything that doesn't match, and the next
 /// pagination request rebuilds cold from the JSON files on disk. The index is
 /// derivative — JSON is authoritative — so cold rebuild is always safe.
-const INDEX_SCHEMA_VERSION: u32 = 1;
+const INDEX_SCHEMA_VERSION: u32 = 2;
 
 fn version_suffix() -> String {
     format!("__v{INDEX_SCHEMA_VERSION}")
@@ -2898,7 +2898,8 @@ mod tests {
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
         assert_eq!(result.filenames, vec!["a.json"]);
 
-        // The legacy tables must be gone; only `__v1` tables remain.
+        // The legacy tables must be gone; only current-version tables remain.
+        let suffix = version_suffix();
         let verify = rusqlite::Connection::open(&db_path).unwrap();
         let table_names: Vec<String> = verify
             .prepare(
@@ -2911,12 +2912,13 @@ mod tests {
             .unwrap();
         for name in &table_names {
             assert!(
-                name.ends_with("__v1"),
+                name.ends_with(&suffix),
                 "found stale-version table after sweep: {name}"
             );
         }
         // And the new versioned validation_results table exists.
-        assert!(table_names.iter().any(|n| n == "validation_results__v1"));
+        let expected_vr = format!("validation_results{suffix}");
+        assert!(table_names.iter().any(|n| n == &expected_vr));
     }
 
     #[test]
