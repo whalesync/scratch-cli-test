@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Component, Path, PathBuf};
 
@@ -8,6 +8,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::api::{ConnectorAccount, DataFolder};
 use crate::config::markers;
+use crate::shared::folder_index;
 use crate::shared::layout::WorkspaceLayout;
 use crate::shared::record_index::{self, RefreshOptions};
 use crate::shared::validators;
@@ -69,6 +70,10 @@ pub enum FilesCommands {
         /// When unset, accepts across every connection in the workspace.
         #[arg(long)]
         folder: Option<PathBuf>,
+        /// Skip refreshing the per-folder SQLite index for the accepted records.
+        /// By default, `reindex-files` runs for each affected folder so the grid stays current.
+        #[arg(long = "skip-folder-index")]
+        skip_folder_index: bool,
     },
     /// Discard every pending and approved-but-unpublished change, reverting records to their last published state
     #[command(name = "discard-all")]
@@ -77,6 +82,10 @@ pub enum FilesCommands {
         /// When unset, discards across every connection in the workspace.
         #[arg(long)]
         folder: Option<PathBuf>,
+        /// Skip refreshing the per-folder SQLite index for the discarded records.
+        /// By default, `reindex-files` runs for each affected folder so the grid stays current.
+        #[arg(long = "skip-folder-index")]
+        skip_folder_index: bool,
     },
     /// Discard pending and approved-but-unpublished changes for one or more specific paths, reverting them to their last published state
     Discard {
@@ -280,12 +289,14 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Download { on_delete } => {
             run_download(&cwd, server_url, json, on_delete).await
         }
-        FilesCommands::AcceptAll { folder } => {
-            run_accept_all(&cwd, server_url, folder.as_deref(), json)
-        }
-        FilesCommands::DiscardAll { folder } => {
-            run_discard_all(&cwd, server_url, folder.as_deref(), json)
-        }
+        FilesCommands::AcceptAll {
+            folder,
+            skip_folder_index,
+        } => run_accept_all(&cwd, server_url, folder.as_deref(), json, skip_folder_index),
+        FilesCommands::DiscardAll {
+            folder,
+            skip_folder_index,
+        } => run_discard_all(&cwd, server_url, folder.as_deref(), json, skip_folder_index),
         FilesCommands::Discard { paths } => run_discard(&cwd, &paths, json),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
         FilesCommands::AcceptField { folder, field } => {
@@ -654,11 +665,37 @@ fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Resu
     Ok(())
 }
 
+/// Group workspace-relative paths by their parent folder and run
+/// `folder_index::reindex_files` for each, so the SQLite folder index stays
+/// current after a multi-file mutation without an extra CLI round trip.
+fn reindex_folder_index_for_changes(
+    workspace_dir: &Path,
+    workspace_relative_paths: &[String],
+) -> anyhow::Result<()> {
+    if workspace_relative_paths.is_empty() {
+        return Ok(());
+    }
+    let mut by_folder: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for path in workspace_relative_paths {
+        let Some(last_slash) = path.rfind('/') else {
+            continue;
+        };
+        let folder = &path[..last_slash];
+        let filename = path[last_slash + 1..].to_string();
+        by_folder.entry(folder).or_default().push(filename);
+    }
+    for (folder, filenames) in by_folder {
+        folder_index::reindex_files(workspace_dir, folder, &filenames, None, false)?;
+    }
+    Ok(())
+}
+
 fn run_discard_all(
     cwd: &Path,
     server_url: &str,
     folder: Option<&Path>,
     json: bool,
+    skip_folder_index: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
@@ -667,32 +704,38 @@ fn run_discard_all(
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
-    let mut results = Vec::new();
+    let mut discarded_files: Vec<String> = Vec::new();
+    let mut total_discarded: i32 = 0;
+    let mut skipped_any = false;
     match folder {
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
-            let result = discard_all_single_repo(&ctx, Some(repo_folder.as_str()))?;
-            refresh_problem_record_index_for_ctx(&ctx, &result.discarded_paths, true)?;
-            results.push(result);
+            let result = discard_all_single_repo(&ctx, &workspace_dir, Some(repo_folder.as_str()))?;
+            refresh_problem_record_index_for_ctx(&ctx, &result.discarded_paths, false)?;
+            total_discarded += result.files_discarded;
+            skipped_any |= result.skipped_missing_main;
+            for p in &result.discarded_paths {
+                discarded_files.push(format!("{}/{}", ctx.conn_dir_name, p));
+            }
         }
         None => {
             for ctx in &contexts {
                 if contexts.len() > 1 && !json {
                     println!("Discarding changes in {}...", ctx.conn_dir_name);
                 }
-                let result = discard_all_single_repo(ctx, None)?;
-                refresh_problem_record_index_for_ctx(ctx, &result.discarded_paths, true)?;
-                results.push(result);
+                let result = discard_all_single_repo(ctx, &workspace_dir, None)?;
+                refresh_problem_record_index_for_ctx(ctx, &result.discarded_paths, false)?;
+                total_discarded += result.files_discarded;
+                skipped_any |= result.skipped_missing_main;
+                for p in &result.discarded_paths {
+                    discarded_files.push(format!("{}/{}", ctx.conn_dir_name, p));
+                }
             }
         }
     }
-
-    let discarded_files: Vec<String> = results
-        .iter()
-        .flat_map(|result| result.discarded_paths.iter().cloned())
-        .collect();
-    let total_discarded: i32 = results.iter().map(|result| result.files_discarded).sum();
-    let skipped_any = results.iter().any(|result| result.skipped_missing_main);
+    if !skip_folder_index {
+        reindex_folder_index_for_changes(&workspace_dir, &discarded_files)?;
+    }
     let elapsed_ms = started.elapsed().as_millis();
 
     if json {
@@ -734,6 +777,7 @@ fn run_accept_all(
     server_url: &str,
     folder: Option<&Path>,
     json: bool,
+    skip_folder_index: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
@@ -742,31 +786,35 @@ fn run_accept_all(
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
-    let mut results = Vec::new();
+    let mut accepted_files: Vec<String> = Vec::new();
+    let mut total_accepted: i32 = 0;
     match folder {
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
-            let result = accept_all_single_repo(&ctx, Some(repo_folder.as_str()))?;
-            refresh_problem_record_index_for_ctx(&ctx, &result.accepted_paths, true)?;
-            results.push(result);
+            let result = accept_all_single_repo(&ctx, &workspace_dir, Some(repo_folder.as_str()))?;
+            refresh_problem_record_index_for_ctx(&ctx, &result.accepted_paths, false)?;
+            total_accepted += result.files_accepted;
+            for p in &result.accepted_paths {
+                accepted_files.push(format!("{}/{}", ctx.conn_dir_name, p));
+            }
         }
         None => {
             for ctx in &contexts {
                 if contexts.len() > 1 && !json {
                     println!("Accepting changes in {}...", ctx.conn_dir_name);
                 }
-                let result = accept_all_single_repo(ctx, None)?;
-                refresh_problem_record_index_for_ctx(ctx, &result.accepted_paths, true)?;
-                results.push(result);
+                let result = accept_all_single_repo(ctx, &workspace_dir, None)?;
+                refresh_problem_record_index_for_ctx(ctx, &result.accepted_paths, false)?;
+                total_accepted += result.files_accepted;
+                for p in &result.accepted_paths {
+                    accepted_files.push(format!("{}/{}", ctx.conn_dir_name, p));
+                }
             }
         }
     }
-
-    let accepted_files: Vec<String> = results
-        .iter()
-        .flat_map(|result| result.accepted_paths.iter().cloned())
-        .collect();
-    let total_accepted: i32 = results.iter().map(|result| result.files_accepted).sum();
+    if !skip_folder_index {
+        reindex_folder_index_for_changes(&workspace_dir, &accepted_files)?;
+    }
     let elapsed_ms = started.elapsed().as_millis();
 
     if json {
@@ -2260,6 +2308,21 @@ fn upload_single_repo(
 
 fn discard_all_single_repo(
     ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<DiscardAllResult> {
+    sync_schema_files_from_master(ctx)?;
+    // Scoped + non-empty folder: drive the affected-file set from the SQLite
+    // folder index (matches accept-all's optimization). Unscoped path still does
+    // the full byte-diff so it can cross every folder in the connection.
+    if let Some(folder) = repo_folder.filter(|f| !f.is_empty()) {
+        return discard_all_scoped_via_index(ctx, workspace_dir, folder);
+    }
+    discard_all_full_scan(ctx, repo_folder)
+}
+
+fn discard_all_full_scan(
+    ctx: &ConnectionContext,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<DiscardAllResult> {
     let main_hash = match git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")? {
@@ -2278,7 +2341,6 @@ fn discard_all_single_repo(
         Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
         None => HashMap::new(),
     };
-    sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
 
     let all_pending = compute_unreviewed_entries(&ctx.conn_dir_name, &dirty_map, &local_map);
@@ -2352,6 +2414,137 @@ fn discard_all_single_repo(
     // Update the dirty worktree's HEAD/index to the new commit, then revert ONLY
     // the affected paths on disk. A full `reset --hard` would blow away pending
     // edits in folders outside the scoped --folder.
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    for path in &affected_paths {
+        let disk_path = ctx.dirty_dir.join(path);
+        match discarded_map.get(path.as_str()) {
+            Some(content) => write_file(&disk_path, content)?,
+            None => {
+                if disk_path.exists() {
+                    std::fs::remove_file(&disk_path)?;
+                }
+            }
+        }
+    }
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
+
+    Ok(DiscardAllResult {
+        files_discarded: affected_paths.len() as i32,
+        discarded_paths: affected_paths.into_iter().collect(),
+        skipped_missing_main: false,
+    })
+}
+
+fn discard_all_scoped_via_index(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    repo_folder: &str,
+) -> anyhow::Result<DiscardAllResult> {
+    let main_hash = match git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")? {
+        Some(hash) => hash,
+        None => {
+            return Ok(DiscardAllResult {
+                skipped_missing_main: true,
+                ..Default::default()
+            });
+        }
+    };
+    let main_map = read_git_tree(&ctx.bare_repo, &main_hash)?;
+
+    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let dirty_map = match dirty_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+
+    let workspace_folder = format!("{}/{}", ctx.conn_dir_name, repo_folder);
+
+    // Refresh stale rows so the bits reflect the current working tree.
+    let stale = folder_index::find_stale_working(workspace_dir, &workspace_folder, None)?;
+    if !stale.is_empty() {
+        folder_index::reindex_files(workspace_dir, &workspace_folder, &stale, None, false)?;
+    }
+
+    // Pre-filter set of files that *might* need discarding — anything the index
+    // flags, plus dirty/main entries with no matching disk file (belt and
+    // suspenders for fresh-workspace cases where the index lacks a row).
+    let mut candidate_paths: std::collections::BTreeSet<String> =
+        folder_index::select_files_with_local_changes(workspace_dir, &workspace_folder, None)?
+            .into_iter()
+            .map(|filename| format!("{}/{}", repo_folder, filename))
+            .collect();
+    for path in dirty_map.keys() {
+        if !is_data_path_in_folder(path, repo_folder) {
+            continue;
+        }
+        candidate_paths.insert(path.clone());
+    }
+    for path in main_map.keys() {
+        if !is_data_path_in_folder(path, repo_folder) {
+            continue;
+        }
+        candidate_paths.insert(path.clone());
+    }
+
+    // Confirm each candidate actually differs from main (working OR dirty side)
+    // — a stale index bit can't produce a spurious commit. The check is byte-
+    // level to match `compute_unreviewed_entries`.
+    let mut affected_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for path in &candidate_paths {
+        let dirty_content = dirty_map.get(path.as_str());
+        let main_content = main_map.get(path.as_str());
+        let working_content = match std::fs::read(ctx.dirty_dir.join(path)) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(anyhow::Error::from(err).context(format!(
+                    "failed to read {}",
+                    ctx.dirty_dir.join(path).display()
+                )))
+            }
+        };
+        let working_differs = match (&working_content, main_content) {
+            (Some(w), Some(m)) => w != m,
+            (Some(_), None) | (None, Some(_)) => true,
+            (None, None) => false,
+        };
+        let dirty_differs = match (dirty_content, main_content) {
+            (Some(d), Some(m)) => d != m,
+            (Some(_), None) | (None, Some(_)) => true,
+            (None, None) => false,
+        };
+        if working_differs || dirty_differs {
+            affected_paths.insert(path.clone());
+        }
+    }
+
+    if affected_paths.is_empty() {
+        return Ok(DiscardAllResult::default());
+    }
+
+    // Build the new dirty tree: clone dirty_map and replace each affected entry
+    // with its main version (or remove it if main doesn't have it).
+    let mut discarded_map = dirty_map;
+    for path in &affected_paths {
+        match main_map.get(path.as_str()) {
+            Some(content) => {
+                discarded_map.insert(path.clone(), content.clone());
+            }
+            None => {
+                discarded_map.remove(path);
+            }
+        }
+    }
+
+    let commit_msg = format!("Discard all local changes in {}", repo_folder);
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        dirty_hash.as_deref(),
+        &discarded_map,
+        &commit_msg,
+    )?;
+    // Update dirty worktree HEAD/index, then revert only the affected paths on
+    // disk — a full reset would blow away pending edits in other folders.
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
     for path in &affected_paths {
         let disk_path = ctx.dirty_dir.join(path);
@@ -2476,6 +2669,23 @@ fn discard_paths_single_repo(
 
 fn accept_all_single_repo(
     ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<AcceptAllResult> {
+    sync_schema_files_from_master(ctx)?;
+
+    // Scoped + non-empty folder: drive the changed-file set from the SQLite folder
+    // index instead of byte-diffing the entire working tree against the entire
+    // dirty tree. The unscoped path still does the full diff — it's the rare
+    // terminal-CLI shape and crosses every folder in the connection.
+    if let Some(folder) = repo_folder.filter(|f| !f.is_empty()) {
+        return accept_all_scoped_via_index(ctx, workspace_dir, folder);
+    }
+    accept_all_full_scan(ctx, repo_folder)
+}
+
+fn accept_all_full_scan(
+    ctx: &ConnectionContext,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<AcceptAllResult> {
     let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
@@ -2483,7 +2693,6 @@ fn accept_all_single_repo(
         Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
         None => HashMap::new(),
     };
-    sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
     let all_changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
 
@@ -2550,6 +2759,150 @@ fn accept_all_single_repo(
     Ok(AcceptAllResult {
         files_accepted: changes.len() as i32,
         accepted_paths: changes.into_iter().map(|entry| entry.path).collect(),
+    })
+}
+
+fn accept_all_scoped_via_index(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    repo_folder: &str,
+) -> anyhow::Result<AcceptAllResult> {
+    let workspace_folder = format!("{}/{}", ctx.conn_dir_name, repo_folder);
+    eprintln!(
+        "[accept-all] scoped path: workspace={} workspace_folder={} repo_folder={}",
+        workspace_dir.display(),
+        workspace_folder,
+        repo_folder
+    );
+
+    // Make sure approvedChanges reflects the latest working-tree state — if the
+    // user edited a file since the grid last refreshed, the bit may be stale.
+    let stale = folder_index::find_stale_working(workspace_dir, &workspace_folder, None)?;
+    eprintln!(
+        "[accept-all] find_stale_working returned {} file(s): {:?}",
+        stale.len(),
+        stale
+    );
+    if !stale.is_empty() {
+        folder_index::reindex_files(workspace_dir, &workspace_folder, &stale, None, false)?;
+    }
+
+    let selected =
+        folder_index::select_files_with_approved_changes(workspace_dir, &workspace_folder, None)?;
+    eprintln!(
+        "[accept-all] SELECT approvedChanges=1 returned {} file(s): {:?}",
+        selected.len(),
+        selected
+    );
+    let mut candidate_rel_paths: std::collections::BTreeSet<String> = selected
+        .into_iter()
+        .map(|filename| format!("{}/{}", repo_folder, filename))
+        .collect();
+
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+
+    // Belt-and-suspenders: pick up deletions that the index might not have a row
+    // for yet (e.g. a fresh workspace where this record was never seeded into
+    // the SQLite cache, but the file was removed from disk). Anything in dirty's
+    // folder that's missing from the working tree is a candidate deletion.
+    let before_belt = candidate_rel_paths.len();
+    for path in base_map.keys() {
+        if !is_data_path_in_folder(path, repo_folder) {
+            continue;
+        }
+        if candidate_rel_paths.contains(path) {
+            continue;
+        }
+        if !ctx.dirty_dir.join(path).exists() {
+            candidate_rel_paths.insert(path.clone());
+        }
+    }
+    eprintln!(
+        "[accept-all] belt-and-suspenders added {} deletion candidate(s); total now {}",
+        candidate_rel_paths.len() - before_belt,
+        candidate_rel_paths.len()
+    );
+
+    if candidate_rel_paths.is_empty() {
+        eprintln!("[accept-all] no candidates — early return");
+        return Ok(AcceptAllResult::default());
+    }
+
+    // Move base_map into accepted_map and apply only the changed entries. Cross-
+    // check each candidate against base_map (byte-level) so a stale index bit
+    // can't produce a spurious commit.
+    let mut accepted_map = base_map;
+    let mut accepted_paths: Vec<String> = Vec::with_capacity(candidate_rel_paths.len());
+    let mut skipped_no_diff = 0usize;
+    for rel_path in candidate_rel_paths {
+        let working_path = ctx.dirty_dir.join(&rel_path);
+        let working_content = match std::fs::read(&working_path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(anyhow::Error::from(err)
+                    .context(format!("failed to read {}", working_path.display())))
+            }
+        };
+        let dirty_content = accepted_map.get(rel_path.as_str());
+        let actually_differs = match (&working_content, dirty_content) {
+            (Some(w), Some(d)) => w != d,
+            (Some(_), None) | (None, Some(_)) => true,
+            (None, None) => false,
+        };
+        if !actually_differs {
+            eprintln!(
+                "[accept-all] candidate {} skipped: working bytes ({}) match dirty/base bytes ({})",
+                rel_path,
+                working_content.as_ref().map_or(0, |b| b.len()),
+                dirty_content.map_or(0, |b| b.len()),
+            );
+            skipped_no_diff += 1;
+            continue;
+        }
+        eprintln!(
+            "[accept-all] accepting {} (working={} bytes, base={} bytes)",
+            rel_path,
+            working_content.as_ref().map_or(0, |b| b.len()),
+            dirty_content.map_or(0, |b| b.len()),
+        );
+        match working_content {
+            Some(bytes) => {
+                accepted_map.insert(rel_path.clone(), bytes);
+            }
+            None => {
+                accepted_map.remove(&rel_path);
+            }
+        }
+        accepted_paths.push(rel_path);
+    }
+    eprintln!(
+        "[accept-all] {} candidates → {} accepted, {} skipped (no real diff)",
+        accepted_paths.len() + skipped_no_diff,
+        accepted_paths.len(),
+        skipped_no_diff
+    );
+    if accepted_paths.is_empty() {
+        return Ok(AcceptAllResult::default());
+    }
+
+    let commit_msg = format!("Accept all local changes in {}", repo_folder);
+    let new_dirty_hash = commit_file_map_to_dirty_ref(
+        &ctx.bare_repo,
+        base_hash.as_deref(),
+        &accepted_map,
+        &commit_msg,
+    )?;
+    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+    update_reviewed_dirty(ctx, &new_dirty_hash)?;
+
+    Ok(AcceptAllResult {
+        files_accepted: accepted_paths.len() as i32,
+        accepted_paths,
     })
 }
 

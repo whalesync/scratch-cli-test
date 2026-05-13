@@ -101,7 +101,10 @@ export function runScratchmdCapture(
     child.stderr.on('data', (chunk: Buffer | string) => {
       const text = chunk.toString();
       stderr += text;
-      if (args.includes('--debug')) {
+      // Temporary: also log accept-all/discard-all stderr so we can diagnose
+      // the index-driven fast path. Remove when no longer needed.
+      const isAcceptDiscardAll = args.includes('accept-all') || args.includes('discard-all');
+      if (args.includes('--debug') || isAcceptDiscardAll) {
         console.debug('[scratchmd]', text.trimEnd());
       }
       if (onProgress) {

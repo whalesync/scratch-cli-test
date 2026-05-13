@@ -1187,7 +1187,7 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
         "{\"v\":\"pending-a1\"}",
     );
 
-    let result = accept_all_single_repo(&ctx, Some("posts")).unwrap();
+    let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
     assert_eq!(result.files_accepted, 1);
     assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
@@ -1222,7 +1222,7 @@ fn accept_all_single_repo_folder_noop_when_folder_has_no_changes() {
         "{\"v\":\"pending-a1\"}",
     );
 
-    let result = accept_all_single_repo(&ctx, Some("posts")).unwrap();
+    let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
     assert_eq!(result.files_accepted, 0);
     assert!(result.accepted_paths.is_empty());
@@ -1245,7 +1245,7 @@ fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
     // Delete the scoped folder's file from the working tree.
     std::fs::remove_file(ctx.dirty_dir.join("posts/rec1.json")).unwrap();
 
-    let result = accept_all_single_repo(&ctx, Some("posts")).unwrap();
+    let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
     assert_eq!(result.files_accepted, 1);
     assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
@@ -1281,7 +1281,7 @@ fn discard_all_single_repo_folder_reverts_only_target_folder() {
         "{\"v\":\"pending-a1\"}",
     );
 
-    let result = discard_all_single_repo(&ctx, Some("posts")).unwrap();
+    let result = discard_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
     assert!(!result.skipped_missing_main);
     assert_eq!(result.files_discarded, 1);
@@ -1360,7 +1360,7 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
 
     let pre_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
 
-    let result = discard_all_single_repo(&ctx, Some("posts")).unwrap();
+    let result = discard_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
     assert!(!result.skipped_missing_main);
     assert_eq!(result.files_discarded, 0);

@@ -386,6 +386,8 @@ fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
     // drops anything that doesn't match, so we always create at the current schema.
     // No incremental ALTER migrations — bump INDEX_SCHEMA_VERSION instead.
     let vr_tq = quote_ident(&validation_results_table());
+    let approved_idx = quote_ident(&format!("{table}_approved_changes_idx"));
+    let unapproved_idx = quote_ident(&format!("{table}_unapproved_changes_idx"));
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS {tq} (
             filename                  TEXT PRIMARY KEY,
@@ -403,6 +405,8 @@ fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
             validated_mtime_master    INTEGER,
             validated_mtime_validator INTEGER
         );
+        CREATE INDEX IF NOT EXISTS {approved_idx} ON {tq} (filename) WHERE approvedChanges = 1;
+        CREATE INDEX IF NOT EXISTS {unapproved_idx} ON {tq} (filename) WHERE unapprovedChanges = 1;
         CREATE TABLE IF NOT EXISTS {vr_tq} (
             folder_path    TEXT NOT NULL,
             filename       TEXT NOT NULL,
@@ -462,6 +466,25 @@ fn scan_json_files(dir: &Path) -> HashSet<String> {
 fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     let bytes = fs::read(path).map_err(|e| format!("read error: {e}"))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("parse error: {e}"))
+}
+
+/// Read a file and (best-effort) parse it as JSON. Returns the raw bytes in all
+/// cases the file is present, plus the parsed value or a parse error message.
+/// Used by the indexers so the diff bit can compare bytes while column values
+/// and `parse_error` come from the parsed form.
+fn read_bytes_and_json(
+    path: &Path,
+) -> (Option<Vec<u8>>, Option<serde_json::Value>, Option<String>) {
+    if !path.exists() {
+        return (None, None, None);
+    }
+    match fs::read(path) {
+        Err(e) => (None, None, Some(format!("read error: {e}"))),
+        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(v) => (Some(bytes), Some(v), None),
+            Err(e) => (Some(bytes), None, Some(format!("parse error: {e}"))),
+        },
+    }
 }
 
 /// Extract a value at a dot-separated json path (e.g. "fields.title") from a
@@ -602,54 +625,30 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
 
         let mut parse_error: Option<String> = None;
 
-        let working_json = if working_path.exists() {
-            match read_json(&working_path) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    parse_error = Some(format!("working: {e}"));
-                    None
-                }
+        let (working_bytes, _working_json, working_err) = read_bytes_and_json(&working_path);
+        if let Some(e) = working_err {
+            parse_error = Some(format!("working: {e}"));
+        }
+        let (dirty_bytes, _dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
+        if let Some(e) = dirty_err {
+            if parse_error.is_none() {
+                parse_error = Some(format!("dirty: {e}"));
             }
-        } else {
-            None
-        };
-
-        let dirty_json = if dirty_path.exists() {
-            match read_json(&dirty_path) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    if parse_error.is_none() {
-                        parse_error = Some(format!("dirty: {e}"));
-                    }
-                    None
-                }
+        }
+        let (master_bytes, _master_json, master_err) = read_bytes_and_json(&master_path);
+        if let Some(e) = master_err {
+            if parse_error.is_none() {
+                parse_error = Some(format!("master: {e}"));
             }
-        } else {
-            None
-        };
+        }
 
-        let master_json = if master_path.exists() {
-            match read_json(&master_path) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    if parse_error.is_none() {
-                        parse_error = Some(format!("master: {e}"));
-                    }
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let approved_changes: i32 = match (&working_json, &dirty_json) {
-            (Some(w), Some(d)) => i32::from(w != d),
-            _ => 0,
-        };
-        let unapproved_changes: i32 = match (&dirty_json, &master_json) {
-            (Some(d), Some(m)) => i32::from(d != m),
-            _ => 0,
-        };
+        // approvedChanges/unapprovedChanges flip whenever the trees differ — by
+        // presence (add/delete) or by raw bytes. Byte comparison matches the
+        // grid's `rowHasUnreviewedChanges` and `compute_unreviewed_entries`, so
+        // a whitespace-only or key-order-only edit still surfaces as a pending
+        // change instead of silently being a no-op.
+        let approved_changes: i32 = i32::from(working_bytes != dirty_bytes);
+        let unapproved_changes: i32 = i32::from(dirty_bytes != master_bytes);
 
         tx.execute(
             &format!(
@@ -1989,6 +1988,55 @@ pub fn find_stale(
     })
 }
 
+/// Return filenames where `approvedChanges = 1` — i.e. the working tree differs
+/// from the dirty branch for this folder. Backed by a partial index on the bit,
+/// so it's O(changed-files) on tables created with the current schema.
+pub fn select_files_with_approved_changes(
+    workspace: &Path,
+    folder: &str,
+    db_path_override: Option<&Path>,
+) -> anyhow::Result<Vec<String>> {
+    select_filenames_where(workspace, folder, db_path_override, "approvedChanges = 1")
+}
+
+/// Return filenames where the working+dirty state diverges from master — the set
+/// of records `discard-all` needs to revert. Matches rows with either bit set
+/// (`approvedChanges = 1 OR unapprovedChanges = 1`). The partial indexes cover
+/// each branch of the OR.
+pub fn select_files_with_local_changes(
+    workspace: &Path,
+    folder: &str,
+    db_path_override: Option<&Path>,
+) -> anyhow::Result<Vec<String>> {
+    select_filenames_where(
+        workspace,
+        folder,
+        db_path_override,
+        "approvedChanges = 1 OR unapprovedChanges = 1",
+    )
+}
+
+fn select_filenames_where(
+    workspace: &Path,
+    folder: &str,
+    db_path_override: Option<&Path>,
+    where_clause: &str,
+) -> anyhow::Result<Vec<String>> {
+    let db_path = resolve_db_path(workspace, folder, db_path_override);
+    if !db_path.exists() {
+        return Ok(vec![]);
+    }
+    let table = table_name_from_folder(folder);
+    let conn = open_conn(&db_path)?;
+    ensure_schema(&conn, &table)?;
+    let tq = quote_ident(&table);
+    let mut stmt = conn.prepare(&format!("SELECT filename FROM {tq} WHERE {where_clause}"))?;
+    let rows: Vec<rusqlite::Result<String>> = stmt.query_map([], |row| row.get(0))?.collect();
+    rows.into_iter()
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
 /// Reindex specific files: reads all three versions (working/dirty/master),
 /// computes approvedChanges/unapprovedChanges, updates the base row, and
 /// refreshes the value for every active field column.
@@ -2027,52 +2075,26 @@ pub fn reindex_files(
             let master_stat = file_mtime_size(&master_path);
 
             let mut parse_error: Option<String> = None;
-            let working_json = if working_path.exists() {
-                match read_json(&working_path) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
-                        parse_error = Some(format!("working: {e}"));
-                        None
-                    }
+            let (working_bytes, working_json, working_err) = read_bytes_and_json(&working_path);
+            if let Some(e) = working_err {
+                parse_error = Some(format!("working: {e}"));
+            }
+            let (dirty_bytes, _dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
+            if let Some(e) = dirty_err {
+                if parse_error.is_none() {
+                    parse_error = Some(format!("dirty: {e}"));
                 }
-            } else {
-                None
-            };
-            let dirty_json = if dirty_path.exists() {
-                match read_json(&dirty_path) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
-                        if parse_error.is_none() {
-                            parse_error = Some(format!("dirty: {e}"));
-                        }
-                        None
-                    }
+            }
+            let (master_bytes, _master_json, master_err) = read_bytes_and_json(&master_path);
+            if let Some(e) = master_err {
+                if parse_error.is_none() {
+                    parse_error = Some(format!("master: {e}"));
                 }
-            } else {
-                None
-            };
-            let master_json = if master_path.exists() {
-                match read_json(&master_path) {
-                    Ok(v) => Some(v),
-                    Err(e) => {
-                        if parse_error.is_none() {
-                            parse_error = Some(format!("master: {e}"));
-                        }
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+            }
 
-            let approved: i32 = match (&working_json, &dirty_json) {
-                (Some(w), Some(d)) => i32::from(w != d),
-                _ => 0,
-            };
-            let unapproved: i32 = match (&dirty_json, &master_json) {
-                (Some(d), Some(m)) => i32::from(d != m),
-                _ => 0,
-            };
+            // Byte-level diff — see refresh_index for the rationale.
+            let approved: i32 = i32::from(working_bytes != dirty_bytes);
+            let unapproved: i32 = i32::from(dirty_bytes != master_bytes);
 
             // If the file is gone from all three trees, remove it from the index.
             if working_stat.is_none() && dirty_stat.is_none() && master_stat.is_none() {
@@ -2526,7 +2548,9 @@ mod tests {
         assert_eq!(result.filenames, vec!["rec1.json"]);
         assert_eq!(result.summary.total, 1);
         assert_eq!(result.summary.working_only, 1);
-        assert_eq!(result.summary.approved_changes, 0);
+        // working present + dirty absent flips approvedChanges (the file is a
+        // pending local addition).
+        assert_eq!(result.summary.approved_changes, 1);
         assert!(result.parse_errors.is_empty());
     }
 
@@ -2547,7 +2571,9 @@ mod tests {
 
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
         assert_eq!(result.summary.approved_changes, 1);
-        assert_eq!(result.summary.unapproved_changes, 0);
+        // dirty present + master absent flips unapprovedChanges (the record exists
+        // in the accepted branch but not yet in the published one).
+        assert_eq!(result.summary.unapproved_changes, 1);
     }
 
     #[test]

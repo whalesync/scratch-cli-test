@@ -554,30 +554,20 @@ ipcMain.handle(
 ipcMain.handle('scratch:refresh-paths', () => {
   // No-op: working-tree changes are detected automatically by find_stale_working
   // on the next paginate-records call. Dirty/master mutations trigger explicit
-  // reindex-table calls at the IPC handler that performed the mutation.
+  // reindex-files / reindex-table calls at the IPC handler that performed the mutation.
   return { success: true };
 });
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
+  // `files accept-all` reindexes the affected folders itself; no follow-up call needed.
   const args = ['files', 'accept-all'];
   if (folderPath) args.push('--folder', folderPath);
-  return withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await runScratchmdCapture(args, workspacePath);
-    if (result.exitCode === 0) {
-      await reindexAllFolderIndexes(workspacePath);
-    }
-    return result;
-  });
+  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
 ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
+  // `files discard-all` reindexes the affected folders itself; no follow-up call needed.
   const args = ['files', 'discard-all'];
   if (folderPath) args.push('--folder', folderPath);
-  return withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await runScratchmdCapture(args, workspacePath);
-    if (result.exitCode === 0) {
-      await reindexAllFolderIndexes(workspacePath);
-    }
-    return result;
-  });
+  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
 ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>
   withWorkspaceInternalMutation(workspacePath, async () => {
