@@ -164,12 +164,80 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
             b"{\"schema\":{}}".to_vec(),
         ),
     ]);
-    materialize_local_repo(&ctx, &replacement).unwrap();
+    materialize_local_repo(&ctx, &replacement, &map).unwrap();
 
     assert!(ctx.dirty_dir.join("posts/next.json").exists());
     assert!(!ctx.dirty_dir.join("posts/rec1.json").exists());
     assert!(ctx.scratch_dir.join("posts/schema.json").exists());
     assert!(!ctx.scratch_dir.join(".publish-plans/1/plan.json").exists());
+}
+
+#[test]
+fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
+    let tmp = TempDir::new().unwrap();
+    let ctx = ConnectionContext {
+        connection_id: "conn_test".to_string(),
+        conn_dir_name: "Conn".to_string(),
+        dirty_dir: tmp.path().join("Conn"),
+        reviewed_dirty_dir: tmp.path().join(".scratch/connections/reviewed-dirty/Conn"),
+        scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
+        workspace_dir: tmp.path().to_path_buf(),
+        master_dir: tmp.path().join(".scratch/connections/master/Conn"),
+        bare_repo: tmp.path().join(".repos/conn.git"),
+        db_path: tmp.path().join(".repos/conn.db"),
+    };
+
+    std::fs::create_dir_all(ctx.dirty_dir.join("posts")).unwrap();
+    let unchanged_path = ctx.dirty_dir.join("posts/keep.json");
+    let changed_path = ctx.dirty_dir.join("posts/edit.json");
+    std::fs::write(&unchanged_path, b"{\"v\":1}").unwrap();
+    std::fs::write(&changed_path, b"{\"v\":1}").unwrap();
+
+    let current = read_materialized_repo(&ctx).unwrap();
+    let unchanged_mtime_before = std::fs::metadata(&unchanged_path)
+        .unwrap()
+        .modified()
+        .unwrap();
+    let changed_mtime_before = std::fs::metadata(&changed_path)
+        .unwrap()
+        .modified()
+        .unwrap();
+
+    // Sleep just enough so a rewrite would observably bump mtime. macOS APFS
+    // mtime resolution is ns but the syscall path can coalesce same-instant
+    // writes; 10 ms is plenty.
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    let target = HashMap::from([
+        // Same content — should be skipped.
+        ("posts/keep.json".to_string(), b"{\"v\":1}".to_vec()),
+        // Different content — should be rewritten.
+        ("posts/edit.json".to_string(), b"{\"v\":2}".to_vec()),
+    ]);
+    materialize_local_repo(&ctx, &target, &current).unwrap();
+
+    let unchanged_mtime_after = std::fs::metadata(&unchanged_path)
+        .unwrap()
+        .modified()
+        .unwrap();
+    let changed_mtime_after = std::fs::metadata(&changed_path)
+        .unwrap()
+        .modified()
+        .unwrap();
+
+    assert_eq!(
+        unchanged_mtime_before, unchanged_mtime_after,
+        "file with matching content should not be rewritten"
+    );
+    assert!(
+        changed_mtime_after > changed_mtime_before,
+        "file with different content should be rewritten"
+    );
+    assert_eq!(
+        std::fs::read(&changed_path).unwrap(),
+        b"{\"v\":2}",
+        "rewritten file should have new content"
+    );
 }
 
 #[test]
@@ -545,6 +613,77 @@ fn upload_single_repo_uses_real_merge_base_for_local_dirty() {
         String::from_utf8(final_remote_map["posts/rec1.json"].clone()).unwrap(),
         "{\n  \"id\": \"rec1\",\n  \"name\": \"local\"\n}\n"
     );
+    // The dirty branch advanced (new merge commit on top of stale_local_parent)
+    // but for rec1.json the merge resolved in favor of local content, which
+    // is what `local_dirty_map` already held — so no data-path content
+    // actually moved on the local side. changed_paths reflects content
+    // movement, not tree-OID movement.
+    assert!(
+        result.changed_paths.is_empty(),
+        "merge resolved to local's content; nothing moved on the local side"
+    );
+}
+
+#[test]
+fn upload_single_repo_fast_path_skips_tree_reads_when_local_matches_remote() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    // Clone copies refs/heads/dirty + refs/remotes/origin/dirty at the same
+    // tip. No local edits, no publish plans, no unreviewed entries — this
+    // hits the fast-path early return that compares refs (cheap, no blob
+    // loads) instead of byte-comparing the full FileMaps.
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
+
+    let result = upload_single_repo(&ctx, "test-token", false).unwrap();
+
+    assert_eq!(
+        result.status, "no_changes",
+        "ref-equal local & remote ⇒ no_changes without reading any trees"
+    );
+    assert!(
+        result.changed_paths.is_empty(),
+        "no work done ⇒ nothing to surface as changed"
+    );
+}
+
+#[test]
+fn upload_single_repo_changed_paths_when_remote_wins() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
+
+    // Push a remote change to a path the local side never modified locally.
+    // The upload's merge picks remote (since local didn't change), so the
+    // local dirty branch advances to incorporate that remote change — which
+    // means `local_dirty_map[posts/rec1.json]` differs from `merged[…]` and
+    // the path should surface in changed_paths.
+    write_file(
+        &fixture.source_dir.join("posts/rec1.json"),
+        "{\n  \"id\": \"rec1\",\n  \"name\": \"remote-only\"\n}\n",
+    );
+    commit_all(&fixture.source_dir, "remote dirty update");
+    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
+
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
+        .unwrap();
+
+    let result = upload_single_repo(&ctx, "test-token", false).unwrap();
+    assert_eq!(result.status, "up_to_date");
+    assert_eq!(
+        result.changed_paths,
+        vec!["posts/rec1.json".to_string()],
+        "remote-only change should surface as a local-side move"
+    );
 }
 
 #[test]
@@ -618,6 +757,123 @@ fn download_single_repo_uses_real_merge_base_and_rebases_working_tree() {
     assert_eq!(
         std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
         "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"published\",\n  \"note\": \"local note\"\n}\n"
+    );
+    // The path that actually moved on the dirty side should surface in
+    // changed_paths so the caller can drive a targeted folder_index reindex
+    // instead of a workspace-wide sweep.
+    assert_eq!(
+        result.changed_paths,
+        vec!["posts/rec1.json".to_string()],
+        "download should report the modified data path in changed_paths"
+    );
+}
+
+#[test]
+fn file_map_changed_data_paths_handles_add_modify_delete_and_filters_scratch() {
+    let old = HashMap::from([
+        ("posts/keep.json".to_string(), b"{\"v\":1}".to_vec()),
+        ("posts/edit.json".to_string(), b"{\"v\":1}".to_vec()),
+        ("posts/gone.json".to_string(), b"{\"v\":1}".to_vec()),
+        (
+            ".scratch/posts/schema.json".to_string(),
+            b"{\"old\":1}".to_vec(),
+        ),
+    ]);
+    let new = HashMap::from([
+        // Same content — must not appear.
+        ("posts/keep.json".to_string(), b"{\"v\":1}".to_vec()),
+        // Different content — modification.
+        ("posts/edit.json".to_string(), b"{\"v\":2}".to_vec()),
+        // New file — addition.
+        ("posts/new.json".to_string(), b"{\"v\":3}".to_vec()),
+        // Modified `.scratch` entry — must be filtered out (folder_index
+        // only tracks data paths under data folders).
+        (
+            ".scratch/posts/schema.json".to_string(),
+            b"{\"new\":1}".to_vec(),
+        ),
+    ]);
+
+    let mut got = file_map_changed_data_paths(&old, &new);
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            "posts/edit.json".to_string(),
+            "posts/gone.json".to_string(),
+            "posts/new.json".to_string(),
+        ],
+        "should cover add/modify/delete on data paths, filter `.scratch/`"
+    );
+}
+
+#[test]
+fn update_master_worktree_returns_no_move_when_main_unchanged() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    // `create_bare_fixture` clones a bare repo, which copies both
+    // refs/heads/main and refs/heads/dirty. So `refs/heads/main` already
+    // matches `refs/remotes/origin/main` from the moment we open the ctx.
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
+
+    let result = update_master_worktree(&ctx, "test-token").unwrap();
+    // origin/main didn't advance ⇒ no move ⇒ no per-folder work needed.
+    // This is the "unchanged connection in a publish flow" case where
+    // run_download wants to skip rebuild_index_for_conn entirely.
+    assert!(!result.moved, "unchanged master should report moved=false");
+    assert!(
+        result.changed_paths.is_empty(),
+        "no master move ⇒ no changed paths"
+    );
+}
+
+#[test]
+fn update_master_worktree_returns_diff_when_main_advances() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
+
+    // Initial call is a no-op (main is already at origin/main from clone)
+    // — still needed to materialize the worktree before the next reset.
+    let initial = update_master_worktree(&ctx, "test-token").unwrap();
+    assert!(!initial.moved);
+
+    // Advance origin/main: add one data file, modify an existing data file,
+    // and write a `.scratch` file that should NOT surface in changed_paths.
+    run_git(&fixture.source_dir, &["checkout", "main"]);
+    write_file(
+        &fixture.source_dir.join("posts/added.json"),
+        "{\"id\":\"added\"}",
+    );
+    write_file(
+        &fixture.source_dir.join("syncs/a.json"),
+        "{\"changed\":true}",
+    );
+    write_file(
+        &fixture.source_dir.join(".scratch/notes.json"),
+        "{\"hidden\":true}",
+    );
+    commit_all(&fixture.source_dir, "advance main");
+    run_git(&fixture.source_dir, &["push", "origin", "main"]);
+
+    let result = update_master_worktree(&ctx, "test-token").unwrap();
+    assert!(result.moved, "master moved ⇒ moved=true");
+    let mut paths = result.changed_paths.clone();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec!["posts/added.json".to_string(), "syncs/a.json".to_string()],
+        ".scratch/* must be filtered out; everything else surfaces"
     );
 }
 

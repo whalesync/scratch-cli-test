@@ -61,6 +61,11 @@ pub enum FilesCommands {
         /// What to do when a connection was removed from the server
         #[arg(long, value_enum, default_value = "prompt")]
         on_delete: OnDeleteAction,
+        /// Skip refreshing the per-folder SQLite index for changed records.
+        /// By default, `index refresh-files-full` runs for each affected folder so the
+        /// grid stays current without a follow-up `index rebuild-folder` sweep.
+        #[arg(long = "skip-folder-index")]
+        skip_folder_index: bool,
     },
     /// Commit all current working-tree record changes into the local dirty branch
     #[command(name = "accept-all")]
@@ -70,7 +75,7 @@ pub enum FilesCommands {
         #[arg(long)]
         folder: Option<PathBuf>,
         /// Skip refreshing the per-folder SQLite index for the accepted records.
-        /// By default, `reindex-files` runs for each affected folder so the grid stays current.
+        /// By default, `index refresh-files-full` runs for each affected folder so the grid stays current.
         #[arg(long = "skip-folder-index")]
         skip_folder_index: bool,
     },
@@ -82,7 +87,7 @@ pub enum FilesCommands {
         #[arg(long)]
         folder: Option<PathBuf>,
         /// Skip refreshing the per-folder SQLite index for the discarded records.
-        /// By default, `reindex-files` runs for each affected folder so the grid stays current.
+        /// By default, `index refresh-files-full` runs for each affected folder so the grid stays current.
         #[arg(long = "skip-folder-index")]
         skip_folder_index: bool,
     },
@@ -91,6 +96,18 @@ pub enum FilesCommands {
         /// Paths to discard, relative to the workspace root (e.g. "ConnectionName/folder/record.json").
         #[arg(required = true)]
         paths: Vec<String>,
+    },
+    /// Discard every unreviewed working-tree change, restoring records to their last accepted (dirty-branch) state
+    #[command(name = "reject-all")]
+    RejectAll {
+        /// Optional folder to scope the reject to (e.g. "ConnectionName/folder").
+        /// When unset, rejects across every connection in the workspace.
+        #[arg(long)]
+        folder: Option<PathBuf>,
+        /// Skip refreshing the per-folder SQLite index for the rejected records.
+        /// By default, `index refresh-files-full` runs for each affected folder so the grid stays current.
+        #[arg(long = "skip-folder-index")]
+        skip_folder_index: bool,
     },
     /// Commit one or more working-tree changes into the local dirty branch in a single commit
     Accept {
@@ -146,7 +163,13 @@ pub enum FilesCommands {
     /// List record changes accepted locally but not yet published (dirty vs master)
     Unpushed,
     /// Upload local changes to the server
-    Upload,
+    Upload {
+        /// Skip refreshing the per-folder SQLite index for changed records.
+        /// By default, `index refresh-files-full` runs for each affected folder so the
+        /// grid stays current without a follow-up `index rebuild-folder` sweep.
+        #[arg(long = "skip-folder-index")]
+        skip_folder_index: bool,
+    },
     /// Force-push local state to the server, skipping merge (fast)
     #[command(name = "force-upload")]
     ForceUpload,
@@ -184,10 +207,19 @@ struct DownloadResult {
     files_merged: i32,
     conflicts_auto_resolved: i32,
     messages: Vec<String>,
+    /// Repo-relative data paths whose dirty branch or working tree moved
+    /// during this download. Used by the caller to drive a targeted
+    /// folder_index reindex instead of a workspace-wide one.
+    changed_paths: Vec<String>,
 }
 
 #[derive(Default)]
 struct UploadResult {
+    /// Repo-relative data paths whose dirty branch moved during this
+    /// upload (locally — i.e. from `local_dirty_hash` to either `remote_hash`
+    /// in the fast-forward case or `new_dirty_hash` in the merge-commit
+    /// case). Drives the caller's per-path folder_index reindex.
+    changed_paths: Vec<String>,
     status: String,
     files_uploaded: i32,
     files_merged: i32,
@@ -221,6 +253,12 @@ struct MergeBaseResult {
 struct AcceptAllResult {
     files_accepted: i32,
     accepted_paths: Vec<String>,
+}
+
+#[derive(Default)]
+struct RejectAllResult {
+    files_rejected: i32,
+    rejected_paths: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -278,9 +316,10 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
     let cwd = std::env::current_dir()?;
 
     match cmd {
-        FilesCommands::Download { on_delete } => {
-            run_download(&cwd, server_url, json, on_delete).await
-        }
+        FilesCommands::Download {
+            on_delete,
+            skip_folder_index,
+        } => run_download(&cwd, server_url, json, on_delete, skip_folder_index).await,
         FilesCommands::AcceptAll {
             folder,
             skip_folder_index,
@@ -290,6 +329,10 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             skip_folder_index,
         } => run_discard_all(&cwd, server_url, folder.as_deref(), json, skip_folder_index),
         FilesCommands::Discard { paths } => run_discard(&cwd, &paths, json),
+        FilesCommands::RejectAll {
+            folder,
+            skip_folder_index,
+        } => run_reject_all(&cwd, server_url, folder.as_deref(), json, skip_folder_index),
         FilesCommands::Accept { paths } => run_accept(&cwd, server_url, &paths, json),
         FilesCommands::AcceptField { folder, field } => {
             run_accept_field(&cwd, &folder, &field, json)
@@ -307,7 +350,9 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
-        FilesCommands::Upload => run_upload(&cwd, server_url, json),
+        FilesCommands::Upload { skip_folder_index } => {
+            run_upload(&cwd, server_url, json, skip_folder_index)
+        }
         FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
         FilesCommands::FindMergeBase => run_find_merge_base(&cwd, server_url, json),
     }
@@ -327,6 +372,7 @@ async fn run_download(
     server_url: &str,
     json: bool,
     on_delete: OnDeleteAction,
+    skip_folder_index: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, _initial_contexts, workspace_server_url) =
@@ -367,17 +413,45 @@ async fn run_download(
     .await;
 
     let mut results = Vec::new();
+    let mut all_changed_workspace_paths: Vec<String> = Vec::new();
     for ctx in &contexts {
         if contexts.len() > 1 && !json {
             println!("Downloading {}...", ctx.conn_dir_name);
         }
         let empty = Vec::new();
         let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
-        results.push(download_single_repo(ctx, &token, folders)?);
-        if update_master_worktree(ctx, &token).is_ok() {
+        let mut download_result = download_single_repo(ctx, &token, folders)?;
+        // `update_master_worktree` is best-effort — failures here shouldn't
+        // bubble up because the dirty-side download already succeeded. Fall
+        // back to "no master change" on error.
+        let master_update = update_master_worktree(ctx, &token).unwrap_or_default();
+        if master_update.moved {
+            // Schema files on master may have moved alongside data files;
+            // resync them into ctx.scratch_dir. file_index for cross-record
+            // remote_id lookups is also master-derived, so rebuild it here.
+            // Both are gated on `moved` so unchanged connections pay zero
+            // cost in the per-ctx loop.
             let _ = sync_schema_files_from_master(ctx);
             rebuild_index_for_conn(ctx, json);
         }
+        // Merge the master-side path diff into the download result so the
+        // single `changed_paths` field downstream covers any tree the
+        // folder_index needs to recompute its bits against.
+        if !master_update.changed_paths.is_empty() {
+            let mut seen: HashSet<String> = download_result.changed_paths.iter().cloned().collect();
+            for path in master_update.changed_paths {
+                if seen.insert(path.clone()) {
+                    download_result.changed_paths.push(path);
+                }
+            }
+        }
+        // Promote to workspace-relative (prefixed with conn_dir_name) so
+        // the post-loop folder_index reindex can route each path to the
+        // right per-folder table without needing per-ctx attribution.
+        for path in &download_result.changed_paths {
+            all_changed_workspace_paths.push(format!("{}/{}", ctx.conn_dir_name, path));
+        }
+        results.push(download_result);
     }
 
     let wb_name = if workspace_marker.workbook.name.is_empty() {
@@ -386,6 +460,13 @@ async fn run_download(
         workspace_marker.workbook.name.as_str()
     };
     let _ = super::generate_docs::write_docs(&workspace_dir, wb_name);
+
+    // Per-path folder_index reindex. Empty when no connection had any
+    // changed files — that's the dominant path for "small publish in a
+    // multi-connection workspace" and produces a zero-cost no-op.
+    if !skip_folder_index {
+        reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
+    }
 
     let result = if results.len() == 1 {
         results.into_iter().next().unwrap_or_default()
@@ -550,9 +631,14 @@ async fn sync_workspace_structure(
     Ok(result)
 }
 
-fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+fn run_upload(
+    cwd: &Path,
+    server_url: &str,
+    json: bool,
+    skip_folder_index: bool,
+) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (_, _, contexts, workspace_server_url) =
+    let (_, workspace_dir, contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url)?;
     let token = get_token(&workspace_server_url)?;
 
@@ -562,11 +648,23 @@ fn run_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
 
     let verbose = !json;
     let mut results = Vec::new();
+    let mut all_changed_workspace_paths: Vec<String> = Vec::new();
     for ctx in &contexts {
         if contexts.len() > 1 && verbose {
             println!("Uploading {}...", ctx.conn_dir_name);
         }
-        results.push(upload_single_repo(ctx, &token, verbose)?);
+        let upload_result = upload_single_repo(ctx, &token, verbose)?;
+        for path in &upload_result.changed_paths {
+            all_changed_workspace_paths.push(format!("{}/{}", ctx.conn_dir_name, path));
+        }
+        results.push(upload_result);
+    }
+
+    // Per-path folder_index reindex. Same shape as download: the dirty
+    // branch's path diff drives a targeted reindex, replacing the
+    // workspace-wide sweep the desktop used to do after every push.
+    if !skip_folder_index {
+        reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
     }
 
     let result = if results.len() == 1 {
@@ -761,6 +859,81 @@ fn run_discard_all(
     if skipped_any {
         println!("Note: one or more connections have no published state yet and were skipped.");
     }
+    Ok(())
+}
+
+fn run_reject_all(
+    cwd: &Path,
+    server_url: &str,
+    folder: Option<&Path>,
+    json: bool,
+    skip_folder_index: bool,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let mut rejected_files: Vec<String> = Vec::new();
+    let mut total_rejected: i32 = 0;
+    match folder {
+        Some(folder) => {
+            let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
+            let result = reject_all_single_repo(&ctx, &workspace_dir, Some(repo_folder.as_str()))?;
+            refresh_problem_record_index_for_ctx(&ctx, &result.rejected_paths, false)?;
+            total_rejected += result.files_rejected;
+            for p in &result.rejected_paths {
+                rejected_files.push(format!("{}/{}", ctx.conn_dir_name, p));
+            }
+        }
+        None => {
+            for ctx in &contexts {
+                if contexts.len() > 1 && !json {
+                    println!("Rejecting changes in {}...", ctx.conn_dir_name);
+                }
+                let result = reject_all_single_repo(ctx, &workspace_dir, None)?;
+                refresh_problem_record_index_for_ctx(ctx, &result.rejected_paths, false)?;
+                total_rejected += result.files_rejected;
+                for p in &result.rejected_paths {
+                    rejected_files.push(format!("{}/{}", ctx.conn_dir_name, p));
+                }
+            }
+        }
+    }
+    if !skip_folder_index {
+        reindex_folder_index_for_changes(&workspace_dir, &rejected_files)?;
+    }
+    let elapsed_ms = started.elapsed().as_millis();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if total_rejected == 0 { "no_changes" } else { "rejected" },
+                "filesRejected": total_rejected,
+                "paths": rejected_files,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    if total_rejected == 0 {
+        println!(
+            "No unreviewed local changes to reject. ({})",
+            format_elapsed(elapsed_ms)
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Rejected {} local record change(s). ({})",
+        total_rejected,
+        format_elapsed(elapsed_ms)
+    );
+    print_file_list(&rejected_files);
     Ok(())
 }
 
@@ -2143,11 +2316,37 @@ fn download_single_repo(
         }
     }
 
-    materialize_local_repo(ctx, &target_map)?;
+    // Compute the set of data paths whose content actually moved on either
+    // tree we care about for the folder_index:
+    //   - dirty branch: `local_dirty_map` → `merged_dirty_map`
+    //   - working tree: `local_map`       → `target_map`
+    // MergeActions over-count here because compute_merge_actions emits
+    // `WriteRemote` even when remote == base (no actual content move);
+    // diffing the maps directly avoids that false positive.
+    let mut changed_paths_set: HashSet<String> = HashSet::new();
+    for path in file_map_changed_data_paths(&local_dirty_map, &merged_dirty_map) {
+        changed_paths_set.insert(path);
+    }
+    for path in file_map_changed_data_paths(&local_map, &target_map) {
+        changed_paths_set.insert(path);
+    }
+    result.changed_paths = changed_paths_set.into_iter().collect();
+
+    // local_map is the snapshot we read earlier; pass it so materialize can
+    // skip rewriting files whose content didn't move (preserves mtimes so
+    // find_stale_files doesn't see every file as stale next page load).
+    materialize_local_repo(ctx, &target_map, &local_map)?;
     reconcile_data_folder_dirs(&ctx.dirty_dir, data_folders)?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
     update_reviewed_dirty(ctx, &new_dirty_hash)?;
-    refresh_problem_record_index_for_ctx(ctx, &[], true)?;
+    // Validators are NOT run inline. The dead `validators::run_validations`
+    // pipeline writes to validation_results_v1 which nothing in production
+    // reads — the grid's validation results come from the folder_index
+    // pipeline (validate_page_records, writing validation_results__v1).
+    // After the per-path folder_index reindex the caller does next, our
+    // affected rows will have working_mtime moved and stale validation,
+    // so the next paginate-records --validate re-runs validators lazily
+    // for whatever page the user actually views.
 
     Ok(result)
 }
@@ -2163,10 +2362,6 @@ fn upload_single_repo(
         eprint!("  Reading local state...");
     }
     let local_dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
-    // Clone local_dirty_map out of the cache so we can continue mutating the cache for
-    // remote tree reads without holding a borrow.
-    let local_dirty_map =
-        cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &local_dirty_hash)?.clone();
     sync_schema_files_from_master(ctx)?;
     let local_unreviewed = unreviewed_entries(ctx)?;
     let local_plan_map = read_local_publish_plan_map(ctx)?;
@@ -2174,6 +2369,13 @@ fn upload_single_repo(
         eprintln!(" done");
     }
 
+    // Fast path for "this connection has nothing to push and nothing came
+    // in from the server either." Commit/tree SHAs are content-hashes, so
+    // ref equality is byte-equivalent to map equality without loading any
+    // blobs. Critical for the publish-flow scenario where the user pushes
+    // to one small table in a workspace with several large untouched
+    // connections — those untouched connections are O(records-in-conn)
+    // otherwise (read_git_tree × 2 + maps_equal byte compare).
     if local_unreviewed.is_empty() && local_plan_map.is_empty() {
         if verbose {
             eprint!("  Fetching remote changes...");
@@ -2184,14 +2386,22 @@ fn upload_single_repo(
         }
 
         let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-        let remote_map = cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?;
-        if maps_equal(&local_dirty_map, remote_map) {
+        if local_dirty_hash == remote_hash {
             return Ok(UploadResult {
                 status: "no_changes".to_string(),
                 ..Default::default()
             });
         }
+        // Falls through: nothing to push but remote advanced. The retry
+        // loop below handles fast-forwarding our local dirty to match,
+        // applying any working-tree changes that came in.
     }
+
+    // From here on we need the local dirty tree in memory for the merge.
+    // Clone out of the cache so the cache can be mutated for remote /
+    // merge-base tree reads inside the retry loop without holding a borrow.
+    let local_dirty_map =
+        cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &local_dirty_hash)?.clone();
 
     const MAX_RETRIES: i32 = 5;
     for attempt in 0..MAX_RETRIES {
@@ -2245,10 +2455,16 @@ fn upload_single_repo(
             apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &remote_map)?;
             update_dirty_worktree_index(ctx, &remote_hash)?;
             update_reviewed_dirty(ctx, &remote_hash)?;
-            refresh_problem_record_index_for_ctx(ctx, &[], true)?;
+            // Validators run lazily via the folder_index pipeline on the
+            // next paginate-records --validate (see download_single_repo
+            // for the same rationale).
             return Ok(UploadResult {
                 status: "up_to_date".to_string(),
                 messages,
+                // Dirty moved from `local_dirty_hash` to `remote_hash` —
+                // capture the path diff so the caller can do a per-path
+                // folder_index reindex instead of a workspace-wide sweep.
+                changed_paths: file_map_changed_data_paths(&local_dirty_map, &remote_map),
                 ..Default::default()
             });
         }
@@ -2272,9 +2488,14 @@ fn upload_single_repo(
                 apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &merged)?;
                 update_dirty_worktree_index(ctx, &new_dirty_hash)?;
                 update_reviewed_dirty(ctx, &new_dirty_hash)?;
-                refresh_problem_record_index_for_ctx(ctx, &[], true)?;
+                // See download_single_repo: validators run lazily on next
+                // --validate paginate, not inline.
                 result.files_plan = plan_file_count;
                 result.messages = messages;
+                // Dirty moved from `local_dirty_hash` to `new_dirty_hash`
+                // (which is a commit of `merged`). Capture the diff for the
+                // caller's per-path folder_index reindex.
+                result.changed_paths = file_map_changed_data_paths(&local_dirty_map, &merged);
                 return Ok(result);
             }
             Err(err) => {
@@ -2749,6 +2970,127 @@ fn accept_all_full_scan(
     Ok(AcceptAllResult {
         files_accepted: changes.len() as i32,
         accepted_paths: changes.into_iter().map(|entry| entry.path).collect(),
+    })
+}
+
+fn reject_all_single_repo(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<RejectAllResult> {
+    sync_schema_files_from_master(ctx)?;
+    if let Some(folder) = repo_folder.filter(|f| !f.is_empty()) {
+        return reject_all_scoped_via_index(ctx, workspace_dir, folder);
+    }
+    reject_all_full_scan(ctx, repo_folder)
+}
+
+fn reject_all_full_scan(
+    ctx: &ConnectionContext,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<RejectAllResult> {
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+    let local_map = read_materialized_repo(ctx)?;
+    let all_changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+
+    let changes: Vec<UnreviewedEntry> = match repo_folder {
+        Some(folder) => all_changes
+            .into_iter()
+            .filter(|entry| is_data_path_in_folder(&entry.path, folder))
+            .collect(),
+        None => all_changes,
+    };
+
+    if changes.is_empty() {
+        return Ok(RejectAllResult::default());
+    }
+
+    // Restore working tree from dirty branch for each changed path. No git commit
+    // is needed — we're only resetting working state to match dirty.
+    for entry in &changes {
+        let disk_path = ctx.dirty_dir.join(&entry.path);
+        match base_map.get(entry.path.as_str()) {
+            Some(content) => write_file(&disk_path, content)?,
+            None => {
+                if disk_path.exists() {
+                    std::fs::remove_file(&disk_path)?;
+                }
+            }
+        }
+    }
+
+    Ok(RejectAllResult {
+        files_rejected: changes.len() as i32,
+        rejected_paths: changes.into_iter().map(|entry| entry.path).collect(),
+    })
+}
+
+fn reject_all_scoped_via_index(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    repo_folder: &str,
+) -> anyhow::Result<RejectAllResult> {
+    let workspace_folder = format!("{}/{}", ctx.conn_dir_name, repo_folder);
+
+    // Refresh any stale approvedChanges bits before we trust the index query.
+    let stale = folder_index::find_stale_files(workspace_dir, &workspace_folder, None)?;
+    if !stale.is_empty() {
+        folder_index::reindex_files(workspace_dir, &workspace_folder, &stale, None, false)?;
+    }
+
+    let candidate_rel_paths: std::collections::BTreeSet<String> =
+        folder_index::select_files_with_approved_changes(workspace_dir, &workspace_folder, None)?
+            .into_iter()
+            .map(|filename| format!("{}/{}", repo_folder, filename))
+            .collect();
+
+    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+    let base_map = match base_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => HashMap::new(),
+    };
+
+    if candidate_rel_paths.is_empty() {
+        return Ok(RejectAllResult::default());
+    }
+
+    let mut rejected_paths: Vec<String> = Vec::with_capacity(candidate_rel_paths.len());
+    for rel_path in candidate_rel_paths {
+        let disk_path = ctx.dirty_dir.join(&rel_path);
+        let working_content = match std::fs::read(&disk_path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(anyhow::Error::from(err)
+                    .context(format!("failed to read {}", disk_path.display())));
+            }
+        };
+        let dirty_content = base_map.get(rel_path.as_str());
+        // Cross-check semantically — skip files where working already matches dirty.
+        if !json_content_differs(
+            working_content.as_deref(),
+            dirty_content.map(|v| v.as_slice()),
+        ) {
+            continue;
+        }
+        match dirty_content {
+            Some(content) => write_file(&disk_path, content)?,
+            None => {
+                if disk_path.exists() {
+                    std::fs::remove_file(&disk_path)?;
+                }
+            }
+        }
+        rejected_paths.push(rel_path);
+    }
+
+    Ok(RejectAllResult {
+        files_rejected: rejected_paths.len() as i32,
+        rejected_paths,
     })
 }
 
@@ -3294,17 +3636,71 @@ fn read_scratch_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Resu
     Ok(())
 }
 
-fn materialize_local_repo(ctx: &ConnectionContext, map: &FileMap) -> anyhow::Result<()> {
-    clear_dir_contents(&ctx.dirty_dir, false)?;
-    clear_dir_contents(&ctx.scratch_dir, true)?;
+/// Reconcile the on-disk state of `ctx.dirty_dir` (user working tree) and
+/// `ctx.scratch_dir` (per-connection schema/validation/publish-plan files)
+/// with `target_map`.
+///
+/// **Diff-aware.** Files whose content matches `current_map` are left alone
+/// — their mtime is preserved. Only paths whose content differs are
+/// rewritten; only paths present in `current_map` but missing from
+/// `target_map` are deleted. Anything outside `current_map` (hidden files,
+/// the `syncs/` subdir, anything `read_dirty_disk` / `read_scratch_disk`
+/// chose to skip) is untouched.
+///
+/// Why this matters: `folder_index::find_stale_files` flags a file as
+/// stale whenever its working-tree mtime drifts from the stored value.
+/// A wholesale clear-and-rewrite (the previous behavior) bumped every
+/// file's mtime on every download, defeating the per-path index updates
+/// downstream.
+///
+/// `current_map` is the snapshot the caller already obtained from
+/// `read_materialized_repo`. Passing it in avoids re-walking the
+/// filesystem here.
+fn materialize_local_repo(
+    ctx: &ConnectionContext,
+    target_map: &FileMap,
+    current_map: &FileMap,
+) -> anyhow::Result<()> {
     std::fs::create_dir_all(&ctx.dirty_dir)?;
     std::fs::create_dir_all(&ctx.scratch_dir)?;
 
-    for (rel_path, content) in map {
+    // Resolve a rel_path into its on-disk path under either `dirty_dir` or
+    // `scratch_dir`. Returns `None` for `.scratch` (bare, no trailing slash)
+    // and similar oddities — those don't materialize to a real file.
+    let resolve_disk_path = |rel_path: &str| -> Option<PathBuf> {
         if let Some(scratch_rel) = rel_path.strip_prefix(".scratch/") {
-            write_file(&ctx.scratch_dir.join(scratch_rel), content)?;
+            Some(ctx.scratch_dir.join(scratch_rel))
         } else if !rel_path.starts_with(".scratch") {
-            write_file(&ctx.dirty_dir.join(rel_path), content)?;
+            Some(ctx.dirty_dir.join(rel_path))
+        } else {
+            None
+        }
+    };
+
+    // Write any entry whose bytes differ from what's currently on disk. New
+    // entries (not in current_map) fall through to the catch-all `_` arm and
+    // get written. Files whose content matches keep their mtime.
+    for (rel_path, target_content) in target_map {
+        let Some(disk_path) = resolve_disk_path(rel_path) else {
+            continue;
+        };
+        match current_map.get(rel_path) {
+            Some(current_content) if current_content == target_content => continue,
+            _ => write_file(&disk_path, target_content)?,
+        }
+    }
+
+    // Delete files that were on disk before but aren't in target_map any more.
+    // Empty parent dirs are pruned later by `reconcile_data_folder_dirs`.
+    for rel_path in current_map.keys() {
+        if target_map.contains_key(rel_path) {
+            continue;
+        }
+        let Some(disk_path) = resolve_disk_path(rel_path) else {
+            continue;
+        };
+        if disk_path.exists() {
+            std::fs::remove_file(&disk_path)?;
         }
     }
 
@@ -3569,28 +3965,6 @@ fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow:
     Ok(())
 }
 
-fn clear_dir_contents(dir: &Path, remove_hidden: bool) -> anyhow::Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !remove_hidden && name.starts_with('.') {
-            continue;
-        }
-
-        let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            std::fs::remove_dir_all(path)?;
-        } else {
-            std::fs::remove_file(path)?;
-        }
-    }
-
-    Ok(())
-}
-
 fn write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -3619,6 +3993,37 @@ enum MergeAction {
         local: Vec<u8>,
         remote: Vec<u8>,
     },
+}
+
+/// Repo-relative data paths whose content differs between `old` and `new`.
+/// Includes adds (in `new` only), deletes (in `old` only), and modifications.
+/// Filters out `.scratch/` and non-`.json` entries — the folder_index only
+/// tracks record data files.
+fn file_map_changed_data_paths(old: &FileMap, new: &FileMap) -> Vec<String> {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut changed: Vec<String> = Vec::new();
+
+    for (path, new_content) in new {
+        seen.insert(path.as_str());
+        match old.get(path) {
+            Some(old_content) if old_content == new_content => continue,
+            _ => {
+                if is_data_path_in_folder(path, "") {
+                    changed.push(path.clone());
+                }
+            }
+        }
+    }
+    for path in old.keys() {
+        if seen.contains(path.as_str()) {
+            continue;
+        }
+        if is_data_path_in_folder(path, "") {
+            changed.push(path.clone());
+        }
+    }
+
+    changed
 }
 
 fn compute_merge_actions(base: &FileMap, local: &FileMap, remote: &FileMap) -> Vec<MergeAction> {
@@ -4094,16 +4499,72 @@ fn rebuild_index_for_conn(ctx: &ConnectionContext, quiet: bool) {
     }
 }
 
-fn update_master_worktree(ctx: &ConnectionContext, token: &str) -> anyhow::Result<()> {
+/// Outcome of `update_master_worktree` for a single connection. Callers use
+/// `moved` to gate work that only matters when master actually advanced
+/// (sync_schema_files_from_master, rebuild_index_for_conn) and
+/// `changed_paths` to drive a targeted folder_index reindex.
+#[derive(Default)]
+struct MasterUpdateResult {
+    /// `true` iff `refs/heads/main` advanced from its previous tip during
+    /// this call (or was created from scratch).
+    moved: bool,
+    /// Repo-relative data paths whose blob OID changed between the old and
+    /// new master tree. Empty when `moved` is false. Excludes `.scratch/`.
+    changed_paths: Vec<String>,
+}
+
+fn update_master_worktree(
+    ctx: &ConnectionContext,
+    token: &str,
+) -> anyhow::Result<MasterUpdateResult> {
     let _ = crate::git_ops::fetch_origin(&ctx.bare_repo, token);
-    let Some(main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
+    let Some(new_main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
     else {
-        return Ok(());
+        return Ok(MasterUpdateResult::default());
     };
-    // Keep refs/heads/main pointing at the fetched tip
-    git_update_ref(&ctx.bare_repo, "refs/heads/main", &main_hash)?;
+    let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    let moved = old_main_hash.as_deref() != Some(new_main_hash.as_str());
+
+    // Always run the worktree-update steps — they're idempotent when master
+    // is already up to date, and they recover from a state where the ref
+    // moved earlier but materialization didn't complete.
+    git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
     crate::git_ops::ensure_sparse_worktree(&ctx.bare_repo, &ctx.master_dir, "refs/heads/main")?;
-    crate::git_ops::worktree_reset_hard(&ctx.master_dir, &main_hash)
+    crate::git_ops::worktree_reset_hard(&ctx.master_dir, &new_main_hash)?;
+
+    let mut changed_paths = Vec::new();
+    if moved {
+        match old_main_hash.as_deref() {
+            Some(old_hash) => {
+                // Cheap path-only diff via `git diff --name-status` — avoids
+                // pulling every blob across the wire like read_git_tree
+                // would. The helper already strips `.scratch/` entries.
+                let diffs =
+                    crate::git_ops::diff_name_status(&ctx.bare_repo, old_hash, &new_main_hash)?;
+                for (_status, path) in diffs {
+                    if is_data_path_in_folder(&path, "") {
+                        changed_paths.push(path);
+                    }
+                }
+            }
+            None => {
+                // First materialization: every data path in the new tree is
+                // a "change" from nothing. Falls back to read_git_tree
+                // because there's no prior ref to diff against.
+                let new_tree = read_git_tree(&ctx.bare_repo, &new_main_hash)?;
+                for path in new_tree.keys() {
+                    if is_data_path_in_folder(path, "") {
+                        changed_paths.push(path.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(MasterUpdateResult {
+        moved,
+        changed_paths,
+    })
 }
 
 trait ToSlashLossy {

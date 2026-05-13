@@ -2,8 +2,8 @@
  * Validation types shared across all processes in the desktop app.
  *
  * These types mirror the contract defined by the `scratchmd` CLI's
- * `get-validation-results` and `get-folder-validation-results` commands,
- * which read from the `validation_results_v1` SQLite table.
+ * `validation get-file-problems` and `validation get-folder-problems` commands,
+ * which read from the `validation_results` SQLite table.
  *
  * Source of truth (Rust): scratch-git-2/src/shared/validators/mod.rs
  * Docs: scratch-git-2/docs/VALIDATION.md
@@ -31,7 +31,7 @@ export type ValidationResultRow = {
 };
 
 /**
- * Per-folder validation issue counts returned by `get-validation-stats`.
+ * Per-folder validation issue counts returned by `validation get-stats`.
  */
 export type ValidationStat = {
   connection: string;

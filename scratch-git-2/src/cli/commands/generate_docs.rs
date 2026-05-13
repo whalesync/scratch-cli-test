@@ -228,27 +228,42 @@ Run `scratchmd <command> --help` for full flag details.
 |---|---|
 | `plan-publish` | Build a publish plan locally (diffs dirty vs master, writes plan.json) |
 
+## paginate
+
+| Command | Description |
+|---|---|
+| `paginate-records --folder <conn>/<folder>` | Query a folder's index — paginated filenames with filters/sort. Primary read API for the grid |
+
 ## index
 
 | Command | Description |
 |---|---|
-| `build-index` | Rebuild the SQLite file index for the current workspace |
-| `dump-index [--connection <name>]` | Print file index contents (debugging) |
-| `refresh-record-index [--path <file>] [--folder <folder>]` | Re-index changed records and re-run validation; accepts specific files or folders |
-| `list-stale-records` | Show which records are out of date without re-indexing |
+| `index dump [--connection <name>]` | Print file index contents (debugging) |
+| `index find-stale-files --folder <conn>/<folder>` | List files whose working-tree mtime/size no longer matches the index |
+| `index find-column-stale-files --folder <conn>/<folder> [--column <c>]` | List files where ≥1 of the given columns is stale (empty input = all non-core columns) |
+| `index find-stale --folder <conn>/<folder>` | Classify stale files into `base_stale` vs `column_stale` |
+| `index refresh-folder --folder <conn>/<folder> [--validate]` | Smart, mtime-aware refresh of one folder. `--validate` also runs validators where stale and populates the problems table |
+| `index rebuild-folder --folder <conn>/<folder>` | Wipe + fully rebuild one folder's index (corruption recovery) |
+| `index rebuild-all` | Wipe + fully rebuild every folder's index in the workspace |
+| `index refresh-files-full --folder <conn>/<folder> --file <name> [--validate]` | Incrementally update specific files (base row + columns); `--validate` also runs validators |
+| `index refresh-files-columns-only --folder <conn>/<folder> --file <name>` | Update only column values for specific files (working tree only) |
+| `index add-column --folder <conn>/<folder> --column <jsonpath>` | Add a JSON-path column to a folder's index and populate it |
+| `index clear-column --folder <conn>/<folder> --column <c>` | Remove a column (and its `:mt`/`:sz` siblings) from a folder |
+| `index clear-folder --folder <conn>/<folder>` | Wipe a folder's index — all rows + dynamic columns |
+| `index init` | Create the SQLite index DB for the workspace (first-time) |
 
 ## validation
 
 | Command | Description |
 |---|---|
-| `validate-record --folder <conn>/<folder> --file <name>` | Dry-run validation on saved file(s) without touching the index |
-| `validate-record --folder <conn>/<folder> --record <json>` | Dry-run validation on inline JSON against saved rules |
-| `validate-record --record <json> --validation <json> --schema <json>` | Fully standalone dry-run with all sources inline |
-| `get-validation-results --record <connection>/<folder>/<file>` | Show stored validation results for a single record |
-| `get-folder-validation-results --folder <connection>/<folder>` | Show all stored validation results for a folder |
-| `get-folder-validation-sample --folder <connection>/<folder>` | Show up to 20 validation issues for a folder (UI preview) |
-| `get-validation-stats` | Show error/warning counts grouped by connection and folder |
-| `dump-validation-config [--connection <name>]` | Print the active validation config (no DB required) |
+| `validation dry-run --folder <conn>/<folder> --file <name>` | Run validators against saved file(s) WITHOUT writing to the index — agent experimentation |
+| `validation dry-run --folder <conn>/<folder> --record <json>` | Dry-run inline JSON against saved rules |
+| `validation dry-run --record <json> --validation <json> --schema <json>` | Fully standalone dry-run with all sources inline |
+| `validation get-file-problems --record <connection>/<folder>/<file>` | Stored validation problems for a single record |
+| `validation get-folder-problems --folder <connection>/<folder> [--limit <n>]` | All stored validation problems for a folder (`--limit` for UI previews) |
+| `validation get-files-with-problems --folder <connection>/<folder> [--limit <n>]` | Filenames in a folder with ≥1 error-level violation |
+| `validation get-stats` | Workspace-wide error/warning counts grouped by connection + folder |
+| `validation dump-config [--connection <name>]` | Print the loaded `validation.json` config (no DB required) |
 
 ## docs
 
@@ -365,19 +380,33 @@ You can compare your edits against the published snapshot in
 const VALIDATIONS_DOC: &str = r#"# Validation
 
 Scratch can check records for problems before they are published. Validators run
-automatically whenever the record index is refreshed. Results appear in the
-Scratch desktop app as error and warning badges on individual records and fields.
+lazily when the desktop grid loads a page of records — each record is checked
+against the configured rules only when it would actually be displayed. Results
+appear in the Scratch desktop app as error and warning badges on individual
+records and fields.
 
 ## How it works
 
 1. The CLI reads `validation.json` from the metadata folder for each table
    (`.scratch/connections/scratch/<connection>/<table>/validation.json`).
-2. On every `scratchmd refresh-record-index` run, each record in the working copy
-   is checked against the configured rules.
-3. Violations are stored in a SQLite table (`validation_results_v1`) inside the
-   connection's `.db` index file.
+2. The desktop loads grid pages via `paginate-records --validate`; the index
+   tracks which records have stale validation state (working tree mtime
+   newer than the last validator run) and re-runs the rules for that page.
+3. Violations are stored in the per-folder SQLite index inside the connection's
+   `.db` file. Passing records produce no rows — only violations are stored.
 4. The desktop app reads those results and highlights affected fields inline.
-   Passing records produce no rows — only violations are stored.
+
+## Two ways to run validators
+
+| Verb | What it does | When to use |
+|------|--------------|-------------|
+| `validation dry-run` | Runs validators, returns JSON. **Does not** write to the index. | Agent experimentation: check a record before saving, try a new rule, debug a validator. No side effects. |
+| `index refresh-folder --folder <conn>/<folder> --validate` | Refreshes the folder's index AND runs validators where validation is stale (mtime-aware skip). Writes to the problems table. | Commit a new/changed `validation.json` and populate the problems table so the desktop app shows up-to-date stats and lets the user browse problems quickly. |
+
+The grid also lazily populates the problems table on its own (each
+`paginate-records --validate` call validates the stale rows on the page being
+displayed). `index refresh-folder --validate` is the eager equivalent for the
+whole folder.
 
 ## Where `validation.json` lives
 
@@ -566,7 +595,7 @@ stripped. Validator scripts must be 256 KB or smaller.
 
 ## Dry-run validation for agents
 
-Use `scratchmd validate-record` to run validation without touching the index.
+Use `scratchmd validation dry-run` to run validation without touching the index.
 This is the primary way for an AI agent to check records before or after
 editing them — no side effects, immediate JSON output.
 
@@ -612,32 +641,38 @@ JSON array of violations (empty array = all checks pass):
 
 ```bash
 # Check a saved record against saved rules
-scratchmd validate-record \
+scratchmd validation dry-run \
   --folder "WEBFLOW - My Site/Blog Posts" \
   --file post-1.json
 
 # Check multiple records at once
-scratchmd validate-record \
+scratchmd validation dry-run \
   --folder "WEBFLOW - My Site/Blog Posts" \
   --file post-1.json --file post-2.json
 
 # Test a proposed edit before saving it
-scratchmd validate-record \
+scratchmd validation dry-run \
   --folder "WEBFLOW - My Site/Blog Posts" \
   --record '{"fieldData":{"name":"New Title","slug":"new-title"}}'
 
 # Test a new validation rule against an existing record
-scratchmd validate-record \
+scratchmd validation dry-run \
   --folder "WEBFLOW - My Site/Blog Posts" \
   --file post-1.json \
   --validation '[{"validator":"length","field":"fieldData.name","params":{"max":60}}]'
 
 # Fully standalone — no workspace needed
-scratchmd validate-record \
+scratchmd validation dry-run \
   --record '{"fieldData":{"slug":"BAD SLUG"}}' \
   --master '{"fieldData":{"slug":"good-slug"}}' \
   --validation '[{"validator":"python:validators/check-slug.py","field":"fieldData.slug"}]' \
   --schema '{}'
+
+# Commit a new validation.json and populate the problems table for the whole folder
+# (smart-skips files that are already fresh)
+scratchmd index refresh-folder \
+  --folder "WEBFLOW - My Site/Blog Posts" \
+  --validate
 ```
 
 ---
@@ -682,19 +717,23 @@ scratchmd validate-record \
 ## CLI commands
 
 ```bash
-# Run validation for all records (runs automatically with refresh-record-index)
-scratchmd refresh-record-index
+# Eagerly run validators for a folder and populate the problems table.
+# Smart-skips files that are already fresh — fast on a clean folder.
+scratchmd index refresh-folder --folder "My Connection/Blog Posts" --validate
 
-# Run validation for specific files only
-scratchmd refresh-record-index --path "Blog Posts/post-1.json"
+# Reindex + validate just a few records — useful after editing one record's data.
+scratchmd index refresh-files-full --folder "My Connection/Blog Posts" --file post-1.json --validate
 
-# Read results for one record
-scratchmd get-validation-results --record "Blog Posts/post-1.json"
+# Read problems for one record.
+scratchmd validation get-file-problems --record "My Connection/Blog Posts/post-1.json"
 
-# Read results for an entire folder
-scratchmd get-folder-validation-results --folder "Blog Posts"
+# Read problems for an entire folder.
+scratchmd validation get-folder-problems --folder "My Connection/Blog Posts"
 
-# Print the active validation config (no DB needed)
-scratchmd dump-validation-config
+# Workspace-wide problem counts by connection + folder.
+scratchmd validation get-stats
+
+# Print the active validation config (no DB needed).
+scratchmd validation dump-config
 ```
 "#;

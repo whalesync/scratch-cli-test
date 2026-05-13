@@ -209,7 +209,7 @@ describeIfPostgres("Validators (custom Python)", () => {
     it("returns no violations for a record whose field passes", () => {
       const violations = cli.json<Violation[]>(
         [
-          "validate-record",
+          "validation", "dry-run",
           "--workspace",
           workspaceDir,
           "--folder",
@@ -225,7 +225,7 @@ describeIfPostgres("Validators (custom Python)", () => {
     it("returns the violation produced by the script for a draft record", () => {
       const violations = cli.json<Violation[]>(
         [
-          "validate-record",
+          "validation", "dry-run",
           "--workspace",
           workspaceDir,
           "--folder",
@@ -252,7 +252,7 @@ describeIfPostgres("Validators (custom Python)", () => {
     it("rejects scripts that call disallowed built-ins (eval / exec)", () => {
       const result = cli.run(
         [
-          "validate-record",
+          "validation", "dry-run",
           "--workspace",
           workspaceDir,
           "--folder",
@@ -287,7 +287,7 @@ describeIfPostgres("Validators (custom Python)", () => {
       const startedAt = Date.now();
       const result = cli.run(
         [
-          "validate-record",
+          "validation", "dry-run",
           "--workspace",
           workspaceDir,
           "--folder",

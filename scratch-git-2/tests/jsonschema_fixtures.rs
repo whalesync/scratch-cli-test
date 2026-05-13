@@ -1,7 +1,7 @@
 /// Fixture-driven tests for the `enforce_schema` built-in validator.
 ///
 /// Each subdirectory of `tests/fixtures/jsonschema/` is one test case.
-/// Tests invoke `scratchmd validate-record` with inline JSON so they exercise
+/// Tests invoke `scratchmd validation dry-run` with inline JSON so they exercise
 /// the real binary end-to-end without needing a lib target.
 ///
 /// ## Standard cases (`pass.json` / `fail.json`)
@@ -33,7 +33,7 @@ fn load_json(path: &Path) -> serde_json::Value {
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("invalid JSON in {}: {e}", path.display()))
 }
 
-/// Run `scratchmd validate-record` with fully-inline JSON and return violations.
+/// Run `scratchmd validation dry-run` with fully-inline JSON and return violations.
 /// Each violation is `(field_path, message)`.
 fn run_enforce_schema(
     schema: &serde_json::Value,
@@ -44,7 +44,8 @@ fn run_enforce_schema(
 
     let output = Command::new(binary)
         .args([
-            "validate-record",
+            "validation",
+            "dry-run",
             "--record",
             &record.to_string(),
             "--validation",
@@ -57,7 +58,7 @@ fn run_enforce_schema(
 
     if !output.status.success() && output.stdout.trim_ascii().is_empty() {
         panic!(
-            "scratchmd validate-record failed:\n{}",
+            "scratchmd validation dry-run failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
     }

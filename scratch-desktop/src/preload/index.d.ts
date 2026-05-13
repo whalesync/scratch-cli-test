@@ -69,6 +69,10 @@ interface ScratchDesktopAPI {
     workspacePath: string,
     folderPath?: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  rejectAllChanges: (
+    workspacePath: string,
+    folderPath?: string,
+  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   acceptRecord: (
     workspacePath: string,
     recordPath: string,

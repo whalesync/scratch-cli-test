@@ -11,7 +11,8 @@ use clap::{Parser, Subcommand};
 
 use api::{ApiClient, DEFAULT_SERVER_URL};
 use commands::{
-    auth, connections, files, index, linked, plan_publish, read_records, syncs, workspaces,
+    auth, connections, files, index, linked, plan_publish, read_records, syncs, validation,
+    workspaces,
 };
 use config::project_config;
 
@@ -99,23 +100,6 @@ enum Commands {
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
     },
-    /// Rebuild SQLite file index for the current workspace
-    #[command(name = "build-index")]
-    BuildIndex {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-    },
-    /// Print file index contents (for debugging)
-    #[command(name = "dump-index")]
-    DumpIndex {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Dump only the named connection (case-sensitive)
-        #[arg(long)]
-        connection: Option<String>,
-    },
     /// Regenerate CLAUDE.md and .scratch/docs/ in the current workspace
     #[command(name = "generate-docs")]
     GenerateDocs {
@@ -123,116 +107,11 @@ enum Commands {
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
     },
-    /// Get validation results for a single record as JSON
-    #[command(name = "get-validation-results")]
-    GetValidationResults {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative record path: <connection>/<folder>/<filename>
-        #[arg(long)]
-        record: String,
-    },
-    /// Get validation results for all records in a folder as JSON
-    #[command(name = "get-folder-validation-results")]
-    GetFolderValidationResults {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder>
-        #[arg(long)]
-        folder: String,
-    },
-    /// Get filenames that have at least one error-level validation violation in a folder as JSON.
-    /// Example: scratchmd get-filenames-with-errors --folder my-conn/posts --workspace .
-    #[command(name = "get-filenames-with-errors")]
-    GetFilenamesWithErrors {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder>
-        #[arg(long)]
-        folder: String,
-    },
-    /// Get validation error/warning counts grouped by connection and folder as JSON.
-    /// Returns an array of { connection, folder_path, errors, warnings }.
-    /// Example: scratchmd get-validation-stats --workspace .
-    #[command(name = "get-validation-stats")]
-    GetValidationStats {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-    },
-    /// Get up to 20 validation results for a folder as JSON (for UI previews).
-    /// Example: scratchmd get-folder-validation-sample --folder my-conn/posts --workspace .
-    #[command(name = "get-folder-validation-sample")]
-    GetFolderValidationSample {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder>
-        #[arg(long)]
-        folder: String,
-    },
-    /// Print validation config loaded from validation.json files in the workspace
-    #[command(name = "dump-validations")]
-    DumpValidations {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Only inspect the named connection (case-sensitive)
-        #[arg(long)]
-        connection: Option<String>,
-    },
-    /// Populate (or refresh) the SQLite index for a single JSON-path column in a folder.
-    /// Useful for testing field indexing without running a full read-records query.
-    #[command(name = "index-field")]
-    IndexField {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
-        #[arg(long)]
-        folder: String,
-        /// JSON path to index (e.g. "fields.title" or "status")
-        #[arg(long)]
-        column: String,
-        /// Print progress to stderr (base sync, discovery, per-batch counts, timing)
-        #[arg(long)]
-        debug: bool,
-    },
-    /// Remove a field column and its metadata from the folder index.
-    /// Drops the <column>, <column>:mt, and <column>:sz columns.
-    /// Outputs JSON: { column: "...", rows_cleared: N }
-    #[command(name = "clear-column-index")]
-    ClearColumnIndex {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
-        #[arg(long)]
-        folder: String,
-        /// Column name to remove (e.g. "id" or "fields.status")
-        #[arg(long)]
-        column: String,
-    },
-    /// Clear the SQLite folder index for a specific folder: removes all data and
-    /// dynamically-added field columns, resetting it to the core schema.
-    /// Outputs JSON: { rows_cleared: N }
-    #[command(name = "clear-folder-index")]
-    ClearFolderIndex {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
-        #[arg(long)]
-        folder: String,
-    },
     /// Query paginated filenames from a folder's SQLite index with optional filters and sorting.
     /// Outputs a JSON object: { filenames, filtered_total, summary, parse_errors }.
     /// Example: scratchmd paginate-records --folder my-conn/posts --limit 100 --offset 0
-    #[command(name = "paginate-records", alias = "read-records")]
-    ReadRecords {
+    #[command(name = "paginate-records")]
+    PaginateRecords {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
@@ -271,116 +150,266 @@ enum Commands {
         #[arg(long)]
         validate: bool,
     },
-    /// List filenames in a folder whose base index row is stale (new, changed, or deleted).
-    /// Outputs a JSON array of filenames.
+    /// Manage the SQLite file index (build, inspect, reindex, find-stale, …)
+    Index {
+        #[command(subcommand)]
+        command: IndexCommands,
+    },
+    /// Read validation results and run dry-run validation
+    Validation {
+        #[command(subcommand)]
+        command: ValidationCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum IndexCommands {
+    /// Print index contents (for debugging)
+    Dump {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Dump only the named connection (case-sensitive)
+        #[arg(long)]
+        connection: Option<String>,
+    },
+    /// List filenames in a folder whose working-tree mtime/size no longer matches the
+    /// index (covers new, modified, and deleted files). Outputs a JSON array.
     #[command(name = "find-stale-files")]
     FindStaleFiles {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
+        /// Workspace-relative folder path: <connection>/<folder>
         #[arg(long)]
         folder: String,
     },
-    /// List filenames in a folder whose indexed field column value is stale.
-    /// If no --column is given, all non-core columns are checked.
+    /// Given a set of columns, list files where at least one of those columns is stale.
+    /// Columns outside the input set are ignored. Empty input = check all non-core columns.
     /// Outputs a JSON array of filenames.
     #[command(name = "find-column-stale-files")]
     FindColumnStaleFiles {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
+        /// Workspace-relative folder path: <connection>/<folder>
         #[arg(long)]
         folder: String,
         /// Column(s) to check (may be repeated). Omit to check all non-core columns.
         #[arg(long = "column")]
         columns: Vec<String>,
     },
-    /// Classify stale files into two sets: base_stale (working mtime changed, needs full reindex)
-    /// and column_stale (base row valid, only field column values stale, working JSON only).
+    /// Classify stale files into two sets: base_stale (working mtime/size changed)
+    /// and column_stale (base row valid, only field column values stale).
     /// Outputs JSON: { base_stale: [...], column_stale: [...] }
     #[command(name = "find-stale")]
     FindStale {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
+        /// Workspace-relative folder path: <connection>/<folder>
         #[arg(long)]
         folder: String,
         /// Column(s) to check for staleness (may be repeated). Omit to check all.
         #[arg(long = "column")]
         columns: Vec<String>,
     },
-    /// Fully reindex a folder: delete all rows, rebuild from all three versions, repopulate field columns.
-    /// Outputs: { rows: N }
-    #[command(name = "reindex-table")]
-    ReindexTable {
+    /// Create the SQLite index DB for the workspace (first-time setup).
+    Init {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
+    },
+    /// Wipe + fully rebuild every folder's index in the workspace.
+    #[command(name = "rebuild-all")]
+    RebuildAll {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+    },
+    /// Wipe + fully rebuild one folder's index from all three trees.
+    /// Outputs: { rows: N }
+    #[command(name = "rebuild-folder")]
+    RebuildFolder {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
         #[arg(long)]
         folder: String,
         /// Print per-batch progress to stderr
         #[arg(long)]
         debug: bool,
     },
-    /// Reindex all folders in all connections of the workspace.
-    /// Iterates each connection's subfolders and runs reindex-table for each.
-    #[command(name = "reindex-workspace")]
-    ReindexWorkspace {
+    /// Smart, mtime-aware refresh of one folder's index. Skips files that are already
+    /// fresh. With --validate, also runs validators for files where validation is stale
+    /// and populates the problems table.
+    /// Outputs JSON: { base_refreshed, columns_refreshed, validated? }
+    #[command(name = "refresh-folder")]
+    RefreshFolder {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
-    },
-    /// Reindex specific files in a folder: reads all 3 versions, updates base row + all active columns.
-    /// Accepts one or more --file arguments (filenames only, not paths).
-    #[command(name = "reindex-files")]
-    ReindexFiles {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
-        #[arg(long, allow_hyphen_values = true)]
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
         folder: String,
-        /// Filename(s) to reindex (may be repeated)
-        #[arg(long = "file", allow_hyphen_values = true)]
-        files: Vec<String>,
-        /// Also run validators and update has_errors / validation_results for the reindexed files
+        /// Also run validators (smart-skip) and populate the problems table.
         #[arg(long)]
         validate: bool,
         /// Print per-batch progress to stderr
         #[arg(long)]
         debug: bool,
     },
-    /// Reindex field column values for specific files using working-tree JSON only.
-    /// Does NOT touch the base row (approvedChanges etc.) — use when only column values are stale.
-    #[command(name = "reindex-files-columns")]
-    ReindexFilesColumns {
+    /// Incrementally update base row + columns for specific files (reads all 3 trees).
+    /// Accepts one or more --file arguments (filenames only, not paths).
+    /// Pass --validate to also run validators on the refreshed files.
+    #[command(name = "refresh-files-full")]
+    RefreshFilesFull {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
-        /// Workspace-relative folder path: <connection>/<folder> (e.g. "my-conn/posts")
+        /// Workspace-relative folder path: <connection>/<folder>
         #[arg(long, allow_hyphen_values = true)]
         folder: String,
-        /// Filename(s) to reindex (may be repeated)
+        /// Filename(s) to refresh (may be repeated)
+        #[arg(long = "file", allow_hyphen_values = true)]
+        files: Vec<String>,
+        /// Also run validators and update has_errors / validation_results for the refreshed files
+        #[arg(long)]
+        validate: bool,
+        /// Print per-batch progress to stderr
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Incrementally update only column values for specific files (working tree only).
+    /// Does NOT touch the base row — use when only column values are stale.
+    #[command(name = "refresh-files-columns-only")]
+    RefreshFilesColumnsOnly {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long, allow_hyphen_values = true)]
+        folder: String,
+        /// Filename(s) to refresh (may be repeated)
         #[arg(long = "file", allow_hyphen_values = true)]
         files: Vec<String>,
         /// Print per-batch progress to stderr
         #[arg(long)]
         debug: bool,
     },
-    /// Run validation against a record without writing to the index.
-    /// Designed for agent dry-runs. Accepts inline JSON overrides for the record,
-    /// master record, validation.json, and schema.json — any combination.
-    #[command(name = "validate-record")]
-    ValidateRecord {
+    /// Add a JSON-path column to a folder's index and populate it.
+    #[command(name = "add-column")]
+    AddColumn {
         /// Workspace directory (default: auto-detected from CWD)
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
-        /// Folder path: <connection>/<folder> (e.g. "WEBFLOW - My Site/Blog Posts").
-        /// Required when reading any source from disk.
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+        /// JSON path to index (e.g. "fields.title" or "status")
+        #[arg(long)]
+        column: String,
+        /// Print progress to stderr
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Remove a field column (and its `:mt`/`:sz` siblings) from a folder.
+    /// Outputs JSON: { column: "...", rows_cleared: N }
+    #[command(name = "clear-column")]
+    ClearColumn {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+        /// Column name to remove
+        #[arg(long)]
+        column: String,
+    },
+    /// Wipe a folder's index — removes all rows and dynamic columns, resetting to the
+    /// core schema. Outputs JSON: { rows_cleared: N }
+    #[command(name = "clear-folder")]
+    ClearFolder {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ValidationCommands {
+    /// Validation problems for a single file.
+    /// `--record` is workspace-relative: <connection>/<folder>/<filename>
+    #[command(name = "get-file-problems")]
+    GetFileProblems {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative record path: <connection>/<folder>/<filename>
+        #[arg(long)]
+        record: String,
+    },
+    /// Validation problems for every record in a folder.
+    /// Pass --limit to cap result count for UI previews (returns the most severe rows first).
+    #[command(name = "get-folder-problems")]
+    GetFolderProblems {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+        /// Cap result count. Omit for unlimited.
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    /// Filenames in a folder with ≥1 error-level violation.
+    /// Output: { filenames, field_paths }. Pass --limit to cap the filenames list.
+    #[command(name = "get-files-with-problems")]
+    GetFilesWithProblems {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Workspace-relative folder path: <connection>/<folder>
+        #[arg(long)]
+        folder: String,
+        /// Cap the filenames list. Omit for unlimited.
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    /// Workspace-wide error/warning counts grouped by connection + folder.
+    /// Returns an array of { connection, folder_path, errors, warnings, records }.
+    #[command(name = "get-stats")]
+    GetStats {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+    },
+    /// Print the loaded validation.json config for the workspace.
+    #[command(name = "dump-config")]
+    DumpConfig {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Only inspect the named connection (case-sensitive)
+        #[arg(long)]
+        connection: Option<String>,
+    },
+    /// Run validators against a record WITHOUT writing to the index — designed for
+    /// agent experimentation. Accepts inline JSON overrides for any combination of:
+    /// the record, the master record, validation.json, and schema.json. To commit a
+    /// config and populate the problems table, use `index refresh-folder --validate`.
+    #[command(name = "dry-run")]
+    DryRun {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Folder path: <connection>/<folder>. Required when reading any source from disk.
         #[arg(long)]
         folder: Option<String>,
         /// Record filename(s) to read from the working copy. Repeatable.
@@ -458,7 +487,6 @@ async fn main() {
         },
 
         Commands::Syncs { workspace, command } => {
-            // Local commands don't need an API client
             if matches!(
                 command,
                 syncs::SyncsCommands::ValidateLocal { .. } | syncs::SyncsCommands::RunLocal { .. }
@@ -483,94 +511,7 @@ async fn main() {
             Err(e) => Err(e),
         },
 
-        Commands::BuildIndex { workspace } => index::build_command(&workspace),
-        Commands::DumpIndex {
-            workspace,
-            connection,
-        } => index::dump_command(&workspace, connection.as_deref()),
-        Commands::GetValidationResults { workspace, record } => {
-            index::get_validation_results_command(&workspace, &record)
-        }
-        Commands::GetFolderValidationResults { workspace, folder } => {
-            index::get_folder_validation_results_command(&workspace, &folder)
-        }
-        Commands::GetFilenamesWithErrors { workspace, folder } => {
-            index::get_filenames_with_errors_command(&workspace, &folder)
-        }
-        Commands::GetValidationStats { workspace } => {
-            index::get_validation_stats_command(&workspace)
-        }
-        Commands::GetFolderValidationSample { workspace, folder } => {
-            index::get_folder_validation_sample_command(&workspace, &folder)
-        }
-        Commands::IndexField {
-            workspace,
-            folder,
-            column,
-            debug,
-        } => index::index_field_command(&workspace, &folder, &column, debug),
-        Commands::ClearColumnIndex {
-            workspace,
-            folder,
-            column,
-        } => index::clear_column_index_command(&workspace, &folder, &column),
-        Commands::ClearFolderIndex { workspace, folder } => {
-            index::clear_folder_index_command(&workspace, &folder)
-        }
-        Commands::FindStaleFiles { workspace, folder } => {
-            index::find_stale_files_command(&workspace, &folder)
-        }
-        Commands::FindColumnStaleFiles {
-            workspace,
-            folder,
-            columns,
-        } => index::find_column_stale_files_command(&workspace, &folder, &columns),
-        Commands::FindStale {
-            workspace,
-            folder,
-            columns,
-        } => index::find_stale_command(&workspace, &folder, &columns),
-        Commands::ReindexTable {
-            workspace,
-            folder,
-            debug,
-        } => index::reindex_table_command(&workspace, &folder, debug),
-        Commands::ReindexWorkspace { workspace } => index::reindex_workspace_command(&workspace),
-        Commands::ReindexFiles {
-            workspace,
-            folder,
-            files,
-            validate,
-            debug,
-        } => index::reindex_files_command(&workspace, &folder, &files, validate, debug),
-        Commands::ReindexFilesColumns {
-            workspace,
-            folder,
-            files,
-            debug,
-        } => index::reindex_files_columns_command(&workspace, &folder, &files, debug),
-        Commands::DumpValidations {
-            workspace,
-            connection,
-        } => index::dump_validations_command(&workspace, connection.as_deref()),
-        Commands::ValidateRecord {
-            workspace,
-            folder,
-            files,
-            record,
-            master,
-            validation,
-            schema,
-        } => index::validate_record_command(
-            &workspace,
-            folder.as_deref(),
-            &files,
-            record.as_deref(),
-            master.as_deref(),
-            validation.as_deref(),
-            schema.as_deref(),
-        ),
-        Commands::ReadRecords {
+        Commands::PaginateRecords {
             workspace,
             folder,
             offset,
@@ -597,6 +538,104 @@ async fn main() {
             debug,
             validate,
         ),
+
+        Commands::Index { command } => match command {
+            IndexCommands::Dump {
+                workspace,
+                connection,
+            } => index::dump_command(&workspace, connection.as_deref()),
+            IndexCommands::FindStaleFiles { workspace, folder } => {
+                index::find_stale_files_command(&workspace, &folder)
+            }
+            IndexCommands::FindColumnStaleFiles {
+                workspace,
+                folder,
+                columns,
+            } => index::find_column_stale_files_command(&workspace, &folder, &columns),
+            IndexCommands::FindStale {
+                workspace,
+                folder,
+                columns,
+            } => index::find_stale_command(&workspace, &folder, &columns),
+            IndexCommands::Init { workspace } => index::init_command(&workspace),
+            IndexCommands::RebuildAll { workspace } => index::rebuild_all_command(&workspace),
+            IndexCommands::RebuildFolder {
+                workspace,
+                folder,
+                debug,
+            } => index::rebuild_folder_command(&workspace, &folder, debug),
+            IndexCommands::RefreshFolder {
+                workspace,
+                folder,
+                validate,
+                debug,
+            } => index::refresh_folder_command(&workspace, &folder, validate, debug),
+            IndexCommands::RefreshFilesFull {
+                workspace,
+                folder,
+                files,
+                validate,
+                debug,
+            } => index::refresh_files_full_command(&workspace, &folder, &files, validate, debug),
+            IndexCommands::RefreshFilesColumnsOnly {
+                workspace,
+                folder,
+                files,
+                debug,
+            } => index::refresh_files_columns_only_command(&workspace, &folder, &files, debug),
+            IndexCommands::AddColumn {
+                workspace,
+                folder,
+                column,
+                debug,
+            } => index::add_column_command(&workspace, &folder, &column, debug),
+            IndexCommands::ClearColumn {
+                workspace,
+                folder,
+                column,
+            } => index::clear_column_command(&workspace, &folder, &column),
+            IndexCommands::ClearFolder { workspace, folder } => {
+                index::clear_folder_command(&workspace, &folder)
+            }
+        },
+
+        Commands::Validation { command } => match command {
+            ValidationCommands::GetFileProblems { workspace, record } => {
+                validation::get_file_problems_command(&workspace, &record)
+            }
+            ValidationCommands::GetFolderProblems {
+                workspace,
+                folder,
+                limit,
+            } => validation::get_folder_problems_command(&workspace, &folder, limit),
+            ValidationCommands::GetFilesWithProblems {
+                workspace,
+                folder,
+                limit,
+            } => validation::get_files_with_problems_command(&workspace, &folder, limit),
+            ValidationCommands::GetStats { workspace } => validation::get_stats_command(&workspace),
+            ValidationCommands::DumpConfig {
+                workspace,
+                connection,
+            } => validation::dump_config_command(&workspace, connection.as_deref()),
+            ValidationCommands::DryRun {
+                workspace,
+                folder,
+                files,
+                record,
+                master,
+                validation: validation_json,
+                schema,
+            } => validation::dry_run_command(
+                &workspace,
+                folder.as_deref(),
+                &files,
+                record.as_deref(),
+                master.as_deref(),
+                validation_json.as_deref(),
+                schema.as_deref(),
+            ),
+        },
 
         Commands::GenerateDocs { workspace } => (|| -> anyhow::Result<()> {
             let wb_dir = commands::generate_docs::resolve_workspace_for_docs(&workspace)?;

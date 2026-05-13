@@ -1868,33 +1868,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             message: `Discarded all pending and approved changes.`,
           });
         } else {
-          // Reject all: gather unreviewed filenames and reject each
-          const rows = diffData?.rows ?? [];
-          const unreviewedFilenames = rows
-            .filter(
-              (r) =>
-                r.__rowStatus === 'added' ||
-                r.__rowStatus === 'deleted' ||
-                r.__rowStatus === 'invalidJson' ||
-                r.__changedFields.length > 0,
-            )
-            .map((r) => r.__filename);
-
-          if (unreviewedFilenames.length === 0) return;
-
-          for (const filename of unreviewedFilenames) {
-            const recordPath = relativeFolderPath ? `${relativeFolderPath}/${filename}` : filename;
-            const result = await window.scratchDesktop.rejectRecord(workspacePath, recordPath);
-            if (result.exitCode !== 0) {
-              throw new Error(
-                result.stderr.trim() || result.stdout.trim() || `Failed to reject changes for ${filename}`,
-              );
-            }
+          // Reject all: one CLI call, folder-scoped, covers every unreviewed file
+          // in the folder — not just the visible page.
+          const result = await window.scratchDesktop.rejectAllChanges(workspacePath, relativeFolderPath || undefined);
+          if (result.exitCode !== 0) {
+            throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to reject changes');
           }
           notifications.show({
             color: 'green',
             title: 'All changes rejected',
-            message: `Rejected ${unreviewedFilenames.length} pending change${unreviewedFilenames.length === 1 ? '' : 's'}.`,
+            message: 'Rejected all pending changes.',
           });
         }
         refreshGridData();
@@ -1910,7 +1893,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         setBulkActionConfirm(null);
       }
     },
-    [workspacePath, diffData?.rows, selectedFolderPath, refreshGridData],
+    [workspacePath, selectedFolderPath, refreshGridData],
   );
 
   // ── Cell content ──

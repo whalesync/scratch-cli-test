@@ -159,18 +159,18 @@ export async function runScratchmd(args: string[], cwd?: string): Promise<{ stdo
   throw new Error(message);
 }
 
-/** Reindex the folder-index table for a single workspace-relative folder path. */
+/** Wipe + fully rebuild the folder-index table for a single workspace-relative folder path. */
 export async function reindexFolderIndex(
   workspacePath: string,
   folder: string,
 ): Promise<{ stdout: string; stderr: string }> {
-  return runScratchmd(['reindex-table', '--folder', folder], workspacePath);
+  return runScratchmd(['index', 'rebuild-folder', '--folder', folder], workspacePath);
 }
 
 /**
- * Reindex specific files within a folder: reads all three tree versions, updates the
- * base row (approved/unapproved flags, mtime/size) and all active field columns.
+ * Incrementally update base row + columns for specific files (reads all 3 trees).
  * Much cheaper than reindexFolderIndex for targeted dirty/master mutations on known files.
+ * Pass `validate: true` to also run validators on the refreshed files.
  */
 export async function reindexFiles(
   workspacePath: string,
@@ -178,7 +178,7 @@ export async function reindexFiles(
   filenames: string[],
   opts?: { validate?: boolean },
 ): Promise<{ stdout: string; stderr: string }> {
-  const args = ['reindex-files', '--folder', folder];
+  const args = ['index', 'refresh-files-full', '--folder', folder];
   for (const f of filenames) args.push('--file', f);
   if (opts?.validate) args.push('--validate');
   return runScratchmd(args, workspacePath);
@@ -591,7 +591,7 @@ export async function getValidationResults(
   const recordPath = `${relFolder}/${filename}`;
   try {
     return await runScratchmdJson<ValidationResultRow[]>(
-      ['get-validation-results', '--record', recordPath],
+      ['validation', 'get-file-problems', '--record', recordPath],
       workspacePath,
     );
   } catch {
@@ -606,7 +606,7 @@ export async function getFolderValidationResults(
   const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
   try {
     return await runScratchmdJson<ValidationResultRow[]>(
-      ['get-folder-validation-results', '--folder', relFolder],
+      ['validation', 'get-folder-problems', '--folder', relFolder],
       workspacePath,
     );
   } catch {
@@ -616,7 +616,7 @@ export async function getFolderValidationResults(
 
 export async function clearFolderIndex(workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> {
   const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
-  return runScratchmdJson<{ rows_cleared: number }>(['clear-folder-index', '--folder', relFolder], workspacePath);
+  return runScratchmdJson<{ rows_cleared: number }>(['index', 'clear-folder', '--folder', relFolder], workspacePath);
 }
 
 export async function getFilenamesWithErrors(
@@ -626,7 +626,7 @@ export async function getFilenamesWithErrors(
   const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
   try {
     return await runScratchmdJson<{ filenames: string[]; field_paths: string[] }>(
-      ['get-filenames-with-errors', '--folder', relFolder],
+      ['validation', 'get-files-with-problems', '--folder', relFolder],
       workspacePath,
     );
   } catch {
@@ -636,7 +636,7 @@ export async function getFilenamesWithErrors(
 
 export async function getValidationStats(workspacePath: string): Promise<ValidationStat[]> {
   try {
-    return await runScratchmdJson<ValidationStat[]>(['get-validation-stats'], workspacePath);
+    return await runScratchmdJson<ValidationStat[]>(['validation', 'get-stats'], workspacePath);
   } catch {
     return [];
   }
@@ -645,7 +645,7 @@ export async function getValidationStats(workspacePath: string): Promise<Validat
 export async function getFolderValidationSample(workspacePath: string, folder: string): Promise<ValidationResultRow[]> {
   try {
     return await runScratchmdJson<ValidationResultRow[]>(
-      ['get-folder-validation-sample', '--folder', folder],
+      ['validation', 'get-folder-problems', '--folder', folder, '--limit', '20'],
       workspacePath,
     );
   } catch {

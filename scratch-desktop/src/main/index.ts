@@ -552,9 +552,10 @@ ipcMain.handle(
   },
 );
 ipcMain.handle('scratch:refresh-paths', () => {
-  // No-op: working-tree changes are detected automatically by find_stale_working
+  // No-op: working-tree changes are detected automatically by `index find-stale-files`
   // on the next paginate-records call. Dirty/master mutations trigger explicit
-  // reindex-files / reindex-table calls at the IPC handler that performed the mutation.
+  // `index refresh-files-full` / `index rebuild-folder` calls at the IPC handler
+  // that performed the mutation.
   return { success: true };
 });
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
@@ -566,6 +567,12 @@ ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, fo
 ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
   // `files discard-all` reindexes the affected folders itself; no follow-up call needed.
   const args = ['files', 'discard-all'];
+  if (folderPath) args.push('--folder', folderPath);
+  return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
+});
+ipcMain.handle('scratch:reject-all-changes', async (_, workspacePath: string, folderPath?: string) => {
+  // `files reject-all` reindexes the affected folders itself; no follow-up call needed.
+  const args = ['files', 'reject-all'];
   if (folderPath) args.push('--folder', folderPath);
   return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
@@ -606,22 +613,19 @@ ipcMain.handle('scratch:delete-local-publish-plans', async (_, workspacePath: st
   deleteLocalPublishPlans(workspacePath),
 );
 ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
-  withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await runScratchmd(['files', 'upload'], workspacePath);
-    await reindexAllFolderIndexes(workspacePath);
-    return result;
-  }),
+  // `files upload` reindexes the affected folders itself (per-path,
+  // scoped to the actually-changed records). No follow-up CLI call.
+  withWorkspaceInternalMutation(workspacePath, () => runScratchmd(['files', 'upload'], workspacePath)),
 );
 ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string, opts?: { onDelete?: string }) => {
   const args = ['files', 'download'];
   if (opts?.onDelete) {
     args.push('--on-delete', opts.onDelete);
   }
-  return withWorkspaceInternalMutation(workspacePath, async () => {
-    const result = await runScratchmd(args, workspacePath);
-    await reindexAllFolderIndexes(workspacePath);
-    return result;
-  });
+  // `files download` reindexes the affected folders itself (per-path,
+  // scoped to the actually-changed records, plus a master diff for
+  // connections whose published state advanced). No follow-up CLI call.
+  return withWorkspaceInternalMutation(workspacePath, () => runScratchmd(args, workspacePath));
 });
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
@@ -867,8 +871,6 @@ ipcMain.handle(
     },
   ) => {
     const fn = process.env.SCRATCH_USE_SQLITE_GRID === '0' ? readDiffGridDataPage : readDiffGridDataPageV2;
-    // folder_index (used by read-records) and record_index (used by refresh-record-index) are
-    // separate SQLite files — no locking conflict, so we don't need to wait for the rebuild.
     const onProgress = (line: string): void => {
       if (!event.sender.isDestroyed()) {
         event.sender.send('scratch:grid-progress', line);

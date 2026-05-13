@@ -39,9 +39,10 @@ fn assert_no_clap_parse_error(args: &[&str], stdout: &str, stderr: &str) {
 }
 
 #[test]
-fn reindex_files_accepts_hyphen_prefixed_folder_and_file() {
+fn refresh_files_full_accepts_hyphen_prefixed_folder_and_file() {
     let args = [
-        "reindex-files",
+        "index",
+        "refresh-files-full",
         "--folder",
         "-tricky-folder",
         "--file",
@@ -54,9 +55,10 @@ fn reindex_files_accepts_hyphen_prefixed_folder_and_file() {
 }
 
 #[test]
-fn reindex_files_columns_accepts_hyphen_prefixed_folder_and_file() {
+fn refresh_files_columns_only_accepts_hyphen_prefixed_folder_and_file() {
     let args = [
-        "reindex-files-columns",
+        "index",
+        "refresh-files-columns-only",
         "--folder",
         "-tricky-folder",
         "--file",

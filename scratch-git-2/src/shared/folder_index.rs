@@ -1868,7 +1868,7 @@ fn get_non_core_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<St
 /// file has disappeared (working_mtime not null but file gone).
 ///
 /// **Hot path** (table already has rows): working-tree only. Dirty/master changes
-/// are controlled by the desktop, which calls `reindex-table` explicitly after
+/// are controlled by the desktop, which calls `index rebuild-folder` explicitly after
 /// any accept/reject/pull/push operation.
 ///
 /// **Cold path** (table is empty or DB doesn't exist yet): scans all three trees
@@ -2220,6 +2220,103 @@ pub fn validate_files(
         &mut conn, &table, filenames, &paths, workspace, folder, true, debug,
     )?;
     Ok(())
+}
+
+/// List files in the folder whose validation state is stale — i.e. either the working
+/// file, master file, or `validation.json` config has changed (or appeared/disappeared)
+/// since validators last ran. Mirrors `is_validation_stale`. Deleted records (no
+/// working file) are excluded.
+pub fn find_validation_stale_files(
+    workspace: &Path,
+    folder: &str,
+    db_path_override: Option<&Path>,
+) -> anyhow::Result<Vec<String>> {
+    let db_path = resolve_db_path(workspace, folder, db_path_override);
+    if !db_path.exists() {
+        return Ok(vec![]);
+    }
+    let validation_json_path = resolve_validation_json_path(workspace, folder);
+    let current_validator_mtime = file_mtime_size(&validation_json_path).map(|(m, _)| m);
+
+    let conn = open_conn(&db_path)?;
+    let table = table_name_from_folder(folder);
+    ensure_schema(&conn, &table)?;
+    let tq = quote_ident(&table);
+
+    // `IS NOT` is null-safe equality in SQLite (NULL IS NOT NULL → false).
+    let sql = format!(
+        "SELECT filename FROM {tq}
+         WHERE working_mtime IS NOT NULL AND (
+            validated_mtime_working IS NOT working_mtime
+            OR validated_mtime_master IS NOT master_mtime
+            OR validated_mtime_validator IS NOT ?1
+         )"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows: Vec<rusqlite::Result<String>> = stmt
+        .query_map(params![current_validator_mtime], |row| row.get(0))?
+        .collect();
+    rows.into_iter()
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
+/// Result of `refresh_folder`. Each field is the number of files that work was performed on.
+/// `validated` is `None` when `validate = false` was passed.
+#[derive(Debug, serde::Serialize)]
+pub struct RefreshFolderResult {
+    pub base_refreshed: usize,
+    pub columns_refreshed: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validated: Option<usize>,
+}
+
+/// Smart, mtime-aware refresh of one folder's index. Skips files that are already fresh.
+///
+/// Order of operations:
+///   1. `find_stale_files` → `reindex_files` for files whose base row is stale.
+///   2. `find_column_stale_files` → `reindex_files_columns` for files whose column values
+///      are stale but base row is fresh (excludes files already covered by step 1).
+///   3. If `validate = true`: `find_validation_stale_files` → `validate_files` for files
+///      whose validation state is stale (working/master/validator config changed).
+///
+/// On a fully-fresh folder this is effectively a no-op.
+pub fn refresh_folder(
+    workspace: &Path,
+    folder: &str,
+    validate: bool,
+    debug: bool,
+) -> anyhow::Result<RefreshFolderResult> {
+    let base_stale = find_stale_files(workspace, folder, None)?;
+    if !base_stale.is_empty() {
+        reindex_files(workspace, folder, &base_stale, None, debug)?;
+    }
+
+    let all_column_stale = find_column_stale_files(workspace, folder, &[], None)?;
+    let base_set: std::collections::HashSet<&String> = base_stale.iter().collect();
+    let column_only: Vec<String> = all_column_stale
+        .into_iter()
+        .filter(|f| !base_set.contains(f))
+        .collect();
+    if !column_only.is_empty() {
+        reindex_files_columns(workspace, folder, &column_only, None, debug)?;
+    }
+
+    let validated = if validate {
+        let stale = find_validation_stale_files(workspace, folder, None)?;
+        if !stale.is_empty() {
+            validate_files(workspace, folder, &stale, None, debug)?;
+        }
+        Some(stale.len())
+    } else {
+        None
+    };
+
+    Ok(RefreshFolderResult {
+        base_refreshed: base_stale.len(),
+        columns_refreshed: column_only.len(),
+        validated,
+    })
 }
 
 /// Reindex specific files using only the working-tree version.

@@ -94,6 +94,11 @@ const scratchDesktop = {
     folderPath?: string,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
     invoke('scratch:discard-all-changes', workspacePath, folderPath),
+  rejectAllChanges: (
+    workspacePath: string,
+    folderPath?: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    invoke('scratch:reject-all-changes', workspacePath, folderPath),
   acceptRecord: (
     workspacePath: string,
     recordPath: string,
