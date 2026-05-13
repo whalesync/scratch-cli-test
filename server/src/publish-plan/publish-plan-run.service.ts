@@ -18,14 +18,34 @@ import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
 
+// Common shape for any plan-operation row dispatched by the runner. Phases that
+// require a sparse partial (edit/backfill) widen this to UpdatePublishOperation.
 type PublishOperation = {
   id: string;
   filePath: string;
   content: ParsedContent;
-  changedFields: Record<string, unknown>;
   remoteRecordId?: string | null;
   dataFolderId?: string | null;
 };
+
+// Operation for the edit/backfill phases — the sparse partial that gets PATCHed.
+// `changedFields` is required at compile time; `narrowToUpdateOps` enforces it at runtime
+// so a build-side bug that omits the field surfaces here instead of crashing in dispatch.
+type UpdatePublishOperation = PublishOperation & {
+  changedFields: Record<string, unknown>;
+};
+
+function narrowToUpdateOps(entries: PublishOperation[]): UpdatePublishOperation[] {
+  return entries.map((entry) => {
+    const cf = (entry as { changedFields?: unknown }).changedFields;
+    if (cf === null || cf === undefined || typeof cf !== 'object' || Array.isArray(cf)) {
+      throw new Error(
+        `PublishOperation ${entry.id} (${entry.filePath}) is missing required changedFields for an edit/backfill phase`,
+      );
+    }
+    return entry as UpdatePublishOperation;
+  });
+}
 
 @Injectable()
 export class PublishPlanRunService {
@@ -514,7 +534,15 @@ export class PublishPlanRunService {
           break;
         case 'edit':
         case 'backfill':
-          await this.dispatchUpdateBatch(phase, entries, connector, tableSpec, workbookId, planId, repoId);
+          await this.dispatchUpdateBatch(
+            phase,
+            narrowToUpdateOps(entries),
+            connector,
+            tableSpec,
+            workbookId,
+            planId,
+            repoId,
+          );
           break;
         case 'create':
           await this.dispatchCreateBatch(phase, entries, connector, tableSpec, workbookId, planId, repoId);
@@ -607,7 +635,7 @@ export class PublishPlanRunService {
 
   private async dispatchUpdateBatch(
     phase: string,
-    entries: PublishOperation[],
+    entries: UpdatePublishOperation[],
     connector: Connector,
     tableSpec: BaseJsonTableSpec,
     workbookId: string,
@@ -622,7 +650,7 @@ export class PublishPlanRunService {
 
     const contents: ParsedContent[] = [];
     const changedFieldsArray: Record<string, unknown>[] = [];
-    const entriesWithOps: { entry: PublishOperation; resolvedContent: ParsedContent }[] = [];
+    const entriesWithOps: { entry: UpdatePublishOperation; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
     for (let entryIdx = 0; entryIdx < entries.length; entryIdx++) {

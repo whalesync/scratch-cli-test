@@ -18,7 +18,7 @@ import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
 import { RefCleanerService } from './ref-cleaner.service';
 import { SchemaHelperService } from './schema-helper.service';
-import { PublishPlanInfo, PublishPlanPhase, PublishPlanStatus } from './types';
+import { PhaseRequiringChangedFields, PublishPlanInfo, PublishPlanPhase, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
 
 @Injectable()
@@ -290,15 +290,27 @@ export class PublishPlanBuildService {
     }
 
     // --- Shared operation buffer ---
-    const planOperations: Array<{
-      filePath: string;
-      phase: PublishPlanPhase;
-      content: ParsedContent;
-      changedFields?: Record<string, unknown> | null;
-      remoteRecordId?: string | null;
-      dataFolderId?: string | null;
-      status: string;
-    }> = [];
+    // Discriminated by phase: edit/backfill require `changedFields` (the sparse
+    // partial that gets PATCHed). The other phases never use it.
+    type PlanOperation =
+      | {
+          phase: PhaseRequiringChangedFields;
+          filePath: string;
+          content: ParsedContent;
+          changedFields: Record<string, unknown>;
+          remoteRecordId?: string | null;
+          dataFolderId?: string | null;
+          status: string;
+        }
+      | {
+          phase: Exclude<PublishPlanPhase, PhaseRequiringChangedFields>;
+          filePath: string;
+          content: ParsedContent;
+          remoteRecordId?: string | null;
+          dataFolderId?: string | null;
+          status: string;
+        };
+    const planOperations: PlanOperation[] = [];
 
     const savePlanOperations = async () => {
       if (planOperations.length === 0) return;
@@ -308,7 +320,8 @@ export class PublishPlanBuildService {
           filePath: e.filePath,
           phase: e.phase,
           content: e.content,
-          changedFields: (e.changedFields as Prisma.InputJsonValue) ?? undefined,
+          changedFields:
+            e.phase === 'edit' || e.phase === 'backfill' ? (e.changedFields as Prisma.InputJsonValue) : undefined,
           remoteRecordId: e.remoteRecordId ?? null,
           dataFolderId: e.dataFolderId ?? null,
           status: e.status,
@@ -412,6 +425,7 @@ export class PublishPlanBuildService {
                 filePath,
                 phase: 'edit',
                 content: JSON.parse(rawContent) as ParsedContent,
+                changedFields: {},
                 dataFolderId: info?.id,
                 status: 'pending',
               });
