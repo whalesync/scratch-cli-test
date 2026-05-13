@@ -434,15 +434,19 @@ export class SupabaseConnector extends Connector {
   // Update
   // -------------------------------------------------------------------------
 
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idColumnRemoteId;
 
-      const records = files.map((file) => ({
+      const records = files.map((file, i) => ({
         id: file[pk] as string | number,
-        data: file,
+        data: changedFields[i],
       }));
 
       await client.updateMany(schema, tableName, pk, records);

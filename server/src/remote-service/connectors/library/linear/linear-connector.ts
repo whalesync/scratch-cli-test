@@ -207,13 +207,21 @@ export class LinearConnector extends Connector {
   /**
    * Update records.
    */
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
     const entityType = tableSpec.id.wsId as EntityType;
     this.assertWritable(entityType);
 
-    for (const file of files) {
-      const entityId = String(file.id);
-      const input = this.stripReadOnlyFields(file, entityType as WritableEntityType, 'update');
+    for (let i = 0; i < files.length; i++) {
+      const entityId = String(files[i].id);
+      const input = this.stripReadOnlyFields(
+        changedFields[i] as ConnectorFile,
+        entityType as WritableEntityType,
+        'update',
+      );
       await this.updateEntity(entityType as WritableEntityType, entityId, input);
     }
   }

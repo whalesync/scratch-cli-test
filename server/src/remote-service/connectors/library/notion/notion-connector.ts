@@ -574,13 +574,31 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * Update pages in Notion from raw JSON files.
    * Files should have an 'id' field and the properties to update.
    */
-  async updateRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    for (const file of files) {
+  async updateRecords(
+    _tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const changed = changedFields[i];
       const pageId = file.id as string;
-      const rawProperties = (file.properties as Record<string, unknown>) || {};
+
+      const fileProperties = (file.properties as Record<string, unknown>) || {};
+      const changedProperties = (changed.properties as Record<string, unknown>) || {};
+
+      // The sparse partial lacks each property's `type` wrapper, so we can't filter
+      // read-only props from `changedProperties` alone — look up types from the full file.
+      const writableChangedProperties: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(changedProperties)) {
+        const fileProp = fileProperties[key] as Record<string, unknown> | undefined;
+        const propType = fileProp?.type as string | undefined;
+        if (propType && NOTION_READ_ONLY_PROPERTY_TYPES.has(propType)) continue;
+        writableChangedProperties[key] = value;
+      }
 
       // Transform properties from read format to update format
-      const properties = this.transformPropertiesForUpdate(rawProperties);
+      const properties = this.transformPropertiesForUpdate(writableChangedProperties);
 
       if (Object.keys(properties).length > 0) {
         await this.withRetry(() =>

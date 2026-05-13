@@ -199,12 +199,16 @@ export class MocoConnector extends Connector {
    * Update entities in Moco from raw JSON files.
    * Files should have an 'id' field and the data to update.
    */
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
     const entityType = tableSpec.id.wsId as MocoEntityType;
 
-    for (const file of files) {
-      const entityId = parseInt(String(file.id), 10);
-      const updateData = this.transformToUpdateRequest(entityType, file);
+    for (let i = 0; i < files.length; i++) {
+      const entityId = parseInt(String(files[i].id), 10);
+      const updateData = this.transformToUpdateRequest(entityType, changedFields[i]);
       await this.client.updateEntity(entityType, entityId, updateData);
     }
   }

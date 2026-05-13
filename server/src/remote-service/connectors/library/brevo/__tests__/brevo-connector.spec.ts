@@ -398,7 +398,7 @@ describe('BrevoConnector', () => {
         },
       ];
 
-      await connector.updateRecords(buildTableSpec('contacts'), files);
+      await connector.updateRecords(buildTableSpec('contacts'), files, files);
 
       expect(mockUpdateContact).toHaveBeenCalledWith(42, {
         attributes: { FIRSTNAME: 'Updated' },
@@ -420,7 +420,7 @@ describe('BrevoConnector', () => {
         },
       ];
 
-      await connector.updateRecords(buildTableSpec('templates'), files);
+      await connector.updateRecords(buildTableSpec('templates'), files, files);
 
       expect(mockUpdateTemplate).toHaveBeenCalledWith(
         10,
@@ -430,6 +430,34 @@ describe('BrevoConnector', () => {
           htmlContent: '<p>Updated</p>',
         }),
       );
+    });
+
+    // DEV-10125: when only one field is in changedFields, the PATCH body must
+    // contain only that field — unchanged sibling fields must not be re-sent.
+    it('sends only the changed contact fields when changedFields is sparse', async () => {
+      mockUpdateContact.mockResolvedValue(undefined);
+
+      const files: ConnectorFile[] = [
+        {
+          id: 42,
+          email: 'unchanged@example.com',
+          attributes: { FIRSTNAME: 'Old', LASTNAME: 'Smith' },
+          emailBlacklisted: false,
+          smsBlacklisted: false,
+          listIds: [1, 2],
+        },
+      ];
+      // Only `attributes` changed; emailBlacklisted/smsBlacklisted/listIds were untouched.
+      const changedFields: Record<string, unknown>[] = [{ attributes: { FIRSTNAME: 'New' } }];
+
+      await connector.updateRecords(buildTableSpec('contacts'), files, changedFields);
+
+      const [contactId, payload] = mockUpdateContact.mock.calls[0] as [number, Record<string, unknown>];
+      expect(contactId).toBe(42);
+      expect(payload.attributes).toEqual({ FIRSTNAME: 'New' });
+      expect(payload.emailBlacklisted).toBeUndefined();
+      expect(payload.smsBlacklisted).toBeUndefined();
+      expect(payload.listIds).toBeUndefined();
     });
   });
 

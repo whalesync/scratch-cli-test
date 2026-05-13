@@ -385,13 +385,17 @@ export class ShopifyConnector extends Connector {
   /**
    * Update records from JSON files.
    */
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
     const entityType = tableSpec.id.wsId as EntityType;
     this.assertWritable(entityType);
 
-    for (const file of files) {
-      const entityId = String(file.id);
-      const input = this.stripReadOnlyFields(file, entityType, 'update');
+    for (let i = 0; i < files.length; i++) {
+      const entityId = String(files[i].id);
+      const input = this.stripReadOnlyFields(changedFields[i] as ConnectorFile, entityType, 'update');
       await this.client.updateEntity(entityType, entityId, input);
     }
   }

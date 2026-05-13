@@ -22,7 +22,7 @@ type PublishOperation = {
   id: string;
   filePath: string;
   content: ParsedContent;
-  changedFields?: Record<string, unknown> | null;
+  changedFields: Record<string, unknown>;
   remoteRecordId?: string | null;
   dataFolderId?: string | null;
 };
@@ -621,7 +621,7 @@ export class PublishPlanRunService {
     );
 
     const contents: ParsedContent[] = [];
-    const changedFieldsArray: (Record<string, unknown> | undefined)[] = [];
+    const changedFieldsArray: Record<string, unknown>[] = [];
     const entriesWithOps: { entry: PublishOperation; resolvedContent: ParsedContent }[] = [];
 
     let opIndex = 0;
@@ -646,16 +646,14 @@ export class PublishPlanRunService {
       } as ParsedContent;
 
       // Skip no-op edits where changedFields is an empty object
-      if (entry.changedFields && Object.keys(entry.changedFields).length === 0) {
+      if (Object.keys(entry.changedFields).length === 0) {
         continue;
       }
 
       // Build deep changedFields from transformed content using the shape from diff.
       // pickByShape uses the structure of entry.changedFields as a mask to extract
       // the corresponding values from the fully-transformed resolvedContent.
-      const resolvedChangedFields = entry.changedFields
-        ? pickByShape(resolvedContent as Record<string, unknown>, entry.changedFields)
-        : undefined;
+      const resolvedChangedFields = pickByShape(resolvedContent as Record<string, unknown>, entry.changedFields);
 
       contents.push(resolvedContent);
       changedFieldsArray.push(resolvedChangedFields);
@@ -664,9 +662,7 @@ export class PublishPlanRunService {
 
     if (contents.length === 0) return;
 
-    // Bulk update — pass changedFields to the connector if any entry has them
-    const hasChangedFields = changedFieldsArray.some((cf) => cf !== undefined);
-    await connector.updateRecords(tableSpec, contents, hasChangedFields ? changedFieldsArray : undefined);
+    await connector.updateRecords(tableSpec, contents, changedFieldsArray);
 
     // Update Refs & Git
     // We can do this in parallel or sequentially. Sequential for safety.

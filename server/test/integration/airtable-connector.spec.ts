@@ -169,9 +169,11 @@ describeIfKey('AirtableConnector — live API', () => {
       expect((created[0] as Record<string, unknown>).fields).toHaveProperty(primaryFieldName, testValue);
 
       // Update
-      await connector.updateRecords(firstSpec, [
-        { id: recordId, fields: { [primaryFieldName]: updatedValue } } as unknown as ConnectorFile,
-      ]);
+      await connector.updateRecords(
+        firstSpec,
+        [{ id: recordId, fields: { [primaryFieldName]: updatedValue } } as unknown as ConnectorFile],
+        [{ fields: { [primaryFieldName]: updatedValue } }],
+      );
 
       // Verify update via pullRecordFilesByIds
       const pulledFiles: ConnectorFile[] = [];

@@ -233,30 +233,36 @@ export class IntercomConnector extends Connector {
     return results;
   }
 
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    for (const file of files) {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const changed = changedFields[i];
       if (tableSpec.id.wsId === 'articles') {
         const articleId = file.id as string;
         const data: IntercomUpdateArticleRequest = {
-          title: file.title as string | undefined,
-          description: file.description as string | undefined,
-          body: file.body as string | undefined,
-          author_id: file.author_id as number | undefined,
-          state: file.state as 'published' | 'draft' | undefined,
-          parent_id: file.parent_id as number | undefined,
-          parent_type: file.parent_type as 'collection' | 'section' | undefined,
-          translated_content: file.translated_content as Record<string, unknown> | undefined,
+          title: changed.title as string | undefined,
+          description: changed.description as string | undefined,
+          body: changed.body as string | undefined,
+          author_id: changed.author_id as number | undefined,
+          state: changed.state as 'published' | 'draft' | undefined,
+          parent_id: changed.parent_id as number | undefined,
+          parent_type: changed.parent_type as 'collection' | 'section' | undefined,
+          translated_content: changed.translated_content as Record<string, unknown> | undefined,
         };
         await this.client.updateArticle(articleId, data);
       } else if (tableSpec.id.wsId === 'collections') {
         const collectionId = file.id as string;
         const data: IntercomUpdateCollectionRequest = {
-          name: file.name as string | undefined,
-          description: file.description as string | undefined,
-          translated_content: file.translated_content as Record<string, unknown> | undefined,
-          icon: file.icon as string | undefined,
-          parent_id: file.parent_id as string | undefined,
-          help_center_id: file.help_center_id as number | undefined,
+          name: changed.name as string | undefined,
+          description: changed.description as string | undefined,
+          translated_content: changed.translated_content as Record<string, unknown> | undefined,
+          icon: changed.icon as string | undefined,
+          parent_id: changed.parent_id as string | undefined,
+          help_center_id: changed.help_center_id as number | undefined,
         };
         await this.client.updateCollection(collectionId, data);
       }

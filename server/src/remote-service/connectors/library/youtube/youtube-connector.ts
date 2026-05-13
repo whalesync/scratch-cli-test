@@ -171,24 +171,31 @@ export class YouTubeConnector extends Connector {
    * Update videos in YouTube from raw JSON files.
    * Files should have an 'id' field and snippet fields to update.
    */
-  async updateRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    for (const file of files) {
+  async updateRecords(
+    _tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const changed = changedFields[i];
       const videoId = file.id as string;
       const updateData: Record<string, unknown> = {
-        title: file.title,
-        description: file.description,
-        categoryId: file.categoryId,
-        defaultLanguage: file.defaultLanguage,
-        tags: file.tags,
+        title: changed.title,
+        description: changed.description,
+        categoryId: changed.categoryId,
+        defaultLanguage: changed.defaultLanguage,
+        tags: changed.tags,
       };
 
       if (Object.values(updateData).some((value) => value !== undefined)) {
         await this.apiClient.updateVideo(videoId, updateData);
       }
 
-      if (file.transcript && file.transcriptId) {
+      // Transcript update is keyed by transcriptId from the full file; only push when the transcript text changed.
+      if (changed.transcript !== undefined && file.transcriptId) {
         try {
-          await this.apiClient.updateTranscript(videoId, file.transcriptId as string, file.transcript as string);
+          await this.apiClient.updateTranscript(videoId, file.transcriptId as string, changed.transcript as string);
         } catch (error) {
           console.warn(`Failed to update transcript for video ${videoId}:`, error);
         }

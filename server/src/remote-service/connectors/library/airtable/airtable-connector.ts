@@ -217,12 +217,16 @@ export class AirtableConnector extends Connector {
    * Update records in Airtable from raw JSON files.
    * Files should have an 'id' field and the fields to update.
    */
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
     const [baseId, tableId] = tableSpec.id.remoteId;
 
-    const airtableRecords = files.map((file) => ({
+    const airtableRecords = files.map((file, i) => ({
       id: file.id as string,
-      fields: this.processFieldDataWithSchema(file, tableSpec),
+      fields: this.processFieldDataWithSchema(changedFields[i] as ConnectorFile, tableSpec),
     }));
 
     await this.client.updateRecords(baseId, tableId, airtableRecords);

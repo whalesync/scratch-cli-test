@@ -227,28 +227,34 @@ export class BrevoConnector extends Connector {
     return results;
   }
 
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    for (const file of files) {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const changed = changedFields[i];
       if (tableSpec.id.wsId === 'contacts') {
         const contactId = file.id as number;
         const data: BrevoUpdateContactRequest = {
-          attributes: file.attributes as Record<string, unknown> | undefined,
-          emailBlacklisted: file.emailBlacklisted as boolean | undefined,
-          smsBlacklisted: file.smsBlacklisted as boolean | undefined,
-          listIds: file.listIds as number[] | undefined,
+          attributes: changed.attributes as Record<string, unknown> | undefined,
+          emailBlacklisted: changed.emailBlacklisted as boolean | undefined,
+          smsBlacklisted: changed.smsBlacklisted as boolean | undefined,
+          listIds: changed.listIds as number[] | undefined,
         };
         await this.client.updateContact(contactId, data);
       } else if (tableSpec.id.wsId === 'templates') {
         const templateId = file.id as number;
         await this.client.updateTemplate(templateId, {
-          templateName: file.name as string | undefined,
-          subject: file.subject as string | undefined,
-          sender: file.sender as { name?: string; email?: string; id?: number } | undefined,
-          htmlContent: file.htmlContent as string | undefined,
-          isActive: file.isActive as boolean | undefined,
-          replyTo: file.replyTo as string | undefined,
-          toField: file.toField as string | undefined,
-          tag: file.tag as string | undefined,
+          templateName: changed.name as string | undefined,
+          subject: changed.subject as string | undefined,
+          sender: changed.sender as { name?: string; email?: string; id?: number } | undefined,
+          htmlContent: changed.htmlContent as string | undefined,
+          isActive: changed.isActive as boolean | undefined,
+          replyTo: changed.replyTo as string | undefined,
+          toField: changed.toField as string | undefined,
+          tag: changed.tag as string | undefined,
         });
       }
     }

@@ -498,7 +498,7 @@ describe('IntercomConnector', () => {
         },
       ];
 
-      await connector.updateRecords(buildTableSpec('articles'), files);
+      await connector.updateRecords(buildTableSpec('articles'), files, files);
 
       expect(mockUpdateArticle).toHaveBeenCalledWith('42', {
         title: 'Updated',
@@ -523,7 +523,7 @@ describe('IntercomConnector', () => {
         },
       ];
 
-      await connector.updateRecords(buildTableSpec('collections'), files);
+      await connector.updateRecords(buildTableSpec('collections'), files, files);
 
       expect(mockUpdateCollection).toHaveBeenCalledWith('5', {
         name: 'Updated FAQ',
@@ -533,6 +533,34 @@ describe('IntercomConnector', () => {
         parent_id: undefined,
         help_center_id: undefined,
       });
+    });
+
+    // DEV-10125: when only one field is in changedFields, the PATCH body must
+    // contain only that field — unchanged sibling fields must not be re-sent.
+    it('sends only the changed article fields when changedFields is sparse', async () => {
+      mockUpdateArticle.mockResolvedValue(makeArticle({ id: '42' }));
+
+      const files: ConnectorFile[] = [
+        {
+          id: '42',
+          title: 'Unchanged title',
+          body: '<p>Old body</p>',
+          author_id: 1,
+          state: 'published',
+        },
+      ];
+      // Only `body` changed.
+      const changedFields: Record<string, unknown>[] = [{ body: '<p>New body</p>' }];
+
+      await connector.updateRecords(buildTableSpec('articles'), files, changedFields);
+
+      const [articleId, payload] = mockUpdateArticle.mock.calls[0] as [string, Record<string, unknown>];
+      expect(articleId).toBe('42');
+      expect(payload.body).toBe('<p>New body</p>');
+      expect(payload.title).toBeUndefined();
+      expect(payload.author_id).toBeUndefined();
+      expect(payload.state).toBeUndefined();
+      expect(payload.description).toBeUndefined();
     });
   });
 

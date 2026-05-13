@@ -194,7 +194,7 @@ describeIfKey(
           } as unknown as ConnectorFile,
         ];
 
-        await expect(connector.updateRecords(contactsSpec, files)).resolves.toBeUndefined();
+        await expect(connector.updateRecords(contactsSpec, files, [{ attributes: { FIRSTNAME: 'Updated' } }])).resolves.toBeUndefined();
 
         // Verify the update by fetching
         const fetched: ConnectorFile[] = [];
@@ -303,7 +303,11 @@ describeIfKey(
           } as unknown as ConnectorFile,
         ];
 
-        await expect(connector.updateRecords(templatesSpec, files)).resolves.toBeUndefined();
+        await expect(
+          connector.updateRecords(templatesSpec, files, [
+            { name: `Updated Template ${TEST_SUFFIX}`, subject: 'Updated Subject' },
+          ]),
+        ).resolves.toBeUndefined();
 
         // Verify by fetching
         const fetched: ConnectorFile[] = [];

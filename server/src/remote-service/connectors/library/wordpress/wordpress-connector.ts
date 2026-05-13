@@ -215,13 +215,17 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
    * Uses "require-all-validate" so WordPress rejects the entire batch if any request
    * fails validation. Once past validation, all requests execute and are expected to succeed.
    */
-  async updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
     const [tableId] = tableSpec.id.remoteId;
 
-    const requests: WordPressBatchRequestItem[] = files.map((file) => ({
+    const requests: WordPressBatchRequestItem[] = files.map((file, i) => ({
       method: 'PATCH' as const,
       path: `/${WORDPRESS_ORG_V2_PATH}${tableId}/${String(file.id)}`,
-      body: this.fileToWordPressRecord(file) as Record<string, unknown>,
+      body: this.fileToWordPressRecord(changedFields[i] as ConnectorFile) as Record<string, unknown>,
     }));
 
     const batchResponse = await this.client.batchRequest(requests);

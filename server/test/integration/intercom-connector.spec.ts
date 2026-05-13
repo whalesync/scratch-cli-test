@@ -225,7 +225,9 @@ describeIfToken(
           } as unknown as ConnectorFile,
         ];
 
-        await expect(connector.updateRecords(collectionsSpec, files)).resolves.toBeUndefined();
+        await expect(
+          connector.updateRecords(collectionsSpec, files, [{ name: `Updated Collection ${TEST_SUFFIX}` }]),
+        ).resolves.toBeUndefined();
 
         // Verify the update by fetching
         const fetched: ConnectorFile[] = [];
@@ -328,7 +330,11 @@ describeIfToken(
           } as unknown as ConnectorFile,
         ];
 
-        await expect(connector.updateRecords(articlesSpec, files)).resolves.toBeUndefined();
+        await expect(
+          connector.updateRecords(articlesSpec, files, [
+            { title: `Updated Article ${TEST_SUFFIX}`, author_id: testAuthorId },
+          ]),
+        ).resolves.toBeUndefined();
 
         // Verify the update by fetching
         const fetched: ConnectorFile[] = [];

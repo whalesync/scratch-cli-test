@@ -588,10 +588,27 @@ export class PublishPlanBuildService {
           }
 
           if (pass3ContentStr !== pass1ContentStr) {
+            // The create above sent pass3 (refs stripped). Anything that differs in
+            // pass1 is a ref that got stripped and now needs to be written back once
+            // the create has resolved IDs — that's exactly what this backfill is for.
+            // The diff (pass3 vs pass1) gives us the keys that were stripped, which is
+            // the sparse partial the connector should PATCH.
+            //
+            // Example: user creates a new article that references a co-pending author.
+            //   pass1: { title: 'Hi', authorId: '@/people/jane.json', cover: '@asset/x' }
+            //   pass3: { title: 'Hi', authorId: null,                 cover: null       }
+            //   create posts pass3 (Jane's id and the asset id aren't known yet).
+            //   diff(pass3, pass1) => { authorId: '@/people/jane.json', cover: '@asset/x' }
+            //   the publish runner later resolves those refs and PATCHes the new record.
+            const backfillChanged = computeChangedFields(
+              pass3ContentObj as Record<string, unknown>,
+              pass1ContentObj as Record<string, unknown>,
+            );
             planOperations.push({
               filePath: add.path,
               phase: 'backfill',
               content: pass1ContentObj,
+              changedFields: backfillChanged,
               dataFolderId: dataFolderId || null,
               status: 'pending',
             });

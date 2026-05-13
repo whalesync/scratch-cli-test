@@ -173,9 +173,17 @@ export class AudiencefulConnector extends Connector {
    * Update people in Audienceful from raw JSON files.
    * Files should contain the person data to update (including email).
    */
-  async updateRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    for (const file of files) {
-      const updateData = this.transformToUpdateRequest(file);
+  async updateRecords(
+    _tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const changed = changedFields[i];
+      // Email is the lookup key for updatePerson — always include it, even when unchanged.
+      const payload: Record<string, unknown> = { ...changed, email: changed.email ?? file.email };
+      const updateData = this.transformToUpdateRequest(payload);
       await this.client.updatePerson(updateData);
     }
   }

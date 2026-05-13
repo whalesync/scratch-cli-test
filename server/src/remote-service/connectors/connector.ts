@@ -190,18 +190,18 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   /**
    * Attempts to push updates to the data source.
    * @param tableSpec - The table spec to update records for.
-   * @param files - The files to update (full content).
-   * @param changedFields - Optional parallel array where changedFields[i] is a deep sparse object
+   * @param files - The files to update (full content, used for ID extraction and any
+   *   fields the connector needs beyond the changed set — e.g. record IDs in path params).
+   * @param changedFields - Parallel array where changedFields[i] is a deep sparse object
    *   containing only the fields that changed for files[i], with values already transformed
-   *   (FK resolution, transformers, etc.). Connectors can use this directly as a partial payload
-   *   or inspect its structure to decide what to update.
-   *   When undefined, connectors send the full file content (backward compatible).
+   *   (FK resolution, transformers, etc.). Connectors should send this as the partial
+   *   payload so unchanged fields (especially computed/read-only ones) are not re-sent.
    * @throws Error if there is a problem updating the records.
    */
   abstract updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
-    changedFields?: (Record<string, unknown> | undefined)[],
+    changedFields: Record<string, unknown>[],
   ): Promise<void>;
 
   /**

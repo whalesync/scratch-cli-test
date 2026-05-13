@@ -245,8 +245,8 @@ describe('PublishPlanRunService', () => {
       const [, files, cfArr] = connector.updateRecords.mock.calls[0];
       expect(files).toHaveLength(2);
       expect(cfArr).toHaveLength(2);
-      expect(cfArr![0]).toEqual({ title: 'New1' });
-      expect(cfArr![1]).toEqual({ body: 'New2' });
+      expect(cfArr[0]).toEqual({ title: 'New1' });
+      expect(cfArr[1]).toEqual({ body: 'New2' });
     });
 
     it('skips no-op edits where changedFields is empty object', async () => {
@@ -291,26 +291,6 @@ describe('PublishPlanRunService', () => {
       const [, files] = updateMock.mock.calls[0];
       expect(files).toHaveLength(1);
       expect(files[0]).toMatchObject({ id: 'rec_2' });
-    });
-
-    it('passes undefined changedFields for legacy plans (null changedFields)', async () => {
-      setupEditPhaseEntries([
-        {
-          id: 'op_1',
-          filePath: 'articles/a1.json',
-          content: { id: 'rec_1', title: 'Hello' },
-          changedFields: null,
-          remoteRecordId: 'rec_1',
-        },
-      ]);
-
-      await service.runPipeline(PLAN_ID);
-
-      expect(connector.updateRecords).toHaveBeenCalledTimes(1);
-      const updateMock = jest.mocked(connector.updateRecords);
-      const [, , cfArg] = updateMock.mock.calls[0];
-      // When no entry has changedFields, pass undefined
-      expect(cfArg).toBeUndefined();
     });
 
     it('commits full content to git even with partial changedFields', async () => {
