@@ -168,6 +168,96 @@ describe('initAutoUpdater event forwarding', () => {
     controller?.dispose();
   });
 
+  it('tags errors before update-available as phase=check', async () => {
+    const sentEvents: UpdaterEvent[] = [];
+    const fakeWindow = {
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((_channel: string, payload: UpdaterEvent) => {
+          sentEvents.push(payload);
+        }),
+      },
+    };
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => fakeWindow as never });
+
+    eventHandlers.get('checking-for-update')?.();
+    eventHandlers.get('error')?.(new Error('net::ERR_NAME_NOT_RESOLVED'));
+
+    expect(sentEvents).toEqual([
+      { type: 'checking-for-update', manual: false },
+      { type: 'error', manual: false, phase: 'check', message: 'net::ERR_NAME_NOT_RESOLVED' },
+    ]);
+
+    controller?.dispose();
+  });
+
+  it('tags errors after update-available as phase=download', async () => {
+    const sentEvents: UpdaterEvent[] = [];
+    const fakeWindow = {
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((_channel: string, payload: UpdaterEvent) => {
+          sentEvents.push(payload);
+        }),
+      },
+    };
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => fakeWindow as never });
+
+    eventHandlers.get('update-available')?.({ version: '1.2.3' });
+    eventHandlers.get('error')?.(new Error('net::ERR_NETWORK_CHANGED'));
+
+    expect(sentEvents).toEqual([
+      {
+        type: 'update-available',
+        manual: false,
+        version: '1.2.3',
+        releaseDate: undefined,
+        releaseNotes: null,
+      },
+      { type: 'error', manual: false, phase: 'download', message: 'net::ERR_NETWORK_CHANGED' },
+    ]);
+
+    controller?.dispose();
+  });
+
+  it('resets download-phase tracking between cycles so the next check-error is phase=check', async () => {
+    const sentEvents: UpdaterEvent[] = [];
+    const fakeWindow = {
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((_channel: string, payload: UpdaterEvent) => {
+          sentEvents.push(payload);
+        }),
+      },
+    };
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => fakeWindow as never });
+
+    // First cycle: download starts, then errors out. Both flags reset.
+    eventHandlers.get('update-available')?.({ version: '1.2.3' });
+    eventHandlers.get('error')?.(new Error('boom'));
+
+    // Clear so we can assert just the second cycle's events.
+    sentEvents.length = 0;
+
+    // Second cycle: error before update-available should be phase=check, not
+    // a leftover phase=download from the previous cycle.
+    eventHandlers.get('checking-for-update')?.();
+    eventHandlers.get('error')?.(new Error('still boom'));
+
+    expect(sentEvents).toEqual([
+      { type: 'checking-for-update', manual: false },
+      { type: 'error', manual: false, phase: 'check', message: 'still boom' },
+    ]);
+
+    controller?.dispose();
+  });
+
   it('runs the initial check after the 5s delay', async () => {
     const { initAutoUpdater } = await import('../updater');
     const controller = initAutoUpdater({ getMainWindow: () => null });

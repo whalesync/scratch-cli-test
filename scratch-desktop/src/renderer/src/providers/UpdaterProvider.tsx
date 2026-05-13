@@ -93,7 +93,7 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
             id: UPDATE_DOWNLOADED_NOTIFICATION_ID,
             title: `Update ready (v${event.version})`,
             message: (
-              <Stack gap="xs" mt="xs">
+              <Stack gap="xs" my="xs">
                 <Text13Regular c="var(--fg-secondary)">
                   Restart Scratch to finish installing. Your workspaces will reopen.
                 </Text13Regular>
@@ -126,10 +126,21 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         case 'error': {
-          // Auto-check errors stay quiet — they're noisy on flaky networks.
-          // Manual-check errors deserve a visible toast so the click feels
-          // responsive.
-          if (event.manual) {
+          // Check-phase auto errors stay quiet — they're noisy on flaky
+          // networks and the next scheduled check will retry. Download-phase
+          // errors always surface: an update was found, the user has a
+          // pending install, and silently dropping it means they sit on an
+          // old version with no signal anything went wrong.
+          if (event.phase === 'download') {
+            showManualToast({
+              title: 'Update download failed',
+              message: event.message,
+              color: 'red',
+              loading: false,
+              autoClose: 6000,
+              withCloseButton: true,
+            });
+          } else if (event.manual) {
             showManualToast({
               title: 'Update check failed',
               message: event.message,

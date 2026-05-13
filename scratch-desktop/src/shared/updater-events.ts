@@ -31,6 +31,14 @@ export type UpdaterEvent =
   | {
       type: 'error';
       manual: boolean;
+      /**
+       * 'check' = failed while talking to the update feed (DNS, 4xx, no network at all).
+       * 'download' = failed after an update was found, while downloading the artifact.
+       * Renderer policy: 'check' errors are shown only for manual checks (background
+       * check noise on flaky networks is intentional). 'download' errors are always
+       * shown — the user has a pending update and deserves to know it didn't land.
+       */
+      phase: 'check' | 'download';
       message: string;
     };
 

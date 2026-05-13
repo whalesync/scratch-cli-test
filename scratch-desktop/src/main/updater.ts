@@ -44,6 +44,11 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
   autoUpdater.autoInstallOnAppQuit = false;
 
   let manualCheckInFlight = false;
+  // True between `update-available` and the next terminal event. Used to tag
+  // `error` events with phase='download' so the renderer can surface them even
+  // on background checks — a failed download is meaningful regardless of how
+  // the check started.
+  let downloadInFlight = false;
 
   function emit(payload: UpdaterEvent): void {
     const win = opts.getMainWindow();
@@ -53,8 +58,9 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
     win.webContents.send(UPDATER_EVENT_CHANNEL, payload);
   }
 
-  function endManualCycle(): void {
+  function endCycle(): void {
     manualCheckInFlight = false;
+    downloadInFlight = false;
   }
 
   autoUpdater.on('checking-for-update', () => {
@@ -62,6 +68,7 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
   });
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
+    downloadInFlight = true;
     emit({
       type: 'update-available',
       manual: manualCheckInFlight,
@@ -73,7 +80,7 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
 
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
     emit({ type: 'update-not-available', manual: manualCheckInFlight, version: info.version });
-    endManualCycle();
+    endCycle();
   });
 
   autoUpdater.on('download-progress', (progress) => {
@@ -95,12 +102,17 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
       releaseDate: info.releaseDate,
       releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : null,
     });
-    endManualCycle();
+    endCycle();
   });
 
   autoUpdater.on('error', (error: Error) => {
-    emit({ type: 'error', manual: manualCheckInFlight, message: error?.message ?? String(error) });
-    endManualCycle();
+    emit({
+      type: 'error',
+      manual: manualCheckInFlight,
+      phase: downloadInFlight ? 'download' : 'check',
+      message: error?.message ?? String(error),
+    });
+    endCycle();
   });
 
   async function runCheck(manual: boolean): Promise<void> {
@@ -111,13 +123,16 @@ export function initAutoUpdater(opts: InitOptions): UpdaterController | null {
       await autoUpdater.checkForUpdates();
     } catch (error) {
       // electron-updater also fires its own 'error' event; this catches the
-      // synchronous rejection path so the manual-check flag still resets.
+      // synchronous rejection path so the cycle flags still reset. A rejection
+      // from checkForUpdates() means we never got to update-available, so this
+      // is always a check-phase failure.
       emit({
         type: 'error',
         manual,
+        phase: 'check',
         message: error instanceof Error ? error.message : String(error),
       });
-      endManualCycle();
+      endCycle();
     }
   }
 
