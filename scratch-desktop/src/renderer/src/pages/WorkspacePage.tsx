@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
+import { API_CONFIG } from '../lib/api';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { jobApi } from '../lib/job-api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
@@ -289,6 +290,19 @@ export function WorkspacePage() {
       window.removeEventListener('focus', handleWindowFocus);
     };
   }, [id, workspaceId, fetchWorkspace, handleDataRefresh]);
+
+  useEffect(() => {
+    API_CONFIG.setActiveWorkspacePath(localPath);
+    if (localPath) {
+      window.scratchDesktop.logSession(localPath, 'start');
+    }
+    return () => {
+      if (localPath) {
+        window.scratchDesktop.logSession(localPath, 'end');
+      }
+      API_CONFIG.setActiveWorkspacePath(null);
+    };
+  }, [localPath]);
 
   useEffect(() => {
     if (!localPath || !watchingEnabled) {

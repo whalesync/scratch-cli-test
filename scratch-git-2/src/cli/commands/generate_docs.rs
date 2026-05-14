@@ -42,6 +42,19 @@ Once your local agent has made changes, open the Scratch desktop app to review t
 - [Editing data (creating, updating, deleting records)](.scratch/docs/editing-data.md)
 - [Validation (checking records before publish)](.scratch/docs/validations.md)
 - [CLI command reference](.scratch/docs/commands.md)
+
+## Troubleshooting with `workspace.log`
+
+The Scratch desktop app writes a rolling log to `workspace.log` at the root of this workspace. The log tracks operations performed by the desktop app and the CLI along with errors and warnings.
+
+Log messages are written in the following format:
+```
+<timestamp> <type> <status> <message>
+```
+
+Each time the user opens the workspace in the desktop app, a `SESSION Starting session` line is written; closing the workspace writes `SESSION Ending session`. When investigating an error, find the **most recent** `Starting session` line and focus on the entries between it and the next `Ending session` (or the end of the file) — that's the session the user was in when the problem occurred. Older sessions are usually unrelated.
+
+Look for `fail exit=...` (CLI), non-2xx status codes (API), or `PUBLISH complete failed ...` lines within that window.
 "#,
         workbook_name = workbook_name,
     )

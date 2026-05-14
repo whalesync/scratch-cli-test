@@ -163,6 +163,8 @@ const scratchDesktop = {
   showInFolder: (folderPath: string): Promise<void> => invoke('scratch:show-in-folder', folderPath),
   /** Reveals a file in Finder / Explorer (shell.showItemInFolder). */
   showItemInFolder: (filePath: string): Promise<void> => invoke('scratch:show-item-in-folder', filePath),
+  /** Reveals <workspacePath>/workspace.log if it exists; otherwise opens the workspace folder. */
+  showWorkspaceLog: (workspacePath: string): Promise<void> => invoke('scratch:show-workspace-log', workspacePath),
   showNativeContextMenu: (
     items: Array<{
       id: string;
@@ -183,6 +185,37 @@ const scratchDesktop = {
   openInTerminal: (folderPath: string): Promise<void> => invoke('scratch:open-in-terminal', folderPath),
   toggleDevTools: (): Promise<void> => invoke('scratch:toggle-devtools'),
   getAppVersion: (): Promise<string> => invoke('scratch:get-app-version'),
+  logApiCall: (
+    workspacePath: string,
+    entry: { method: string; url: string; status?: number; durationMs: number; errorSummary?: string },
+  ): void => {
+    ipcRenderer.send('scratch:log-api-call', workspacePath, entry);
+  },
+  logSession: (workspacePath: string, event: 'start' | 'end'): void => {
+    ipcRenderer.send('scratch:log-session', workspacePath, event);
+  },
+  logPublishJob: (
+    workspacePath: string,
+    entry:
+      | {
+          event: 'start';
+          jobIds: string[];
+          tables: string[];
+          plans: number;
+          summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
+        }
+      | {
+          event: 'complete';
+          jobId: string;
+          state: string;
+          successCount?: number;
+          failedCount?: number;
+          summary?: { edit: number; create: number; delete: number; backfill: number; rename: number };
+          errorSummary?: string;
+        },
+  ): void => {
+    ipcRenderer.send('scratch:log-publish-job', workspacePath, entry);
+  },
   watchWorkspaceFiles: (workspacePath: string): Promise<string[]> =>
     invoke('scratch:watch-workspace-files', workspacePath),
   clearWorkspaceFileWatch: (): Promise<void> => invoke('scratch:clear-workspace-file-watch'),

@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useConfirmModal } from '../components/ConfirmModal';
 import { LiveCommandOutput } from '../components/LiveCommandOutput';
+import { API_CONFIG } from '../lib/api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
 import { DataFolder, Workspace } from '../types/workspace';
@@ -507,6 +508,17 @@ export function WorkspacePageDebug() {
     }
   }, [localPath]);
 
+  const handleShowWorkspaceLog = useCallback(() => {
+    if (!localPath) return;
+    void window.scratchDesktop.showWorkspaceLog(localPath).catch((err: unknown) => {
+      notifications.show({
+        title: 'Could not open workspace log',
+        message: err instanceof Error ? err.message : 'Failed to reveal workspace.log',
+        color: 'red',
+      });
+    });
+  }, [localPath]);
+
   const handlePublishAll = useCallback(async () => {
     if (!localPath) {
       return;
@@ -546,6 +558,13 @@ export function WorkspacePageDebug() {
   useEffect(() => {
     void fetchWorkspace();
   }, [fetchWorkspace]);
+
+  useEffect(() => {
+    API_CONFIG.setActiveWorkspacePath(localPath);
+    return () => {
+      API_CONFIG.setActiveWorkspacePath(null);
+    };
+  }, [localPath]);
 
   useEffect(() => {
     const unsubscribe = window.scratchDesktop.onCommandEvent((event) => {
@@ -1120,6 +1139,9 @@ export function WorkspacePageDebug() {
             </Button>
             <Button variant="light" onClick={() => void handleOpenPublishAll()}>
               Publish all
+            </Button>
+            <Button variant="light" onClick={handleShowWorkspaceLog}>
+              Show workspace log
             </Button>
             <Button onClick={() => void handlePushChanges()} loading={pushing}>
               Upload files

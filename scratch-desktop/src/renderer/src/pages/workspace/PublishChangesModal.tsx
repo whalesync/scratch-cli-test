@@ -330,6 +330,7 @@ export function PublishChangesModal({
 }: PublishChangesModalProps) {
   const planningSessionIdRef = useRef<string | null>(null);
   const pollingIntervalRef = useRef<number | null>(null);
+  const loggedCompleteJobIdsRef = useRef<Set<string>>(new Set());
   const [mode, setMode] = useState<PublishMode>('approval');
   const [initializing, setInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -512,13 +513,34 @@ export function PublishChangesModal({
         return;
       }
 
+      loggedCompleteJobIdsRef.current = new Set();
+      if (localPath) {
+        const aggregateSummary = plans.reduce(
+          (acc, plan) => ({
+            edit: acc.edit + plan.summary.edit,
+            create: acc.create + plan.summary.create,
+            delete: acc.delete + plan.summary.delete,
+            backfill: acc.backfill + plan.summary.backfill,
+            rename: acc.rename + plan.summary.rename,
+          }),
+          { edit: 0, create: 0, delete: 0, backfill: 0, rename: 0 },
+        );
+        const tables = Array.from(new Set(plans.flatMap((plan) => plan.tablePaths)));
+        window.scratchDesktop.logPublishJob(localPath, {
+          event: 'start',
+          jobIds: result.jobIds,
+          tables,
+          plans: plans.length,
+          summary: aggregateSummary,
+        });
+      }
       setJobIds(result.jobIds);
     } catch (err) {
       setPublishing(false);
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to trigger publish-from-git');
     }
-  }, [localPath]);
+  }, [localPath, plans]);
 
   useEffect(() => {
     if (!opened) {
@@ -604,6 +626,36 @@ export function PublishChangesModal({
           (jobId) => byId.get(jobId) ?? { bullJobId: jobId, state: 'created' as const, type: 'publish-from-git' },
         );
         setJobs(hydrated);
+
+        if (localPath) {
+          for (const job of hydrated) {
+            const jobId = job.bullJobId ?? '';
+            if (!jobId || !isTerminalState(job.state) || loggedCompleteJobIdsRef.current.has(jobId)) {
+              continue;
+            }
+            loggedCompleteJobIdsRef.current.add(jobId);
+            const failed = job.state !== 'completed' || hasPublishFailures(job);
+            const progress = job.publicProgress as PublishFromGitProgress | undefined;
+            const summary = progress
+              ? {
+                  edit: progress.editsPlanned ?? 0,
+                  create: progress.createsPlanned ?? 0,
+                  delete: progress.deletesPlanned ?? 0,
+                  backfill: progress.backfillsPlanned ?? 0,
+                  rename: progress.renameFilesPlanned ?? 0,
+                }
+              : undefined;
+            window.scratchDesktop.logPublishJob(localPath, {
+              event: 'complete',
+              jobId,
+              state: job.state,
+              successCount: progress?.successCount,
+              failedCount: progress?.failedCount,
+              summary,
+              errorSummary: failed ? getPublishFailureMessage(job) : undefined,
+            });
+          }
+        }
 
         if (hydrated.every((job) => isTerminalState(job.state))) {
           if (pollingIntervalRef.current !== null) {

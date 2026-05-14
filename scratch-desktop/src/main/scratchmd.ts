@@ -17,7 +17,9 @@ import { randomUUID } from 'crypto';
 import { app } from 'electron';
 import { readdir, readFile, rm } from 'fs/promises';
 import { join, relative, resolve } from 'path';
+import { performance } from 'perf_hooks';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
+import { logCliCommand } from './workspace-logger';
 
 // ── Types ──
 
@@ -84,6 +86,7 @@ export function runScratchmdCapture(
   return new Promise((resolve, reject) => {
     const binary = getScratchmdBinaryPath();
     console.log('Running scratchmd command', binary, args);
+    const startedAt = performance.now();
     const child = spawn(binary, args, {
       cwd,
       env: process.env,
@@ -115,6 +118,12 @@ export function runScratchmdCapture(
     });
 
     child.on('error', (error: NodeJS.ErrnoException) => {
+      logCliCommand(cwd, {
+        args,
+        exitCode: -1,
+        durationMs: performance.now() - startedAt,
+        errorSummary: error.message,
+      });
       if (error.code === 'ENOENT') {
         const hint = app.isPackaged
           ? `Bundled scratchmd binary missing — app may be corrupted. Expected path: ${binary}`
@@ -126,7 +135,14 @@ export function runScratchmdCapture(
     });
 
     child.on('close', (code) => {
-      resolve({ stdout, stderr, exitCode: code ?? -1 });
+      const exitCode = code ?? -1;
+      logCliCommand(cwd, {
+        args,
+        exitCode,
+        durationMs: performance.now() - startedAt,
+        errorSummary: exitCode === 0 ? undefined : stderr.trim() || stdout.trim() || undefined,
+      });
+      resolve({ stdout, stderr, exitCode });
     });
   });
 }
@@ -285,6 +301,8 @@ export function startScratchmdLiveCommand(
     };
 
     const binary = getScratchmdBinaryPath();
+    const startedAt = performance.now();
+    let stderrBuf = '';
     const child = spawn(binary, args, {
       cwd,
       env: process.env,
@@ -300,11 +318,19 @@ export function startScratchmdLiveCommand(
     });
 
     child.stderr.on('data', (chunk: Buffer | string) => {
-      emit({ type: 'chunk', stream: 'stderr', chunk: chunk.toString() });
+      const text = chunk.toString();
+      stderrBuf += text;
+      emit({ type: 'chunk', stream: 'stderr', chunk: text });
     });
 
     child.on('error', (error: NodeJS.ErrnoException) => {
       options?.onExit?.();
+      logCliCommand(cwd, {
+        args,
+        exitCode: -1,
+        durationMs: performance.now() - startedAt,
+        errorSummary: error.message,
+      });
       const message =
         error.code === 'ENOENT'
           ? app.isPackaged
@@ -316,7 +342,14 @@ export function startScratchmdLiveCommand(
 
     child.on('close', (code) => {
       options?.onExit?.();
-      emitExit(code ?? -1);
+      const exitCode = code ?? -1;
+      logCliCommand(cwd, {
+        args,
+        exitCode,
+        durationMs: performance.now() - startedAt,
+        errorSummary: exitCode === 0 ? undefined : stderrBuf.trim() || undefined,
+      });
+      emitExit(exitCode);
     });
   });
 }
@@ -354,6 +387,8 @@ export function startScratchmdLiveSequence(
     const runStep = (): void => {
       const step = steps[stepIndex];
       const header = `\n$ scratchmd ${step.label}\n`;
+      const stepStartedAt = performance.now();
+      let stepStderrBuf = '';
 
       const child = spawn(binary, step.args, {
         cwd,
@@ -374,10 +409,18 @@ export function startScratchmdLiveSequence(
       });
 
       child.stderr.on('data', (chunk: Buffer | string) => {
-        emitChunk(chunk.toString(), 'stderr');
+        const text = chunk.toString();
+        stepStderrBuf += text;
+        emitChunk(text, 'stderr');
       });
 
       child.on('error', (error: NodeJS.ErrnoException) => {
+        logCliCommand(cwd, {
+          args: step.args,
+          exitCode: -1,
+          durationMs: performance.now() - stepStartedAt,
+          errorSummary: error.message,
+        });
         const message =
           error.code === 'ENOENT'
             ? app.isPackaged
@@ -394,9 +437,16 @@ export function startScratchmdLiveSequence(
       });
 
       child.on('close', (code) => {
-        if ((code ?? -1) !== 0) {
+        const exitCode = code ?? -1;
+        logCliCommand(cwd, {
+          args: step.args,
+          exitCode,
+          durationMs: performance.now() - stepStartedAt,
+          errorSummary: exitCode === 0 ? undefined : stepStderrBuf.trim() || undefined,
+        });
+        if (exitCode !== 0) {
           options?.onExit?.();
-          emitExit(code ?? -1);
+          emitExit(exitCode);
           return;
         }
 

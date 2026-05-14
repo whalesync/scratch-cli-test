@@ -120,6 +120,7 @@ interface ScratchDesktopAPI {
   pullAllLinkedTables: (workspacePath: string) => Promise<{ jobIds: string[] }>;
   showInFolder: (folderPath: string) => Promise<void>;
   showItemInFolder: (filePath: string) => Promise<void>;
+  showWorkspaceLog: (workspacePath: string) => Promise<void>;
   showNativeContextMenu: (
     items: Array<{
       id: string;
@@ -133,6 +134,31 @@ interface ScratchDesktopAPI {
   openInTerminal: (folderPath: string) => Promise<void>;
   toggleDevTools: () => Promise<void>;
   getAppVersion: () => Promise<string>;
+  logApiCall: (
+    workspacePath: string,
+    entry: { method: string; url: string; status?: number; durationMs: number; errorSummary?: string },
+  ) => void;
+  logSession: (workspacePath: string, event: 'start' | 'end') => void;
+  logPublishJob: (
+    workspacePath: string,
+    entry:
+      | {
+          event: 'start';
+          jobIds: string[];
+          tables: string[];
+          plans: number;
+          summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
+        }
+      | {
+          event: 'complete';
+          jobId: string;
+          state: string;
+          successCount?: number;
+          failedCount?: number;
+          summary?: { edit: number; create: number; delete: number; backfill: number; rename: number };
+          errorSummary?: string;
+        },
+  ) => void;
   watchWorkspaceFiles: (workspacePath: string) => Promise<string[]>;
   clearWorkspaceFileWatch: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;

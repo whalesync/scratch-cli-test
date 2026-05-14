@@ -58,6 +58,14 @@ import {
 import { initAutoUpdater } from './updater';
 import { attachWindowStatePersistence, getRestoredWindowState } from './window-state';
 import { WorkspaceFileWatchService } from './workspace-file-watch';
+import {
+  logApiCall,
+  logPublishJob,
+  logSession,
+  type ApiLogEntry,
+  type PublishJobEntry,
+  type SessionEvent,
+} from './workspace-logger';
 
 const appStartTime = performance.now();
 
@@ -670,6 +678,15 @@ ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
 ipcMain.handle('scratch:show-item-in-folder', (_, filePath: string) => {
   shell.showItemInFolder(filePath);
 });
+ipcMain.handle('scratch:show-workspace-log', async (_, workspacePath: string) => {
+  const logPath = join(workspacePath, 'workspace.log');
+  try {
+    await stat(logPath);
+    shell.showItemInFolder(logPath);
+  } catch {
+    void shell.openPath(workspacePath);
+  }
+});
 ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
   spawn('open', ['-a', 'Terminal', folderPath], { stdio: 'ignore', detached: true }).unref();
 });
@@ -959,6 +976,22 @@ ipcMain.handle('files:reject-field-changes', async (_, folderPath: string, works
     return result;
   }),
 );
+
+ipcMain.on('scratch:log-api-call', (_event, workspacePath: string, entry: ApiLogEntry) => {
+  if (typeof workspacePath !== 'string' || !workspacePath) return;
+  logApiCall(workspacePath, entry);
+});
+
+ipcMain.on('scratch:log-session', (_event, workspacePath: string, event: SessionEvent) => {
+  if (typeof workspacePath !== 'string' || !workspacePath) return;
+  if (event !== 'start' && event !== 'end') return;
+  logSession(workspacePath, event);
+});
+
+ipcMain.on('scratch:log-publish-job', (_event, workspacePath: string, entry: PublishJobEntry) => {
+  if (typeof workspacePath !== 'string' || !workspacePath) return;
+  logPublishJob(workspacePath, entry);
+});
 
 void app.whenReady().then(() => {
   if (!gotTheLock) {
