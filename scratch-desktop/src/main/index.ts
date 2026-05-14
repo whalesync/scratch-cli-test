@@ -422,6 +422,38 @@ async function withWorkspaceInternalMutation<T>(workspacePath: string, action: (
   }
 }
 
+// Per-(workspace, connection) async queue for folder-index reads. The CLI stores one SQLite
+// file per connection (workspace/.repos/{conn}.db), so two concurrent paginate-records calls
+// against any folders within the same connection race on the same DB. During a large lazy
+// reindex this surfaces as "database is locked". Serialize same-DB calls; different DBs still
+// run in parallel.
+const folderIndexQueues = new Map<string, Promise<unknown>>();
+
+function folderIndexQueueKey(workspacePath: string, folderPath: string): string {
+  const rel = relative(workspacePath, folderPath).replace(/^[/\\]+/, '');
+  const conn = rel.split(/[/\\]/)[0] || rel;
+  return `${workspacePath}::${conn}`;
+}
+
+async function withFolderIndexQueue<T>(
+  workspacePath: string,
+  folderPath: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const key = folderIndexQueueKey(workspacePath, folderPath);
+  const previous = folderIndexQueues.get(key) ?? Promise.resolve();
+  // Swallow the previous result/error so a single failure doesn't poison the queue for later calls.
+  const next = previous.catch(() => undefined).then(() => action());
+  folderIndexQueues.set(key, next);
+  try {
+    return await next;
+  } finally {
+    if (folderIndexQueues.get(key) === next) {
+      folderIndexQueues.delete(key);
+    }
+  }
+}
+
 async function withFilePathInternalMutation<T>(filePath: string, action: () => Promise<T>): Promise<T> {
   const workspacePath = await findWorkspaceRootForPath(filePath);
   if (!workspacePath) {
@@ -887,13 +919,15 @@ ipcMain.handle(
       validate?: boolean;
     },
   ) => {
-    const fn = process.env.SCRATCH_USE_SQLITE_GRID === '0' ? readDiffGridDataPage : readDiffGridDataPageV2;
-    const onProgress = (line: string): void => {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send('scratch:grid-progress', line);
-      }
-    };
-    return fn(folderPath, workspacePath, opts ?? {}, onProgress);
+    return withFolderIndexQueue(workspacePath, folderPath, async () => {
+      const fn = process.env.SCRATCH_USE_SQLITE_GRID === '0' ? readDiffGridDataPage : readDiffGridDataPageV2;
+      const onProgress = (line: string): void => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('scratch:grid-progress', line);
+        }
+      };
+      return fn(folderPath, workspacePath, opts ?? {}, onProgress);
+    });
   },
 );
 ipcMain.handle('files:read-diff-record-data', async (_, folderPath: string, workspacePath: string, filename: string) =>

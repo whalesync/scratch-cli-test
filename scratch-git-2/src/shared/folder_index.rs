@@ -2074,6 +2074,9 @@ pub fn reindex_files(
     if filenames.is_empty() {
         return Ok(());
     }
+    // Up-front signal so callers (e.g. the desktop app) can react before the first
+    // batch finishes — the per-batch progress below only fires every 1000 files.
+    eprintln!("[reindex] Reindexing {} file(s)...", filenames.len());
     let db_path = resolve_db_path(workspace, folder, db_path_override);
     let paths = resolve_folder_paths(workspace, folder);
     let table = table_name_from_folder(folder);
@@ -2345,6 +2348,13 @@ pub fn reindex_files_columns(
     if active_cols.is_empty() {
         return Ok(());
     }
+
+    // Up-front signal so callers (e.g. the desktop app) can react before the first
+    // batch finishes — the per-batch progress below only fires every 1000 files.
+    eprintln!(
+        "[reindex] Reindexing {} column value(s)...",
+        filenames.len()
+    );
 
     let tq = quote_ident(&table);
     let total = filenames.len();

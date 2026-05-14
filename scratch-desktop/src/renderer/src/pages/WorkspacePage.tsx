@@ -1,9 +1,9 @@
-import { Alert, Box, Center, Loader, Modal, Stack } from '@mantine/core';
+import { Alert, Box, Center, Group, Loader, Modal, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
-import { Text13Regular } from '../components/base/text';
+import { Text13Regular, TextMono12Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { API_CONFIG } from '../lib/api';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
@@ -53,6 +53,9 @@ export function WorkspacePage() {
   const gridFilterTriggerRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState(false);
+  // Non-null while a folder index is being rebuilt; drives the blocking modal that
+  // prevents the user from triggering a second parallel reindex by switching folders.
+  const [indexingProgress, setIndexingProgress] = useState<string | null>(null);
 
   const focusSyncBootAtRef = useRef(0);
   const lastFocusSyncAtRef = useRef(0);
@@ -370,6 +373,25 @@ export function WorkspacePage() {
   return (
     <Box h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
       <Modal
+        opened={indexingProgress !== null}
+        onClose={() => undefined}
+        title="Building folder index"
+        centered
+        closeOnClickOutside={false}
+        closeOnEscape={false}
+        withCloseButton={false}
+      >
+        <Stack gap="md">
+          <Group gap="sm" wrap="nowrap">
+            <Loader size="sm" />
+            <Text13Regular c="dimmed">
+              Rebuilding the index for this folder. This usually takes a few seconds.
+            </Text13Regular>
+          </Group>
+          {indexingProgress && <TextMono12Regular c="dimmed">{indexingProgress}</TextMono12Regular>}
+        </Stack>
+      </Modal>
+      <Modal
         opened={localWorkspaceMissingModalOpen}
         onClose={() => undefined}
         title="Local workspace not found"
@@ -460,6 +482,7 @@ export function WorkspacePage() {
         activateGlobalFilter={gridFilterActivation}
         onActivateGlobalFilterConsumed={() => setGridFilterActivation(null)}
         validateEnabled={validateEnabled}
+        onIndexingProgress={setIndexingProgress}
       />
     </Box>
   );

@@ -151,6 +151,11 @@ interface FolderDataGridProps {
   onActivateGlobalFilterConsumed?: () => void;
   /** When true, paginate-records will run validators on stale records for the current page. */
   validate?: boolean;
+  /**
+   * Fires with the latest progress message while a full folder reindex is running, and with `null`
+   * when the reindex finishes. Lets the parent block UI to prevent overlapping reindex requests.
+   */
+  onIndexingProgress?: (message: string | null) => void;
 }
 
 type GridLoadMode = 'idle' | 'blocking' | 'refreshing';
@@ -915,10 +920,33 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       return;
     }
     return window.scratchDesktop.onGridProgress((line) => {
-      const match = /^\[\w+\]\s*(.+)/.exec(line);
-      setIndexingProgress(match ? match[1] : line);
+      // Two signals open / update the modal:
+      //   1. "[reindex] Reindexing N file(s)..." — the up-front start signal — but only when
+      //      N > 1000. Below that the reindex completes within a single batch (faster than the
+      //      modal would be useful), so we'd just flash the modal for nothing.
+      //   2. Any per-batch progress line containing a "done/total" fraction — keeps the modal
+      //      message updating once a long reindex is underway.
+      const startMatch = /^\[reindex\]\s+Reindexing\s+(\d+)/.exec(line);
+      if (startMatch) {
+        if (parseInt(startMatch[1], 10) > 1000) {
+          setIndexingProgress(line.replace(/^\[\w+\]\s*/, ''));
+        }
+        return;
+      }
+      if (/\d+\/\d+/.test(line)) {
+        setIndexingProgress(line.replace(/^\[\w+\]\s*/, ''));
+      }
     });
   }, [isBlockingLoad]);
+
+  // Surface indexing state to the parent so it can block the workspace UI while a full
+  // reindex is running (prevents the user from queuing a second parallel reindex by
+  // switching folders mid-reindex).
+  const onIndexingProgressRef = useRef(props.onIndexingProgress);
+  onIndexingProgressRef.current = props.onIndexingProgress;
+  useEffect(() => {
+    onIndexingProgressRef.current?.(indexingProgress);
+  }, [indexingProgress]);
 
   const validateRef = useRef(validate);
   validateRef.current = validate;
