@@ -335,6 +335,26 @@ build and test scratch-desktop:
 # MISC
 # =============================================================================
 
+# Same Slack channel / format as desktop 'release started' + deploy notifications
+# (scratch-desktop/.gitlab-ci-release.yml, 05-deploy.yml). Runs in this stage
+# so the team sees prod builds as soon as build-and-test work begins.
+.notify_slack_prod_release_pipeline_started:
+  stage: build and test
+  allow_failure: true
+  dependencies: []
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"${SLACK_PROD_PIPELINE_STARTED_PREFIX} Scratch production release build started — ${CI_COMMIT_SHORT_SHA}\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
+      "${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}"
+
+notify slack prod release pipeline started:
+  extends: .notify_slack_prod_release_pipeline_started
+  variables:
+    SLACK_PROD_PIPELINE_STARTED_PREFIX: '🚀'
+  rules:
+    - !reference [.rules, on_merge_to_prod]
+
 # ⚠️  DO NOT set the dummy job to `when: manual`. Vanta requires a pipeline to
 # run and pass before every MR is merged. A manual job is too easy to skip,
 # which would violate that compliance requirement.
