@@ -1,7 +1,7 @@
 # Move Scratch Desktop Releases to a Dedicated GitHub Repo
 
 **Date**: 2026-05-04
-**Status**: Proposed
+**Status**: Implemented
 **Scope**: [scratch-desktop/](../../scratch-desktop/) release pipeline + updater + server/client consumers + Homebrew tap
 
 ## Goal
