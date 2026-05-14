@@ -454,11 +454,33 @@ Finalize test release:
   rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 # -----------------------------------------------------------------------------
-# SLACK — notify when a desktop release is published (after finalize succeeds).
-# NEW_VERSION comes from bootstrap’s dotenv report — do not use dependencies: []
-# here; GitLab treats that as blocking all artifact/dotenv downloads, so the tag
-# would be empty in the GitHub URL.
+# SLACK — notify when a desktop release build starts (after bootstrap) and when
+# it is published (after finalize succeeds). NEW_VERSION comes from bootstrap’s
+# dotenv report — use needs: bootstrap with artifacts: true (do not use
+# dependencies: [] here; GitLab treats that as blocking all artifact/dotenv
+# downloads, so variables like NEW_VERSION would be empty).
 # -----------------------------------------------------------------------------
+.notify_slack_desktop_release_started:
+  stage: release desktop app
+  allow_failure: true
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"${SLACK_DESKTOP_RELEASE_STARTED_PREFIX} Scratch Desktop ${SLACK_DESKTOP_RELEASE_LABEL} release build started — ${NEW_VERSION}\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
+      "${SLACK_DESKTOP_RELEASE_WEBHOOK_URL}"
+
+Notify slack prod desktop release started:
+  extends: .notify_slack_desktop_release_started
+  variables:
+    SLACK_DESKTOP_RELEASE_LABEL: 'production'
+    SLACK_DESKTOP_RELEASE_STARTED_PREFIX: '🚀'
+    SLACK_DESKTOP_RELEASE_WEBHOOK_URL: $SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL
+  needs:
+    - job: Bootstrap prod desktop release
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "prod"'
+
 .notify_slack_desktop_release_published:
   stage: release desktop app
   allow_failure: true
@@ -466,7 +488,7 @@ Finalize test release:
     - |
       RELEASE_URL="https://github.com/whalesync/scratch-desktop/releases/tag/${NEW_VERSION}"
       curl -X POST -H 'Content-type: application/json' \
-      --data "{\"text\":\"${SLACK_DESKTOP_RELEASE_SLACK_PREFIX} Scratch Desktop ${SLACK_DESKTOP_RELEASE_LABEL} release published\n>${CI_COMMIT_TITLE}\n<${RELEASE_URL}|GitHub Release> | <${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
+      --data "{\"text\":\"${SLACK_DESKTOP_RELEASE_SLACK_PREFIX} Scratch Desktop ${SLACK_DESKTOP_RELEASE_LABEL} release published\n>${CI_COMMIT_TITLE}\n<${RELEASE_URL}|Release ${NEW_VERSION}> | <${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
       "${SLACK_DESKTOP_RELEASE_WEBHOOK_URL}"
 
 Notify slack prod desktop release published:

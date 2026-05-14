@@ -10,8 +10,10 @@ cd "$(dirname "$0")/.."
 # .blockmap files are electron-updater's channel manifest + delta-download
 # integrity layer — without them auto-update can't find or apply releases.
 # If an asset with the same name already exists, delete it first — makes the
-# job idempotent so retries (the only realistic source of duplicate-name
-# contention) succeed cleanly.
+# job idempotent so CI retries succeed cleanly. Platform upload jobs (macOS,
+# Linux, Windows) run in parallel on the same GitHub release; the asset list is
+# fetched once at startup, so another job may delete an asset before we do — a
+# DELETE that returns 404 is treated as success (already absent).
 #
 # Required env (normally propagated via bootstrap's release.env dotenv):
 #   RELEASE_ID, RELEASE_UPLOAD_URL, NEW_VERSION
@@ -50,12 +52,40 @@ EXISTING_ASSETS_JSON=$(curl -sS --fail-with-body -H "Authorization: token $GITHU
 delete_asset_if_exists() {
   local fname=$1
   local asset_id
+  local attempt=1
+  local max_attempts=5
+  local http_code
   asset_id=$(echo "$EXISTING_ASSETS_JSON" | jq -r --arg n "$fname" '.[] | select(.name == $n) | .id // empty')
-  if [ -n "$asset_id" ]; then
-    echo "  Deleting pre-existing asset $fname (id=$asset_id)..."
-    curl -sS --fail-with-body -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-      "https://api.github.com/repos/${GITHUB_REPO}/releases/assets/${asset_id}"
+  if [ -z "$asset_id" ]; then
+    return 0
   fi
+  echo "  Deleting pre-existing asset $fname (id=$asset_id)..."
+  while [ $attempt -le $max_attempts ]; do
+    http_code=$(curl -sS -o /tmp/delete_asset_body -w "%{http_code}" -X DELETE \
+      -H "Authorization: token $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github.v3+json" \
+      "https://api.github.com/repos/${GITHUB_REPO}/releases/assets/${asset_id}") || http_code="000"
+
+    # 204 = deleted; 404 = already gone (e.g. parallel upload job deleted same name, or stale id from snapshot).
+    if [ "$http_code" = "204" ] || [ "$http_code" = "200" ] || [ "$http_code" = "404" ]; then
+      return 0
+    fi
+
+    if [ "$http_code" = "429" ] || [ "$http_code" -ge 500 ] || [ "$http_code" = "000" ]; then
+      echo "  Delete attempt $attempt failed with HTTP $http_code; retrying..."
+      sleep $((attempt * 3))
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    echo "  Delete failed with HTTP $http_code (non-retryable). Response body:"
+    cat /tmp/delete_asset_body
+    return 1
+  done
+
+  echo "  Delete failed after $max_attempts attempts. Last response body:"
+  cat /tmp/delete_asset_body
+  return 1
 }
 
 upload_with_retry() {
@@ -80,11 +110,13 @@ upload_with_retry() {
       return 0
     fi
 
-    # Retry on 5xx and transport failure (000); bail on 4xx.
-    if [ "$http_code" -lt 500 ] && [ "$http_code" != "000" ]; then
-      echo "  Upload failed with HTTP $http_code (non-retryable). Response body:"
-      cat /tmp/upload_body
-      return 1
+    # Retry on 5xx, rate limit (429), and transport failure (000); bail on other 4xx.
+    if [ "$http_code" != "429" ]; then
+      if [ "$http_code" -lt 500 ] && [ "$http_code" != "000" ]; then
+        echo "  Upload failed with HTTP $http_code (non-retryable). Response body:"
+        cat /tmp/upload_body
+        return 1
+      fi
     fi
 
     echo "  Upload attempt $attempt failed with HTTP $http_code; retrying..."
