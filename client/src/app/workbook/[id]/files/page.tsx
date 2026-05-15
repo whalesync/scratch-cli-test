@@ -1,14 +1,8 @@
 'use client';
 
 import { ButtonPrimarySolid, ButtonSecondaryOutline } from '@/app/components/base/buttons';
-import {
-  Text12Regular,
-  Text13Medium,
-  Text13Regular,
-  Text16Medium,
-  Text16Regular,
-  TextTitle2,
-} from '@/app/components/base/text';
+import { Text13Medium, Text13Regular, Text16Medium, Text16Regular } from '@/app/components/base/text';
+import { DesktopDownloadCTA } from '@/app/components/DesktopDownloadCTA';
 import { DecorativeBoxedIcon } from '@/app/components/Icons/DecorativeBoxedIcon';
 import customBordersClasses from '@/app/components/theme/custom-borders.module.css';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
@@ -288,6 +282,80 @@ function CLIWorkflowSection({ workbookId }: { workbookId: WorkbookId }) {
   );
 }
 
+function AgentWorkflowSection() {
+  return (
+    <CollapsibleSection label="Tell your agent about Scratch">
+      <Stack gap="sm" pt="lg">
+        <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
+          <Group gap="md" wrap="nowrap" align="center">
+            <DecorativeBoxedIcon Icon={SparklesIcon} size="sm" c={GREEN} />
+            <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+              <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
+                Step 1: Download API Key
+              </Text13Medium>
+              <Text13Regular c="var(--fg-secondary)">
+                Your agent needs this key to authenticate with Scratch.
+              </Text13Regular>
+            </Stack>
+            <Box style={{ flexShrink: 0 }}>
+              <DownloadApiKeyButton />
+            </Box>
+          </Group>
+        </Box>
+
+        <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
+          <Group gap="md" wrap="nowrap" align="start">
+            <Box pt={2}>
+              <DecorativeBoxedIcon Icon={ShieldCheckIcon} size="sm" c={GREEN} />
+            </Box>
+            <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+              <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
+                Step 2 (Optional): Allow scratch.md in Claude
+              </Text13Medium>
+              <Text13Regular c="var(--fg-secondary)">
+                If you use Claude, add scratch.md to its allowed domains so it can read your content directly.
+              </Text13Regular>
+              <Stack gap={2} pt={4}>
+                <Text13Regular c="var(--fg-secondary)">
+                  1. Go to{' '}
+                  <Anchor href="https://claude.ai/settings/capabilities" target="_blank" c={GREEN} size="sm">
+                    claude.ai/settings/capabilities
+                  </Anchor>
+                </Text13Regular>
+                <Text13Regular c="var(--fg-secondary)">{`2. Find "Additional allowed domains"`}</Text13Regular>
+                <Text13Regular c="var(--fg-secondary)">
+                  {'3. Type '}
+                  <Code>*.scratch.md</Code>
+                  {' and click "Add"'}
+                </Text13Regular>
+              </Stack>
+            </Stack>
+          </Group>
+        </Box>
+
+        <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
+          <Group gap="md" wrap="nowrap" align="center">
+            <DecorativeBoxedIcon Icon={LinkIcon} size="sm" c={GREEN} />
+            <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+              <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
+                Step 3: Tell your AI agent to look at this
+              </Text13Medium>
+              <Text13Regular c="var(--fg-secondary)">
+                Copy this into your AI agent (e.g. Claude Code, Cursor). It will figure out the rest.
+              </Text13Regular>
+              <Box pt={4}>
+                <CommandBlock
+                  command={`I use a content platform called Scratch. Please read the full contents of ${DISCOVER_URL} (e.g. using \`curl\` or equivalent, not a summary via something like WebFetch). It includes helpful guidance on what to do next. Then help me explore my content and what I can do.`}
+                />
+              </Box>
+            </Stack>
+          </Group>
+        </Box>
+      </Stack>
+    </CollapsibleSection>
+  );
+}
+
 /**
  * Files tab with no file selected - shows empty state
  */
@@ -303,85 +371,11 @@ export default function FilesPage() {
   return (
     <>
       <Box h="100%" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto' }}>
-        <Stack gap="xl" maw={640} px="xl" py="xl">
-          <Stack gap="xs">
-            <Text12Regular c={GREEN} style={{ textTransform: 'uppercase' }}>
-              {'// GET STARTED'}
-            </Text12Regular>
-            <TextTitle2>
-              Connect your local AI agent <span style={{ color: GREEN }}>to your content.</span>
-            </TextTitle2>
-          </Stack>
+        <Stack gap="xl" maw={640} px="xl" py="xl" align="center" w="100%">
+          <DesktopDownloadCTA eyebrow="// GET STARTED" />
 
-          <Stack gap="sm">
-            <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
-              <Group gap="md" wrap="nowrap" align="center">
-                <DecorativeBoxedIcon Icon={SparklesIcon} size="sm" c={GREEN} />
-                <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                  <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
-                    Step 1: Download API Key
-                  </Text13Medium>
-                  <Text13Regular c="var(--fg-secondary)">
-                    Your agent needs this key to authenticate with Scratch.
-                  </Text13Regular>
-                </Stack>
-                <Box style={{ flexShrink: 0 }}>
-                  <DownloadApiKeyButton />
-                </Box>
-              </Group>
-            </Box>
-
-            <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
-              <Group gap="md" wrap="nowrap" align="start">
-                <Box pt={2}>
-                  <DecorativeBoxedIcon Icon={ShieldCheckIcon} size="sm" c={GREEN} />
-                </Box>
-                <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                  <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
-                    Step 2 (Optional): Allow scratch.md in Claude
-                  </Text13Medium>
-                  <Text13Regular c="var(--fg-secondary)">
-                    If you use Claude, add scratch.md to its allowed domains so it can read your content directly.
-                  </Text13Regular>
-                  <Stack gap={2} pt={4}>
-                    <Text13Regular c="var(--fg-secondary)">
-                      1. Go to{' '}
-                      <Anchor href="https://claude.ai/settings/capabilities" target="_blank" c={GREEN} size="sm">
-                        claude.ai/settings/capabilities
-                      </Anchor>
-                    </Text13Regular>
-                    <Text13Regular c="var(--fg-secondary)">{`2. Find "Additional allowed domains"`}</Text13Regular>
-                    <Text13Regular c="var(--fg-secondary)">
-                      {'3. Type '}
-                      <Code>*.scratch.md</Code>
-                      {' and click "Add"'}
-                    </Text13Regular>
-                  </Stack>
-                </Stack>
-              </Group>
-            </Box>
-
-            <Box className={customBordersClasses.cornerBorders} c="var(--fg-muted)" p="md">
-              <Group gap="md" wrap="nowrap" align="center">
-                <DecorativeBoxedIcon Icon={LinkIcon} size="sm" c={GREEN} />
-                <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                  <Text13Medium c={GREEN} style={{ textTransform: 'uppercase' }}>
-                    Step 3: Tell your AI agent to look at this
-                  </Text13Medium>
-                  <Text13Regular c="var(--fg-secondary)">
-                    Copy this into your AI agent (e.g. Claude Code, Cursor). It will figure out the rest.
-                  </Text13Regular>
-                  <Box pt={4}>
-                    <CommandBlock
-                      command={`I use a content platform called Scratch. Please read the full contents of ${DISCOVER_URL} (e.g. using \`curl\` or equivalent, not a summary via something like WebFetch). It includes helpful guidance on what to do next. Then help me explore my content and what I can do.`}
-                    />
-                  </Box>
-                </Stack>
-              </Group>
-            </Box>
-          </Stack>
-
-          <Stack gap="xs">
+          <Stack gap="xs" w="100%" mt="xl">
+            <AgentWorkflowSection />
             {!hasConnections && <ManualConnectSection services={services} openConnectionModal={openConnectionModal} />}
             <CLIWorkflowSection workbookId={workbookId} />
           </Stack>

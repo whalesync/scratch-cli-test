@@ -32,6 +32,7 @@ export class RouteUrls {
   // Authenticated Routes & Route Generators
   static homePageUrl = '/'; // Root page handles redirect to workbook
   static healthPageUrl = '/health';
+  static workbookPickerPageUrl = '/workbook'; // Always renders the workspace picker
   static workbookPageUrl = (id: string) => `/workbook/${id}`;
   static workbookFilesPageUrl = (id: string) => `/workbook/${id}/files`;
   static workbookFilesFileUrl = (id: string, filePath: string) => {

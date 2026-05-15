@@ -4,7 +4,6 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { DeleteConfirmDialog, useDeleteConfirmDialog } from '@/app/components/modals/DeleteConfirmDialog';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { usersApi } from '@/lib/api/users';
 import { workbookApi } from '@/lib/api/workbook';
 import { trackDeleteWorkbook } from '@/lib/posthog';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
@@ -101,9 +100,8 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
         try {
           trackDeleteWorkbook(workbookId);
           await workbookApi.delete(workbookId);
-          await usersApi.updateLastWorkbook(null);
           await mutate(() => true, undefined, { revalidate: false });
-          router.push(RouteUrls.homePageUrl);
+          router.push(RouteUrls.workbookPickerPageUrl);
         } catch (e) {
           notifications.show({
             title: 'Error',

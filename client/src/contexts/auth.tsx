@@ -4,7 +4,6 @@ import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { API_CONFIG } from '@/lib/api/config';
 import { trackUserSignIn } from '@/lib/posthog';
-import { isExperimentEnabled } from '@/types/server-entities/users';
 import { RouteUrls } from '@/utils/route-urls';
 import { useAuth, useUser } from '@clerk/nextjs';
 import { usePathname, useRouter } from 'next/navigation';
@@ -30,12 +29,10 @@ export const ScratchPadUserProvider = ({ children }: { children: ReactNode }): J
   const isReady = !scratchPadUser.isLoading && !!scratchPadUser.user;
   const user = scratchPadUser.user;
 
-  const desktopFocused = isExperimentEnabled('SHOW_DESKTOP_FOCUSED_UI', user ?? null);
-
   const needsRedirect =
     isReady &&
     ((!user!.waitlistApproved && pathname !== RouteUrls.waitlistPageUrl) ||
-      (!desktopFocused && pathname === RouteUrls.homePageUrl && !!user!.lastWorkbookId));
+      pathname === RouteUrls.homePageUrl);
 
   useEffect(() => {
     if (!isReady || !user) return;
@@ -45,11 +42,15 @@ export const ScratchPadUserProvider = ({ children }: { children: ReactNode }): J
       return;
     }
 
-    // Skip auto-redirect for desktop-focused users so they see the landing page
-    if (!desktopFocused && pathname === RouteUrls.homePageUrl && user.lastWorkbookId) {
-      router.replace(RouteUrls.workbookFilesPageUrl(user.lastWorkbookId));
+    // `/` routes to the user's last workbook (if any), else the picker.
+    if (pathname === RouteUrls.homePageUrl) {
+      if (user.lastWorkbookId) {
+        router.replace(RouteUrls.workbookFilesPageUrl(user.lastWorkbookId));
+      } else {
+        router.replace(RouteUrls.workbookPickerPageUrl);
+      }
     }
-  }, [isReady, user, pathname, router, desktopFocused]);
+  }, [isReady, user, pathname, router]);
 
   if (!isReady || needsRedirect) {
     return <FullPageLoader />;
