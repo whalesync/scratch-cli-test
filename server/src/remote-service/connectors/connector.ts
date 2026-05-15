@@ -123,14 +123,16 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   /**
    * Whether this connector can answer "what changed since X?" for a given folder.
    * The default returns `false` — connectors whose remote API supports a modified-since
-   * (or change-token) endpoint override this to return `true`. Some connectors need to
-   * inspect per-folder configuration (e.g. a user-declared `modifiedAtField`), which is
-   * why `options` is passed in.
+   * (or change-token) endpoint override this to return `true`. Connectors may inspect
+   * per-folder configuration (e.g. a user-declared `modifiedAtField` on `options`) or
+   * the table schema (e.g. an auto-detected last-modified field annotated with
+   * `X_SCRATCH_LAST_MODIFIED_FIELD`), which is why both `options` and `tableSpec` are
+   * passed in.
    *
    * The job consults this flag before issuing an incremental pull; folders backed by
    * connectors that return `false` are silently demoted to a full scan.
    */
-  supportsIncrementalPull(options: PullRecordFilesOptions): boolean {
+  supportsIncrementalPull(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
     return false;
   }
 

@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient, UserRole } from '@prisma/client';
 import {
   DataFolderId,
   type DataFolderOptions,
@@ -6,11 +6,14 @@ import {
   JobType,
   type WorkbookId,
 } from '@spinner/shared-types';
+import type { ExperimentsService } from '../../../experiments/experiments.service';
+import { UserFlag } from '../../../experiments/flags';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import {
   type BaseJsonTableSpec,
   type ConnectorFile,
   idPath,
+  type PullRecordFilesOptions,
   readRecordIdAsString,
 } from '../../../remote-service/connectors/types';
 import type { JsonSafeObject } from '../../../utils/objects';
@@ -29,7 +32,7 @@ import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.serv
 import { JobCanceledError } from 'src/worker/job-errors';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
-import { type BuiltFile, buildGitFilesFromConnectorFiles } from './connector-file-utils';
+import { buildGitFilesFromConnectorFiles, type BuiltFile } from './connector-file-utils';
 
 export type PullLinkedFolderFilesPublicProgress = {
   totalFiles: number;
@@ -40,6 +43,13 @@ export type PullLinkedFolderFilesPublicProgress = {
   connector: string;
   filter: string | null;
   status: 'pending' | 'active' | 'completed' | 'failed';
+  /**
+   * Effective pull mode for the current folder. Set when a folder's resolution
+   * finishes in Phase 1 and updated per-folder as Phase 2 advances. Incremental
+   * requests can demote to full per-folder (capability check, bootstrap,
+   * `fullPullOnly`), so this can differ from the job's requested mode.
+   */
+  mode?: 'full' | 'incremental';
   /** All folder IDs being pulled (multi-folder jobs). */
   dataFolderIds?: string[];
   createdPaths: string[];
@@ -61,6 +71,15 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
     userId: string;
     organizationId: string;
     trigger?: 'web' | 'scheduler' | 'cli' | 'job';
+    /**
+     * Requested pull mode for the job. Omitted → `'full'` (the safe default
+     * matching pre-incremental behavior). Only `'incremental'` is opt-in via
+     * the `INCREMENTAL_PULL` schedule action, the HTTP `mode=incremental`
+     * parameter, or the CLI `--mode incremental` flag. Per-folder demotion to
+     * `'full'` still happens at execution time (capability, bootstrap,
+     * `fullPullOnly`) — see `loadFolderAndConnector`.
+     */
+    pullMode?: 'full' | 'incremental';
     progress?: JsonSafeObject;
     initialPublicProgress?: PullLinkedFolderFilesPublicProgress;
   },
@@ -106,6 +125,18 @@ type FolderContext = {
   connector: Connector;
   tableSpec: BaseJsonTableSpec;
   pullOptions: DataFolderOptions;
+  /**
+   * Pull mode after per-folder resolution: starts from `data.pullMode`, then
+   * demoted to `'full'` if `pullOptions.fullPullOnly`, the connector reports
+   * no incremental support, or `lastIncrementalPullAt` is null (bootstrap).
+   */
+  effectiveMode: 'full' | 'incremental';
+  /** Captured before the connector call so we can persist it as the watermark on success. */
+  pullStartedAt: Date;
+  /** Last-incremental watermark from the previous successful run. Non-null only when `effectiveMode === 'incremental'`. */
+  since: Date | null;
+  /** Connector-opaque cross-run cursor from the previous run. Distinct from mid-run pagination progress. */
+  resumeCursor: JsonSafeObject | null;
 };
 
 /** Result from Phase 1 fetch for a single folder. */
@@ -114,6 +145,10 @@ type FolderFetchResult = {
   pulledPaths: Set<string>;
   fileCount: number;
   isResuming: boolean;
+  /** New watermark returned by the connector (or `pullStartedAt` as fallback) for incremental runs. */
+  newWatermark?: Date;
+  /** New cross-run cursor returned by the connector for incremental runs that use opaque tokens. */
+  newCursor?: JsonSafeObject | null;
 };
 
 /**
@@ -138,6 +173,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     private readonly assetExtractorService: AssetExtractorService,
     private readonly assetIndexService: AssetIndexService,
     private readonly postHogService: PostHogService,
+    private readonly experimentsService: ExperimentsService,
   ) {}
 
   async run(params: {
@@ -152,6 +188,25 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       throw new Error(`Invalid job data: dataFolderIds is ${JSON.stringify(data?.dataFolderIds)}`);
     }
     const folderCount = data.dataFolderIds.length;
+
+    // Kill switch: incremental polling is gated behind a per-user feature flag.
+    // When the flag is off, force the requested mode to 'full' before any
+    // per-folder resolution. Role is unused by PostHog flag evaluation — the
+    // dummy value is just to satisfy the PartialUser shape on `getBooleanFlag`.
+    const incrementalEnabled = await this.experimentsService.getBooleanFlag(
+      UserFlag.INCREMENTAL_POLLING_ENABLED,
+      false,
+      { id: data.userId, role: UserRole.USER },
+    );
+    const requestedMode: 'full' | 'incremental' = incrementalEnabled ? (data.pullMode ?? 'full') : 'full';
+    if (!incrementalEnabled && data.pullMode === 'incremental') {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: 'Incremental polling kill switch is off — forcing full pull',
+        workbookId: data.workbookId,
+        userId: data.userId,
+      });
+    }
 
     // Fetch all folders upfront to validate they share the same connection
     const folders = await this.prisma.dataFolder.findMany({
@@ -181,7 +236,13 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const failedFolderIds: DataFolderId[] = [];
     for (const dataFolderId of data.dataFolderIds) {
       try {
-        const folderCtx = await this.loadFolderAndConnector({ dataFolderId, repoId, data, jobId });
+        const folderCtx = await this.loadFolderAndConnector({
+          dataFolderId,
+          repoId,
+          data,
+          jobId,
+          requestedMode,
+        });
         folderContexts.push(folderCtx);
       } catch (error) {
         failedFolderIds.push(dataFolderId);
@@ -390,6 +451,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       this.postHogService.trackPullCompleted(data.userId, {
         workbookId: data.workbookId,
         trigger: data.trigger,
+        mode: data.pullMode ?? 'full',
         result: pullStats.failed ? 'failure' : 'success',
         totalFilesPulled: publicProgress.totalFiles,
         filesCreated: pullStats.created,
@@ -415,8 +477,14 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     repoId: string;
     data: PullLinkedFolderFilesJobDefinition['data'];
     jobId: string;
+    /**
+     * Pull mode requested for this job, already gated by the
+     * `INCREMENTAL_POLLING_ENABLED` feature flag at the top of `run()`. Per-folder
+     * demotions (fullPullOnly, capability, bootstrap) apply on top of this.
+     */
+    requestedMode: 'full' | 'incremental';
   }): Promise<FolderContext> {
-    const { dataFolderId, repoId, data, jobId } = params;
+    const { dataFolderId, repoId, data, jobId, requestedMode } = params;
 
     const dataFolder = await this.prisma.dataFolder.findUnique({
       where: { id: dataFolderId },
@@ -478,6 +546,47 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       }
     }
 
+    // ---- Resolve effective pull mode per folder ----
+    // The kill-switch gate has already been applied in `run()` — `requestedMode`
+    // is the post-gate mode. Per-folder demotions stack on top:
+    //   1. `fullPullOnly = true` forces full regardless of trigger.
+    //   2. Connector capability check (passed both options + tableSpec so it
+    //      can consult per-folder config and schema annotations).
+    //   3. Bootstrap: no prior watermark ⇒ run full once so future runs have
+    //      a non-null `lastIncrementalPullAt` to filter from.
+    let effectiveMode: 'full' | 'incremental' = requestedMode;
+    const lastIncrementalPullAt = dataFolder.lastIncrementalPullAt ?? null;
+    const incrementalCursor = (dataFolder.incrementalCursor as JsonSafeObject | null | undefined) ?? null;
+
+    if (effectiveMode === 'incremental' && pullOptions.fullPullOnly === true) {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: 'Demoting incremental pull to full: folder has fullPullOnly=true',
+        workbookId: dataFolder.workbookId,
+        dataFolderId: dataFolder.id,
+      });
+      effectiveMode = 'full';
+    }
+    if (effectiveMode === 'incremental' && !connector.supportsIncrementalPull(pullOptions, tableSpec)) {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: 'Demoting incremental pull to full: connector reports no incremental support for this folder',
+        workbookId: dataFolder.workbookId,
+        dataFolderId: dataFolder.id,
+        connectorService: dataFolder.connectorService,
+      });
+      effectiveMode = 'full';
+    }
+    if (effectiveMode === 'incremental' && lastIncrementalPullAt === null) {
+      WSLogger.info({
+        source: LOG_SOURCE,
+        message: 'Demoting incremental pull to full: bootstrap (no prior watermark)',
+        workbookId: dataFolder.workbookId,
+        dataFolderId: dataFolder.id,
+      });
+      effectiveMode = 'full';
+    }
+
     return {
       jobId,
       dataFolder: {
@@ -492,6 +601,10 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       connector,
       tableSpec,
       pullOptions,
+      effectiveMode,
+      pullStartedAt: new Date(),
+      since: effectiveMode === 'incremental' ? lastIncrementalPullAt : null,
+      resumeCursor: effectiveMode === 'incremental' ? incrementalCursor : null,
     };
   }
 
@@ -634,6 +747,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         // Update publicProgress to show current folder
         publicProgress.folderId = folderCtx.dataFolder.id;
         publicProgress.folderName = folderCtx.dataFolder.name;
+        publicProgress.mode = folderCtx.effectiveMode;
 
         const result = await this.processFolder({
           folderCtx,
@@ -796,9 +910,25 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       },
     });
 
-    await connector.pullRecordFiles(tableSpec, onBatch, resumeProgress, pullOptions);
+    // Build the call-time options bag: persisted folder options + runtime
+    // fields the connector needs to choose its branch.
+    const callOptions: PullRecordFilesOptions = {
+      ...pullOptions,
+      pullMode: folderCtx.effectiveMode,
+      since: folderCtx.effectiveMode === 'incremental' ? folderCtx.since : null,
+      cursor: folderCtx.effectiveMode === 'incremental' ? folderCtx.resumeCursor : null,
+    };
 
-    return { folderId, pulledPaths, fileCount, isResuming };
+    const pullResult = await connector.pullRecordFiles(tableSpec, onBatch, resumeProgress, callOptions);
+
+    // For incremental: prefer the connector's reported watermark (e.g. server
+    // time on the change-feed response) over the job-captured pullStartedAt,
+    // but fall back to pullStartedAt if the connector didn't return one.
+    const newWatermark =
+      folderCtx.effectiveMode === 'incremental' ? (pullResult.newWatermark ?? folderCtx.pullStartedAt) : undefined;
+    const newCursor = folderCtx.effectiveMode === 'incremental' ? (pullResult.newCursor ?? null) : undefined;
+
+    return { folderId, pulledPaths, fileCount, isResuming, newWatermark, newCursor };
   }
 
   // ---------------------------------------------------------------------------
@@ -925,14 +1055,21 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const updated = allUpdated.length;
 
     // --- Delete stale files ---
-    const deleteResult = await this.deleteStaleFiles({
-      folderCtx,
-      pulledPaths: fetchResult.pulledPaths,
-      isResuming: fetchResult.isResuming,
-    });
+    // Incremental pulls don't delete: the connector only returned records
+    // matching `IS_AFTER(...)`, so files absent from `pulledPaths` may be
+    // unchanged rather than deleted. Deletion is the responsibility of full
+    // pulls.
+    const deleteResult =
+      folderCtx.effectiveMode === 'full'
+        ? await this.deleteStaleFiles({
+            folderCtx,
+            pulledPaths: fetchResult.pulledPaths,
+            isResuming: fetchResult.isResuming,
+          })
+        : { deleted: 0, deletedPaths: [] };
 
-    // --- Finalize (clear lock, send events) ---
-    await this.finalizeFolder({ folderCtx, jobId });
+    // --- Finalize (clear lock, persist watermark/cursor, send events) ---
+    await this.finalizeFolder({ folderCtx, fetchResult, jobId });
 
     this.workbookEventService.sendWorkbookEvent(dataFolder.workbookId as WorkbookId, {
       type: 'folder-contents-changed',
@@ -1008,13 +1145,46 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     return { deleted: 0, deletedPaths: [] };
   }
 
-  private async finalizeFolder(params: { folderCtx: FolderContext; jobId: string }): Promise<void> {
-    const { folderCtx, jobId } = params;
-    const { dataFolder } = folderCtx;
+  private async finalizeFolder(params: {
+    folderCtx: FolderContext;
+    fetchResult: FolderFetchResult;
+    jobId: string;
+  }): Promise<void> {
+    const { folderCtx, fetchResult, jobId } = params;
+    const { dataFolder, effectiveMode, pullStartedAt } = folderCtx;
+
+    // Compose the watermark update atomically with clearing the lock so a
+    // crash between commit and finalize re-runs the same window next time
+    // (idempotent commits absorb the dupes).
+    //
+    // Full pull: a full scan is a superset of incremental — advancing
+    // `lastIncrementalPullAt` to `pullStartedAt` lets a follow-up incremental
+    // start from the right point. Clear `incrementalCursor` since any
+    // connector-opaque token from a prior incremental run is no longer
+    // anchored to that watermark.
+    //
+    // Incremental pull: advance `lastIncrementalPullAt` to the connector's
+    // reported watermark (already resolved in `fetchFolder`, falling back to
+    // `pullStartedAt`). Persist `incrementalCursor` if the connector returned
+    // one — otherwise leave it unchanged.
+    const finalizeData: Prisma.DataFolderUpdateInput = {
+      lock: null,
+    };
+    if (effectiveMode === 'full') {
+      finalizeData.lastFullPullAt = pullStartedAt;
+      finalizeData.lastIncrementalPullAt = pullStartedAt;
+      finalizeData.incrementalCursor = Prisma.DbNull;
+    } else if (fetchResult.newWatermark) {
+      finalizeData.lastIncrementalPullAt = fetchResult.newWatermark;
+      if (fetchResult.newCursor !== undefined) {
+        finalizeData.incrementalCursor =
+          fetchResult.newCursor === null ? Prisma.DbNull : (fetchResult.newCursor as Prisma.InputJsonValue);
+      }
+    }
 
     await this.prisma.dataFolder.update({
       where: { id: dataFolder.id },
-      data: { lock: null },
+      data: finalizeData,
     });
 
     WSLogger.debug({

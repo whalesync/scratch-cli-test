@@ -1,6 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import type { DataFolderOptions, EntityId, TableView } from '@spinner/shared-types';
-import { PostgresColumnType } from '@spinner/shared-types';
+import { PostgresColumnType, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { get, set, unset } from 'lodash';
 import { JsonSafeObject } from 'src/utils/objects';
 
@@ -163,6 +163,35 @@ export interface PullRecordFilesOptions extends DataFolderOptions {
 export interface PullRecordFilesResult {
   newWatermark?: Date;
   newCursor?: JsonSafeObject | null;
+}
+
+/**
+ * Walk the `fields` properties of a `BaseJsonTableSpec` schema and return the
+ * name of the first field annotated with `x-scratch-last-modified-field`. Used
+ * by connectors that auto-detect a server-side last-modified column when the
+ * user hasn't explicitly set `DataFolderOptions.modifiedAtField`.
+ *
+ * The schema shape this walks is the standard connector record schema:
+ * `{ properties: { fields: { properties: { <fieldName>: { ... } } } } }`.
+ * Returns `undefined` if no such field exists or the schema shape doesn't match.
+ */
+export function findLastModifiedFieldName(tableSpec: BaseJsonTableSpec): string | undefined {
+  const schema = tableSpec.schema as unknown as Record<string, unknown>;
+  const properties = schema?.['properties'] as Record<string, unknown> | undefined;
+  const fields = properties?.['fields'] as Record<string, unknown> | undefined;
+  const fieldsProps = fields?.['properties'] as Record<string, unknown> | undefined;
+  if (!fieldsProps) return undefined;
+  for (const fieldName of Object.keys(fieldsProps)) {
+    const fieldSchema = fieldsProps[fieldName];
+    if (
+      fieldSchema !== null &&
+      typeof fieldSchema === 'object' &&
+      (fieldSchema as Record<string, unknown>)[X_SCRATCH_LAST_MODIFIED_FIELD] === true
+    ) {
+      return fieldName;
+    }
+  }
+  return undefined;
 }
 
 export type ConnectorErrorDetails = {

@@ -70,6 +70,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     dataFolderIds: DataFolderId[],
     initialPublicProgress: PullLinkedFolderFilesJobDefinition['publicProgress'] | undefined,
     runContext: RunContext,
+    pullMode?: 'full' | 'incremental',
   ): Promise<Job> {
     const id = `pull-${workbookId}-${createPlainId()}`;
     const data: PullLinkedFolderFilesJobDefinition['data'] = {
@@ -79,6 +80,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       dataFolderIds,
       trigger: runContext.trigger,
       type: JobType.PullLinkedFolderFiles,
+      pullMode,
       initialPublicProgress,
     };
     return await this.createAndEnqueue(

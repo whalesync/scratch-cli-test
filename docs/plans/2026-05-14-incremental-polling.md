@@ -16,13 +16,32 @@
   - `PullRecordFilesResult` with optional `newWatermark` / `newCursor` (currently always `{}` — see note below).
 - Abstract [`Connector`](../../server/src/remote-service/connectors/connector.ts): `pullRecordFiles` signature switched to `PullRecordFilesOptions` / `Promise<PullRecordFilesResult>`; added `supportsIncrementalPull(options: PullRecordFilesOptions): boolean` defaulting to `false`.
 - All 18 concrete connectors under [server/src/remote-service/connectors/library/](../../server/src/remote-service/connectors/library/) updated mechanically: parameter type widened to `PullRecordFilesOptions`, return type widened to `Promise<PullRecordFilesResult>`, `return {};` added at the end of each `pullRecordFiles` body. No incremental logic anywhere — every connector still inherits the base `supportsIncrementalPull() = false`, including Airtable. The three connectors with custom pull-options subtypes (`AirtablePullOptions`, `IntercomPullOptions`, `NotionPullOptions`) now extend `PullRecordFilesOptions`.
+- **Airtable incremental implementation (2026-05-15):**
+  - `DataFolderOptions.modifiedAtField?: string` added in [packages/shared-types/src/connector/dtos.ts](../../packages/shared-types/src/connector/dtos.ts) — explicit per-folder override of which field to use for the modified-since filter.
+  - New schema annotation `X_SCRATCH_LAST_MODIFIED_FIELD = 'x-scratch-last-modified-field'` added in [packages/shared-types/src/connector/json-schema.ts](../../packages/shared-types/src/connector/json-schema.ts). The Airtable schema builder in [airtable-json-schema.ts](../../server/src/remote-service/connectors/library/airtable/airtable-json-schema.ts) sets this to `true` on any field of type `lastModifiedTime`, so an Airtable table with such a column gets incremental support automatically — no per-folder configuration required.
+  - Generic helper `findLastModifiedFieldName(tableSpec)` in [server/src/remote-service/connectors/types.ts](../../server/src/remote-service/connectors/types.ts) walks `schema.properties.fields.properties` and returns the first field annotated with `X_SCRATCH_LAST_MODIFIED_FIELD`. Reusable by any future connector that wants schema-driven last-modified detection.
+  - `Connector.supportsIncrementalPull` signature widened to `(options, tableSpec)` so connectors can consult either per-folder options or the schema annotation. Default still returns `false`.
+  - [`AirtableConnector`](../../server/src/remote-service/connectors/library/airtable/airtable-connector.ts) overrides `supportsIncrementalPull(options, tableSpec)` and routes through a `resolveModifiedAtField(options, tableSpec)` helper that prefers `options.modifiedAtField` and falls back to the schema-annotated field. The same helper drives `pullRecordFiles`, so the capability check and the actual pull stay in lockstep.
+  - Incremental branch in `pullRecordFiles`: captures `pullStartedAt` before the first API call, builds `IS_AFTER({<resolvedField>}, '<since - 60s>')`, combines with any user `options.filter` via `AND(...)`, and returns `{ newWatermark: pullStartedAt }`. Full pulls still return `{}` and pass the user filter through unchanged.
+  - Formula helpers + clock-skew constant in [airtable-incremental.ts](../../server/src/remote-service/connectors/library/airtable/airtable-incremental.ts) (with escaping for `}` / `\` / `'`).
+  - `modifiedAtField` added to `AirtableConnector.advancedSettings` for discoverability (acts as an override when auto-detection isn't enough — e.g. a table with multiple last-modified-time columns).
+  - Unit tests in [__tests__/airtable-connector.spec.ts](../../server/src/remote-service/connectors/library/airtable/__tests__/airtable-connector.spec.ts), [__tests__/airtable-incremental.spec.ts](../../server/src/remote-service/connectors/library/airtable/__tests__/airtable-incremental.spec.ts), and [__tests__/airtable-json-schema.spec.ts](../../server/src/remote-service/connectors/library/airtable/__tests__/airtable-json-schema.spec.ts): capability check (explicit + auto-detect + neither), incremental formula injection, AND-combination with user filter, field-name escaping, watermark return, full-pull no-op, schema annotation set on `lastModifiedTime` fields, explicit-overrides-auto precedence.
+- **`PullLinkedFolderFilesJob` incremental support (2026-05-15):**
+  - Job data shape gains `pullMode?: 'full' | 'incremental'` (default `'full'`); `PullLinkedFolderFilesPublicProgress` gains `mode?: 'full' | 'incremental'` (set per-folder during Phase 2).
+  - `loadFolderAndConnector` resolves effective mode per folder via the plan's four-step rule: requested → `fullPullOnly` override → connector capability (with `tableSpec`) → bootstrap (`lastIncrementalPullAt === null`). Each demotion is logged at info level.
+  - `FolderContext` carries `effectiveMode`, `pullStartedAt` (captured before any work), `since`, and `resumeCursor`. `FolderFetchResult` carries `newWatermark` and `newCursor`.
+  - `fetchFolder` builds the connector call options (`{ ...pullOptions, pullMode, since, cursor }`) and captures the connector's returned `newWatermark` / `newCursor`. For incremental runs it prefers the connector's reported watermark, falling back to `pullStartedAt`.
+  - `processFolder` skips `deleteStaleFiles` entirely on incremental. `finalizeFolder` atomically clears the lock and persists watermarks: full runs bump both `lastFullPullAt` and `lastIncrementalPullAt` to `pullStartedAt` and clear `incrementalCursor` (`Prisma.DbNull`); incremental runs bump only `lastIncrementalPullAt` and persist the returned cursor when provided.
+  - PostHog `trackPullCompleted` gains an optional `mode` field, populated from `data.pullMode ?? 'full'`.
+  - `BullEnqueuerService.enqueuePullLinkedFolderFilesJob` accepts an optional `pullMode` argument and threads it into the job data (no defaulting in the enqueuer — that's the job's responsibility).
+  - Unit tests in [pull-linked-folder-files.job.spec.ts](../../server/src/worker/jobs/job-definitions/__tests__/pull-linked-folder-files.job.spec.ts) cover all six cases from the plan: bootstrap demote, happy-path incremental call args, capability demote, incremental success (no delete + watermark advance), full-pull bumps both watermarks + clears cursor, `fullPullOnly` demote (skips the capability check).
 - `yarn build` and `yarn lint` pass from the repo root.
 
 **Still to do (in roughly this order):**
 
 1. Generate and apply the two Prisma migrations (enum + `DataFolder` columns; then `UPDATE "Schedule" SET "action" = 'FULL_PULL' WHERE "action" = 'PULL'`). See [Data migration — convert existing `PULL` rows to `FULL_PULL`](#data-migration--convert-existing-pull-rows-to-full_pull).
-2. Airtable incremental implementation (`supportsIncrementalPull(options)` override checking `modifiedAtField`; incremental branch in `pullRecordFiles`; clock-skew overlap). See [Airtable (in scope)](#airtable-in-scope).
-3. Job changes in [`PullLinkedFolderFilesJob`](../../server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts): effective-mode resolution, `since`/`cursor` injection into `pullOptions`, watermark/cursor persistence, conditional `deleteStaleFiles`. See [Job changes](#job-changes).
+2. ~~Airtable incremental implementation (`supportsIncrementalPull(options)` override checking `modifiedAtField`; incremental branch in `pullRecordFiles`; clock-skew overlap). See [Airtable (in scope)](#airtable-in-scope).~~ Landed 2026-05-15.
+3. ~~Job changes in [`PullLinkedFolderFilesJob`](../../server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts): effective-mode resolution, `since`/`cursor` injection into `pullOptions`, watermark/cursor persistence, conditional `deleteStaleFiles`. See [Job changes](#job-changes).~~ Landed 2026-05-15.
 4. Scheduler: derive `pullMode` from `Schedule.action`; update `SCHEDULE_ACTION_TO_JOB_TYPE`. See [Scheduler changes](#scheduler-changes).
 5. `schedule.service.ts` CRUD: accept the two new actions; keep accepting legacy `PULL`.
 6. HTTP `mode` parameter on the pull-folder endpoint; CLI `--mode` flag on `scratchmd pull`. See [Trigger paths](#trigger-paths).
@@ -44,7 +63,7 @@ Three pieces fit together:
 
 1. **Connector contract.** Extend the existing `pullRecordFiles` on the [`Connector`](../../server/src/remote-service/connectors/connector.ts) abstract class to accept the pull mode and incremental inputs (watermark, cursor) via its `options` parameter, and to return the new watermark/cursor for incremental runs. Add a `supportsIncrementalPull` capability flag — connectors whose remote APIs can answer "what changed since X?" override it to return `true`. Connectors that don't support incremental ignore the mode and continue full-scanning; the job demotes the run to `full` for them so state stays consistent.
 
-2. **Polling state.** Store a per-folder high-water mark on `DataFolder` (`lastIncrementalPullAt`) and an optional opaque cursor (`incrementalCursor`). Add a single user-facing knob `fullPullOnly: boolean` to `DataFolder.options` that disables incremental polling for that folder (forces all pulls to be full). No `pollMode` field — the trigger (schedule/HTTP/CLI) drives mode by default, and `fullPullOnly` is the per-folder opt-out.
+2. **Polling state.** Store a per-folder high-water mark on `DataFolder` (`lastIncrementalPullAt`) and an optional opaque cursor (`incrementalCursor`). Add a single user-facing knob `fullPullOnly: boolean` to `DataFolder.options` that disables incremental polling for that folder (forces all pulls to be full). No `pollMode` field — the trigger (schedule/HTTP/CLI) drives mode by default, and `fullPullOnly` is the per-folder opt-out. Connectors that need to know which field on the remote table holds the last-modified timestamp resolve it in two layers: (a) an explicit `DataFolderOptions.modifiedAtField` override, and (b) schema-driven auto-detection via the `x-scratch-last-modified-field` annotation set by the connector's schema builder.
 
 3. **Trigger paths.** Add two new values to the [`Schedule`](../../server/prisma/schema.prisma) action enum — `FULL_PULL` and `INCREMENTAL_PULL` — and **deprecate** the legacy `PULL` action. `PULL` and `FULL_PULL` are functionally equivalent at runtime so existing `PULL` rows keep working unchanged; a follow-up data migration flips remaining `PULL` rows to `FULL_PULL` and drops the enum value once we've confirmed everything is working in production. The split lets users run, e.g., "every 5 min `INCREMENTAL_PULL` + nightly `FULL_PULL`" on the same folder (the existing `@@unique([workbookId, action, entityId])` constraint already accommodates one row per action per folder). Manual triggers (HTTP and CLI) accept a `mode` parameter. The existing [`PullLinkedFolderFilesJob`](../../server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts) carries the mode and resolves per-folder behavior at execution time.
 
@@ -108,6 +127,8 @@ Watermark vs. cursor: most connectors will use the timestamp alone. The cursor e
 
 Extend the existing `pullRecordFiles` on [`Connector`](../../server/src/remote-service/connectors/connector.ts) — no new abstract method. The mode and incremental inputs are passed via `options`; the new watermark/cursor flow back through a typed return value.
 
+In addition to `options`, the capability flag (`supportsIncrementalPull`) is given the `tableSpec` so connectors can inspect schema-level metadata — see [Schema annotation: `x-scratch-last-modified-field`](#schema-annotation-x-scratch-last-modified-field) for the auto-detection mechanism that lets connectors enable incremental pulls without per-folder configuration.
+
 New supporting types (colocated with `BaseJsonTableSpec` in [connectors/types.ts](../../server/src/remote-service/connectors/types.ts)):
 
 ```typescript
@@ -131,8 +152,13 @@ export interface PullRecordFilesResult {
 The abstract signature on `Connector` becomes:
 
 ```typescript
-/** Default: connectors do not support incremental polling. Override per connector. */
-supportsIncrementalPull(): boolean {
+/**
+ * Default: connectors do not support incremental polling. Override per connector.
+ * Both `options` and `tableSpec` are passed so the connector can decide based on
+ * per-folder configuration (e.g. an explicit `modifiedAtField`) or schema-level
+ * metadata (e.g. a field annotated with `x-scratch-last-modified-field`).
+ */
+supportsIncrementalPull(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
   return false;
 }
 
@@ -156,6 +182,23 @@ abstract pullRecordFiles(
 ): Promise<PullRecordFilesResult>;
 ```
 
+### Schema annotation: `x-scratch-last-modified-field`
+
+Connectors that auto-detect the last-modified column from the remote schema do so via a new JSON Schema annotation:
+
+- `X_SCRATCH_LAST_MODIFIED_FIELD = 'x-scratch-last-modified-field'` is defined alongside the other `x-scratch-*` keys in [packages/shared-types/src/connector/json-schema.ts](../../packages/shared-types/src/connector/json-schema.ts).
+- The annotation value is the literal boolean `true`. It's set per-field in the connector's schema builder when that field is known to hold the row's server-side last-modified timestamp.
+- Airtable's schema builder ([airtable-json-schema.ts](../../server/src/remote-service/connectors/library/airtable/airtable-json-schema.ts)) tags every field whose Airtable type is `lastModifiedTime`. Future connectors with a typed "last modified" field (Notion `last_edited_time`, HubSpot `hs_lastmodifieddate`, PostgreSQL columns the user opts in) annotate analogously.
+- A generic helper `findLastModifiedFieldName(tableSpec)` in [server/src/remote-service/connectors/types.ts](../../server/src/remote-service/connectors/types.ts) walks `tableSpec.schema.properties.fields.properties` and returns the first annotated field name, or `undefined`. Connectors call this from `supportsIncrementalPull` and from the incremental branch of `pullRecordFiles`, typically wrapped in a `resolveModifiedAtField(options, tableSpec)` helper that prefers an explicit `options.modifiedAtField` over the auto-detected value.
+
+Resolution precedence (used by Airtable, recommended for future connectors):
+
+1. `DataFolderOptions.modifiedAtField` if set — explicit user override (useful when a table has multiple last-modified-time fields and the user wants to pick one).
+2. The first field annotated with `x-scratch-last-modified-field` in the table schema — auto-detected.
+3. Otherwise `supportsIncrementalPull()` returns `false` and the job demotes the run to a full pull.
+
+Connectors whose remote APIs expose a service-wide change feed (no per-table field needed) ignore both layers and override `supportsIncrementalPull` to return `true` unconditionally.
+
 ### Refactor task: switch `pullRecordFiles` parameter type from `DataFolderOptions` to `PullRecordFilesOptions`
 
 Because `PullRecordFilesOptions extends DataFolderOptions`, every existing field a connector reads today (`options.filter`, `options.readOnly`, the `[key: string]: unknown` connector-specific extras) keeps working without code changes — the type only adds the runtime fields on top. The refactor itself is mechanical:
@@ -174,24 +217,31 @@ The existing `pullRecordFilesByIds` (by-ID pulls used by [`pull-files.job.ts`](.
 
 This initial phase implements **Airtable only**. All other connectors keep `supportsIncrementalPull() = false` and continue full-scanning — they only need the trivial `return {}` added to their existing `pullRecordFiles` so the new return type compiles. Once the Airtable path is validated end-to-end (schema, job, scheduler, CLI, audit logs), a follow-up plan covers the rest using the same framework.
 
-### Airtable (in scope)
+### Airtable (in scope — landed 2026-05-15)
 
 [`server/src/remote-service/connectors/library/airtable/`](../../server/src/remote-service/connectors/library/airtable/)
 
 - **API support**: `filterByFormula` parameter on the list endpoint. Combined with a `LAST_MODIFIED_TIME()` field on the table, an expression like `IS_AFTER({Last Modified Time}, '2026-05-14T12:00:00.000Z')` returns only changed rows. Pagination via the existing offset cursor is unaffected.
-- **User configuration**: the modified-at field is not guaranteed to exist on every Airtable table — users have to add a "Last modified time" column. The connector therefore reads the field name from a new optional `DataFolderOptions.modifiedAtField?: string`. If absent, `supportsIncrementalPull()` returns false for that folder and the job demotes to full. This keeps incremental opt-in, avoids guessing field names, and matches the deferred PostgreSQL pattern (`modifiedAtColumn`).
-- **Capability flag**: `supportsIncrementalPull(options: PullRecordFilesOptions): boolean` — override the base signature to take options so the per-folder field check can run. (The base abstract gets the same signature; default returns `false`.)
+- **Field resolution (two-layer)**: an Airtable folder gets incremental support when the connector can locate a last-modified field on the table. Precedence:
+  1. Explicit `DataFolderOptions.modifiedAtField` — the user names a field directly. Useful when a table has multiple `lastModifiedTime` columns and the user wants to pick one (e.g. one scoped to data columns and another tracking schema changes).
+  2. Auto-detection: the [schema builder](../../server/src/remote-service/connectors/library/airtable/airtable-json-schema.ts) annotates every Airtable `lastModifiedTime` field with `x-scratch-last-modified-field: true` (see [Schema annotation: `x-scratch-last-modified-field`](#schema-annotation-x-scratch-last-modified-field)). The connector falls back to `findLastModifiedFieldName(tableSpec)` when no explicit option is set, so a table that already has a Last Modified Time column gets incremental support with zero configuration.
+  3. Neither → `supportsIncrementalPull()` returns false, the job demotes to full.
+- **Capability flag**: `supportsIncrementalPull(options, tableSpec): boolean` — override the base signature; both `options` and `tableSpec` are needed so the per-folder option check and schema-annotation lookup can both run. Delegates to a private `resolveModifiedAtField(options, tableSpec)` helper used by both the capability check and the pull body, so they can't disagree.
 - **Incremental branch in `pullRecordFiles`**:
-  1. If `options.pullMode !== 'incremental'` or `options.modifiedAtField` is unset → fall through to existing full-scan code, `return {}`.
-  2. Build the incremental formula: `IS_AFTER({<modifiedAtField>}, '<options.since.toISOString()>')`. If a user-defined `options.filter` is also set, combine with `AND(...)`.
-  3. Reuse the existing offset-cursor pagination via the connector's async generator (`AirtableApiClient.listRecords`); only the formula differs.
-  4. Return `{ newWatermark: <pullStartedAt provided by job; the connector echoes it back> }`. Airtable's API doesn't surface a server-side change-token, so `newCursor` stays unset — `lastIncrementalPullAt` is the only state needed.
-- **Filter combination**: the existing user-formula path lives in [`AirtableConnector`](../../server/src/remote-service/connectors/library/airtable/airtable-connector.ts) and `airtable-api-client.ts`. Wrap the formula composition in a small helper so the same logic is reusable when other connectors are added later.
-- **Edge case — clock skew**: Airtable's `LAST_MODIFIED_TIME` is server-side; the job's `pullStartedAt` is server-side (Scratch's server). If their clocks drift, a record modified seconds before `pullStartedAt` could be missed. Mitigation: subtract a small overlap (e.g. 60 seconds) from `options.since` when building the formula. Document this in the connector's incremental block; idempotent file commits absorb the dupe.
+  1. Resolve the field via `resolveModifiedAtField(options, tableSpec)`. If unresolved or `options.pullMode !== 'incremental'` or `options.since` is missing → fall through to existing full-scan code, `return {}`.
+  2. Capture `pullStartedAt = new Date()` BEFORE the first API call (used as the watermark to return).
+  3. Build the incremental formula: `IS_AFTER({<resolvedField>}, '<options.since - 60s>')`. If a user-defined `options.filter` is also set, combine with `AND(...)`.
+  4. Reuse the existing offset-cursor pagination via the connector's async generator (`AirtableApiClient.listRecords`); only the formula differs.
+  5. Return `{ newWatermark: pullStartedAt }`. Airtable's API doesn't surface a server-side change-token, so `newCursor` stays unset — `lastIncrementalPullAt` is the only state needed.
+- **Filter combination**: extracted into [airtable-incremental.ts](../../server/src/remote-service/connectors/library/airtable/airtable-incremental.ts) (`buildAirtableModifiedSinceFormula`, `combineAirtableFormulas`, `AIRTABLE_INCREMENTAL_CLOCK_SKEW_MS`). Includes Airtable formula escaping for `\`, `}`, and `'`. Reusable when other connectors with similar formula syntax are added later.
+- **Discoverability**: `modifiedAtField` is exposed as an entry in `AirtableConnector.advancedSettings` (placeholder: `e.g. Last Modified Time`) so the future folder-settings UI can render it. With auto-detection in place, most users won't need to touch it.
+- **Edge case — clock skew**: Airtable's `LAST_MODIFIED_TIME` is server-side; `pullStartedAt` is captured on Scratch's server. If their clocks drift, a record modified seconds before `pullStartedAt` could be missed. Mitigation: `AIRTABLE_INCREMENTAL_CLOCK_SKEW_MS = 60_000` is subtracted from `options.since` when building the formula. Idempotent file commits absorb any duplicates this overlap creates.
 
 ### All other connectors (deferred to a follow-up)
 
-Mechanical change only: add `return {}` to the end of each existing `pullRecordFiles` so the new `Promise<PullRecordFilesResult>` return type compiles. `supportsIncrementalPull()` inherits the base `false`. The list of connectors that will eventually be implemented (with sketches) is preserved here for future reference:
+Mechanical change only: add `return {}` to the end of each existing `pullRecordFiles` so the new `Promise<PullRecordFilesResult>` return type compiles. `supportsIncrementalPull()` inherits the base `false`. When each connector's incremental implementation lands, it can reuse the [`x-scratch-last-modified-field`](#schema-annotation-x-scratch-last-modified-field) annotation + `findLastModifiedFieldName` helper so the auto-detection path stays identical across connectors — only the formula/filter syntax differs.
+
+The list of connectors that will eventually be implemented (with sketches) is preserved here for future reference:
 
 | Connector  | API support                                  | Future plan sketch                                                                  |
 | ---------- | -------------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -360,22 +410,23 @@ Per [server CLAUDE.md](../../server/CLAUDE.md), CLI interactions must be audit-l
 
 ## Critical files
 
-- [server/src/remote-service/connectors/connector.ts](../../server/src/remote-service/connectors/connector.ts) — add `supportsIncrementalPull(options)`; change `pullRecordFiles` return type to `PullRecordFilesResult`.
-- [server/src/remote-service/connectors/types.ts](../../server/src/remote-service/connectors/types.ts) — add `PullRecordFilesOptions` and `PullRecordFilesResult`.
-- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md) — document the new contract (mode in options, return shape, capability flag) using Airtable as the worked example.
-- [server/src/remote-service/connectors/library/airtable/](../../server/src/remote-service/connectors/library/airtable/) — implement incremental branch in `pullRecordFiles`; override `supportsIncrementalPull(options)`; read `options.modifiedAtField`; combine user formula with `IS_AFTER`; return `{ newWatermark }`.
-- All other connectors under [server/src/remote-service/connectors/library/](../../server/src/remote-service/connectors/library/) — add trivial `return {}` so the new return type compiles. Capability flag inherits base `false`.
-- [server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts](../../server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts) — resolve effective mode per folder; augment `options` with `pullMode`/`since`/`cursor`; conditional `deleteStaleFiles` in Phase 2; persist new watermark/cursor.
-- [server/src/schedule/scheduler.service.ts](../../server/src/schedule/scheduler.service.ts) — map `Schedule.action` (`FULL_PULL` / `INCREMENTAL_PULL` / legacy `PULL`) to job `pullMode` at enqueue.
-- [server/src/schedule/schedule.service.ts](../../server/src/schedule/schedule.service.ts) — surface the two new actions in CRUD; `PULL` remains valid (equivalent to `FULL_PULL`).
-- [server/src/schedule/schedule.types.ts](../../server/src/schedule/schedule.types.ts) — update `SCHEDULE_ACTION_TO_JOB_TYPE` with the new actions.
-- [server/prisma/schema.prisma](../../server/prisma/schema.prisma) — `DataFolder` columns; add `FULL_PULL` / `INCREMENTAL_PULL` to the `ScheduleAction` enum and mark `PULL` deprecated.
-- [server/prisma/migrations/](../../server/prisma/migrations/) — two migrations: (1) add the new enum values + `DataFolder` columns, (2) `UPDATE "Schedule" SET "action" = 'FULL_PULL' WHERE "action" = 'PULL'`.
-- [packages/shared-types/src/connector/dtos.ts](../../packages/shared-types/src/connector/dtos.ts) — `DataFolderOptions.fullPullOnly`.
-- [packages/shared-types/src/job-types.ts](../../packages/shared-types/src/job-types.ts) — job `data.pullMode` typing.
-- [server/src/workbook/data-folder.controller.ts](../../server/src/workbook/data-folder.controller.ts) — accept `mode` on pull endpoint.
-- [server/src/worker-enqueuer/bull-enqueuer.service.ts](../../server/src/worker-enqueuer/bull-enqueuer.service.ts) — thread `pullMode` into job data + audit log.
-- [scratch-git-2/src/cli/](../../scratch-git-2/src/cli/) — `--mode` flag for `scratchmd pull`.
+- [server/src/remote-service/connectors/connector.ts](../../server/src/remote-service/connectors/connector.ts) — `supportsIncrementalPull(options, tableSpec)` (default `false`); `pullRecordFiles` returns `PullRecordFilesResult`. ✅ Landed.
+- [server/src/remote-service/connectors/types.ts](../../server/src/remote-service/connectors/types.ts) — `PullRecordFilesOptions`, `PullRecordFilesResult`, and `findLastModifiedFieldName(tableSpec)` helper. ✅ Landed.
+- [packages/shared-types/src/connector/json-schema.ts](../../packages/shared-types/src/connector/json-schema.ts) — `X_SCRATCH_LAST_MODIFIED_FIELD` annotation constant. ✅ Landed.
+- [packages/shared-types/src/connector/dtos.ts](../../packages/shared-types/src/connector/dtos.ts) — `DataFolderOptions.fullPullOnly` ✅ + `DataFolderOptions.modifiedAtField` ✅.
+- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md) — document the new contract (mode in options, return shape, capability flag, `x-scratch-last-modified-field` annotation) using Airtable as the worked example. ⏳ Pending.
+- [server/src/remote-service/connectors/library/airtable/](../../server/src/remote-service/connectors/library/airtable/) — incremental branch in `pullRecordFiles`; `supportsIncrementalPull(options, tableSpec)` override; `resolveModifiedAtField` helper; schema builder annotates `lastModifiedTime` fields. Helpers in `airtable-incremental.ts`. ✅ Landed.
+- All other connectors under [server/src/remote-service/connectors/library/](../../server/src/remote-service/connectors/library/) — trivial `return {}` already added so the new return type compiles. Capability flag inherits base `false`. ✅ Landed.
+- [server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts](../../server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts) — resolve effective mode per folder; pass `tableSpec` to `supportsIncrementalPull`; augment `options` with `pullMode`/`since`/`cursor`; conditional `deleteStaleFiles` in Phase 2; persist new watermark/cursor. ✅ Landed.
+- [server/src/schedule/scheduler.service.ts](../../server/src/schedule/scheduler.service.ts) — map `Schedule.action` (`FULL_PULL` / `INCREMENTAL_PULL` / legacy `PULL`) to job `pullMode` at enqueue. ⏳ Pending.
+- [server/src/schedule/schedule.service.ts](../../server/src/schedule/schedule.service.ts) — surface the two new actions in CRUD; `PULL` remains valid (equivalent to `FULL_PULL`). ⏳ Pending.
+- [server/src/schedule/schedule.types.ts](../../server/src/schedule/schedule.types.ts) — update `SCHEDULE_ACTION_TO_JOB_TYPE` with the new actions. ⏳ Pending.
+- [server/prisma/schema.prisma](../../server/prisma/schema.prisma) — `DataFolder` columns; add `FULL_PULL` / `INCREMENTAL_PULL` to the `ScheduleAction` enum and mark `PULL` deprecated. ✅ Landed (not yet migrated).
+- [server/prisma/migrations/](../../server/prisma/migrations/) — two migrations: (1) add the new enum values + `DataFolder` columns, (2) `UPDATE "Schedule" SET "action" = 'FULL_PULL' WHERE "action" = 'PULL'`. ⏳ Pending.
+- [packages/shared-types/src/job-types.ts](../../packages/shared-types/src/job-types.ts) — job `data.pullMode` typing. ⏳ Pending.
+- [server/src/workbook/data-folder.controller.ts](../../server/src/workbook/data-folder.controller.ts) — accept `mode` on pull endpoint. ⏳ Pending.
+- [server/src/worker-enqueuer/bull-enqueuer.service.ts](../../server/src/worker-enqueuer/bull-enqueuer.service.ts) — optional `pullMode` arg added; threads into job data. Audit-log entry still pending.
+- [scratch-git-2/src/cli/](../../scratch-git-2/src/cli/) — `--mode` flag for `scratchmd pull`. ⏳ Pending.
 
 Existing utilities to reuse — not to reinvent:
 
@@ -388,14 +439,15 @@ Existing utilities to reuse — not to reinvent:
 ## Verification
 
 1. **Unit**: `pull-linked-folder-files.job.spec.ts` — add cases for (a) bootstrap (null watermark → full), (b) incremental happy path (watermark set, connector called with `since`), (c) connector without support → forced to full, (d) incremental success updates `lastIncrementalPullAt`, doesn't run `deleteStaleFiles`, (e) full run on incremental folder bumps both watermarks, (f) `fullPullOnly = true` demotes incremental to full.
-2. **Airtable connector unit tests**: verify `pullRecordFiles` with `pullMode === 'incremental'` (a) injects `IS_AFTER({<modifiedAtField>}, '<since>')` into the formula, (b) combines correctly with a user-provided `options.filter`, (c) applies the clock-skew overlap, (d) returns `{ newWatermark }`, (e) returns `{}` when `pullMode === 'full'`. Verify `supportsIncrementalPull(options)` returns false when `modifiedAtField` is unset.
+2. **Airtable connector unit tests** ✅ (landed 2026-05-15): `pullRecordFiles` with `pullMode === 'incremental'` (a) injects `IS_AFTER({<resolvedField>}, '<since>')` into the formula, (b) combines correctly with a user-provided `options.filter`, (c) applies the clock-skew overlap, (d) returns `{ newWatermark }`, (e) returns `{}` when `pullMode === 'full'`. `supportsIncrementalPull(options, tableSpec)` returns false when neither `modifiedAtField` is set nor the schema has an annotated field, true when either is present, and explicit `modifiedAtField` takes precedence over the schema annotation. Plus schema-builder tests asserting `lastModifiedTime` Airtable fields get tagged with `x-scratch-last-modified-field: true`.
 3. **Integration** (`yarn test:integration`): end-to-end against a real Airtable test base with a `Last Modified Time` field — bootstrap pull, modify a record, incremental pull, assert only the modified record's file changed in git, watermark advanced.
 4. **Manual** (Airtable):
-   - Create an Airtable folder, add `modifiedAtField: 'Last Modified Time'` to `dataFolder.options`. Trigger `scratchmd pull --mode incremental` → full bootstrap (no watermark yet). Check `lastIncrementalPullAt` populated.
+   - **Auto-detection path**: Create an Airtable folder against a table that already has a Last Modified Time field. Leave `dataFolder.options.modifiedAtField` unset. Trigger `scratchmd pull --mode incremental` → full bootstrap, `lastIncrementalPullAt` populated. Modify one record, trigger again → only that file touched in git. Verify the schema written to git contains `x-scratch-last-modified-field: true` on that field.
+   - **Explicit override path**: Add a second Last Modified Time field to the same Airtable table (scoped to different columns). Set `dataFolder.options.modifiedAtField` to the second field's name. Trigger `--mode incremental` → formula uses the second field, not the auto-detected one.
+   - **No last-modified field**: Use an Airtable table with no `lastModifiedTime` column and no `modifiedAtField` set. Trigger `--mode incremental` → silently runs full with a logged warning (`supportsIncrementalPull() = false`).
    - Modify one record in Airtable. Trigger `scratchmd pull --mode incremental` → only that file touched in git, no deletions, watermark advanced.
    - Delete a remote record. Incremental pull → not detected (expected). Full pull → deleted in git, `lastFullPullAt` updated, `lastIncrementalPullAt` also advanced.
    - Set `dataFolder.options.fullPullOnly = true`. Trigger `--mode incremental` → silently runs full (log entry confirms demotion); incremental state unchanged.
-   - Unset `modifiedAtField`. Trigger `--mode incremental` → silently runs full with a logged warning (`supportsIncrementalPull() = false`).
    - Create two schedules on the same Airtable folder — `action = INCREMENTAL_PULL` at `*/5 * * * *` and `action = FULL_PULL` at `0 3 * * *`. Verify both rows insert cleanly under the existing `@@unique([workbookId, action, entityId])` constraint and `SchedulerService` enqueues each with the correct `pullMode`.
    - Before deploying, seed a test DB with `action = 'PULL'` rows; after running the migration, verify all are now `'FULL_PULL'` (their `id`, `cronExpression`, `nextRunAt` unchanged) and continue firing on schedule.
    - Verify a new `action = 'PULL'` row inserted post-migration still fires and behaves identically to `FULL_PULL` (runtime tolerance is preserved).

@@ -1,7 +1,17 @@
 import { Type } from '@sinclair/typebox';
-import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, idPath } from '../../../types';
-import { getForeignKeyOptions, isForeignKey, isReadonlyField } from '../airtable-json-schema';
+import {
+  airtableFieldToJsonSchema,
+  getForeignKeyOptions,
+  isForeignKey,
+  isReadonlyField,
+} from '../airtable-json-schema';
+import { AirtableDataType } from '../airtable-types';
 
 // Regression for DEV-10126. Airtable field names are user-typed and frequently
 // contain `/` (e.g. `Date/heure de création`). Per RFC 6901 §3 these must be
@@ -44,5 +54,25 @@ describe('airtable JSON Pointer escaping (RFC 6901)', () => {
 
   it('getForeignKeyOptions handles field names containing `/`', () => {
     expect(getForeignKeyOptions(fieldWithSlash, buildSpec())).toEqual(fkOptions);
+  });
+});
+
+describe('airtableFieldToJsonSchema last-modified annotation', () => {
+  it('annotates lastModifiedTime fields with x-scratch-last-modified-field=true', () => {
+    const schema = airtableFieldToJsonSchema({
+      id: 'fldLM',
+      name: 'Last Modified Time',
+      type: AirtableDataType.LAST_MODIFIED_TIME,
+    });
+    expect((schema as unknown as Record<string, unknown>)[X_SCRATCH_LAST_MODIFIED_FIELD]).toBe(true);
+  });
+
+  it('does not annotate other field types', () => {
+    const schema = airtableFieldToJsonSchema({
+      id: 'fldName',
+      name: 'Name',
+      type: AirtableDataType.SINGLE_LINE_TEXT,
+    });
+    expect((schema as unknown as Record<string, unknown>)[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
   });
 });

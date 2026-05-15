@@ -342,6 +342,7 @@ export class PostHogService implements OnModuleDestroy {
     properties: {
       workbookId: string;
       trigger?: string;
+      mode?: 'full' | 'incremental';
       result: 'success' | 'failure';
       totalFilesPulled: number;
       filesCreated: number;

@@ -87,6 +87,8 @@ import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
@@ -101,7 +103,6 @@ import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/sc
 import { EncryptionService } from 'src/utils/encryption';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { PullLinkedFolderFilesJobHandler } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
-import { PostHogService } from 'src/posthog/posthog.service';
 import { VirtualGitFs } from './virtual-git-fs';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -440,7 +441,14 @@ describe('Fetch → Edit → Publish Integration', () => {
       commitStagedFiles: jest
         .fn()
         .mockImplementation(
-          async (jobId: string, repoId: string, branch: string, folder: string, _message: string, batchSize: number) => {
+          async (
+            jobId: string,
+            repoId: string,
+            branch: string,
+            folder: string,
+            _message: string,
+            batchSize: number,
+          ) => {
             const key = `${jobId}/${folder}`;
             const store = stagingStore.get(key) ?? new Map<string, string>();
             const committed = committedPaths.get(key) ?? new Set<string>();
@@ -514,6 +522,13 @@ describe('Fetch → Edit → Publish Integration', () => {
       trackPullCompleted: jest.fn(),
     } as unknown as PostHogService;
 
+    // This round-trip test never requests pullMode='incremental', so the
+    // requested mode resolves to 'full' regardless of the flag value. The
+    // mock just has to exist so run()'s kill-switch check doesn't throw.
+    const mockExperimentsService = {
+      getBooleanFlag: jest.fn().mockResolvedValue(false),
+    } as unknown as ExperimentsService;
+
     pullHandler = new PullLinkedFolderFilesJobHandler(
       prisma,
       realConnectorsService,
@@ -525,6 +540,7 @@ describe('Fetch → Edit → Publish Integration', () => {
       mockAssetExtractorService,
       mockAssetIndexService,
       mockPostHogService,
+      mockExperimentsService,
     );
 
     publishPlanService = new PublishPlanBuildService(

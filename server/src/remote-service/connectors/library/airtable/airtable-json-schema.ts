@@ -8,6 +8,7 @@ import {
   X_SCRATCH_ASSET_FIELD,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
@@ -224,6 +225,9 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
   schema[X_SCRATCH_READONLY] = isAirtableColumnReadonly(field) ? true : undefined;
   schema[X_SCRATCH_REMOTE_FIELD_ID] = field.id;
   schema[X_SCRATCH_SUGGESTED_TRANSFORMER] = formulaSuggestedTransformer(connectorDataType) ?? undefined;
+  if ((field.type as AirtableDataType) === AirtableDataType.LAST_MODIFIED_TIME) {
+    schema[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
+  }
   return schema;
 }
 

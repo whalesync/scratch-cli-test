@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AssetModule } from 'src/asset/asset.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
 import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
@@ -35,6 +36,7 @@ import { WorkersController } from './test/workers.controller';
     AssetModule,
     PosthogModule,
     MetricsModule,
+    ExperimentsModule,
   ],
   controllers: [WorkersController],
   providers: [WorkerPoolService, QueueService, QueueTestService, JobHandlerService],

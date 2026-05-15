@@ -4,6 +4,7 @@ import { Type } from '@sinclair/typebox';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { AssetExtractorService } from '../../../../asset/asset-extractor.service';
 import { AssetIndexService } from '../../../../asset/asset-index.service';
+import { ExperimentsService } from '../../../../experiments/experiments.service';
 import { PostHogService } from '../../../../posthog/posthog.service';
 import { FileIndexService } from '../../../../publish-plan/file-index.service';
 import { FileReferenceService } from '../../../../publish-plan/file-reference.service';
@@ -35,6 +36,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   let mockAssetExtractorService: jest.Mocked<AssetExtractorService>;
   let mockAssetIndexService: jest.Mocked<AssetIndexService>;
   let mockPostHogService: jest.Mocked<PostHogService>;
+  let mockExperimentsService: jest.Mocked<ExperimentsService>;
 
   const defaultTableSpec: BaseJsonTableSpec = {
     idColumnRemoteId: 'id',
@@ -69,6 +71,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   const createMockConnector = (tableSpecOverrides?: Partial<BaseJsonTableSpec>) => ({
     fetchJsonTableSpec: jest.fn().mockResolvedValue({ ...defaultTableSpec, ...tableSpecOverrides }),
     pullRecordFiles: jest.fn(),
+    supportsIncrementalPull: jest.fn().mockReturnValue(false),
     getSuggestedRecordFileNames: jest.fn().mockImplementation((records: ConnectorFile[]) =>
       records.map((r) => {
         const slug = r['slug'] as string | undefined;
@@ -174,6 +177,12 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       trackPullCompleted: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
+    // Default: kill switch ON (flag enabled), so existing tests exercising
+    // pullMode='incremental' continue to hit the incremental code path.
+    mockExperimentsService = {
+      getBooleanFlag: jest.fn().mockResolvedValue(true),
+    } as unknown as jest.Mocked<ExperimentsService>;
+
     handler = new PullLinkedFolderFilesJobHandler(
       mockPrisma,
       mockConnectorService,
@@ -185,6 +194,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       mockAssetExtractorService,
       mockAssetIndexService,
       mockPostHogService,
+      mockExperimentsService,
     );
   });
 
@@ -867,6 +877,201 @@ describe('PullLinkedFolderFilesJobHandler', () => {
             filesUpdated: 1,
             filesDeleted: 0,
           }),
+        );
+      });
+    });
+
+    describe('incremental pulls', () => {
+      type DataFolderUpdateData = {
+        lock?: null;
+        lastFullPullAt?: Date;
+        lastIncrementalPullAt?: Date;
+        incrementalCursor?: unknown;
+      };
+
+      const stubEmptyPhase2 = () => {
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+      };
+
+      const lastConnectorCallOptions = (
+        mockConnector: ReturnType<typeof createMockConnector>,
+      ): { pullMode?: string; since?: Date | null; cursor?: unknown } => {
+        const calls = mockConnector.pullRecordFiles.mock.calls as Array<unknown[]>;
+        const lastCall = calls[calls.length - 1];
+        return lastCall[3] as { pullMode?: string; since?: Date | null; cursor?: unknown };
+      };
+
+      const findUpdateMatching = (predicate: (data: DataFolderUpdateData) => boolean): DataFolderUpdateData | null => {
+        const calls = (mockPrisma.dataFolder.update as jest.Mock).mock.calls as Array<[{ data: DataFolderUpdateData }]>;
+        const found = calls.find((c) => predicate(c[0].data));
+        return found ? found[0].data : null;
+      };
+
+      // (a) Bootstrap: an incremental request against a never-pulled folder
+      // runs a full pull and seeds both watermarks, so the *next* run can
+      // actually go incremental.
+      it('demotes to full on bootstrap when lastIncrementalPullAt is null', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        // Folder has no prior incremental pull.
+        Object.assign(dataFolder, { lastIncrementalPullAt: null });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        // Connector saw 'full' — not 'incremental' — because no watermark yet.
+        expect(lastConnectorCallOptions(mockConnector).pullMode).toBe('full');
+        // Deletion check ran (this is a full pull), and both watermarks are seeded.
+        expect(mockScratchGitService.listRepoFiles).toHaveBeenCalled();
+        const updateData = findUpdateMatching((d) => d.lastFullPullAt instanceof Date);
+        expect(updateData).not.toBeNull();
+        expect(updateData!.lastFullPullAt).toBeInstanceOf(Date);
+        expect(updateData!.lastIncrementalPullAt).toBeInstanceOf(Date);
+        // Prisma.DbNull serializes to a sentinel object; assert deletion intent rather than the literal null.
+        expect(updateData!.incrementalCursor).toBeDefined();
+      });
+
+      // (b) Happy path: existing watermark → connector called with pullMode/since.
+      it('passes pullMode + since to the connector when incremental is supported', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        const previousWatermark = new Date('2026-05-01T00:00:00.000Z');
+        Object.assign(dataFolder, { lastIncrementalPullAt: previousWatermark });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({ newWatermark: new Date('2026-05-14T12:00:00.000Z') });
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        const callOptions = lastConnectorCallOptions(mockConnector);
+        expect(callOptions.pullMode).toBe('incremental');
+        expect(callOptions.since).toEqual(previousWatermark);
+      });
+
+      // (c) Connector reports no support → forced to full.
+      it('demotes to full when the connector does not support incremental for this folder', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
+        mockConnector.supportsIncrementalPull.mockReturnValue(false);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        expect(lastConnectorCallOptions(mockConnector).pullMode).toBe('full');
+        // Deletion check ran (full mode after demotion).
+        expect(mockScratchGitService.listRepoFiles).toHaveBeenCalled();
+      });
+
+      // (d) Successful incremental run advances lastIncrementalPullAt and does NOT run stale-file deletion.
+      it('updates lastIncrementalPullAt and skips deleteStaleFiles on incremental success', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        const previousWatermark = new Date('2026-05-01T00:00:00.000Z');
+        const reportedWatermark = new Date('2026-05-14T12:00:00.000Z');
+        Object.assign(dataFolder, { lastIncrementalPullAt: previousWatermark });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({ newWatermark: reportedWatermark });
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        // No stale-file deletion on incremental.
+        expect(mockScratchGitService.listRepoFiles).not.toHaveBeenCalled();
+        expect(mockScratchGitService.deleteFilesFromBranch).not.toHaveBeenCalled();
+        // lastIncrementalPullAt advanced to the connector-reported watermark.
+        const updateData = findUpdateMatching((d) => d.lastIncrementalPullAt instanceof Date);
+        expect(updateData).not.toBeNull();
+        expect(updateData!.lastIncrementalPullAt).toEqual(reportedWatermark);
+        // No lastFullPullAt write — this was an incremental, not a full.
+        expect(updateData!.lastFullPullAt).toBeUndefined();
+      });
+
+      // (e) Full run after bootstrap bumps BOTH watermarks.
+      it('bumps both lastFullPullAt and lastIncrementalPullAt on a full pull, clearing the cursor', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'full' } });
+
+        const updateData = findUpdateMatching((d) => d.lastFullPullAt instanceof Date);
+        expect(updateData).not.toBeNull();
+        expect(updateData!.lastFullPullAt).toBeInstanceOf(Date);
+        expect(updateData!.lastIncrementalPullAt).toBeInstanceOf(Date);
+        expect(updateData!.lastFullPullAt).toEqual(updateData!.lastIncrementalPullAt);
+        // Prisma.DbNull sentinel, not the literal null — just assert "cleared".
+        expect(updateData!.incrementalCursor).toBeDefined();
+      });
+
+      // Kill switch: when the INCREMENTAL_POLLING_ENABLED flag is off for the
+      // job's user, an incremental request is silently forced to full before
+      // any per-folder resolution.
+      it('forces full when the INCREMENTAL_POLLING_ENABLED feature flag is off', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+        mockExperimentsService.getBooleanFlag.mockResolvedValue(false);
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        // Connector still saw 'full' — the kill switch short-circuits before
+        // the per-folder capability check is even consulted.
+        expect(lastConnectorCallOptions(mockConnector).pullMode).toBe('full');
+        expect(mockConnector.supportsIncrementalPull).not.toHaveBeenCalled();
+      });
+
+      // (f) fullPullOnly = true demotes incremental to full.
+      it('demotes to full when fullPullOnly is set on the folder', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+          options: { fullPullOnly: true },
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        const call = mockConnector.pullRecordFiles.mock.calls[0] as unknown[];
+        expect((call[3] as { pullMode?: string }).pullMode).toBe('full');
+        // Capability check is skipped once fullPullOnly forces full.
+        expect(mockConnector.supportsIncrementalPull).not.toHaveBeenCalled();
+      });
+
+      // (g) INCREMENTAL_POLLING_ENABLED feature flag is off → kill switch
+      // forces full pull even when the caller requested incremental.
+      it('forces full when the INCREMENTAL_POLLING_ENABLED kill switch is off', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+
+        // Kill switch OFF: flag returns false.
+        (mockExperimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(false);
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        expect(lastConnectorCallOptions(mockConnector).pullMode).toBe('full');
+        // The capability check never runs when the kill switch already forced full.
+        expect(mockConnector.supportsIncrementalPull).not.toHaveBeenCalled();
+        // Verify the flag was actually consulted for this userId.
+        expect(mockExperimentsService.getBooleanFlag).toHaveBeenCalledWith(
+          'INCREMENTAL_POLLING_ENABLED',
+          false,
+          expect.objectContaining({ id: 'usr_123' }),
         );
       });
     });

@@ -37,6 +37,12 @@ export const X_SCRATCH_ASSET_FIELD = 'x-scratch-asset-field';
 // Marks a table whose records ARE assets (e.g. WordPress media, Webflow Assets).
 export const X_SCRATCH_ASSET_TABLE = 'x-scratch-asset-table';
 
+// Marks a field whose value is the row's server-side last-modified timestamp.
+// Connectors that auto-detect this on schema build (e.g. Airtable's lastModifiedTime
+// field type) annotate the field so incremental pulls can use it without an explicit
+// `DataFolderOptions.modifiedAtField`. The annotation value is `true`.
+export const X_SCRATCH_LAST_MODIFIED_FIELD = 'x-scratch-last-modified-field';
+
 /**
  * Options for an asset field annotation.
  */

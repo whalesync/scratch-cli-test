@@ -5,6 +5,7 @@ import { AssetDownloadService } from 'src/asset/asset-download.service';
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -52,6 +53,7 @@ export class JobHandlerService {
     private readonly postHogService: PostHogService,
     private readonly workbookService: WorkbookService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
+    private readonly experimentsService: ExperimentsService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -74,6 +76,7 @@ export class JobHandlerService {
           this.assetExtractorService,
           this.assetIndexService,
           this.postHogService,
+          this.experimentsService,
         ) as JobHandler<JobDefinition>;
 
       case JobType.RefreshRecords:

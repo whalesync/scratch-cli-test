@@ -18,11 +18,13 @@ import {
   ConnectorErrorDetails,
   ConnectorFile,
   EntityId,
+  findLastModifiedFieldName,
   PullRecordFilesOptions,
   PullRecordFilesResult,
   TablePreview,
 } from '../../types';
 import { AirtableApiClient } from './airtable-api-client';
+import { buildAirtableModifiedSinceFormula, combineAirtableFormulas } from './airtable-incremental';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
 import { AirtableSchemaParser } from './airtable-schema-parser';
 
@@ -54,6 +56,14 @@ export class AirtableConnector extends Connector {
       label: 'View',
       description: 'Airtable view ID to pull records from. Leave empty to pull all records.',
       placeholder: 'Enter view ID...',
+    },
+    {
+      key: 'modifiedAtField',
+      type: 'string',
+      label: 'Last modified time field',
+      description:
+        'Name of a Last Modified Time field on this table. Enables incremental pulls — when set, scheduled INCREMENTAL_PULL runs fetch only records modified since the previous run. Leave empty to always do full pulls.',
+      placeholder: 'e.g. Last Modified Time',
     },
   ];
 
@@ -156,6 +166,31 @@ export class AirtableConnector extends Connector {
     return undefined;
   }
 
+  /**
+   * Airtable supports incremental pulls when we know which field on the table
+   * stores the row's last-modified timestamp. Resolution order:
+   *   1. Explicit `options.modifiedAtField` set on the data folder.
+   *   2. Auto-detected field: any column whose schema is annotated with
+   *      `x-scratch-last-modified-field` (Airtable's `lastModifiedTime` field
+   *      type is annotated this way by the schema builder).
+   * Without either, we can't build the `IS_AFTER` filter, so we report no
+   * support and the job demotes the run to a full scan.
+   */
+  override supportsIncrementalPull(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
+    return this.resolveModifiedAtField(options, tableSpec) !== undefined;
+  }
+
+  /**
+   * Resolve the field name to use for the modified-since filter, preferring an
+   * explicit user setting over the schema-annotated auto-detection.
+   */
+  private resolveModifiedAtField(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): string | undefined {
+    if (typeof options.modifiedAtField === 'string' && options.modifiedAtField.trim() !== '') {
+      return options.modifiedAtField.trim();
+    }
+    return findLastModifiedFieldName(tableSpec);
+  }
+
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
@@ -164,7 +199,24 @@ export class AirtableConnector extends Connector {
   ): Promise<PullRecordFilesResult> {
     const [baseId, tableId] = tableSpec.id.remoteId;
 
-    const filterByFormula = options.filter && options.filter.trim() !== '' ? options.filter : undefined;
+    const modifiedAtField = this.resolveModifiedAtField(options, tableSpec);
+    const isIncremental =
+      options.pullMode === 'incremental' && modifiedAtField !== undefined && options.since instanceof Date;
+
+    let newWatermark: Date | undefined;
+    let filterByFormula: string | undefined;
+
+    if (isIncremental && options.since && modifiedAtField) {
+      // Capture the start-of-pull timestamp BEFORE the first API call so we
+      // don't lose changes that happen mid-pull. Idempotent commits absorb
+      // any duplicates this overlap creates.
+      newWatermark = new Date();
+      const incrementalFormula = buildAirtableModifiedSinceFormula(modifiedAtField, options.since);
+      filterByFormula = combineAirtableFormulas(options.filter, incrementalFormula);
+    } else {
+      filterByFormula = options.filter && options.filter.trim() !== '' ? options.filter : undefined;
+    }
+
     const view = options.view ?? undefined;
     const resumeOffset = (progress as { airtableOffset?: string })?.airtableOffset;
 
@@ -178,7 +230,8 @@ export class AirtableConnector extends Connector {
         connectorProgress: batch.nextOffset ? { airtableOffset: batch.nextOffset } : {},
       });
     }
-    return {};
+
+    return newWatermark ? { newWatermark } : {};
   }
 
   async pullRecordFilesByIds(
