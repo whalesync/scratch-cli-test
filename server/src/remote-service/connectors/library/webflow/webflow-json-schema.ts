@@ -193,9 +193,11 @@ export function buildWebflowJsonTableSpec(
     }),
   );
   properties['isArchived'] = Type.Optional(
-    Type.Boolean({ description: 'Whether the item is archived (default: false)' }),
+    Type.Boolean({ description: 'Whether the item is archived (default: false)', [X_SCRATCH_READONLY]: true }),
   );
-  properties['isDraft'] = Type.Optional(Type.Boolean({ description: 'Whether the item is a draft (default: false)' }));
+  properties['isDraft'] = Type.Optional(
+    Type.Boolean({ description: 'Whether the item is a draft (default: false)', [X_SCRATCH_READONLY]: true }),
+  );
 
   // Add fieldData wrapper to indicate where custom fields are stored
   const fieldDataProperties: Record<string, TSchema> = {};
@@ -317,6 +319,84 @@ export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Webflow.Site
     basePath: [site.displayName ?? site.shortName ?? ''],
     generatedAt: new Date().toISOString(),
     defaultView: buildWebflowDefaultView(schema, 'assets'),
+  };
+}
+
+/**
+ * Table ID prefix for Webflow site-level pages tables.
+ */
+export { WEBFLOW_PAGES_TABLE_ID_PREFIX } from './webflow-types';
+
+/**
+ * Build a BaseJsonTableSpec schema for Webflow site pages.
+ */
+export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Webflow.Site): BaseJsonTableSpec {
+  const schema = Type.Object(
+    {
+      id: Type.String({ description: 'Unique page identifier', [X_SCRATCH_READONLY]: true }),
+      title: Type.Optional(Type.String({ description: 'Title of the page' })),
+      slug: Type.Optional(Type.String({ description: 'URL slug of the page (derived from title)' })),
+      publishedPath: Type.Optional(
+        Type.String({ description: 'Relative path of the published page URL', [X_SCRATCH_READONLY]: true }),
+      ),
+      parentId: Type.Optional(
+        Type.String({ description: 'Identifier of the parent folder', [X_SCRATCH_READONLY]: true }),
+      ),
+      archived: Type.Optional(
+        Type.Boolean({ description: 'Whether the page has been archived', [X_SCRATCH_READONLY]: true }),
+      ),
+      draft: Type.Optional(Type.Boolean({ description: 'Whether the page is a draft', [X_SCRATCH_READONLY]: true })),
+      seo: Type.Optional(
+        Type.Object(
+          {
+            title: Type.Optional(Type.String({ description: 'SEO title shown in search engine results' })),
+            description: Type.Optional(Type.String({ description: 'SEO description shown in search engine results' })),
+          },
+          { description: 'SEO-related fields for the page' },
+        ),
+      ),
+      openGraph: Type.Optional(
+        Type.Object(
+          {
+            title: Type.Optional(Type.String({ description: 'Open Graph title' })),
+            titleCopied: Type.Optional(
+              Type.Boolean({ description: 'Whether the OG title was copied from the SEO title' }),
+            ),
+            description: Type.Optional(Type.String({ description: 'Open Graph description' })),
+            descriptionCopied: Type.Optional(
+              Type.Boolean({ description: 'Whether the OG description was copied from the SEO description' }),
+            ),
+          },
+          { description: 'Open Graph fields for the page' },
+        ),
+      ),
+      createdOn: Type.Optional(
+        Type.String({ description: 'When the page was created', format: 'date-time', [X_SCRATCH_READONLY]: true }),
+      ),
+      lastUpdated: Type.Optional(
+        Type.String({
+          description: 'When the page was last updated',
+          format: 'date-time',
+          [X_SCRATCH_READONLY]: true,
+        }),
+      ),
+    },
+    {
+      $id: `webflow-pages/${site.id}`,
+      title: 'Pages',
+    },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Pages',
+    schema,
+    idColumnRemoteId: idPath('id'),
+    titleColumnRemoteId: ['slug'],
+    basePath: [site.displayName ?? site.shortName ?? ''],
+    generatedAt: new Date().toISOString(),
+    defaultView: buildWebflowDefaultView(schema, 'pages'),
   };
 }
 

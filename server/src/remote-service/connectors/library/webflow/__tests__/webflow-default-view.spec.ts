@@ -1,5 +1,10 @@
 import { Type } from '@sinclair/typebox';
-import { TableViewCol, X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  TableViewBannerGroup,
+  TableViewCol,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { buildWebflowDefaultView } from '../webflow-default-view';
 
 /** Helper: build a fieldData property with optional annotations. */
@@ -174,9 +179,14 @@ describe('buildWebflowDefaultView — collection_items', () => {
       expect(col.readonly).toBe(true);
     });
 
-    it('should not mark isArchived as readonly', () => {
+    it('should mark isArchived as readonly', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'isArchived') as TableViewCol;
-      expect(col.readonly).toBeUndefined();
+      expect(col.readonly).toBe(true);
+    });
+
+    it('should mark isDraft as readonly', () => {
+      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'isDraft') as TableViewCol;
+      expect(col.readonly).toBe(true);
     });
   });
 
@@ -274,5 +284,140 @@ describe('buildWebflowDefaultView — assets', () => {
     const emptySchema = Type.Object({});
     const emptyView = buildWebflowDefaultView(emptySchema, 'assets');
     expect(emptyView.cols).toHaveLength(0);
+  });
+});
+
+describe('buildWebflowDefaultView — pages', () => {
+  function makePagesSchema() {
+    return Type.Object({
+      id: Type.String({ [X_SCRATCH_READONLY]: true }),
+      title: Type.Optional(Type.String()),
+      slug: Type.Optional(Type.String()),
+      publishedPath: Type.Optional(Type.String({ [X_SCRATCH_READONLY]: true })),
+      parentId: Type.Optional(Type.String({ [X_SCRATCH_READONLY]: true })),
+      archived: Type.Optional(Type.Boolean()),
+      draft: Type.Optional(Type.Boolean()),
+      seo: Type.Optional(
+        Type.Object({ title: Type.Optional(Type.String()), description: Type.Optional(Type.String()) }),
+      ),
+      openGraph: Type.Optional(
+        Type.Object({
+          title: Type.Optional(Type.String()),
+          titleCopied: Type.Optional(Type.Boolean()),
+          description: Type.Optional(Type.String()),
+          descriptionCopied: Type.Optional(Type.Boolean()),
+        }),
+      ),
+      createdOn: Type.Optional(Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true })),
+      lastUpdated: Type.Optional(Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true })),
+    });
+  }
+
+  const schema = makePagesSchema();
+  const view = buildWebflowDefaultView(schema, 'pages');
+
+  // Helper to find a col by path, searching inside banner groups too
+  function findCol(path: string): TableViewCol | undefined {
+    for (const entry of view.cols) {
+      if (entry.kind === 'col' && entry.path === path) return entry;
+      if (entry.kind === 'banner-group') {
+        const found = entry.cols.find((c) => c.path === path);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  }
+
+  it('should return a view named "Default"', () => {
+    expect(view.name).toBe('Default');
+  });
+
+  it('should place slug first, then title, then id', () => {
+    // Only look at flat cols for ordering
+    const flatCols = view.cols.filter((c): c is TableViewCol => c.kind === 'col');
+    const paths = flatCols.map((c) => c.path);
+    expect(paths[0]).toBe('slug');
+    expect(paths[1]).toBe('title');
+    expect(paths[2]).toBe('id');
+  });
+
+  it('should hide parentId', () => {
+    const parentIdCol = findCol('parentId')!;
+    expect(parentIdCol.hidden).toBe(true);
+  });
+
+  it('should mark readonly fields correctly', () => {
+    expect(findCol('id')!.readonly).toBe(true);
+    expect(findCol('publishedPath')!.readonly).toBe(true);
+    expect(findCol('createdOn')!.readonly).toBe(true);
+  });
+
+  it('should not mark writable fields as readonly', () => {
+    expect(findCol('title')!.readonly).toBeUndefined();
+    expect(findCol('slug')!.readonly).toBeUndefined();
+  });
+
+  it('should map date-time fields to date type', () => {
+    expect(findCol('createdOn')!.type).toBe('date');
+  });
+
+  it('should map archived/draft to checkbox type', () => {
+    expect(findCol('archived')!.type).toBe('checkbox');
+    expect(findCol('draft')!.type).toBe('checkbox');
+  });
+
+  describe('SEO banner group', () => {
+    const seoGroup = view.cols.find((c) => c.kind === 'banner-group' && c.name === 'SEO') as TableViewBannerGroup;
+
+    it('should exist', () => {
+      expect(seoGroup).toBeDefined();
+    });
+
+    it('should contain seo.title and seo.description columns', () => {
+      const paths = seoGroup.cols.map((c) => c.path);
+      expect(paths).toContain('seo.title');
+      expect(paths).toContain('seo.description');
+    });
+
+    it('should not have a bare seo column in the flat list', () => {
+      const bareSeo = view.cols.find((c) => c.kind === 'col' && c.path === 'seo');
+      expect(bareSeo).toBeUndefined();
+    });
+  });
+
+  describe('Open Graph banner group', () => {
+    const ogGroup = view.cols.find((c) => c.kind === 'banner-group' && c.name === 'Open Graph') as TableViewBannerGroup;
+
+    it('should exist', () => {
+      expect(ogGroup).toBeDefined();
+    });
+
+    it('should contain openGraph sub-columns', () => {
+      const paths = ogGroup.cols.map((c) => c.path);
+      expect(paths).toContain('openGraph.title');
+      expect(paths).toContain('openGraph.titleCopied');
+      expect(paths).toContain('openGraph.description');
+      expect(paths).toContain('openGraph.descriptionCopied');
+    });
+
+    it('should map titleCopied/descriptionCopied to checkbox', () => {
+      const titleCopied = ogGroup.cols.find((c) => c.path === 'openGraph.titleCopied')!;
+      const descCopied = ogGroup.cols.find((c) => c.path === 'openGraph.descriptionCopied')!;
+      expect(titleCopied.type).toBe('checkbox');
+      expect(descCopied.type).toBe('checkbox');
+    });
+
+    it('should not have a bare openGraph column in the flat list', () => {
+      const bareOg = view.cols.find((c) => c.kind === 'col' && c.path === 'openGraph');
+      expect(bareOg).toBeUndefined();
+    });
+  });
+
+  it('should place banner groups before createdOn/lastUpdated', () => {
+    const createdOnIdx = view.cols.findIndex((c) => c.kind === 'col' && c.path === 'createdOn');
+    const seoIdx = view.cols.findIndex((c) => c.kind === 'banner-group' && c.name === 'SEO');
+    const ogIdx = view.cols.findIndex((c) => c.kind === 'banner-group' && c.name === 'Open Graph');
+    expect(seoIdx).toBeLessThan(createdOnIdx);
+    expect(ogIdx).toBeLessThan(createdOnIdx);
   });
 });

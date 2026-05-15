@@ -29,7 +29,9 @@ import {
 import {
   buildWebflowAssetsJsonTableSpec,
   buildWebflowJsonTableSpec,
+  buildWebflowPagesJsonTableSpec,
   WEBFLOW_ASSETS_TABLE_ID_PREFIX,
+  WEBFLOW_PAGES_TABLE_ID_PREFIX,
 } from './webflow-json-schema';
 import { WebflowSchemaParser } from './webflow-schema-parser';
 import { WEBFLOW_ECOMMERCE_COLLECTION_SLUGS } from './webflow-types';
@@ -122,6 +124,25 @@ export class WebflowConnector extends Connector {
           siteId: site.id,
           siteName: site.displayName,
           isAssetsTable: true,
+        },
+      });
+
+      // Add a site-level Pages table (metadata only — title, slug, SEO, Open Graph)
+      const pagesTableId = `${WEBFLOW_PAGES_TABLE_ID_PREFIX}${site.id}`;
+      tables.push({
+        id: {
+          wsId: pagesTableId,
+          remoteId: [site.id, pagesTableId],
+        },
+        displayName: `Pages`,
+        disabledCreates: true,
+        disabledDeletes: true,
+        disabledReason: 'Page metadata only — title, slug, SEO, and Open Graph fields are editable',
+        parentPath: site.displayName,
+        metadata: {
+          siteId: site.id,
+          siteName: site.displayName,
+          isPagesTable: true,
         },
       });
     }
@@ -218,6 +239,12 @@ export class WebflowConnector extends Connector {
       return {};
     }
 
+    // Handle pages table
+    if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      await this.pullPages(siteId, callback);
+      return {};
+    }
+
     let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
     let hasMore = true;
 
@@ -301,6 +328,62 @@ export class WebflowConnector extends Connector {
   }
 
   /**
+   * Pull all pages for a site via the Webflow Pages API.
+   */
+  private async pullPages(
+    siteId: string,
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.withRetry(() =>
+        this.client.pages.list(siteId, {
+          limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+          offset,
+        }),
+      );
+
+      const pages = response.pages || [];
+
+      if (pages.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      const files: ConnectorFile[] = pages.map(
+        (page) =>
+          ({
+            id: page.id,
+            title: page.title,
+            slug: page.slug,
+            publishedPath: page.publishedPath,
+            parentId: page.parentId,
+            archived: page.archived,
+            draft: page.draft,
+            seo: page.seo,
+            openGraph: page.openGraph,
+            createdOn: page.createdOn instanceof Date ? page.createdOn.toISOString() : page.createdOn,
+            lastUpdated: page.lastUpdated instanceof Date ? page.lastUpdated.toISOString() : page.lastUpdated,
+          }) as unknown as ConnectorFile,
+      );
+
+      await callback({ files });
+
+      const pagination = response.pagination;
+      if (pagination) {
+        const total = pagination.total || 0;
+        offset += pages.length;
+        hasMore = offset < total;
+      } else {
+        hasMore = pages.length === WEBFLOW_DEFAULT_BATCH_SIZE;
+        offset += pages.length;
+      }
+    }
+  }
+
+  /**
    * Fetch JSON Table Spec directly from the Webflow API for a collection or assets table.
    * Converts Webflow field types to JSON Schema types for AI consumption.
    * Uses field slugs as property keys.
@@ -312,6 +395,12 @@ export class WebflowConnector extends Connector {
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
       const site = await this.withRetry(() => this.client.sites.get(siteId));
       return buildWebflowAssetsJsonTableSpec(id, site);
+    }
+
+    // Handle pages table
+    if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      const site = await this.withRetry(() => this.client.sites.get(siteId));
+      return buildWebflowPagesJsonTableSpec(id, site);
     }
 
     // Fetch site and collection directly from Webflow API
@@ -348,6 +437,44 @@ export class WebflowConnector extends Connector {
             WSLogger.warn({
               source: 'WebflowConnector',
               message: `Asset ${assetId} not found, skipping`,
+            });
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (buffer.length > 0) {
+        await callback({ files: buffer });
+      }
+      return;
+    }
+
+    // Handle pages table (metadata only)
+    if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      const buffer: ConnectorFile[] = [];
+      for (const pageId of ids) {
+        try {
+          const page = await this.withRetry(() => this.client.pages.getMetadata(pageId));
+          if (page) {
+            buffer.push({
+              id: page.id,
+              title: page.title,
+              slug: page.slug,
+              publishedPath: page.publishedPath,
+              parentId: page.parentId,
+              archived: page.archived,
+              draft: page.draft,
+              seo: page.seo,
+              openGraph: page.openGraph,
+              createdOn: page.createdOn instanceof Date ? page.createdOn.toISOString() : page.createdOn,
+              lastUpdated: page.lastUpdated instanceof Date ? page.lastUpdated.toISOString() : page.lastUpdated,
+            } as unknown as ConnectorFile);
+          }
+        } catch (error) {
+          if (error instanceof WebflowError && error.statusCode === 404) {
+            WSLogger.warn({
+              source: 'WebflowConnector',
+              message: `Page ${pageId} not found, skipping`,
             });
             continue;
           }
@@ -403,6 +530,10 @@ export class WebflowConnector extends Connector {
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const [, collectionId] = tableSpec.id.remoteId;
 
+    if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      throw new Error('Creating pages is not supported via the Webflow API');
+    }
+
     const fieldDataArray: Record<string, unknown>[] = [];
     for (const file of files) {
       const fields = await this.extractFieldDataForApi(file, tableSpec);
@@ -433,6 +564,26 @@ export class WebflowConnector extends Connector {
   ): Promise<void> {
     const [, collectionId] = tableSpec.id.remoteId;
 
+    // Handle pages table — update page settings one at a time
+    if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const source = changedFields?.[i] ?? file;
+        const pageId = file.id as string;
+
+        const update: Record<string, unknown> = {};
+        if (source.title !== undefined) update.title = source.title;
+        if (source.slug !== undefined) update.slug = source.slug;
+        if (source.seo !== undefined) update.seo = source.seo;
+        if (source.openGraph !== undefined) update.openGraph = source.openGraph;
+
+        if (Object.keys(update).length > 0) {
+          await this.withRetry(() => this.client.pages.updatePageSettings(pageId, update as Webflow.PageMetadataWrite));
+        }
+      }
+      return;
+    }
+
     const items: { id: string; fieldData: Webflow.CollectionItemFieldData }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -456,6 +607,10 @@ export class WebflowConnector extends Connector {
    */
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     const [, collectionId] = tableSpec.id.remoteId;
+
+    if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      throw new Error('Deleting pages is not supported via the Webflow API');
+    }
 
     const items = files.map((file) => ({ id: file.id as string }));
     try {
@@ -583,6 +738,16 @@ export class WebflowConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const [, collectionId] = tableSpec.id.remoteId;
+
+    // For pages, use the slug as the filename
+    if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      return records.map((record) => {
+        const slug = record.slug as string | undefined;
+        return slug || undefined;
+      });
+    }
+
     return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
   }
 

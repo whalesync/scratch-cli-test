@@ -1974,6 +1974,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return {
           kind,
           data: typeof val === 'boolean' ? val : undefined,
+          readonly: isReadOnly,
           allowOverlay: false as const,
           copyData: toDisplayString(val, colType),
           themeOverride,

@@ -1,5 +1,11 @@
 import { Kind, TSchema } from '@sinclair/typebox';
-import { TablePropertyType, TableView, TableViewCol, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  TablePropertyType,
+  TableView,
+  TableViewBannerGroup,
+  TableViewCol,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 
 // ── Collection items ──
 
@@ -17,7 +23,15 @@ const COLLECTION_ITEM_PRIORITY: string[] = [
 const COLLECTION_ITEM_HIDDEN_FIELDS = new Set(['cmsLocaleId']);
 
 // Fixed fields that are system-generated and cannot be edited via the API.
-const COLLECTION_ITEM_READONLY_FIXED = new Set(['id', 'cmsLocaleId', 'lastPublished', 'lastUpdated', 'createdOn']);
+const COLLECTION_ITEM_READONLY_FIXED = new Set([
+  'id',
+  'cmsLocaleId',
+  'lastPublished',
+  'lastUpdated',
+  'createdOn',
+  'isDraft',
+  'isArchived',
+]);
 
 // ── Assets: priority ordering ──
 
@@ -35,6 +49,24 @@ const ASSET_FIELD_PRIORITY: string[] = [
 
 const ASSET_HIDDEN_FIELDS = new Set(['siteId']);
 
+// ── Pages: priority ordering ──
+
+// Fields that get expanded into banner groups instead of flat columns.
+const PAGES_BANNER_GROUP_FIELDS = new Set(['seo', 'openGraph']);
+
+const PAGES_FIELD_PRIORITY: string[] = [
+  'slug',
+  'title',
+  'id',
+  'publishedPath',
+  'archived',
+  'draft',
+  'createdOn',
+  'lastUpdated',
+];
+
+const PAGES_HIDDEN_FIELDS = new Set(['parentId']);
+
 /**
  * Build a default TableView for a Webflow collection or assets table.
  *
@@ -48,6 +80,10 @@ export function buildWebflowDefaultView(schema: TSchema, entityType: string): Ta
 
   if (entityType === 'assets') {
     return { name: 'Default', cols: buildAssetCols(topLevel) };
+  }
+
+  if (entityType === 'pages') {
+    return { name: 'Default', cols: buildPagesView(topLevel) };
   }
 
   return { name: 'Default', cols: buildCollectionItemCols(topLevel) };
@@ -94,6 +130,68 @@ function buildAssetCols(topLevel: Record<string, TSchema>): TableViewCol[] {
   return sorted.map((fieldId) => buildAssetCol(fieldId, topLevel[fieldId]));
 }
 
+// ── Pages ──
+
+function buildPagesView(topLevel: Record<string, TSchema>): (TableViewCol | TableViewBannerGroup)[] {
+  // Collect flat fields (excluding those that become banner groups)
+  const flatFieldIds = Object.keys(topLevel).filter((id) => !PAGES_BANNER_GROUP_FIELDS.has(id));
+  const sorted = sortByPriority(flatFieldIds, PAGES_FIELD_PRIORITY);
+
+  const cols: (TableViewCol | TableViewBannerGroup)[] = sorted.map((fieldId) =>
+    buildPagesCol(fieldId, topLevel[fieldId]),
+  );
+
+  // Insert SEO banner group after the flat fields, before dates
+  const seoSchema = unwrapOptional(topLevel['seo']);
+  if (seoSchema) {
+    const seoProps: Record<string, TSchema> =
+      (seoSchema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
+    const seoCols: TableViewCol[] = Object.entries(seoProps).map(([key, schema]) => ({
+      kind: 'col' as const,
+      path: `seo.${key}`,
+      name: formatCamelCaseName(key),
+      type: mapFieldType(unwrapOptional(schema)),
+    }));
+    if (seoCols.length > 0) {
+      // Insert before createdOn (or at end if not found)
+      const insertIdx = cols.findIndex((c) => c.kind === 'col' && c.path === 'createdOn');
+      const group: TableViewBannerGroup = { kind: 'banner-group', name: 'SEO', cols: seoCols };
+      if (insertIdx >= 0) {
+        cols.splice(insertIdx, 0, group);
+      } else {
+        cols.push(group);
+      }
+    }
+  }
+
+  // Insert Open Graph banner group after SEO
+  const ogSchema = unwrapOptional(topLevel['openGraph']);
+  if (ogSchema) {
+    const ogProps: Record<string, TSchema> =
+      (ogSchema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
+    const ogCols: TableViewCol[] = Object.entries(ogProps).map(([key, schema]) => {
+      const inner = unwrapOptional(schema);
+      return {
+        kind: 'col' as const,
+        path: `openGraph.${key}`,
+        name: formatCamelCaseName(key),
+        type: mapFieldType(inner),
+      };
+    });
+    if (ogCols.length > 0) {
+      const insertIdx = cols.findIndex((c) => c.kind === 'col' && c.path === 'createdOn');
+      const group: TableViewBannerGroup = { kind: 'banner-group', name: 'Open Graph', cols: ogCols };
+      if (insertIdx >= 0) {
+        cols.splice(insertIdx, 0, group);
+      } else {
+        cols.push(group);
+      }
+    }
+  }
+
+  return cols;
+}
+
 // ── Column builders ──
 
 function buildFieldDataCol(fieldName: string, fieldSchema: TSchema): TableViewCol {
@@ -129,6 +227,22 @@ function buildCollectionFixedCol(fieldId: string, fieldSchema: TSchema | undefin
 function buildAssetCol(fieldId: string, fieldSchema: TSchema | undefined): TableViewCol {
   const inner = unwrapOptional(fieldSchema);
   const hidden = ASSET_HIDDEN_FIELDS.has(fieldId) || undefined;
+  const isReadonly = inner?.[X_SCRATCH_READONLY] === true;
+
+  return {
+    kind: 'col',
+    path: fieldId,
+    name: formatCamelCaseName(fieldId),
+    type: mapFieldType(inner),
+    hidden,
+    readonly: isReadonly || undefined,
+  };
+}
+
+/** Build a col for a pages field. */
+function buildPagesCol(fieldId: string, fieldSchema: TSchema | undefined): TableViewCol {
+  const inner = unwrapOptional(fieldSchema);
+  const hidden = PAGES_HIDDEN_FIELDS.has(fieldId) || undefined;
   const isReadonly = inner?.[X_SCRATCH_READONLY] === true;
 
   return {

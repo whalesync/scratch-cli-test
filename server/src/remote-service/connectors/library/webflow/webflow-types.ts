@@ -10,6 +10,11 @@ export const WEBFLOW_LAST_PUBLISHED_COLUMN_ID = 'lastPublished';
 export const WEBFLOW_LAST_UPDATED_COLUMN_ID = 'lastUpdated';
 export const WEBFLOW_CREATED_ON_COLUMN_ID = 'createdOn';
 
+/**
+ * Table ID prefix for Webflow site-level pages tables.
+ */
+export const WEBFLOW_PAGES_TABLE_ID_PREFIX = '__pages__';
+
 export type WebflowItemMetadata = Omit<CollectionItem, 'id' | 'fieldData'>;
 
 export const WEBFLOW_METADATA_COLUMNS = [
