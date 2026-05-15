@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -11,7 +11,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { MocoApiClient, MocoError } from './moco-api-client';
 import { buildMocoJsonTableSpec } from './moco-json-schema';
 import { MocoCredentials, MocoEntityType } from './moco-types';
@@ -125,8 +133,8 @@ export class MocoConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as MocoEntityType;
     let page = (progress as { nextPage?: number })?.nextPage ?? 1;
 
@@ -134,6 +142,7 @@ export class MocoConnector extends Connector {
       page++;
       await callback({ files: entities as unknown as ConnectorFile[], connectorProgress: { nextPage: page } });
     }
+    return {};
   }
 
   async pullRecordFilesByIds(

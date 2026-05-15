@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -10,7 +10,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { PipedriveApiClient, PipedriveError } from './pipedrive-api-client';
 import { buildPipedriveJsonTableSpec } from './pipedrive-json-schema';
 import { ENTITY_DISPLAY_NAMES, ENTITY_TYPES, PipedriveDownloadProgress, PipedriveEntityType } from './pipedrive-types';
@@ -104,8 +112,8 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     callback: (params: { files: ConnectorFile[]; connectorProgress?: PipedriveDownloadProgress }) => Promise<void>,
     progress: PipedriveDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
     const resumeCursor = (progress as { nextCursor?: string })?.nextCursor;
 
@@ -115,6 +123,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
         connectorProgress: batch.nextCursor ? { nextCursor: batch.nextCursor } : {},
       });
     }
+    return {};
   }
 
   /**

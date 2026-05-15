@@ -1,10 +1,18 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { ConnectorSettingDefinition, DataFolderOptions, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorSettingDefinition, TableDiscoveryMode } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { getServiceDisplayName } from './display-names';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from './types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from './types';
 
 /**
  * Defines a utility that parses the user provided parameters for a given service into a set of credentials and extras.
@@ -113,18 +121,47 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   }
 
   /**
-   * Does a full poll of target remote table and pulls all of the available records as JSON files.
-   * This is the new method that uses JSON schema instead of column-based specs.
+   * Whether this connector can answer "what changed since X?" for a given folder.
+   * The default returns `false` — connectors whose remote API supports a modified-since
+   * (or change-token) endpoint override this to return `true`. Some connectors need to
+   * inspect per-folder configuration (e.g. a user-declared `modifiedAtField`), which is
+   * why `options` is passed in.
+   *
+   * The job consults this flag before issuing an incremental pull; folders backed by
+   * connectors that return `false` are silently demoted to a full scan.
+   */
+  supportsIncrementalPull(options: PullRecordFilesOptions): boolean {
+    return false;
+  }
+
+  /**
+   * Pull records for a table.
+   *
+   * `options` is a {@link PullRecordFilesOptions}: every persisted
+   * `DataFolderOptions` field (filter, readOnly, fullPullOnly, connector-specific
+   * extras) plus the runtime additions set by the job:
+   *   - `pullMode === 'full'` (default if absent): full scan, existing behavior.
+   *     The connector should ignore `since`/`cursor`.
+   *   - `pullMode === 'incremental'`: pull only records changed since
+   *     `options.since` (or after the opaque `options.cursor` if the connector
+   *     uses tokens). Only invoked when `supportsIncrementalPull(options)`
+   *     returns true.
+   *
+   * For incremental runs the connector returns the new high-water mark and/or
+   * cursor for the job to persist. For full runs the connector returns an empty
+   * result (`{}`).
+   *
    * @param tableSpec The JSON table spec to pull records for.
    * @param callback The callback that will process batches of files as they are pulled.
    * @param progress The progress object to update with the pull progress.
+   * @param options Persisted folder options plus runtime pull-mode/since/cursor fields.
    */
   abstract pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>,
     progress: TConnectorProgress,
-    options: DataFolderOptions,
-  ): Promise<void>;
+    options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult>;
 
   /**
    * Fetch specific records by their IDs from the remote service.

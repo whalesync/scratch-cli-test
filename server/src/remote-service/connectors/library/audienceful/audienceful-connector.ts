@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -10,7 +10,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { AudiencefulApiClient, AudiencefulError } from './audienceful-api-client';
 import { buildAudiencefulJsonTableSpec } from './audienceful-json-schema';
 import { AudiencefulField } from './audienceful-types';
@@ -105,8 +113,8 @@ export class AudiencefulConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const resumeUrl = (progress as { nextUrl?: string })?.nextUrl ?? undefined;
 
     for await (const batch of this.client.listPeople(resumeUrl)) {
@@ -115,6 +123,7 @@ export class AudiencefulConnector extends Connector {
         connectorProgress: batch.nextUrl ? { nextUrl: batch.nextUrl } : {},
       });
     }
+    return {};
   }
 
   async pullRecordFilesByIds(

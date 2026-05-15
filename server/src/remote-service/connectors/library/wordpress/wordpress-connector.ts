@@ -1,5 +1,5 @@
 import { TObject } from '@sinclair/typebox';
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import TurndownService from 'turndown';
@@ -12,7 +12,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { WordPressAuthParser } from './wordpress-auth-parser';
 import {
   WORDPRESS_BATCH_SIZE,
@@ -132,8 +140,8 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     callback: (params: { files: ConnectorFile[]; connectorProgress?: WordPressDownloadProgress }) => Promise<void>,
     progress: WordPressDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const [tableId] = tableSpec.id.remoteId;
     let offset = progress?.nextOffset ?? 0;
     let hasMore = true;
@@ -154,6 +162,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
         await callback({ files: response as unknown as ConnectorFile[], connectorProgress: { nextOffset: offset } });
       }
     }
+    return {};
   }
 
   async pullRecordFilesByIds(

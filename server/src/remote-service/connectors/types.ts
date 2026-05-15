@@ -1,7 +1,8 @@
 import { TSchema } from '@sinclair/typebox';
-import type { EntityId, TableView } from '@spinner/shared-types';
+import type { DataFolderOptions, EntityId, TableView } from '@spinner/shared-types';
 import { PostgresColumnType } from '@spinner/shared-types';
 import { get, set, unset } from 'lodash';
+import { JsonSafeObject } from 'src/utils/objects';
 
 // Re-export from shared-types for backwards compatibility
 export { PostgresColumnType };
@@ -135,6 +136,34 @@ export type BaseJsonTableSpec = {
  * This lets us know when we are talking about record files instead of using the generic Record<string, unknown> type.
  */
 export type ConnectorFile = Record<string, unknown>;
+
+/**
+ * The full options bag passed to `pullRecordFiles`. Extends the persisted
+ * `DataFolderOptions` with non-persisted runtime fields set by the job at call
+ * time so connectors can route between full and incremental pulls without a
+ * second method signature.
+ *
+ * - `pullMode` absent or `'full'` ⇒ existing full-scan behavior; `since`/`cursor`
+ *   are ignored.
+ * - `pullMode === 'incremental'` ⇒ the connector should pull only records
+ *   changed since `since` (or after the opaque `cursor` if it uses tokens).
+ *   Only invoked when `supportsIncrementalPull(options)` returns true.
+ */
+export interface PullRecordFilesOptions extends DataFolderOptions {
+  pullMode?: 'full' | 'incremental';
+  since?: Date | null;
+  cursor?: JsonSafeObject | null;
+}
+
+/**
+ * Returned from `pullRecordFiles`. Empty (`{}`) for full pulls; populated by
+ * connectors that ran incremental so the job can persist the new watermark
+ * and/or cursor for the next run.
+ */
+export interface PullRecordFilesResult {
+  newWatermark?: Date;
+  newCursor?: JsonSafeObject | null;
+}
 
 export type ConnectorErrorDetails = {
   userFriendlyMessage: string;

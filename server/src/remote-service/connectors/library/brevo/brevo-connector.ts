@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -9,7 +9,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { BrevoApiClient, BrevoError } from './brevo-api-client';
 import {
   buildBrevoContactsJsonTableSpec,
@@ -105,8 +113,8 @@ export class BrevoConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const resumeOffset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
 
     switch (tableSpec.id.wsId) {
@@ -156,6 +164,7 @@ export class BrevoConnector extends Connector {
       default:
         throw new BrevoError(`Unknown table '${tableSpec.id.wsId}'`, 404);
     }
+    return {};
   }
 
   async pullRecordFilesByIds(

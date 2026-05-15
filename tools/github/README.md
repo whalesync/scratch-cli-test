@@ -57,3 +57,12 @@ Run with an explicit token instead of `$GITHUB_TOKEN`:
 ```bash
 ./cleanup_stale_releases.py --app cli --variant test --token ghp_xxx --apply
 ```
+
+### Test Build cleanup
+
+This cleans up any test pre-releases for the CLI and desktop that were built > 3 days ago.
+
+```bash
+./cleanup_stale_releases.py --app CLI --variant test --days 3 --token ghp_XXXXX --apply
+./cleanup_stale_releases.py --app desktop --variant test --days 3 --token ghp_XXXXX --apply
+```

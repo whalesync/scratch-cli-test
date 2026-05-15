@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions, isQuickBooksConnectorExtras } from '@spinner/shared-types';
+import { connectorMetadata, isQuickBooksConnectorExtras } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -10,7 +10,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { QuickBooksApiClient, QuickBooksError } from './quickbooks-api-client';
 import { buildQuickBooksJsonTableSpec } from './quickbooks-json-schema';
 import {
@@ -121,8 +129,8 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
     callback: (params: { files: ConnectorFile[]; connectorProgress?: QuickBooksDownloadProgress }) => Promise<void>,
     progress: QuickBooksDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.remoteId[0];
     let startPosition = progress.nextStartPosition ?? 1;
     let hasMore = true;
@@ -139,6 +147,7 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
         });
       }
     }
+    return {};
   }
 
   /**

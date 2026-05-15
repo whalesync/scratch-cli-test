@@ -15,7 +15,6 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
   X_SCRATCH_READONLY,
-  type DataFolderOptions,
 } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -29,6 +28,8 @@ import {
   type ConnectorErrorDetails,
   type ConnectorFile,
   type EntityId,
+  type PullRecordFilesOptions,
+  type PullRecordFilesResult,
   type TablePreview,
 } from '../../types';
 import {
@@ -353,15 +354,15 @@ export class SupabaseConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    options: DataFolderOptions,
-  ): Promise<void> {
+    options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const rawFilter = options.filter?.trim() || undefined;
     if (rawFilter) {
       validateWhereFilter(rawFilter);
     }
 
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
-    return this.withPgClient(async (client) => {
+    await this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
       const pk = tableSpec.idColumnRemoteId;
       const filter = rawFilter;
@@ -377,6 +378,7 @@ export class SupabaseConnector extends Connector {
         if (rows.length < READ_BATCH_SIZE) break;
       }
     }, resolved.connectionString);
+    return {};
   }
 
   async pullRecordFilesByIds(

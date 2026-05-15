@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { assertUnreachable } from 'src/utils/asserts';
@@ -11,7 +11,15 @@ import {
 } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { AttioApiClient, AttioError } from './attio-api-client';
 import { buildAttioListTableSpec, buildAttioObjectTableSpec } from './attio-json-schema';
 import {
@@ -138,8 +146,8 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: AttioDownloadProgress }) => Promise<void>,
     progress: AttioDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const parsed = parseAttioTableId(tableSpec.id);
     const resumeOffset = progress?.offset;
 
@@ -151,7 +159,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
             connectorProgress: batch.nextOffset !== undefined ? { offset: batch.nextOffset } : {},
           });
         }
-        return;
+        return {};
       }
       case 'list': {
         for await (const batch of this.client.queryListEntries(parsed.listSlug, resumeOffset)) {
@@ -160,7 +168,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
             connectorProgress: batch.nextOffset !== undefined ? { offset: batch.nextOffset } : {},
           });
         }
-        return;
+        return {};
       }
       default:
         return assertUnreachable(parsed);

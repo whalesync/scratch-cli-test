@@ -6,7 +6,7 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox';
-import { connectorMetadata, DataFolderOptions, isShopifyConnectorExtras } from '@spinner/shared-types';
+import { connectorMetadata, isShopifyConnectorExtras } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -19,7 +19,16 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, idPath, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  idPath,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, EntityType, getEntityConfig, isChildEntity } from './graphql';
 import { SEO_METAFIELD_ENTITIES, ShopifyApiClient, ShopifyError } from './shopify-api-client';
 import { buildShopifyDefaultView } from './shopify-default-view';
@@ -255,8 +264,8 @@ export class ShopifyConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as EntityType;
 
     if (!ENTITY_REGISTRY[entityType]) {
@@ -272,6 +281,7 @@ export class ShopifyConnector extends Connector {
     } else {
       await this.pullParentRecords(entityType, callback, resumeCursor);
     }
+    return {};
   }
 
   /**

@@ -1,9 +1,36 @@
 # Incremental Polling
 
 **Date**: 2026-05-14
-**Status**: Proposed
+**Status**: In progress
 **Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling)
 **Scope**: Server-only. UI changes deferred to a follow-up. **Airtable is the only connector implemented in this initial phase** — the full pipeline (schema, job, scheduler, triggers, audit logging) goes end-to-end against Airtable so we can validate the design before rolling it out to the other connectors.
+
+## Progress
+
+**Landed (2026-05-14):**
+
+- Prisma schema (not yet migrated): added `lastIncrementalPullAt`, `incrementalCursor`, `lastFullPullAt` to `DataFolder`; added `FULL_PULL` and `INCREMENTAL_PULL` to `ScheduleAction` (with `PULL` marked deprecated) in [server/prisma/schema.prisma](../../server/prisma/schema.prisma). Mirrored the `ScheduleAction` change in [packages/shared-types/src/enums/enums.ts](../../packages/shared-types/src/enums/enums.ts).
+- `DataFolderOptions.fullPullOnly?: boolean` added in [packages/shared-types/src/connector/dtos.ts](../../packages/shared-types/src/connector/dtos.ts).
+- Connector contract types added in [server/src/remote-service/connectors/types.ts](../../server/src/remote-service/connectors/types.ts):
+  - `PullRecordFilesOptions extends DataFolderOptions` with optional runtime `pullMode` / `since` / `cursor`.
+  - `PullRecordFilesResult` with optional `newWatermark` / `newCursor` (currently always `{}` — see note below).
+- Abstract [`Connector`](../../server/src/remote-service/connectors/connector.ts): `pullRecordFiles` signature switched to `PullRecordFilesOptions` / `Promise<PullRecordFilesResult>`; added `supportsIncrementalPull(options: PullRecordFilesOptions): boolean` defaulting to `false`.
+- All 18 concrete connectors under [server/src/remote-service/connectors/library/](../../server/src/remote-service/connectors/library/) updated mechanically: parameter type widened to `PullRecordFilesOptions`, return type widened to `Promise<PullRecordFilesResult>`, `return {};` added at the end of each `pullRecordFiles` body. No incremental logic anywhere — every connector still inherits the base `supportsIncrementalPull() = false`, including Airtable. The three connectors with custom pull-options subtypes (`AirtablePullOptions`, `IntercomPullOptions`, `NotionPullOptions`) now extend `PullRecordFilesOptions`.
+- `yarn build` and `yarn lint` pass from the repo root.
+
+**Still to do (in roughly this order):**
+
+1. Generate and apply the two Prisma migrations (enum + `DataFolder` columns; then `UPDATE "Schedule" SET "action" = 'FULL_PULL' WHERE "action" = 'PULL'`). See [Data migration — convert existing `PULL` rows to `FULL_PULL`](#data-migration--convert-existing-pull-rows-to-full_pull).
+2. Airtable incremental implementation (`supportsIncrementalPull(options)` override checking `modifiedAtField`; incremental branch in `pullRecordFiles`; clock-skew overlap). See [Airtable (in scope)](#airtable-in-scope).
+3. Job changes in [`PullLinkedFolderFilesJob`](../../server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts): effective-mode resolution, `since`/`cursor` injection into `pullOptions`, watermark/cursor persistence, conditional `deleteStaleFiles`. See [Job changes](#job-changes).
+4. Scheduler: derive `pullMode` from `Schedule.action`; update `SCHEDULE_ACTION_TO_JOB_TYPE`. See [Scheduler changes](#scheduler-changes).
+5. `schedule.service.ts` CRUD: accept the two new actions; keep accepting legacy `PULL`.
+6. HTTP `mode` parameter on the pull-folder endpoint; CLI `--mode` flag on `scratchmd pull`. See [Trigger paths](#trigger-paths).
+7. Audit-log entry on `enqueuePullLinkedFolderFilesJob` including `{ folderIds, mode, trigger }`.
+8. `CONNECTOR_GUIDE.md` update documenting the new contract.
+9. Verification per [Verification](#verification).
+
+**Open question — how the job learns which mode actually ran**: today `PullRecordFilesResult` only carries optional `newWatermark` / `newCursor`. Adding `pullMode: 'full' | 'incremental'` to the result so connectors must report which mode they actually executed (in case a connector demotes incremental → full internally) was considered and rolled back. The job-side capability check (`if requestedMode === 'incremental' && !connector.supportsIncrementalPull(options) → demote`) is the current contract; revisit if a connector ends up needing to demote *after* `supportsIncrementalPull` has already approved the call.
 
 ## Context
 

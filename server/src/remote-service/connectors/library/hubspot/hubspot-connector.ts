@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -11,7 +11,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { HubspotApiClient, HubspotError } from './hubspot-api-client';
 import { buildHubspotJsonTableSpec, isReadonlyHubspotProperty } from './hubspot-json-schema';
 import {
@@ -144,8 +152,8 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     callback: (params: { files: ConnectorFile[]; connectorProgress?: HubspotDownloadProgress }) => Promise<void>,
     progress: HubspotDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const objectType = tableSpec.id.remoteId[0];
     const propertyNames = await this.getPropertyNames(objectType);
     const associations = this.getAssociationTypes(objectType);
@@ -156,6 +164,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
         connectorProgress: { afterCursor: batch.nextCursor },
       });
     }
+    return {};
   }
 
   /**

@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -13,7 +13,15 @@ import {
 } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { AffinityApiClient, AffinityError } from './affinity-api-client';
 import {
   buildAffinityCompaniesTableSpec,
@@ -211,8 +219,8 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
     callback: (params: { files: ConnectorFile[]; connectorProgress?: AffinityDownloadProgress }) => Promise<void>,
     progress: AffinityDownloadProgress,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const parsed = parseAffinityTableId(tableSpec.id);
     const resumeCursor = progress?.cursor;
 
@@ -225,7 +233,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
             connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
           });
         }
-        return;
+        return {};
       }
       case 'tenant-persons': {
         for await (const batch of this.client.listAllPersons(resumeCursor)) {
@@ -235,7 +243,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
             connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
           });
         }
-        return;
+        return {};
       }
       case 'tenant-companies': {
         for await (const batch of this.client.listAllCompanies(resumeCursor)) {
@@ -245,7 +253,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
             connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
           });
         }
-        return;
+        return {};
       }
       case 'tenant-opportunities': {
         for await (const batch of this.client.listAllOpportunities(resumeCursor)) {
@@ -257,7 +265,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
             connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
           });
         }
-        return;
+        return {};
       }
       case 'tenant-notes': {
         for await (const batch of this.client.listAllNotes(resumeCursor)) {
@@ -267,7 +275,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
             connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
           });
         }
-        return;
+        return {};
       }
       case 'tenant-entity-files': {
         for await (const batch of this.client.listAllEntityFiles(resumeCursor)) {
@@ -277,7 +285,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
             connectorProgress: batch.nextCursor ? { cursor: batch.nextCursor } : {},
           });
         }
-        return;
+        return {};
       }
       default:
         return assertUnreachable(parsed);

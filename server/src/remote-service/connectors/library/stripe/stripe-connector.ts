@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -10,7 +10,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { StripeApiClient, StripeError } from './stripe-api-client';
 import { buildStripeJsonTableSpec } from './stripe-json-schema';
 import { StripeCredentials, StripeEntityType } from './stripe-types';
@@ -151,8 +159,8 @@ export class StripeConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as StripeEntityType;
     const resumeAfter = (progress as { startingAfter?: string })?.startingAfter;
 
@@ -164,6 +172,7 @@ export class StripeConnector extends Connector {
         connectorProgress: lastId ? { startingAfter: lastId } : {},
       });
     }
+    return {};
   }
 
   /**

@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorSettingDefinition, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -13,12 +13,20 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { AirtableApiClient } from './airtable-api-client';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
 import { AirtableSchemaParser } from './airtable-schema-parser';
 
-interface AirtablePullOptions extends DataFolderOptions {
+interface AirtablePullOptions extends PullRecordFilesOptions {
   filter?: string | undefined;
   // A view ID to pull records from. If not provided, all records will be pulled.
   view?: string | undefined;
@@ -153,7 +161,7 @@ export class AirtableConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     options: AirtablePullOptions,
-  ): Promise<void> {
+  ): Promise<PullRecordFilesResult> {
     const [baseId, tableId] = tableSpec.id.remoteId;
 
     const filterByFormula = options.filter && options.filter.trim() !== '' ? options.filter : undefined;
@@ -170,6 +178,7 @@ export class AirtableConnector extends Connector {
         connectorProgress: batch.nextOffset ? { airtableOffset: batch.nextOffset } : {},
       });
     }
+    return {};
   }
 
   async pullRecordFilesByIds(

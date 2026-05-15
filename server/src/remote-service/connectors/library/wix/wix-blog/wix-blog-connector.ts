@@ -1,4 +1,4 @@
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import type { DraftPost } from '@wix/auto_sdk_blog_draft-posts';
 import { draftPosts } from '@wix/blog';
 import { members } from '@wix/members';
@@ -12,7 +12,15 @@ import { Connector, suggestFileNamesFromFieldPaths } from '../../../connector';
 import { connectorRegistry } from '../../../connector-registry';
 import { ConnectorInstantiationError } from '../../../error';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../../types';
 import { HtmlToWixConverter } from '../rich-content/html-to-ricos';
 import { createTurndownService } from '../rich-content/markdown-helpers';
 import { WixToHtmlConverter } from '../rich-content/ricos-to-html';
@@ -140,10 +148,11 @@ export class WixBlogConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'WixBlogConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
     await callback({ files: [], connectorProgress: progress });
+    return {};
   }
 
   /* eslint-disable @typescript-eslint/no-unused-vars */

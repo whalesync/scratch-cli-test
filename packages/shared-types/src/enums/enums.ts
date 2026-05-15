@@ -46,7 +46,10 @@ export enum SyncState {
 }
 
 export enum ScheduleAction {
+  /** @deprecated Equivalent to FULL_PULL. Retained for runtime tolerance until the enum value is dropped. */
   PULL = 'PULL',
+  FULL_PULL = 'FULL_PULL',
+  INCREMENTAL_PULL = 'INCREMENTAL_PULL',
   PUBLISH = 'PUBLISH',
   SYNC = 'SYNC',
 }

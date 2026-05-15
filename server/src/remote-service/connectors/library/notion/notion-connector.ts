@@ -11,12 +11,7 @@ import {
   CreatePageParameters,
   QueryDatabaseParameters,
 } from '@notionhq/client/build/src/api-endpoints';
-import {
-  connectorMetadata,
-  ConnectorSettingDefinition,
-  DataFolderOptions,
-  TableDiscoveryMode,
-} from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition, TableDiscoveryMode } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -26,7 +21,15 @@ import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError, ErrorMessageTemplates } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { createNotionBlockDiff } from './conversion/notion-block-diff';
 import { NotionBlockDiffExecutor } from './conversion/notion-block-diff-executor';
 import { NotionMarkdownConverter } from './conversion/notion-markdown-converter';
@@ -52,7 +55,7 @@ type NotionDownloadProgress = {
   nextCursor: string | undefined;
 };
 
-interface NotionPullOptions extends DataFolderOptions {
+interface NotionPullOptions extends PullRecordFilesOptions {
   filter?: string | undefined;
   excludePageContent?: boolean | undefined;
   childContentMaxDepth?: number | undefined;
@@ -272,7 +275,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: NotionDownloadProgress }) => Promise<void>,
     progress: NotionDownloadProgress,
     options: NotionPullOptions,
-  ): Promise<void> {
+  ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'NotionConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
 
     const [databaseId] = tableSpec.id.remoteId;
@@ -336,6 +339,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         connectorProgress: { nextCursor },
       });
     }
+    return {};
   }
 
   async pullRecordFilesByIds(

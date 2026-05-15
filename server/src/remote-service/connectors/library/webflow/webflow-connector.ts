@@ -1,5 +1,5 @@
 import { TObject, TSchema } from '@sinclair/typebox';
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -17,7 +17,15 @@ import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import {
   buildWebflowAssetsJsonTableSpec,
   buildWebflowJsonTableSpec,
@@ -199,15 +207,15 @@ export class WebflowConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'WebflowConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
     const [siteId, collectionId] = tableSpec.id.remoteId;
 
     // Handle assets table
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
       await this.pullAssets(siteId, callback);
-      return;
+      return {};
     }
 
     let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
@@ -243,6 +251,7 @@ export class WebflowConnector extends Connector {
 
       await callback({ files: items as unknown as ConnectorFile[], connectorProgress: { nextOffset: offset } });
     }
+    return {};
   }
 
   /**

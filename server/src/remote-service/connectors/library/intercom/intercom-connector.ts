@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorSettingDefinition, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -9,7 +9,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { IntercomApiClient, IntercomError } from './intercom-api-client';
 import {
   buildIntercomArticlesJsonTableSpec,
@@ -23,7 +31,7 @@ import {
   IntercomUpdateCollectionRequest,
 } from './intercom-types';
 
-interface IntercomPullOptions extends DataFolderOptions {
+interface IntercomPullOptions extends PullRecordFilesOptions {
   excludeConversationParts?: boolean | undefined;
 }
 
@@ -123,7 +131,7 @@ export class IntercomConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     options: IntercomPullOptions,
-  ): Promise<void> {
+  ): Promise<PullRecordFilesResult> {
     const resumeProgress = progress as { nextPage?: number; startingAfter?: string };
 
     switch (tableSpec.id.wsId) {
@@ -161,6 +169,7 @@ export class IntercomConnector extends Connector {
       default:
         throw new IntercomError(`Unknown table '${tableSpec.id.wsId}'`, 404);
     }
+    return {};
   }
 
   async pullRecordFilesByIds(

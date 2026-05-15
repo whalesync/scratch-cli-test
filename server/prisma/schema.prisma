@@ -50,7 +50,10 @@ enum SyncState {
 }
 
 enum ScheduleAction {
+  /// @deprecated Equivalent to FULL_PULL. Retained for runtime tolerance until a follow-up cleanup migration drops the value.
   PULL
+  FULL_PULL
+  INCREMENTAL_PULL
   PUBLISH
   SYNC
 }
@@ -369,6 +372,15 @@ model DataFolder {
   // Additional options for interacting with the connector
   // Will be an object matching the DataFolderOptions interface, plus any connector-specific keys.
   options Json? @default("{}")
+
+  // High-water mark for incremental polling. Null = never bootstrapped; the next pull will run as a full scan.
+  lastIncrementalPullAt DateTime?
+
+  // Connector-opaque change token used as an alternative to lastIncrementalPullAt for APIs that return change tokens.
+  incrementalCursor Json? @db.Json
+
+  // Timestamp of the last successful full pull. Tracked separately so full and incremental schedules don't shadow each other.
+  lastFullPullAt DateTime?
 
   @@index([workbookId])
   @@index([connectorAccountId])

@@ -5,7 +5,7 @@
  * Supports CRUD for Issues and Projects; read-only for Teams, Users, Labels, and Cycles.
  */
 
-import { connectorMetadata, DataFolderOptions } from '@spinner/shared-types';
+import { connectorMetadata } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
@@ -19,7 +19,15 @@ import {
   extractErrorMessageFromAxiosError,
 } from '../../error';
 import { Service } from '../../service-constants';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile, EntityId, TablePreview } from '../../types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  TablePreview,
+} from '../../types';
 import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, type EntityType } from './graphql';
 import { ISSUES_READ_ONLY_FIELDS, ISSUES_STRIP_ON_UPDATE_FIELDS } from './graphql/mutations/issues.mutations';
 import { PROJECTS_READ_ONLY_FIELDS } from './graphql/mutations/projects.mutations';
@@ -128,8 +136,8 @@ export class LinearConnector extends Connector {
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: DataFolderOptions,
-  ): Promise<void> {
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as EntityType;
 
     if (!ENTITY_REGISTRY[entityType]) {
@@ -144,6 +152,7 @@ export class LinearConnector extends Connector {
         connectorProgress: batch.endCursor ? { endCursor: batch.endCursor } : {},
       });
     }
+    return {};
   }
 
   /**
