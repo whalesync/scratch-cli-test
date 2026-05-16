@@ -3,7 +3,7 @@
 **Date**: 2026-05-14
 **Status**: In progress
 **Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling)
-**Scope**: Server-only. UI changes deferred to a follow-up. **Airtable is the only connector implemented in this initial phase** — the full pipeline (schema, job, scheduler, triggers, audit logging) goes end-to-end against Airtable so we can validate the design before rolling it out to the other connectors.
+**Scope**: Server-only. UI changes deferred to a follow-up. **Airtable is the only connector implemented in this initial phase** — the full pipeline (schema, job, scheduler, triggers) goes end-to-end against Airtable so we can validate the design before rolling it out to the other connectors.
 
 ## Progress
 
@@ -45,9 +45,8 @@
 4. Scheduler: derive `pullMode` from `Schedule.action`; update `SCHEDULE_ACTION_TO_JOB_TYPE`. See [Scheduler changes](#scheduler-changes).
 5. `schedule.service.ts` CRUD: accept the two new actions; keep accepting legacy `PULL`.
 6. HTTP `mode` parameter on the pull-folder endpoint; CLI `--mode` flag on `scratchmd pull`. See [Trigger paths](#trigger-paths).
-7. Audit-log entry on `enqueuePullLinkedFolderFilesJob` including `{ folderIds, mode, trigger }`.
-8. `CONNECTOR_GUIDE.md` update documenting the new contract.
-9. Verification per [Verification](#verification).
+7. `CONNECTOR_GUIDE.md` update documenting the new contract.
+8. Verification per [Verification](#verification).
 
 **Open question — how the job learns which mode actually ran**: today `PullRecordFilesResult` only carries optional `newWatermark` / `newCursor`. Adding `pullMode: 'full' | 'incremental'` to the result so connectors must report which mode they actually executed (in case a connector demotes incremental → full internally) was considered and rolled back. The job-side capability check (`if requestedMode === 'incremental' && !connector.supportsIncrementalPull(options) → demote`) is the current contract; revisit if a connector ends up needing to demote *after* `supportsIncrementalPull` has already approved the call.
 
@@ -215,7 +214,7 @@ The existing `pullRecordFilesByIds` (by-ID pulls used by [`pull-files.job.ts`](.
 
 ## Per-connector implementation strategy
 
-This initial phase implements **Airtable only**. All other connectors keep `supportsIncrementalPull() = false` and continue full-scanning — they only need the trivial `return {}` added to their existing `pullRecordFiles` so the new return type compiles. Once the Airtable path is validated end-to-end (schema, job, scheduler, CLI, audit logs), a follow-up plan covers the rest using the same framework.
+This initial phase implements **Airtable only**. All other connectors keep `supportsIncrementalPull() = false` and continue full-scanning — they only need the trivial `return {}` added to their existing `pullRecordFiles` so the new return type compiles. Once the Airtable path is validated end-to-end (schema, job, scheduler, CLI), a follow-up plan covers the rest using the same framework.
 
 ### Airtable (in scope — landed 2026-05-15)
 
@@ -339,10 +338,6 @@ mode: 'full' | 'incremental';  // emitted per-folder so analytics/UI can disting
 
 PostHog event `trackPullCompleted` ([line 390](../../server/src/worker/jobs/job-definitions/pull-linked-folder-files.job.ts#L390)) gets a `mode` field. No new event type — same lifecycle.
 
-### Audit logging
-
-The job already emits workbook events and PostHog. Add an audit-log entry on job start in `BullEnqueuerService.enqueuePullLinkedFolderFilesJob` capturing `{ folderIds, mode, trigger }` per the [server CLAUDE.md](../../server/CLAUDE.md) tracking rules ("triggering asynchronous jobs related to a core entity").
-
 ## Scheduler changes
 
 [`SchedulerService.evaluateSchedules`](../../server/src/schedule/scheduler.service.ts) (around [line 161](../../server/src/schedule/scheduler.service.ts#L161)) derives `pullMode` from the `Schedule.action` and passes it to `enqueuePullLinkedFolderFilesJob`. Cron evaluation, atomic claim, and debounce logic are unchanged.
@@ -388,8 +383,6 @@ The 30-second debounce window is per-entity-and-action today; with the action-le
 
 [`scratch-git-2/src/cli/`](../../scratch-git-2/src/cli/) — `scratchmd pull` gains a `--mode full|incremental` flag (default: `full`). Update the `cli-linked.controller.ts` endpoint it calls.
 
-Per [server CLAUDE.md](../../server/CLAUDE.md), CLI interactions must be audit-logged; verify the existing CLI pull audit entry includes the new `mode` field.
-
 ## State transitions
 
 - **Bootstrap**: `lastIncrementalPullAt = null`. First pull (regardless of requested mode) runs as a full scan. On success, the job sets `lastIncrementalPullAt = pullStartedAt` and `lastFullPullAt = pullStartedAt`. From then on, incremental requests do incremental.
@@ -425,7 +418,7 @@ Per [server CLAUDE.md](../../server/CLAUDE.md), CLI interactions must be audit-l
 - [server/prisma/migrations/](../../server/prisma/migrations/) — two migrations: (1) add the new enum values + `DataFolder` columns, (2) `UPDATE "Schedule" SET "action" = 'FULL_PULL' WHERE "action" = 'PULL'`. ⏳ Pending.
 - [packages/shared-types/src/job-types.ts](../../packages/shared-types/src/job-types.ts) — job `data.pullMode` typing. ⏳ Pending.
 - [server/src/workbook/data-folder.controller.ts](../../server/src/workbook/data-folder.controller.ts) — accept `mode` on pull endpoint. ⏳ Pending.
-- [server/src/worker-enqueuer/bull-enqueuer.service.ts](../../server/src/worker-enqueuer/bull-enqueuer.service.ts) — optional `pullMode` arg added; threads into job data. Audit-log entry still pending.
+- [server/src/worker-enqueuer/bull-enqueuer.service.ts](../../server/src/worker-enqueuer/bull-enqueuer.service.ts) — optional `pullMode` arg added; threads into job data. ✅ Landed.
 - [scratch-git-2/src/cli/](../../scratch-git-2/src/cli/) — `--mode` flag for `scratchmd pull`. ⏳ Pending.
 
 Existing utilities to reuse — not to reinvent:

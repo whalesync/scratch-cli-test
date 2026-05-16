@@ -12,7 +12,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
 import { ScheduleEntity } from './entities/schedule.entity';
-import { SCHEDULE_MIN_INTERVAL_MINUTES } from './schedule.types';
+import { isPullAction, SCHEDULE_MIN_INTERVAL_MINUTES } from './schedule.types';
 
 @Injectable()
 export class ScheduleService {
@@ -154,7 +154,7 @@ export class ScheduleService {
 
   /** Checks whether the entity referenced by a schedule still exists. */
   async entityExists(workbookId: string, action: string, entityId: string): Promise<boolean> {
-    if (action === 'PULL' || action === 'PUBLISH') {
+    if (isPullAction(action) || action === 'PUBLISH') {
       const folder = await this.db.client.dataFolder.findFirst({
         where: { id: entityId, workbookId },
         select: { id: true },
@@ -180,7 +180,7 @@ export class ScheduleService {
 
   /** Validates that the entityId refers to a valid entity for the given action within the workbook. */
   private async validateEntityId(workbookId: string, action: string, entityId: string): Promise<void> {
-    if (action === 'PULL' || action === 'PUBLISH') {
+    if (isPullAction(action) || action === 'PUBLISH') {
       const folder = await this.db.client.dataFolder.findFirst({
         where: { id: entityId, workbookId },
         select: { id: true, connectorAccountId: true },
@@ -188,7 +188,7 @@ export class ScheduleService {
       if (!folder) {
         throw new BadRequestException(`DataFolder ${entityId} not found in workbook ${workbookId}`);
       }
-      if (action === 'PULL' && !folder.connectorAccountId) {
+      if (isPullAction(action) && !folder.connectorAccountId) {
         throw new BadRequestException(`DataFolder ${entityId} is not a linked folder (no connector account)`);
       }
     } else if (action === 'SYNC') {

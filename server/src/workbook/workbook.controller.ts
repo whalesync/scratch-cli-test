@@ -122,7 +122,7 @@ export class WorkbookController {
     const actor = userToActor(req.user);
     await this.service.assertWritableWorkbook(actor, id);
     const dto = pullDto;
-    return this.service.pullFiles(id, actor, dto.dataFolderIds, createRunContext('web'));
+    return this.service.pullFiles(id, actor, dto.dataFolderIds, createRunContext('web'), dto.mode);
   }
 
   @Post(':id/pull-assets')

@@ -29,7 +29,7 @@ import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
-import { CreateCliLinkedTableDto, ValidatedCreateCliLinkedTableDto } from './dtos/cli-linked.dto';
+import { CliPullDto, CreateCliLinkedTableDto, ValidatedCreateCliLinkedTableDto } from './dtos/cli-linked.dto';
 
 /**
  * Controller for CLI linked table operations.
@@ -186,11 +186,18 @@ export class CliLinkedController {
   async pullAllLinkedTables(
     @Req() req: RequestWithUser,
     @Param('workbookId') workbookId: string,
+    @Body() body: CliPullDto,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
     await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
 
-    return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, undefined, createRunContext('cli'));
+    return await this.workbookService.pullFiles(
+      workbookId as WorkbookId,
+      actor,
+      undefined,
+      createRunContext('cli'),
+      body.mode,
+    );
   }
 
   /**
@@ -201,11 +208,18 @@ export class CliLinkedController {
     @Req() req: RequestWithUser,
     @Param('workbookId') workbookId: string,
     @Param('folderId') folderId: string,
+    @Body() body: CliPullDto,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
     await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
 
-    return await this.workbookService.pullFiles(workbookId as WorkbookId, actor, [folderId], createRunContext('cli'));
+    return await this.workbookService.pullFiles(
+      workbookId as WorkbookId,
+      actor,
+      [folderId],
+      createRunContext('cli'),
+      body.mode,
+    );
   }
 
   /**

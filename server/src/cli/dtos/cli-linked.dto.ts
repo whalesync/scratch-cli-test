@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
 /**
  * DTO for creating a linked table via CLI.
@@ -41,3 +41,17 @@ export class AvailableTablesQueryDto {
 }
 
 export type ValidatedAvailableTablesQueryDto = AvailableTablesQueryDto;
+
+/**
+ * Body for the CLI pull endpoints (`scratchmd linked pull` / `pull-all`).
+ * Selects the pull mode; omitted → `'full'` (the safe default matching
+ * pre-incremental behavior). Per-folder demotion to full still happens at job
+ * execution time (capability, bootstrap, `fullPullOnly`).
+ */
+export class CliPullDto {
+  @IsOptional()
+  @IsIn(['full', 'incremental'])
+  mode?: 'full' | 'incremental';
+}
+
+export type ValidatedCliPullDto = CliPullDto;

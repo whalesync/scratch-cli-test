@@ -233,7 +233,7 @@ Run `scratchmd <command> --help` for full flag details.
 | `linked link` | Link a new table to the workspace |
 | `linked unlink <folder-id>` | Remove a linked table |
 | `linked show <folder-id>` | Show linked table details and pending changes |
-| `linked pull [--folder <id>]` | Pull changes from the external service into the workspace |
+| `linked pull [<id>] [--mode full\|incremental]` | Pull changes from the external service into the workspace (incremental pulls only records changed since the last pull) |
 
 ## publish
 

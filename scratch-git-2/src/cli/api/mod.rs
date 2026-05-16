@@ -617,11 +617,13 @@ impl ApiClient {
         &self,
         workbook_id: &str,
         folder_id: &str,
+        mode: &str,
     ) -> ApiResult<JobStartedResponse> {
-        self.post_no_body(&format!(
-            "workbooks/{}/linked/{}/pull",
-            workbook_id, folder_id
-        ))
+        let body = serde_json::json!({ "mode": mode });
+        self.post(
+            &format!("workbooks/{}/linked/{}/pull", workbook_id, folder_id),
+            &body,
+        )
         .await
     }
 
@@ -642,8 +644,10 @@ impl ApiClient {
     pub async fn pull_all_linked_tables(
         &self,
         workbook_id: &str,
+        mode: &str,
     ) -> ApiResult<PullAllLinkedTablesResponse> {
-        self.post_no_body(&format!("workbooks/{}/linked/pull-all", workbook_id))
+        let body = serde_json::json!({ "mode": mode });
+        self.post(&format!("workbooks/{}/linked/pull-all", workbook_id), &body)
             .await
     }
 

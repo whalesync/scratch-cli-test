@@ -5,6 +5,25 @@ use clap::Subcommand;
 use crate::api::{self, ApiClient, CreateLinkedTableRequest};
 use crate::config;
 
+/// Pull mode for `linked pull` / `linked pull-all`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum PullMode {
+    /// Full scan (default) — fetch every record and detect deletions
+    Full,
+    /// Incremental — only records changed since the last pull (connectors that
+    /// support it; falls back to full when unsupported or not yet bootstrapped)
+    Incremental,
+}
+
+impl PullMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            PullMode::Full => "full",
+            PullMode::Incremental => "incremental",
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum LinkedCommands {
     /// List available tables from a connection (or list connections if no ID given)
@@ -52,6 +71,9 @@ pub enum LinkedCommands {
         /// Pull specific file(s) by path instead of full table (repeatable)
         #[arg(long = "file")]
         files: Vec<String>,
+        /// Pull mode (ignored when --file is used). Default: full
+        #[arg(long, value_enum, default_value = "full")]
+        mode: PullMode,
     },
     /// Publish workspace changes to the CRM
     Publish {
@@ -59,7 +81,11 @@ pub enum LinkedCommands {
         id: Option<String>,
     },
     /// Pull all linked tables and return job IDs without waiting
-    PullAll,
+    PullAll {
+        /// Pull mode applied to every linked table. Default: full
+        #[arg(long, value_enum, default_value = "full")]
+        mode: PullMode,
+    },
 }
 
 pub async fn run(
@@ -100,15 +126,15 @@ pub async fn run(
             let folder_id = config::resolve_data_folder_id(id.as_deref())?;
             show(client, &workbook_id, &folder_id, json).await
         }
-        LinkedCommands::Pull { id, files } => {
+        LinkedCommands::Pull { id, files, mode } => {
             let folder_id = config::resolve_data_folder_id(id.as_deref())?;
-            pull(client, &workbook_id, &folder_id, &files, json).await
+            pull(client, &workbook_id, &folder_id, &files, mode, json).await
         }
         LinkedCommands::Publish { id } => {
             let folder_id = config::resolve_data_folder_id(id.as_deref())?;
             publish(client, &workbook_id, &folder_id, json).await
         }
-        LinkedCommands::PullAll => pull_all(client, &workbook_id).await,
+        LinkedCommands::PullAll { mode } => pull_all(client, &workbook_id, mode).await,
     }
 }
 
@@ -382,10 +408,13 @@ async fn pull(
     workbook_id: &str,
     folder_id: &str,
     file_paths: &[String],
+    mode: PullMode,
     json: bool,
 ) -> anyhow::Result<()> {
     let resp = if file_paths.is_empty() {
-        client.pull_linked_table(workbook_id, folder_id).await?
+        client
+            .pull_linked_table(workbook_id, folder_id, mode.as_str())
+            .await?
     } else {
         client
             .pull_linked_table_files(workbook_id, folder_id, file_paths)
@@ -432,8 +461,10 @@ async fn publish(
     super::files::download_workbook(client.base_url(), client.token(), workbook_id).await
 }
 
-async fn pull_all(client: &ApiClient, workbook_id: &str) -> anyhow::Result<()> {
-    let resp = client.pull_all_linked_tables(workbook_id).await?;
+async fn pull_all(client: &ApiClient, workbook_id: &str, mode: PullMode) -> anyhow::Result<()> {
+    let resp = client
+        .pull_all_linked_tables(workbook_id, mode.as_str())
+        .await?;
     println!("{}", serde_json::to_string(&resp)?);
     Ok(())
 }

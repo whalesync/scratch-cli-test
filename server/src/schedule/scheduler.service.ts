@@ -10,7 +10,7 @@ import { DataFolderService } from 'src/workbook/data-folder.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScheduleService } from './schedule.service';
-import { actionToJobType, SCHEDULE_DEBOUNCE_WINDOW_MS } from './schedule.types';
+import { actionToJobType, SCHEDULE_DEBOUNCE_WINDOW_MS, scheduleActionToPullMode } from './schedule.types';
 
 @Injectable()
 export class SchedulerService {
@@ -137,12 +137,32 @@ export class SchedulerService {
       return recentJob !== null;
     }
 
-    // For PULL/PUBLISH, check by dataFolderId
+    if (schedule.action === 'PUBLISH') {
+      const recentJob = await this.db.client.dbJob.findFirst({
+        where: {
+          dataFolderId: schedule.entityId,
+          type: jobType,
+          createdAt: { gte: cutoff },
+        },
+      });
+      return recentJob !== null;
+    }
+
+    // Pull actions (PULL / FULL_PULL / INCREMENTAL_PULL) all map to the same job
+    // type, so discriminate the debounce key by the resolved pull mode. This keeps
+    // an INCREMENTAL_PULL from suppressing a FULL_PULL (or vice versa) scheduled
+    // seconds apart on the same folder. Legacy PULL and FULL_PULL both resolve to
+    // 'full' and therefore share a key — acceptable, they're equivalent at runtime.
+    // Note: only scheduler-enqueued pull jobs carry an explicit `pullMode`; manual
+    // (web/CLI without `mode`) and bootstrap enqueues omit it and don't share this
+    // key. Any rare overlap is absorbed by idempotent file commits.
+    const pullMode = scheduleActionToPullMode(schedule.action);
     const recentJob = await this.db.client.dbJob.findFirst({
       where: {
         dataFolderId: schedule.entityId,
         type: jobType,
         createdAt: { gte: cutoff },
+        data: { path: ['pullMode'], equals: pullMode },
       },
     });
     return recentJob !== null;
@@ -157,6 +177,8 @@ export class SchedulerService {
 
     switch (schedule.action) {
       case 'PULL':
+      case 'FULL_PULL':
+      case 'INCREMENTAL_PULL':
         if (schedule.entityId) {
           await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
             workbookId,
@@ -164,6 +186,7 @@ export class SchedulerService {
             [schedule.entityId as DataFolderId],
             undefined,
             runContext,
+            scheduleActionToPullMode(schedule.action),
           );
         } else {
           WSLogger.info({

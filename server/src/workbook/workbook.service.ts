@@ -534,6 +534,7 @@ export class WorkbookService {
     actor: Actor,
     dataFolderIds: string[] | undefined,
     runContext: RunContext,
+    pullMode?: 'full' | 'incremental',
   ): Promise<PullFilesResponseDto> {
     // Verify the workbook exists and the user has access
     const workbook = await this.findOneOrThrow(id, actor);
@@ -611,6 +612,7 @@ export class WorkbookService {
           deletedCount: 0,
         },
         runContext,
+        pullMode,
       );
       jobs.push({ id: job.id as string });
     }
