@@ -68,7 +68,8 @@ model User {
   updatedAt            DateTime              @updatedAt
   clerkId              String?               @unique
   name                 String?
-  email                String?
+  /// Always stored lowercase + trimmed by a BEFORE INSERT/UPDATE trigger.
+  email                String?               @unique
   role                 UserRole              @default(USER)
   stripeCustomerId     String?               @unique
   organizationId       String?
@@ -206,6 +207,7 @@ model WorkspaceInvites {
   id         String   @id // type: WorkspaceInvitesId
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  /// Always stored lowercase + trimmed by a BEFORE INSERT/UPDATE trigger.
   email      String
   workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
   workbookId String

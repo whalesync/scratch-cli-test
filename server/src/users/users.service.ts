@@ -212,7 +212,7 @@ export class UsersService {
 
   private async redeemWorkspaceInvites(email: string, userId: string): Promise<void> {
     const invites = await this.db.client.workspaceInvites.findMany({
-      where: { email },
+      where: { email: email.trim().toLowerCase() },
     });
 
     if (invites.length === 0) {

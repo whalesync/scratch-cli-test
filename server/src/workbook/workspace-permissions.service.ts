@@ -61,6 +61,7 @@ export class WorkspacePermissionsService {
     role: WorkspacePermissionRole,
     actor: Actor,
   ): Promise<void> {
+    email = email.trim().toLowerCase();
     const user = await this.db.client.user.findFirst({
       where: { email },
     });
