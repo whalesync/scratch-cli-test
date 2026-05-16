@@ -34,6 +34,7 @@ const mockDbService = {
     user: {
       update: jest.fn(),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
     },
     subscription: {
       create: jest.fn(),
@@ -891,7 +892,7 @@ describe('StripePaymentService', () => {
       expect(mockDbService.client.subscription.upsert).not.toHaveBeenCalled();
     });
 
-    it('should return error when user not found', async () => {
+    it('should return ignored when user not known in non-production', async () => {
       const mockSubscription = {
         id: 'sub_nouser123',
         customer: 'cus_nouser123',
@@ -912,16 +913,120 @@ describe('StripePaymentService', () => {
 
       const result = await service.upsertSubscription('sub_nouser123', undefined, mockSubscription);
 
-      // Since priceId matches test plans, subscription is considered scratch
-      // However user lookup fails, which should return error
-      // But in test/staging environments, unknown users return "ignored" to avoid webhook failures
+      // In non-production, the isKnownStripeCustomerId check returns ignored before reaching the
+      // email-fallback path, so unknown Stripe customers from other environments don't fail webhooks.
       expect(isOk(result)).toBe(true);
       if (isOk(result)) {
         expect(result.v).toBe('ignored');
       }
     });
 
-    it('should return error when user has no organization', async () => {
+    it('should back-fill stripeCustomerId via email match in production', async () => {
+      mockConfigService.isProductionEnvironment.mockReturnValueOnce(true);
+
+      const mockSubscription = {
+        id: 'sub_backfill123',
+        customer: 'cus_backfill123',
+        status: 'active',
+        metadata: { application: 'scratch', planType: ScratchPlanType.PRO_PLAN, environment: 'test' },
+        items: {
+          data: [
+            {
+              price: { id: VALID_TEST_PRICE_ID },
+              current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+              plan: { amount: 1000, currency: 'usd' },
+            },
+          ],
+        },
+      } as unknown as Stripe.Subscription;
+
+      // Direct stripeCustomerId lookup misses.
+      mockDbService.client.user.findFirst.mockResolvedValueOnce(null);
+      // Stripe returns a customer with an email we recognize.
+      mockStripeInstance.customers.retrieve = jest.fn().mockResolvedValue({
+        id: 'cus_backfill123',
+        deleted: false,
+        email: '  Curtis@Whalesync.com  ',
+      });
+      // Email lookup (normalized) finds the User row, which has no stripeCustomerId yet.
+      const candidate = createMockUser({
+        id: 'usr_backfill',
+        email: 'curtis@whalesync.com',
+        stripeCustomerId: null,
+        organizationId: 'org_backfill',
+      });
+      mockDbService.client.user.findUnique.mockResolvedValueOnce(candidate);
+      mockDbService.client.user.update.mockResolvedValueOnce({});
+      mockDbService.client.subscription.upsert.mockResolvedValueOnce({});
+
+      const result = await service.upsertSubscription('sub_backfill123', true, mockSubscription);
+
+      expect(isOk(result)).toBe(true);
+      if (isOk(result)) {
+        expect(result.v).toBe('success');
+      }
+      expect(mockDbService.client.user.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { email: 'curtis@whalesync.com' } }),
+      );
+      expect(mockDbService.client.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'usr_backfill' },
+          data: { stripeCustomerId: 'cus_backfill123' },
+        }),
+      );
+      expect(mockDbService.client.subscription.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ userId: 'usr_backfill', organizationId: 'org_backfill' }),
+        }),
+      );
+    });
+
+    it('should ignore when email match has a different stripeCustomerId', async () => {
+      mockConfigService.isProductionEnvironment.mockReturnValueOnce(true);
+
+      const mockSubscription = {
+        id: 'sub_conflict123',
+        customer: 'cus_new123',
+        status: 'active',
+        metadata: { application: 'scratch', planType: ScratchPlanType.PRO_PLAN, environment: 'test' },
+        items: {
+          data: [
+            {
+              price: { id: VALID_TEST_PRICE_ID },
+              current_period_end: Math.floor(Date.now() / 1000) + 86400 * 30,
+              plan: { amount: 1000, currency: 'usd' },
+            },
+          ],
+        },
+      } as unknown as Stripe.Subscription;
+
+      mockDbService.client.user.findFirst.mockResolvedValueOnce(null);
+      mockStripeInstance.customers.retrieve = jest.fn().mockResolvedValue({
+        id: 'cus_new123',
+        deleted: false,
+        email: 'curtis@whalesync.com',
+      });
+      // Candidate already linked to a different Stripe customer — don't overwrite.
+      mockDbService.client.user.findUnique.mockResolvedValueOnce(
+        createMockUser({
+          id: 'usr_conflict',
+          email: 'curtis@whalesync.com',
+          stripeCustomerId: 'cus_existing456',
+          organizationId: 'org_conflict',
+        }),
+      );
+
+      const result = await service.upsertSubscription('sub_conflict123', undefined, mockSubscription);
+
+      expect(isOk(result)).toBe(true);
+      if (isOk(result)) {
+        expect(result.v).toBe('ignored');
+      }
+      expect(mockDbService.client.user.update).not.toHaveBeenCalled();
+      expect(mockDbService.client.subscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it('should return ignored when user has no organization', async () => {
       const mockSubscription = {
         id: 'sub_noorg123',
         customer: 'cus_noorg123',
@@ -946,10 +1051,9 @@ describe('StripePaymentService', () => {
 
       const result = await service.upsertSubscription('sub_noorg123', undefined, mockSubscription);
 
-      expect(isErr(result)).toBe(true);
-      if (isErr(result)) {
-        expect(result.code).toBe(ErrorCode.UnexpectedError);
-        expect(result.error).toContain('User does not have an organization id');
+      expect(isOk(result)).toBe(true);
+      if (isOk(result)) {
+        expect(result.v).toBe('ignored');
       }
     });
 

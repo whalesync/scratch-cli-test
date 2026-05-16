@@ -700,13 +700,25 @@ export class StripePaymentService {
 
     // This should always be an insert, except if the same message is delivered twice accidentally.
     try {
-      const user = await this.getUserFromStripeCustomerId(stripeCustomerId);
+      const user = await this.resolveUserForStripeCustomer(stripeCustomerId);
       if (!user) {
-        return unexpectedError('User not found', { context: { stripeCustomerId } });
+        WSLogger.warn({
+          source: StripePaymentService.name,
+          message: 'No user resolved for Stripe customer; ignoring webhook event',
+          stripeCustomerId,
+          subscriptionId: stripeSubscriptionId,
+        });
+        return ok('ignored');
       }
 
       if (!user.organizationId) {
-        return unexpectedError('User does not have an organization id', { context: { userId: user.id } });
+        WSLogger.warn({
+          source: StripePaymentService.name,
+          message: 'User has no organization; ignoring webhook event',
+          userId: user.id,
+          subscriptionId: stripeSubscriptionId,
+        });
+        return ok('ignored');
       }
 
       const existingSubscription = user.organization?.subscriptions.find(
@@ -797,6 +809,78 @@ export class StripePaymentService {
       where: { stripeCustomerId },
       include: UserCluster._validator.include,
     });
+  }
+
+  /**
+   * Look up the User attached to a Stripe customer, falling back to an email match against the Stripe
+   * customer record when no User row carries this `stripeCustomerId` yet. If the email match finds a
+   * User with no `stripeCustomerId` set, the column is back-filled so subsequent webhooks resolve via
+   * the direct lookup. Returns `null` for true orphans (no email match, multiple matches via a
+   * conflicting `stripeCustomerId`, or a deleted Stripe customer).
+   */
+  private async resolveUserForStripeCustomer(stripeCustomerId: string): Promise<UserCluster.User | null> {
+    const direct = await this.getUserFromStripeCustomerId(stripeCustomerId);
+    if (direct) {
+      return direct;
+    }
+
+    let email: string | null = null;
+    try {
+      const customer = await this.stripe.customers.retrieve(stripeCustomerId);
+      if (!customer.deleted) {
+        email = customer.email;
+      }
+    } catch (err) {
+      WSLogger.error({
+        source: StripePaymentService.name,
+        message: 'Failed to retrieve Stripe customer for email fallback',
+        stripeCustomerId,
+        error: err,
+      });
+      return null;
+    }
+
+    if (!email) {
+      return null;
+    }
+
+    // User.email is stored lowercase + trimmed by a DB trigger; normalize the input to match.
+    const normalizedEmail = email.trim().toLowerCase();
+    const candidate = await this.dbService.client.user.findUnique({
+      where: { email: normalizedEmail },
+      include: UserCluster._validator.include,
+    });
+
+    if (!candidate) {
+      return null;
+    }
+
+    if (candidate.stripeCustomerId && candidate.stripeCustomerId !== stripeCustomerId) {
+      WSLogger.warn({
+        source: StripePaymentService.name,
+        message: 'User matched by email already has a different stripeCustomerId; skipping back-fill',
+        userId: candidate.id,
+        existingStripeCustomerId: candidate.stripeCustomerId,
+        incomingStripeCustomerId: stripeCustomerId,
+      });
+      return null;
+    }
+
+    if (!candidate.stripeCustomerId) {
+      await this.dbService.client.user.update({
+        where: { id: candidate.id },
+        data: { stripeCustomerId },
+      });
+      WSLogger.warn({
+        source: StripePaymentService.name,
+        message: 'Back-filled stripeCustomerId on User via email match',
+        userId: candidate.id,
+        stripeCustomerId,
+      });
+      return { ...candidate, stripeCustomerId };
+    }
+
+    return candidate;
   }
 
   /*
