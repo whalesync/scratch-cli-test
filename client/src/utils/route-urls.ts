@@ -28,6 +28,7 @@ export class RouteUrls {
   // Not implemented yet, just placeholder for future use
   static signUpPageUrl = '/sign-up';
   static signUpPageWithRedirect = (redirect_url: string) => `${this.signUpPageUrl}?redirect_url=${redirect_url}`;
+  static signOutPageUrl = '/sign-out';
 
   // Authenticated Routes & Route Generators
   static homePageUrl = '/'; // Root page handles redirect to workbook
@@ -112,7 +113,13 @@ export class RouteUrls {
 
   /** Utils */
 
-  static publicRoutePatterns = [this.healthEndpoint, this.pricingPageUrl, this.signInPageUrl, this.signUpPageUrl];
+  static publicRoutePatterns = [
+    this.healthEndpoint,
+    this.pricingPageUrl,
+    this.signInPageUrl,
+    this.signUpPageUrl,
+    this.signOutPageUrl,
+  ];
 
   /**
    * Public routes are endpoints that don't require any authentication, user identification or JWT tokens
