@@ -37,9 +37,11 @@ yarn build:mac:unsigned
 
 ### `yarn build:mac:local` — full local build (unsigned)
 
-Same as `build:mac:unsigned`, but first compiles `scratchmd` for `aarch64-apple-darwin` via `cargo zigbuild` and copies it into `scratch-git-2/cli-binaries/aarch64-apple-darwin/`. This is the standard way to get an end-to-end local build that exercises the bundled CLI.
+Same as `build:mac:unsigned`, but first compiles `scratchmd` for `aarch64-apple-darwin` and copies it into `scratch-git-2/cli-binaries/aarch64-apple-darwin/`. This is the standard way to get an end-to-end local build that exercises the bundled CLI.
 
-**Prerequisites**: Rust toolchain, [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild), and Zig (same as CI's `scratch-git-2` builds).
+On Apple Silicon hosts targeting `aarch64-apple-darwin` the script uses plain `cargo build` (no cross-compile). For any other host/target combination it falls back to `cargo zigbuild`, matching CI.
+
+**Prerequisites**: Rust toolchain. [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild) and Zig are only needed when cross-compiling (i.e., not on an Apple Silicon Mac targeting itself).
 
 ```bash
 yarn build:mac:local

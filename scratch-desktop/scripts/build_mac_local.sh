@@ -23,7 +23,14 @@ echo "==> Building scratchmd ($RUST_TARGET) in scratch-git-2"
 cd "$SCRATCH_GIT_2"
 # Optional; matches .gitlab-ci-release.yml for embed-time defaults
 export SCRATCH_DEFAULT_URL="${SCRATCH_DEFAULT_URL:-}"
-cargo zigbuild --release --bin scratchmd --target "$RUST_TARGET"
+# Skip cargo-zigbuild when host arch matches the target — zigbuild only exists
+# to cross-compile from CI's Linux runners, and its SDKROOT/-L handling fights
+# Xcode on a native Mac (see gitlab-runners/docker/hasty-dolphin.dockerfile).
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && "$RUST_TARGET" == "aarch64-apple-darwin" ]]; then
+  cargo build --release --bin scratchmd --target "$RUST_TARGET"
+else
+  cargo zigbuild --release --bin scratchmd --target "$RUST_TARGET"
+fi
 mkdir -p "cli-binaries/$RUST_TARGET"
 cp "target/$RUST_TARGET/release/scratchmd" "cli-binaries/$RUST_TARGET/scratchmd"
 echo "==> CLI binary: $SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd"
