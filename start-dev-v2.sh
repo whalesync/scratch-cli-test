@@ -123,6 +123,18 @@ echo -e "${YELLOW}Installing client dependencies...${NC}"
 echo -e "${GREEN}Client dependencies installed${NC}"
 echo ""
 
+# Install scratch-desktop dependencies (runs electron-builder install-app-deps via postinstall)
+echo -e "${YELLOW}Installing scratch-desktop dependencies...${NC}"
+(
+    cd "$SCRIPT_DIR/scratch-desktop"
+    yarn install --silent
+) || {
+    echo -e "${RED}Failed to install scratch-desktop dependencies${NC}"
+    exit 1
+}
+echo -e "${GREEN}scratch-desktop dependencies installed${NC}"
+echo ""
+
 # Build scratch-git-2 (Rust)
 echo -e "${YELLOW}Building scratch-git-2...${NC}"
 (
@@ -139,6 +151,7 @@ echo ""
 CLIENT_PID=""
 SERVER_PID=""
 SCRATCH_GIT_PID=""
+DESKTOP_PID=""
 cleanup() {
     echo -e "\n${YELLOW}Shutting down all services...${NC}"
 
@@ -157,6 +170,11 @@ cleanup() {
         kill "$SCRATCH_GIT_PID" 2>/dev/null || true
     fi
 
+    if [ -n "$DESKTOP_PID" ] && kill -0 "$DESKTOP_PID" 2>/dev/null; then
+        echo -e "${BLUE}Stopping scratch-desktop...${NC}"
+        kill "$DESKTOP_PID" 2>/dev/null || true
+    fi
+
     # Wait a moment for graceful shutdown
     sleep 1
 
@@ -164,6 +182,7 @@ cleanup() {
     [ -n "$CLIENT_PID" ] && kill -9 "$CLIENT_PID" 2>/dev/null || true
     [ -n "$SERVER_PID" ] && kill -9 "$SERVER_PID" 2>/dev/null || true
     [ -n "$SCRATCH_GIT_PID" ] && kill -9 "$SCRATCH_GIT_PID" 2>/dev/null || true
+    [ -n "$DESKTOP_PID" ] && kill -9 "$DESKTOP_PID" 2>/dev/null || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
@@ -190,6 +209,7 @@ fi
 CLIENT_LOG="/tmp/scratch-client.log"
 SERVER_LOG="/tmp/scratch-server.log"
 SCRATCH_GIT_LOG="/tmp/scratch-git.log"
+DESKTOP_LOG="/tmp/scratch-desktop.log"
 
 # Start Client (Next.js on port 3000)
 echo -e "${BLUE}[CLIENT]${NC} Starting Next.js dev server on port 3000..."
@@ -220,16 +240,35 @@ echo -e "${YELLOW}[SCRATCH-GIT]${NC} Starting scratch-git-2 on port 3100..."
 ) &
 SCRATCH_GIT_PID=$!
 
+# Wait for client to be ready before launching the Electron desktop app,
+# so it doesn't open against a dead http://localhost:3000.
+(
+    echo -e "${BLUE}[DESKTOP]${NC} Waiting for client on port 3000..."
+    for i in $(seq 1 120); do
+        if curl -sf -o /dev/null "http://localhost:3000"; then
+            echo -e "${BLUE}[DESKTOP]${NC} Client is up. Starting Electron..."
+            cd "$SCRIPT_DIR/scratch-desktop"
+            yarn dev 2>&1 | tee "$DESKTOP_LOG" | while IFS= read -r line; do echo -e "${BLUE}[DESKTOP]${NC} $line"; done
+            exit 0
+        fi
+        sleep 1
+    done
+    echo -e "${RED}[DESKTOP]${NC} Client never came up on port 3000; skipping desktop app."
+) &
+DESKTOP_PID=$!
+
 echo ""
 echo -e "${YELLOW}========================================${NC}"
 echo -e "  ${BLUE}Client${NC}:       http://localhost:3000"
 echo -e "  ${GREEN}Server${NC}:       http://localhost:3010"
 echo -e "  ${YELLOW}scratch-git-2${NC}: http://localhost:3100 (API) + :3101 (HTTP backend)"
+echo -e "  ${BLUE}Desktop${NC}:      Electron app (launches after client is ready)"
 echo -e "${YELLOW}========================================${NC}"
 echo ""
 echo -e "  Logs: ${BLUE}$CLIENT_LOG${NC}"
 echo -e "        ${GREEN}$SERVER_LOG${NC}"
 echo -e "        ${YELLOW}$SCRATCH_GIT_LOG${NC}"
+echo -e "        ${BLUE}$DESKTOP_LOG${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
 echo ""
