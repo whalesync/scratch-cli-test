@@ -140,8 +140,8 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * Pull records for a table.
    *
    * `options` is a {@link PullRecordFilesOptions}: every persisted
-   * `DataFolderOptions` field (filter, readOnly, fullPullOnly, connector-specific
-   * extras) plus the runtime additions set by the job:
+   * `DataFolderOptions` field (filter, readOnly, connector-specific extras)
+   * plus the runtime additions set by the job:
    *   - `pullMode === 'full'` (default if absent): full scan, existing behavior.
    *     The connector should ignore `since`/`cursor`.
    *   - `pullMode === 'incremental'`: pull only records changed since

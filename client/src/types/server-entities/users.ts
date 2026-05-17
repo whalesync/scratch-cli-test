@@ -27,6 +27,7 @@ export interface UserExperimentFlags {
   DEV_TOOLBOX: boolean;
   ENABLE_CREATE_BUG_REPORT: boolean;
   SHOW_OPEN_IN_DESKTOP: boolean;
+  INCREMENTAL_POLLING_ENABLED: boolean;
 }
 
 export function isExperimentEnabled(experiment: keyof UserExperimentFlags, user: User | null): boolean {

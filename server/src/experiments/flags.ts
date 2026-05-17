@@ -22,8 +22,8 @@ export enum UserFlag {
   /**
    * Kill switch for incremental polling. When false, the pull job forces every
    * folder to a full pull regardless of `data.pullMode`. When true, the
-   * standard per-folder resolution applies (capability check, bootstrap,
-   * `fullPullOnly`). Checked server-side only — not exposed to the client via
+   * standard per-folder resolution applies (capability check, bootstrap).
+   * Checked server-side only — not exposed to the client via
    * `ClientUserFlags`.
    */
   INCREMENTAL_POLLING_ENABLED = 'INCREMENTAL_POLLING_ENABLED',
@@ -48,4 +48,5 @@ export const ClientUserFlags: Partial<Record<UserFlag, FlagDataType>> = {
   // User-scoped feature flags
   [UserFlag.ENABLE_CREATE_BUG_REPORT]: 'boolean',
   [UserFlag.SHOW_OPEN_IN_DESKTOP]: 'boolean',
+  [UserFlag.INCREMENTAL_POLLING_ENABLED]: 'boolean',
 };

@@ -17,7 +17,11 @@ import { getScheduleLabel } from '../shared/SyncScheduleModal';
 const getActionLabel = (action: ScheduleAction): string => {
   switch (action) {
     case 'PULL':
-      return 'Pull';
+      return 'Full Pull (legacy)';
+    case 'FULL_PULL':
+      return 'Full Pull';
+    case 'INCREMENTAL_PULL':
+      return 'Incremental Pull';
     case 'PUBLISH':
       return 'Publish';
     case 'SYNC':
@@ -30,7 +34,10 @@ const getActionLabel = (action: ScheduleAction): string => {
 const getActionColor = (action: ScheduleAction): string => {
   switch (action) {
     case 'PULL':
+    case 'FULL_PULL':
       return 'var(--mantine-color-cyan-5)';
+    case 'INCREMENTAL_PULL':
+      return 'var(--mantine-color-blue-5)';
     case 'PUBLISH':
       return 'var(--mantine-color-green-5)';
     case 'SYNC':
@@ -44,6 +51,8 @@ const getActionColor = (action: ScheduleAction): string => {
 const actionToJobType = (action: ScheduleAction): string => {
   switch (action) {
     case 'PULL':
+    case 'FULL_PULL':
+    case 'INCREMENTAL_PULL':
       return 'pull';
     case 'PUBLISH':
       return 'publish';

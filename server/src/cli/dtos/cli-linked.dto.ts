@@ -46,7 +46,7 @@ export type ValidatedAvailableTablesQueryDto = AvailableTablesQueryDto;
  * Body for the CLI pull endpoints (`scratchmd linked pull` / `pull-all`).
  * Selects the pull mode; omitted → `'full'` (the safe default matching
  * pre-incremental behavior). Per-folder demotion to full still happens at job
- * execution time (capability, bootstrap, `fullPullOnly`).
+ * execution time (capability, bootstrap).
  */
 export class CliPullDto {
   @IsOptional()

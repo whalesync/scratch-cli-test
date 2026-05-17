@@ -9,8 +9,7 @@ export class PullFilesDto {
   /**
    * Requested pull mode. Omitted → `'full'` (the safe default matching
    * pre-incremental behavior). `'incremental'` is opt-in; per-folder demotion
-   * to full still happens at job execution time (capability, bootstrap,
-   * `fullPullOnly`).
+   * to full still happens at job execution time (capability, bootstrap).
    */
   @IsOptional()
   @IsIn(['full', 'incremental'])

@@ -33,7 +33,7 @@ export interface UseWorkbookReturn {
     options?: Record<string, unknown>,
     triggerPull?: boolean,
   ) => Promise<DataFolder>;
-  pullFolders: (dataFolderIds?: DataFolderId[]) => Promise<void>;
+  pullFolders: (dataFolderIds?: DataFolderId[], opts?: { mode?: 'full' | 'incremental' }) => Promise<void>;
   pullAssets: (dataFolderIds: DataFolderId[], options?: { rehost?: boolean }) => Promise<void>;
   discardAllChanges: () => Promise<void>;
 }
@@ -156,13 +156,13 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
   );
 
   const pullFolders = useCallback(
-    async (folderIds?: DataFolderId[]): Promise<void> => {
+    async (folderIds?: DataFolderId[], opts?: { mode?: 'full' | 'incremental' }): Promise<void> => {
       if (!id) {
         return;
       }
-      trackPullFiles(id);
+      trackPullFiles(id, opts?.mode);
       try {
-        const result = await workbookApi.pullFiles(id, folderIds);
+        const result = await workbookApi.pullFiles(id, folderIds, opts?.mode);
         if (result.jobIds?.length) {
           useActiveJobsStore.getState().trackJobIds(result.jobIds);
         }

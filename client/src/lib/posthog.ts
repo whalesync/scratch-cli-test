@@ -89,8 +89,8 @@ export function trackRunSync(syncId: string, workbookId: string): void {
   captureEvent(PostHogEvents.RUN_SYNC, { syncId, workbookId });
 }
 
-export function trackPullFiles(workbookId: string): void {
-  captureEvent(PostHogEvents.PULL_FILES, { workbookId });
+export function trackPullFiles(workbookId: string, mode?: 'full' | 'incremental'): void {
+  captureEvent(PostHogEvents.PULL_FILES, { workbookId, mode: mode ?? 'full' });
 }
 
 export function trackPublishAll(workbookId: string, folderCount: number): void {

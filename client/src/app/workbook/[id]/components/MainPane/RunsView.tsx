@@ -1300,6 +1300,8 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
   const connector = progress.connector as string | undefined;
   const totalFiles = (progress.totalFiles ?? progress.totalRequested) as number | undefined;
   const status = progress.status as string | undefined;
+  const mode = progress.mode as 'full' | 'incremental' | undefined;
+  const typeLabel = mode === 'incremental' ? 'Incremental' : mode === 'full' ? 'Full' : '-';
   const createdPaths = (progress.createdPaths as string[] | undefined) ?? [];
   const updatedPaths = (progress.updatedPaths as string[] | undefined) ?? [];
   const deletedPaths = (progress.deletedPaths as string[] | undefined) ?? [];
@@ -1325,6 +1327,7 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
             <Table.Th>Updated</Table.Th>
             {deletedCount > 0 && <Table.Th>Deleted</Table.Th>}
             <Table.Th>Fetched</Table.Th>
+            <Table.Th>Type</Table.Th>
             <Table.Th>Status</Table.Th>
           </Table.Tr>
         </Table.Thead>
@@ -1336,6 +1339,7 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
             <Table.Td>{updatedCount}</Table.Td>
             {deletedCount > 0 && <Table.Td>{deletedCount}</Table.Td>}
             <Table.Td>{totalFiles ?? 0}</Table.Td>
+            <Table.Td>{typeLabel}</Table.Td>
             <Table.Td>{status ?? '-'}</Table.Td>
           </Table.Tr>
           {folderErrorEntries.map(([folderId, folderError]) => (
@@ -1350,6 +1354,7 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
                   )}
                 </Stack>
               </Table.Td>
+              <Table.Td>-</Table.Td>
               <Table.Td>
                 <Text13Regular c="var(--mantine-color-red-6)">failed</Text13Regular>
               </Table.Td>

@@ -12,6 +12,15 @@ export interface ConnectorMetadata {
   bases: string | null;
   logo: string;
   visible: boolean;
+  /**
+   * Whether this connector type implements the incremental-pull contract
+   * (`Connector.supportsIncrementalPull` can resolve to true for some folder).
+   * Static, per-connector answer used by the web client to gate incremental
+   * pull menu actions and the incremental schedule row. The runtime
+   * `supportsIncrementalPull(options, tableSpec)` still
+   * decides whether a given folder's run actually goes incremental.
+   */
+  incrementalPull: boolean;
   pushOperationName: string;
   pullOperationName: string;
   supportedAuthMethods: AuthMethod[];
@@ -36,6 +45,7 @@ const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {
   base: null,
   bases: null,
   visible: true,
+  incrementalPull: false,
   pushOperationName: 'Publish',
   pullOperationName: 'Download',
   supportedAuthMethods: [],

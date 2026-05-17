@@ -6,14 +6,17 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
+import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { filesApi } from '@/lib/api/files';
 import { workbookApi } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { selectJobsForConnector, useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
+import { isExperimentEnabled } from '@/types/server-entities/users';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
@@ -271,7 +274,15 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { workbook, pullFolders, pullAssets } = useActiveWorkbook();
+  const { metadata } = useConnectorsMetadata();
+  const { user } = useScratchPadUser();
   const [isReauthorizing, setIsReauthorizing] = useState(false);
+
+  const incrementalService = connectorAccount?.service ?? group.service ?? undefined;
+  const supportsIncrementalPull =
+    isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user) && incrementalService
+      ? Boolean(metadata?.[incrementalService]?.incrementalPull)
+      : false;
 
   // Targeted Zustand selector — only re-renders when THIS connector's jobs change
   const connectorJobsSelector = useCallback(
@@ -306,6 +317,9 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   const connectionFolderIds = useMemo(() => group.dataFolders.map((f) => f.id), [group.dataFolders]);
   const handlePullAll = useCallback(async () => {
     await pullFolders(connectionFolderIds);
+  }, [pullFolders, connectionFolderIds]);
+  const handlePullAllIncremental = useCallback(async () => {
+    await pullFolders(connectionFolderIds, { mode: 'incremental' });
   }, [pullFolders, connectionFolderIds]);
 
   const [pullAssetsModalOpen, { open: openPullAssetsModal, close: closePullAssetsModal }] = useDisclosure(false);
@@ -466,6 +480,15 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
           onClose={() => setContextMenu(null)}
           extraItemsBefore={[
             { label: 'Pull All Tables', icon: CloudDownloadIcon, onClick: handlePullAll },
+            ...(supportsIncrementalPull
+              ? [
+                  {
+                    label: 'Pull All Tables (Incremental)',
+                    icon: CloudDownloadIcon,
+                    onClick: handlePullAllIncremental,
+                  },
+                ]
+              : []),
             { label: 'Pull All Assets', icon: ImageIcon, onClick: openPullAssetsModal },
           ]}
           extraItemsAfter={[
@@ -534,6 +557,12 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const { pullFolders, pullAssets } = useActiveWorkbook();
   const { isDevToolsEnabled } = useDevTools();
+  const { metadata } = useConnectorsMetadata();
+  const { user } = useScratchPadUser();
+  const supportsIncrementalPull =
+    isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user) && folder.connectorService
+      ? Boolean(metadata?.[folder.connectorService]?.incrementalPull)
+      : false;
 
   const nodeId = `table-${folder.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -583,6 +612,13 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
       await pullFolders([folder.id]);
     } catch (error) {
       console.error('Failed to pull table:', error);
+    }
+  };
+  const handlePullTableIncremental = async () => {
+    try {
+      await pullFolders([folder.id], { mode: 'incremental' });
+    } catch (error) {
+      console.error('Failed to pull table (incremental):', error);
     }
   };
 
@@ -809,6 +845,15 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
           position={contextMenu}
           items={[
             { label: 'Pull this table', icon: CloudDownloadIcon, onClick: handlePullTable },
+            ...(supportsIncrementalPull
+              ? [
+                  {
+                    label: 'Pull this table (Incremental)',
+                    icon: CloudDownloadIcon,
+                    onClick: handlePullTableIncremental,
+                  },
+                ]
+              : []),
             { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },
             {
               label: 'New File',

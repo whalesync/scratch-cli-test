@@ -42,6 +42,7 @@ export class AirtableConnector extends Connector {
     base: 'base',
     bases: 'bases',
     logo: 'https://static.scratch.md/connector-icons/airtable.svg',
+    incrementalPull: true,
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
@@ -59,7 +60,7 @@ export class AirtableConnector extends Connector {
     },
     {
       key: 'modifiedAtField',
-      type: 'string',
+      type: 'field-select',
       label: 'Last modified time field',
       description:
         'Name of a Last Modified Time field on this table. Enables incremental pulls — when set, scheduled INCREMENTAL_PULL runs fetch only records modified since the previous run. Leave empty to always do full pulls.',

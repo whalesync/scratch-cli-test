@@ -1031,26 +1031,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         expect(mockConnector.supportsIncrementalPull).not.toHaveBeenCalled();
       });
 
-      // (f) fullPullOnly = true demotes incremental to full.
-      it('demotes to full when fullPullOnly is set on the folder', async () => {
-        const { dataFolder, mockConnector, params } = setupStandardMocks();
-        Object.assign(dataFolder, {
-          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
-          options: { fullPullOnly: true },
-        });
-        mockConnector.supportsIncrementalPull.mockReturnValue(true);
-        mockConnector.pullRecordFiles.mockResolvedValue({});
-        stubEmptyPhase2();
-
-        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
-
-        const call = mockConnector.pullRecordFiles.mock.calls[0] as unknown[];
-        expect((call[3] as { pullMode?: string }).pullMode).toBe('full');
-        // Capability check is skipped once fullPullOnly forces full.
-        expect(mockConnector.supportsIncrementalPull).not.toHaveBeenCalled();
-      });
-
-      // (g) INCREMENTAL_POLLING_ENABLED feature flag is off → kill switch
+      // (f) INCREMENTAL_POLLING_ENABLED feature flag is off → kill switch
       // forces full pull even when the caller requested incremental.
       it('forces full when the INCREMENTAL_POLLING_ENABLED kill switch is off', async () => {
         const { dataFolder, mockConnector, params } = setupStandardMocks();

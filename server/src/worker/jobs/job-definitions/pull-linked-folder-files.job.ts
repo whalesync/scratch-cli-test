@@ -46,8 +46,8 @@ export type PullLinkedFolderFilesPublicProgress = {
   /**
    * Effective pull mode for the current folder. Set when a folder's resolution
    * finishes in Phase 1 and updated per-folder as Phase 2 advances. Incremental
-   * requests can demote to full per-folder (capability check, bootstrap,
-   * `fullPullOnly`), so this can differ from the job's requested mode.
+   * requests can demote to full per-folder (capability check, bootstrap), so
+   * this can differ from the job's requested mode.
    */
   mode?: 'full' | 'incremental';
   /** All folder IDs being pulled (multi-folder jobs). */
@@ -76,8 +76,8 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
      * matching pre-incremental behavior). Only `'incremental'` is opt-in via
      * the `INCREMENTAL_PULL` schedule action, the HTTP `mode=incremental`
      * parameter, or the CLI `--mode incremental` flag. Per-folder demotion to
-     * `'full'` still happens at execution time (capability, bootstrap,
-     * `fullPullOnly`) — see `loadFolderAndConnector`.
+     * `'full'` still happens at execution time (capability, bootstrap) — see
+     * `loadFolderAndConnector`.
      */
     pullMode?: 'full' | 'incremental';
     progress?: JsonSafeObject;
@@ -127,8 +127,8 @@ type FolderContext = {
   pullOptions: DataFolderOptions;
   /**
    * Pull mode after per-folder resolution: starts from `data.pullMode`, then
-   * demoted to `'full'` if `pullOptions.fullPullOnly`, the connector reports
-   * no incremental support, or `lastIncrementalPullAt` is null (bootstrap).
+   * demoted to `'full'` if the connector reports no incremental support, or
+   * `lastIncrementalPullAt` is null (bootstrap).
    */
   effectiveMode: 'full' | 'incremental';
   /** Captured before the connector call so we can persist it as the watermark on success. */
@@ -480,7 +480,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     /**
      * Pull mode requested for this job, already gated by the
      * `INCREMENTAL_POLLING_ENABLED` feature flag at the top of `run()`. Per-folder
-     * demotions (fullPullOnly, capability, bootstrap) apply on top of this.
+     * demotions (capability, bootstrap) apply on top of this.
      */
     requestedMode: 'full' | 'incremental';
   }): Promise<FolderContext> {
@@ -549,24 +549,14 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // ---- Resolve effective pull mode per folder ----
     // The kill-switch gate has already been applied in `run()` — `requestedMode`
     // is the post-gate mode. Per-folder demotions stack on top:
-    //   1. `fullPullOnly = true` forces full regardless of trigger.
-    //   2. Connector capability check (passed both options + tableSpec so it
+    //   1. Connector capability check (passed both options + tableSpec so it
     //      can consult per-folder config and schema annotations).
-    //   3. Bootstrap: no prior watermark ⇒ run full once so future runs have
+    //   2. Bootstrap: no prior watermark ⇒ run full once so future runs have
     //      a non-null `lastIncrementalPullAt` to filter from.
     let effectiveMode: 'full' | 'incremental' = requestedMode;
     const lastIncrementalPullAt = dataFolder.lastIncrementalPullAt ?? null;
     const incrementalCursor = (dataFolder.incrementalCursor as JsonSafeObject | null | undefined) ?? null;
 
-    if (effectiveMode === 'incremental' && pullOptions.fullPullOnly === true) {
-      WSLogger.info({
-        source: LOG_SOURCE,
-        message: 'Demoting incremental pull to full: folder has fullPullOnly=true',
-        workbookId: dataFolder.workbookId,
-        dataFolderId: dataFolder.id,
-      });
-      effectiveMode = 'full';
-    }
     if (effectiveMode === 'incremental' && !connector.supportsIncrementalPull(pullOptions, tableSpec)) {
       WSLogger.info({
         source: LOG_SOURCE,
