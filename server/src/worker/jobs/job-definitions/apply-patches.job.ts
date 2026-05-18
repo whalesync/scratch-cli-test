@@ -10,8 +10,6 @@ export type ApplyPatchesPublicProgress = {
   uploadId: string;
   patchCount: number;
   processedCount: number;
-  pipelineId?: string;
-  publishJobId?: string;
 };
 
 // ── Job Definition ─────────────────────────────────────────────────────────
@@ -20,8 +18,12 @@ export type ApplyPatchesJobDefinition = JobDefinitionBuilder<
   typeof JobType.ApplyPatches,
   {
     workbookId: WorkbookId;
+    /**
+     * Initiating user — bull-worker tracking metadata only. The patch-apply
+     * service itself doesn't need it; the decoupled service signature accepts
+     * neither userId nor organizationId.
+     */
     userId: string;
-    organizationId: string;
     connectorAccountId: string;
     /** Opaque ID identifying the patch payload uploaded to GCS by `/upload-patch/init`. */
     uploadId: string;
@@ -82,10 +84,8 @@ export class ApplyPatchesJobHandler implements JobHandlerBuilder<ApplyPatchesJob
         });
       };
 
-      const result = await this.applyPatchesService.applyAndPublish({
+      const result = await this.applyPatchesService.applyPatches({
         workbookId: data.workbookId,
-        userId: data.userId,
-        organizationId: data.organizationId,
         connectorAccountId: data.connectorAccountId,
         uploadId: data.uploadId,
         onProgress,
@@ -95,8 +95,6 @@ export class ApplyPatchesJobHandler implements JobHandlerBuilder<ApplyPatchesJob
         uploadId: data.uploadId,
         patchCount: result.patchCount,
         processedCount: result.patchCount,
-        ...(result.pipelineId ? { pipelineId: result.pipelineId } : {}),
-        ...(result.publishJobId ? { publishJobId: result.publishJobId } : {}),
       };
 
       await checkpoint({
@@ -110,12 +108,7 @@ export class ApplyPatchesJobHandler implements JobHandlerBuilder<ApplyPatchesJob
         message: 'Apply-patches job completed',
         workbookId: data.workbookId,
         jobId,
-        data: {
-          uploadId: data.uploadId,
-          patchCount: result.patchCount,
-          pipelineId: result.pipelineId,
-          publishJobId: result.publishJobId,
-        },
+        data: { uploadId: data.uploadId, patchCount: result.patchCount },
       });
     } catch (err) {
       await checkpoint({

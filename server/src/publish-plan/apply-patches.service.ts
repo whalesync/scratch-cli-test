@@ -6,9 +6,6 @@ import { WSLogger } from 'src/logger';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { validateRecordPath } from 'src/utils/path-validation';
-import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
-import { createRunContext } from 'src/worker/jobs/base-types';
-import { PublishPlanBuildService } from './publish-plan-build.service';
 
 /** GCS key derived from an uploadId. Used by both the controller (PUT) and worker (stream). */
 export function gcsKeyForPatchUpload(uploadId: string): string {
@@ -21,32 +18,22 @@ export class ApplyPatchesService {
     private readonly db: DbService,
     private readonly scratchGitService: ScratchGitService,
     private readonly objectStorageService: ObjectStorageService,
-    private readonly publishPlanBuildService: PublishPlanBuildService,
-    private readonly bullEnqueuerService: BullEnqueuerService,
   ) {}
 
   /**
-   * Stream patches from GCS, apply them to the dirty branch as one logical
-   * change, and trigger the existing publish-v2 plan-job + run-job pipeline.
-   *
-   * Returns the pipelineId + jobId of the publish that was enqueued (null when
-   * the patches produced no diff against main).
+   * Stream patches from GCS and apply them to the dirty branch as one logical
+   * change. Does NOT trigger publishing — callers (CLI / desktop) drive
+   * `/publish-v2/plan-job` and `/run-job` themselves so the two concerns stay
+   * decoupled. The endpoint's name (`/upload-patch/commit`) reflects this:
+   * "commit patches to remote dirty", not "publish."
    */
-  async applyAndPublish(args: {
+  async applyPatches(args: {
     workbookId: WorkbookId;
-    userId: string;
-    organizationId: string;
     connectorAccountId: string;
     uploadId: string;
-    onProgress?: (progress: {
-      uploadId: string;
-      patchCount: number;
-      processedCount: number;
-      pipelineId?: string;
-      publishJobId?: string;
-    }) => Promise<void>;
-  }): Promise<{ pipelineId: string | null; publishJobId: string | null; patchCount: number }> {
-    const { workbookId, userId, organizationId, connectorAccountId, uploadId, onProgress } = args;
+    onProgress?: (progress: { uploadId: string; patchCount: number; processedCount: number }) => Promise<void>;
+  }): Promise<{ patchCount: number }> {
+    const { workbookId, connectorAccountId, uploadId, onProgress } = args;
 
     // 1. Stream + parse the patch payload.
     const payload = await this.readPatchPayload(uploadId);
@@ -123,51 +110,14 @@ export class ApplyPatchesService {
 
     await onProgress?.({ uploadId, patchCount, processedCount: patchCount });
 
-    // 7. Trigger the existing publish-v2 plan-job + run-job pipeline.
-    const hasDiffs = await this.publishPlanBuildService.hasDiffs(workbookId, connectorAccountId, undefined, undefined);
-    if (!hasDiffs) {
-      WSLogger.info({
-        source: 'ApplyPatchesService.applyAndPublish',
-        message: 'Patches produced no diff against main; skipping publish',
-        workbookId,
-        data: { uploadId, patchCount },
-      });
-      return { pipelineId: null, publishJobId: null, patchCount };
-    }
-
-    const { pipelineId } = await this.publishPlanBuildService.createPipeline(workbookId, userId, connectorAccountId);
-    const planJob = await this.bullEnqueuerService.enqueuePlanPipelineJob(
-      workbookId,
-      { userId, organizationId },
-      pipelineId,
-      connectorAccountId,
-      true, // runAfterPlan
-      undefined,
-      undefined,
-      undefined,
-      createRunContext('cli'),
-    );
-    const publishJobId = planJob.id ? String(planJob.id) : null;
-    if (publishJobId) {
-      await this.publishPlanBuildService.setActiveJob(pipelineId, publishJobId);
-    }
-
-    await onProgress?.({
-      uploadId,
-      patchCount,
-      processedCount: patchCount,
-      pipelineId,
-      ...(publishJobId ? { publishJobId } : {}),
-    });
-
     WSLogger.info({
-      source: 'ApplyPatchesService.applyAndPublish',
-      message: 'Apply-patches enqueued publish pipeline',
+      source: 'ApplyPatchesService.applyPatches',
+      message: 'Applied upload-patch payload to dirty branch',
       workbookId,
-      data: { uploadId, patchCount, pipelineId, publishJobId },
+      data: { uploadId, patchCount, writes: filesToCommit.length, deletes: toDelete.length },
     });
 
-    return { pipelineId, publishJobId, patchCount };
+    return { patchCount };
   }
 
   private async readPatchPayload(uploadId: string): Promise<UploadPatchPayload> {

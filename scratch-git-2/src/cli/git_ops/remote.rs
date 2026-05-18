@@ -44,20 +44,6 @@ pub(crate) fn fetch_origin(bare_repo: &Path, token: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-pub(crate) fn push_origin_dirty(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
-    let auth = git_auth_args(token);
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(&auth)
-        .args(["push", "origin", "refs/heads/dirty:dirty"])
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git push failed: {}", stderr.trim());
-    }
-    Ok(())
-}
-
 pub(crate) fn force_push_origin_dirty(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
     let auth = git_auth_args(token);
     let output = Command::new("git")

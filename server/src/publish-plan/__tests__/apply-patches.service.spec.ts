@@ -30,24 +30,16 @@ describe('applyJsonMergePatch (RFC 7396)', () => {
   });
 });
 
-describe('ApplyPatchesService.applyAndPublish', () => {
+describe('ApplyPatchesService.applyPatches', () => {
   const workbookId = 'wkb_test' as WorkbookId;
   const connectorAccountId = 'ca_test';
-  const userId = 'usr_test';
-  const organizationId = 'org_test';
   const uploadId = 'up_test';
 
-  function buildService(
-    payload: UploadPatchPayload,
-    opts?: { hasDiffs?: boolean; existingContent?: Record<string, string> },
-  ) {
-    const hasDiffs = opts?.hasDiffs ?? true;
+  function buildService(payload: UploadPatchPayload, opts?: { existingContent?: Record<string, string> }) {
     const existingContent = opts?.existingContent ?? {};
 
     const commitCalls: Array<{ branch: string; files: { path: string; content: string }[]; message: string }> = [];
     const deleteCalls: Array<{ branch: string; paths: string[]; message: string }> = [];
-    const planJobCalls: Array<{ pipelineId: string; runAfterPlan: boolean }> = [];
-    const setActiveCalls: Array<{ pipelineId: string; bullJobId: string }> = [];
 
     const db = {
       client: {
@@ -78,47 +70,19 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       streamObjectFromPatchUpload: jest.fn(() => Readable.from([Buffer.from(JSON.stringify(payload))])),
     };
 
-    const publishPlanBuildService = {
-      hasDiffs: jest.fn().mockResolvedValue(hasDiffs),
-      createPipeline: jest.fn().mockResolvedValue({ pipelineId: 'pipe_1', branchName: 'publish/usr/pipe_1' }),
-      setActiveJob: jest.fn((pipelineId: string, bullJobId: string) => {
-        setActiveCalls.push({ pipelineId, bullJobId });
-        return Promise.resolve();
-      }),
-    };
-
-    const bullEnqueuerService = {
-      enqueuePlanPipelineJob: jest.fn(
-        (_wb: unknown, _actor: unknown, pipelineId: string, _ca: unknown, runAfterPlan: boolean) => {
-          planJobCalls.push({ pipelineId, runAfterPlan });
-          return Promise.resolve({ id: 'job_1' });
-        },
-      ),
-    };
-
-    const service = new ApplyPatchesService(
-      db as never,
-      scratchGitService as never,
-      objectStorageService as never,
-      publishPlanBuildService as never,
-      bullEnqueuerService as never,
-    );
+    const service = new ApplyPatchesService(db as never, scratchGitService as never, objectStorageService as never);
 
     return {
       service,
       commitCalls,
       deleteCalls,
-      planJobCalls,
-      setActiveCalls,
-      mocks: { db, scratchGitService, objectStorageService, publishPlanBuildService, bullEnqueuerService },
+      mocks: { db, scratchGitService, objectStorageService },
     };
   }
 
   function defaultArgs(uploadIdOverride?: string) {
     return {
       workbookId,
-      userId,
-      organizationId,
       connectorAccountId,
       uploadId: uploadIdOverride ?? uploadId,
     };
@@ -141,7 +105,7 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       },
     );
 
-    const result = await service.applyAndPublish(defaultArgs());
+    const result = await service.applyPatches(defaultArgs());
 
     expect(commitCalls).toHaveLength(1);
     expect(commitCalls[0].branch).toBe('dirty');
@@ -161,7 +125,7 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       ],
     });
 
-    await service.applyAndPublish(defaultArgs());
+    await service.applyPatches(defaultArgs());
 
     expect(commitCalls).toHaveLength(1);
     expect(JSON.parse(commitCalls[0].files[0].content)).toEqual({ id: 'rec_new', title: 'Hello' });
@@ -172,7 +136,7 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       patches: [{ path: 'Companies/rec1.json', patch: null }],
     });
 
-    await service.applyAndPublish(defaultArgs());
+    await service.applyPatches(defaultArgs());
 
     expect(commitCalls).toHaveLength(0);
     expect(deleteCalls).toHaveLength(1);
@@ -196,7 +160,7 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       },
     );
 
-    await service.applyAndPublish(defaultArgs());
+    await service.applyPatches(defaultArgs());
 
     const content = JSON.parse(commitCalls[0].files[0].content) as Record<string, unknown>;
     expect(content).toEqual({ id: 'rec1', name: 'Acme' });
@@ -207,7 +171,7 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       patches: [{ path: '../etc/passwd', patch: { evil: true } }],
     });
 
-    await expect(service.applyAndPublish(defaultArgs())).rejects.toThrow(/traversal/i);
+    await expect(service.applyPatches(defaultArgs())).rejects.toThrow(/traversal/i);
     expect(commitCalls).toHaveLength(0);
     expect(deleteCalls).toHaveLength(0);
   });
@@ -216,7 +180,7 @@ describe('ApplyPatchesService.applyAndPublish', () => {
     // Two valid patches followed by one traversal patch — even though the
     // first two would have succeeded, none should be applied. Locks in the
     // pre-write validation invariant.
-    const { service, commitCalls, deleteCalls, planJobCalls } = buildService({
+    const { service, commitCalls, deleteCalls } = buildService({
       patches: [
         { path: 'Companies/rec1.json', patch: { name: 'Acme' } },
         { path: 'Posts/rec_new.json', patch: { id: 'rec_new', title: 'Hello' } },
@@ -224,10 +188,9 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       ],
     });
 
-    await expect(service.applyAndPublish(defaultArgs())).rejects.toThrow(/traversal/i);
+    await expect(service.applyPatches(defaultArgs())).rejects.toThrow(/traversal/i);
     expect(commitCalls).toHaveLength(0);
     expect(deleteCalls).toHaveLength(0);
-    expect(planJobCalls).toHaveLength(0);
   });
 
   it('handles a mixed batch of writes and deletes in one call', async () => {
@@ -247,7 +210,7 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       },
     );
 
-    await service.applyAndPublish(defaultArgs());
+    await service.applyPatches(defaultArgs());
 
     expect(commitCalls).toHaveLength(1);
     expect(commitCalls[0].files).toHaveLength(2);
@@ -263,52 +226,41 @@ describe('ApplyPatchesService.applyAndPublish', () => {
       patches: [{ path: 'Strangers/rec1.json', patch: { a: 1 } }],
     });
 
-    await expect(service.applyAndPublish(defaultArgs())).rejects.toThrow(/DataFolder/);
+    await expect(service.applyPatches(defaultArgs())).rejects.toThrow(/DataFolder/);
     expect(commitCalls).toHaveLength(0);
   });
 
-  it('enqueues a plan pipeline job when patches produce diffs', async () => {
-    const { service, planJobCalls, setActiveCalls } = buildService({
+  it('does NOT enqueue a publish pipeline — callers drive plan-job / run-job separately', async () => {
+    // Decoupled in the design after CLI review: /upload-patch/commit is a
+    // patch-to-dirty endpoint, no implicit publish. The publish-plan service
+    // and bull enqueuer are not even constructor dependencies anymore — this
+    // test guards against silent re-coupling by asserting the writes happen
+    // (so the patch was applied) without touching publish at all.
+    const { service, commitCalls } = buildService({
       patches: [{ path: 'Companies/rec1.json', patch: { name: 'Acme' } }],
     });
 
-    const result = await service.applyAndPublish(defaultArgs());
+    const result = await service.applyPatches(defaultArgs());
 
-    expect(planJobCalls).toHaveLength(1);
-    expect(planJobCalls[0].runAfterPlan).toBe(true);
-    expect(setActiveCalls).toHaveLength(1);
-    expect(result.pipelineId).toBe('pipe_1');
-    expect(result.publishJobId).toBe('job_1');
+    expect(commitCalls).toHaveLength(1);
+    expect(result).toEqual({ patchCount: 1 });
   });
 
-  it('skips publish when no diff vs main results from the patches', async () => {
-    const { service, planJobCalls } = buildService(
-      { patches: [{ path: 'Companies/rec1.json', patch: { name: 'Acme' } }] },
-      { hasDiffs: false },
-    );
-
-    const result = await service.applyAndPublish(defaultArgs());
-
-    expect(planJobCalls).toHaveLength(0);
-    expect(result.pipelineId).toBeNull();
-    expect(result.publishJobId).toBeNull();
-  });
-
-  it('emits progress callbacks before and after dispatch', async () => {
+  it('emits progress callbacks before and after the patches are applied', async () => {
     const { service } = buildService({
       patches: [{ path: 'Companies/rec1.json', patch: { name: 'Acme' } }],
     });
 
-    const progressEvents: Array<{ processedCount: number; pipelineId?: string }> = [];
-    await service.applyAndPublish({
+    const progressEvents: Array<{ processedCount: number; patchCount: number }> = [];
+    await service.applyPatches({
       ...defaultArgs(),
       onProgress: (p) => {
-        progressEvents.push({ processedCount: p.processedCount, pipelineId: p.pipelineId });
+        progressEvents.push({ processedCount: p.processedCount, patchCount: p.patchCount });
         return Promise.resolve();
       },
     });
 
-    expect(progressEvents[0]).toEqual({ processedCount: 0, pipelineId: undefined });
-    expect(progressEvents[progressEvents.length - 1].pipelineId).toBe('pipe_1');
+    expect(progressEvents[0]).toEqual({ processedCount: 0, patchCount: 1 });
+    expect(progressEvents[progressEvents.length - 1]).toEqual({ processedCount: 1, patchCount: 1 });
   });
 });

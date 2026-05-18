@@ -679,6 +679,109 @@ impl ApiClient {
         .await
     }
 
+    /// Step 1 of publish: build a publish plan from the server's current
+    /// dirty-vs-main diff for one connector. Returns `{ jobId: null,
+    /// pipelineId: null }` when there's nothing to publish. Otherwise the
+    /// caller polls `jobId` then calls `publish_plan_run` with `pipelineId`.
+    /// `runAfterPlan` is intentionally `false` — the split publish flow does
+    /// plan and run as separate explicit calls.
+    pub async fn publish_plan_build(
+        &self,
+        workbook_id: &str,
+        connector_account_id: &str,
+    ) -> ApiResult<PublishPlanBuildResponse> {
+        self.post(
+            &format!("workbooks/{}/publish-v2/plan-job", workbook_id),
+            &serde_json::json!({
+                "connectorAccountId": connector_account_id,
+                "runAfterPlan": false,
+            }),
+        )
+        .await
+    }
+
+    /// Step 2 of publish: execute the pipeline created by `publish_plan_build`.
+    /// Returns the run-job id to poll.
+    pub async fn publish_plan_run(
+        &self,
+        workbook_id: &str,
+        pipeline_id: &str,
+    ) -> ApiResult<PublishPlanRunResponse> {
+        self.post(
+            &format!("workbooks/{}/publish-v2/run-job", workbook_id),
+            &serde_json::json!({ "pipelineId": pipeline_id }),
+        )
+        .await
+    }
+
+    /// Step 1 of the upload-patch flow: request a presigned GCS PUT URL.
+    /// Mirrors `packages/shared-types/src/dto/upload-patch/*`. The Rust CLI
+    /// re-declares the wire types in serde rather than importing from TS.
+    pub async fn upload_patch_init(
+        &self,
+        workbook_id: &str,
+        connector_account_id: &str,
+    ) -> ApiResult<UploadPatchInitResponse> {
+        self.post(
+            &format!("workbooks/{}/upload-patch/init", workbook_id),
+            &serde_json::json!({ "connectorAccountId": connector_account_id }),
+        )
+        .await
+    }
+
+    /// Step 3 of the upload-patch flow: tell the server the GCS upload is
+    /// complete so it can enqueue the ApplyPatches worker. `base_head` is the
+    /// local `main` SHA at diff time — if it doesn't match server `main`, the
+    /// response carries a soft `stalenessWarning` (patches are still applied).
+    pub async fn upload_patch_commit(
+        &self,
+        workbook_id: &str,
+        connector_account_id: &str,
+        upload_id: &str,
+        base_head: Option<&str>,
+    ) -> ApiResult<UploadPatchCommitResponse> {
+        let mut body = serde_json::json!({
+            "uploadId": upload_id,
+            "connectorAccountId": connector_account_id,
+        });
+        if let Some(head) = base_head {
+            body["baseHead"] = serde_json::Value::String(head.to_string());
+        }
+        self.post(
+            &format!("workbooks/{}/upload-patch/commit", workbook_id),
+            &body,
+        )
+        .await
+    }
+
+    /// PUT the patch payload to a presigned GCS URL. The server pins
+    /// `Content-Type: application/json` on the presigned URL signature, so the
+    /// CLI MUST send exactly that header — anything else fails with a
+    /// SignatureDoesNotMatch from GCS.
+    pub async fn upload_patch_put(
+        &self,
+        presigned_url: &str,
+        payload: &UploadPatchPayload,
+    ) -> ApiResult<()> {
+        let body = serde_json::to_vec(payload).map_err(|e| ApiError::Other(e.to_string()))?;
+        let resp = self
+            .client
+            .put(presigned_url)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ApiError::ServerError {
+                status: status.as_u16(),
+                body: format!("GCS PUT failed: {text}"),
+            });
+        }
+        Ok(())
+    }
+
     pub async fn discard_remote_dirty_changes(
         &self,
         workbook_id: &str,
@@ -694,6 +797,65 @@ impl ApiClient {
         )
         .await
     }
+}
+
+// ── Upload-patch ────────────────────────────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UploadPatchInitResponse {
+    #[serde(rename = "uploadId")]
+    pub upload_id: String,
+    #[serde(rename = "presignedUrl")]
+    pub presigned_url: String,
+    #[allow(dead_code)] // documents the wire contract; surfaces in logs if we ever need it
+    #[serde(rename = "expiresInSeconds", default)]
+    pub expires_in_seconds: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UploadPatchCommitResponse {
+    #[serde(rename = "jobId", default)]
+    pub job_id: Option<String>,
+    #[serde(rename = "stalenessWarning", default)]
+    pub staleness_warning: Option<StalenessWarning>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct StalenessWarning {
+    #[serde(rename = "newHead")]
+    pub new_head: String,
+}
+
+/// Wire format for the body uploaded to the presigned GCS PUT URL. Mirrors
+/// `packages/shared-types/src/dto/upload-patch/upload-patch.dto.ts::UploadPatchPayload`.
+#[derive(Debug, serde::Serialize)]
+pub struct UploadPatchPayload {
+    pub patches: Vec<UploadPatchEntry>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct UploadPatchEntry {
+    /// Path relative to the connection root, e.g. `Companies/rec123.json`.
+    pub path: String,
+    /// RFC 7396 JSON Merge Patch. `null` means delete the file.
+    pub patch: serde_json::Value,
+}
+
+// ── Publish-v2 (plan + run) ────────────────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PublishPlanBuildResponse {
+    /// `null` when there's nothing to publish (server's dirty == main).
+    #[serde(rename = "jobId", default)]
+    pub job_id: Option<String>,
+    #[serde(rename = "pipelineId", default)]
+    pub pipeline_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PublishPlanRunResponse {
+    #[serde(rename = "jobId", default)]
+    pub job_id: Option<String>,
 }
 
 // ── Syncs ────────────────────────────────────────────────────────────────────

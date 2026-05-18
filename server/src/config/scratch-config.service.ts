@@ -206,6 +206,19 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('GCS_PROJECT_ID');
   }
 
+  /**
+   * Local-dev escape hatch: when set, the server impersonates the named
+   * service account when generating V4 signed URLs. Needed because user-mode
+   * ADC (`gcloud auth application-default login`) has no `client_email`, which
+   * the Storage SDK's default signer requires. In Cloud Run, ADC IS the
+   * runtime service account, so signing works natively and this stays unset.
+   *
+   * The caller must have `roles/iam.serviceAccountTokenCreator` on the target.
+   */
+  getGcsLocalSigningServiceAccount(): string | undefined {
+    return this.getOptionalEnvVariable('GCS_LOCAL_SIGNING_SA');
+  }
+
   getUseOpenTelemetryMetrics(): boolean {
     return this.getOptionalFlagVariable('USE_OPENTELEMETRY_METRICS', false);
   }

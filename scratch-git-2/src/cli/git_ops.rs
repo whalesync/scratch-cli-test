@@ -17,7 +17,7 @@ pub(crate) use local::{
     read_tree_files, rev_parse_optional_to_string, rev_parse_to_string, setup_sparse_worktree,
     update_ref, worktree_reset_hard, worktree_reset_mixed, worktree_status_entries,
 };
-pub(crate) use remote::{clone_bare, fetch_origin, force_push_origin_dirty, push_origin_dirty};
+pub(crate) use remote::{clone_bare, fetch_origin, force_push_origin_dirty};
 
 fn open_bare_repo(bare_repo: &Path) -> anyhow::Result<gix::Repository> {
     gix::open(bare_repo.to_path_buf())

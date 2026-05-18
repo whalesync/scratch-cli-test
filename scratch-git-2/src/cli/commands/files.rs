@@ -14,36 +14,6 @@ use crate::shared::validators;
 
 type FileMap = HashMap<String, Vec<u8>>;
 
-/// Cache for `read_git_tree` results keyed by commit/tree hash. Avoids redundant
-/// blob reads when the same tree is needed multiple times during an upload.
-struct TreeCache {
-    entries: HashMap<String, FileMap>,
-}
-
-impl TreeCache {
-    fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
-    }
-
-    fn get_or_read(&mut self, bare_repo: &Path, hash: &str) -> anyhow::Result<&FileMap> {
-        if !self.entries.contains_key(hash) {
-            let map = read_git_tree(bare_repo, hash)?;
-            self.entries.insert(hash.to_string(), map);
-        }
-        Ok(&self.entries[hash])
-    }
-}
-
-fn cached_read_git_tree<'c>(
-    cache: &'c mut TreeCache,
-    bare_repo: &Path,
-    hash: &str,
-) -> anyhow::Result<&'c FileMap> {
-    cache.get_or_read(bare_repo, hash)
-}
-
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum OnDeleteAction {
     /// Interactively ask per removed connection
@@ -162,7 +132,13 @@ pub enum FilesCommands {
     Unpublished,
     /// List record changes accepted locally but not yet published (dirty vs master)
     Unpushed,
-    /// Upload local changes to the server
+    /// Upload locally accepted changes to the server's dirty branch (no publish).
+    ///
+    /// Computes the diff between local `main` and local `dirty`, emits one
+    /// RFC 7396 merge patch per data file, and POSTs the payload to
+    /// `/upload-patch/{init,commit}`. The server applies the patches to its
+    /// dirty branch and stops there — running the publish plan + dispatching
+    /// to external connectors is a separate step (`scratchmd files publish`).
     Upload {
         /// Skip refreshing the per-folder SQLite index for changed records.
         /// By default, `index refresh-files-full` runs for each affected folder so the
@@ -170,6 +146,14 @@ pub enum FilesCommands {
         #[arg(long = "skip-folder-index")]
         skip_folder_index: bool,
     },
+    /// Publish accepted changes to external connectors (plan-job + run-job).
+    ///
+    /// Drives `/publish-v2/plan-job` (builds the plan from the server's
+    /// current dirty vs main) and then `/publish-v2/run-job` (executes the
+    /// plan, dispatching to the external service). Does NOT upload local
+    /// changes — run `scratchmd files upload` first if you have unpublished
+    /// local accepted edits.
+    Publish,
     /// Force-push local state to the server, skipping merge (fast)
     #[command(name = "force-upload")]
     ForceUpload,
@@ -351,8 +335,9 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
         FilesCommands::Upload { skip_folder_index } => {
-            run_upload(&cwd, server_url, json, skip_folder_index)
+            run_upload(&cwd, server_url, json, skip_folder_index).await
         }
+        FilesCommands::Publish => run_publish(&cwd, server_url, json).await,
         FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
         FilesCommands::FindMergeBase => run_find_merge_base(&cwd, server_url, json),
     }
@@ -631,20 +616,29 @@ async fn sync_workspace_structure(
     Ok(result)
 }
 
-fn run_upload(
+async fn run_upload(
     cwd: &Path,
     server_url: &str,
     json: bool,
     skip_folder_index: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (_, workspace_dir, contexts, workspace_server_url) =
+    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url)?;
     let token = get_token(&workspace_server_url)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
+
+    // Workspace-wide advisory lock: every mutating CLI op holds it for the
+    // duration of its work. Released when `_lock` drops at end of scope. The
+    // single-worktree design (Phase 5) loses the implicit serialization the
+    // three-worktree model had; this restores it ahead of that work.
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    let client = crate::api::ApiClient::new(&workspace_server_url, token.clone());
+    let workbook_id = workspace_marker.workbook.id.as_str();
 
     let verbose = !json;
     let mut results = Vec::new();
@@ -653,16 +647,17 @@ fn run_upload(
         if contexts.len() > 1 && verbose {
             println!("Uploading {}...", ctx.conn_dir_name);
         }
-        let upload_result = upload_single_repo(ctx, &token, verbose)?;
+        let upload_result =
+            upload_single_repo_via_patches(ctx, &client, &token, workbook_id, verbose).await?;
         for path in &upload_result.changed_paths {
             all_changed_workspace_paths.push(format!("{}/{}", ctx.conn_dir_name, path));
         }
         results.push(upload_result);
     }
 
-    // Per-path folder_index reindex. Same shape as download: the dirty
-    // branch's path diff drives a targeted reindex, replacing the
-    // workspace-wide sweep the desktop used to do after every push.
+    // Per-path folder_index reindex. Same shape as download: the local
+    // refs that moved during this upload drive a targeted reindex, replacing
+    // the workspace-wide sweep the desktop used to do after every push.
     if !skip_folder_index {
         reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
     }
@@ -674,6 +669,136 @@ fn run_upload(
     };
 
     print_upload_result(&result, started.elapsed().as_millis(), json)
+}
+
+/// Publish accepted edits to external connectors. Two explicit server calls
+/// per connection: `/publish-v2/plan-job` builds the plan (server-side diff
+/// of dirty vs main) and `/publish-v2/run-job` dispatches the plan through the
+/// connector. The CLI polls each job to completion before moving to the next
+/// connection or the next phase. Decoupled from `files upload` so the two
+/// concerns — "stage my changes server-side" and "actually publish them" —
+/// can be driven independently (scripting, CI, deferred publishing).
+async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url)?;
+    let token = get_token(&workspace_server_url)?;
+
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    let client = crate::api::ApiClient::new(&workspace_server_url, token.clone());
+    let workbook_id = workspace_marker.workbook.id.as_str();
+
+    let verbose = !json;
+    let mut published_connections: Vec<String> = Vec::new();
+    let mut skipped_no_diff: Vec<String> = Vec::new();
+
+    for ctx in &contexts {
+        if contexts.len() > 1 && verbose {
+            println!("Publishing {}...", ctx.conn_dir_name);
+        }
+
+        if verbose {
+            eprint!("  Planning...");
+        }
+        let plan = client
+            .publish_plan_build(workbook_id, &ctx.connection_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("plan-job failed for {}: {e}", ctx.conn_dir_name))?;
+
+        let (plan_job_id, pipeline_id) = match (plan.job_id, plan.pipeline_id) {
+            (Some(job), Some(pipe)) => (job, pipe),
+            _ => {
+                if verbose {
+                    eprintln!(" no changes");
+                }
+                skipped_no_diff.push(ctx.conn_dir_name.clone());
+                continue;
+            }
+        };
+
+        crate::api::poll_job(&client, &plan_job_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("plan-job poll failed for {}: {e}", ctx.conn_dir_name))?;
+        if verbose {
+            eprintln!(" done");
+        }
+
+        if verbose {
+            eprint!("  Running...");
+        }
+        let run = client
+            .publish_plan_run(workbook_id, &pipeline_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("run-job failed for {}: {e}", ctx.conn_dir_name))?;
+        if let Some(run_job_id) = run.job_id.as_deref() {
+            crate::api::poll_job(&client, run_job_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("run-job poll failed for {}: {e}", ctx.conn_dir_name))?;
+        }
+        if verbose {
+            eprintln!(" done");
+        }
+
+        // After a successful publish, the server's `main` has advanced for
+        // this connector. Fetch + advance the local `main` ref so the next
+        // `files upload` correctly sees no diff against `dirty`.
+        crate::git_ops::fetch_origin(&ctx.bare_repo, &token)?;
+        if let Some(new_main_hash) =
+            git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
+        {
+            git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
+        }
+
+        published_connections.push(ctx.conn_dir_name.clone());
+    }
+
+    let elapsed_ms = started.elapsed().as_millis();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if published_connections.is_empty() && skipped_no_diff.is_empty() { "no_changes" }
+                          else if published_connections.is_empty() { "no_diff" }
+                          else { "published" },
+                "publishedConnections": published_connections,
+                "skippedNoDiff": skipped_no_diff,
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+        return Ok(());
+    }
+
+    let elapsed = format_elapsed(elapsed_ms);
+    if published_connections.is_empty() && skipped_no_diff.is_empty() {
+        println!("No connections to publish. ({})", elapsed);
+    } else if published_connections.is_empty() {
+        println!(
+            "No changes to publish across {} connection(s). ({})",
+            skipped_no_diff.len(),
+            elapsed
+        );
+    } else {
+        println!(
+            "Published {} connection(s). ({})",
+            published_connections.len(),
+            elapsed
+        );
+        for name in &published_connections {
+            println!("  {}", name);
+        }
+        if !skipped_no_diff.is_empty() {
+            println!(
+                "Skipped {} connection(s) with no changes.",
+                skipped_no_diff.len()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
@@ -2351,172 +2476,245 @@ fn download_single_repo(
     Ok(result)
 }
 
-fn upload_single_repo(
+/// Phase 1 of the upload-patch flow. Publishes the local connection's
+/// accepted state by:
+///
+///   1. Fetching origin so `refs/remotes/origin/main` reflects the server's
+///      current view of published state.
+///   2. Computing per-file RFC 7396 merge patches between local `main` (the
+///      last-fetched server state) and local `dirty` (the user's locally
+///      accepted edits).
+///   3. Uploading the patch payload via `/upload-patch/init` → presigned GCS
+///      PUT → `/upload-patch/commit`. The server applies the patches to its
+///      dirty branch as one commit, then triggers the existing publish-v2
+///      plan-job + run-job pipeline.
+///   4. Polling the publish job to completion (or surfacing its failure).
+///   5. Fetching again so the local `main` ref advances to include the
+///      just-published commit. Without this, the user would see "no_changes"
+///      based on stale local state on the next run.
+///
+/// Replaces the legacy local-merge-and-push path (which built publish plans
+/// client-side and pushed them to `refs/heads/dirty`). The local `dirty`
+/// branch is no longer authoritative for what gets published — the diff
+/// against local `main` is. Local refs are left alone except for advancing
+/// `main` after a successful publish.
+async fn upload_single_repo_via_patches(
     ctx: &ConnectionContext,
+    client: &crate::api::ApiClient,
     token: &str,
+    workbook_id: &str,
     verbose: bool,
 ) -> anyhow::Result<UploadResult> {
-    let mut tree_cache = TreeCache::new();
-
     if verbose {
-        eprint!("  Reading local state...");
+        eprint!("  Fetching remote changes...");
     }
-    let local_dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
-    sync_schema_files_from_master(ctx)?;
-    let local_unreviewed = unreviewed_entries(ctx)?;
-    let local_plan_map = read_local_publish_plan_map(ctx)?;
+    crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
     if verbose {
         eprintln!(" done");
     }
 
-    // Fast path for "this connection has nothing to push and nothing came
-    // in from the server either." Commit/tree SHAs are content-hashes, so
-    // ref equality is byte-equivalent to map equality without loading any
-    // blobs. Critical for the publish-flow scenario where the user pushes
-    // to one small table in a workspace with several large untouched
-    // connections — those untouched connections are O(records-in-conn)
-    // otherwise (read_git_tree × 2 + maps_equal byte compare).
-    if local_unreviewed.is_empty() && local_plan_map.is_empty() {
-        if verbose {
-            eprint!("  Fetching remote changes...");
-        }
-        crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
-        if verbose {
-            eprintln!(" done");
-        }
+    let local_unreviewed = unreviewed_entries(ctx)?;
 
-        let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-        if local_dirty_hash == remote_hash {
-            return Ok(UploadResult {
-                status: "no_changes".to_string(),
-                ..Default::default()
-            });
-        }
-        // Falls through: nothing to push but remote advanced. The retry
-        // loop below handles fast-forwarding our local dirty to match,
-        // applying any working-tree changes that came in.
+    let main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
+        .or(git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?);
+    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
+
+    let main_map = match main_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => FileMap::new(),
+    };
+    let dirty_map = match dirty_hash.as_deref() {
+        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
+        None => FileMap::new(),
+    };
+
+    if verbose {
+        eprint!("  Computing patches...");
+    }
+    let patches = compute_upload_patches(&main_map, &dirty_map, &ctx.conn_dir_name)?;
+    if verbose {
+        eprintln!(" done ({} file(s))", patches.len());
     }
 
-    // From here on we need the local dirty tree in memory for the merge.
-    // Clone out of the cache so the cache can be mutated for remote /
-    // merge-base tree reads inside the retry loop without holding a borrow.
-    let local_dirty_map =
-        cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &local_dirty_hash)?.clone();
-
-    const MAX_RETRIES: i32 = 5;
-    for attempt in 0..MAX_RETRIES {
-        if verbose {
-            eprint!("  Fetching remote changes...");
-        }
-        crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
-        if verbose {
-            eprintln!(" done");
-        }
-
-        let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-        let remote_map =
-            cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &remote_hash)?.clone();
-        let merge_base_hash = crate::git_ops::merge_base_to_string(
-            &ctx.bare_repo,
-            "refs/heads/dirty",
-            "refs/remotes/origin/dirty",
-        )?
-        .ok_or_else(|| {
-            anyhow::anyhow!("No merge base found between local dirty and origin/dirty")
-        })?;
-        let merge_base_map =
-            cached_read_git_tree(&mut tree_cache, &ctx.bare_repo, &merge_base_hash)?.clone();
-
-        if verbose {
-            eprint!("  Merging...");
-        }
-        let (mut merged, mut result, mut messages) =
-            prepare_upload_merge(&merge_base_map, &local_dirty_map, &remote_map, attempt);
-        if verbose {
-            eprintln!(" done");
-        }
-
-        strip_publish_plan_files(&mut merged);
-        let plan_file_count = local_plan_map.len() as i32;
-        for (path, value) in &local_plan_map {
-            merged.insert(path.clone(), value.clone());
-        }
-
+    if patches.is_empty() {
+        let mut messages = Vec::new();
         if !local_unreviewed.is_empty() {
             messages.push(format!(
                 "{} record(s) have unreviewed local changes and will not be uploaded. Run `scratchmd files accept-all` first.",
                 local_unreviewed.len()
             ));
         }
+        return Ok(UploadResult {
+            status: "no_changes".to_string(),
+            messages,
+            ..Default::default()
+        });
+    }
 
-        if maps_equal(&merged, &remote_map) {
-            git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
-            sync_schema_files_from_master(ctx)?;
-            apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &remote_map)?;
-            update_dirty_worktree_index(ctx, &remote_hash)?;
-            update_reviewed_dirty(ctx, &remote_hash)?;
-            // Validators run lazily via the folder_index pipeline on the
-            // next paginate-records --validate (see download_single_repo
-            // for the same rationale).
-            return Ok(UploadResult {
-                status: "up_to_date".to_string(),
-                messages,
-                // Dirty moved from `local_dirty_hash` to `remote_hash` —
-                // capture the path diff so the caller can do a per-path
-                // folder_index reindex instead of a workspace-wide sweep.
-                changed_paths: file_map_changed_data_paths(&local_dirty_map, &remote_map),
-                ..Default::default()
-            });
-        }
+    let files_uploaded = patches.iter().filter(|p| !p.patch.is_null()).count() as i32;
+    let files_deleted = patches.iter().filter(|p| p.patch.is_null()).count() as i32;
+    let uploaded_paths: Vec<String> = patches
+        .iter()
+        .filter(|p| !p.patch.is_null())
+        .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
+        .collect();
+    let deleted_paths: Vec<String> = patches
+        .iter()
+        .filter(|p| p.patch.is_null())
+        .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
+        .collect();
+    // The dirty branch didn't move on this upload (server is authoritative
+    // now), but the caller still wants paths to drive folder_index reindex
+    // after `main` advances below — feed it the same set we touched.
+    let changed_paths: Vec<String> = patches.iter().map(|p| p.path.clone()).collect();
 
-        let new_dirty_hash = commit_file_map_to_dirty_ref(
-            &ctx.bare_repo,
-            Some(remote_hash.as_str()),
-            &merged,
-            "Upload from Scratch CLI",
-        )?;
+    let payload = crate::api::UploadPatchPayload {
+        patches: patches
+            .into_iter()
+            .map(|p| crate::api::UploadPatchEntry {
+                path: p.path,
+                patch: p.patch,
+            })
+            .collect(),
+    };
 
+    if verbose {
+        eprint!("  Uploading...");
+    }
+    let init = client
+        .upload_patch_init(workbook_id, &ctx.connection_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("upload-patch init failed: {e}"))?;
+    client
+        .upload_patch_put(&init.presigned_url, &payload)
+        .await
+        .map_err(|e| anyhow::anyhow!("upload-patch PUT failed: {e}"))?;
+    let commit = client
+        .upload_patch_commit(
+            workbook_id,
+            &ctx.connection_id,
+            &init.upload_id,
+            main_hash.as_deref(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("upload-patch commit failed: {e}"))?;
+    if verbose {
+        eprintln!(" done");
+    }
+
+    let mut messages = Vec::new();
+    if !local_unreviewed.is_empty() {
+        messages.push(format!(
+            "{} record(s) have unreviewed local changes and were not uploaded. Run `scratchmd files accept-all` first.",
+            local_unreviewed.len()
+        ));
+    }
+    if let Some(staleness) = &commit.staleness_warning {
+        messages.push(format!(
+            "The server has more recent changes ({}) than what's on your computer. Patches were still applied; run `scratchmd files download` to refresh.",
+            short_sha(&staleness.new_head),
+        ));
+    }
+
+    // Poll the apply-patches job to completion. The job's "done" state means
+    // the server's `dirty` branch has the new commit; the publish pipeline is
+    // NOT triggered by this endpoint anymore — the caller must run
+    // `scratchmd files publish` afterwards.
+    if let Some(job_id) = commit.job_id.as_deref() {
         if verbose {
-            eprint!("  Pushing...");
+            eprint!("  Applying...");
         }
-        match crate::git_ops::push_origin_dirty(&ctx.bare_repo, token) {
-            Ok(()) => {
-                if verbose {
-                    eprintln!(" done");
-                }
-                sync_schema_files_from_master(ctx)?;
-                apply_remote_changes_to_working_copy(ctx, &local_dirty_map, &merged)?;
-                update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-                update_reviewed_dirty(ctx, &new_dirty_hash)?;
-                // See download_single_repo: validators run lazily on next
-                // --validate paginate, not inline.
-                result.files_plan = plan_file_count;
-                result.messages = messages;
-                // Dirty moved from `local_dirty_hash` to `new_dirty_hash`
-                // (which is a commit of `merged`). Capture the diff for the
-                // caller's per-path folder_index reindex.
-                result.changed_paths = file_map_changed_data_paths(&local_dirty_map, &merged);
-                return Ok(result);
-            }
-            Err(err) => {
-                if verbose {
-                    eprintln!(" retrying");
-                }
-                if err.to_string().contains("non-fast-forward")
-                    || err.to_string().contains("rejected")
-                {
-                    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &local_dirty_hash)?;
-                    continue;
-                }
-                return Err(err);
-            }
+        crate::api::poll_job(client, job_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("apply-patches job failed: {e}"))?;
+        if verbose {
+            eprintln!(" done");
         }
     }
 
-    anyhow::bail!(
-        "Upload failed after {} attempts due to concurrent changes on the server",
-        MAX_RETRIES
-    )
+    Ok(UploadResult {
+        status: "uploaded".to_string(),
+        files_uploaded,
+        files_deleted,
+        uploaded_paths,
+        deleted_paths,
+        changed_paths,
+        messages,
+        ..Default::default()
+    })
+}
+
+/// Local diff producer: between the local `main` tree (server's last-known
+/// state) and the local `dirty` tree (user's accepted edits), emit one
+/// `UploadPatchEntry` per data file that differs. Skips non-data paths
+/// (`.scratch/*`, non-JSON) so we don't accidentally publish the local
+/// publish-plan scratch files that the legacy flow used to push.
+fn compute_upload_patches(
+    main_map: &FileMap,
+    dirty_map: &FileMap,
+    conn_dir_name: &str,
+) -> anyhow::Result<Vec<ComputedUploadPatch>> {
+    let mut all_paths: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for path in main_map.keys() {
+        if is_data_path_in_folder(path, "") {
+            all_paths.insert(path.as_str());
+        }
+    }
+    for path in dirty_map.keys() {
+        if is_data_path_in_folder(path, "") {
+            all_paths.insert(path.as_str());
+        }
+    }
+
+    let mut patches: Vec<ComputedUploadPatch> = Vec::new();
+    for path in all_paths {
+        let main_bytes = main_map.get(path);
+        let dirty_bytes = dirty_map.get(path);
+        let patch_value = match (main_bytes, dirty_bytes) {
+            (Some(m), Some(d)) if m == d => continue,
+            (None, None) => continue,
+            (Some(_), None) => serde_json::Value::Null,
+            (None, Some(d)) => parse_json_value(d, path, conn_dir_name)?,
+            (Some(m), Some(d)) => {
+                let main_value = parse_json_value(m, path, conn_dir_name)?;
+                let dirty_value = parse_json_value(d, path, conn_dir_name)?;
+                match crate::commands::merge_patch::diff(&main_value, &dirty_value) {
+                    Some(patch) => patch,
+                    None => continue,
+                }
+            }
+        };
+        patches.push(ComputedUploadPatch {
+            path: path.to_string(),
+            patch: patch_value,
+        });
+    }
+    Ok(patches)
+}
+
+#[derive(Debug)]
+struct ComputedUploadPatch {
+    path: String,
+    patch: serde_json::Value,
+}
+
+fn parse_json_value(
+    bytes: &[u8],
+    path: &str,
+    conn_dir_name: &str,
+) -> anyhow::Result<serde_json::Value> {
+    serde_json::from_slice(bytes).map_err(|err| {
+        anyhow::anyhow!(
+            "Failed to parse JSON in '{}/{}': {}. Aborting upload to avoid sending malformed patches.",
+            conn_dir_name,
+            path,
+            err
+        )
+    })
+}
+
+fn short_sha(sha: &str) -> &str {
+    sha.get(..7.min(sha.len())).unwrap_or(sha)
 }
 
 fn discard_all_single_repo(
@@ -3784,77 +3982,8 @@ fn prune_empty_unknown_dirs(dir: &Path, wanted: &HashSet<PathBuf>) -> anyhow::Re
 
 /// Rebase the current working tree from `old_map` to `new_map`, treating the
 /// working tree as local edits on top of `old_map`.
-fn apply_remote_changes_to_working_copy(
-    ctx: &ConnectionContext,
-    old_map: &FileMap,
-    new_map: &FileMap,
-) -> anyhow::Result<()> {
-    let old_data_map = data_only_map(old_map);
-    let new_data_map = data_only_map(new_map);
-
-    let mut working_tree_map = FileMap::new();
-    read_dirty_disk(&ctx.dirty_dir, &ctx.dirty_dir, &mut working_tree_map)?;
-
-    let actions = compute_merge_actions(&old_data_map, &working_tree_map, &new_data_map);
-
-    for act in actions {
-        let (path, next_content) = match act {
-            MergeAction::KeepLocal { path, content, .. } => (path, content),
-            MergeAction::WriteRemote { path, content } => (path, content),
-            MergeAction::Delete { path, .. } => (path, None),
-            MergeAction::Merge {
-                path,
-                base,
-                local,
-                remote,
-            } => (
-                path.clone(),
-                Some(merge_content(
-                    &path,
-                    Some(&base),
-                    Some(&local),
-                    Some(&remote),
-                )),
-            ),
-        };
-
-        let current_content = working_tree_map.get(path.as_str());
-        if current_content == next_content.as_ref() {
-            continue;
-        }
-
-        match next_content {
-            Some(content) => write_file(&ctx.dirty_dir.join(&path), &content)?,
-            None => {
-                let _ = std::fs::remove_file(ctx.dirty_dir.join(&path));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn read_local_publish_plan_map(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
-    let mut scratch_map = FileMap::new();
-    read_scratch_disk(&ctx.scratch_dir, &ctx.scratch_dir, &mut scratch_map)?;
-    Ok(scratch_map
-        .into_iter()
-        .filter(|(path, _)| is_publish_plan_file(path))
-        .collect())
-}
-
 fn is_scratch_path(path: &str) -> bool {
     path.starts_with(".scratch/")
-}
-
-fn is_publish_plan_file(path: &str) -> bool {
-    path.strip_prefix(".scratch/")
-        .map(|rest| rest.starts_with(".publish-plans/") || rest.contains("/publish-plan-"))
-        .unwrap_or(false)
-}
-
-fn strip_publish_plan_files(map: &mut FileMap) {
-    map.retain(|path, _| !is_publish_plan_file(path));
 }
 
 fn scratch_only_map(map: &FileMap) -> FileMap {

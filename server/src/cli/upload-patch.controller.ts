@@ -105,7 +105,6 @@ export class UploadPatchController {
     const job = await this.bullEnqueuerService.enqueueApplyPatchesJob(
       workbookId,
       actor.userId,
-      actor.organizationId,
       body.connectorAccountId,
       body.uploadId,
       body.baseHead,

@@ -332,7 +332,6 @@ export class BullEnqueuerService implements OnModuleDestroy {
   async enqueueApplyPatchesJob(
     workbookId: WorkbookId,
     userId: string,
-    organizationId: string,
     connectorAccountId: string,
     uploadId: string,
     baseHead?: string,
@@ -342,7 +341,6 @@ export class BullEnqueuerService implements OnModuleDestroy {
       type: JobType.ApplyPatches,
       workbookId,
       userId,
-      organizationId,
       connectorAccountId,
       uploadId,
       ...(baseHead ? { baseHead } : {}),

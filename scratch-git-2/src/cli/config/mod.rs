@@ -1,6 +1,7 @@
 pub mod credentials;
 pub mod markers;
 pub mod project_config;
+pub mod workspace_lock;
 pub mod workspaces;
 
 /// Resolve workspace ID from an explicit flag value or the nearest .scratchmd marker.

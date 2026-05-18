@@ -494,33 +494,6 @@ fn git_fetch_updates_remote_tracking_dirty_ref() {
 }
 
 #[test]
-fn git_push_updates_remote_dirty_branch() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let fixture = create_bare_fixture();
-    let parent = git_rev_parse(&fixture.local_bare, "dirty").unwrap();
-    let files = HashMap::from([(
-        "posts/rec1.json".to_string(),
-        b"{\"id\":\"rec1\",\"fields\":{\"title\":\"Updated\"}}".to_vec(),
-    )]);
-    let commit_hash = commit_file_map_to_dirty_ref(
-        &fixture.local_bare,
-        Some(parent.as_str()),
-        &files,
-        "local update",
-    )
-    .unwrap();
-
-    crate::git_ops::push_origin_dirty(&fixture.local_bare, "test-token").unwrap();
-
-    let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
-    assert_eq!(remote_dirty, commit_hash);
-}
-
-#[test]
 fn git_push_force_overwrites_diverged_remote_dirty_branch() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
@@ -549,10 +522,6 @@ fn git_push_force_overwrites_diverged_remote_dirty_branch() {
     )
     .unwrap();
 
-    let push_err =
-        crate::git_ops::push_origin_dirty(&fixture.local_bare, "test-token").unwrap_err();
-    assert!(push_err.to_string().contains("git push failed"));
-
     crate::git_ops::force_push_origin_dirty(&fixture.local_bare, "test-token").unwrap();
 
     let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
@@ -560,129 +529,99 @@ fn git_push_force_overwrites_diverged_remote_dirty_branch() {
 }
 
 #[test]
-fn upload_single_repo_uses_real_merge_base_for_local_dirty() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let fixture = create_bare_fixture();
-    let tmp = TempDir::new().unwrap();
-    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
-
-    let original_remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
-
-    write_file(
-        &fixture.source_dir.join("posts/rec1.json"),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"remote\"\n}\n",
+fn compute_upload_patches_emits_create_update_and_delete() {
+    // Three records that exercise all three transition shapes that the
+    // upload-patch flow must produce: a new file, a field-level edit, and
+    // a deletion. The output is the on-the-wire payload the server sees.
+    let mut main_map = FileMap::new();
+    main_map.insert(
+        "Companies/rec_keep.json".to_string(),
+        b"{\"id\":\"rec_keep\",\"name\":\"Acme\",\"industry\":\"SaaS\"}".to_vec(),
     );
-    commit_all(&fixture.source_dir, "remote dirty update");
-    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
-
-    let stale_local_parent = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
-    let mut local_files = read_git_tree(&fixture.local_bare, &stale_local_parent).unwrap();
-    local_files.insert(
-        "posts/rec1.json".to_string(),
-        b"{\n  \"id\": \"rec1\",\n  \"name\": \"local\"\n}\n".to_vec(),
+    main_map.insert(
+        "Companies/rec_delete.json".to_string(),
+        b"{\"id\":\"rec_delete\"}".to_vec(),
     );
-    commit_file_map_to_dirty_ref(
-        &fixture.local_bare,
-        Some(stale_local_parent.as_str()),
-        &local_files,
-        "local approved update",
-    )
-    .unwrap();
 
-    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
-        .unwrap();
+    let mut dirty_map = FileMap::new();
+    dirty_map.insert(
+        "Companies/rec_keep.json".to_string(),
+        b"{\"id\":\"rec_keep\",\"name\":\"Acme\",\"industry\":\"Devtools\"}".to_vec(),
+    );
+    dirty_map.insert(
+        "Companies/rec_create.json".to_string(),
+        b"{\"id\":\"rec_create\",\"name\":\"NewCo\"}".to_vec(),
+    );
 
-    let result = upload_single_repo(&ctx, "test-token", false).unwrap();
-    assert_eq!(result.status, "uploaded");
+    let patches = compute_upload_patches(&main_map, &dirty_map, "HubSpot").unwrap();
 
-    let final_remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
-    let merge_base = crate::git_ops::merge_base_to_string(
-        &fixture.remote_bare,
-        "refs/heads/dirty",
-        &original_remote_dirty,
-    )
-    .unwrap();
-    assert_eq!(merge_base, Some(original_remote_dirty.clone()));
+    let by_path: HashMap<String, serde_json::Value> =
+        patches.into_iter().map(|p| (p.path, p.patch)).collect();
 
-    let final_remote_map = read_git_tree(&fixture.remote_bare, &final_remote_dirty).unwrap();
     assert_eq!(
-        String::from_utf8(final_remote_map["posts/rec1.json"].clone()).unwrap(),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"local\"\n}\n"
+        by_path.get("Companies/rec_keep.json"),
+        Some(&serde_json::json!({ "industry": "Devtools" })),
+        "field-level edit should produce a minimal RFC 7396 patch"
     );
-    // The dirty branch advanced (new merge commit on top of stale_local_parent)
-    // but for rec1.json the merge resolved in favor of local content, which
-    // is what `local_dirty_map` already held — so no data-path content
-    // actually moved on the local side. changed_paths reflects content
-    // movement, not tree-OID movement.
-    assert!(
-        result.changed_paths.is_empty(),
-        "merge resolved to local's content; nothing moved on the local side"
+    assert_eq!(
+        by_path.get("Companies/rec_delete.json"),
+        Some(&serde_json::Value::Null),
+        "missing-on-dirty should produce patch=null (deletion)"
+    );
+    assert_eq!(
+        by_path.get("Companies/rec_create.json"),
+        Some(&serde_json::json!({ "id": "rec_create", "name": "NewCo" })),
+        "new file should produce the full content as the patch"
     );
 }
 
 #[test]
-fn upload_single_repo_fast_path_skips_tree_reads_when_local_matches_remote() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    // Clone copies refs/heads/dirty + refs/remotes/origin/dirty at the same
-    // tip. No local edits, no publish plans, no unreviewed entries — this
-    // hits the fast-path early return that compares refs (cheap, no blob
-    // loads) instead of byte-comparing the full FileMaps.
-    let fixture = create_bare_fixture();
-    let tmp = TempDir::new().unwrap();
-    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
-
-    let result = upload_single_repo(&ctx, "test-token", false).unwrap();
-
-    assert_eq!(
-        result.status, "no_changes",
-        "ref-equal local & remote ⇒ no_changes without reading any trees"
+fn compute_upload_patches_skips_unchanged_and_non_data_paths() {
+    let mut main_map = FileMap::new();
+    main_map.insert(
+        "Companies/rec_same.json".to_string(),
+        b"{\"id\":\"rec_same\",\"name\":\"X\"}".to_vec(),
     );
+    main_map.insert(
+        ".scratch/should-skip.json".to_string(),
+        b"{\"internal\":true}".to_vec(),
+    );
+    main_map.insert("Companies/schema.txt".to_string(), b"not json".to_vec());
+
+    let mut dirty_map = main_map.clone();
+    dirty_map.insert(
+        ".scratch/should-skip.json".to_string(),
+        b"{\"internal\":false}".to_vec(),
+    );
+    dirty_map.insert("Companies/schema.txt".to_string(), b"different".to_vec());
+
+    let patches = compute_upload_patches(&main_map, &dirty_map, "HubSpot").unwrap();
     assert!(
-        result.changed_paths.is_empty(),
-        "no work done ⇒ nothing to surface as changed"
+        patches.is_empty(),
+        "non-data paths and unchanged files must not surface as patches; got {:?}",
+        patches.iter().map(|p| &p.path).collect::<Vec<_>>()
     );
 }
 
 #[test]
-fn upload_single_repo_changed_paths_when_remote_wins() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let fixture = create_bare_fixture();
-    let tmp = TempDir::new().unwrap();
-    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
-
-    // Push a remote change to a path the local side never modified locally.
-    // The upload's merge picks remote (since local didn't change), so the
-    // local dirty branch advances to incorporate that remote change — which
-    // means `local_dirty_map[posts/rec1.json]` differs from `merged[…]` and
-    // the path should surface in changed_paths.
-    write_file(
-        &fixture.source_dir.join("posts/rec1.json"),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"remote-only\"\n}\n",
+fn compute_upload_patches_errors_on_unparseable_json() {
+    let mut main_map = FileMap::new();
+    main_map.insert(
+        "Companies/rec.json".to_string(),
+        b"{\"id\":\"rec\"}".to_vec(),
     );
-    commit_all(&fixture.source_dir, "remote dirty update");
-    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
 
-    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
-        .unwrap();
+    let mut dirty_map = FileMap::new();
+    dirty_map.insert(
+        "Companies/rec.json".to_string(),
+        b"{ not valid json".to_vec(),
+    );
 
-    let result = upload_single_repo(&ctx, "test-token", false).unwrap();
-    assert_eq!(result.status, "up_to_date");
-    assert_eq!(
-        result.changed_paths,
-        vec!["posts/rec1.json".to_string()],
-        "remote-only change should surface as a local-side move"
+    let err = compute_upload_patches(&main_map, &dirty_map, "HubSpot").unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Companies/rec.json") && msg.to_lowercase().contains("parse"),
+        "unparseable JSON must surface as a precise error pointing at the file; got: {msg}"
     );
 }
 
@@ -877,34 +816,6 @@ fn update_master_worktree_returns_diff_when_main_advances() {
     );
 }
 
-#[test]
-fn apply_remote_changes_to_working_copy_rebases_unapproved_edits() {
-    let tmp = TempDir::new().unwrap();
-    let ctx = make_connection_context(tmp.path(), &tmp.path().join("repo.git"));
-
-    std::fs::create_dir_all(ctx.dirty_dir.join("posts")).unwrap();
-    write_file(
-        &ctx.dirty_dir.join("posts/rec1.json"),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"local\",\n  \"status\": \"draft\"\n}\n",
-    );
-
-    let old_map = HashMap::from([(
-        "posts/rec1.json".to_string(),
-        b"{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"draft\"\n}\n".to_vec(),
-    )]);
-    let new_map = HashMap::from([(
-        "posts/rec1.json".to_string(),
-        b"{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"published\"\n}\n".to_vec(),
-    )]);
-
-    apply_remote_changes_to_working_copy(&ctx, &old_map, &new_map).unwrap();
-
-    assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"local\",\n  \"status\": \"published\"\n}\n"
-    );
-}
-
 /// Verify that batched `read_tree_files` returns correct paths and blob contents
 /// for a repo with nested directories, multiple files, and a non-blob entry.
 #[test]
@@ -950,24 +861,6 @@ fn read_tree_files_batched_handles_empty_tree() {
 
     let map = read_git_tree(&bare, "refs/heads/main").unwrap();
     assert!(map.is_empty());
-}
-
-/// Verify that the TreeCache avoids redundant reads and returns consistent results.
-#[test]
-fn tree_cache_returns_same_result_on_repeated_reads() {
-    let fixture = create_bare_fixture();
-    let hash = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
-
-    let mut cache = TreeCache::new();
-    let first = cached_read_git_tree(&mut cache, &fixture.local_bare, &hash)
-        .unwrap()
-        .clone();
-    let second = cached_read_git_tree(&mut cache, &fixture.local_bare, &hash)
-        .unwrap()
-        .clone();
-
-    assert_eq!(first, second);
-    assert_eq!(first.len(), 2);
 }
 
 fn git_available() -> bool {

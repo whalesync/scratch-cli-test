@@ -27,7 +27,6 @@
  * Gated on `DATABASE_URL` so `yarn test` stays hermetic — only the
  * integration runner picks this up.
  */
-/* eslint-disable @typescript-eslint/require-await */
 
 import { PrismaClient } from '@prisma/client';
 import {
@@ -43,7 +42,6 @@ import { DbService } from 'src/db/db.service';
 import { Service as ConnectorService } from 'src/remote-service/connectors/service-constants';
 import { Readable } from 'stream';
 import { ApplyPatchesService } from '../apply-patches.service';
-import { PublishPlanBuildService } from '../publish-plan-build.service';
 
 const describeIfIntegration = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -136,13 +134,11 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
 
   /**
    * Build an ApplyPatchesService wired to:
-   *   - REAL DbService → REAL prisma → REAL PublishPlanBuildService writes.
+   *   - REAL DbService → REAL prisma (so we can assert no PublishPlan row is written).
    *   - In-memory ScratchGitService mock (dirty branch state tracked in a Map).
    *   - ObjectStorageService mock that streams a fixed payload.
-   *   - BullEnqueuerService mock that captures plan-pipeline-job calls.
    */
-  function buildHarness(payload: UploadPatchPayload, opts?: { hasDiffs?: boolean }) {
-    const hasDiffs = opts?.hasDiffs ?? true;
+  function buildHarness(payload: UploadPatchPayload) {
     const dirty = new Map<string, string>();
 
     const scratchGitService = {
@@ -158,74 +154,29 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
         for (const p of paths) dirty.delete(p);
         return Promise.resolve();
       }),
-      // PublishPlanBuildService.hasDiffs() calls this. Return one synthetic diff
-      // entry per touched path so the diff check passes; the actual plan-build
-      // we don't run in this test.
-      getRepoStatus: jest.fn(() =>
-        Promise.resolve(hasDiffs ? [{ path: 'Companies/rec1.json', status: 'modified' }] : []),
-      ),
     };
 
     const objectStorageService = {
       streamObjectFromPatchUpload: jest.fn(() => Readable.from([Buffer.from(JSON.stringify(payload))])),
     };
 
-    const planJobCalls: Array<{ pipelineId: string; runAfterPlan: boolean; connectorAccountId: string }> = [];
-    const bullEnqueuerService = {
-      enqueuePlanPipelineJob: jest.fn(
-        async (
-          _wb: unknown,
-          _actor: unknown,
-          pipelineId: string,
-          ca: string,
-          runAfterPlan: boolean,
-        ): Promise<{ id: string }> => {
-          planJobCalls.push({ pipelineId, runAfterPlan, connectorAccountId: ca });
-          return { id: `job_${pipelineId}` };
-        },
-      ),
-    };
-
     const dbService = { client: prisma } as unknown as DbService;
 
-    // PublishPlanBuildService has many constructor deps. We only call hasDiffs,
-    // createPipeline, and setActiveJob, which only touch DbService and
-    // ScratchGitService — so the rest can be null/undefined.
-    const publishPlanBuildService = new PublishPlanBuildService(
-      dbService,
-      scratchGitService as never,
-      null as never,
-      null as never,
-      null as never,
-      null as never,
-      null as never,
-      null as never,
-      null as never,
-    );
+    const service = new ApplyPatchesService(dbService, scratchGitService as never, objectStorageService as never);
 
-    const service = new ApplyPatchesService(
-      dbService,
-      scratchGitService as never,
-      objectStorageService as never,
-      publishPlanBuildService,
-      bullEnqueuerService as never,
-    );
-
-    return { service, dirty, planJobCalls, mocks: { scratchGitService, objectStorageService, bullEnqueuerService } };
+    return { service, dirty, mocks: { scratchGitService, objectStorageService } };
   }
 
-  it('applies patches to dirty and creates a PublishPlan row in Postgres', async () => {
-    const { service, dirty, planJobCalls } = buildHarness({
+  it('applies patches to dirty without enqueueing any publish pipeline', async () => {
+    const { service, dirty } = buildHarness({
       patches: [
         { path: 'Companies/rec1.json', patch: { id: 'rec1', name: 'Acme' } },
         { path: 'Posts/rec_new.json', patch: { id: 'rec_new', title: 'Hi' } },
       ],
     });
 
-    const result = await service.applyAndPublish({
+    const result = await service.applyPatches({
       workbookId,
-      userId,
-      organizationId: orgId,
       connectorAccountId,
       uploadId: 'up_e2e_apply',
     });
@@ -234,23 +185,17 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
     expect(JSON.parse(dirty.get('Companies/rec1.json') ?? '')).toEqual({ id: 'rec1', name: 'Acme' });
     expect(JSON.parse(dirty.get('Posts/rec_new.json') ?? '')).toEqual({ id: 'rec_new', title: 'Hi' });
 
-    // A real PublishPlan row exists in Postgres, tied to this workbook + user + CA.
-    expect(result.pipelineId).not.toBeNull();
-    const plan = await prisma.publishPlan.findUnique({ where: { id: result.pipelineId as string } });
-    expect(plan).not.toBeNull();
-    expect(plan?.workbookId).toBe(workbookId);
-    expect(plan?.userId).toBe(userId);
-    expect(plan?.connectorAccountId).toBe(connectorAccountId);
-    expect(plan?.activeJobId).toBe(result.publishJobId);
+    expect(result).toEqual({ patchCount: 2 });
 
-    // The publish-v2 plan-pipeline job was enqueued with runAfterPlan=true.
-    expect(planJobCalls).toHaveLength(1);
-    expect(planJobCalls[0].runAfterPlan).toBe(true);
-    expect(planJobCalls[0].connectorAccountId).toBe(connectorAccountId);
+    // After decoupling, /upload-patch/commit is patch-only — no PublishPlan
+    // row should be created here. The CLI/desktop calls /publish-v2/plan-job
+    // separately afterwards.
+    const planCount = await prisma.publishPlan.count({ where: { workbookId } });
+    expect(planCount).toBe(0);
   });
 
   it('rejects a batch with any traversal path and writes nothing to Postgres or dirty', async () => {
-    const { service, dirty, planJobCalls } = buildHarness({
+    const { service, dirty } = buildHarness({
       patches: [
         { path: 'Companies/rec1.json', patch: { id: 'rec1', name: 'Acme' } },
         { path: '../etc/passwd', patch: { evil: true } },
@@ -258,37 +203,14 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
     });
 
     await expect(
-      service.applyAndPublish({
+      service.applyPatches({
         workbookId,
-        userId,
-        organizationId: orgId,
         connectorAccountId,
         uploadId: 'up_e2e_traversal',
       }),
     ).rejects.toThrow(/traversal/i);
 
     expect(dirty.size).toBe(0);
-    expect(planJobCalls).toHaveLength(0);
-    const planCount = await prisma.publishPlan.count({ where: { workbookId } });
-    expect(planCount).toBe(0);
-  });
-
-  it('skips publish-pipeline enqueue when the patch produces no diff vs main', async () => {
-    const { service, planJobCalls } = buildHarness(
-      { patches: [{ path: 'Companies/rec1.json', patch: { id: 'rec1', name: 'Same' } }] },
-      { hasDiffs: false },
-    );
-
-    const result = await service.applyAndPublish({
-      workbookId,
-      userId,
-      organizationId: orgId,
-      connectorAccountId,
-      uploadId: 'up_e2e_nodiff',
-    });
-
-    expect(result.pipelineId).toBeNull();
-    expect(planJobCalls).toHaveLength(0);
     const planCount = await prisma.publishPlan.count({ where: { workbookId } });
     expect(planCount).toBe(0);
   });

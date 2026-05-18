@@ -1,5 +1,6 @@
 import {
   All,
+  BadRequestException,
   Body,
   ClassSerializerInterceptor,
   Controller,
@@ -23,13 +24,15 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
-import { PublishFromGitDto } from 'src/publish-plan/dto/publish-v2.dto';
+import { PublishFromGitDto, PublishPlanBuildDto, PublishPlanRunDto } from 'src/publish-plan/dto/publish-v2.dto';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { userToActor } from 'src/users/types';
 import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { createRunContext } from 'src/worker/jobs/base-types';
 import { Readable } from 'stream';
 import {
   CliConnectorAccountDto,
@@ -59,6 +62,7 @@ export class CliWorkbookController {
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly bullEnqueuerService: BullEnqueuerService,
+    private readonly publishPlanBuildService: PublishPlanBuildService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
   }
@@ -427,6 +431,84 @@ export class CliWorkbookController {
       body.planPath,
     );
     return { jobId: job.id };
+  }
+
+  /**
+   * CLI shim over `PublishPlanController.planAsJob`. Same behavior as the web
+   * client's `/workbook/:id/publish-v2/plan-job`, just lifted into the
+   * versioned `/cli/v1/...` namespace so the CLI doesn't have to leave it.
+   * The CLI calls this AFTER `/upload-patch/commit` has applied its patches
+   * to the dirty branch — `/upload-patch/commit` is intentionally patch-only.
+   */
+  @Post(':id/publish-v2/plan-job')
+  async planPublishAsJob(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Body() body: PublishPlanBuildDto,
+  ): Promise<{ jobId: string | number | null; pipelineId: string | null }> {
+    const actor = userToActor(req.user);
+    const workbookId = id as WorkbookId;
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+
+    if (!body.connectorAccountId) {
+      throw new BadRequestException('connectorAccountId is required');
+    }
+
+    const hasDiffs = await this.publishPlanBuildService.hasDiffs(
+      workbookId,
+      body.connectorAccountId,
+      body.folderPath,
+      body.filePath,
+    );
+    if (!hasDiffs) {
+      return { jobId: null, pipelineId: null };
+    }
+
+    const { pipelineId } = await this.publishPlanBuildService.createPipeline(
+      workbookId,
+      req.user.id,
+      body.connectorAccountId,
+    );
+
+    const job = await this.bullEnqueuerService.enqueuePlanPipelineJob(
+      workbookId,
+      { userId: req.user.id, organizationId: req.user.organization?.id ?? '' },
+      pipelineId,
+      body.connectorAccountId,
+      body.runAfterPlan ?? false,
+      body.folderPath,
+      body.filePath,
+      undefined,
+      createRunContext('cli'),
+    );
+    await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
+    return { jobId: job.id ?? null, pipelineId };
+  }
+
+  /**
+   * CLI shim over `PublishPlanController.runAsJob`. Runs the publish pipeline
+   * created by an earlier plan-job call.
+   */
+  @Post(':id/publish-v2/run-job')
+  async runPublishAsJob(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Body() body: PublishPlanRunDto,
+  ): Promise<{ jobId: string | number | null }> {
+    const actor = userToActor(req.user);
+    const workbookId = id as WorkbookId;
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+
+    const job = await this.bullEnqueuerService.enqueueRunPipelineJob(
+      workbookId,
+      { userId: req.user.id, organizationId: req.user.organization?.id ?? '' },
+      body.pipelineId,
+      body.executeSinglePhase,
+      undefined,
+      createRunContext('cli'),
+    );
+    await this.publishPlanBuildService.setActiveJob(body.pipelineId, job.id!.toString());
+    return { jobId: job.id ?? null };
   }
 
   // ── Workbook repo endpoints ─────────────────────────────────────────────────

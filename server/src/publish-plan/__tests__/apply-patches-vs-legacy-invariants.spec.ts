@@ -44,8 +44,6 @@ interface DirtyFile {
 describe('ApplyPatchesService invariants vs hand-modeled legacy baseline', () => {
   const workbookId = 'wkb_parity' as WorkbookId;
   const connectorAccountId = 'ca_parity';
-  const userId = 'usr_parity';
-  const organizationId = 'org_parity';
 
   /**
    * Simulate Path A's effect on dirty: the CLI commits the final intended file
@@ -90,27 +88,11 @@ describe('ApplyPatchesService invariants vs hand-modeled legacy baseline', () =>
     const objectStorageService = {
       streamObjectFromPatchUpload: jest.fn(() => Readable.from([Buffer.from(JSON.stringify(payload))])),
     };
-    const publishPlanBuildService = {
-      hasDiffs: jest.fn().mockResolvedValue(true),
-      createPipeline: jest.fn().mockResolvedValue({ pipelineId: 'pipe', branchName: 'b' }),
-      setActiveJob: jest.fn().mockResolvedValue(undefined),
-    };
-    const bullEnqueuerService = {
-      enqueuePlanPipelineJob: jest.fn().mockResolvedValue({ id: 'job' }),
-    };
 
-    const service = new ApplyPatchesService(
-      db as never,
-      scratchGitService as never,
-      objectStorageService as never,
-      publishPlanBuildService as never,
-      bullEnqueuerService as never,
-    );
+    const service = new ApplyPatchesService(db as never, scratchGitService as never, objectStorageService as never);
 
-    await service.applyAndPublish({
+    await service.applyPatches({
       workbookId,
-      userId,
-      organizationId,
       connectorAccountId,
       uploadId: 'up_parity',
     });

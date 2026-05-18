@@ -1,12 +1,155 @@
 # Simplify Local Workspace Architecture
 
-**Date**: 2026-05-17 (revised 2026-05-18 after `/plan-ceo-review` + `/plan-eng-review`)
-**Status**: Draft — ready to implement
+**Date**: 2026-05-17 (revised 2026-05-18 after `/plan-ceo-review` + `/plan-eng-review`; Phase 1 server slice landed 2026-05-18, CLI rewrite committed on `dev-10144-mr2`)
+**Status**: Phase 1 — server slice on `dev-10144-mr1` (`d6f78f14`), CLI rewrite on `dev-10144-mr2`; desktop modal still pending
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
 **Scope**: Replace the three-worktree + eager SQLite + local-publish architecture of `scratchmd workspaces init` with a one-bare-repo + one-non-sparse-worktree-per-connection model. Publishing redirects to the existing server-native pipeline via a thin upload-patch shim; the working tree IS the diff source against `main`, with `gix` doing index-backed diff detection.
 
-> **Revision history.** The original 2026-05-17 draft proposed inline HTTP patches and a brand-new server publish pipeline. After CEO + eng review on 2026-05-18, the design was revised to use a presigned GCS upload shim that feeds the existing `publish-v2/plan-job` + `run-job` server pipeline (one publish path on the server, no parallel system). The Decision log appendices below capture the rationale.
+> **Revision history.** The original 2026-05-17 draft proposed inline HTTP patches and a brand-new server publish pipeline. After CEO + eng review on 2026-05-18, the design was revised to use a presigned GCS upload shim that feeds the existing `publish-v2/plan-job` + `run-job` server pipeline (one publish path on the server, no parallel system). 2026-05-18 evening: Phase 1 server slice landed — see Progress section below for what shipped vs. what's still pending.
+
+## Progress (2026-05-18)
+
+| Phase                                   | Status                                                                            | Notes                                                                      |
+| --------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Phase 1 — server `/upload-patch`        | **Server: `dev-10144-mr1` (`d6f78f14`); CLI: `dev-10144-mr2`; desktop: pending.** | Server + CLI both shipped; desktop modal rewrite (PR 3) is the last piece. |
+| Phase 2 — pull stash/replay             | Not started                                                                       |                                                                            |
+| Phase 3 — drop `reviewed-dirty` on init | Not started                                                                       |                                                                            |
+| Phase 4 — drop SQLite index             | Not started                                                                       |                                                                            |
+| Phase 5 — collapse to one worktree      | Not started                                                                       |                                                                            |
+| Phase 6 — parallelize connections       | Not started                                                                       |                                                                            |
+| Phase 7 — delete `run-from-git`         | Not started                                                                       | Gated on Phase 1 fully shipping (desktop).                                 |
+
+### Phase 1 server slice — what landed
+
+Committed in `d6f78f14` ("[server] add /upload-patch endpoint for server-side publishing (DEV-10144)"). 23 files / +1773 −3.
+
+- `POST /cli/v1/workbooks/:id/upload-patch/init` + `/commit` controller in `server/src/cli/upload-patch.controller.ts`. Returns **503 `ServiceUnavailableException`** (not 400) when the patch bucket is unconfigured.
+- `ApplyPatchesService` + `ApplyPatchesJobHandler` (`server/src/publish-plan/apply-patches.service.ts`, `server/src/worker/jobs/job-definitions/apply-patches.job.ts`) — streams the GCS payload, applies RFC 7396 patches to dirty as one logical change, then enqueues the existing `publish-v2/plan-job` with `runAfterPlan=true`.
+- `JobType.ApplyPatches` added; `BullEnqueuerService.enqueueApplyPatchesJob` mirrors `enqueuePublishFromGitJob`; metric maps extended for the new job type.
+- `ObjectStorageService` extended with **use-case-specific** `signPutUrlForPatchUpload(key, ttl)` and `streamObjectFromPatchUpload(key)`. Pinned to `Content-Type: application/json` so the CLI MUST send that header on its PUT.
+- `validateRecordPath(path, dataFolders)` in `server/src/utils/path-validation.ts` — rejects empty / absolute / traversal / reserved-prefix / outside-folder paths before any commit. All-or-nothing across a batch.
+- AuditLog row written on `/commit` (`eventType: 'publish'`, message references the workbook). Broader CLI AuditLog backfill remains as eng follow-up E1.
+- DTOs live in `@spinner/shared-types/dto/upload-patch/upload-patch.dto.ts` (request classes with `class-validator`, response interfaces, and the `UploadPatchPayload` wire format) so the future TypeScript desktop port imports from a single source. The Rust CLI re-declares via serde.
+- `.env.example`: documents `GCS_PATCH_UPLOAD_BUCKET`, points the dev example at the real test-env bucket. Same correction applied to the existing `GCS_ASSET_BUCKET` placeholder.
+
+**Tests:**
+
+- `server/src/utils/__tests__/path-validation.spec.ts` — 9 cases.
+- `server/src/publish-plan/__tests__/apply-patches.service.spec.ts` — 15 cases including all-or-nothing rejection, mixed batch, no-diff skip.
+- `server/src/publish-plan/__tests__/apply-patches-vs-legacy-invariants.spec.ts` — renamed from `upload-patch-parity.spec.ts`; honest header notes this is a hand-modeled baseline comparison, NOT a true runtime parity (the e2e is the real parity check).
+- `server/src/publish-plan/__tests__/upload-patch.e2e.spec.ts` — gated on `DATABASE_URL`, runs against a real `PrismaClient` with seeded org/user/workbook/connector/data-folders; mocks ScratchGitService + ObjectStorageService + BullEnqueuerService at the boundary. Verifies a real `PublishPlan` row gets written. Controller-level scenarios (AuditLog row, 503, staleness banner) still need supertest + a NestJS TestingModule (eng follow-up E6).
+
+### Infra — terraform-applied in both envs
+
+Added to `terraform/modules/env/main.tf`:
+
+- `google_storage_bucket.upload_patches` (`${gcp_project_id}-upload-patches`): private (NO `allUsers` grant), uniform bucket-level access, **24h lifecycle delete** (vs 7d originally proposed — preference: less data at rest), CORS `origin=["*"], method=["PUT"], response_header=["Content-Type"]` (signed URL is the auth, restricting origin gave no real security and would block future browser clients).
+- IAM: `roles/storage.objectAdmin` to `cloudrun-service-account` on the new bucket; signed URLs work because the SA already has `roles/iam.serviceAccountTokenCreator` on itself.
+- `GCS_PATCH_UPLOAD_BUCKET` wired into all three Cloud Run services (api / cron / worker) in `services.tf`.
+- **Applied to `eu-test` and `eu-production` on 2026-05-18.** `/upload-patch/init` returns 503 in both envs until PR 1 ships and the next deploy runs.
+
+### Notable deviations from the original plan
+
+| Plan said                                                     | Shipped                                                                      | Why                                                                                                                                                      |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BadRequestException` for unconfigured bucket                 | `ServiceUnavailableException` (503)                                          | Misconfiguration is server-side, not client-side. Client can branch on 503 to surface "admin needs to provision the bucket" vs treating as a user error. |
+| Defer staleness check (no scratch-git API)                    | Same — eng follow-up E5 tracks the branch-head lookup                        | Hard rejection on stale `baseHead` would fail too often (CEO §3); soft semantics still apply, just no signal yet.                                        |
+| Bucket name unspecified                                       | `${gcp_project_id}-upload-patches`                                           | Mirrors the asset bucket's naming.                                                                                                                       |
+| Lifecycle: not specified                                      | 24h auto-delete                                                              | Patches process within minutes; less data at rest is safer than longer debugging windows.                                                                |
+| CORS: locked to `client_domain`                               | Wildcard `*` PUT                                                             | The signed URL is the auth (short TTL, per-upload, server-issued only to the authenticated session). CORS restriction is theatre for signed PUTs.        |
+| DTOs in `server/src/cli/dtos/`                                | DTOs in `@spinner/shared-types/dto/upload-patch/`                            | Matches existing convention (`dto/schedule/*`, `dto/workbook/*`). Single source of truth for desktop port.                                               |
+| Generic `signPutUrl` / `streamObject` on ObjectStorageService | Use-case-specific `signPutUrlForPatchUpload` / `streamObjectFromPatchUpload` | Each method enforces its bucket and pins `Content-Type`, so callers can't accidentally mix buckets.                                                      |
+
+### Phase 1 CLI slice — what landed
+
+Branch `dev-10144-mr2`. The `scratchmd files upload` implementation was replaced in place — no `upload-v2` command, no flag gating. Three new modules plus a clean rewrite of `upload_single_repo`:
+
+- **`scratch-git-2/src/cli/commands/files.rs`** — `run_upload` is now `async`; per-connection it fetches origin, computes the diff between local `main` and local `dirty` (the user's accepted state), emits one RFC 7396 patch per data file, POSTs `/upload-patch/init`, PUTs to the presigned URL with `Content-Type: application/json`, POSTs `/commit`, polls the publish job to completion, and finally re-fetches + advances local `refs/heads/main` so subsequent diffs report "no changes" without round-tripping. Legacy local-merge-and-push code (`upload_single_repo`, `apply_remote_changes_to_working_copy`, `read_local_publish_plan_map`, `strip_publish_plan_files`, `TreeCache`, `push_origin_dirty`) deleted along with their tests.
+- **`scratch-git-2/src/cli/commands/merge_patch.rs`** — new shared RFC 7396 diff helper (~50 LOC + 9 unit tests covering equal values, scalar/array/object diffs, nested recursion, deleted keys). The server's `applyJsonMergePatch` is the apply side of the same contract; the two implementations are intentionally symmetric.
+- **`scratch-git-2/src/cli/config/workspace_lock.rs`** — new `.scratch/lock` file lock with PID-based stale reclaim (matches git's `.git/index.lock` pattern). Acquired at the workspace level (single-user assumption) in `run_upload`; reclaims stale locks via `kill(pid, 0)` ESRCH probe. 3 unit tests cover acquire/release, contention detection, and stale-PID reclaim.
+- **API client (`scratch-git-2/src/cli/api/mod.rs`)** — added `upload_patch_init` / `upload_patch_put` / `upload_patch_commit` + wire types (`UploadPatchPayload`, `UploadPatchEntry`, `UploadPatchInitResponse`, `UploadPatchCommitResponse`, `StalenessWarning`). The Rust types re-declare the shapes from `@spinner/shared-types/dto/upload-patch/upload-patch.dto.ts` in serde — single source of truth for the wire contract stays in TS for the eventual desktop port.
+- **CLI tests** — 3 new unit tests on `compute_upload_patches` (create / update / delete shapes, non-data path filtering, parse-error handling). The four obsolete tests that exercised `upload_single_repo`, `apply_remote_changes_to_working_copy`, `push_origin_dirty`, and `TreeCache` were removed alongside the code they covered. Full Rust suite: 211 tests pass.
+
+#### Notable deviations from PR 2 spec
+
+| Plan said                                       | Shipped                                                                                                                                                  | Why                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gix status` for changed paths                  | `read_git_tree` diff between local `refs/heads/dirty` and `refs/remotes/origin/main` (with fallback to `refs/heads/main`) — semantically equivalent here | The plan's mental model is the Phase-5 end state (one worktree of `main`, where `gix status` against HEAD == diff vs main). Pre-Phase-5, the accepted state lives in `dirty`, not the worktree. Same diff, different ref pair. Worktree-based gix-status moves in Phase 5. |
+| "Wrap every mutating CLI op in `.scratch/lock`" | Lock infrastructure landed + wired into `upload` only                                                                                                    | Other mutating ops (accept/discard/reject/download) still have the implicit three-worktree serialization. Wiring the lock into them is mechanical but expands PR 2's blast radius — tracked as **CLI follow-up C1** below.                                                 |
+| Local refs untouched after publish              | `refs/heads/main` advanced to match `refs/remotes/origin/main` after job success                                                                         | Without this, the next `upload` would diff against a stale local `main` and re-send already-published patches. Mirrors what `update_master_worktree` does for download.                                                                                                    |
+
+### CLI-review follow-ups
+
+| #   | Item                                                                                                                                                     | Why                                                                                                                                                                   | Effort (CC) |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| C1  | Wire `.scratch/lock` into the remaining mutating commands (accept/accept-all/accept-field/reject*/discard*/restore-deleted-record/download/force-upload) | Phase 1 introduces the lock; only `upload` calls it today. The other mutating ops still rely on three-worktree implicit serialization, which Phase 5 removes.         | 1h          |
+| C2  | Mock-HTTP integration test for the upload-patch round-trip                                                                                               | Unit coverage on `compute_upload_patches` + `merge_patch` is good; an end-to-end CLI test against a fake `/upload-patch/init`-`/commit` would catch wire-shape drift. | 2h          |
+| C3  | Surface `stalenessWarning.new_head` in the printed warning (full SHA in `--json`, short SHA in human output)                                             | Today the warning string just lists the short SHA. Desktop will format more usefully; the CLI text could match.                                                       | 15min       |
+
+### Phase 1 decoupling — split `files upload` from publishing (2026-05-18 evening)
+
+Code review found that the first cut of the CLI rewrite conflated two concerns: `/upload-patch/commit` was applying patches AND auto-enqueueing the publish-v2 plan + run pipeline, even though the endpoint's name promised only the patch step. The CLI's `poll_job` then polled the apply-patches job (which "completed" after enqueueing publish, not after publishing), so `Publishing... done (3.1s)` was misleading — actual external dispatch could still be running afterwards.
+
+**Server changes:**
+
+- `ApplyPatchesService.applyAndPublish` → renamed `applyPatches`. Dropped `publishPlanBuildService` and `bullEnqueuerService` dependencies. The service now applies patches to `dirty` and returns `{ patchCount }`. Logged source updated to `ApplyPatchesService.applyPatches`.
+- `ApplyPatchesJobHandler` simplified — no more `pipelineId` / `publishJobId` in progress; payload is just `{ uploadId, patchCount, processedCount }`.
+- `ApplyPatchesJobDefinition['data']` drops `organizationId` and keeps `userId` only because the bull-worker tracking layer requires it (separate concern from the service).
+- `BullEnqueuerService.enqueueApplyPatchesJob` signature: dropped `organizationId`.
+- New CLI shim endpoints in `cli-workbook.controller.ts`: `POST /cli/v1/workbooks/:id/publish-v2/plan-job` and `/run-job`. Thin pass-throughs to `PublishPlanBuildService` + `BullEnqueuerService.enqueuePlanPipelineJob` / `enqueueRunPipelineJob`. They live under the versioned `/cli/v1/...` namespace so the CLI doesn't have to leave it; matches the precedent of `/cli/v1/workbooks/:id/publish-v2/run-from-git`.
+- Tests updated: `apply-patches.service.spec.ts` (22 cases, including an explicit regression guard that the service no longer touches publish), `apply-patches-vs-legacy-invariants.spec.ts`, `upload-patch.e2e.spec.ts` (now asserts NO `PublishPlan` row is created by `/upload-patch/commit`).
+
+**CLI changes:**
+
+- `FilesCommands::Upload` now patches-only. No more publish polling; no more post-publish fetch of `refs/heads/main`. Wall-time drops accordingly (publish work moved out).
+- New `FilesCommands::Publish` — runs `/publish-v2/plan-job` then `/publish-v2/run-job` per connection. Polls each job to completion. Fetches + advances local `refs/heads/main` after a successful run-job so the next `upload` correctly sees "no diff" without round-tripping. Skips connections that report no diff with a clean message.
+- API client: new `publish_plan_build` / `publish_plan_run` + response types (`PublishPlanBuildResponse`, `PublishPlanRunResponse`).
+- Verified end-to-end against localhost: `upload` runs in ~4s, `publish` in ~10s, server-side trace shows the apply-patches job completes BEFORE any publish job is enqueued (no implicit chaining), then plan-job and run-job each run as their own queue entry when `publish` is called.
+
+**Decisions captured:**
+
+- **CLI surface mirrors server surface.** Two CLI commands (`upload`, `publish`) map 1:1 to two server flows. Single conflated `upload` command was rejected — it would have hidden the decoupling we just baked into the server.
+- **Plan and run as two CLI calls, not `runAfterPlan=true` chain.** Splits cleanly for scripting and surfaces plan completion as a useful intermediate state. `runAfterPlan: false` is hard-coded in `publish_plan_build`.
+- **Local-main advance moves to `publish`, not `upload`.** Upload doesn't change server main; publish does. Previously they were lumped together in the legacy flow.
+- **CLI shim endpoints on the server, not direct `/workbook/...` calls.** The CLI's `ApiClient` hardcodes `/cli/v1/` into its base URL. Adding two thin shim controllers is cheaper than complicating the URL construction in every CLI call site, and keeps the CLI behind a stable versioned namespace.
+
+### End-to-end verification (2026-05-18, against localhost)
+
+Drove the full CLI flow against a real workspace (`/tmp/scratchmd-profile-37373/Monorepo`, Affinity connector) and watched the round-trip:
+
+```
+Fetching remote changes... done
+Computing patches... done (1 file(s))
+Uploading... done
+Publishing.... done
+
+1 uploaded (3.1s)
+  Affinity/People/affinity-help.json
+```
+
+Server-side trace (`/tmp/scratch-server.log`):
+
+1. `UploadPatchController.init`: issued presigned URL (signed via impersonated `cloudrun-service-account`)
+2. CLI PUT to GCS → 200
+3. `UploadPatchController.commit`: enqueued `ApplyPatchesJob`
+4. `ApplyPatchesJobHandler`: streamed payload from GCS, applied 1 patch to dirty
+5. `ApplyPatchesService.applyAndPublish`: enqueued publish pipeline (plan-job + run-job)
+6. CLI polled job to completion; total wall time 3.1s
+
+Affinity's batch then reported `"The Affinity connector is read-only. Updating list entries is not supported."` — the publish _job_ completed cleanly, but the _batch_ inside reported the connector's refusal. Expected for a read-only connector. The plumbing is sound.
+
+### Local-dev signing fix (Option C, shipped alongside PR 2)
+
+`@google-cloud/storage`'s V4 signer calls `auth.sign(blob)`, which fails with `Cannot sign data without client_email` under user ADC (`gcloud auth application-default login`). In Cloud Run, ADC IS a service account so signing works natively; locally it doesn't.
+
+Fix: new optional `GCS_LOCAL_SIGNING_SA` env var. When set, `ObjectStorageService` builds a `GoogleAuth`-like wrapper whose `sign()` delegates to `Impersonated.sign()` (IAM Credentials `signBlob` API) against the target SA, and whose `getCredentials()` returns the SA as `client_email`. Documented in `server/.env.example`. Cloud Run leaves the var unset → unchanged behavior.
+
+Requires `roles/iam.serviceAccountTokenCreator` on the target SA. For the test env, that's `cloudrun-service-account@spv1eu-test.iam.gserviceaccount.com`.
+
+### Still pending for Phase 1
+
+- **PR 3 — Desktop modal rewrite** (`scratch-desktop/src/renderer/src/pages/workspace/PublishChangesModal.tsx`). New state modes; staleness banner consumes `stalenessWarning` from `/commit`. Desktop imports DTOs from `@spinner/shared-types`. CLI is now reference-implementation parity for the wire flow.
 
 ## Problem
 
@@ -354,12 +497,14 @@ Smaller items to track as separate tickets. None block shipping the phases above
 
 Smaller items surfaced during eng review that don't block phase work.
 
-| #   | Item                                                                                                                                  | Why                                                                      | Effort (CC) |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------- |
-| E1  | Backfill AuditLog across remaining `server/src/cli/` endpoints                                                                        | Scope-limited in Phase 1 to `/upload-patch`; rest of CLI still uncovered | 1h          |
-| E2  | Delete `update_dirty_worktree_index` (`scratch-git-2/src/cli/commands/files.rs:2210`) and callers when Phase 4 drops the SQLite index | Dead code after index removal                                            | 30min       |
-| E3  | Verify gix worktree-add support in current crate version (may have landed since 0.70)                                                 | If gix supports it natively, drop the shell-out                          | 15min       |
-| E4  | Document desktop's post-publish `git fetch origin main` retry policy                                                                  | Finding 1.6 from CEO review on the data-flow shadow path                 | 30min       |
+| #   | Item                                                                                                                                                                 | Why                                                                             | Effort (CC) |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------- |
+| E1  | Backfill AuditLog across remaining `server/src/cli/` endpoints                                                                                                       | Scope-limited in Phase 1 to `/upload-patch`; rest of CLI still uncovered        | 1h          |
+| E2  | Delete `update_dirty_worktree_index` (`scratch-git-2/src/cli/commands/files.rs:2210`) and callers when Phase 4 drops the SQLite index                                | Dead code after index removal                                                   | 30min       |
+| E3  | Verify gix worktree-add support in current crate version (may have landed since 0.70)                                                                                | If gix supports it natively, drop the shell-out                                 | 15min       |
+| E4  | Document desktop's post-publish `git fetch origin main` retry policy                                                                                                 | Finding 1.6 from CEO review on the data-flow shadow path                        | 30min       |
+| E5  | Add a branch-head lookup to ScratchGitService → ScratchGitClient and light up the `stalenessWarning` in `/upload-patch/commit`                                       | Currently `/commit` accepts `baseHead` but never compares; signal is dark       | 1h          |
+| E6  | Controller-level e2e for `/upload-patch` (supertest + NestJS TestingModule): asserts AuditLog row written, 503 on unconfigured bucket, staleness banner pass-through | The Phase 1 e2e covers the service; the controller surface still needs coverage | 1-2h        |
 
 ## Decision log — CEO review (HOLD SCOPE, 2026-05-18)
 
