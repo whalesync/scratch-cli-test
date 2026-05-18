@@ -1,10 +1,12 @@
 # Simplify Local Workspace Architecture
 
-**Date**: 2026-05-17
-**Status**: Draft — planning
+**Date**: 2026-05-17 (revised 2026-05-18 after `/plan-ceo-review` + `/plan-eng-review`)
+**Status**: Draft — ready to implement
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
-**Scope**: Replace the three-worktree + eager SQLite + local-publish architecture of `scratchmd workspaces init` with a one-bare-repo + one-non-sparse-worktree-per-connection model. Publishing moves to the server; the working tree IS the diff source against `main`, with `gix` doing index-backed diff detection.
+**Scope**: Replace the three-worktree + eager SQLite + local-publish architecture of `scratchmd workspaces init` with a one-bare-repo + one-non-sparse-worktree-per-connection model. Publishing redirects to the existing server-native pipeline via a thin upload-patch shim; the working tree IS the diff source against `main`, with `gix` doing index-backed diff detection.
+
+> **Revision history.** The original 2026-05-17 draft proposed inline HTTP patches and a brand-new server publish pipeline. After CEO + eng review on 2026-05-18, the design was revised to use a presigned GCS upload shim that feeds the existing `publish-v2/plan-job` + `run-job` server pipeline (one publish path on the server, no parallel system). The Decision log appendices below capture the rationale.
 
 ## Problem
 
@@ -102,48 +104,54 @@ This is the format used for publish-upload and for the pull stash/replay. It is 
 
 ### Operations
 
-**Publish** (desktop app initiates):
+**Publish** (desktop app initiates; all mutating ops acquire `.scratch/lock` first):
 
 1. `gix::Repository::status(...)` enumerates files modified vs `HEAD`.
 2. For each changed path: read the snapshot blob via gix (`HEAD:<path>`), read the working file from disk, compute the JSON merge patch.
-3. POST `{ workbookId, patches: [{ path, patch }], baseHead }` to the server.
-4. Server applies patches to its authoritative state and runs the existing publish pipeline.
-5. On success, the desktop app calls `git fetch origin main` so the local `HEAD` advances and subsequent diff detection reports "no changes" again.
+3. `POST /workbook/:id/upload-patch/init` → server returns `{ uploadId, presignedUrl }`.
+4. CLI PUTs the patch payload directly to GCS using the presigned URL.
+5. `POST /workbook/:id/upload-patch/commit { uploadId, baseHead? }` → server validates paths, enqueues an `ApplyPatchesJob`. Response includes `stalenessWarning?: { newHead }` if `baseHead` doesn't match server's `main`.
+6. `ApplyPatchesJob` worker: stream patch from GCS → apply RFC 7396 patches to the server-side dirty branch as one commit → trigger the existing `publish-v2/plan-job` + `run-job`.
+7. On job success, the desktop app calls `git fetch origin main` so the local `HEAD` advances and subsequent diff detection reports "no changes" again.
 
-**Pull** (download latest from server):
+If `stalenessWarning` is present, the desktop shows a non-blocking banner: "The server has more recent changes than what's on your computer. Refresh first?" The patches were still applied — single-user assumption + audit/telemetry covers the residual risk.
 
-1. Save the current commit ID as `old_head` (e.g., `.scratch/last-pulled-head`, or just read `refs/heads/main` before fetching).
+**Pull** (download latest from server; `.scratch/lock` acquired):
+
+1. Read `refs/heads/main` as `old_head`.
 2. Compute the user's local patches: `gix status` for changed files; for each, `diff(snapshot_at_old_head[path], current[path])`.
 3. `git fetch origin main` (incremental, packed).
-4. Determine what the server changed: `gix` tree-vs-tree diff between `old_head` and the new `HEAD`, gives a path list.
+4. `gix` tree-vs-tree diff between `old_head` and the new `HEAD` → list of server-changed paths.
 5. For each path in (server-changed ∪ user-changed):
    - Write the new-HEAD blob to the working file.
    - If the user had a patch for this path, re-apply it.
-   - For each key the user's patch touches: if `snapshot_at_old_head[key] != snapshot_at_new_head[key]`, append to `.scratch/conflicts.log` (user-wins, but logged).
+   - For each key the user's patch touches: if `snapshot_at_old_head[key] != snapshot_at_new_head[key]`, append to `.scratch/conflicts.log` AND emit a PostHog event (`desktop.pull.conflict` with `{ connectorAccountId, conflictCount, pathPattern }`, no record content).
 
 **Init**:
 
 1. Resolve the workbook's connector accounts.
-2. For each connection (in parallel):
-   - `git clone --bare` (or gix equivalent) into `.repos/<repo-id>.git/`.
-   - `git worktree add --no-detach <workspace>/<Connection> main` (shell out — gix worktree-add support is limited at 0.70).
+2. For each connection (in parallel via `rayon::par_iter`):
+   - `git clone --bare` into `.repos/<repo-id>.git/`.
+   - `git worktree add --no-detach <workspace>/<Connection> main` (shell out unless gix has caught up — verify before defaulting).
 3. Write `.scratch/workspace.yaml`.
-4. Done. One bare repo + one worktree per connection. No `reviewed-dirty`, no `master` worktree, no SQLite index.
+4. If 1/N connectors fails, warn + continue with N-1. If 0/N, exit non-zero. If a partial prior init is detected, resume the missing connections.
+5. Done. One bare repo + one worktree per connection. No `reviewed-dirty`, no `master` worktree, no SQLite index.
 
 ### Decisions / open questions
 
-| Decision                      | Recommendation                                                                         | Why                                                                                                                                                             |
-| ----------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Patch granularity             | RFC 7396 (Merge Patch) — field-level, arrays atomic                                    | ~60 lines total. Upgrade to RFC 6902 only if same-array conflicts become a real problem.                                                                        |
-| Conflict policy               | User wins; log same-field collisions to `.scratch/conflicts.log`                       | Zero blocking UX, no silent data loss without an audit trail.                                                                                                   |
-| Snapshot storage              | Bare repo objects (read via `gix::rev_parse("HEAD:<path>")`)                           | No duplicate on-disk snapshot directory. Packed objects are already efficient storage.                                                                          |
-| Diff detection mechanism      | `gix::Repository::status(Discard).into_iter([])` against the worktree                  | Index-backed; measured ~235ms cold / ~210ms warm on the Stripe worktree (~110k files). Already a dependency. See [Measured performance](#measured-performance). |
-| Working tree shape            | One **non-sparse** git worktree of `main` per connection                               | The `.git` link file is the only artifact; identical to today's dirty checkout. Non-sparse so we don't pay sparse-checkout config overhead.                     |
-| Transport                     | `git clone --bare` + `git fetch origin main` (incremental)                             | Free incremental fetch from existing scratch-git-2 backend; no tarball or manifest-API to build.                                                                |
-| Worktree creation             | Shell out to `git worktree add` at init                                                | gix 0.70's worktree-add support is limited; we already shell out for this today in `setup_sparse_worktree`. Hot path is one call per connection.                |
-| Publish wire format           | `POST /cli/v1/workbooks/:id/publish` taking `{ patches: [{ path, patch }], baseHead }` | Single source of truth; CLI and desktop both call it.                                                                                                           |
-| Concurrent pulls / publishes  | Optimistic concurrency: client sends `baseHead` commit id with publish                 | If `baseHead` is stale, server rejects → desktop runs pull first.                                                                                               |
-| Arrays in RFC 7396 are atomic | Accept the limitation; log it in the conflicts file if both sides touched              | Rare in record-per-file data; upgrade to RFC 6902 only if user pain materializes.                                                                               |
+| Decision                      | Recommendation                                                                                                                                          | Why                                                                                                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Patch granularity             | RFC 7396 (Merge Patch) — field-level, arrays atomic                                                                                                     | ~60 lines total. Upgrade to RFC 6902 only if same-array conflicts become a real problem.                                                                        |
+| Conflict policy               | User wins; log same-field collisions to `.scratch/conflicts.log`                                                                                        | Zero blocking UX, no silent data loss without an audit trail.                                                                                                   |
+| Snapshot storage              | Bare repo objects (read via `gix::rev_parse("HEAD:<path>")`)                                                                                            | No duplicate on-disk snapshot directory. Packed objects are already efficient storage.                                                                          |
+| Diff detection mechanism      | `gix::Repository::status(Discard).into_iter([])` against the worktree                                                                                   | Index-backed; measured ~235ms cold / ~210ms warm on the Stripe worktree (~110k files). Already a dependency. See [Measured performance](#measured-performance). |
+| Working tree shape            | One **non-sparse** git worktree of `main` per connection                                                                                                | The `.git` link file is the only artifact; identical to today's dirty checkout. Non-sparse so we don't pay sparse-checkout config overhead.                     |
+| Transport                     | `git clone --bare` + `git fetch origin main` (incremental)                                                                                              | Free incremental fetch from existing scratch-git-2 backend; no tarball or manifest-API to build.                                                                |
+| Worktree creation             | Shell out to `git worktree add` at init                                                                                                                 | gix 0.70's worktree-add support is limited; we already shell out for this today in `setup_sparse_worktree`. Hot path is one call per connection.                |
+| Publish wire format           | Split: `POST :id/upload-patch/init` (returns presigned GCS URL + `uploadId`) → CLI PUTs to GCS → `POST :id/upload-patch/commit { uploadId, baseHead? }` | Inline POST hits NestJS body-parser limits on big publishes. Presigned upload + async job matches the existing publish-v2 UX. See Decision log — CEO §1, §7.    |
+| Concurrent pulls / publishes  | `baseHead` is optional; mismatch returns soft warning, server applies anyway                                                                            | Hard 409 would fail too often once incremental polling started moving `main` server-side. See Decision log — CEO §3.                                            |
+| Arrays in RFC 7396 are atomic | Accept the limitation; log it in the conflicts file if both sides touched                                                                               | Rare in record-per-file data; upgrade to RFC 6902 only if user pain materializes.                                                                               |
+| Local concurrency             | File lock at `.scratch/lock` for any mutating CLI op                                                                                                    | Single-worktree design loses the implicit serialization the three-worktree model had. Matches git's own `.git/index.lock` pattern. See Decision log — CEO §5.   |
 
 ### Measured performance
 
@@ -165,23 +173,90 @@ The spike file is preserved in `examples/` for future perf checks; `cargo` does 
 
 The architecture changes touch many files; the migration is **publish first, then pull, then strip the rest**. Each phase is independently shippable and leaves the system working.
 
-### Phase 1 — Move publish to the server
+### Phase 1 — Unify publish on the server via /upload-patch
 
-- Add `POST /cli/v1/workbooks/:id/publish` accepting `{ patches: [{ path, patch }], baseHead }`.
-- Server-side: load current authoritative state per path, apply patch, run existing publish pipeline against the resulting file set. Reject with 409 if `baseHead` is stale.
-- Add `scratchmd publish-v2` (or a flag on existing `publish`) that computes per-file merge patches from `current` vs `master_dir` (using gix to read snapshot blobs) and uploads them.
-- Desktop app: switch its publish action to the new endpoint.
-- **Leaves alone**: `reviewed-dirty`, the SQLite index, the local `plan_publish.rs` machinery. The new path is additive.
+**Goal:** Replace local publish-plan building with a server-native flow that feeds the existing `publish-v2/plan-job` + `run-job` pipeline. Eliminate the dual publish paths (server-native used by web client + run-from-git used by desktop) → one server publish path.
 
-Done when: desktop app's publish button uses the new endpoint and end-to-end publishes succeed against test-api.
+**Endpoint shape** (thin upload shim, not a new pipeline):
+
+```
+POST /workbook/:id/upload-patch/init
+  → { uploadId, presignedUrl }      // presigned GCS PUT URL, ≤24h TTL
+
+CLI PUTs the patch payload to GCS using the presigned URL.
+
+POST /workbook/:id/upload-patch/commit { uploadId, baseHead? }
+  → enqueues ApplyPatchesJob (BullMQ)
+  → response: { jobId, stalenessWarning?: { newHead } }
+
+ApplyPatchesJob worker:
+  → streamObject(uploadId) from GCS
+  → validate every patch.path via validateRecordPath()
+  → apply RFC 7396 patches to dirty branch as ONE commit
+  → enqueueRunPipelineJob() (existing publish-v2 plan-job + run-job)
+```
+
+**`baseHead` semantics:** optional. If omitted, server applies with no concurrency check. If provided and mismatched, server applies anyway and returns a staleness warning (incremental server-side polling moves `main` under the user; hard 409 would fail too often given the single-user assumption). See Decision log — CEO §3.
+
+**Server deliverables:**
+
+- Controllers: `/upload-patch/init` + `/upload-patch/commit` (likely as new `upload-patch.controller.ts` under `server/src/cli/` or extending `cli-workbook.controller.ts`)
+- `JobType.ApplyPatches` + `ApplyPatchesJobDefinition { workbookId, userId, connectorAccountId, uploadId, baseHead? }` + worker handler under `server/src/worker/jobs/`
+- `enqueueApplyPatchesJob(...)` in `bull-enqueuer.service.ts` (mirror `enqueuePublishFromGitJob`)
+- Extend `server/src/asset/object-storage.service.ts` with `signPutUrl(key, expiresIn): Promise<string>` and `streamObject(key): Promise<Readable>` (reuse existing `Storage` client + IAM)
+- Path validation utility at `server/src/utils/path-validation.ts` exporting `validateRecordPath(path, dataFolders): Result<string, ValidationError>` (rejects `..`, leading `/`, `.git/` / `.scratch/` prefixes, and paths outside known DataFolders)
+- AuditLog entry on `/upload-patch/commit`: `{ event: 'upload_patch.commit', workbookId, connectorAccountId, patchCount, baseHeadMatched, byteSize }`
+
+**CLI deliverables:**
+
+- Replace `scratchmd files upload` implementation in-place (no `upload-v2`, no flag-gating). New flow: gix-status → per-file RFC 7396 patch → presigned PUT to GCS → call `/commit`.
+- File lock at `.scratch/lock` (also Phase 5 prereq) — acquire on any mutating op, release on completion/panic. Detect + reclaim stale locks via PID check.
+
+**Desktop deliverables:**
+
+- Rewrite `scratch-desktop/src/renderer/src/pages/workspace/PublishChangesModal.tsx`. The 6-mode state machine (`approval / planning / ready / publishing / complete / error`) becomes the new flow's modes (`computing-diff / uploading / queued / publishing / complete / error`).
+- Staleness banner consuming `stalenessWarning` from the `/commit` response. Non-blocking, dismissible: "The server has more recent changes than what's on your computer. Refresh first?"
+
+**Asset uploads stay on the existing `/assets` pipeline.** Patches are JSON-only. The `publish-plan-build` service's asset-upload phase 0 continues to read asset refs from the dirty branch — unchanged. See Decision log — Eng §7.
+
+**Tests (mandatory for Phase 1 to ship):**
+
+- **Parity test** at `server/src/publish-plan/__tests__/upload-patch-parity.spec.ts`. Feed identical edits through both `/upload-patch` → plan-job and through legacy `run-from-git`. Assert same dispatched operations (`phase`, `path`, `content`, `changedFields`) AND same final `main` commit SHA. Deleted in Phase 7.
+- **Permanent end-to-end smoke test** at `server/src/publish-plan/__tests__/upload-patch.e2e.spec.ts`. Asserts the full round-trip (edit → upload → commit → plan-job → run-job → connector update → main advanced). Survives Phase 7 as the integration regression backstop.
+
+**Leaves alone:** `reviewed-dirty`, the SQLite index, `shared/plan_publish.rs`, the `run-from-git` endpoint. All deleted in later phases. The new path is additive.
+
+Done when: desktop's publish action uses `/upload-patch` end-to-end against test-api; parity test green; permanent e2e smoke test in CI.
 
 ### Phase 2 — Replace download with stash/replay
 
-- Add a `download-v2` path: save current `HEAD`, compute user patches via gix, `git fetch origin main`, walk the tree-vs-tree diff, overwrite working files with new blobs, replay user patches, log same-field collisions to `.scratch/conflicts.log`.
-- Switch desktop app's refresh action to the new path.
-- **Leaves alone**: init still creates three worktrees. We just stop using the three-way merge.
+**Goal:** Replace the three-way merge download with a stash/replay model: capture user patches against the old HEAD, fetch new HEAD, write server blobs, replay user patches; same-field collisions resolve user-wins, are logged locally, and emit telemetry.
 
-Done when: desktop app's refresh uses the new path and round-trips correctly with conflicts logged.
+**CLI flow:**
+
+1. Acquire `.scratch/lock` (Phase 1 prereq).
+2. Read `refs/heads/main` as `old_head`.
+3. `gix status` → compute per-file user patches against `old_head` snapshots.
+4. `git fetch origin main`.
+5. Tree-vs-tree diff between `old_head` and new `HEAD` → list of server-changed paths.
+6. For each path in (server-changed ∪ user-changed):
+   - Write new-HEAD blob to working file.
+   - If user has a patch for this path: replay it.
+   - For each key the user's patch touches: if `snapshot_at_old_head[key] != snapshot_at_new_head[key]`, append to `.scratch/conflicts.log` AND fire a PostHog event.
+
+**`conflicts.log` entry shape** (one JSON object per line, no record content):
+
+```
+{ "ts": "2026-05-18T13:24:51Z", "connectorAccountId": "ca_...", "path": "Companies/rec123.json", "conflictingKeys": ["website", "industry"] }
+```
+
+**PostHog event:** `desktop.pull.conflict` with `{ connectorAccountId, conflictCount, pathPattern }` (path pattern = folder, not record content).
+
+**Desktop:** Refresh action switches to the new path. No new UI required (conflicts silent, logged, telemetered). See Decision log — CEO §8.
+
+**Leaves alone:** init still creates three worktrees. Stash/replay supersedes the three-way merge but doesn't require Phase 5 first.
+
+Done when: desktop refresh uses the new path; round-trip test with concurrent server + user changes asserts user-wins; PostHog event fires; `conflicts.log` entry written.
 
 ### Phase 3 — Stop creating `reviewed-dirty` on init
 
@@ -191,28 +266,37 @@ Done when: desktop app's refresh uses the new path and round-trips correctly wit
 
 Done when: `init` no longer creates the worktree and no code path references it.
 
-### Phase 4 — Lazy / drop the SQLite index
+### Phase 4 — Drop the SQLite index
 
-- Once Phase 1 lands, `plan_publish` no longer runs locally → the eager `index::build` at `workspaces.rs:736` is dead weight for init.
-- Decide: drop it entirely (if no remaining caller needs it), or build it lazily on first query.
-- Saves ~35s of `init` for Stripe.
+Once Phase 1 lands, local `plan_publish` no longer runs → the eager `index::build` at `workspaces.rs:736` is dead weight.
 
-Done when: `init` doesn't build the index, and any code that still needs it either rebuilds on demand or has been removed.
+- Drop the index entirely (preferred). No caller should need it once Phases 1 + 2 are live.
+- Also delete `update_dirty_worktree_index` at `scratch-git-2/src/cli/commands/files.rs:2210` and all its callers — dead code after the index goes (eng follow-up E2).
+
+Saves ~35s of init for the Stripe connector on the Monorepo workspace.
+
+Done when: init doesn't build the index; `shared/index.rs` is either deleted or has no callers from CLI publish/pull paths.
 
 ### Phase 5 — Collapse to one worktree per connection
 
-- Today's "dirty checkout" (sparse worktree of the dirty branch) becomes the single non-sparse worktree of `main`. The separate `master` worktree goes away — its only role (snapshot reads) is now served by `gix::rev_parse("HEAD:<path>")` against the bare repo.
+Today's "dirty checkout" (sparse worktree of the dirty branch) becomes the single non-sparse worktree of `main`. The separate `master` worktree goes away — its snapshot-reads role is now served by `gix::rev_parse("HEAD:<path>")` against the bare repo.
+
 - Drop `materialize_dirty_checkout`'s sparse-checkout config; replace with a plain `git worktree add` of `main`.
-- Remove all references to the dirty branch from the CLI (the branch may continue to exist server-side for now; that's a server cleanup item).
+- Remove all CLI references to the dirty branch. (Server-side, `dirty` continues to exist as the publish working area — by design, unchanged.)
+- **Worktree-add mechanism:** verify whether the current gix crate version supports `worktree add` natively before defaulting to shell-out (eng follow-up E3). If gix supports it, drop the shell-out.
+- The `.scratch/lock` file lock from Phase 1 continues to gate any mutating op against the single worktree.
 
 Done when: a fresh `init` against `wkb_3qH9SlxsNq` produces one bare repo + one non-sparse `main` worktree per connection, with no `.scratch/connections/*/` directories.
 
 ### Phase 6 — Parallelize connections
 
-- Replace the `for (ca, entry) in ...` loop at `workspaces.rs:411` with `rayon::par_iter` or `tokio::task::spawn_blocking` fan-out.
-- Independent of the other phases; ship as soon as it's safe (probably after Phase 5, when each connection is "clone + worktree add" with no shared mutable state).
+Replace the `for (ca, entry) in ...` loop at `workspaces.rs:411` with `rayon::par_iter` or `tokio::task::spawn_blocking` fan-out. Ships after Phase 5 (each connection is then "clone + worktree add" with no shared mutable state).
 
-Done when: total wall time is dominated by the single slowest connection, not the sum.
+**Failure policy** (CEO follow-up F5): if 1/N connections fails to clone, log a warning and continue with the other N-1 — user gets a partial-but-usable workspace. If 0/N succeed, exit non-zero.
+
+**Re-init detection** (CEO follow-up F6): if the workspace dir contains a partial prior init (some bare repos exist, others don't), detect via marker scan and resume the missing connections. Failing-clean is acceptable as a fallback.
+
+Done when: total wall time is dominated by the single slowest connection, not the sum; partial-failure behavior is tested.
 
 ### Phase 7 — Delete `publish-v2/run-from-git`
 
@@ -240,91 +324,13 @@ Done when: `run-from-git` has been removed from the server, CLI, and desktop, th
 
 ## Risks
 
-- **Same-field collision = silent user-wins.** Mitigated by `.scratch/conflicts.log`, but the desktop app should eventually surface this. Out of scope for v1.
-- **Server-side publish performance.** The local publish-plan diff was fast because the index was prebuilt. The server will compute the equivalent on demand; needs to scale to large workspaces. Worth benchmarking in Phase 1.
-- **gix `worktree add` gaps.** gix 0.70's worktree-add support is limited, so we shell out — same as today. If gix improves, we can swap, but the shell-out is acceptable on a one-call-per-connection path.
-- **Loss of git-as-undo.** Users currently have a local git history they could in principle inspect. Almost certainly unused, but worth confirming nobody depends on it.
-- **Migration of in-flight workspaces.** Anyone with a workspace already initialized on the old layout keeps using the old code paths until they re-init. We should add a one-liner to the desktop app prompting re-init when the new path lands.
+- **Same-field collision = silent user-wins.** Mitigated by `.scratch/conflicts.log` + PostHog event (Phase 2). The desktop app should eventually surface this as a UI; out of scope for v1.
+- **Server-side publish performance.** Path A (`plan-job` + `run-job`) already exists and runs in production for the web client, so structurally the cutover is safe — but its perf on the 135k-file Monorepo workspace hasn't been benchmarked. Phase 7's gate forces a measurement before deletion (T11).
+- **gix `worktree add` gaps.** gix 0.70's worktree-add support was limited. Eng follow-up E3 verifies the current crate version before defaulting to shell-out.
+- **Loss of git-as-undo.** Users currently have a local git history they could in principle inspect. Almost certainly unused, but worth confirming nobody depends on it before Phase 5 ships.
+- **Migration of in-flight workspaces.** Workspaces already initialized on the old layout keep using the old code paths until they re-init. The desktop should prompt re-init when the new path lands.
 
-## Captured decisions from CEO review (2026-05-18)
-
-Reviewed by Curtis Fonger via `/plan-ceo-review` (HOLD SCOPE mode). The decisions below were locked during the review and should be reflected in the migration phases above when each phase is implemented.
-
-### 1. Phase 1 endpoint shape: upload then publish (split)
-
-The single `POST /publish { patches, baseHead }` originally proposed conflates two operations. Replace with:
-
-- `POST /workbook/:workbookId/upload-patch/init` → returns a presigned GCS URL + `uploadId`.
-- CLI `PUT`s the patch payload directly to GCS (NDJSON or single JSON).
-- `POST /workbook/:workbookId/upload-patch/commit { uploadId, baseHead? }` → enqueues a BullMQ job that streams the patch from GCS, applies it to the **server-side dirty branch** as a single commit, then triggers the existing `publish-v2/plan-job` + `run-job`.
-
-The upload is one atomic action; publishing is independent and can be re-triggered without re-uploading.
-
-### 2. Reuse the existing server publish pipeline
-
-The server already has `POST /workbook/:workbookId/publish-v2/plan-job` + `run-job` used by the web client. Phase 1 is **not** a new publish pipeline — it is a thin upload shim that puts patches onto the dirty branch in the shape the existing pipeline expects. Plan documentation and code comments should make this explicit so future readers don't think two parallel publish systems exist.
-
-### 3. `baseHead` semantics: optional, soft warning, never blocks
-
-`baseHead` on `/upload-patch/commit` is optional:
-
-- Omitted → server applies patches with no concurrency check.
-- Provided and matches server's `origin/main` → no warning, no extra response.
-- Provided and mismatches → server applies patches **anyway**, response includes `{ stalenessWarning: { newHead } }`. Desktop shows a non-blocking banner: "The server has more recent changes than what's on your computer. Refresh first?"
-
-Rationale: incremental polling (recently shipped on the server) regularly advances `main` server-side. Hard 409 rejection would fail too often in normal operation. Single-user assumption makes silent overwrites acceptably rare; the audit log (follow-up F3) and PostHog conflict event (§8) cover the rest.
-
-### 4. Server-side path validation
-
-`/upload-patch/commit` MUST validate every `patch.path` server-side and reject the entire request with 400 if any path:
-
-- Contains `..` segments
-- Has a leading `/`
-- Begins with `.git/` or `.scratch/`
-- Is not within a known DataFolder of the connector account
-
-CLI-side validation may also be added for better UX, but server-side is the gate.
-
-### 5. Worktree concurrency: file lock at `.scratch/lock`
-
-The new single-worktree design loses the implicit serialization the three-worktree model had. All mutating CLI operations (publish, pull, init, files commands) must acquire a file lock at `.scratch/lock` before proceeding. Second concurrent process exits with "workspace busy."
-
-Use the same locking primitive git itself uses (`gix::lock` or equivalent). Stale-lock detection: if the lock's PID is no longer alive, reclaim it.
-
-### 6. Test strategy: phase-aligned + cutover parity test
-
-Each phase ships with its own unit + integration tests. Phase 1 additionally ships a **parity test** that:
-
-- Takes a representative set of edits
-- Runs them through the new `/upload-patch` → `plan-job` → `run-job` path
-- Runs them through the legacy `run-from-git` path
-- Asserts identical publish results (same operations, same final state in `main`)
-
-The parity test is deleted in Phase 7 alongside `run-from-git`.
-
-### 7. Large publishes via presigned GCS upload
-
-Patches are uploaded to GCS, not POSTed inline. This avoids NestJS body-parser limits, keeps server memory bounded, and supports resumable uploads. A BullMQ job streams from GCS and applies the patch — fits the existing publish-v2 async-job UX. GCS bucket gets a ≤24h lifecycle rule on uploaded patches.
-
-### 8. Conflict telemetry: PostHog event from desktop
-
-On every same-field conflict during pull, the desktop fires a PostHog event with:
-
-- Connector account ID
-- Conflict count
-- Path pattern (folder, not file content)
-- (No record content — privacy)
-
-This gives visibility into whether user-wins is acceptable in practice, or whether real conflict-resolution UX is needed later.
-
-### 9. Rollout: server first, no feature flag
-
-- Server ships `/upload-patch` endpoints first; legacy `run-from-git` remains alive.
-- CLI/desktop ship a follow-up release that adopts `/upload-patch`.
-- Server identifies clients by which endpoint they call — no version sniffing needed. If a request hits `/upload-patch`, it's a newer client; if it hits `run-from-git`, it's older.
-- Phase 7 (delete `run-from-git`) gates on server metric: zero `run-from-git` callers for ≥7 consecutive days.
-
-## Follow-ups (from CEO review)
+## CEO follow-ups
 
 Smaller items to track as separate tickets. None block shipping the phases above.
 
@@ -344,101 +350,6 @@ Smaller items to track as separate tickets. None block shipping the phases above
 | F12 | Promote init-phase timings (`SCRATCHMD_PROFILE`) to PostHog event | See init perf in production                                        | 15min       |
 | F13 | End-to-end publish smoke test per deploy                          | Catch regressions immediately post-deploy                          | 1h          |
 
-## Captured decisions from eng review (2026-05-18)
-
-Reviewed by Curtis Fonger via `/plan-eng-review` (HOLD SCOPE). These decisions are code-level specifications that complement the CEO review's architectural decisions above. Each maps to one or more entries in the Implementation Tasks file at `~/.gstack/projects/whalesync-spinner/tasks-eng-review-*.jsonl`.
-
-### 1. Phase 1 — explicit deliverables
-
-Phase 1 ships ALL of the following (T1, T2, T6, T10 in the tasks file):
-
-- **Server**: `POST /workbook/:id/upload-patch/init` + `commit` controllers, ApplyPatches BullMQ job + worker handler, path-validation utility at `server/src/utils/path-validation.ts`, AuditLog entries on both endpoints, extensions to `server/src/asset/object-storage.service.ts` for `signPutUrl` + `streamObject`.
-- **CLI**: `scratchmd files upload` implementation replaced in-place (no new command, no flag-gating). gix-status → per-file patch → presigned-PUT to GCS → call `/commit`.
-- **Desktop**: `PublishChangesModal.tsx` rewritten. 6-mode state machine (`approval`/`planning`/`ready`/`publishing`/`complete`/`error`) refactored to match the new flow (`computing-diff`/`uploading`/`queued`/`publishing`/`complete`/`error`). Staleness banner wired to consume `stalenessWarning` from the `/commit` response.
-- **Tests**: parity test (Path A vs Path B) AND permanent end-to-end smoke test (survives Phase 7). See §6 and §10.
-
-### 2. BullMQ job scaffolding (T2)
-
-Mirror the existing publish-from-git pattern:
-
-- `JobType.ApplyPatches` enum value
-- `ApplyPatchesJobDefinition` with `{ workbookId, userId, connectorAccountId, uploadId, baseHead? }`
-- Worker handler in `server/src/worker/jobs/`
-- `enqueueApplyPatchesJob(...)` in `bull-enqueuer.service.ts`
-- Queue routing via existing patterns
-
-The worker streams the patch from GCS, validates paths, applies merge patches to the dirty branch (single commit), then enqueues `enqueuePlanPipelineJob` for the connector.
-
-### 3. Reuse `object-storage.service.ts` (T3)
-
-Add to the existing service:
-
-- `async signPutUrl(key: string, expiresIn: Duration): Promise<string>`
-- `async streamObject(key: string): Promise<Readable>`
-
-Use existing `Storage` client, existing bucket config, existing IAM. No new module.
-
-### 4. AuditLog scope (T4)
-
-Limit Phase 1's audit work to the new `/upload-patch` endpoints. Backfilling AuditLog across all of `server/src/cli/` is real work but separable — track as a TODO, not Phase 1 scope.
-
-Audit entry shape: `{ event: 'upload_patch.commit', workbookId, connectorAccountId, patchCount, baseHeadMatched: boolean, byteSize }`.
-
-### 5. Path validation utility (T5)
-
-`server/src/utils/path-validation.ts`:
-
-```ts
-export function validateRecordPath(
-  path: string,
-  dataFolders: ReadonlyArray<{ path: string }>,
-): Result<string, ValidationError>;
-```
-
-Rejects: `..` segments, leading `/`, paths beginning with `.git/` or `.scratch/`, paths not under a known DataFolder. Returns the normalized path on success. Unit tests live alongside.
-
-Reusable beyond `/upload-patch` — should be the canonical helper for any future endpoint that accepts file paths.
-
-### 6. Parity test contract (T6)
-
-`server/src/publish-plan/__tests__/upload-patch-parity.spec.ts`:
-
-Test harness:
-
-1. Set up a test workbook with seeded data
-2. Apply identical edits as in-memory ParsedContent
-3. Run **Path A**: serialize edits as patches → `/upload-patch/init` + `/commit` → wait for plan-job + run-job
-4. Run **Path B**: serialize edits as phase files → push to dirty → `/run-from-git` → wait for job
-5. Assert: same dispatched operations (compare `phase`, `path`, `content`, `changedFields`), same final main commit SHA
-
-Deleted in Phase 7. The permanent end-to-end smoke test (§10) is what catches regressions long-term.
-
-### 7. Asset uploads stay on existing pipeline (T7)
-
-Plan does NOT bundle binary asset uploads into `/upload-patch`. Assets continue to flow through the existing `/assets` upload endpoint as today. The `publish-plan-build` service's asset-upload phase 0 continues to work unchanged because it reads asset refs from the dirty branch, not from patches.
-
-This means: desktop's flow for an edit involving a new asset is: (1) upload binary via `/assets`, get URL; (2) embed URL in record JSON; (3) edit triggers publish → new flow processes JSON only.
-
-### 8. CLI command naming (T8)
-
-`scratchmd files upload` keeps its name; the implementation is replaced in Phase 1. No `upload-v2`, no flag-gating. After Phase 7, the old code paths are gone but the command surface is unchanged.
-
-### 9. `discardRemoteDirtyChanges` endpoint unchanged (T9)
-
-The endpoint at `server/src/cli/cli-workbook.controller.ts:222` already operates on the server-side dirty branch. With the new model (dirty lives only server-side), its semantics become MORE coherent, not different. Desktop continues to call it; after the call, desktop runs pull to sync local main back to the (now-reset) server main.
-
-### 10. Permanent end-to-end smoke test (T10)
-
-`server/src/publish-plan/__tests__/upload-patch.e2e.spec.ts`:
-
-Asserts the full path: seed workbook → edit record → CLI/test client computes patches → `/upload-patch/init` → GCS PUT → `/commit` → BullMQ job applies to dirty → plan-job → run-job → connector receives upstream update → main commit advanced.
-
-Survives Phase 7. This is the regression backstop for the unified publish path.
-
-### 11. Phase 7 perf gate (T11)
-
-Built into Phase 7's "Done when" criteria above. Benchmark on Monorepo workspace; gate on p95 within 2× today's baseline.
-
 ## Eng-review follow-ups
 
 Smaller items surfaced during eng review that don't block phase work.
@@ -449,6 +360,54 @@ Smaller items surfaced during eng review that don't block phase work.
 | E2  | Delete `update_dirty_worktree_index` (`scratch-git-2/src/cli/commands/files.rs:2210`) and callers when Phase 4 drops the SQLite index | Dead code after index removal                                            | 30min       |
 | E3  | Verify gix worktree-add support in current crate version (may have landed since 0.70)                                                 | If gix supports it natively, drop the shell-out                          | 15min       |
 | E4  | Document desktop's post-publish `git fetch origin main` retry policy                                                                  | Finding 1.6 from CEO review on the data-flow shadow path                 | 30min       |
+
+## Decision log — CEO review (HOLD SCOPE, 2026-05-18)
+
+Rationale behind the architecture decisions captured by `/plan-ceo-review`. The phases above implement the "what"; this appendix preserves the "why" so future readers can judge edge cases.
+
+1. **Endpoint split (Phase 1).** Original proposal was inline `POST /publish { patches, baseHead }`. Conflating upload + publish reduces flexibility (can't retry publish without re-uploading; can't pre-stage a large patch). Split into `/upload-patch/init` + `/commit`.
+
+2. **Reuse server-native publish (Phase 1).** Server already had `publish-v2/plan-job` + `run-job` used by the web client. New endpoint is a thin shim, not a new pipeline. Goal: one publish path on the server, no parallel system.
+
+3. **`baseHead` soft warning, not 409 (Phase 1).** Hard rejection on stale `baseHead` would fail too often once incremental server-side polling started moving `main` under the user. Single-user assumption makes silent overwrites acceptably rare; audit log + telemetry covers the residual risk.
+
+4. **Server-side path validation (Phase 1).** Path traversal in `patch.path` is the only Med-likelihood / High-impact security gap. Defense-in-depth: server is the gate; CLI may validate for UX.
+
+5. **`.scratch/lock` (Phase 1 + Phase 5).** Three-worktree design implicitly serialized via branch ops; the single-worktree design loses this. File lock matches git's own `.git/index.lock` pattern.
+
+6. **Parity test + permanent smoke (Phase 1 + survives Phase 7).** Parity catches divergence between the two publish paths during cutover; the permanent smoke catches integration drift forever.
+
+7. **Presigned GCS upload (Phase 1).** Inline POST hits NestJS body-parser limits and blows up server memory on big publishes. GCS upload-then-process matches the existing async-job UX.
+
+8. **PostHog conflict telemetry (Phase 2).** Conflicts get more common as incremental polling moves `main`. Lightweight signal to know if user-wins is acceptable in practice or if a real conflict-resolution UI is needed later.
+
+9. **Rollout: server first, no flag, caller-identity = version (Phase 1 → Phase 7).** Simpler than feature flags. Server tracks which endpoint each desktop version calls; Phase 7 deletes the old when callers drop to zero for ≥7 days.
+
+## Decision log — Eng review (HOLD SCOPE, 2026-05-18)
+
+Code-level decisions captured by `/plan-eng-review`. Each maps to a task in `~/.gstack/projects/whalesync-spinner/tasks-eng-review-20260518-095015.jsonl`.
+
+1. **Phase 1 explicit deliverables (T1, T2, T6, T10).** Original Phase 1 hid significant UI rework and BullMQ job scaffolding. Spelling them out prevents discovered scope during implementation.
+
+2. **BullMQ `JobType.ApplyPatches` scaffolding (T2).** Mirror the existing `publish-from-git` pattern (enum + JobDefinition + worker + enqueuer + queue routing). Consistency reduces cognitive load.
+
+3. **Extend `object-storage.service.ts` (T3).** Existing service already does GCS ops for assets. Adding `signPutUrl` + `streamObject` reuses the existing `Storage` client, bucket config, and IAM. DRY.
+
+4. **Scope AuditLog to `/upload-patch` only (T4).** Backfilling AuditLog across `server/src/cli/` is real work but separable. Phase 1 closes the new gap; full backfill tracked as E1.
+
+5. **`server/src/utils/path-validation.ts` (T5).** Path validation rules from CEO §4 have no existing helper. Living as a shared util enables reuse from future endpoints (asset, sync, anywhere paths flow from the wire).
+
+6. **Parity test compares dispatched ops + final SHA (T6).** Path A reads `getRepoStatus`; Path B reads phase files. Comparing internal data structures would couple to implementation; comparing dispatched operations + final `main` SHA tests the OBSERVABLE contract.
+
+7. **Asset uploads unchanged (T7).** Bundling binaries into `/upload-patch` would couple two pipelines that have separate lifecycles. Keep them apart; document the existing flow so future readers don't think assets are missing.
+
+8. **Replace `scratchmd files upload` in-place (T8).** No `upload-v2`, no flag-gating. Reduces dual-surface area during migration; the command name persists, only the implementation changes.
+
+9. **`discardRemoteDirtyChanges` unchanged (T9).** The endpoint already operates on the server-side dirty branch. With dirty living only server-side now, its semantics become MORE coherent without contract change.
+
+10. **Permanent end-to-end smoke test (T10).** Parity test gets deleted in Phase 7 alongside `run-from-git`. The smoke test is the regression backstop that survives — full edit → publish → main-advanced round-trip in CI on every change.
+
+11. **Phase 7 perf gate (T11).** Path A's `getRepoStatus` exists in production for the web client but hasn't been benchmarked at Monorepo scale (135k files). Gate Phase 7 deletion on p95 within 2× today's `run-from-git` baseline.
 
 ## GSTACK REVIEW REPORT
 
