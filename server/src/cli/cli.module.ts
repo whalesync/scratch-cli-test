@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { AssetModule } from 'src/asset/asset.module';
+import { AuditLogModule } from 'src/audit/audit-log.module';
 import { AuthModule } from 'src/auth/auth.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
@@ -19,6 +21,7 @@ import { CliConnectionController } from './cli-connection.controller';
 import { CliLinkedController } from './cli-linked.controller';
 import { CliSyncController } from './cli-sync.controller';
 import { CliWorkbookController } from './cli-workbook.controller';
+import { UploadPatchController } from './upload-patch.controller';
 
 @Module({
   imports: [
@@ -35,6 +38,8 @@ import { CliWorkbookController } from './cli-workbook.controller';
     ScratchGitModule,
     SyncModule,
     PublishPlanModule,
+    AssetModule,
+    AuditLogModule,
   ],
   controllers: [
     CliAuthController,
@@ -42,6 +47,7 @@ import { CliWorkbookController } from './cli-workbook.controller';
     CliConnectionController,
     CliLinkedController,
     CliSyncController,
+    UploadPatchController,
   ],
   providers: [CliAuthService, WorkbookRepoService],
   exports: [CliAuthService],

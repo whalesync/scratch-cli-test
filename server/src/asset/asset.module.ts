@@ -9,6 +9,6 @@ import { ObjectStorageService } from './object-storage.service';
 @Module({
   imports: [DbModule, ScratchConfigModule],
   providers: [AssetExtractorService, AssetIndexService, ObjectStorageService, AssetDownloadService],
-  exports: [AssetExtractorService, AssetIndexService, AssetDownloadService],
+  exports: [AssetExtractorService, AssetIndexService, AssetDownloadService, ObjectStorageService],
 })
 export class AssetModule {}

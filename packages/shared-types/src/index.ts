@@ -54,4 +54,5 @@ export * from './dto/schedule/update-schedule.dto';
 export * from './dto/sync/sync-api';
 export * from './dto/sync/whalesync-import-api';
 export * from './dto/transformer/test-transformer.dto';
+export * from './dto/upload-patch/upload-patch.dto';
 export * from './dto/workspace-permission/workspace-permission.dto';

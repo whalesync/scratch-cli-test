@@ -447,6 +447,55 @@ resource "google_project_iam_custom_role" "assets_object_reader" {
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
+## Publish-Patch Upload Bucket
+##
+## Holds short-lived publish-patch payloads uploaded by CLI / desktop via
+## presigned PUT (`/upload-patch/init`). Intentionally separate from the asset
+## bucket: patches contain user record data and must not live in the
+## publicly-readable asset bucket. Auto-deletes objects after 24h — patches are
+## processed within minutes, so longer retention only widens the window of
+## data at rest.
+##
+## CORS is wildcard-permissive: the signed URL is the auth (short TTL,
+## per-upload, server-issued only to the authenticated session), so origin
+## restriction would add no real security and would just block future
+## browser-based callers.
+## ---------------------------------------------------------------------------------------------------------------------
+
+resource "google_storage_bucket" "upload_patches" {
+  name          = "${var.gcp_project_id}-upload-patches"
+  location      = var.gcp_region
+  force_destroy = false
+
+  uniform_bucket_level_access = true
+
+  lifecycle_rule {
+    condition {
+      age = 1 # days — patches are processed within minutes
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  cors {
+    origin          = ["*"]
+    method          = ["PUT"]
+    response_header = ["Content-Type"]
+    max_age_seconds = 3600
+  }
+
+  labels = merge(local.default_labels, local.vanta_user_data_labels)
+}
+
+resource "google_storage_bucket_iam_member" "upload_patches_cloudrun" {
+  bucket = google_storage_bucket.upload_patches.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${module.iam-sa.service_accounts["cloudrun-service-account"].email}"
+}
+# Deliberately no allUsers grant. Read access is server-only.
+
+## ---------------------------------------------------------------------------------------------------------------------
 ## Static Assets Bucket + LB
 ## ---------------------------------------------------------------------------------------------------------------------
 

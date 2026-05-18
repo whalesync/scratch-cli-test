@@ -1,5 +1,6 @@
 import { Job as BullMQPlainJob } from 'bullmq';
 import { Progress } from './base-types';
+import { ApplyPatchesJobDefinition } from './job-definitions/apply-patches.job';
 import { DeleteWorkbookJobDefinition } from './job-definitions/delete-workbook.job';
 import { PublishFromGitJobDefinition } from './job-definitions/publish-from-git.job';
 import { PublishJobDefinition } from './job-definitions/publish.job';
@@ -9,6 +10,7 @@ import { RehostAssetsJobDefinition } from './job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobDefinition } from './job-definitions/sync-data-folders.job';
 
 export type JobDefinition =
+  | ApplyPatchesJobDefinition
   | DeleteWorkbookJobDefinition
   | PublishFromGitJobDefinition
   | PublishJobDefinition

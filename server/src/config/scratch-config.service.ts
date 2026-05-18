@@ -192,6 +192,16 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('GCS_ASSET_BUCKET');
   }
 
+  /**
+   * Bucket for short-lived publish-patch payloads uploaded via `/upload-patch`.
+   * Intentionally separate from the asset bucket: patches contain user record
+   * data and must NOT live in the publicly-readable asset bucket. Deliberately
+   * has no fallback — when unset, `/upload-patch/init` returns 503.
+   */
+  getGcsPatchUploadBucket(): string | undefined {
+    return this.getOptionalEnvVariable('GCS_PATCH_UPLOAD_BUCKET');
+  }
+
   getGcsProjectId(): string | undefined {
     return this.getOptionalEnvVariable('GCS_PROJECT_ID');
   }

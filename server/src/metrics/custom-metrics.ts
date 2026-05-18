@@ -14,6 +14,7 @@ export enum CustomMetric {
   JOB_SYNC_DATA_FOLDERS_COMPLETED = 'job_sync_data_folders_completed',
   JOB_REHOST_ASSETS_COMPLETED = 'job_rehost_assets_completed',
   JOB_PUBLISH_FROM_GIT_COMPLETED = 'job_publish_from_git_completed',
+  JOB_APPLY_PATCHES_COMPLETED = 'job_apply_patches_completed',
   JOB_PUBLISH_COMPLETED = 'job_publish_completed',
   JOB_DELETE_WORKBOOK_COMPLETED = 'job_delete_workbook_completed',
 
@@ -23,6 +24,7 @@ export enum CustomMetric {
   JOB_SYNC_DATA_FOLDERS_FAILED = 'job_sync_data_folders_failed',
   JOB_REHOST_ASSETS_FAILED = 'job_rehost_assets_failed',
   JOB_PUBLISH_FROM_GIT_FAILED = 'job_publish_from_git_failed',
+  JOB_APPLY_PATCHES_FAILED = 'job_apply_patches_failed',
   JOB_PUBLISH_FAILED = 'job_publish_failed',
   JOB_DELETE_WORKBOOK_FAILED = 'job_delete_workbook_failed',
 
@@ -35,6 +37,7 @@ export enum CustomMetric {
   JOB_SYNC_DATA_FOLDERS_CANCELED = 'job_sync_data_folders_canceled',
   JOB_REHOST_ASSETS_CANCELED = 'job_rehost_assets_canceled',
   JOB_PUBLISH_FROM_GIT_CANCELED = 'job_publish_from_git_canceled',
+  JOB_APPLY_PATCHES_CANCELED = 'job_apply_patches_canceled',
   JOB_PUBLISH_CANCELED = 'job_publish_canceled',
   JOB_DELETE_WORKBOOK_CANCELED = 'job_delete_workbook_canceled',
 
@@ -44,6 +47,7 @@ export enum CustomMetric {
   JOB_SYNC_DATA_FOLDERS_STALLED = 'job_sync_data_folders_stalled',
   JOB_REHOST_ASSETS_STALLED = 'job_rehost_assets_stalled',
   JOB_PUBLISH_FROM_GIT_STALLED = 'job_publish_from_git_stalled',
+  JOB_APPLY_PATCHES_STALLED = 'job_apply_patches_stalled',
   JOB_PUBLISH_STALLED = 'job_publish_stalled',
   JOB_DELETE_WORKBOOK_STALLED = 'job_delete_workbook_stalled',
 }
@@ -55,6 +59,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED:
     case CustomMetric.JOB_REHOST_ASSETS_COMPLETED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_COMPLETED:
+    case CustomMetric.JOB_APPLY_PATCHES_COMPLETED:
     case CustomMetric.JOB_PUBLISH_COMPLETED:
     case CustomMetric.JOB_DELETE_WORKBOOK_COMPLETED:
     case CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_FAILED:
@@ -62,6 +67,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED:
     case CustomMetric.JOB_REHOST_ASSETS_FAILED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_FAILED:
+    case CustomMetric.JOB_APPLY_PATCHES_FAILED:
     case CustomMetric.JOB_PUBLISH_FAILED:
     case CustomMetric.JOB_DELETE_WORKBOOK_FAILED:
     case CustomMetric.JOB_WORKER_ERROR:
@@ -70,6 +76,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED:
     case CustomMetric.JOB_REHOST_ASSETS_CANCELED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_CANCELED:
+    case CustomMetric.JOB_APPLY_PATCHES_CANCELED:
     case CustomMetric.JOB_PUBLISH_CANCELED:
     case CustomMetric.JOB_DELETE_WORKBOOK_CANCELED:
     case CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_STALLED:
@@ -77,6 +84,7 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED:
     case CustomMetric.JOB_REHOST_ASSETS_STALLED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_STALLED:
+    case CustomMetric.JOB_APPLY_PATCHES_STALLED:
     case CustomMetric.JOB_PUBLISH_STALLED:
     case CustomMetric.JOB_DELETE_WORKBOOK_STALLED:
       return CustomMetricDimension.NO_DIMENSION;
@@ -97,6 +105,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED:
     case CustomMetric.JOB_REHOST_ASSETS_COMPLETED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_COMPLETED:
+    case CustomMetric.JOB_APPLY_PATCHES_COMPLETED:
     case CustomMetric.JOB_PUBLISH_COMPLETED:
     case CustomMetric.JOB_DELETE_WORKBOOK_COMPLETED:
     case CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_FAILED:
@@ -104,6 +113,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED:
     case CustomMetric.JOB_REHOST_ASSETS_FAILED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_FAILED:
+    case CustomMetric.JOB_APPLY_PATCHES_FAILED:
     case CustomMetric.JOB_PUBLISH_FAILED:
     case CustomMetric.JOB_DELETE_WORKBOOK_FAILED:
     case CustomMetric.JOB_WORKER_ERROR:
@@ -112,6 +122,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED:
     case CustomMetric.JOB_REHOST_ASSETS_CANCELED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_CANCELED:
+    case CustomMetric.JOB_APPLY_PATCHES_CANCELED:
     case CustomMetric.JOB_PUBLISH_CANCELED:
     case CustomMetric.JOB_DELETE_WORKBOOK_CANCELED:
     case CustomMetric.JOB_PULL_LINKED_FOLDER_FILES_STALLED:
@@ -119,6 +130,7 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED:
     case CustomMetric.JOB_REHOST_ASSETS_STALLED:
     case CustomMetric.JOB_PUBLISH_FROM_GIT_STALLED:
+    case CustomMetric.JOB_APPLY_PATCHES_STALLED:
     case CustomMetric.JOB_PUBLISH_STALLED:
     case CustomMetric.JOB_DELETE_WORKBOOK_STALLED:
       return CustomMetricUnit.EVENT_COUNT;
@@ -137,6 +149,7 @@ export const JOB_COMPLETED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED,
   [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_COMPLETED,
   [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_COMPLETED,
+  [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_COMPLETED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_COMPLETED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_COMPLETED,
 };
@@ -147,6 +160,7 @@ export const JOB_FAILED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED,
   [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_FAILED,
   [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_FAILED,
+  [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_FAILED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_FAILED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_FAILED,
 };
@@ -157,6 +171,7 @@ export const JOB_CANCELED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED,
   [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_CANCELED,
   [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_CANCELED,
+  [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_CANCELED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_CANCELED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_CANCELED,
 };
@@ -167,6 +182,7 @@ export const JOB_STALLED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.SyncDataFolders]: CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED,
   [JobType.RehostAssets]: CustomMetric.JOB_REHOST_ASSETS_STALLED,
   [JobType.PublishFromGit]: CustomMetric.JOB_PUBLISH_FROM_GIT_STALLED,
+  [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_STALLED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_STALLED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_STALLED,
 };

@@ -9,6 +9,7 @@ import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
+import { ApplyPatchesJobDefinition } from '../worker/jobs/job-definitions/apply-patches.job';
 import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
 import { PublishFromGitJobDefinition } from '../worker/jobs/job-definitions/publish-from-git.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
@@ -314,6 +315,37 @@ export class BullEnqueuerService implements OnModuleDestroy {
       userId,
       connectorAccountId,
       planPath,
+    };
+    return await this.createAndEnqueue(
+      {
+        userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+      },
+      data,
+      id,
+    );
+  }
+
+  async enqueueApplyPatchesJob(
+    workbookId: WorkbookId,
+    userId: string,
+    organizationId: string,
+    connectorAccountId: string,
+    uploadId: string,
+    baseHead?: string,
+  ): Promise<Job> {
+    const id = `apply-patches-${workbookId}-${createPlainId()}`;
+    const data: ApplyPatchesJobDefinition['data'] = {
+      type: JobType.ApplyPatches,
+      workbookId,
+      userId,
+      organizationId,
+      connectorAccountId,
+      uploadId,
+      ...(baseHead ? { baseHead } : {}),
     };
     return await this.createAndEnqueue(
       {

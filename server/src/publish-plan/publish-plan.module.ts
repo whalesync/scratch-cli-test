@@ -11,6 +11,7 @@ import { FileReferenceService } from './file-reference.service';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { ScratchGitModule } from '../scratch-git/scratch-git.module';
 import { WorkerEnqueuerModule } from '../worker-enqueuer/worker-enqueuer.module';
+import { ApplyPatchesService } from './apply-patches.service';
 import { PublishFromGitService } from './publish-from-git.service';
 import { PublishPlanBuildService } from './publish-plan-build.service';
 import { PublishPlanCrudService } from './publish-plan-crud.service';
@@ -37,6 +38,7 @@ import { SchemaHelperService } from './schema-helper.service';
     FileIndexService,
     FileReferenceService,
     PublishFromGitService,
+    ApplyPatchesService,
     PublishPlanCrudService,
     PublishPlanBuildService,
     RefResolverService,
@@ -48,6 +50,7 @@ import { SchemaHelperService } from './schema-helper.service';
     FileIndexService,
     FileReferenceService,
     PublishFromGitService,
+    ApplyPatchesService,
     PublishPlanCrudService,
     PublishPlanBuildService,
     RefResolverService,

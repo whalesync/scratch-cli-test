@@ -9,6 +9,7 @@ import { ExperimentsService } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { ApplyPatchesService } from 'src/publish-plan/apply-patches.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { PublishFromGitService } from 'src/publish-plan/publish-from-git.service';
@@ -22,6 +23,7 @@ import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
+import { ApplyPatchesJobHandler } from './jobs/job-definitions/apply-patches.job';
 import { DeleteWorkbookJobHandler } from './jobs/job-definitions/delete-workbook.job';
 import { PublishFromGitJobHandler } from './jobs/job-definitions/publish-from-git.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
@@ -49,6 +51,7 @@ export class JobHandlerService {
     private readonly pipelinePlanService: PublishPlanBuildService,
     private readonly pipelineRunService: PublishPlanRunService,
     private readonly publishFromGitService: PublishFromGitService,
+    private readonly applyPatchesService: ApplyPatchesService,
     private readonly dbService: DbService,
     private readonly postHogService: PostHogService,
     private readonly workbookService: WorkbookService,
@@ -114,6 +117,9 @@ export class JobHandlerService {
 
       case JobType.PublishFromGit:
         return new PublishFromGitJobHandler(this.publishFromGitService) as JobHandler<JobDefinition>;
+
+      case JobType.ApplyPatches:
+        return new ApplyPatchesJobHandler(this.applyPatchesService) as JobHandler<JobDefinition>;
 
       case JobType.DeleteWorkbook:
         return new DeleteWorkbookJobHandler(this.workbookService) as JobHandler<JobDefinition>;
