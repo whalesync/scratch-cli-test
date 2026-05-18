@@ -214,6 +214,20 @@ Done when: a fresh `init` against `wkb_3qH9SlxsNq` produces one bare repo + one 
 
 Done when: total wall time is dominated by the single slowest connection, not the sum.
 
+### Phase 7 — Delete `publish-v2/run-from-git`
+
+Once Phases 1–6 are live and the desktop app has shipped using `/upload-patch`, monitor server metrics for callers of `POST :id/publish-v2/run-from-git`. When zero callers are observed for a sustained window (≥7 consecutive days), delete:
+
+- The `run-from-git` endpoint in both `cli-workbook.controller.ts` and `publish-plan.controller.ts`.
+- `enqueuePublishFromGitJob` and `publish-from-git.service.ts`.
+- The CLI's local plan-build command (the `scratchmd files upload` flow that produces phase files).
+- `scratch-git-2/src/shared/plan_publish.rs` (~600 LOC) and any remaining callers.
+- The parity test introduced in Phase 1 (see Captured decisions §6).
+
+Net debt reduction: ~600 LOC + sparse-checkout config + SQLite index code removed. After Phase 7, the only publish path on the server is `/upload-patch` → `publish-v2/plan-job` → `publish-v2/run-job`.
+
+Done when: `run-from-git` has been removed from the server, CLI, and desktop, and the parity test is gone.
+
 ## Out of scope
 
 - Multi-user collaborative editing of the same workspace (still single-user assumed).
@@ -229,3 +243,101 @@ Done when: total wall time is dominated by the single slowest connection, not th
 - **gix `worktree add` gaps.** gix 0.70's worktree-add support is limited, so we shell out — same as today. If gix improves, we can swap, but the shell-out is acceptable on a one-call-per-connection path.
 - **Loss of git-as-undo.** Users currently have a local git history they could in principle inspect. Almost certainly unused, but worth confirming nobody depends on it.
 - **Migration of in-flight workspaces.** Anyone with a workspace already initialized on the old layout keeps using the old code paths until they re-init. We should add a one-liner to the desktop app prompting re-init when the new path lands.
+
+## Captured decisions from CEO review (2026-05-18)
+
+Reviewed by Curtis Fonger via `/plan-ceo-review` (HOLD SCOPE mode). The decisions below were locked during the review and should be reflected in the migration phases above when each phase is implemented.
+
+### 1. Phase 1 endpoint shape: upload then publish (split)
+
+The single `POST /publish { patches, baseHead }` originally proposed conflates two operations. Replace with:
+
+- `POST /workbook/:workbookId/upload-patch/init` → returns a presigned GCS URL + `uploadId`.
+- CLI `PUT`s the patch payload directly to GCS (NDJSON or single JSON).
+- `POST /workbook/:workbookId/upload-patch/commit { uploadId, baseHead? }` → enqueues a BullMQ job that streams the patch from GCS, applies it to the **server-side dirty branch** as a single commit, then triggers the existing `publish-v2/plan-job` + `run-job`.
+
+The upload is one atomic action; publishing is independent and can be re-triggered without re-uploading.
+
+### 2. Reuse the existing server publish pipeline
+
+The server already has `POST /workbook/:workbookId/publish-v2/plan-job` + `run-job` used by the web client. Phase 1 is **not** a new publish pipeline — it is a thin upload shim that puts patches onto the dirty branch in the shape the existing pipeline expects. Plan documentation and code comments should make this explicit so future readers don't think two parallel publish systems exist.
+
+### 3. `baseHead` semantics: optional, soft warning, never blocks
+
+`baseHead` on `/upload-patch/commit` is optional:
+
+- Omitted → server applies patches with no concurrency check.
+- Provided and matches server's `origin/main` → no warning, no extra response.
+- Provided and mismatches → server applies patches **anyway**, response includes `{ stalenessWarning: { newHead } }`. Desktop shows a non-blocking banner: "The server has more recent changes than what's on your computer. Refresh first?"
+
+Rationale: incremental polling (recently shipped on the server) regularly advances `main` server-side. Hard 409 rejection would fail too often in normal operation. Single-user assumption makes silent overwrites acceptably rare; the audit log (follow-up F3) and PostHog conflict event (§8) cover the rest.
+
+### 4. Server-side path validation
+
+`/upload-patch/commit` MUST validate every `patch.path` server-side and reject the entire request with 400 if any path:
+
+- Contains `..` segments
+- Has a leading `/`
+- Begins with `.git/` or `.scratch/`
+- Is not within a known DataFolder of the connector account
+
+CLI-side validation may also be added for better UX, but server-side is the gate.
+
+### 5. Worktree concurrency: file lock at `.scratch/lock`
+
+The new single-worktree design loses the implicit serialization the three-worktree model had. All mutating CLI operations (publish, pull, init, files commands) must acquire a file lock at `.scratch/lock` before proceeding. Second concurrent process exits with "workspace busy."
+
+Use the same locking primitive git itself uses (`gix::lock` or equivalent). Stale-lock detection: if the lock's PID is no longer alive, reclaim it.
+
+### 6. Test strategy: phase-aligned + cutover parity test
+
+Each phase ships with its own unit + integration tests. Phase 1 additionally ships a **parity test** that:
+
+- Takes a representative set of edits
+- Runs them through the new `/upload-patch` → `plan-job` → `run-job` path
+- Runs them through the legacy `run-from-git` path
+- Asserts identical publish results (same operations, same final state in `main`)
+
+The parity test is deleted in Phase 7 alongside `run-from-git`.
+
+### 7. Large publishes via presigned GCS upload
+
+Patches are uploaded to GCS, not POSTed inline. This avoids NestJS body-parser limits, keeps server memory bounded, and supports resumable uploads. A BullMQ job streams from GCS and applies the patch — fits the existing publish-v2 async-job UX. GCS bucket gets a ≤24h lifecycle rule on uploaded patches.
+
+### 8. Conflict telemetry: PostHog event from desktop
+
+On every same-field conflict during pull, the desktop fires a PostHog event with:
+
+- Connector account ID
+- Conflict count
+- Path pattern (folder, not file content)
+- (No record content — privacy)
+
+This gives visibility into whether user-wins is acceptable in practice, or whether real conflict-resolution UX is needed later.
+
+### 9. Rollout: server first, no feature flag
+
+- Server ships `/upload-patch` endpoints first; legacy `run-from-git` remains alive.
+- CLI/desktop ship a follow-up release that adopts `/upload-patch`.
+- Server identifies clients by which endpoint they call — no version sniffing needed. If a request hits `/upload-patch`, it's a newer client; if it hits `run-from-git`, it's older.
+- Phase 7 (delete `run-from-git`) gates on server metric: zero `run-from-git` callers for ≥7 consecutive days.
+
+## Follow-ups (from CEO review)
+
+Smaller items to track as separate tickets. None block shipping the phases above.
+
+| #   | Item                                                                      | Why                                                                            | Effort (CC) |
+| --- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------- |
+| F1  | Parallelize per-file patch loop in CLI publish (rayon)                    | 1000+ files sequential is slow on Monorepo                                     | 15min       |
+| F2  | gix-patterns docs page in `scratch-git-2/docs/`                           | Bus factor — only the spike file uses gix today                                | 30min       |
+| F3  | AuditLogService entries for `/upload-patch` + publish trigger             | `server/CLAUDE.md` requires audit logging on CLI interactions                  | 30min       |
+| F4  | Body size + nesting depth caps on `/upload-patch/commit`                  | DoS guard on the trigger endpoint (presigned upload itself is GCS)             | 15min       |
+| F5  | Init: 1/N connector failure policy (continue vs rollback)                 | Plan doesn't specify; needs choice + UX                                        | 30min       |
+| F6  | Init: re-run on partial state — resume or fail-clean                      | Detect partial prior init and decide                                           | 1h          |
+| F7  | iCloud/Dropbox workspace detection + warning                              | Git on cloud-synced FS corrupts state                                          | 1h          |
+| F8  | Multi-connection publish atomicity model                                  | Partial-success UX when 3/5 connectors succeed                                 | 1h          |
+| F9  | Publish-then-fetch failure → server-driven HEAD-advance signal            | Avoid silent local divergence when `git fetch` fails post-publish              | 1h          |
+| F10 | conflicts.log rotation                                                    | Prevent unbounded growth                                                       | 15min       |
+| F11 | Worktree lock metrics (acquire timeout, stale recovery)                   | Observability gap                                                              | 30min       |
+| F12 | Promote init-phase timings (`SCRATCHMD_PROFILE`) to PostHog event         | See init perf in production                                                    | 15min       |
+| F13 | End-to-end publish smoke test per deploy                                  | Catch regressions immediately post-deploy                                      | 1h          |
