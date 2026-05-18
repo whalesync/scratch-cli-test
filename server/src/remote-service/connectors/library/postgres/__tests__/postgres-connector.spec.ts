@@ -5,8 +5,8 @@ import {
   X_SCRATCH_MAX_LENGTH,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, ConnectorFile, EntityId } from '../../../types';
-import { type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
+import { BaseJsonTableSpec, ConnectorFile, EntityId, PullRecordFilesOptions } from '../../../types';
+import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
 import { PostgresConnector } from '../postgres-connector';
 
 function buildColumn(overrides: Partial<InformationSchemaColumn> & { column_name: string }): InformationSchemaColumn {
@@ -384,5 +384,148 @@ describe('PostgresConnector.fetchJsonTableSpec', () => {
     expect(tag[X_SCRATCH_MAX_LENGTH]).toBe(8);
     expect(tag[X_SCRATCH_READONLY]).toBe(true);
     expect(spec.schema.required).not.toContain('tag');
+  });
+});
+
+function buildIncrementalTableSpec(): BaseJsonTableSpec {
+  return {
+    id: { wsId: 'records', remoteId: ['public', 'records'] },
+    slug: 'records',
+    name: 'records',
+    schema: Type.Object({
+      id: Type.Number(),
+      name: Type.String(),
+      updated_at: Type.String(),
+    }),
+    idColumnRemoteId: 'id',
+  };
+}
+
+type SelectAllArgs = [
+  schema: string,
+  tableName: string,
+  columns: string[] | undefined,
+  primaryId: string,
+  limit: number,
+  offset: number,
+  filter?: string,
+  modifiedSinceColumn?: string,
+  modifiedSinceDatetime?: Date,
+];
+
+function selectAllCall(index = 0): SelectAllArgs {
+  return mockSelectAll.mock.calls[index] as SelectAllArgs;
+}
+
+describe('PostgresConnector incremental pulls', () => {
+  let connector: PostgresConnector;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDispose.mockResolvedValue(undefined);
+    mockSelectAll.mockResolvedValue([]); // empty page → loop exits after one call
+    connector = new PostgresConnector({ connectionString: 'postgres://test' });
+  });
+
+  describe('supportsIncrementalPull', () => {
+    it('returns false when modifiedAtField is unset', () => {
+      expect(connector.supportsIncrementalPull({}, buildIncrementalTableSpec())).toBe(false);
+    });
+
+    it('returns false when modifiedAtField is blank', () => {
+      expect(connector.supportsIncrementalPull({ modifiedAtField: '  ' }, buildIncrementalTableSpec())).toBe(false);
+    });
+
+    it('returns true when modifiedAtField is set (no SQL auto-detection)', () => {
+      expect(connector.supportsIncrementalPull({ modifiedAtField: 'updated_at' }, buildIncrementalTableSpec())).toBe(
+        true,
+      );
+    });
+  });
+
+  describe('pullRecordFiles', () => {
+    const callback = jest.fn().mockResolvedValue(undefined);
+
+    it('runs a full pull (no modified-since args) and returns {} when pullMode is not incremental', async () => {
+      const result = await connector.pullRecordFiles(buildIncrementalTableSpec(), callback, {}, { pullMode: 'full' });
+
+      expect(result).toEqual({});
+      const [, , , , , , filter, modifiedSinceColumn, modifiedSinceDatetime] = selectAllCall();
+      expect(filter).toBeUndefined();
+      expect(modifiedSinceColumn).toBeUndefined();
+      expect(modifiedSinceDatetime).toBeUndefined();
+    });
+
+    it('demotes to full when pullMode is incremental but modifiedAtField is unset', async () => {
+      const since = new Date('2026-05-01T00:00:00.000Z');
+      const options: PullRecordFilesOptions = { pullMode: 'incremental', since };
+
+      const result = await connector.pullRecordFiles(buildIncrementalTableSpec(), callback, {}, options);
+
+      expect(result).toEqual({});
+      const [, , , , , , , modifiedSinceColumn, modifiedSinceDatetime] = selectAllCall();
+      expect(modifiedSinceColumn).toBeUndefined();
+      expect(modifiedSinceDatetime).toBeUndefined();
+    });
+
+    it('passes the column + clock-skew-adjusted datetime and returns a newWatermark', async () => {
+      const since = new Date('2026-05-01T12:00:00.000Z');
+      const options: PullRecordFilesOptions = { pullMode: 'incremental', since, modifiedAtField: 'updated_at' };
+
+      const before = Date.now();
+      const result = await connector.pullRecordFiles(buildIncrementalTableSpec(), callback, {}, options);
+      const after = Date.now();
+
+      const [schema, tableName, , , , , filter, modifiedSinceColumn, modifiedSinceDatetime] = selectAllCall();
+      expect(schema).toBe('public');
+      expect(tableName).toBe('records');
+      expect(filter).toBeUndefined();
+      expect(modifiedSinceColumn).toBe('updated_at');
+      expect((modifiedSinceDatetime as Date).getTime()).toBe(since.getTime() - PG_INCREMENTAL_CLOCK_SKEW_MS);
+
+      expect(result.newWatermark).toBeInstanceOf(Date);
+      expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+      expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
+    });
+
+    it('passes the user filter through alongside the modified-since args', async () => {
+      const since = new Date('2026-05-01T12:00:00.000Z');
+      const options: PullRecordFilesOptions = {
+        pullMode: 'incremental',
+        since,
+        modifiedAtField: 'updated_at',
+        filter: "name = 'Acme'",
+      };
+
+      await connector.pullRecordFiles(buildIncrementalTableSpec(), callback, {}, options);
+
+      const [, , , , , , filter, modifiedSinceColumn] = selectAllCall();
+      expect(filter).toBe("name = 'Acme'");
+      expect(modifiedSinceColumn).toBe('updated_at');
+    });
+
+    it('throws before querying when modifiedAtField is not a column on the table', async () => {
+      const since = new Date('2026-05-01T12:00:00.000Z');
+      const options: PullRecordFilesOptions = { pullMode: 'incremental', since, modifiedAtField: 'does_not_exist' };
+
+      await expect(connector.pullRecordFiles(buildIncrementalTableSpec(), callback, {}, options)).rejects.toThrow(
+        /does not exist/,
+      );
+      expect(mockSelectAll).not.toHaveBeenCalled();
+    });
+
+    it('ignores since and returns {} on a full pull even when modifiedAtField is set', async () => {
+      const options: PullRecordFilesOptions = {
+        pullMode: 'full',
+        since: new Date('2026-05-01T12:00:00.000Z'),
+        modifiedAtField: 'updated_at',
+      };
+
+      const result = await connector.pullRecordFiles(buildIncrementalTableSpec(), callback, {}, options);
+
+      expect(result).toEqual({});
+      const [, , , , , , , modifiedSinceColumn] = selectAllCall();
+      expect(modifiedSinceColumn).toBeUndefined();
+    });
   });
 });

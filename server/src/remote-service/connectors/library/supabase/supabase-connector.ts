@@ -11,6 +11,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import {
   connectorMetadata,
+  ConnectorSettingDefinition,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
@@ -33,10 +34,13 @@ import {
   type TablePreview,
 } from '../../types';
 import {
+  applyPgClockSkew,
+  assertModifiedAtColumnExists,
   isGeneratedColumn,
   KnexPGClient,
   KnexPGClientError,
   mapPgType,
+  resolvePgModifiedAtField,
   SUPABASE_SYSTEM_SCHEMA_PATTERNS,
   SUPABASE_SYSTEM_SCHEMAS,
   TableName,
@@ -65,6 +69,7 @@ export class SupabaseConnector extends Connector {
     base: 'project',
     bases: 'projects',
     logo: 'https://static.scratch.md/connector-icons/supabase.svg',
+    incrementalPull: true,
     oauth: { label: 'OAuth' },
     userProvidedParamsLabel: 'Connection String',
     credentialFields: {
@@ -80,6 +85,18 @@ export class SupabaseConnector extends Connector {
       ],
     },
   });
+  static readonly advancedSettings: ConnectorSettingDefinition[] = [
+    {
+      key: 'modifiedAtField',
+      type: 'field-select',
+      label: 'Last modified time field',
+      description:
+        'Name of a timestamp column that records when each row was last changed (e.g. updated_at). ' +
+        'Enables incremental pulls — when set, scheduled INCREMENTAL_PULL runs fetch only rows changed ' +
+        'since the previous run. Leave empty to always do full pulls.',
+      placeholder: 'e.g. updated_at',
+    },
+  ];
 
   private readonly connectionString: string | undefined;
   private readonly projects: SupabaseProjectConfig[];
@@ -350,6 +367,26 @@ export class SupabaseConnector extends Connector {
   // Pull
   // -------------------------------------------------------------------------
 
+  /**
+   * Supabase supports incremental pulls only when the user has declared which
+   * column stores the row's last-modified timestamp. SQL has no last-modified
+   * convention, so there is no schema-annotated auto-detection — without an
+   * explicit `modifiedAtField` the job demotes the run to a full scan.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  override supportsIncrementalPull(options: PullRecordFilesOptions, _tableSpec: BaseJsonTableSpec): boolean {
+    return this.resolveModifiedAtField(options) !== undefined;
+  }
+
+  /**
+   * Resolve the modified-since column. Explicit `options.modifiedAtField` only
+   * (no auto-detection for SQL). Helper shape kept identical to Airtable's for
+   * consistency across connectors.
+   */
+  private resolveModifiedAtField(options: PullRecordFilesOptions): string | undefined {
+    return resolvePgModifiedAtField(options);
+  }
+
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
@@ -361,6 +398,25 @@ export class SupabaseConnector extends Connector {
       validateWhereFilter(rawFilter);
     }
 
+    const modifiedAtField = this.resolveModifiedAtField(options);
+    const isIncremental =
+      options.pullMode === 'incremental' && modifiedAtField !== undefined && options.since instanceof Date;
+
+    let newWatermark: Date | undefined;
+    let modifiedSinceColumn: string | undefined;
+    let modifiedSinceDatetime: Date | undefined;
+
+    if (isIncremental && options.since && modifiedAtField) {
+      // Reject a typo'd column up front (it comes from user options) so the
+      // pull fails fast with a clear message instead of an opaque SQL error.
+      assertModifiedAtColumnExists(tableSpec.schema, tableSpec.name, modifiedAtField);
+      // Capture the start-of-pull timestamp BEFORE the first query so changes
+      // made mid-pull aren't lost; idempotent commits absorb any duplicates.
+      newWatermark = new Date();
+      modifiedSinceColumn = modifiedAtField;
+      modifiedSinceDatetime = applyPgClockSkew(options.since);
+    }
+
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     await this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
@@ -369,7 +425,17 @@ export class SupabaseConnector extends Connector {
       let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
 
       while (true) {
-        const rows = await client.selectAll(schema, tableName, undefined, pk, READ_BATCH_SIZE, offset, filter);
+        const rows = await client.selectAll(
+          schema,
+          tableName,
+          undefined,
+          pk,
+          READ_BATCH_SIZE,
+          offset,
+          filter,
+          modifiedSinceColumn,
+          modifiedSinceDatetime,
+        );
         if (rows.length === 0) break;
 
         offset += rows.length;
@@ -378,7 +444,7 @@ export class SupabaseConnector extends Connector {
         if (rows.length < READ_BATCH_SIZE) break;
       }
     }, resolved.connectionString);
-    return {};
+    return newWatermark ? { newWatermark } : {};
   }
 
   async pullRecordFilesByIds(
@@ -588,7 +654,7 @@ export class SupabaseConnector extends Connector {
 connectorRegistry.register({
   service: Service.SUPABASE,
   metadata: SupabaseConnector.metadata,
-  advancedSettings: [],
+  advancedSettings: SupabaseConnector.advancedSettings,
   supportedAuthMethods: ['oauth', 'user_provided_params'],
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

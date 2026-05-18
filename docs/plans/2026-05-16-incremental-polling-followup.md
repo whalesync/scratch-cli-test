@@ -1,21 +1,23 @@
 # Incremental Polling — Follow-up: More Connectors + Web UI
 
 **Date**: 2026-05-16
-**Status**: Track 1 planned · **Track 2 (Web UI) landed 2026-05-16**
+**Status**: Track 1 in progress — **PostgreSQL + Supabase landed 2026-05-17** (Notion pending; Webflow deferred — see Out of scope) · **Track 2 (Web UI) landed 2026-05-16**
 **Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling)
 **Depends on**: [2026-05-14-incremental-polling.md](2026-05-14-incremental-polling.md) (server pipeline + Airtable, landed; scheduler/API/CLI landed in `7fd093ce`)
 **Scope**: Two independent tracks that can ship separately —
 
-1. Extend the incremental-pull contract to **Webflow, PostgreSQL, Supabase, Notion**.
+1. Extend the incremental-pull contract to **PostgreSQL, Supabase, Notion**.
 2. **Web client UI** on the Workspace page: incremental pull menu actions, separate full/incremental schedules, and the last-modified-field control in Advanced Settings.
 
 > **Update 2026-05-17:** `fullPullOnly` was dropped from the feature entirely — removed from `DataFolderOptions`, the pull-job demotion logic, and the Advanced Settings UI. References to it below are retained for history but struck through where they described removed behavior.
+>
+> **Update 2026-05-17:** Webflow incremental pull (§1a) is **deferred** (user decision) — not implemented in this iteration. `incrementalPull` stays `false` for Webflow; it full-scans as today. The §1a design is retained below marked DEFERRED; all active Track 1 references (status, variant table, tests, critical files, open questions) exclude Webflow, and Webflow is listed under Out of scope.
 
 ## Context
 
 The initial plan landed the full server pipeline (connector contract, `PullLinkedFolderFilesJob`, scheduler/API/CLI mode plumbing) and proved it end-to-end against **Airtable only**. Every other connector still inherits `supportsIncrementalPull() = false` and full-scans. There is **no UI** — `fullPullOnly`, `modifiedAtField`, and the `FULL_PULL` / `INCREMENTAL_PULL` schedule actions are reachable only via API/CLI. `PullScheduleModal` still hardcodes the deprecated `ScheduleAction.PULL`.
 
-This follow-up does two things: (1) implement the incremental branch in four more connectors using the Airtable pattern, adapted to each API's modified-since mechanism; (2) expose the whole feature in the web client so users can actually configure and trigger it.
+This follow-up does two things: (1) implement the incremental branch in three more connectors using the Airtable pattern, adapted to each API's modified-since mechanism; (2) expose the whole feature in the web client so users can actually configure and trigger it.
 
 The two tracks are independent. Track 1 needs no UI; Track 2's manual-trigger and schedule pieces work against Airtable today and light up automatically for the new connectors as Track 1 lands. The only shared dependency is the **connector capability flag** (below), which Track 2 needs to gate UI and Track 1 sets per connector.
 
@@ -28,7 +30,7 @@ The two tracks are independent. Track 1 needs no UI; Track 2's manual-trigger an
 Add a static flag to `ConnectorMetadata` rather than overloading the runtime method:
 
 - [packages/shared-types/src/connector/metadata.ts](../../packages/shared-types/src/connector/metadata.ts): add `incrementalPull: boolean` to `ConnectorMetadata`; default `false` in `DEFAULTS`.
-- Set `incrementalPull: true` in the `connectorMetadata({...})` call of each connector that implements the contract: Airtable (already implemented), plus Webflow, PostgreSQL, Supabase, Notion as Track 1 lands them.
+- Set `incrementalPull: true` in the `connectorMetadata({...})` call of each connector that implements the contract: Airtable (already implemented), plus PostgreSQL, Supabase, Notion as Track 1 lands them. (Webflow deferred — see Out of scope; stays `false`.)
 - This is the same pattern as `supportedAuthMethods` / `visible`. It is already fetched globally by the client via `useConnectorsMetadata()` (keyed by `Service`), so both the tree context menus and the Advanced Settings modal can read it with no new endpoint.
 
 This static flag is the single source of truth for "show the incremental UI." The runtime `supportsIncrementalPull(options, tableSpec)` still governs whether a given _folder's_ run actually goes incremental or gets demoted to full by the job — unchanged from the base plan. A folder whose connector advertises `incrementalPull: true` but has no resolvable last-modified field still demotes to full at job time (existing behavior); the UI may optionally warn about this (see [2d](#2d-advanced-settings-last-modified-time-field-dropdown)).
@@ -50,14 +52,15 @@ Each connector differs only in step 1 (which field) and step 5 (the API's modifi
 
 | Connector  | Modified-since mechanism                                        | Last-modified field                                             | Clock-skew margin                                                             |
 | ---------- | --------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Webflow    | **No server-side filter** — client-side filter while paginating | `lastUpdated` (collection items, assets, pages) — auto-detected | 60s (applied client-side)                                                     |
 | PostgreSQL | SQL `WHERE <col> > $since` via Knex builder                     | user-declared `modifiedAtField` (no convention)                 | 60s                                                                           |
 | Supabase   | identical to PostgreSQL (shared `KnexPGClient`)                 | user-declared `modifiedAtField`                                 | 60s                                                                           |
 | Notion     | `databases.query` `filter` on `last_edited_time`                | fixed system field `last_edited_time` (always present)          | 0 (Notion timestamp is server-side and the filter is inclusive `on_or_after`) |
 
 Reuse the Airtable helper-module idea: each connector gets a small `*-incremental.ts` with its predicate builder + filter-combiner + clock-skew constant, mirroring [airtable-incremental.ts](../../server/src/remote-service/connectors/library/airtable/airtable-incremental.ts). Do **not** try to share one helper across connectors — the predicate syntaxes (Airtable formula, SQL, Notion JSON, JS comparison) have nothing in common; only the _shape_ of the code is shared.
 
-### 1a. Webflow
+### 1a. Webflow — ⏸️ DEFERRED (2026-05-17 — not in this iteration)
+
+> **Deferred by user decision (2026-05-17).** Webflow incremental pull is **not being implemented at this time**. The design below is retained for a possible future iteration; it is **not** active Track 1 work and Webflow is listed under [Out of scope](#out-of-scope). Skip to [1b](#1b-postgresql--supabase-shared-pg-common) for active work. Everything in this subsection is design-only until the deferral is lifted.
 
 [server/src/remote-service/connectors/library/webflow/](../../server/src/remote-service/connectors/library/webflow/)
 
@@ -118,7 +121,7 @@ Notion has a **fixed system field** `last_edited_time` on every page and a real 
 The base plan left the guide update pending. Complete it here with the now-multiple worked examples, documenting the three modified-since archetypes so future connectors pick the right one:
 
 - **Server-side predicate** (Airtable formula, SQL `WHERE`, Notion filter) — preferred; combine with user filter.
-- **Client-side filter during pagination** (Webflow) — when the API has no filter param; explain why early-termination needs guaranteed sort order.
+- **Client-side filter during pagination** — when the API has no `modified_since` param; filter records in-process while paginating. **No connector implements this yet** (the Webflow design that would have is deferred — see Out of scope); document the archetype and why early-termination needs guaranteed sort order so the first connector to need it picks the right pattern.
 - **Opaque cursor / change feed** (none yet; keep the base plan's note).
 
 Document: the `resolveModifiedAtField` two-layer precedence, the `X_SCRATCH_LAST_MODIFIED_FIELD` annotation, the watermark-before-first-call rule, per-connector clock-skew rationale, the `ConnectorMetadata.incrementalPull` static flag, and the Notion nesting-limit demotion.
@@ -127,9 +130,9 @@ Document: the `resolveModifiedAtField` two-layer precedence, the `X_SCRATCH_LAST
 
 Per connector, mirroring the Airtable specs:
 
-- `supportsIncrementalPull` truthiness (Webflow/PG/Supabase: with/without resolvable field; Notion: always true).
+- `supportsIncrementalPull` truthiness (PG/Supabase: with/without resolvable field; Notion: always true).
 - `pullRecordFiles` with `pullMode: 'incremental'`: predicate built correctly, combined with a user filter, clock-skew applied (where applicable), `{ newWatermark }` returned; `pullMode: 'full'` returns `{}` and ignores `since`.
-- Schema-builder specs: Webflow `lastUpdated` (×3 table types) and Notion `last_edited_time` get `x-scratch-last-modified-field: true`.
+- Schema-builder spec: Notion `last_edited_time` gets `x-scratch-last-modified-field: true`.
 - `KnexPGClient.selectAll` spec: with `modifiedSinceColumn`+`modifiedSinceDatetime` emits a parameterized `> ` predicate that ANDs with an existing raw filter; absent → query unchanged.
 - Notion compound-filter nesting-limit guard demotes to full.
 - Integration (`yarn test:integration`) against a real test source per connector where infra exists (at minimum Notion and one SQL): bootstrap full → modify one record → incremental → only that record's file changes in git, watermark advances.
@@ -167,7 +170,7 @@ Today `modifiedAtField` is a `type: 'string'` `ConnectorSettingDefinition` rende
 
 Two implementation options — **recommended: option A** (keeps the generic settings renderer reusable):
 
-- **Option A — new setting type.** Add `'field-select'` to `ConnectorSettingDefinition.type` in [packages/shared-types/src/connector/dtos.ts](../../packages/shared-types/src/connector/dtos.ts). In `ConnectorSettingField`, render a Mantine `Select` (`searchable`, with an Autocomplete-style "use typed value" fallback) when `setting.type === 'field-select'`. Change each SQL/Webflow connector's `modifiedAtField` entry to `type: 'field-select'`. The field options come from a new prop the modal passes down (schema field list).
+- **Option A — new setting type.** Add `'field-select'` to `ConnectorSettingDefinition.type` in [packages/shared-types/src/connector/dtos.ts](../../packages/shared-types/src/connector/dtos.ts). In `ConnectorSettingField`, render a Mantine `Select` (`searchable`, with an Autocomplete-style "use typed value" fallback) when `setting.type === 'field-select'`. Change each SQL connector's `modifiedAtField` entry to `type: 'field-select'`. The field options come from a new prop the modal passes down (schema field list).
 - **Option B — special-case `modifiedAtField`** in the modal by key. Less invasive to shared-types but leaks a magic key into the generic renderer; not recommended.
 
 Field-options source: fetch the folder's flattened schema fields via the existing **`GET /data-folder/:id/schema-paths`** endpoint ([client/src/lib/api/data-folder.ts](../../client/src/lib/api/data-folder.ts) — add a `getSchemaPaths` fn + `SWR_KEYS.dataFolders.schemaPaths` key if not present; server returns `SchemaField[]` with name/path/type, already traversal-aware for nested vs flat schemas). Build options as:
@@ -176,7 +179,7 @@ Field-options source: fetch the folder's flattened schema fields via the existin
 2. Then date/datetime-typed fields.
 3. Then all remaining fields (searchable), plus accept a custom typed value.
 
-Pre-select the auto-detected field as the placeholder/hint so users with a typed last-modified column (Webflow auto, Airtable auto) see it works with no input. Notion does not expose `modifiedAtField` so this control simply does not render for Notion (no such advancedSetting).
+Pre-select the auto-detected field as the placeholder/hint so users with a typed last-modified column (Airtable auto) see it works with no input. Notion does not expose `modifiedAtField` so this control simply does not render for Notion (no such advancedSetting).
 
 ### 2e. Separate full vs incremental schedules
 
@@ -209,23 +212,23 @@ Optional nicety (note, not required for v1): if the incremental row is enabled b
 
 ## Out of scope
 
-- Connectors beyond Webflow / PostgreSQL / Supabase / Notion (HubSpot, Shopify, Linear, WordPress, etc. remain `false`; the base plan's table tracks them).
+- Connectors beyond PostgreSQL / Supabase / Notion (HubSpot, Shopify, Linear, WordPress, etc. remain `false`; the base plan's table tracks them).
+- **Webflow incremental pull — deferred (2026-05-17, user decision).** Not implemented in this iteration; `incrementalPull` stays `false` for Webflow and it full-scans as today. The §1a design is retained (marked DEFERRED) for a future iteration.
 - Removing the `PULL` enum value (still deferred to the base plan's cleanup migration; this plan only converges rows opportunistically via the schedule modal).
 - Webhook / change-data-capture / deletion feeds.
 - Connector-level (workbook-wide) schedule management — schedules remain per-DataFolder; only the modal gains a second action row.
-- Webflow early-termination via guaranteed sort order (documented as an optional optimization, not implemented in v1).
 
 ## Critical files
 
 **Track 1 — server**
 
 - [packages/shared-types/src/connector/metadata.ts](../../packages/shared-types/src/connector/metadata.ts) — add `ConnectorMetadata.incrementalPull` (default false). ⏳
-- [server/src/remote-service/connectors/library/webflow/](../../server/src/remote-service/connectors/library/webflow/) — annotate `lastUpdated` (items/assets/pages); `advancedSettings`; `supportsIncrementalPull`; client-side filter branch; `webflow-incremental.ts`; `incrementalPull: true` metadata. ⏳
-- [server/src/remote-service/connectors/library/pg-common/knex-pg-client.ts](../../server/src/remote-service/connectors/library/pg-common/knex-pg-client.ts) — `selectAll` gains `modifiedSinceColumn`/`modifiedSinceDatetime`. ⏳
-- [server/src/remote-service/connectors/library/postgres/postgres-connector.ts](../../server/src/remote-service/connectors/library/postgres/postgres-connector.ts) & [supabase/supabase-connector.ts](../../server/src/remote-service/connectors/library/supabase/supabase-connector.ts) — `advancedSettings`, resolver, capability, incremental branch, column validation, `incrementalPull: true`. ⏳
-- [server/src/remote-service/connectors/library/pg-common/pg-incremental.ts](../../server/src/remote-service/connectors/library/pg-common/) — new shared helper. ⏳
+- ~~[server/src/remote-service/connectors/library/webflow/](../../server/src/remote-service/connectors/library/webflow/) — annotate `lastUpdated` (items/assets/pages); `advancedSettings`; `supportsIncrementalPull`; client-side filter branch; `webflow-incremental.ts`; `incrementalPull: true` metadata.~~ ⏸️ DEFERRED (2026-05-17) — see §1a / Out of scope.
+- [server/src/remote-service/connectors/library/pg-common/knex-pg-client.ts](../../server/src/remote-service/connectors/library/pg-common/knex-pg-client.ts) — `selectAll` gains `modifiedSinceColumn`/`modifiedSinceDatetime` (parameterized `knex.ref(col) > date`, ANDs with raw filter). ✅ landed 2026-05-17
+- [server/src/remote-service/connectors/library/postgres/postgres-connector.ts](../../server/src/remote-service/connectors/library/postgres/postgres-connector.ts) & [supabase/supabase-connector.ts](../../server/src/remote-service/connectors/library/supabase/supabase-connector.ts) — `advancedSettings` (`modifiedAtField` field-select), resolver, `supportsIncrementalPull` override, incremental branch, column validation, `incrementalPull: true` metadata, registered `advancedSettings`. ✅ landed 2026-05-17
+- [server/src/remote-service/connectors/library/pg-common/pg-incremental.ts](../../server/src/remote-service/connectors/library/pg-common/) — new shared helper (`PG_INCREMENTAL_CLOCK_SKEW_MS`, `resolvePgModifiedAtField`, `applyPgClockSkew`, `assertModifiedAtColumnExists`); exported via `pg-common/index.ts`. ✅ landed 2026-05-17
 - [server/src/remote-service/connectors/library/notion/notion-connector.ts](../../server/src/remote-service/connectors/library/notion/notion-connector.ts) & [notion-json-schema.ts](../../server/src/remote-service/connectors/library/notion/notion-json-schema.ts) — annotate `last_edited_time`; `supportsIncrementalPull = true`; filter branch with nesting-limit demotion; `notion-incremental.ts`; `incrementalPull: true`. ⏳
-- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md) — complete the incremental section with the three archetypes. ⏳ (carried from base plan)
+- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md) — added "Incremental Pulls" section: the full contract (static `incrementalPull` flag, `resolveModifiedAtField` precedence, `X_SCRATCH_LAST_MODIFIED_FIELD`, watermark-before-first-call, clock-skew), the three archetypes, and the SQL server-side-predicate worked example. 🟡 Notion worked example to be filled as that connector lands. (Webflow worked example deferred with §1a.)
 
 **Track 2 — client / shared-types — ✅ landed 2026-05-16**
 
@@ -246,7 +249,7 @@ Optional nicety (note, not required for v1): if the incremental row is enabled b
 
 ## Open questions
 
-1. **Webflow early-termination**: requires confirming the Webflow SDK supports `sortBy: lastUpdated` desc on all three list endpoints (items/assets/pages). If only collection items support it, do we ship the optimization partially or keep the uniform client-side-filter approach? Recommendation: uniform client-side filter for v1, optimize later.
+1. ~~**Webflow early-termination**~~ — **moot**: Webflow incremental deferred (2026-05-17). See Out of scope / §1a.
 2. **Field-select setting type (2d)**: Option A (new shared-types `type`) vs Option B (modal special-cases the key). Recommendation: Option A for a reusable renderer; flagged here because it touches shared-types consumed by client + server.
    ANSWER: use option A
 3. **Legacy `PULL` convergence (2e)**: convert `PULL`→`FULL_PULL` on edit via delete+recreate (recommended, converges DB) vs leave `PULL` untouched and only ever create new `FULL_PULL`/`INCREMENTAL_PULL` rows (less DB churn, slower convergence). The base plan's data migration is the primary converger; this is belt-and-suspenders.

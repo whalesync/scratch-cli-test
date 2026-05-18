@@ -13,6 +13,12 @@ export {
   type TableName,
 } from './knex-pg-types';
 export {
+  PG_INCREMENTAL_CLOCK_SKEW_MS,
+  applyPgClockSkew,
+  assertModifiedAtColumnExists,
+  resolvePgModifiedAtField,
+} from './pg-incremental';
+export {
   PG_BOOLEAN_TYPES,
   PG_DATE_TYPES,
   PG_JSON_TYPES,

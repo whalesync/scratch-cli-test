@@ -325,6 +325,13 @@ export class KnexPGClient {
   /**
    * Paginated SELECT with ORDER BY primary key.
    * Returns sanitized row objects.
+   *
+   * When both `modifiedSinceColumn` and `modifiedSinceDatetime` are supplied
+   * (incremental pulls), a parameterized `WHERE <col> > $since` predicate is
+   * appended. The column is quoted via Knex's identifier ref and the datetime
+   * is bound as a parameter — never string-interpolated — so a user-declared
+   * column/value can't inject SQL. Knex ANDs this with any raw `filter`.
+   * Ordering and offset pagination are unchanged.
    */
   async selectAll(
     schema: string,
@@ -334,11 +341,16 @@ export class KnexPGClient {
     limit: number,
     offset: number,
     filter?: string,
+    modifiedSinceColumn?: string,
+    modifiedSinceDatetime?: Date,
   ): Promise<Record<string, unknown>[]> {
     const selection = columns ? escapeColumns(columns) : '*';
     let query = this.knex(`${schema}.${tableName}`).select(selection).orderBy(primaryId).offset(offset).limit(limit);
     if (filter) {
       query = query.whereRaw(filter);
+    }
+    if (modifiedSinceColumn && modifiedSinceDatetime) {
+      query = query.where(this.knex.ref(modifiedSinceColumn), '>', modifiedSinceDatetime);
     }
     const rows = (await query) as Record<string, unknown>[];
     return rows.map(sanitizeRow);

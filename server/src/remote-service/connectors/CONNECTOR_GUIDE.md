@@ -319,6 +319,77 @@ The async iterator pattern wraps pagination internally in the API client. The ge
 
 **Important:** All connectors must persist pagination state via `connectorProgress`. When a BullMQ job stalls and restarts, the saved `connectorProgress` is passed back to `pullRecordFiles` as the `progress` parameter. If your connector doesn't write `connectorProgress`, it will re-fetch from page 1 on every restart.
 
+### Incremental Pulls
+
+A full pull re-fetches every record every run. An **incremental pull** fetches only records changed since the previous run, which the job decides between by mode:
+
+- `options.pullMode === 'full'` (or absent) — full scan; ignore `options.since` / `options.cursor`; return `{}`.
+- `options.pullMode === 'incremental'` — fetch only records modified since `options.since`; return `{ newWatermark }` (or `{ newCursor }` for token-based APIs). Only invoked when `supportsIncrementalPull(options, tableSpec)` returned `true`.
+
+The job demotes an incremental run to a full scan whenever `supportsIncrementalPull` is `false` or there is no prior watermark (bootstrap), so a connector never has to special-case the first run.
+
+#### The contract (all incremental connectors)
+
+1. **`ConnectorMetadata.incrementalPull: true`** — a _static, per-connector_ flag set in `connectorMetadata({ ... })`. The web client reads it to gate the incremental menu items and the incremental schedule row. It says only "this connector type can do incremental"; the _runtime_ `supportsIncrementalPull(options, tableSpec)` still decides per folder.
+2. **`resolveModifiedAtField(options, tableSpec)`** — a private helper with a fixed two-layer precedence:
+   1. explicit `options.modifiedAtField` (trimmed) if the user set one in advanced settings;
+   2. else auto-detect: the first schema field annotated with `X_SCRATCH_LAST_MODIFIED_FIELD` (`x-scratch-last-modified-field`), found via `findLastModifiedFieldName(tableSpec)`.
+
+   Connectors over an API with no last-modified convention (SQL) skip layer 2 — there is nothing to annotate, so resolution is the explicit setting only.
+3. **`supportsIncrementalPull`** — usually `return this.resolveModifiedAtField(...) !== undefined`. Connectors with a guaranteed system field (e.g. Notion's `last_edited_time`) return `true` unconditionally.
+4. **`advancedSettings`** — expose `modifiedAtField` as a `field-select` setting so users can override/declare the column, unless the field is fixed and not user-selectable.
+5. **Watermark-before-first-call rule** — capture `newWatermark = new Date()` _before the first API call_, not after the last. Anything modified mid-pull is then re-pulled next run rather than skipped; idempotent commits absorb the duplicates.
+6. **Clock-skew margin** — the watermark is captured on the worker; the record's modified-at is written by the remote. Subtract a small per-connector margin from `since` so a record modified just before `pullStartedAt` on a skewed clock isn't missed. The margin is `0` only when the remote filter is inclusive and uses a server-side timestamp.
+
+#### Modified-since archetypes
+
+Pick the one matching the remote API:
+
+- **Server-side predicate** (preferred — Airtable formula, SQL `WHERE`, Notion filter): the remote filters; you page through only changed records. Combine with any user `options.filter` (AND them). Lowest cost.
+- **Client-side filter during pagination** (Webflow — no `modified_since` param): page through everything and drop records older than the cutoff before the callback. You cannot early-terminate unless the API guarantees modified-time sort order, so the win is skipping git writes for unchanged records, not API quota.
+- **Opaque cursor / change feed**: persist `newCursor` instead of `newWatermark` and resume from it. None implemented yet.
+
+##### Worked example — server-side predicate (SQL: Postgres / Supabase)
+
+SQL has no last-modified convention, so there is **no schema annotation**: incremental support is gated entirely on the user declaring `modifiedAtField`. Both PG connectors share `pg-common/pg-incremental.ts` (`PG_INCREMENTAL_CLOCK_SKEW_MS = 60_000`, `resolvePgModifiedAtField`, `applyPgClockSkew`, `assertModifiedAtColumnExists`) and the shared `KnexPGClient.selectAll`, which appends a **parameterized** predicate when given a modified-since column + datetime:
+
+```typescript
+if (modifiedSinceColumn && modifiedSinceDatetime) {
+  // knex.ref() quotes the identifier; the Date binds as a parameter.
+  // Never string-interpolate a user-supplied column or value into SQL.
+  query = query.where(this.knex.ref(modifiedSinceColumn), '>', modifiedSinceDatetime);
+}
+```
+
+```typescript
+override supportsIncrementalPull(options: PullRecordFilesOptions): boolean {
+  return this.resolveModifiedAtField(options) !== undefined; // explicit only — no SQL auto-detect
+}
+
+async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecordFilesResult> {
+  const modifiedAtField = this.resolveModifiedAtField(options);
+  const isIncremental =
+    options.pullMode === 'incremental' && modifiedAtField !== undefined && options.since instanceof Date;
+
+  let newWatermark: Date | undefined;
+  let modifiedSinceColumn: string | undefined;
+  let modifiedSinceDatetime: Date | undefined;
+  if (isIncremental && options.since && modifiedAtField) {
+    // The column comes from user options — reject a typo up front against the
+    // schema (built from information_schema.columns) so it fails fast with a
+    // clear message instead of an opaque mid-pull SQL error.
+    assertModifiedAtColumnExists(tableSpec.schema, tableSpec.name, modifiedAtField);
+    newWatermark = new Date();                          // BEFORE the first query
+    modifiedSinceColumn = modifiedAtField;
+    modifiedSinceDatetime = applyPgClockSkew(options.since); // since - 60s
+  }
+  // ...paginate via selectAll(..., rawFilter, modifiedSinceColumn, modifiedSinceDatetime)...
+  return newWatermark ? { newWatermark } : {};
+}
+```
+
+Reuse the helper-module _shape_ but **not one shared helper across connector families** — predicate syntaxes (Airtable formula, SQL, Notion JSON) have nothing in common; only the code shape is shared. See `airtable/airtable-incremental.ts` for the formula-based variant.
+
 ### Hydration
 
 When the API returns lightweight list results but you need full detail, use the **light list + heavy hydrate** pattern:

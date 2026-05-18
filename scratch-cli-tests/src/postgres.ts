@@ -119,6 +119,66 @@ export async function setupProductsTable(): Promise<void> {
 }
 
 /**
+ * Set up `integration_products` for incremental-pull tests.
+ *
+ * Loads the schema (`test_table_products.sql`) and rows
+ * (`test_data_products.sql`), then **backdates every row's `created_dt` /
+ * `updated_dt` to a fixed point well in the past** (`2020-01-01`).
+ *
+ * The backdating is essential, not cosmetic. The Postgres connector's
+ * incremental predicate is `WHERE updated_dt > (since - 60s)` (a 60s
+ * clock-skew margin — `PG_INCREMENTAL_CLOCK_SKEW_MS`). `test_data_products.sql`
+ * inserts rows with `updated_dt = CURRENT_TIMESTAMP`, so without backdating the
+ * un-edited rows would fall inside the first incremental pull's skew window
+ * (their `updated_dt` is only seconds older than the full-pull watermark) and
+ * the "exactly one row changed" assertion would see all five. Pinning them to
+ * 2020 puts them safely below `watermark - 60s` so only the row we explicitly
+ * touch in the test is returned.
+ */
+export async function setupIncrementalProductsTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${PRODUCTS_TABLE} CASCADE`);
+
+    const schemaSql = fs.readFileSync(
+      path.resolve(__dirname, "../test_table_products.sql"),
+      "utf-8",
+    );
+    await client.query(schemaSql);
+
+    const dataSql = fs.readFileSync(
+      path.resolve(__dirname, "../test_data_products.sql"),
+      "utf-8",
+    );
+    await client.query(dataSql);
+
+    // Backdate so the seeded rows sit outside the incremental clock-skew window.
+    await client.query(
+      `UPDATE ${PRODUCTS_TABLE}
+         SET created_dt = TIMESTAMP '2020-01-01 00:00:00',
+             updated_dt = TIMESTAMP '2020-01-01 00:00:00'`,
+    );
+
+    const count = await client.query(
+      `SELECT COUNT(*) AS cnt FROM ${PRODUCTS_TABLE}`,
+    );
+    const rowCount = parseInt(count.rows[0].cnt, 10);
+    if (rowCount !== 5) {
+      throw new Error(
+        `Expected 5 rows in ${PRODUCTS_TABLE} but found ${rowCount}`,
+      );
+    }
+    console.log(
+      `[postgres] ${PRODUCTS_TABLE}: ${rowCount} rows loaded (backdated to 2020-01-01)`,
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
  * Drop the integration_products table.
  */
 export async function teardownProductsTable(): Promise<void> {
