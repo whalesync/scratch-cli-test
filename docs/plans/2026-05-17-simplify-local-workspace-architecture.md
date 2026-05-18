@@ -226,7 +226,9 @@ Once Phases 1–6 are live and the desktop app has shipped using `/upload-patch`
 
 Net debt reduction: ~600 LOC + sparse-checkout config + SQLite index code removed. After Phase 7, the only publish path on the server is `/upload-patch` → `publish-v2/plan-job` → `publish-v2/run-job`.
 
-Done when: `run-from-git` has been removed from the server, CLI, and desktop, and the parity test is gone.
+**Perf gate (from eng review D11):** Before deletion, measure p50/p95 latency of the new path's `/upload-patch` → first published operation on the Monorepo workspace (135k files). Must be within 2× today's `run-from-git` baseline. If it regresses beyond that, fix before deletion, don't ship the regression and clean up later.
+
+Done when: `run-from-git` has been removed from the server, CLI, and desktop, the parity test is gone, and the perf gate cleared (the permanent end-to-end smoke test from eng review §10 continues to assert publish round-trip).
 
 ## Out of scope
 
@@ -326,18 +328,136 @@ This gives visibility into whether user-wins is acceptable in practice, or wheth
 
 Smaller items to track as separate tickets. None block shipping the phases above.
 
-| #   | Item                                                                      | Why                                                                            | Effort (CC) |
-| --- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------- |
-| F1  | Parallelize per-file patch loop in CLI publish (rayon)                    | 1000+ files sequential is slow on Monorepo                                     | 15min       |
-| F2  | gix-patterns docs page in `scratch-git-2/docs/`                           | Bus factor — only the spike file uses gix today                                | 30min       |
-| F3  | AuditLogService entries for `/upload-patch` + publish trigger             | `server/CLAUDE.md` requires audit logging on CLI interactions                  | 30min       |
-| F4  | Body size + nesting depth caps on `/upload-patch/commit`                  | DoS guard on the trigger endpoint (presigned upload itself is GCS)             | 15min       |
-| F5  | Init: 1/N connector failure policy (continue vs rollback)                 | Plan doesn't specify; needs choice + UX                                        | 30min       |
-| F6  | Init: re-run on partial state — resume or fail-clean                      | Detect partial prior init and decide                                           | 1h          |
-| F7  | iCloud/Dropbox workspace detection + warning                              | Git on cloud-synced FS corrupts state                                          | 1h          |
-| F8  | Multi-connection publish atomicity model                                  | Partial-success UX when 3/5 connectors succeed                                 | 1h          |
-| F9  | Publish-then-fetch failure → server-driven HEAD-advance signal            | Avoid silent local divergence when `git fetch` fails post-publish              | 1h          |
-| F10 | conflicts.log rotation                                                    | Prevent unbounded growth                                                       | 15min       |
-| F11 | Worktree lock metrics (acquire timeout, stale recovery)                   | Observability gap                                                              | 30min       |
-| F12 | Promote init-phase timings (`SCRATCHMD_PROFILE`) to PostHog event         | See init perf in production                                                    | 15min       |
-| F13 | End-to-end publish smoke test per deploy                                  | Catch regressions immediately post-deploy                                      | 1h          |
+| #   | Item                                                              | Why                                                                | Effort (CC) |
+| --- | ----------------------------------------------------------------- | ------------------------------------------------------------------ | ----------- |
+| F1  | Parallelize per-file patch loop in CLI publish (rayon)            | 1000+ files sequential is slow on Monorepo                         | 15min       |
+| F2  | gix-patterns docs page in `scratch-git-2/docs/`                   | Bus factor — only the spike file uses gix today                    | 30min       |
+| F3  | AuditLogService entries for `/upload-patch` + publish trigger     | `server/CLAUDE.md` requires audit logging on CLI interactions      | 30min       |
+| F4  | Body size + nesting depth caps on `/upload-patch/commit`          | DoS guard on the trigger endpoint (presigned upload itself is GCS) | 15min       |
+| F5  | Init: 1/N connector failure policy (continue vs rollback)         | Plan doesn't specify; needs choice + UX                            | 30min       |
+| F6  | Init: re-run on partial state — resume or fail-clean              | Detect partial prior init and decide                               | 1h          |
+| F7  | iCloud/Dropbox workspace detection + warning                      | Git on cloud-synced FS corrupts state                              | 1h          |
+| F8  | Multi-connection publish atomicity model                          | Partial-success UX when 3/5 connectors succeed                     | 1h          |
+| F9  | Publish-then-fetch failure → server-driven HEAD-advance signal    | Avoid silent local divergence when `git fetch` fails post-publish  | 1h          |
+| F10 | conflicts.log rotation                                            | Prevent unbounded growth                                           | 15min       |
+| F11 | Worktree lock metrics (acquire timeout, stale recovery)           | Observability gap                                                  | 30min       |
+| F12 | Promote init-phase timings (`SCRATCHMD_PROFILE`) to PostHog event | See init perf in production                                        | 15min       |
+| F13 | End-to-end publish smoke test per deploy                          | Catch regressions immediately post-deploy                          | 1h          |
+
+## Captured decisions from eng review (2026-05-18)
+
+Reviewed by Curtis Fonger via `/plan-eng-review` (HOLD SCOPE). These decisions are code-level specifications that complement the CEO review's architectural decisions above. Each maps to one or more entries in the Implementation Tasks file at `~/.gstack/projects/whalesync-spinner/tasks-eng-review-*.jsonl`.
+
+### 1. Phase 1 — explicit deliverables
+
+Phase 1 ships ALL of the following (T1, T2, T6, T10 in the tasks file):
+
+- **Server**: `POST /workbook/:id/upload-patch/init` + `commit` controllers, ApplyPatches BullMQ job + worker handler, path-validation utility at `server/src/utils/path-validation.ts`, AuditLog entries on both endpoints, extensions to `server/src/asset/object-storage.service.ts` for `signPutUrl` + `streamObject`.
+- **CLI**: `scratchmd files upload` implementation replaced in-place (no new command, no flag-gating). gix-status → per-file patch → presigned-PUT to GCS → call `/commit`.
+- **Desktop**: `PublishChangesModal.tsx` rewritten. 6-mode state machine (`approval`/`planning`/`ready`/`publishing`/`complete`/`error`) refactored to match the new flow (`computing-diff`/`uploading`/`queued`/`publishing`/`complete`/`error`). Staleness banner wired to consume `stalenessWarning` from the `/commit` response.
+- **Tests**: parity test (Path A vs Path B) AND permanent end-to-end smoke test (survives Phase 7). See §6 and §10.
+
+### 2. BullMQ job scaffolding (T2)
+
+Mirror the existing publish-from-git pattern:
+
+- `JobType.ApplyPatches` enum value
+- `ApplyPatchesJobDefinition` with `{ workbookId, userId, connectorAccountId, uploadId, baseHead? }`
+- Worker handler in `server/src/worker/jobs/`
+- `enqueueApplyPatchesJob(...)` in `bull-enqueuer.service.ts`
+- Queue routing via existing patterns
+
+The worker streams the patch from GCS, validates paths, applies merge patches to the dirty branch (single commit), then enqueues `enqueuePlanPipelineJob` for the connector.
+
+### 3. Reuse `object-storage.service.ts` (T3)
+
+Add to the existing service:
+
+- `async signPutUrl(key: string, expiresIn: Duration): Promise<string>`
+- `async streamObject(key: string): Promise<Readable>`
+
+Use existing `Storage` client, existing bucket config, existing IAM. No new module.
+
+### 4. AuditLog scope (T4)
+
+Limit Phase 1's audit work to the new `/upload-patch` endpoints. Backfilling AuditLog across all of `server/src/cli/` is real work but separable — track as a TODO, not Phase 1 scope.
+
+Audit entry shape: `{ event: 'upload_patch.commit', workbookId, connectorAccountId, patchCount, baseHeadMatched: boolean, byteSize }`.
+
+### 5. Path validation utility (T5)
+
+`server/src/utils/path-validation.ts`:
+
+```ts
+export function validateRecordPath(
+  path: string,
+  dataFolders: ReadonlyArray<{ path: string }>,
+): Result<string, ValidationError>;
+```
+
+Rejects: `..` segments, leading `/`, paths beginning with `.git/` or `.scratch/`, paths not under a known DataFolder. Returns the normalized path on success. Unit tests live alongside.
+
+Reusable beyond `/upload-patch` — should be the canonical helper for any future endpoint that accepts file paths.
+
+### 6. Parity test contract (T6)
+
+`server/src/publish-plan/__tests__/upload-patch-parity.spec.ts`:
+
+Test harness:
+
+1. Set up a test workbook with seeded data
+2. Apply identical edits as in-memory ParsedContent
+3. Run **Path A**: serialize edits as patches → `/upload-patch/init` + `/commit` → wait for plan-job + run-job
+4. Run **Path B**: serialize edits as phase files → push to dirty → `/run-from-git` → wait for job
+5. Assert: same dispatched operations (compare `phase`, `path`, `content`, `changedFields`), same final main commit SHA
+
+Deleted in Phase 7. The permanent end-to-end smoke test (§10) is what catches regressions long-term.
+
+### 7. Asset uploads stay on existing pipeline (T7)
+
+Plan does NOT bundle binary asset uploads into `/upload-patch`. Assets continue to flow through the existing `/assets` upload endpoint as today. The `publish-plan-build` service's asset-upload phase 0 continues to work unchanged because it reads asset refs from the dirty branch, not from patches.
+
+This means: desktop's flow for an edit involving a new asset is: (1) upload binary via `/assets`, get URL; (2) embed URL in record JSON; (3) edit triggers publish → new flow processes JSON only.
+
+### 8. CLI command naming (T8)
+
+`scratchmd files upload` keeps its name; the implementation is replaced in Phase 1. No `upload-v2`, no flag-gating. After Phase 7, the old code paths are gone but the command surface is unchanged.
+
+### 9. `discardRemoteDirtyChanges` endpoint unchanged (T9)
+
+The endpoint at `server/src/cli/cli-workbook.controller.ts:222` already operates on the server-side dirty branch. With the new model (dirty lives only server-side), its semantics become MORE coherent, not different. Desktop continues to call it; after the call, desktop runs pull to sync local main back to the (now-reset) server main.
+
+### 10. Permanent end-to-end smoke test (T10)
+
+`server/src/publish-plan/__tests__/upload-patch.e2e.spec.ts`:
+
+Asserts the full path: seed workbook → edit record → CLI/test client computes patches → `/upload-patch/init` → GCS PUT → `/commit` → BullMQ job applies to dirty → plan-job → run-job → connector receives upstream update → main commit advanced.
+
+Survives Phase 7. This is the regression backstop for the unified publish path.
+
+### 11. Phase 7 perf gate (T11)
+
+Built into Phase 7's "Done when" criteria above. Benchmark on Monorepo workspace; gate on p95 within 2× today's baseline.
+
+## Eng-review follow-ups
+
+Smaller items surfaced during eng review that don't block phase work.
+
+| #   | Item                                                                                                                                  | Why                                                                      | Effort (CC) |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------- |
+| E1  | Backfill AuditLog across remaining `server/src/cli/` endpoints                                                                        | Scope-limited in Phase 1 to `/upload-patch`; rest of CLI still uncovered | 1h          |
+| E2  | Delete `update_dirty_worktree_index` (`scratch-git-2/src/cli/commands/files.rs:2210`) and callers when Phase 4 drops the SQLite index | Dead code after index removal                                            | 30min       |
+| E3  | Verify gix worktree-add support in current crate version (may have landed since 0.70)                                                 | If gix supports it natively, drop the shell-out                          | 15min       |
+| E4  | Document desktop's post-publish `git fetch origin main` retry policy                                                                  | Finding 1.6 from CEO review on the data-flow shadow path                 | 30min       |
+
+## GSTACK REVIEW REPORT
+
+| Review                      | Trigger               | Why                             | Runs | Status             | Findings                                                                                                   |
+| --------------------------- | --------------------- | ------------------------------- | ---- | ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| CEO Review                  | `/plan-ceo-review`    | Scope & strategy                | 1    | CLEAR (HOLD_SCOPE) | mode: HOLD_SCOPE, 0 critical gaps, 9 decisions captured                                                    |
+| Eng Review                  | `/plan-eng-review`    | Architecture & tests (required) | 1    | CLEAR (PLAN)       | 18 issues found across Architecture/Code Quality/Tests/Performance, 0 critical gaps, 11 decisions captured |
+| Design Review               | `/plan-design-review` | UI/UX gaps                      | 0    | —                  | —                                                                                                          |
+| Adversarial / Outside Voice | `/codex`              | Independent 2nd opinion         | 0    | skipped            | Codex CLI not installed; user opted out                                                                    |
+
+**UNRESOLVED:** 0
+**VERDICT:** CEO + ENG CLEARED — ready to implement. Phase 1 has explicit deliverables (T1-T6, T10), perf gate locked for Phase 7 (T11). Tasks artifact at `~/.gstack/projects/whalesync-spinner/tasks-eng-review-20260518-095015.jsonl`.
