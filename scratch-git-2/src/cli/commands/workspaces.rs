@@ -11,6 +11,31 @@ use crate::shared::layout::WorkspaceLayout;
 const DIRTY_BRANCH: &str = "dirty";
 const MAIN_BRANCH: &str = "main";
 
+/// RAII timer that prints elapsed time on drop when `SCRATCHMD_PROFILE=1`.
+/// Used to profile `scratchmd workspaces init` phases.
+struct PhaseTimer {
+    label: String,
+    start: std::time::Instant,
+}
+
+impl PhaseTimer {
+    fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            start: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for PhaseTimer {
+    fn drop(&mut self) {
+        if std::env::var("SCRATCHMD_PROFILE").as_deref() == Ok("1") {
+            let ms = self.start.elapsed().as_millis();
+            eprintln!("[profile] {:>6} ms  {}", ms, self.label);
+        }
+    }
+}
+
 /// JSON output shape matching the Go CLI exactly.
 /// Includes a null `dataFolders` at workbook level (Go always serializes this as null).
 #[derive(serde::Serialize)]
@@ -352,6 +377,7 @@ async fn init(
 }
 
 fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> anyhow::Result<i64> {
+    let _t = PhaseTimer::new("init_v2 (total)");
     std::fs::create_dir_all(target_dir)?;
     // Canonicalize so all derived layout paths are absolute.
     let target_dir = target_dir.canonicalize()?;
@@ -369,25 +395,38 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
         })
         .collect();
     let org_id = derive_workbook_org_id(wb);
-    markers::write_workspace(
-        target_dir,
-        &wb.id,
-        &wb.name,
-        &org_id,
-        server_url,
-        &connections,
-    )?;
+    {
+        let _t = PhaseTimer::new("write workspace marker");
+        markers::write_workspace(
+            target_dir,
+            &wb.id,
+            &wb.name,
+            &org_id,
+            server_url,
+            &connections,
+        )?;
+    }
 
     let mut total = 0i64;
-    total += init_workbook_repo(wb, &layout, token)?;
+    {
+        let _t = PhaseTimer::new("init_workbook_repo (config repo)");
+        total += init_workbook_repo(wb, &layout, token)?;
+    }
 
-    for (ca, entry) in wb.connector_accounts.iter().zip(connections.iter()) {
-        match setup_connection(ca, &entry.dir_name, &layout, token) {
-            Ok(file_count) => total += file_count,
-            Err(e) => eprintln!(
-                "  Warning: failed to set up connection {}: {e}",
-                ca.display_name
-            ),
+    {
+        let _t = PhaseTimer::new(format!(
+            "all connections ({} total, sequential)",
+            wb.connector_accounts.len()
+        ));
+        for (ca, entry) in wb.connector_accounts.iter().zip(connections.iter()) {
+            let _t = PhaseTimer::new(format!("  connection: {}", ca.display_name));
+            match setup_connection(ca, &entry.dir_name, &layout, token) {
+                Ok(file_count) => total += file_count,
+                Err(e) => eprintln!(
+                    "  Warning: failed to set up connection {}: {e}",
+                    ca.display_name
+                ),
+            }
         }
     }
 
@@ -396,7 +435,10 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
     } else {
         wb.name.as_str()
     };
-    let _ = super::generate_docs::write_docs(target_dir, wb_name);
+    {
+        let _t = PhaseTimer::new("generate_docs::write_docs");
+        let _ = super::generate_docs::write_docs(target_dir, wb_name);
+    }
 
     Ok(total)
 }
@@ -418,16 +460,23 @@ fn init_workbook_repo(wb: &Workbook, layout: &WorkspaceLayout, token: &str) -> a
 
     let bare_repo = layout.bare_repo_path(&repo_id);
 
-    if let Err(err) = git_clone_bare(&wb.git_url, &bare_repo, token) {
-        let _ = std::fs::remove_dir_all(&bare_repo);
-        eprintln!(
-            "  Note: workbook config repo clone failed ({err}); leaving .scratch/workspace as local directories only"
-        );
-        return Ok(count_files(&workbook_dir));
+    {
+        let _t = PhaseTimer::new("    workbook git_clone_bare");
+        if let Err(err) = git_clone_bare(&wb.git_url, &bare_repo, token) {
+            let _ = std::fs::remove_dir_all(&bare_repo);
+            eprintln!(
+                "  Note: workbook config repo clone failed ({err}); leaving .scratch/workspace as local directories only"
+            );
+            return Ok(count_files(&workbook_dir));
+        }
     }
 
-    materialize_workbook_checkout(&bare_repo, &workbook_dir)?;
+    {
+        let _t = PhaseTimer::new("    workbook materialize_workbook_checkout");
+        materialize_workbook_checkout(&bare_repo, &workbook_dir)?;
+    }
 
+    let _t = PhaseTimer::new("    workbook count_files");
     Ok(count_files(&workbook_dir))
 }
 
@@ -644,28 +693,68 @@ pub fn setup_connection(
     let master_dir = layout.master_worktree_path(&dir_name);
     let db_path = layout.index_db_path(&ca.repo_path);
 
-    git_clone_bare(&ca.git_url, &bare_repo, token)?;
-    materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
-    super::files::reconcile_data_folder_dirs(&dirty_dir, &ca.data_folders)?;
-    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
-    if let Err(e) =
-        crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH)
     {
-        eprintln!(
-            "  Warning: could not set up reviewed-dirty worktree for {}: {e}",
+        let _t = PhaseTimer::new(format!("    [{}] git_clone_bare", dir_name));
+        git_clone_bare(&ca.git_url, &bare_repo, token)?;
+    }
+    {
+        let _t = PhaseTimer::new(format!(
+            "    [{}] materialize_dirty_checkout (sparse worktree: dirty)",
             dir_name
-        );
+        ));
+        materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
+    }
+    {
+        let _t = PhaseTimer::new(format!("    [{}] reconcile_data_folder_dirs", dir_name));
+        super::files::reconcile_data_folder_dirs(&dirty_dir, &ca.data_folders)?;
+    }
+    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
+    {
+        let _t = PhaseTimer::new(format!(
+            "    [{}] setup_sparse_worktree (reviewed-dirty)",
+            dir_name
+        ));
+        if let Err(e) =
+            crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH)
+        {
+            eprintln!(
+                "  Warning: could not set up reviewed-dirty worktree for {}: {e}",
+                dir_name
+            );
+        }
     }
 
-    match git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir) {
+    let main_checkout_result = {
+        let _t = PhaseTimer::new(format!(
+            "    [{}] git_checkout_branch_from_bare (main, sparse worktree)",
+            dir_name
+        ));
+        git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir)
+    };
+    match main_checkout_result {
         Ok(()) => {
-            include_schemas_in_sparse_checkout(&master_dir)?;
-            sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
+            {
+                let _t = PhaseTimer::new(format!(
+                    "    [{}] include_schemas_in_sparse_checkout",
+                    dir_name
+                ));
+                include_schemas_in_sparse_checkout(&master_dir)?;
+            }
+            {
+                let _t = PhaseTimer::new(format!(
+                    "    [{}] sync_schema_files_from_master_checkout",
+                    dir_name
+                ));
+                sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
+            }
             if let Some(parent) = db_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            if let Err(e) = crate::shared::index::build(&master_dir, &db_path) {
-                eprintln!("  Warning: failed to build index for {}: {e}", dir_name);
+            {
+                let _t = PhaseTimer::new(format!("    [{}] index::build (SQLite)", dir_name));
+                if let Err(e) = crate::shared::index::build(&master_dir, &db_path) {
+                    eprintln!("  Warning: failed to build index for {}: {e}", dir_name);
+                }
             }
         }
         Err(_) => {
@@ -676,6 +765,7 @@ pub fn setup_connection(
         }
     }
 
+    let _t = PhaseTimer::new(format!("    [{}] count_files (dirty)", dir_name));
     Ok(count_files(&dirty_dir))
 }
 
