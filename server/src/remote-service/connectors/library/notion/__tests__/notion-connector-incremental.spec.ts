@@ -1,0 +1,123 @@
+import { TSchema } from '@sinclair/typebox';
+import { BaseJsonTableSpec, PullRecordFilesOptions } from '../../../types';
+
+// Mock display-names to break circular import chain
+jest.mock('../../../display-names', () => ({
+  getServiceDisplayName: jest.fn(() => 'Notion'),
+}));
+
+const mockDatabasesQuery = jest.fn();
+
+jest.mock('@notionhq/client', () => ({
+  Client: jest.fn().mockImplementation(() => ({
+    databases: { query: mockDatabasesQuery },
+  })),
+  APIResponseError: class extends Error {},
+  RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
+  APIErrorCode: {},
+}));
+
+jest.mock('turndown', () =>
+  jest.fn().mockImplementation(() => ({
+    addRule: jest.fn().mockReturnThis(),
+    turndown: jest.fn(() => ''),
+  })),
+);
+
+import { NotionConnector } from '../notion-connector';
+import { buildNotionLastEditedFilter } from '../notion-incremental';
+
+function buildTableSpec(): BaseJsonTableSpec {
+  return {
+    id: { wsId: 'db', remoteId: ['db_123'] },
+    slug: 'db',
+    name: 'db',
+    idColumnRemoteId: 'id',
+    schema: {} as unknown as TSchema,
+  };
+}
+
+function lastQueryFilter(): unknown {
+  const [args] = mockDatabasesQuery.mock.calls[0] as [{ filter?: unknown }];
+  return args.filter;
+}
+
+describe('NotionConnector.supportsIncrementalPull', () => {
+  it('is always true — every Notion page has a server-side last_edited_time', () => {
+    const connector = new NotionConnector('fake-key');
+    expect(connector.supportsIncrementalPull()).toBe(true);
+  });
+});
+
+describe('NotionConnector.pullRecordFiles (incremental)', () => {
+  let connector: NotionConnector;
+  const callback = jest.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDatabasesQuery.mockResolvedValue({
+      results: [{ object: 'page', id: 'page_1', last_edited_time: '2026-05-14T13:00:00.000Z' }],
+      has_more: false,
+      next_cursor: null,
+    });
+    connector = new NotionConnector('fake-key');
+  });
+
+  it('runs a full pull and returns {} when pullMode is not incremental', async () => {
+    const result = await connector.pullRecordFiles(buildTableSpec(), callback, { nextCursor: undefined }, {
+      pullMode: 'full',
+      excludePageContent: true,
+    } as PullRecordFilesOptions);
+
+    expect(result).toEqual({});
+    expect(lastQueryFilter()).toBeUndefined();
+  });
+
+  it('injects the last_edited_time filter and returns a newWatermark when incremental', async () => {
+    const since = new Date('2026-05-01T12:00:00.000Z');
+    const options = { pullMode: 'incremental', since, excludePageContent: true } as PullRecordFilesOptions;
+
+    const before = Date.now();
+    const result = await connector.pullRecordFiles(buildTableSpec(), callback, { nextCursor: undefined }, options);
+    const after = Date.now();
+
+    expect(lastQueryFilter()).toEqual(buildNotionLastEditedFilter(since));
+    expect(result.newWatermark).toBeInstanceOf(Date);
+    expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it('AND-combines a simple user filter with the incremental timestamp filter', async () => {
+    const since = new Date('2026-05-01T12:00:00.000Z');
+    const userFilter = { property: 'Status', checkbox: { equals: true } };
+    const options = {
+      pullMode: 'incremental',
+      since,
+      excludePageContent: true,
+      filter: JSON.stringify(userFilter),
+    } as PullRecordFilesOptions;
+
+    const result = await connector.pullRecordFiles(buildTableSpec(), callback, { nextCursor: undefined }, options);
+
+    expect(lastQueryFilter()).toEqual({ and: [userFilter, buildNotionLastEditedFilter(since)] });
+    expect(result.newWatermark).toBeInstanceOf(Date);
+  });
+
+  it('demotes to full (keeps user filter, no watermark) when the user filter is a compound and/or', async () => {
+    const since = new Date('2026-05-01T12:00:00.000Z');
+    const userFilter = { and: [{ property: 'A', checkbox: { equals: true } }] };
+    const options = {
+      pullMode: 'incremental',
+      since,
+      excludePageContent: true,
+      filter: JSON.stringify(userFilter),
+    } as PullRecordFilesOptions;
+
+    const result = await connector.pullRecordFiles(buildTableSpec(), callback, { nextCursor: undefined }, options);
+
+    // The incremental timestamp filter is NOT applied — the raw user filter is
+    // passed through unchanged and no watermark is returned.
+    expect(lastQueryFilter()).toEqual(userFilter);
+    expect(result).toEqual({});
+  });
+});

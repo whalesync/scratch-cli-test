@@ -1,7 +1,7 @@
 # Incremental Polling — Follow-up: More Connectors + Web UI
 
 **Date**: 2026-05-16
-**Status**: Track 1 in progress — **PostgreSQL + Supabase landed 2026-05-17** (Notion pending; Webflow deferred — see Out of scope) · **Track 2 (Web UI) landed 2026-05-16**
+**Status**: Track 1 — **PostgreSQL + Supabase + Notion landed 2026-05-17** (Webflow deferred — see Out of scope) · **Track 2 (Web UI) landed 2026-05-16**. All in-scope Track 1 connectors complete (integration test deferred — see Track 1 tests note).
 **Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling)
 **Depends on**: [2026-05-14-incremental-polling.md](2026-05-14-incremental-polling.md) (server pipeline + Airtable, landed; scheduler/API/CLI landed in `7fd093ce`)
 **Scope**: Two independent tracks that can ship separately —
@@ -99,9 +99,9 @@ Both connectors are independent classes but both pull via `KnexPGClient.selectAl
   - Validate the user-supplied column name against the table schema before use (it comes from user options): confirm `modifiedAtField` exists in the columns built from `information_schema.columns` and reject otherwise, so a typo fails fast rather than producing a SQL error mid-pull. Reuse the column list the connector already fetches when building the schema.
 - **Helper module** `pg-common/pg-incremental.ts` (shared by both): `PG_INCREMENTAL_CLOCK_SKEW_MS`, and a thin wrapper if useful. Keep it in `pg-common` since both connectors and `KnexPGClient` live there.
 
-### 1c. Notion
+### 1c. Notion — ✅ landed 2026-05-17
 
-[notion/notion-connector.ts](../../server/src/remote-service/connectors/library/notion/notion-connector.ts), [notion/notion-json-schema.ts](../../server/src/remote-service/connectors/library/notion/notion-json-schema.ts).
+[notion/notion-connector.ts](../../server/src/remote-service/connectors/library/notion/notion-connector.ts), [notion/notion-json-schema.ts](../../server/src/remote-service/connectors/library/notion/notion-json-schema.ts), [notion/notion-incremental.ts](../../server/src/remote-service/connectors/library/notion/notion-incremental.ts).
 
 Notion has a **fixed system field** `last_edited_time` on every page and a real server-side filter via `databases.query({ filter, sorts, start_cursor })`. `NotionPullOptions extends PullRecordFilesOptions` already exists (`filter`, `excludePageContent`, `childContentMaxDepth`, `pageSize`).
 
@@ -136,6 +136,7 @@ Per connector, mirroring the Airtable specs:
 - `KnexPGClient.selectAll` spec: with `modifiedSinceColumn`+`modifiedSinceDatetime` emits a parameterized `> ` predicate that ANDs with an existing raw filter; absent → query unchanged.
 - Notion compound-filter nesting-limit guard demotes to full.
 - Integration (`yarn test:integration`) against a real test source per connector where infra exists (at minimum Notion and one SQL): bootstrap full → modify one record → incremental → only that record's file changes in git, watermark advances.
+  - **Status 2026-05-17:** Notion unit + schema-builder + nesting-limit specs landed (`notion-incremental.spec.ts`, `notion-json-schema.spec.ts`, `notion-connector-incremental.spec.ts`; all green, 129/129 in the notion suite). The SQL integration test landed with §1b. **A Notion `test:integration` round-trip is still pending** — it needs a dedicated Notion test database + credentials wired into the integration harness, which is not yet in place; tracked as remaining Track 1 follow-up, not a blocker for the connector landing.
 
 ---
 
@@ -222,13 +223,13 @@ Optional nicety (note, not required for v1): if the incremental row is enabled b
 
 **Track 1 — server**
 
-- [packages/shared-types/src/connector/metadata.ts](../../packages/shared-types/src/connector/metadata.ts) — add `ConnectorMetadata.incrementalPull` (default false). ⏳
+- [packages/shared-types/src/connector/metadata.ts](../../packages/shared-types/src/connector/metadata.ts) — add `ConnectorMetadata.incrementalPull` (default false). ✅ landed 2026-05-16 (Track 2)
 - ~~[server/src/remote-service/connectors/library/webflow/](../../server/src/remote-service/connectors/library/webflow/) — annotate `lastUpdated` (items/assets/pages); `advancedSettings`; `supportsIncrementalPull`; client-side filter branch; `webflow-incremental.ts`; `incrementalPull: true` metadata.~~ ⏸️ DEFERRED (2026-05-17) — see §1a / Out of scope.
 - [server/src/remote-service/connectors/library/pg-common/knex-pg-client.ts](../../server/src/remote-service/connectors/library/pg-common/knex-pg-client.ts) — `selectAll` gains `modifiedSinceColumn`/`modifiedSinceDatetime` (parameterized `knex.ref(col) > date`, ANDs with raw filter). ✅ landed 2026-05-17
 - [server/src/remote-service/connectors/library/postgres/postgres-connector.ts](../../server/src/remote-service/connectors/library/postgres/postgres-connector.ts) & [supabase/supabase-connector.ts](../../server/src/remote-service/connectors/library/supabase/supabase-connector.ts) — `advancedSettings` (`modifiedAtField` field-select), resolver, `supportsIncrementalPull` override, incremental branch, column validation, `incrementalPull: true` metadata, registered `advancedSettings`. ✅ landed 2026-05-17
 - [server/src/remote-service/connectors/library/pg-common/pg-incremental.ts](../../server/src/remote-service/connectors/library/pg-common/) — new shared helper (`PG_INCREMENTAL_CLOCK_SKEW_MS`, `resolvePgModifiedAtField`, `applyPgClockSkew`, `assertModifiedAtColumnExists`); exported via `pg-common/index.ts`. ✅ landed 2026-05-17
-- [server/src/remote-service/connectors/library/notion/notion-connector.ts](../../server/src/remote-service/connectors/library/notion/notion-connector.ts) & [notion-json-schema.ts](../../server/src/remote-service/connectors/library/notion/notion-json-schema.ts) — annotate `last_edited_time`; `supportsIncrementalPull = true`; filter branch with nesting-limit demotion; `notion-incremental.ts`; `incrementalPull: true`. ⏳
-- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md) — added "Incremental Pulls" section: the full contract (static `incrementalPull` flag, `resolveModifiedAtField` precedence, `X_SCRATCH_LAST_MODIFIED_FIELD`, watermark-before-first-call, clock-skew), the three archetypes, and the SQL server-side-predicate worked example. 🟡 Notion worked example to be filled as that connector lands. (Webflow worked example deferred with §1a.)
+- [server/src/remote-service/connectors/library/notion/notion-connector.ts](../../server/src/remote-service/connectors/library/notion/notion-connector.ts) & [notion-json-schema.ts](../../server/src/remote-service/connectors/library/notion/notion-json-schema.ts) — annotated top-level `last_edited_time` with `X_SCRATCH_LAST_MODIFIED_FIELD`; `supportsIncrementalPull()` returns `true` unconditionally; `pullRecordFiles` incremental branch with compound-filter nesting-limit demotion; new `notion-incremental.ts` helper; `incrementalPull: true` metadata. ✅ landed 2026-05-17
+- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md) — added "Incremental Pulls" section: the full contract (static `incrementalPull` flag, `resolveModifiedAtField` precedence, `X_SCRATCH_LAST_MODIFIED_FIELD`, watermark-before-first-call, clock-skew), the three archetypes, and the SQL + Notion server-side-predicate worked examples (Notion incl. the nesting-limit demotion). ✅ landed 2026-05-17. (Webflow worked example deferred with §1a.)
 
 **Track 2 — client / shared-types — ✅ landed 2026-05-16**
 

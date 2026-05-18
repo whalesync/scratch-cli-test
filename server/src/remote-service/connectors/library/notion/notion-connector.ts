@@ -35,6 +35,7 @@ import { NotionBlockDiffExecutor } from './conversion/notion-block-diff-executor
 import { NotionMarkdownConverter } from './conversion/notion-markdown-converter';
 import { convertToNotionBlocks } from './conversion/notion-rich-text-push';
 import { ConvertedNotionBlock } from './conversion/notion-rich-text-push-types';
+import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { NotionSchemaParser } from './notion-schema-parser';
 
@@ -87,6 +88,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     record: 'page',
     records: 'pages',
     logo: 'https://static.scratch.md/connector-icons/notion.svg',
+    incrementalPull: true,
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
@@ -270,6 +272,18 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     return undefined;
   }
 
+  /**
+   * Notion supports incremental pulls unconditionally: every database page has
+   * a server-side `last_edited_time` system field, and `databases.query` can
+   * filter on it. There is no per-folder config to inspect (the field is not
+   * user-selectable), so this always returns `true` and a run only demotes to
+   * full at pull time if the user's own filter is a compound `and`/`or`
+   * (Notion's single-level nesting limit — see `pullRecordFiles`).
+   */
+  override supportsIncrementalPull(): boolean {
+    return true;
+  }
+
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: NotionDownloadProgress }) => Promise<void>,
@@ -294,6 +308,31 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
           error,
         });
         throw new Error(`Failed to parse Notion filter ${options.filter}`);
+      }
+    }
+
+    let newWatermark: Date | undefined;
+    if (options.pullMode === 'incremental' && options.since instanceof Date) {
+      const timestampFilter = buildNotionLastEditedFilter(options.since);
+      const combined = combineNotionFilters(notionFilter ?? undefined, timestampFilter);
+      if (combined.demoteToFull) {
+        // Notion allows only one level of compound nesting. Wrapping a
+        // compound user filter in another `and` would 400, so we skip the
+        // incremental filter and full-scan instead (keeping the user filter).
+        WSLogger.warn({
+          source: 'NotionConnector',
+          message:
+            'Incremental pull demoted to full: the user filter is a compound and/or, so nesting the ' +
+            "last_edited_time filter would exceed Notion's single-level compound-filter limit",
+          tableId: tableSpec.id.wsId,
+        });
+      } else {
+        // Capture the start-of-pull timestamp BEFORE the first API call so we
+        // don't lose changes that happen mid-pull. `on_or_after` is inclusive,
+        // so the boundary record is re-pulled and absorbed by idempotent
+        // commits (NOTION_INCREMENTAL_CLOCK_SKEW_MS = 0).
+        newWatermark = new Date();
+        notionFilter = combined.filter;
       }
     }
 
@@ -339,7 +378,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         connectorProgress: { nextCursor },
       });
     }
-    return {};
+    return newWatermark ? { newWatermark } : {};
   }
 
   async pullRecordFilesByIds(

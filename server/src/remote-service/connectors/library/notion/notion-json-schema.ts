@@ -6,6 +6,7 @@ import {
   X_SCRATCH_ASSET_FIELD,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
@@ -55,7 +56,14 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
       object: Type.Literal('page', { description: 'Object type' }),
       id: Type.String({ description: 'Unique page identifier' }),
       created_time: Type.String({ description: 'Page creation time', format: 'date-time' }),
-      last_edited_time: Type.String({ description: 'Last edit time', format: 'date-time' }),
+      last_edited_time: Type.String({
+        description: 'Last edit time',
+        format: 'date-time',
+        // System field present on every Notion page. Drives incremental pulls
+        // (the connector filters on it) and surfaces it to the UI's
+        // last-modified-field picker. See notion-incremental.ts.
+        [X_SCRATCH_LAST_MODIFIED_FIELD]: true,
+      }),
       created_by: Type.Object(
         {
           object: Type.Literal('user'),

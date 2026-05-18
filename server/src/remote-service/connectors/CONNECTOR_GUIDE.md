@@ -388,7 +388,39 @@ async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecor
 }
 ```
 
-Reuse the helper-module _shape_ but **not one shared helper across connector families** — predicate syntaxes (Airtable formula, SQL, Notion JSON) have nothing in common; only the code shape is shared. See `airtable/airtable-incremental.ts` for the formula-based variant.
+##### Worked example — server-side predicate (Notion: fixed system field + nesting-limit demotion)
+
+Notion is the simplest variant: every database page carries a server-side `last_edited_time` system field, and `databases.query` filters on it. There is **no `resolveModifiedAtField` / `modifiedAtField` setting** — the field is fixed and not user-selectable — so `supportsIncrementalPull()` returns `true` unconditionally and `incrementalPull: true` is set in `connectorMetadata({ ... })`. The schema builder still annotates the top-level `last_edited_time` with `X_SCRATCH_LAST_MODIFIED_FIELD` so the UI's last-modified-field picker can surface it.
+
+The timestamp filter uses `on_or_after`, which is **inclusive** and compares two server-side timestamps, so `NOTION_INCREMENTAL_CLOCK_SKEW_MS = 0`: the boundary record is re-pulled each run and absorbed by idempotent commits — no margin needed.
+
+```typescript
+override supportsIncrementalPull(): boolean {
+  return true; // last_edited_time is guaranteed on every Notion page
+}
+
+async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecordFilesResult> {
+  let notionFilter = parseUserFilter(options.filter); // existing behavior
+  let newWatermark: Date | undefined;
+
+  if (options.pullMode === 'incremental' && options.since instanceof Date) {
+    const tsFilter = buildNotionLastEditedFilter(options.since); // { timestamp: 'last_edited_time', last_edited_time: { on_or_after } }
+    const combined = combineNotionFilters(notionFilter, tsFilter);
+    if (combined.demoteToFull) {
+      WSLogger.warn({ ... }); // compound user filter — see nesting limit below
+    } else {
+      newWatermark = new Date();        // BEFORE the first databases.query
+      notionFilter = combined.filter;   // { and: [userFilter, tsFilter] } or tsFilter alone
+    }
+  }
+  // ...cursor-paginate databases.query with `filter: notionFilter` (constant across pages)...
+  return newWatermark ? { newWatermark } : {};
+}
+```
+
+**Nesting-limit demotion (Notion-specific edge case):** Notion compound filters allow only **one level** of `and`/`or` nesting. The timestamp filter is non-compound, so wrapping a _simple_ user filter as `{ and: [userFilter, tsFilter] }` is fine. But if the user's own `options.filter` is itself a top-level compound (`{ and: [...] }` / `{ or: [...] }`), wrapping it in another `and` exceeds the limit and Notion 400s. `combineNotionFilters` detects a top-level compound user filter and returns `demoteToFull`; the connector then logs a warning, **skips the incremental filter (keeping the user filter)**, full-scans, and returns `{}` (no watermark). This is a connector-side demotion analogous to the job-level one — the next incremental run retries from the same prior watermark.
+
+Reuse the helper-module _shape_ but **not one shared helper across connector families** — predicate syntaxes (Airtable formula, SQL, Notion JSON) have nothing in common; only the code shape is shared. See `airtable/airtable-incremental.ts` for the formula-based variant and `notion/notion-incremental.ts` for the Notion JSON-filter variant.
 
 ### Hydration
 
