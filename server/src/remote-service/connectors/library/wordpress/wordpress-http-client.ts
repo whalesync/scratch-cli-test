@@ -14,6 +14,7 @@ import {
   WordPressGetTypesApiResponse,
   WordPressMediaUploadResponse,
   WordPressRecord,
+  WordPressSiteTimezone,
 } from './wordpress-types';
 
 /**
@@ -21,6 +22,8 @@ import {
  */
 export class WordPressHttpClient {
   private readonly client: AxiosInstance;
+  /** Memoized site-timezone lookup (one REST-index fetch per client instance). */
+  private siteTimezonePromise?: Promise<WordPressSiteTimezone>;
 
   constructor(
     private readonly endpoint: string,
@@ -108,9 +111,60 @@ export class WordPressHttpClient {
   }
 
   /**
-   * Poll records from a WordPress table
+   * Resolve the site's configured timezone from the REST API index
+   * (`timezone_string` / `gmt_offset`). Memoized for the lifetime of this
+   * client instance — incremental pulls across folders share one index fetch.
+   * Any failure resolves to `{}`, which callers treat as UTC: a flaky index
+   * degrades watermark precision (the periodic full pull reconciles), it never
+   * fails the pull.
    */
-  async pollRecords(tableId: string, offset: number, pageSize: number): Promise<WordPressRecord[]> {
+  async getSiteTimezone(): Promise<WordPressSiteTimezone> {
+    this.siteTimezonePromise ??= this.fetchSiteTimezone();
+    return this.siteTimezonePromise;
+  }
+
+  private async fetchSiteTimezone(): Promise<WordPressSiteTimezone> {
+    try {
+      const info = await this.getDiscoveryInfo();
+      if (!info || typeof info !== 'object') {
+        return {};
+      }
+      const timezoneString =
+        typeof info.timezone_string === 'string' && info.timezone_string.trim() !== ''
+          ? info.timezone_string.trim()
+          : undefined;
+      const gmtOffsetHours =
+        typeof info.gmt_offset === 'number' && Number.isFinite(info.gmt_offset) ? info.gmt_offset : undefined;
+      return { timezoneString, gmtOffsetHours };
+    } catch (error) {
+      WSLogger.warn({
+        source: 'WordpressHttpClient',
+        message: 'Failed to resolve site timezone from REST index; incremental pull will fall back to UTC',
+        error,
+      });
+      return {};
+    }
+  }
+
+  /**
+   * Poll records from a WordPress table.
+   *
+   * When `modifiedAfter` is supplied (incremental pull), adds it verbatim as
+   * the `modified_after` query param so WordPress server-side filters the
+   * collection to records changed since then. The connector renders this value
+   * as the site's local wall-clock time (WordPress compares it against
+   * `post_modified`, stored in site-local time), so the client passes the
+   * string through untouched. Only post-type and media collections support
+   * `modified_after`; taxonomy collections never reach this path (the connector
+   * demotes them to a full scan). Offset pagination and the `status=any` /
+   * `context=edit` params are unchanged.
+   */
+  async pollRecords(
+    tableId: string,
+    offset: number,
+    pageSize: number,
+    modifiedAfter?: string,
+  ): Promise<WordPressRecord[]> {
     const searchParams: { name: string; value: string }[] = [];
     searchParams.push({ name: 'per_page', value: String(pageSize) });
     if (offset > 0) {
@@ -118,6 +172,9 @@ export class WordPressHttpClient {
     }
     if (tableId !== 'media') {
       searchParams.push({ name: 'status', value: 'any' }); // This is to ensure that we get all posts, including draft and trashed ones
+    }
+    if (modifiedAfter) {
+      searchParams.push({ name: 'modified_after', value: modifiedAfter });
     }
     searchParams.push({ name: 'context', value: 'edit' }); // Return raw content and all fields
     const url = this.generateUrl(this.endpoint, tableId, null, searchParams);

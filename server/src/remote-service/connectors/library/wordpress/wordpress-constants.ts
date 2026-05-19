@@ -3,6 +3,12 @@
 export const WORDPRESS_POLLING_PAGE_SIZE = 100;
 export const WORDPRESS_STATUS_COLUMN_ID = 'status';
 
+// Last-modified field exposed by post-type and media collections (in the
+// site's timezone). Taxonomy collections (categories/tags/terms) do NOT expose
+// this field, so they have no incremental-pull support and demote to a full
+// scan. Used to gate the `x-scratch-last-modified-field` schema annotation.
+export const WORDPRESS_MODIFIED_COLUMN_ID = 'modified';
+
 // WordPress batch API supports up to 25 requests per batch (default server limit)
 export const WORDPRESS_BATCH_SIZE = 25;
 

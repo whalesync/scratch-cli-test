@@ -14,7 +14,32 @@ export type WordPressDownloadProgress = {
 export interface WordPressGetDiscoveryApiResponse {
   name: string;
   url: string;
+  /**
+   * Site offset from UTC in hours, e.g. `-5` or `5.5`. Exposed on the REST API
+   * index. A static number — does NOT account for DST at a given instant, so
+   * `timezone_string` is preferred when present.
+   */
+  gmt_offset?: number;
+  /**
+   * IANA timezone name the site is configured with, e.g. `"America/New_York"`.
+   * Empty string when the admin configured a manual UTC offset instead (use
+   * `gmt_offset` in that case).
+   */
+  timezone_string?: string;
   routes: { [Key in string]?: WordPressRoute };
+}
+
+/**
+ * The site's configured timezone, resolved from the REST API index. Used to
+ * render our UTC watermark as the site's local wall-clock time for the
+ * `modified_after` filter (WordPress compares it against `post_modified`, which
+ * is stored in site-local time). Both fields absent ⇒ treat as UTC.
+ */
+export interface WordPressSiteTimezone {
+  /** IANA name (DST-aware). Preferred when present. */
+  timezoneString?: string;
+  /** Fixed hour offset fallback when no IANA name is configured. */
+  gmtOffsetHours?: number;
 }
 
 /** Includes only relevant properties. */

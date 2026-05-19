@@ -17,6 +17,7 @@ import {
   ConnectorErrorDetails,
   ConnectorFile,
   EntityId,
+  findLastModifiedFieldName,
   PullRecordFilesOptions,
   PullRecordFilesResult,
   TablePreview,
@@ -31,6 +32,7 @@ import {
   WORDPRESS_STATUS_COLUMN_ID,
 } from './wordpress-constants';
 import { WordPressHttpClient } from './wordpress-http-client';
+import { formatWordPressModifiedAfter } from './wordpress-incremental';
 import { buildWordPressJsonTableSpec } from './wordpress-json-schema';
 import {
   buildTaxonomyForeignKeys,
@@ -54,6 +56,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     record: 'post',
     records: 'posts',
     logo: 'https://static.scratch.md/connector-icons/wordpress.svg',
+    incrementalPull: true,
     credentialFields: {
       user_provided_params: [
         {
@@ -135,19 +138,75 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     return {};
   }
 
+  /**
+   * WordPress supports incremental pulls when the collection exposes a
+   * last-modified column. Post-type and media collections have `modified`
+   * (annotated `x-scratch-last-modified-field` by the schema builder), so they
+   * auto-detect with zero config. Taxonomy collections (categories/tags/terms)
+   * have no `modified` field and no `modified_after` param — they resolve to
+   * `undefined` here, so this returns `false` and the job demotes the folder to
+   * a full scan. Resolution order: explicit `options.modifiedAtField` →
+   * schema-annotated auto-detect.
+   */
+  override supportsIncrementalPull(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
+    return this.resolveModifiedAtField(options, tableSpec) !== undefined;
+  }
+
+  /**
+   * Resolve the field name used for the `modified_after` filter, preferring an
+   * explicit user setting over the schema-annotated auto-detection. The field
+   * is effectively always `modified` when present; the override exists only for
+   * an unusual CPT that exposes a differently named modified column.
+   */
+  private resolveModifiedAtField(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): string | undefined {
+    if (typeof options.modifiedAtField === 'string' && options.modifiedAtField.trim() !== '') {
+      return options.modifiedAtField.trim();
+    }
+    return findLastModifiedFieldName(tableSpec);
+  }
+
+  /**
+   * Pull all records for a table as JSON files.
+   *
+   * Full pull (default): scan every record. Incremental pull: pass
+   * `modified_after` (the watermark minus a clock-skew margin) into every
+   * paginated request so WordPress server-side filters to records changed since
+   * the previous run, and return the new watermark for the job to persist.
+   * WordPress has no user `options.filter` today — nothing to combine.
+   */
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: WordPressDownloadProgress }) => Promise<void>,
     progress: WordPressDownloadProgress,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: PullRecordFilesOptions,
+    options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const [tableId] = tableSpec.id.remoteId;
     let offset = progress?.nextOffset ?? 0;
     let hasMore = true;
 
+    // Capture the watermark BEFORE the first API call so changes made mid-pull
+    // aren't lost on the next run; idempotent commits absorb the small
+    // re-pulled window. `modified_after` is filtered against `post_modified`,
+    // which WordPress stores in the *site's* timezone, while our watermark is a
+    // UTC instant — `formatWordPressModifiedAfter` resolves the site timezone
+    // (from the REST index, memoized) and renders the clock-skewed watermark as
+    // site-local wall-clock time so the comparison is correct. Incremental only
+    // applies when the field resolves (post/media) — taxonomy is gated out by
+    // `supportsIncrementalPull` and falls through to a full scan here.
+    let newWatermark: Date | undefined;
+    let modifiedAfter: string | undefined;
+    const incremental =
+      options.pullMode === 'incremental' &&
+      options.since instanceof Date &&
+      this.resolveModifiedAtField(options, tableSpec) !== undefined;
+    if (incremental && options.since) {
+      newWatermark = new Date();
+      const siteTimezone = await this.client.getSiteTimezone();
+      modifiedAfter = formatWordPressModifiedAfter(options.since, siteTimezone);
+    }
+
     while (hasMore) {
-      const response = await this.client.pollRecords(tableId, offset, WORDPRESS_POLLING_PAGE_SIZE);
+      const response = await this.client.pollRecords(tableId, offset, WORDPRESS_POLLING_PAGE_SIZE, modifiedAfter);
 
       if (!Array.isArray(response)) {
         throw new Error(`Unexpected response format from WordPress: expected array, got ${typeof response}`);
@@ -162,7 +221,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
         await callback({ files: response as unknown as ConnectorFile[], connectorProgress: { nextOffset: offset } });
       }
     }
-    return {};
+    return newWatermark ? { newWatermark } : {};
   }
 
   async pullRecordFilesByIds(

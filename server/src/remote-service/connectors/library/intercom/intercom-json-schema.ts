@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { buildIntercomDefaultView } from './intercom-default-view';
 
@@ -270,9 +270,15 @@ export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonT
         description: 'Creation timestamp (Unix)',
         [X_SCRATCH_READONLY]: true,
       }),
+      // Annotated as the last-modified field so the UI's last-modified-field
+      // picker surfaces it. The connector hardcodes `updated_at` and gates
+      // incremental on the conversations table (Notion/Linear-style "hardcoded
+      // field, annotated for UI"). Articles/Collections are deliberately not
+      // annotated — they have no server-side incremental path.
       updated_at: Type.Number({
         description: 'Last updated timestamp (Unix)',
         [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_LAST_MODIFIED_FIELD]: true,
       }),
     },
     {

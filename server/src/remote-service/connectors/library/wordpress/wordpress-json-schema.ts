@@ -6,12 +6,13 @@ import {
   X_SCRATCH_ASSET_TABLE,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import { isArray } from 'lodash';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
-import { WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
+import { WORDPRESS_MODIFIED_COLUMN_ID, WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
 import { buildWordPressDefaultView } from './wordpress-default-view';
 import { WordPressArgument, WordPressDataType, WordPressEndpointOptionsResponse } from './wordpress-types';
 
@@ -292,6 +293,20 @@ export function buildWordPressJsonTableSpec(
   }
 
   const schema = Type.Object(properties, schemaOptions);
+
+  // Annotate the last-modified field for incremental pulls. WordPress post-type
+  // and media collections expose `modified` (the date the record was last
+  // modified, in the site's timezone) — annotate it so the auto-detect layer
+  // (`findLastModifiedFieldName`) and the client's last-modified-field picker
+  // surface it, exactly as Linear annotates `updatedAt`. Taxonomy collections
+  // (categories/tags/terms) have no `modified` field, so nothing is annotated
+  // and the connector's `supportsIncrementalPull` resolves to `false` — the job
+  // then demotes that folder to a full scan. (`modified_gmt` is intentionally
+  // left unannotated; we filter on `modified` and let WordPress map it.)
+  const modifiedProp = (schema.properties as Record<string, TSchema | undefined>)[WORDPRESS_MODIFIED_COLUMN_ID];
+  if (modifiedProp) {
+    modifiedProp[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
+  }
 
   const spec: BaseJsonTableSpec = {
     id,

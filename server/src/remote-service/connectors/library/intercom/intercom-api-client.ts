@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, RawAxiosRequestHeaders } from 'axios';
 import { createApiClient } from '../../create-api-client';
+import { IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
   IntercomArticle,
   IntercomCollection,
@@ -231,35 +232,29 @@ export class IntercomApiClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * List conversations with cursor-based pagination.
+   * Shared cursor-pagination + hydration loop for conversations, used by both
+   * the full list (`GET /conversations`) and the incremental search
+   * (`POST /conversations/search`). `fetchPage` performs one request given the
+   * current cursor and returns the parsed response body.
    *
-   * When `hydrate` is true (default), each conversation is individually fetched via
-   * getConversation to include `conversation_parts`. This is slow for large workspaces
-   * (one API call per conversation).
-   *
-   * When `hydrate` is false, conversations are returned as-is from the list endpoint
-   * (no `conversation_parts`). Much faster for large workspaces.
+   * When `hydrate` is true, each conversation is individually fetched via
+   * getConversation to include `conversation_parts` (one API call per
+   * conversation — slow for large workspaces). When false, conversations are
+   * yielded as-is from the list/search endpoint (no `conversation_parts`).
    */
-  async *listConversations(
-    pageSize = 20,
-    hydrate = true,
+  private async *paginateConversations(
+    fetchPage: (
+      startingAfter: string | undefined,
+    ) => Promise<IntercomCursorPaginatedResponse<IntercomConversationListItem>>,
+    hydrate: boolean,
     resumeAfter?: string,
   ): AsyncGenerator<(IntercomConversation | IntercomConversationListItem)[], void> {
     let startingAfter: string | undefined = resumeAfter;
     let hasMore = true;
 
     while (hasMore) {
-      const params: Record<string, unknown> = { per_page: pageSize };
-      if (startingAfter) {
-        params.starting_after = startingAfter;
-      }
-
-      const response = await this.client.get<IntercomCursorPaginatedResponse<IntercomConversationListItem>>(
-        '/conversations',
-        { params },
-      );
-
-      const items = response.data.conversations ?? [];
+      const data = await fetchPage(startingAfter);
+      const items = data.conversations ?? [];
 
       if (items.length > 0) {
         if (hydrate) {
@@ -279,12 +274,79 @@ export class IntercomApiClient {
         }
       }
 
-      if (response.data.pages.next?.starting_after) {
-        startingAfter = response.data.pages.next.starting_after;
+      if (data.pages.next?.starting_after) {
+        startingAfter = data.pages.next.starting_after;
       } else {
         hasMore = false;
       }
     }
+  }
+
+  /**
+   * List conversations with cursor-based pagination.
+   *
+   * When `hydrate` is true (default), each conversation is individually fetched via
+   * getConversation to include `conversation_parts`. This is slow for large workspaces
+   * (one API call per conversation).
+   *
+   * When `hydrate` is false, conversations are returned as-is from the list endpoint
+   * (no `conversation_parts`). Much faster for large workspaces.
+   */
+  listConversations(
+    pageSize = 20,
+    hydrate = true,
+    resumeAfter?: string,
+  ): AsyncGenerator<(IntercomConversation | IntercomConversationListItem)[], void> {
+    return this.paginateConversations(
+      async (startingAfter) => {
+        const params: Record<string, unknown> = { per_page: pageSize };
+        if (startingAfter) {
+          params.starting_after = startingAfter;
+        }
+        const response = await this.client.get<IntercomCursorPaginatedResponse<IntercomConversationListItem>>(
+          '/conversations',
+          { params },
+        );
+        return response.data;
+      },
+      hydrate,
+      resumeAfter,
+    );
+  }
+
+  /**
+   * Incremental conversations pull: search for conversations whose
+   * `updated_at` matches `query` (built by `buildIntercomUpdatedSinceQuery`),
+   * sorted ascending so a record updated mid-pagination is pushed to the tail
+   * (a possible duplicate, never a miss — Intercom's cursor pagination is
+   * stateless). Same hydration/pagination behavior as `listConversations`.
+   */
+  searchConversationsUpdatedSince(
+    query: IntercomUpdatedSinceQuery,
+    pageSize = 20,
+    hydrate = true,
+    resumeAfter?: string,
+  ): AsyncGenerator<(IntercomConversation | IntercomConversationListItem)[], void> {
+    return this.paginateConversations(
+      async (startingAfter) => {
+        const pagination: Record<string, unknown> = { per_page: pageSize };
+        if (startingAfter) {
+          pagination.starting_after = startingAfter;
+        }
+        const body = {
+          query,
+          sort: { field: 'updated_at', order: 'ascending' },
+          pagination,
+        };
+        const response = await this.client.post<IntercomCursorPaginatedResponse<IntercomConversationListItem>>(
+          '/conversations/search',
+          body,
+        );
+        return response.data;
+      },
+      hydrate,
+      resumeAfter,
+    );
   }
 
   /**

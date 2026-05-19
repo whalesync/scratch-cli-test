@@ -19,6 +19,7 @@ import {
   TablePreview,
 } from '../../types';
 import { IntercomApiClient, IntercomError } from './intercom-api-client';
+import { buildIntercomUpdatedSinceQuery, IntercomUpdatedSinceQuery } from './intercom-incremental';
 import {
   buildIntercomArticlesJsonTableSpec,
   buildIntercomCollectionsJsonTableSpec,
@@ -53,6 +54,7 @@ export class IntercomConnector extends Connector {
     record: 'record',
     records: 'records',
     logo: 'https://static.scratch.md/connector-icons/intercom.svg',
+    incrementalPull: true,
     credentialFields: {
       user_provided_params: [
         {
@@ -126,6 +128,18 @@ export class IntercomConnector extends Connector {
     }
   }
 
+  /**
+   * Only the Conversations table supports a server-side incremental pull
+   * (`POST /conversations/search` filters on `updated_at`). Articles and
+   * Collections have no modified-since filter on their list endpoints, so the
+   * job demotes those folders to a full scan. The capability gate is the table
+   * itself — `updated_at` is a fixed conversations system field, not
+   * user-selectable, so there is no per-folder config to inspect.
+   */
+  override supportsIncrementalPull(_options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
+    return tableSpec.id.wsId === 'conversations';
+  }
+
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
@@ -155,7 +169,27 @@ export class IntercomConnector extends Connector {
 
       case 'conversations': {
         const hydrate = !options.excludeConversationParts;
-        for await (const conversations of this.client.listConversations(20, hydrate, resumeProgress?.startingAfter)) {
+
+        // Incremental: only conversations supports a server-side updated_at
+        // search. Capture the watermark BEFORE the first API call so changes
+        // made mid-pull are re-pulled next run, not skipped. Intercom's search
+        // `>` is exclusive and `updated_at` is server-side (Unix seconds) while
+        // the watermark is client-side, so the helper subtracts a clock-skew
+        // margin; idempotent commits absorb the small re-pulled window. Gated
+        // inside this case so a stray incremental request for the other tables
+        // still returns {} (no watermark).
+        let newWatermark: Date | undefined;
+        let updatedSinceQuery: IntercomUpdatedSinceQuery | undefined;
+        if (options.pullMode === 'incremental' && options.since instanceof Date) {
+          newWatermark = new Date();
+          updatedSinceQuery = buildIntercomUpdatedSinceQuery(options.since);
+        }
+
+        const conversationPages = updatedSinceQuery
+          ? this.client.searchConversationsUpdatedSince(updatedSinceQuery, 20, hydrate, resumeProgress?.startingAfter)
+          : this.client.listConversations(20, hydrate, resumeProgress?.startingAfter);
+
+        for await (const conversations of conversationPages) {
           const lastConvo = conversations[conversations.length - 1];
           const lastId = lastConvo ? String((lastConvo as Record<string, unknown>).id) : undefined;
           await callback({
@@ -163,7 +197,7 @@ export class IntercomConnector extends Connector {
             connectorProgress: lastId ? { startingAfter: lastId } : {},
           });
         }
-        break;
+        return newWatermark ? { newWatermark } : {};
       }
 
       default:

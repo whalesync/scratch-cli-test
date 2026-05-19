@@ -526,4 +526,130 @@ describe('IntercomApiClient', () => {
       expect(result).toBeNull();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // searchConversationsUpdatedSince (incremental)
+  // ---------------------------------------------------------------------------
+
+  describe('searchConversationsUpdatedSince', () => {
+    const query = { field: 'updated_at' as const, operator: '>' as const, value: 1_700_000_000 };
+
+    it('POSTs /conversations/search with the query, ascending sort, and pagination', async () => {
+      const listItem = { type: 'conversation', id: '1', title: 'Test' };
+      const fullConversation = {
+        type: 'conversation',
+        id: '1',
+        title: 'Test',
+        conversation_parts: { type: 'conversation_part.list', conversation_parts: [], total_count: 0 },
+      };
+
+      mockPost.mockResolvedValueOnce({
+        data: {
+          type: 'conversation.list',
+          conversations: [listItem],
+          total_count: 1,
+          pages: { type: 'pages', page: 1, per_page: 20, total_pages: 1 },
+        },
+      });
+      // Hydration call goes through GET /conversations/{id}
+      mockGet.mockResolvedValueOnce({ data: fullConversation });
+
+      const pages: unknown[][] = [];
+      for await (const page of client.searchConversationsUpdatedSince(query)) {
+        pages.push(page);
+      }
+
+      expect(pages).toHaveLength(1);
+      expect(pages[0]).toEqual([fullConversation]);
+      expect(mockPost).toHaveBeenCalledWith('/conversations/search', {
+        query,
+        sort: { field: 'updated_at', order: 'ascending' },
+        pagination: { per_page: 20 },
+      });
+      expect(mockGet).toHaveBeenCalledWith('/conversations/1');
+    });
+
+    it('follows cursor pagination via pages.next.starting_after', async () => {
+      const conv1 = { type: 'conversation', id: '1' };
+      const conv2 = { type: 'conversation', id: '2' };
+      const fullConv1 = { ...conv1, conversation_parts: { type: 'list', conversation_parts: [], total_count: 0 } };
+      const fullConv2 = { ...conv2, conversation_parts: { type: 'list', conversation_parts: [], total_count: 0 } };
+
+      mockPost
+        .mockResolvedValueOnce({
+          data: {
+            type: 'conversation.list',
+            conversations: [conv1],
+            total_count: 2,
+            pages: { type: 'pages', page: 1, per_page: 1, total_pages: 2, next: { page: 2, starting_after: 'abc' } },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            type: 'conversation.list',
+            conversations: [conv2],
+            total_count: 2,
+            pages: { type: 'pages', page: 2, per_page: 1, total_pages: 2 },
+          },
+        });
+      mockGet.mockResolvedValueOnce({ data: fullConv1 }).mockResolvedValueOnce({ data: fullConv2 });
+
+      const pages: unknown[][] = [];
+      for await (const page of client.searchConversationsUpdatedSince(query, 1)) {
+        pages.push(page);
+      }
+
+      expect(pages).toHaveLength(2);
+      // Second page request threads the cursor into pagination.starting_after.
+      expect(mockPost).toHaveBeenLastCalledWith('/conversations/search', {
+        query,
+        sort: { field: 'updated_at', order: 'ascending' },
+        pagination: { per_page: 1, starting_after: 'abc' },
+      });
+    });
+
+    it('skips hydration when hydrate is false', async () => {
+      const listItem = { type: 'conversation', id: '1', title: 'Test', state: 'open' };
+      mockPost.mockResolvedValueOnce({
+        data: {
+          type: 'conversation.list',
+          conversations: [listItem],
+          total_count: 1,
+          pages: { type: 'pages', page: 1, per_page: 20, total_pages: 1 },
+        },
+      });
+
+      const pages: unknown[][] = [];
+      for await (const page of client.searchConversationsUpdatedSince(query, 20, false)) {
+        pages.push(page);
+      }
+
+      expect(pages).toEqual([[listItem]]);
+      // No hydration GET /conversations/1
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it('threads a resume cursor into the first request', async () => {
+      mockPost.mockResolvedValueOnce({
+        data: {
+          type: 'conversation.list',
+          conversations: [],
+          total_count: 0,
+          pages: { type: 'pages', page: 1, per_page: 20, total_pages: 0 },
+        },
+      });
+
+      const pages: unknown[][] = [];
+      for await (const page of client.searchConversationsUpdatedSince(query, 20, true, 'resume_cursor')) {
+        pages.push(page);
+      }
+
+      expect(pages).toHaveLength(0);
+      expect(mockPost).toHaveBeenCalledWith('/conversations/search', {
+        query,
+        sort: { field: 'updated_at', order: 'ascending' },
+        pagination: { per_page: 20, starting_after: 'resume_cursor' },
+      });
+    });
+  });
 });

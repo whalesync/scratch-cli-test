@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument */
-import { X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import {
   buildIntercomArticlesJsonTableSpec,
   buildIntercomCollectionsJsonTableSpec,
@@ -54,6 +54,13 @@ describe('buildIntercomArticlesJsonTableSpec', () => {
     expect(props.statistics[X_SCRATCH_READONLY]).toBe(true);
     expect(props.created_at[X_SCRATCH_READONLY]).toBe(true);
     expect(props.updated_at[X_SCRATCH_READONLY]).toBe(true);
+  });
+
+  it('does NOT annotate updated_at as the last-modified field (articles have no incremental path)', () => {
+    const spec = buildIntercomArticlesJsonTableSpec(entityId);
+    const props = spec.schema.properties;
+
+    expect(props.updated_at[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
   });
 
   it('does not mark title, description, body, author_id, state as readonly', () => {
@@ -119,6 +126,13 @@ describe('buildIntercomCollectionsJsonTableSpec', () => {
     expect(props.updated_at[X_SCRATCH_READONLY]).toBe(true);
   });
 
+  it('does NOT annotate updated_at as the last-modified field (collections have no incremental path)', () => {
+    const spec = buildIntercomCollectionsJsonTableSpec(entityId);
+    const props = spec.schema.properties;
+
+    expect(props.updated_at[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
+  });
+
   it('does not mark name, description, icon, parent_id, help_center_id as readonly', () => {
     const spec = buildIntercomCollectionsJsonTableSpec(entityId);
     const props = spec.schema.properties;
@@ -182,6 +196,14 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
     for (const key of Object.keys(props)) {
       expect(props[key][X_SCRATCH_READONLY]).toBe(true);
     }
+  });
+
+  it('annotates updated_at as the last-modified field for the UI picker (not created_at)', () => {
+    const spec = buildIntercomConversationsJsonTableSpec(entityId);
+    const props = spec.schema.properties;
+
+    expect(props.updated_at[X_SCRATCH_LAST_MODIFIED_FIELD]).toBe(true);
+    expect(props.created_at[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
   });
 
   it('includes source with nested author schema', () => {

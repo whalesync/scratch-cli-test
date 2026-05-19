@@ -3,6 +3,7 @@ import { AxiosError } from 'axios';
 import { Service } from '../../../service-constants';
 import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
 import { IntercomConnector } from '../intercom-connector';
+import { buildIntercomUpdatedSinceQuery } from '../intercom-incremental';
 import { IntercomArticle, IntercomCollection, IntercomConversation } from '../intercom-types';
 
 // Mock display-names to break circular import chain
@@ -23,6 +24,7 @@ const mockCreateCollection = jest.fn();
 const mockUpdateCollection = jest.fn();
 const mockDeleteCollection = jest.fn();
 const mockListConversations = jest.fn();
+const mockSearchConversationsUpdatedSince = jest.fn();
 const mockGetConversation = jest.fn();
 
 jest.mock('../intercom-api-client', () => {
@@ -40,6 +42,7 @@ jest.mock('../intercom-api-client', () => {
       updateCollection: mockUpdateCollection,
       deleteCollection: mockDeleteCollection,
       listConversations: mockListConversations,
+      searchConversationsUpdatedSince: mockSearchConversationsUpdatedSince,
       getConversation: mockGetConversation,
     })),
     IntercomError: class IntercomError extends Error {
@@ -347,6 +350,134 @@ describe('IntercomConnector', () => {
       await expect(
         connector.pullRecordFiles(buildTableSpec('unknown'), callback, {}, { forceFull: false }),
       ).rejects.toThrow("Unknown table 'unknown'");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // supportsIncrementalPull
+  // ---------------------------------------------------------------------------
+
+  describe('supportsIncrementalPull', () => {
+    it('is true only for the conversations table', () => {
+      expect(connector.supportsIncrementalPull({}, buildTableSpec('conversations'))).toBe(true);
+    });
+
+    it('is false for articles and collections (no server-side updated_at filter)', () => {
+      expect(connector.supportsIncrementalPull({}, buildTableSpec('articles'))).toBe(false);
+      expect(connector.supportsIncrementalPull({}, buildTableSpec('collections'))).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // pullRecordFiles (incremental)
+  // ---------------------------------------------------------------------------
+
+  describe('pullRecordFiles (incremental)', () => {
+    it('searches conversations updated since `since` and returns a newWatermark', async () => {
+      const conversations = [makeConversation({ id: '1' }), makeConversation({ id: '2' })];
+      mockSearchConversationsUpdatedSince.mockReturnValue(asyncGen([conversations]));
+      const since = new Date('2026-05-01T12:00:00.000Z');
+
+      const callback = jest.fn(() => Promise.resolve());
+      const before = Date.now();
+      const result = await connector.pullRecordFiles(
+        buildTableSpec('conversations'),
+        callback,
+        {},
+        {
+          pullMode: 'incremental',
+          since,
+        },
+      );
+      const after = Date.now();
+
+      expect(mockSearchConversationsUpdatedSince).toHaveBeenCalledWith(
+        buildIntercomUpdatedSinceQuery(since),
+        20,
+        true,
+        undefined,
+      );
+      expect(mockListConversations).not.toHaveBeenCalled();
+      expect(result.newWatermark).toBeInstanceOf(Date);
+      expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+      expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
+    });
+
+    it('passes hydrate=false to search when excludeConversationParts is set', async () => {
+      mockSearchConversationsUpdatedSince.mockReturnValue(asyncGen([[makeConversation({ id: '1' })]]));
+      const since = new Date('2026-05-01T12:00:00.000Z');
+
+      await connector.pullRecordFiles(
+        buildTableSpec('conversations'),
+        jest.fn(() => Promise.resolve()),
+        {},
+        {
+          pullMode: 'incremental',
+          since,
+          excludeConversationParts: true,
+        },
+      );
+
+      expect(mockSearchConversationsUpdatedSince).toHaveBeenCalledWith(
+        buildIntercomUpdatedSinceQuery(since),
+        20,
+        false,
+        undefined,
+      );
+    });
+
+    it('forwards a resume cursor from progress.startingAfter to the search', async () => {
+      mockSearchConversationsUpdatedSince.mockReturnValue(asyncGen([[makeConversation({ id: '1' })]]));
+      const since = new Date('2026-05-01T12:00:00.000Z');
+
+      await connector.pullRecordFiles(
+        buildTableSpec('conversations'),
+        jest.fn(() => Promise.resolve()),
+        { startingAfter: 'cur_9' },
+        { pullMode: 'incremental', since },
+      );
+
+      expect(mockSearchConversationsUpdatedSince).toHaveBeenCalledWith(
+        buildIntercomUpdatedSinceQuery(since),
+        20,
+        true,
+        'cur_9',
+      );
+    });
+
+    it('falls back to a full list (and returns {}) when incremental but `since` is missing', async () => {
+      mockListConversations.mockReturnValue(asyncGen([[makeConversation({ id: '1' })]]));
+
+      const result = await connector.pullRecordFiles(
+        buildTableSpec('conversations'),
+        jest.fn(() => Promise.resolve()),
+        {},
+        {
+          pullMode: 'incremental',
+        },
+      );
+
+      expect(result).toEqual({});
+      expect(mockSearchConversationsUpdatedSince).not.toHaveBeenCalled();
+      expect(mockListConversations).toHaveBeenCalledWith(20, true, undefined);
+    });
+
+    it('never searches for articles even if incremental options leak through (returns {})', async () => {
+      mockListArticles.mockReturnValue(asyncGen([[makeArticle({ id: '1' })]]));
+
+      const result = await connector.pullRecordFiles(
+        buildTableSpec('articles'),
+        jest.fn(() => Promise.resolve()),
+        {},
+        {
+          pullMode: 'incremental',
+          since: new Date('2026-05-01T12:00:00.000Z'),
+        },
+      );
+
+      expect(result).toEqual({});
+      expect(mockSearchConversationsUpdatedSince).not.toHaveBeenCalled();
+      expect(mockListArticles).toHaveBeenCalled();
     });
   });
 
