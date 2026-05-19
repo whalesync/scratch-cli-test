@@ -336,6 +336,12 @@ The job demotes an incremental run to a full scan whenever `supportsIncrementalP
    2. else auto-detect: the first schema field annotated with `X_SCRATCH_LAST_MODIFIED_FIELD` (`x-scratch-last-modified-field`), found via `findLastModifiedFieldName(tableSpec)`.
 
    Connectors over an API with no last-modified convention (SQL) skip layer 2 — there is nothing to annotate, so resolution is the explicit setting only.
+
+   `findLastModifiedFieldName` understands the three record-schema shapes connectors use (first match wins), so a connector's `resolveModifiedAtField`/auto-detect path and the client's annotation walk stay identical regardless of shape:
+
+   1. **Airtable-nested** — `{ properties: { fields: { properties: { <name> } } } }` (the original Airtable record shape).
+   2. **Flat top-level** — `{ properties: { <name> } }` — one static schema per entity type (WordPress, **Linear**, Shopify).
+   3. **HubSpot-nested** — `{ properties: { properties: { properties: { <name> } } } }`, where CRM properties live under a nested `properties` object.
 3. **`supportsIncrementalPull`** — usually `return this.resolveModifiedAtField(...) !== undefined`. Connectors with a guaranteed system field (e.g. Notion's `last_edited_time`) return `true` unconditionally.
 4. **`advancedSettings`** — expose `modifiedAtField` as a `field-select` setting so users can override/declare the column, unless the field is fixed and not user-selectable.
 5. **Watermark-before-first-call rule** — capture `newWatermark = new Date()` _before the first API call_, not after the last. Anything modified mid-pull is then re-pulled next run rather than skipped; idempotent commits absorb the duplicates.
@@ -420,7 +426,36 @@ async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecor
 
 **Nesting-limit demotion (Notion-specific edge case):** Notion compound filters allow only **one level** of `and`/`or` nesting. The timestamp filter is non-compound, so wrapping a _simple_ user filter as `{ and: [userFilter, tsFilter] }` is fine. But if the user's own `options.filter` is itself a top-level compound (`{ and: [...] }` / `{ or: [...] }`), wrapping it in another `and` exceeds the limit and Notion 400s. `combineNotionFilters` detects a top-level compound user filter and returns `demoteToFull`; the connector then logs a warning, **skips the incremental filter (keeping the user filter)**, full-scans, and returns `{}` (no watermark). This is a connector-side demotion analogous to the job-level one — the next incremental run retries from the same prior watermark.
 
-Reuse the helper-module _shape_ but **not one shared helper across connector families** — predicate syntaxes (Airtable formula, SQL, Notion JSON) have nothing in common; only the code shape is shared. See `airtable/airtable-incremental.ts` for the formula-based variant and `notion/notion-incremental.ts` for the Notion JSON-filter variant.
+##### Worked example — server-side predicate (Linear: fixed system field + per-entity filter-input-type map)
+
+Linear is the GraphQL counterpart to the Notion variant: every entity type (Issue, Project, Team, User, IssueLabel, Cycle) has a guaranteed server-side `updatedAt`, and every list connection accepts a typed `filter` input exposing an `updatedAt: DateComparator` comparator. The field is fixed and not user-selectable, so there is **no `resolveModifiedAtField` / `modifiedAtField` setting** — `supportsIncrementalPull()` returns `true` unconditionally, `incrementalPull: true` is set in `connectorMetadata({ ... })`, and `advancedSettings` stays `[]`. The schema builder still annotates the flat top-level `updatedAt` with `X_SCRATCH_LAST_MODIFIED_FIELD` (applied in the non-generated `linear-json-schema.ts`, not the do-not-edit generated schema files) so the UI's last-modified-field picker can surface it — exactly as Notion annotates `last_edited_time`.
+
+Unlike Notion's inclusive `on_or_after`, Linear's `gt` is **exclusive** and the watermark is captured client-side, so `LINEAR_INCREMENTAL_CLOCK_SKEW_MS = 60_000`: the helper subtracts the margin from `since` so a boundary record on a skewed clock isn't missed; idempotent commits absorb the small re-pulled window.
+
+The one Linear-specific wrinkle is that the GraphQL filter **input type name differs per entity** (`issues → IssueFilter`, `projects → ProjectFilter`, `teams → TeamFilter`, `users → UserFilter`, `labels → IssueLabelFilter`, `cycles → CycleFilter` — verified against `@linear/sdk`'s generated documents). The API client carries a `FILTER_TYPE_MAP` alongside `ROOT_FIELD_MAP`; when a filter is supplied it declares a typed `$filter: <EntityFilter>` variable and threads it onto the root connection. When absent, the query is emitted unchanged — a full scan with zero behavior change. Linear has no user `options.filter` today, so there is no filter-combiner (the `linear-incremental.ts` helper is just the clock-skew constant + `buildLinearUpdatedAtFilter`).
+
+```typescript
+override supportsIncrementalPull(): boolean {
+  return true; // updatedAt is guaranteed on every Linear entity type
+}
+
+async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecordFilesResult> {
+  let newWatermark: Date | undefined;
+  let filter: LinearUpdatedAtFilter | undefined;
+  if (options.pullMode === 'incremental' && options.since instanceof Date) {
+    newWatermark = new Date();                          // BEFORE the first listEntities
+    filter = buildLinearUpdatedAtFilter(options.since); // { updatedAt: { gt: (since - 60s).toISOString() } }
+  }
+  // listEntities builds `query List…($first,$after[,$filter:<EntityFilter>])`,
+  // passing `filter` (constant across pages) only when supplied.
+  for await (const batch of this.client.listEntities(entityType, 50, resumeCursor, filter)) { ... }
+  return newWatermark ? { newWatermark } : {};
+}
+```
+
+(None of the part-3 server-side-predicate connectors needed the **client-side-filter** archetype — it stays documented-but-unimplemented; the deferred Webflow design remains its future template.)
+
+Reuse the helper-module _shape_ but **not one shared helper across connector families** — predicate syntaxes (Airtable formula, SQL, Notion JSON, Linear GraphQL filter input) have nothing in common; only the code shape is shared. See `airtable/airtable-incremental.ts` for the formula-based variant, `notion/notion-incremental.ts` for the Notion JSON-filter variant, and `linear/linear-incremental.ts` for the GraphQL typed-filter variant.
 
 ### Hydration
 

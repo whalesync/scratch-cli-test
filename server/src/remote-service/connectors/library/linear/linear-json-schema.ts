@@ -5,6 +5,7 @@
  */
 
 import { type TSchema } from '@sinclair/typebox';
+import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import {
   CyclesSchema,
@@ -29,6 +30,25 @@ const SCHEMA_MAP: Record<EntityType, TSchema> = {
   labels: LabelsSchema,
   cycles: CyclesSchema,
 };
+
+/**
+ * Every Linear entity (Issue, Project, Team, User, IssueLabel, Cycle) exposes a
+ * server-side `updatedAt` system field. Annotate it as the last-modified field
+ * on each entity schema so the auto-detect layer (`findLastModifiedFieldName`)
+ * and the client's last-modified-field picker surface it. The connector itself
+ * hardcodes `updatedAt` for incremental pulls (it is guaranteed universal), the
+ * same way Notion annotates `last_edited_time` for the UI even though its
+ * connector hardcodes that field. The generated schema files apply
+ * `X_SCRATCH_READONLY` to these same singletons by post-hoc mutation; this is
+ * the equivalent additive annotation kept out of the generated (do-not-edit)
+ * code.
+ */
+for (const schema of Object.values(SCHEMA_MAP)) {
+  const props = (schema as { properties?: Record<string, Record<string, unknown>> }).properties;
+  if (props?.updatedAt) {
+    props.updatedAt[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
+  }
+}
 
 /**
  * Build a BaseJsonTableSpec for a Linear entity type.

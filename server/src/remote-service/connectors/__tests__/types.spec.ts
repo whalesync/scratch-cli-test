@@ -1,4 +1,25 @@
-import { clearRecordId, idPath, readRecordId, readRecordIdAsString, recordWithId, writeRecordId } from '../types';
+import { TSchema } from '@sinclair/typebox';
+import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
+import {
+  BaseJsonTableSpec,
+  clearRecordId,
+  findLastModifiedFieldName,
+  idPath,
+  readRecordId,
+  readRecordIdAsString,
+  recordWithId,
+  writeRecordId,
+} from '../types';
+
+function specWithSchema(schema: unknown): BaseJsonTableSpec {
+  return {
+    id: { wsId: 't', remoteId: ['t'] },
+    slug: 't',
+    name: 't',
+    idColumnRemoteId: 'id',
+    schema: schema as TSchema,
+  };
+}
 
 describe('IdPath helpers', () => {
   // ── readRecordId ──────────────────────────────────────────────────────────
@@ -116,5 +137,70 @@ describe('IdPath helpers', () => {
     it('accepts numeric ids', () => {
       expect(recordWithId(idPath('id'), 42)).toEqual({ id: 42 });
     });
+  });
+});
+
+describe('findLastModifiedFieldName', () => {
+  const annotated = { type: 'string', [X_SCRATCH_LAST_MODIFIED_FIELD]: true };
+  const plain = { type: 'string' };
+
+  // 1. Airtable-nested: properties.fields.properties.<name> (unchanged behavior)
+  describe('Airtable-nested shape', () => {
+    it('returns the annotated field under properties.fields.properties', () => {
+      const spec = specWithSchema({
+        properties: { fields: { properties: { Name: plain, 'Last Modified': annotated } } },
+      });
+      expect(findLastModifiedFieldName(spec)).toBe('Last Modified');
+    });
+
+    it('returns undefined when no nested field is annotated', () => {
+      const spec = specWithSchema({ properties: { fields: { properties: { Name: plain } } } });
+      expect(findLastModifiedFieldName(spec)).toBeUndefined();
+    });
+  });
+
+  // 2. Flat top-level: properties.<name> (WordPress / Linear / Shopify)
+  describe('flat top-level shape', () => {
+    it('returns the annotated top-level field (Linear/WordPress/Shopify)', () => {
+      const spec = specWithSchema({ properties: { id: plain, updatedAt: annotated } });
+      expect(findLastModifiedFieldName(spec)).toBe('updatedAt');
+    });
+
+    it('returns undefined when no top-level field is annotated', () => {
+      const spec = specWithSchema({ properties: { id: plain, updatedAt: plain } });
+      expect(findLastModifiedFieldName(spec)).toBeUndefined();
+    });
+  });
+
+  // 3. HubSpot-nested: properties.properties.properties.<name>
+  describe('HubSpot-nested shape', () => {
+    it('returns the annotated property under the nested properties object', () => {
+      const spec = specWithSchema({
+        properties: {
+          id: plain,
+          properties: { properties: { name: plain, hs_lastmodifieddate: annotated } },
+        },
+      });
+      expect(findLastModifiedFieldName(spec)).toBe('hs_lastmodifieddate');
+    });
+
+    it('returns undefined when no nested HubSpot property is annotated', () => {
+      const spec = specWithSchema({
+        properties: { id: plain, properties: { properties: { name: plain } } },
+      });
+      expect(findLastModifiedFieldName(spec)).toBeUndefined();
+    });
+  });
+
+  it('returns undefined for an empty or shapeless schema', () => {
+    expect(findLastModifiedFieldName(specWithSchema({}))).toBeUndefined();
+    expect(findLastModifiedFieldName(specWithSchema({ properties: {} }))).toBeUndefined();
+  });
+
+  it('prefers the Airtable-nested match over a flat top-level one', () => {
+    const spec = specWithSchema({
+      properties: { updatedAt: annotated, fields: { properties: { 'Last Modified': annotated } } },
+    });
+    expect(findLastModifiedFieldName(spec)).toBe('Last Modified');
   });
 });

@@ -32,6 +32,7 @@ import { ALL_ENTITY_TYPES, ENTITY_REGISTRY, type EntityType } from './graphql';
 import { ISSUES_READ_ONLY_FIELDS, ISSUES_STRIP_ON_UPDATE_FIELDS } from './graphql/mutations/issues.mutations';
 import { PROJECTS_READ_ONLY_FIELDS } from './graphql/mutations/projects.mutations';
 import { LinearApiClient, LinearError } from './linear-api-client';
+import { buildLinearUpdatedAtFilter, LinearUpdatedAtFilter } from './linear-incremental';
 import { buildLinearJsonTableSpec } from './linear-json-schema';
 import { LinearCredentials } from './linear-types';
 
@@ -67,6 +68,7 @@ export class LinearConnector extends Connector {
     record: 'item',
     records: 'items',
     logo: 'https://static.scratch.md/connector-icons/linear.svg',
+    incrementalPull: true,
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
@@ -129,14 +131,28 @@ export class LinearConnector extends Connector {
   }
 
   /**
+   * Linear supports incremental pulls unconditionally: every entity type
+   * (Issue, Project, Team, User, IssueLabel, Cycle) has a guaranteed
+   * server-side `updatedAt` system field and every list connection accepts an
+   * `updatedAt` filter comparator. The field is fixed (not user-selectable), so
+   * there is no per-folder config to inspect — this always returns `true`.
+   */
+  override supportsIncrementalPull(): boolean {
+    return true;
+  }
+
+  /**
    * Pull all entities of the given type as JSON files.
+   *
+   * Full pull (default): scan every entity. Incremental pull: filter the
+   * connection by `updatedAt > since` (minus a clock-skew margin) and return
+   * the new watermark for the job to persist.
    */
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: PullRecordFilesOptions,
+    options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as EntityType;
 
@@ -146,13 +162,25 @@ export class LinearConnector extends Connector {
 
     const resumeCursor = (progress as { endCursor?: string })?.endCursor;
 
-    for await (const batch of this.client.listEntities(entityType, 50, resumeCursor)) {
+    // Capture the watermark BEFORE the first API call so changes made mid-pull
+    // aren't lost on the next run. `updatedAt` is server-side and Linear's `gt`
+    // is exclusive while the watermark is client-side, so the helper subtracts
+    // a clock-skew margin; idempotent commits absorb the small re-pulled
+    // window. Linear has no user `options.filter` today — nothing to combine.
+    let newWatermark: Date | undefined;
+    let filter: LinearUpdatedAtFilter | undefined;
+    if (options.pullMode === 'incremental' && options.since instanceof Date) {
+      newWatermark = new Date();
+      filter = buildLinearUpdatedAtFilter(options.since);
+    }
+
+    for await (const batch of this.client.listEntities(entityType, 50, resumeCursor, filter)) {
       await callback({
         files: batch.nodes as ConnectorFile[],
         connectorProgress: batch.endCursor ? { endCursor: batch.endCursor } : {},
       });
     }
-    return {};
+    return newWatermark ? { newWatermark } : {};
   }
 
   /**

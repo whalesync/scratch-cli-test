@@ -64,6 +64,22 @@ const ROOT_FIELD_MAP: Record<EntityType, string> = {
 };
 
 /**
+ * Linear GraphQL filter input type names per entity type. Each list connection
+ * accepts a typed `filter` argument of this input type, and every one of these
+ * inputs exposes an `updatedAt: DateComparator` comparator (verified against
+ * `@linear/sdk`'s generated documents). Used to declare the `$filter` variable
+ * type when an incremental filter is supplied to {@link listEntities}.
+ */
+const FILTER_TYPE_MAP: Record<EntityType, string> = {
+  issues: 'IssueFilter',
+  projects: 'ProjectFilter',
+  teams: 'TeamFilter',
+  users: 'UserFilter',
+  labels: 'IssueLabelFilter',
+  cycles: 'CycleFilter',
+};
+
+/**
  * Singular root field names for single-node queries.
  */
 const SINGULAR_FIELD_MAP: Record<EntityType, string> = {
@@ -181,35 +197,50 @@ export class LinearApiClient {
 
   /**
    * List entities by type using cursor-based pagination.
+   *
+   * When `filter` is supplied (incremental pull), the query declares a typed
+   * `$filter` variable of the entity's Linear filter input type and passes it
+   * to the root connection. When omitted, the query is emitted unchanged — a
+   * full scan with zero behavior change.
    */
   async *listEntities(
     entityType: EntityType,
     pageSize = 50,
     resumeCursor?: string,
+    filter?: Record<string, unknown>,
   ): AsyncGenerator<{ nodes: Record<string, unknown>[]; endCursor: string | null }, void> {
     const queryFields = QUERY_FIELDS_MAP[entityType];
     const rootField = ROOT_FIELD_MAP[entityType];
 
+    const filterType = filter ? FILTER_TYPE_MAP[entityType] : undefined;
+    const varDecls = filterType
+      ? `$first: Int!, $after: String, $filter: ${filterType}`
+      : `$first: Int!, $after: String`;
+    const rootArgs = filterType ? `first: $first, after: $after, filter: $filter` : `first: $first, after: $after`;
+
     const queryString = `
-      query List${capitalize(rootField)}($first: Int!, $after: String) {
-        ${rootField}(first: $first, after: $after) {
+      query List${capitalize(rootField)}(${varDecls}) {
+        ${rootField}(${rootArgs}) {
           nodes { ${queryFields} }
           pageInfo { hasNextPage endCursor }
         }
       }
     `;
 
-    yield* this.paginatedList(queryString, rootField, pageSize, resumeCursor);
+    yield* this.paginatedList(queryString, rootField, pageSize, resumeCursor, filterType ? { filter } : undefined);
   }
 
   /**
    * Generic paginated list generator using Relay-style cursor pagination.
+   * `extraVariables` are merged into the GraphQL variables on every page (used
+   * to pass a stable `filter` across all pages of an incremental pull).
    */
   private async *paginatedList<T>(
     queryString: string,
     rootField: string,
     pageSize: number,
     resumeCursor?: string,
+    extraVariables?: Record<string, unknown>,
   ): AsyncGenerator<{ nodes: T[]; endCursor: string | null }, void> {
     let cursor: string | null = resumeCursor ?? null;
     let hasMore = true;
@@ -219,6 +250,7 @@ export class LinearApiClient {
       const response: ResponseType = await this.query<ResponseType>(queryString, {
         first: pageSize,
         after: cursor,
+        ...extraVariables,
       });
 
       const connection: LinearConnection<T> | undefined = response[rootField];

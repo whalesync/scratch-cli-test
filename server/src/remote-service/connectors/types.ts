@@ -166,23 +166,13 @@ export interface PullRecordFilesResult {
 }
 
 /**
- * Walk the `fields` properties of a `BaseJsonTableSpec` schema and return the
- * name of the first field annotated with `x-scratch-last-modified-field`. Used
- * by connectors that auto-detect a server-side last-modified column when the
- * user hasn't explicitly set `DataFolderOptions.modifiedAtField`.
- *
- * The schema shape this walks is the standard connector record schema:
- * `{ properties: { fields: { properties: { <fieldName>: { ... } } } } }`.
- * Returns `undefined` if no such field exists or the schema shape doesn't match.
+ * Scan a single `{ <name>: { ...subSchema } }` properties bag and return the
+ * first key whose sub-schema carries `x-scratch-last-modified-field === true`.
  */
-export function findLastModifiedFieldName(tableSpec: BaseJsonTableSpec): string | undefined {
-  const schema = tableSpec.schema as unknown as Record<string, unknown>;
-  const properties = schema?.['properties'] as Record<string, unknown> | undefined;
-  const fields = properties?.['fields'] as Record<string, unknown> | undefined;
-  const fieldsProps = fields?.['properties'] as Record<string, unknown> | undefined;
-  if (!fieldsProps) return undefined;
-  for (const fieldName of Object.keys(fieldsProps)) {
-    const fieldSchema = fieldsProps[fieldName];
+function scanPropertiesForLastModified(propsBag: Record<string, unknown> | undefined): string | undefined {
+  if (!propsBag) return undefined;
+  for (const fieldName of Object.keys(propsBag)) {
+    const fieldSchema = propsBag[fieldName];
     if (
       fieldSchema !== null &&
       typeof fieldSchema === 'object' &&
@@ -192,6 +182,43 @@ export function findLastModifiedFieldName(tableSpec: BaseJsonTableSpec): string 
     }
   }
   return undefined;
+}
+
+/**
+ * Find the name of the first field annotated with `x-scratch-last-modified-field`
+ * in a `BaseJsonTableSpec` schema. Used by connectors that auto-detect a
+ * server-side last-modified column when the user hasn't explicitly set
+ * `DataFolderOptions.modifiedAtField`.
+ *
+ * Connectors model their record schemas with different shapes, so the lookup
+ * is tried in this order (first match wins):
+ *
+ * 1. **Airtable-nested** — `{ properties: { fields: { properties: { <name> } } } }`
+ *    (the original shape; unchanged behavior).
+ * 2. **Flat top-level** — `{ properties: { <name> } }` (WordPress, Linear,
+ *    Shopify — one static schema per entity type).
+ * 3. **HubSpot-nested** — `{ properties: { properties: { properties: { <name> } } } }`
+ *    where the user/CRM properties live under a nested `properties` object.
+ *
+ * Returns the annotated field's name using the key each connector's own schema
+ * reader expects, or `undefined` if no annotated field exists.
+ */
+export function findLastModifiedFieldName(tableSpec: BaseJsonTableSpec): string | undefined {
+  const schema = tableSpec.schema as unknown as Record<string, unknown>;
+  const properties = schema?.['properties'] as Record<string, unknown> | undefined;
+
+  // 1. Airtable-nested: properties.fields.properties
+  const fields = properties?.['fields'] as Record<string, unknown> | undefined;
+  const airtableMatch = scanPropertiesForLastModified(fields?.['properties'] as Record<string, unknown> | undefined);
+  if (airtableMatch !== undefined) return airtableMatch;
+
+  // 2. Flat top-level: properties.<name> (WordPress / Linear / Shopify)
+  const flatMatch = scanPropertiesForLastModified(properties);
+  if (flatMatch !== undefined) return flatMatch;
+
+  // 3. HubSpot-nested: properties.properties.properties.<name>
+  const hubspotProps = properties?.['properties'] as Record<string, unknown> | undefined;
+  return scanPropertiesForLastModified(hubspotProps?.['properties'] as Record<string, unknown> | undefined);
 }
 
 export type ConnectorErrorDetails = {
