@@ -116,7 +116,10 @@ export class JobHandlerService {
         ) as JobHandler<JobDefinition>;
 
       case JobType.PublishFromGit:
-        return new PublishFromGitJobHandler(this.publishFromGitService) as JobHandler<JobDefinition>;
+        return new PublishFromGitJobHandler(
+          this.publishFromGitService,
+          this.postHogService,
+        ) as JobHandler<JobDefinition>;
 
       case JobType.ApplyPatches:
         return new ApplyPatchesJobHandler(this.applyPatchesService) as JobHandler<JobDefinition>;

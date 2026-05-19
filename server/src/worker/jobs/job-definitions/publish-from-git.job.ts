@@ -1,4 +1,5 @@
 import { JobType, type WorkbookId } from '@spinner/shared-types';
+import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishFromGitService } from 'src/publish-plan/publish-from-git.service';
 import { WSLogger } from '../../../logger';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
@@ -44,7 +45,10 @@ export type PublishFromGitJobDefinition = JobDefinitionBuilder<
 // ── Handler ────────────────────────────────────────────────────────────────
 
 export class PublishFromGitJobHandler implements JobHandlerBuilder<PublishFromGitJobDefinition> {
-  constructor(private readonly publishFromGitService: PublishFromGitService) {}
+  constructor(
+    private readonly publishFromGitService: PublishFromGitService,
+    private readonly postHogService?: PostHogService,
+  ) {}
 
   async run(params: {
     jobId: string;
@@ -123,6 +127,24 @@ export class PublishFromGitJobHandler implements JobHandlerBuilder<PublishFromGi
         connectorProgress: {},
       });
 
+      try {
+        this.postHogService?.trackPublishCompleted(data.userId, {
+          workbookId: data.workbookId,
+          trigger: 'cli',
+          result: 'success',
+          totalRecordsPushed: result.successCount,
+          creates: result.createsPlanned,
+          edits: result.editsPlanned,
+          deletes: result.deletesPlanned,
+        });
+      } catch (err) {
+        WSLogger.warn({
+          source: 'PublishFromGitJobHandler',
+          message: 'Failed to track publish completed event',
+          error: err,
+        });
+      }
+
       WSLogger.info({
         source: 'PublishFromGitJobHandler',
         message: 'Publish-from-git job completed',
@@ -136,6 +158,21 @@ export class PublishFromGitJobHandler implements JobHandlerBuilder<PublishFromGi
         jobProgress: {},
         connectorProgress: {},
       });
+
+      try {
+        this.postHogService?.trackPublishCompleted(data.userId, {
+          workbookId: data.workbookId,
+          trigger: 'cli',
+          result: 'failure',
+          totalRecordsPushed: 0,
+          creates: 0,
+          edits: 0,
+          deletes: 0,
+        });
+      } catch {
+        // PostHog tracking should never break the error flow
+      }
+
       throw err;
     }
   }
