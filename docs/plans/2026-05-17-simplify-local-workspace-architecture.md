@@ -52,7 +52,7 @@ The three checkouts are three **states** of the user's data, not a three-way dif
 
 ## End-state design
 
-> Per connection: **one bare repo + one non-sparse git worktree of `main`**. The user's editable files live in that worktree. Snapshot reads, diff detection, and incremental pulls all go through `gix` against the bare repo. Publishing is server-side, with JSON Merge Patches sent over REST.
+> Per connection: **one bare repo + one non-sparse git worktree of `main`**. The user's editable files live in that worktree. Snapshot reads, diff detection, and fetches go through `gix` against the bare repo; in-flight user changes are stashed to a JSON patch file during pull. Publishing is server-side, with JSON Merge Patches sent over REST.
 
 The user's working files at the top of the worktree are plain JSON record files, just as today. The only git artifact in user-facing space is the `.git` link file (a single file, not a directory) — identical to what today's `dirty` checkout already has.
 
@@ -78,9 +78,10 @@ The user's working files at the top of the worktree are plain JSON record files,
     conflicts.log                    ← same-field collisions from pull (audit-only)
     connections/<conn>/
       accepted-patches.json          ← user's approved-pending-publish edits (RFC 7396; IS the wire payload)
+      working-patches.json           ← ephemeral pull stash; absent in steady state, left on disk if a pull fails
 ```
 
-What disappears vs. today: `.scratch/connections/*/dirty/`, `.scratch/connections/*/master/`, `.scratch/connections/*/reviewed-dirty/` worktrees, the `file_index` and `file_references` tables inside `.repos/<conn>.db` (per-folder tables stay — see [Phase 4](#phase-4--stop-building-the-master-file_index-table-at-initdownload)), and the sparse-checkout configuration in each worktree.
+What disappears vs. today: `.scratch/connections/*/dirty/`, `.scratch/connections/*/master/`, `.scratch/connections/*/reviewed-dirty/` worktrees, the `file_index` and `file_references` tables inside `.repos/<conn>.db` (per-folder tables stay — see [Phase 2](#phase-2--stop-building-the-master-file_index-table-at-initdownload)), and the sparse-checkout configuration in each worktree.
 
 What stays: one bare repo per connection (already used as transport), one worktree per connection (the user's editable directory), the `.repos/<conn>.db` SQLite file (now holding only per-folder tables that the desktop UI's grid view depends on).
 
@@ -92,7 +93,7 @@ Git earns its keep on three fronts that would otherwise need bespoke replacement
 2. **Snapshot storage.** The bare repo's packed objects ARE the snapshot for "what was main when we pulled" — no separate snapshot directory needed. Snapshot reads go through `gix::Repository::rev_parse("HEAD:<path>")` → blob bytes.
 3. **Fast diff detection via index.** `gix::Repository::status(...)` uses git's index to skip unchanged files via `stat`, hashing only files whose mtime/size changed. Measured ~210ms warm on the Stripe worktree (~110k files); see [Measured performance](#measured-performance) below.
 
-What we stop using git for: branches (no `dirty`, no `reviewed-dirty`), local commits (publishing is now an HTTP call), local merge logic (`shared/plan_publish.rs` machinery), and the `file_index` SQLite table that the local plan generator depended on.
+What we stop using git for: branches (no `dirty`, no `reviewed-dirty` — they were our de facto long-lived stash storage), local commits (publishing is now an HTTP call), local merge logic (`shared/plan_publish.rs` machinery), and the `file_index` SQLite table that the local plan generator depended on. In-flight pulls stash user changes to `working-patches.json` instead.
 
 ### Diff format on the wire: JSON Merge Patch (RFC 7396)
 
@@ -175,7 +176,7 @@ The file IS the wire format. Publish becomes "read file → PUT to GCS → POST 
 - Server deleted the path → if the user had an `update` accepted, convert to a `create` with reconstructed content; log a conflict.
 - Server changed a key the user's patch touches → user-wins. Patch value stays; semantics shift from "change A→B" to "set to B." Append to `.scratch/conflicts.log` + emit `desktop.pull.conflict`.
 
-The re-anchor routine for working-tree patches (unreviewed) and for the accepted-patches file is the same logic, run twice.
+The re-anchor routine runs twice with the same logic: once over the stashed `working-patches.json` (unreviewed edits captured at pull start), once over `accepted-patches.json` (approved-pending-publish).
 
 ### Operations
 
@@ -192,17 +193,19 @@ If `stalenessWarning` is present, the desktop shows a non-blocking banner: "The 
 
 **Pull** (download latest from server; `.scratch/lock` acquired):
 
-1. Read `refs/heads/main` as `old_head`.
-2. Collect two patch sets to re-anchor:
-   - **Working-tree patches** (unreviewed): `gix status` for changed files; for each, `diff(snapshot_at_old_head[path], working[path])`.
+1. If `working-patches.json` already exists from a prior failed pull, refuse to proceed and surface a recovery prompt (see [Phase 4](#phase-4--replace-download-with-stashreplay)).
+2. Read `refs/heads/main` as `old_head`.
+3. Collect two patch sets to re-anchor:
+   - **Working-tree patches** (unreviewed): `gix status` for changed files; for each, `diff(snapshot_at_old_head[path], working[path])`. Write the resulting `Vec<(path, patch)>` atomically to `<workspace>/.scratch/connections/<conn>/working-patches.json` — the stash is plain inspectable JSON that survives a crashed pull as user-recoverable state.
    - **Accepted patches** (approved, not yet published): load `accepted-patches.json`.
-3. `git fetch origin main` (incremental, packed).
-4. `gix` tree-vs-tree diff between `old_head` and the new `HEAD` → list of server-changed paths.
-5. For each server-changed path, re-anchor any user patch (working or accepted) that referenced it:
+4. `git fetch origin main` (incremental, packed).
+5. `gix` tree-vs-tree diff between `old_head` and the new `HEAD` → list of server-changed paths.
+6. For each server-changed path, re-anchor any user patch (working or accepted) that referenced it:
    - **Server didn't change a key the user touched** → patch valid as-is.
    - **Server deleted the path** → if the user had an accepted update, convert to a `create` patch with reconstructed content; log a conflict.
    - **Server changed a key the user's patch touches** → user-wins. Patch value stays; meaning shifts from "change A→B" to "set to B." Append to `.scratch/conflicts.log` and emit `desktop.pull.conflict` with `{ connectorAccountId, conflictCount, pathPattern }` (no record content).
-6. Write new-HEAD blobs to working files for paths the user didn't touch. Re-apply working-tree patches on top of new-HEAD blobs. Persist re-anchored accepted patches back to `accepted-patches.json`.
+7. Write new-HEAD blobs to working files for paths the user didn't touch. Re-apply `working-patches.json` on top of new-HEAD blobs. Persist re-anchored accepted patches back to `accepted-patches.json`.
+8. On success, delete `working-patches.json`. On any failure between (3) and (7), leave it on disk and surface the recovery message — the user can save it, then re-run pull with `--clear-stash` to discard and let the worktree become the fresh server copy.
 
 **Init**:
 
@@ -248,7 +251,7 @@ The spike file is preserved in `examples/` for future perf checks; `cargo` does 
 
 ## Migration plan
 
-The architecture changes touch many files; the migration is **publish first, then pull, then strip the rest**. Each phase is independently shippable and leaves the system working.
+The architecture changes touch many files; the migration order is **publish (1), strip the easy dead code (2–3), rewrite pull (4), collapse and parallelize (5–6), delete the legacy server endpoint (7)**. Each phase is independently shippable and leaves the system working.
 
 ### Phase 1 — Unify publish on the server via /upload-patch
 
@@ -314,56 +317,16 @@ Publish (separate concern, separate CLI command):
 
 **Done when:** desktop's publish action uses `/upload-patch` end-to-end against test-api; parity test green; permanent e2e smoke test in CI.
 
-### Phase 2 — Replace download with stash/replay
-
-**Goal:** Replace the three-way merge download with a stash/replay model: capture user patches against the old HEAD, fetch new HEAD, write server blobs, replay user patches; same-field collisions resolve user-wins, are logged locally, and emit telemetry.
-
-**CLI flow** (Phase 2 version — working-tree patches only; the accepted-patches file is added in Phase 5):
-
-1. Acquire `.scratch/lock` (Phase 1 prereq).
-2. Read `refs/heads/main` as `old_head`.
-3. `gix status` → compute per-file user patches against `old_head` snapshots.
-4. `git fetch origin main`.
-5. Tree-vs-tree diff between `old_head` and new `HEAD` → list of server-changed paths.
-6. For each path in (server-changed ∪ user-changed):
-   - Write new-HEAD blob to working file.
-   - If user has a patch for this path: replay it.
-   - For each key the user's patch touches: if `snapshot_at_old_head[key] != snapshot_at_new_head[key]`, append to `.scratch/conflicts.log` AND fire a PostHog event.
-
-**`conflicts.log` entry shape** (one JSON object per line, no record content):
-
-```
-{ "ts": "2026-05-18T13:24:51Z", "connectorAccountId": "ca_...", "path": "Companies/rec123.json", "conflictingKeys": ["website", "industry"] }
-```
-
-**PostHog event:** `desktop.pull.conflict` with `{ connectorAccountId, conflictCount, pathPattern }` (path pattern = folder, not record content).
-
-**Desktop:** Refresh action switches to the new path. No new UI required (conflicts silent, logged, telemetered).
-
-**Leaves alone:** init still creates three worktrees. Stash/replay supersedes the three-way merge but doesn't require Phase 5 first.
-
-**Future-proofing:** the re-anchor routine should be factored so it accepts a generic patch set (`Vec<(path, patch)>`) rather than reading directly from `gix status`. In Phase 5, the same routine runs twice — once on working-tree patches, once on `accepted-patches.json` — see [Operations → Pull](#operations) for the full end-state. Designing the routine this way in Phase 2 avoids a rewrite at Phase 5.
-
-**Done when:** desktop refresh uses the new path; round-trip test with concurrent server + user changes asserts user-wins; PostHog event fires; `conflicts.log` entry written.
-
-### Phase 3 — Stop creating `reviewed-dirty` on init
-
-Once Phase 1 lands, `reviewed-dirty` is unused. Delete `layout.reviewed_dirty_checkout_path` references and the worktree setup in `workspaces.rs`. Also delete the `update_reviewed_dirty` calls in `cli/commands/files.rs` (called from accept/reject paths). Saves ~10–15s of `init` per large connection.
-
-**Why this is safe to ship before Phase 5:** the only code that reads from `reviewed-dirty` is `shared/plan_publish.rs`, which Phase 1 dead-coded at runtime by routing desktop publishes through `/upload-patch`. Stopping the writes (`update_reviewed_dirty`) means the worktree (if it still exists on an old workspace) drifts out of sync with `dirty` — but nothing reads it, so the drift is harmless. New workspaces don't create the worktree at all.
-
-**Done when:** `init` no longer creates the worktree and no code path references it.
-
-### Phase 4 — Stop building the master `file_index` table at init/download
+### Phase 2 — Stop building the master `file_index` table at init/download
 
 **Audit finding (2026-05-19):** There is one SQLite file per connection (`<workspace>/.repos/<conn>.db`) shared by **two** Rust modules that write **different tables** in that file:
 
 | Tables                                                                                               | Written by                                                                                                                                                            | Read by                                                                                                                  | Lifecycle                                                                                                                                                                                                                                           |
 | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `file_index`, `file_references`                                                                      | `shared/index.rs::build` from the CLI (eager at init + after every download)                                                                                          | Only `shared/plan_publish.rs` on the client (dies post-Phase 1 at runtime, source deleted in Phase 7)                    | Phase 4 stops writing these                                                                                                                                                                                                                         |
-| Per-folder tables (`Contacts`, `blog_en`, ...) with column metadata, FK metadata, validation results | `shared/folder_index.rs::reindex_table` / `refresh_folder` / `reindex_files` etc., invoked by the desktop via `scratchmd index rebuild-folder` / `refresh-files-full` | `read_records.rs::run_query` (SQL `LIMIT/OFFSET/WHERE/ORDER BY` — desktop grid pagination), validators, validation stats | **Tables and columns unchanged in Phase 4.** Note: the `approvedChanges` / `unapprovedChanges` column _compute_ changes in Phase 5 when the three-worktree comparison goes away — see [Phase 5](#phase-5--collapse-to-one-worktree-per-connection). |
+| `file_index`, `file_references`                                                                      | `shared/index.rs::build` from the CLI (eager at init + after every download)                                                                                          | Only `shared/plan_publish.rs` on the client (dies post-Phase 1 at runtime, source deleted in Phase 7)                    | Phase 2 stops writing these                                                                                                                                                                                                                         |
+| Per-folder tables (`Contacts`, `blog_en`, ...) with column metadata, FK metadata, validation results | `shared/folder_index.rs::reindex_table` / `refresh_folder` / `reindex_files` etc., invoked by the desktop via `scratchmd index rebuild-folder` / `refresh-files-full` | `read_records.rs::run_query` (SQL `LIMIT/OFFSET/WHERE/ORDER BY` — desktop grid pagination), validators, validation stats | **Tables and columns unchanged in Phase 2.** Note: the `approvedChanges` / `unapprovedChanges` column _compute_ changes in Phase 5 when the three-worktree comparison goes away — see [Phase 5](#phase-5--collapse-to-one-worktree-per-connection). |
 
-**The `.db` file itself stays.** The CLI keeps opening it on every folder rebuild, refresh, and validation call from the desktop. Phase 4 only stops the `shared/index.rs` writes — the small `file_index` table that `plan_publish.rs` consumes.
+**The `.db` file itself stays.** The CLI keeps opening it on every folder rebuild, refresh, and validation call from the desktop. Phase 2 only stops the `shared/index.rs` writes — the small `file_index` table that `plan_publish.rs` consumes.
 
 **Why the desktop UI is unaffected:**
 
@@ -389,9 +352,59 @@ Once Phase 1 lands, `reviewed-dirty` is unused. Delete `layout.reviewed_dirty_ch
 - `service/routes/index.rs` — server-side HTTP API for the index, production load-bearing.
 - `shared/folder_index.rs` — entire module, all subcommands, all desktop-facing surface.
 
-**Sequencing:** Phase 4 (stop writing `file_index`) is safe before Phase 7 (stop reading it) because Phase 1 already stopped _calling_ `plan_publish.rs` from active client code paths. Deleting the writes stops doing wasted work; deleting the source waits until Phase 7.
+**Sequencing:** Phase 2 (stop writing `file_index`) is safe before Phase 7 (stop reading it) because Phase 1 already stopped _calling_ `plan_publish.rs` from active client code paths. Deleting the writes stops doing wasted work; deleting the source waits until Phase 7.
 
 **Done when:** `init` doesn't build the `file_index` table; downloads don't refresh it; `<conn>.db` exists and is written to as before, but no longer contains a `file_index` or `file_references` table after a fresh init.
+
+### Phase 3 — Stop creating `reviewed-dirty` on init
+
+Once Phase 1 lands, `reviewed-dirty` is unused. Delete `layout.reviewed_dirty_checkout_path` references and the worktree setup in `workspaces.rs`. Also delete the `update_reviewed_dirty` calls in `cli/commands/files.rs` (called from accept/reject paths). Saves ~10–15s of `init` per large connection.
+
+**Why this is safe to ship before Phase 5:** the only code that reads from `reviewed-dirty` is `shared/plan_publish.rs`, which Phase 1 dead-coded at runtime by routing desktop publishes through `/upload-patch`. Stopping the writes (`update_reviewed_dirty`) means the worktree (if it still exists on an old workspace) drifts out of sync with `dirty` — but nothing reads it, so the drift is harmless. New workspaces don't create the worktree at all.
+
+**Done when:** `init` no longer creates the worktree and no code path references it.
+
+### Phase 4 — Replace download with stash/replay
+
+**Goal:** Replace the three-way merge download with a stash/replay model that stashes user changes to a JSON patch file before fetching, then replays them on top of the new HEAD. Same-field collisions resolve user-wins, are logged locally, and emit telemetry. The stash file is plain inspectable JSON — the user's escape hatch if anything goes wrong.
+
+**Stash file:** `<workspace>/.scratch/connections/<conn>/working-patches.json`. Same RFC 7396 shape as `accepted-patches.json` and the `/upload-patch` payload — one entry per modified file with `kind: 'create' | 'update' | 'delete'`. Lifecycle: written before `git fetch`, deleted on successful replay, left on disk on failure for user recovery.
+
+**Why a JSON file, not git internals:** the user can `cat` the file and reason about it without knowing git. Consistent with `accepted-patches.json` shape, the `/upload-patch` payload shape, and the re-anchor routine's input contract. Git is still used internally for snapshot reads (`gix::rev_parse("HEAD:<path>")`) and for the incremental fetch — just not as the stash mechanism.
+
+**CLI flow** (Phase 4 version — working-tree patches only; the accepted-patches file is added in Phase 5):
+
+1. Acquire `.scratch/lock` (Phase 1 prereq).
+2. If `working-patches.json` already exists from a prior failed pull, refuse to proceed. Print: "a previous pull left local changes stashed at `<path>`; save it if you want a record, then re-run with `--clear-stash` to discard and replace your worktree with the fresh server copy." The user can also manually merge from the file into their worktree before retrying.
+3. Read `refs/heads/main` as `old_head`.
+4. `gix status` → compute per-file user patches against `old_head` snapshots. Write atomically (temp + rename) to `working-patches.json`.
+5. `git fetch origin main`.
+6. Tree-vs-tree diff between `old_head` and new `HEAD` → list of server-changed paths.
+7. For each path in (server-changed ∪ stashed):
+   - Write new-HEAD blob to working file.
+   - If `working-patches.json` has an entry for this path: replay it.
+   - For each key the entry's patch touches: if `snapshot_at_old_head[key] != snapshot_at_new_head[key]`, append to `.scratch/conflicts.log` AND fire a PostHog event.
+8. Delete `working-patches.json`.
+
+If any step after (4) fails (network, replay, disk), `working-patches.json` stays on disk and the CLI prints the recovery message from step 2. The desktop surfaces this as a non-blocking error with a "Show stashed changes" affordance that reveals the file in the OS file browser.
+
+**`--clear-stash` flag:** discards `working-patches.json` without replaying. Combined with a pull, the working tree ends up at fresh server HEAD with no user patches applied — the "overwrite my local with the server's copy" escape hatch.
+
+**`conflicts.log` entry shape** (one JSON object per line, no record content):
+
+```
+{ "ts": "2026-05-18T13:24:51Z", "connectorAccountId": "ca_...", "path": "Companies/rec123.json", "conflictingKeys": ["website", "industry"] }
+```
+
+**PostHog event:** `desktop.pull.conflict` with `{ connectorAccountId, conflictCount, pathPattern }` (path pattern = folder, not record content).
+
+**Desktop:** Refresh action switches to the new path. Stash-recovery state surfaces as an error toast + dialog with options to "Discard stash and pull fresh" (= `--clear-stash`) or "Show file in Finder/Explorer." Conflicts otherwise silent (logged + telemetered).
+
+**Leaves alone:** init still creates three worktrees. Stash/replay supersedes the three-way merge but doesn't require Phase 5 first.
+
+**Future-proofing:** the re-anchor routine should accept a generic patch set (`Vec<(path, patch)>`) read from disk. In Phase 5, the same routine runs twice — once on `working-patches.json` (stashed during pull), once on `accepted-patches.json` (persistent) — see [Operations → Pull](#operations) for the full end-state. Designing it this way in Phase 4 avoids a rewrite at Phase 5.
+
+**Done when:** desktop refresh uses the new path; `working-patches.json` written before fetch, deleted on success, left on failure; `--clear-stash` flag works; pre-existing stash blocks new pull with a recovery message; round-trip test with concurrent server + user changes asserts user-wins; PostHog event fires; `conflicts.log` entry written.
 
 ### Phase 5 — Collapse to one worktree per connection
 
@@ -442,7 +455,7 @@ Once Phases 1–6 are live and the desktop app has shipped using `/upload-patch`
 - The `run-from-git` endpoint in both `cli-workbook.controller.ts` and `publish-plan.controller.ts`.
 - `enqueuePublishFromGitJob` and `publish-from-git.service.ts`.
 - The CLI's local plan-build command (the `scratchmd files upload` flow that produces phase files — superseded by Phase 1's `upload` + `publish` commands).
-- `scratch-git-2/src/shared/plan_publish.rs` (~855 LOC) — the only remaining reader of the local `index.db`. Deleting it completes the Phase 4 work on the client side.
+- `scratch-git-2/src/shared/plan_publish.rs` (~855 LOC) — the only remaining reader of the local `index.db`. Deleting it completes the Phase 2 work on the client side.
 - `cli/commands/plan_publish.rs` (the wiring that opened `index.db` for the local plan command).
 - The parity test introduced in Phase 1.
 
@@ -463,20 +476,21 @@ Net debt reduction: ~600 LOC from `plan_publish.rs` and friends + sparse-checkou
 
 ## Risks
 
-- **Same-field collision = silent user-wins.** Mitigated by `.scratch/conflicts.log` + PostHog event (Phase 2). The desktop app should eventually surface this as a UI; out of scope for v1.
+- **Same-field collision = silent user-wins.** Mitigated by `.scratch/conflicts.log` + PostHog event (Phase 4). The desktop app should eventually surface this as a UI; out of scope for v1.
 - **Server-side publish performance.** Path A (`plan-job` + `run-job`) already exists and runs in production for the web client, so structurally the cutover is safe — but its perf on the 135k-file Monorepo workspace hasn't been benchmarked. Phase 7's gate forces a measurement before deletion.
 - **gix `worktree add` gaps.** gix 0.70's worktree-add support was limited. Verify the current crate version before defaulting to shell-out.
 - **Loss of git-as-undo.** Users currently have a local git history they could in principle inspect. Almost certainly unused, but worth confirming nobody depends on it before Phase 5 ships.
 - **Migration of in-flight workspaces.** Workspaces already initialized on the old layout keep using the old code paths until they re-init. The desktop should prompt re-init when the new path lands.
+- **Stash recovery is user-driven.** If a pull crashes and the user deletes `working-patches.json` without inspecting it, their unreviewed edits are lost silently. Mitigated by the CLI recovery message + desktop "Show file in Finder/Explorer" affordance + pre-existing-stash check. Acceptable given the file is plain JSON in a documented location; the failure mode requires the user to manually delete a file they were told not to.
 
 ## Status
 
 | Phase                                             | Status                                                                                                             |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Phase 1 — Server `/upload-patch`                  | **Shipped** on `dev-10144-{mr1,mr2,mr3}`. See [Phase 1 implementation notes](#phase-1-implementation-notes) below. |
-| Phase 2 — Pull stash/replay                       | Not started                                                                                                        |
+| Phase 2 — Stop building master `file_index` table | Not started. Scope clarified by 2026-05-19 audit (see Phase 2 above).                                              |
 | Phase 3 — Drop `reviewed-dirty` on init           | Not started                                                                                                        |
-| Phase 4 — Stop building master `file_index` table | Not started. Scope clarified by 2026-05-19 audit (see Phase 4 above).                                              |
+| Phase 4 — Pull stash/replay                       | Not started                                                                                                        |
 | Phase 5 — Collapse to one worktree                | Not started                                                                                                        |
 | Phase 6 — Parallelize connections                 | Not started                                                                                                        |
 | Phase 7 — Delete `run-from-git`                   | Blocked on ≥7-day zero-caller window + perf gate                                                                   |
@@ -567,10 +581,26 @@ Rationale captured during review and implementation. Records the _why_ behind th
 25. **Non-sparse worktree of `main`.** The `.git` link file is the only artifact; identical to today's dirty checkout. Non-sparse so we don't pay sparse-checkout config overhead.
 26. **Shell out to `git worktree add` at init.** gix 0.70's worktree-add support is limited; we already shell out for this today. Hot path is one call per connection.
 
-### SQLite index scope (Phase 4 audit, 2026-05-19)
+### Pull stash mechanism (Phase 4)
 
-27. **One SQLite file, two table families.** Initial plan said "drop the SQLite index entirely" — wrong. There's a single `<workspace>/.repos/<conn>.db` per connection. Within it: a `file_index`/`file_references` pair (written by `shared/index.rs`, read only by `plan_publish.rs` on the client) and per-folder tables (written by `shared/folder_index.rs`, read by `read-records` for desktop grid pagination). The file stays; the CLI keeps writing per-folder tables; Phase 4 only stops the `file_index` build. Server-side, the scratch-git microservice's HTTP index API uses the same `shared/index.rs` module but against its own DBs in `service_repos_dir/<id>.db` — independent of the client and out of scope.
-28. **Phase 4 is safe before Phase 7.** Phase 1 already stopped _calling_ `plan_publish.rs` from active client code paths; Phase 4 stops writing the `file_index` table the dead-coded reader would have read; Phase 7 deletes the reader source. The intermediate state (write-side gone, read-side still compiled but unreached) is fine.
+- **Stash to `working-patches.json` on disk, not git internals.** Original spec used `gix status` + in-memory `Vec<(path, patch)>` as the stash during pull. Switched to a plain JSON file on disk because: (a) if anything fails, the user can `cat` it and reason about it without git knowledge; (b) same RFC 7396 shape as `accepted-patches.json` and the `/upload-patch` payload, so the re-anchor routine's input contract is one shape across the codebase; (c) gives a natural "overwrite my local with the fresh copy" escape hatch via `--clear-stash`. Git still does snapshot reads and the fetch; only the stash moves to JSON.
+- **File-only-during-pull, not persistent shadow log.** Considered keeping `working-patches.json` always-present whenever there's unreviewed work. Rejected: extra disk I/O on every accept/edit, and the working tree is already the source of truth for unreviewed state — a persistent shadow log would be derived state that drifts. The pull-only file is purely a stash artifact: written before fetch, deleted on success, left on disk only when something went wrong.
+- **Pre-existing stash blocks new pull.** If `working-patches.json` exists at pull start, refuse and surface a recovery message. Blindly replaying an old stash against a fresh HEAD could silently re-apply edits the user has already manually merged or rejected. Better to make the user acknowledge the leftover.
+
+### SQLite index scope (Phase 2 audit, 2026-05-19)
+
+27. **One SQLite file, two table families.** Initial plan said "drop the SQLite index entirely" — wrong. There's a single `<workspace>/.repos/<conn>.db` per connection. Within it: a `file_index`/`file_references` pair (written by `shared/index.rs`, read only by `plan_publish.rs` on the client) and per-folder tables (written by `shared/folder_index.rs`, read by `read-records` for desktop grid pagination). The file stays; the CLI keeps writing per-folder tables; Phase 2 only stops the `file_index` build. Server-side, the scratch-git microservice's HTTP index API uses the same `shared/index.rs` module but against its own DBs in `service_repos_dir/<id>.db` — independent of the client and out of scope.
+28. **Phase 2 is safe before Phase 7.** Phase 1 already stopped _calling_ `plan_publish.rs` from active client code paths; Phase 2 stops writing the `file_index` table the dead-coded reader would have read; Phase 7 deletes the reader source. The intermediate state (write-side gone, read-side still compiled but unreached) is fine.
+
+### Phase ordering (2026-05-19 reorder)
+
+Original order was `1 → pull → reviewed-dirty → file_index → 5 → 6 → 7`. Reordered to put the two low-risk dead-code deletions first:
+
+- **Old Phase 4 → new Phase 2** (stop building `file_index`): pure deletion; Phase 1 already dead-coded the reader. Biggest single-phase init perf win (~35s on Stripe).
+- **Phase 3** (drop `reviewed-dirty` on init): unchanged position; also a pure deletion (~10–15s).
+- **Old Phase 2 → new Phase 4** (pull stash/replay): the substantive rewrite. Now ships last among the pre-collapse phases, after Phases 2 and 3 have already shrunk the surface area it needs to reason about.
+
+**Why:** users see init-time perf improvements faster; the riskier pull rewrite ships with less surrounding code in flight; Phase 5's prereq (the re-anchor routine in Phase 4) is unchanged. Dependencies: `4 → 5 → 6` and `7` blocked on observation window — all still satisfied. Phase 3 remains technically subsumable by Phase 5, but is worth shipping standalone for the early perf win unless Phase 5 lands very quickly after it.
 
 ### Review state in the single-worktree model (Phase 5)
 
@@ -714,4 +744,4 @@ The plumbing is sound; 429s went away after polling consolidation + `@SkipApiRat
 | Adversarial / Outside Voice | `/codex`              | Independent 2nd opinion         | 0    | skipped            | Codex CLI not installed; user opted out                                                                    |
 
 **UNRESOLVED:** 0
-**VERDICT:** CEO + ENG CLEARED. Phase 1 shipped. Phase 4 scope clarified by 2026-05-19 audit. Tasks artifact at `~/.gstack/projects/whalesync-spinner/tasks-eng-review-20260518-095015.jsonl`.
+**VERDICT:** CEO + ENG CLEARED. Phase 1 shipped. Phase 2 scope clarified by 2026-05-19 audit (file_index; renumbered from old Phase 4 on 2026-05-19). Tasks artifact at `~/.gstack/projects/whalesync-spinner/tasks-eng-review-20260518-095015.jsonl`.
