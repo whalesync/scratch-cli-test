@@ -50,3 +50,6 @@ pnpm-lock.yaml
 
 # Prisma generated files
 generated/
+
+# apiget-driver output (per-run record dumps for iteration)
+/apiget-output

@@ -1,0 +1,33 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "custom-header",
+    "headerName": "X-Shopify-Access-Token"
+  },
+  "endpoints": [
+    {
+      "id": "ep_shopify_products",
+      "name": "Products",
+      "method": "GET",
+      "url": "https://YOUR-SHOP.myshopify.com/admin/api/2024-10/products.json"
+    },
+    {
+      "id": "ep_shopify_orders",
+      "name": "Orders",
+      "method": "GET",
+      "url": "https://YOUR-SHOP.myshopify.com/admin/api/2024-10/orders.json"
+    },
+    {
+      "id": "ep_shopify_customers",
+      "name": "Customers",
+      "method": "GET",
+      "url": "https://YOUR-SHOP.myshopify.com/admin/api/2024-10/customers.json"
+    },
+    {
+      "id": "ep_shopify_collections",
+      "name": "Collections",
+      "method": "GET",
+      "url": "https://YOUR-SHOP.myshopify.com/admin/api/2024-10/custom_collections.json"
+    }
+  ]
+}

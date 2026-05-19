@@ -1,0 +1,20 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_airtable_bases",
+      "name": "Bases",
+      "method": "GET",
+      "url": "https://api.airtable.com/v0/meta/bases"
+    },
+    {
+      "id": "ep_airtable_table_records",
+      "name": "Table Records",
+      "method": "GET",
+      "url": "https://api.airtable.com/v0/YOUR-BASE-ID/YOUR-TABLE-NAME"
+    }
+  ]
+}

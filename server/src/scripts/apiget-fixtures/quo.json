@@ -1,0 +1,60 @@
+{
+  "apiType": "rest",
+  "authHeader": { "style": "raw" },
+  "endpoints": [
+    {
+      "id": "ep_quo_phone_numbers",
+      "name": "Phone Numbers",
+      "method": "GET",
+      "url": "https://api.openphone.com/v1/phone-numbers",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "pageToken",
+          "limitParam": "maxResults",
+          "maxPageSize": 50
+        },
+        "response": {
+          "cursorPath": "nextPageToken",
+          "dataPath": "data"
+        }
+      }
+    },
+    {
+      "id": "ep_quo_users",
+      "name": "Users",
+      "method": "GET",
+      "url": "https://api.openphone.com/v1/users",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "pageToken",
+          "limitParam": "maxResults",
+          "maxPageSize": 50
+        },
+        "response": {
+          "cursorPath": "nextPageToken",
+          "dataPath": "data"
+        }
+      }
+    },
+    {
+      "id": "ep_quo_contacts",
+      "name": "Contacts",
+      "method": "GET",
+      "url": "https://api.openphone.com/v1/contacts",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "pageToken",
+          "limitParam": "maxResults",
+          "maxPageSize": 50
+        },
+        "response": {
+          "cursorPath": "nextPageToken",
+          "dataPath": "data"
+        }
+      }
+    }
+  ]
+}

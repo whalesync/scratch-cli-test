@@ -1,0 +1,40 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_slack_users",
+      "name": "Users",
+      "method": "GET",
+      "url": "https://slack.com/api/users.list",
+      "overrides": {
+        "request": {
+          "cursorParam": "cursor",
+          "maxPageSize": 1000
+        },
+        "response": {
+          "dataPath": "members",
+          "cursorPath": "response_metadata.next_cursor"
+        }
+      }
+    },
+    {
+      "id": "ep_slack_channels",
+      "name": "Channels",
+      "method": "GET",
+      "url": "https://slack.com/api/conversations.list",
+      "overrides": {
+        "request": {
+          "cursorParam": "cursor",
+          "maxPageSize": 1000
+        },
+        "response": {
+          "dataPath": "channels",
+          "cursorPath": "response_metadata.next_cursor"
+        }
+      }
+    }
+  ]
+}

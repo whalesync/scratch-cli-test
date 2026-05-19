@@ -495,6 +495,13 @@ export function buildNextURL(baseURL: string, cursor: string, strategy: Strategy
       return cursor;
     }
     u.searchParams.set(strategy.cursorParam ?? 'cursor', cursor);
+    // Re-apply the limit on every page when it's set on the strategy so the
+    // page size stays consistent (page 1's URL was augmented identically by
+    // augmentUrlForPage1; without this, a runtime --page-size override would
+    // be honored on page 1 but silently dropped on page 2+).
+    if (strategy.limit !== undefined && strategy.limit > 0) {
+      u.searchParams.set(strategy.limitParam ?? 'limit', String(strategy.limit));
+    }
   } else if (strategy.type === 'offset') {
     if (cursor === '') return '';
     u.searchParams.set(strategy.offsetParam ?? 'offset', cursor);

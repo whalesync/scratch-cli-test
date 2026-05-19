@@ -1,0 +1,32 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_intercom_contacts",
+      "name": "Contacts",
+      "method": "GET",
+      "url": "https://api.intercom.io/contacts"
+    },
+    {
+      "id": "ep_intercom_companies",
+      "name": "Companies",
+      "method": "GET",
+      "url": "https://api.intercom.io/companies"
+    },
+    {
+      "id": "ep_intercom_conversations",
+      "name": "Conversations",
+      "method": "GET",
+      "url": "https://api.intercom.io/conversations"
+    },
+    {
+      "id": "ep_intercom_admins",
+      "name": "Admins",
+      "method": "GET",
+      "url": "https://api.intercom.io/admins"
+    }
+  ]
+}

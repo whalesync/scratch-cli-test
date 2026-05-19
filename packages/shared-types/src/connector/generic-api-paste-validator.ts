@@ -142,10 +142,12 @@ function validateShape(parsed: unknown, apiType: 'rest' | 'graphql'): string | n
   }
   const obj = parsed as Record<string, unknown>;
 
-  const authHeaderRaw = obj['authHeader'];
-  if (typeof authHeaderRaw !== 'string' || !(authHeaderRaw in VALID_AUTH_HEADERS)) {
-    return `authHeader must be one of: Bearer, Token, raw, X-API-Key. Got: ${JSON.stringify(authHeaderRaw)}.`;
-  }
+  // authHeader accepts two shapes:
+  //   - Wire (AI output): string like "Bearer" — gets coerced to canonical.
+  //   - Canonical: object { style, headerName? } — used by stored fixtures
+  //     and any custom header name other than the literal "X-API-Key".
+  const authHeaderResult = parseAuthHeader(obj['authHeader']);
+  if (typeof authHeaderResult === 'string') return authHeaderResult;
 
   const endpointsRaw = obj['endpoints'];
   if (!Array.isArray(endpointsRaw)) {
@@ -160,12 +162,7 @@ function validateShape(parsed: unknown, apiType: 'rest' | 'graphql'): string | n
     if (epError) return epError;
   }
 
-  const canonicalAuthStyle = VALID_AUTH_HEADERS[authHeaderRaw];
-  obj['authHeader'] =
-    canonicalAuthStyle === 'custom-header'
-      ? { style: 'custom-header', headerName: 'X-API-Key' }
-      : { style: canonicalAuthStyle };
-
+  obj['authHeader'] = authHeaderResult;
   obj['apiType'] = apiType;
 
   for (let i = 0; i < endpointsRaw.length; i++) {
@@ -176,6 +173,40 @@ function validateShape(parsed: unknown, apiType: 'rest' | 'graphql'): string | n
   }
 
   return null;
+}
+
+/**
+ * Normalize the authHeader field. Returns a canonical `{ style, headerName? }`
+ * object on success, or an error-message string on failure.
+ *
+ * Two input shapes are accepted:
+ *   - String (wire / AI shape):  "Bearer", "X-API-Key", etc.
+ *   - Object (canonical shape):  { style, headerName? }
+ */
+function parseAuthHeader(raw: unknown): { style: GenericApiAuthHeaderStyle; headerName?: string } | string {
+  if (typeof raw === 'string') {
+    if (!(raw in VALID_AUTH_HEADERS)) {
+      return `authHeader must be one of: Bearer, Token, raw, X-API-Key. Got: ${JSON.stringify(raw)}.`;
+    }
+    const style = VALID_AUTH_HEADERS[raw];
+    return style === 'custom-header' ? { style: 'custom-header', headerName: 'X-API-Key' } : { style };
+  }
+  if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    const style = obj['style'];
+    if (style !== 'bearer' && style !== 'token' && style !== 'raw' && style !== 'custom-header') {
+      return `authHeader.style must be one of: bearer, token, raw, custom-header. Got: ${JSON.stringify(style)}.`;
+    }
+    if (style === 'custom-header') {
+      const headerName = obj['headerName'];
+      if (typeof headerName !== 'string' || headerName === '') {
+        return 'authHeader.headerName is required when style is "custom-header".';
+      }
+      return { style: 'custom-header', headerName };
+    }
+    return { style };
+  }
+  return `authHeader must be a string (e.g. "Bearer") or an object like { "style": "custom-header", "headerName": "X-API-Key" }. Got: ${JSON.stringify(raw)}.`;
 }
 
 function validateEndpointShape(ep: unknown, index: number, apiType: 'rest' | 'graphql'): string | null {

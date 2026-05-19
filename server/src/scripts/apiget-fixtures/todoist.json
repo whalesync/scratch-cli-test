@@ -1,0 +1,30 @@
+{
+  "apiType": "rest",
+  "authHeader": { "style": "bearer" },
+  "endpoints": [
+    {
+      "id": "ep_todoist_projects",
+      "name": "Projects",
+      "method": "GET",
+      "url": "https://api.todoist.com/api/v1/projects"
+    },
+    {
+      "id": "ep_todoist_tasks",
+      "name": "Tasks",
+      "method": "GET",
+      "url": "https://api.todoist.com/api/v1/tasks"
+    },
+    {
+      "id": "ep_todoist_sections",
+      "name": "Sections",
+      "method": "GET",
+      "url": "https://api.todoist.com/api/v1/sections"
+    },
+    {
+      "id": "ep_todoist_labels",
+      "name": "Labels",
+      "method": "GET",
+      "url": "https://api.todoist.com/api/v1/labels"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "apiType": "graphql",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_linear_issues",
+      "name": "Issues",
+      "url": "https://api.linear.app/graphql",
+      "query": "query Issues($after: String) {\n  issues(first: 50, after: $after) {\n    pageInfo { hasNextPage endCursor }\n    nodes { id title state { name } priority createdAt updatedAt }\n  }\n}"
+    },
+    {
+      "id": "ep_linear_projects",
+      "name": "Projects",
+      "url": "https://api.linear.app/graphql",
+      "query": "query Projects($after: String) {\n  projects(first: 50, after: $after) {\n    pageInfo { hasNextPage endCursor }\n    nodes { id name state startDate targetDate }\n  }\n}"
+    },
+    {
+      "id": "ep_linear_users",
+      "name": "Users",
+      "url": "https://api.linear.app/graphql",
+      "query": "query Users($after: String) {\n  users(first: 50, after: $after) {\n    pageInfo { hasNextPage endCursor }\n    nodes { id name email active }\n  }\n}"
+    }
+  ]
+}

@@ -55,7 +55,7 @@ describe('probeEndpointForTable', () => {
     expect(result.page2Status).toBe('no-pagination');
     expect(result.recordsWalked).toBe(2);
     expect(result.probe.detectedPagination).toBeNull();
-    expect(result.probe.extractionIdPath).toBe('id');
+    expect(result.probe.idPath).toBe('id');
     // Schema should reflect the two fields
     const schema = result.probe.inferredSchema as { properties: Record<string, unknown> };
     expect(Object.keys(schema.properties)).toEqual(expect.arrayContaining(['id', 'name']));
@@ -94,7 +94,7 @@ describe('probeEndpointForTable', () => {
     ).rejects.toThrow(/not found/);
   });
 
-  it('respects an extractionIdPath override', async () => {
+  it('respects an idPath override', async () => {
     const fetch: FetchFn = () =>
       Promise.resolve({
         status: 200,
@@ -105,10 +105,10 @@ describe('probeEndpointForTable', () => {
       extras: baseExtras,
       apiKey: 'k',
       endpointId: 'ep_1',
-      extractionIdPath: 'uuid',
+      idPath: 'uuid',
       fetch,
     });
-    expect(result.probe.extractionIdPath).toBe('uuid');
+    expect(result.probe.idPath).toBe('uuid');
   });
 });
 
@@ -119,7 +119,7 @@ describe('probeEndpointForTable', () => {
 function probe(overrides: Partial<GenericApiFolderOptions['probe']> = {}): GenericApiFolderOptions['probe'] {
   return {
     detectedPagination: null,
-    extractionIdPath: 'id',
+    idPath: 'id',
     inferredSchema: { type: 'object', properties: { id: { type: 'string' } } },
     lastProbedAt: '2026-05-18T20:00:00Z',
     ...overrides,
@@ -129,15 +129,15 @@ function probe(overrides: Partial<GenericApiFolderOptions['probe']> = {}): Gener
 describe('diffProbeResults', () => {
   it('reports no drift when probes are identical', () => {
     const d = diffProbeResults(probe(), probe());
-    expect(d.extractionIdPathChanged).toBe(false);
+    expect(d.idPathChanged).toBe(false);
     expect(d.paginationStrategyChanged).toBe(false);
     expect(d.schemaFieldsAdded).toEqual([]);
     expect(d.schemaFieldsRemoved).toEqual([]);
   });
 
-  it('flags extractionIdPath drift (the hard-stop case)', () => {
-    const d = diffProbeResults(probe(), probe({ extractionIdPath: 'uuid' }));
-    expect(d.extractionIdPathChanged).toBe(true);
+  it('flags idPath drift (the hard-stop case)', () => {
+    const d = diffProbeResults(probe(), probe({ idPath: 'uuid' }));
+    expect(d.idPathChanged).toBe(true);
   });
 
   it('flags pagination Strategy change', () => {

@@ -1,0 +1,70 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_odoo_partners",
+      "name": "Partners",
+      "method": "POST",
+      "url": "https://YOUR-INSTANCE.odoo.com/json/2/res.partner/search_read",
+      "body": {
+        "_param_": {
+          "domain": [],
+          "fields": [
+            "id",
+            "name",
+            "email",
+            "phone",
+            "is_company",
+            "country_id"
+          ],
+          "limit": 100,
+          "offset": 0
+        }
+      }
+    },
+    {
+      "id": "ep_odoo_sale_orders",
+      "name": "Sale Orders",
+      "method": "POST",
+      "url": "https://YOUR-INSTANCE.odoo.com/json/2/sale.order/search_read",
+      "body": {
+        "_param_": {
+          "domain": [],
+          "fields": [
+            "id",
+            "name",
+            "partner_id",
+            "state",
+            "amount_total",
+            "date_order"
+          ],
+          "limit": 100,
+          "offset": 0
+        }
+      }
+    },
+    {
+      "id": "ep_odoo_products",
+      "name": "Products",
+      "method": "POST",
+      "url": "https://YOUR-INSTANCE.odoo.com/json/2/product.template/search_read",
+      "body": {
+        "_param_": {
+          "domain": [],
+          "fields": [
+            "id",
+            "name",
+            "default_code",
+            "list_price",
+            "type"
+          ],
+          "limit": 100,
+          "offset": 0
+        }
+      }
+    }
+  ]
+}

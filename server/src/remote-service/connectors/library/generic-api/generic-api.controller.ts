@@ -129,7 +129,7 @@ export class GenericApiProbeService {
   /**
    * Re-probe an existing GENERIC_API DataFolder. Compares the new probe to
    * the persisted one; applies silent diffs immediately; surfaces the
-   * extractionIdPath-drift case as a dialog the client must confirm.
+   * idPath-drift case as a dialog the client must confirm.
    */
   async reprobe(workbookId: WorkbookId, dataFolderId: DataFolderId, actor: Actor): Promise<ReprobeResponse> {
     checkWorkspacePermissions(actor, workbookId);
@@ -158,9 +158,9 @@ export class GenericApiProbeService {
     const newResult = await this.probeEndpoint(workbookId, folder.connectorAccountId, endpointId, actor);
     const diff = diffProbeResults(currentProbe, newResult.probe);
 
-    // Hard-stop case: extractionIdPath drift. Do NOT apply; return the diff
+    // Hard-stop case: idPath drift. Do NOT apply; return the diff
     // so the client can show the confirmation dialog.
-    if (diff.extractionIdPathChanged) {
+    if (diff.idPathChanged) {
       return { applied: false, diff, newProbe: newResult.probe };
     }
 
@@ -189,7 +189,7 @@ export class GenericApiProbeService {
 
   /**
    * Apply a re-probe result that was previously withheld due to
-   * extractionIdPath drift. The client calls this after the user explicitly
+   * idPath drift. The client calls this after the user explicitly
    * confirms the drift dialog.
    */
   async applyReprobe(

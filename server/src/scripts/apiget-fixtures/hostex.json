@@ -1,0 +1,53 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "custom-header",
+    "headerName": "Hostex-Access-Token"
+  },
+  "endpoints": [
+    {
+      "id": "ep_hostex_properties",
+      "name": "Properties",
+      "method": "GET",
+      "url": "https://api.hostex.io/v3/properties",
+      "overrides": {
+        "paginationType": "offset",
+        "request": { "maxPageSize": 100 },
+        "response": { "dataPath": "data.properties", "idPath": "id" }
+      }
+    },
+    {
+      "id": "ep_hostex_reservations",
+      "name": "Reservations",
+      "method": "GET",
+      "url": "https://api.hostex.io/v3/reservations",
+      "overrides": {
+        "paginationType": "offset",
+        "request": { "maxPageSize": 100 },
+        "response": { "dataPath": "data.reservations", "idPath": "stay_code" }
+      }
+    },
+    {
+      "id": "ep_hostex_conversations",
+      "name": "Conversations",
+      "method": "GET",
+      "url": "https://api.hostex.io/v3/conversations",
+      "overrides": {
+        "paginationType": "offset",
+        "request": { "maxPageSize": 100 },
+        "response": { "dataPath": "data.conversations" }
+      }
+    },
+    {
+      "id": "ep_hostex_reviews",
+      "name": "Reviews",
+      "method": "GET",
+      "url": "https://api.hostex.io/v3/reviews",
+      "overrides": {
+        "paginationType": "offset",
+        "request": { "maxPageSize": 100 },
+        "response": { "dataPath": "data.reviews", "idPath": "reservation_code" }
+      }
+    }
+  ]
+}

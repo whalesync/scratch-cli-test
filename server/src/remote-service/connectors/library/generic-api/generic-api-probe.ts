@@ -98,8 +98,8 @@ export async function probeEndpointForTable(opts: {
   extras: GenericApiConnectorExtras;
   apiKey: string;
   endpointId: string;
-  /** Override the default extractionIdPath ('id'). */
-  extractionIdPath?: string;
+  /** Override the default idPath ('id'). */
+  idPath?: string;
   fetch?: FetchFn;
 }): Promise<ProbeResult> {
   const endpoint = opts.extras.endpoints.find((e) => e.id === opts.endpointId);
@@ -118,7 +118,9 @@ export async function probeEndpointForTable(opts: {
   const page1Records = page1.value.records;
   const detectedPagination: Strategy | null = page1.value.detected?.pagination ?? null;
   const idField = page1.value.detected?.idField ?? 'id';
-  const extractionIdPath = opts.extractionIdPath ?? idField;
+  // Override precedence: explicit opts.idPath wins, then endpoint.overrides.response.idPath,
+  // then the auto-detected idField, then 'id' fallback.
+  const idPath = opts.idPath ?? endpoint.overrides?.response?.idPath ?? idField;
 
   // Page 2 — only if pagination was detected on page 1. If not, the endpoint
   // is single-page and we're done.
@@ -141,7 +143,7 @@ export async function probeEndpointForTable(opts: {
   return {
     probe: {
       detectedPagination: strategyToPersisted(detectedPagination),
-      extractionIdPath,
+      idPath,
       inferredSchema,
       lastProbedAt: new Date().toISOString(),
     },
@@ -162,11 +164,11 @@ export async function probeEndpointForTable(opts: {
  *     settings anyway in v1 since no schema UI).
  *   - Schema gained fields → silently add and save.
  *   - Schema removed fields → keep in saved schema, mark "not seen".
- *   - extractionIdPath resolves differently → HARD STOP, surface dialog.
+ *   - idPath resolves differently → HARD STOP, surface dialog.
  *     Caller must require explicit user confirmation before applying.
  */
 export interface ProbeDiff {
-  extractionIdPathChanged: boolean;
+  idPathChanged: boolean;
   paginationStrategyChanged: boolean;
   schemaFieldsAdded: string[];
   schemaFieldsRemoved: string[];
@@ -176,7 +178,7 @@ export function diffProbeResults(
   previous: GenericApiFolderOptions['probe'],
   next: GenericApiFolderOptions['probe'],
 ): ProbeDiff {
-  const extractionIdPathChanged = previous.extractionIdPath !== next.extractionIdPath;
+  const idPathChanged = previous.idPath !== next.idPath;
   const paginationStrategyChanged =
     JSON.stringify(previous.detectedPagination) !== JSON.stringify(next.detectedPagination);
 
@@ -185,7 +187,7 @@ export function diffProbeResults(
   const schemaFieldsAdded = nextFields.filter((f) => !prevFields.includes(f));
   const schemaFieldsRemoved = prevFields.filter((f) => !nextFields.includes(f));
 
-  return { extractionIdPathChanged, paginationStrategyChanged, schemaFieldsAdded, schemaFieldsRemoved };
+  return { idPathChanged, paginationStrategyChanged, schemaFieldsAdded, schemaFieldsRemoved };
 }
 
 function topLevelFieldNames(schema: object): string[] {

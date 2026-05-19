@@ -211,7 +211,7 @@ export const GitFileBrowserModal = ({
             Up
           </Button>
           <Text size="sm" c="dimmed" style={{ fontFamily: 'monospace' }} truncate>
-            /{currentPath} {currentFile ? `/${currentFile}` : ''}
+            {`/${currentPath}${currentFile ? `/${currentFile}` : ''}`}
           </Text>
         </Group>
 

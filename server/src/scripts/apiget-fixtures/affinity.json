@@ -1,0 +1,32 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_affinity_lists",
+      "name": "Lists",
+      "method": "GET",
+      "url": "https://api.affinity.co/v2/lists"
+    },
+    {
+      "id": "ep_affinity_persons",
+      "name": "Persons",
+      "method": "GET",
+      "url": "https://api.affinity.co/v2/persons"
+    },
+    {
+      "id": "ep_affinity_companies",
+      "name": "Companies",
+      "method": "GET",
+      "url": "https://api.affinity.co/v2/companies"
+    },
+    {
+      "id": "ep_affinity_opportunities",
+      "name": "Opportunities",
+      "method": "GET",
+      "url": "https://api.affinity.co/v2/opportunities"
+    }
+  ]
+}

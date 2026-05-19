@@ -55,6 +55,7 @@ import {
   PaginationLoopError,
   Strategy,
 } from './apiget';
+import { applyOverridesToSettings } from './apply-overrides';
 
 /**
  * Per-page resume state checkpointed to Redis by the pull job. The connector
@@ -78,7 +79,7 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
     record: 'record',
     records: 'records',
     logo: '/logo-color.svg',
-    // Hidden from the picker until PR 6 flips the PostHog flag. The connector
+    // The connector
     // can still be loaded server-side (so internal tests / scripts work) but
     // the standard "Add connection" UI does not show it.
     visible: false,
@@ -87,7 +88,7 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
     credentialFields: {
       // Only `apiKey` is registered here — the secret. The rest of the form
       // (apiType / authHeader / endpoints) is non-secret config the v1 custom
-      // modal (PR 3) collects directly and writes to `extras`. See the
+      // modal collects directly and writes to `extras`. See the
       // GenericApiConnectorExtras type in shared-types.
       user_provided_params: [{ key: 'apiKey', type: 'password', label: 'API Key', required: true }],
     },
@@ -241,29 +242,31 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
     });
 
     // Cross-page duplicate-ID detection. Per impl plan §2 ("Record file
-    // layout") and safety-critical test #3: if extractionIdPath resolves to
+    // layout") and safety-critical test #3: if idPath resolves to
     // the same value for two different records, the pull hard-fails BEFORE
     // any files are written to disk. Last-write-wins is unacceptable.
     const seenIds = new Set<string>();
+    // Per-endpoint idPath override wins over the probed default.
+    const idPathStr = endpoint.overrides?.response?.idPath ?? genericApi.probe.idPath;
 
     const iter = apigetStream(settings, this.rateLimiter ? { fetch: this.makeRateLimitedFetch() } : {});
     for await (const page of iter) {
       const files: ConnectorFile[] = [];
       for (const record of page.records) {
         const file = recordToConnectorFile(record);
-        const id = extractRemoteIdString(file, genericApi.probe.extractionIdPath);
+        const id = extractRemoteIdString(file, idPathStr);
         if (id === null) {
           const keys = file && typeof file === 'object' ? Object.keys(file).slice(0, 12).join(', ') : '<not an object>';
           throw new Error(
-            `Record missing or null remote ID at path "${genericApi.probe.extractionIdPath}". ` +
+            `Record missing or null remote ID at path "${idPathStr}". ` +
               `Record keys seen: [${keys}]. ` +
-              `Re-probe this endpoint or override extractionIdPath in advanced settings.`,
+              `Re-probe this endpoint or override response.idPath in the endpoint's overrides.`,
           );
         }
         if (seenIds.has(id)) {
           throw new Error(
             `Duplicate remote IDs detected — "${id}" appeared twice at path ` +
-              `"${genericApi.probe.extractionIdPath}". Your extractionIdPath is probably wrong, ` +
+              `"${idPathStr}". Your response.idPath is probably wrong, ` +
               `or the API does not assign stable IDs at the path you specified.`,
           );
         }
@@ -419,7 +422,7 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
       ? toStrategyOrUndefined(persisted.probe.detectedPagination)
       : undefined;
 
-    return {
+    const baseSettings: ApigetSettings = {
       url: endpoint.url,
       method,
       headers,
@@ -427,6 +430,9 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
       pagination,
       maxPages: opts.maxPages,
     };
+    // Per-endpoint overrides win over auto-detection AND over the persisted
+    // probe — the user explicitly set them, so honor them.
+    return applyOverridesToSettings(baseSettings, endpoint.overrides);
   }
 
   /**
@@ -567,7 +573,7 @@ function buildBaseJsonTableSpec(
     slug: labelOrFallback,
     name: labelOrFallback,
     schema,
-    idColumnRemoteId: idPath(folderOpts.probe.extractionIdPath),
+    idColumnRemoteId: idPath(folderOpts.probe.idPath),
     generatedAt: folderOpts.probe.lastProbedAt,
   };
 }

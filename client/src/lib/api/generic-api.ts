@@ -16,7 +16,7 @@ export interface ProbeEndpointResponse {
 }
 
 export interface ReprobeDiff {
-  extractionIdPathChanged: boolean;
+  idPathChanged: boolean;
   paginationStrategyChanged: boolean;
   schemaFieldsAdded: string[];
   schemaFieldsRemoved: string[];

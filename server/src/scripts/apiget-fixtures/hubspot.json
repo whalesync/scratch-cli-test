@@ -1,0 +1,32 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_hubspot_contacts",
+      "name": "Contacts",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/objects/contacts"
+    },
+    {
+      "id": "ep_hubspot_companies",
+      "name": "Companies",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/objects/companies"
+    },
+    {
+      "id": "ep_hubspot_deals",
+      "name": "Deals",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/objects/deals"
+    },
+    {
+      "id": "ep_hubspot_tickets",
+      "name": "Tickets",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/objects/tickets"
+    }
+  ]
+}

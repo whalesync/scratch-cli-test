@@ -749,7 +749,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         let options = buildOptionsForTable(tableKey);
         // GENERIC_API: probe the endpoint before persisting the folder so the
         // connector's pull/fetch can rely on probe data (pagination strategy,
-        // extractionIdPath, inferred schema). table.id.wsId is the stable
+        // idPath, inferred schema). table.id.wsId is the stable
         // endpoint UUID from extras.endpoints — set by the connector class.
         if (connectorAccount.service === 'GENERIC_API') {
           try {

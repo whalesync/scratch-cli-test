@@ -27,6 +27,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:integration": "jest --config ./test/integration/jest-integration.json",
+    "apiget:driver": "node --env-file-if-exists=src/scripts/apiget-fixtures/.env -r tsconfig-paths/register -r ts-node/register src/scripts/apiget-driver.ts",
     "generate": "prisma generate",
     "postinstall": "prisma generate",
     "migrate": "prisma migrate deploy",

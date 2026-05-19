@@ -131,8 +131,8 @@ export interface GenericApiRestEndpoint {
   url: string;
   /** For POST endpoints. Static — not mutated between pages (cursor-in-body pagination is NOT supported in v1). */
   body?: unknown;
-  /** Optional pagination/enrich/expand overrides — apiget auto-detects if absent. */
-  advanced?: GenericApiAdvancedOverrides;
+  /** Optional pagination/enrich overrides — apiget auto-detects if absent. */
+  overrides?: GenericApiEndpointOverrides;
 }
 
 /** A GraphQL "endpoint" — one entity to sync, expressed as a single query string. */
@@ -144,34 +144,54 @@ export interface GenericApiGraphqlEndpoint {
   url: string;
   /** The full GraphQL query string for this entity (apiget injects the cursor into variables on subsequent pages). */
   query: string;
-  advanced?: GenericApiAdvancedOverrides;
+  overrides?: GenericApiEndpointOverrides;
 }
 
 /**
  * Per-endpoint manual overrides for apiget's auto-detected behavior. All
- * optional — defaults come from apiget's detection. Surfaced in the advanced
- * disclosure of the endpoint editor.
+ * optional — defaults come from apiget's detection.
+ *
+ * Split into two groups:
+ *   - `request` — query-param names (and the page-size value) we send in the
+ *     NEXT request to advance pagination
+ *   - `response` — JSON paths into the response body where apiget should find
+ *     the cursor / records array / record-ID
+ * Top-level fields (paginationType, maxPages, enrichUrl) are general settings
+ * that don't fit either bucket.
  */
-export interface GenericApiAdvancedOverrides {
+export interface GenericApiEndpointOverrides {
   /** Force a specific pagination type instead of relying on auto-detect. */
   paginationType?: 'cursor' | 'offset' | 'graphql' | 'link-header' | 'none';
-  /** Override the cursor JSON path (e.g. 'pagination.next_cursor'). */
-  cursorPath?: string;
-  /** Override the records array JSON path (e.g. 'data', 'result.items'). */
-  dataPath?: string;
-  /** Override the cursor query-parameter name (e.g. 'page_token'). */
-  cursorParam?: string;
-  /** Override the offset / limit query-parameter names. */
-  offsetParam?: string;
-  limitParam?: string;
-  /** Override the records-per-page hint. */
-  pageSize?: number;
-  /** Per-record enrichment: fetch full record from a detail endpoint. */
-  enrichUrl?: string;
-  /** Override the lodash-style dot path used to extract each record's remote ID. */
-  extractionIdPath?: string;
   /** Override apiget's default maxPages backstop (default 1000). */
   maxPages?: number;
+  /** Per-record enrichment: fetch full record from a detail endpoint (URL template with `{id}` placeholder). */
+  enrichUrl?: string;
+  /**
+   * What we SEND in the next request to advance pagination. These describe
+   * the *shape* of the request (param names, server constraints) — not the
+   * value of any one fetch. The page-size VALUE is a caller-side decision
+   * (driver `--page-size`, future memory-aware pull-job logic, etc.) and
+   * flows through a separate runtime parameter.
+   */
+  request?: {
+    /** Override the cursor query-parameter name (e.g. 'page_token'). */
+    cursorParam?: string;
+    /** Override the offset query-parameter name (e.g. 'skip'). */
+    offsetParam?: string;
+    /** Override the limit query-parameter name (e.g. 'per_page'). */
+    limitParam?: string;
+    /** The server's hard maximum records-per-page for this endpoint (from API docs). Used as the default page size and as a safety clamp on runtime requests. */
+    maxPageSize?: number;
+  };
+  /** Where in the response body apiget should look. Lodash-style dot paths. */
+  response?: {
+    /** Override the cursor JSON path (e.g. 'response_metadata.next_cursor'). */
+    cursorPath?: string;
+    /** Override the records array JSON path (e.g. 'members', 'result.items'). */
+    dataPath?: string;
+    /** Override the dot path used to extract each record's remote ID (default: 'id'). */
+    idPath?: string;
+  };
 }
 
 /**
@@ -223,7 +243,7 @@ export interface GenericApiFolderOptions {
       limitParam?: string;
       limit?: number;
     } | null;
-    extractionIdPath: string;
+    idPath: string;
     /** Plain JSON Schema object (see note above). */
     inferredSchema: object;
     /** ISO 8601. */

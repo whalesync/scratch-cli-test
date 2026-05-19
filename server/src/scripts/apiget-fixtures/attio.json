@@ -1,0 +1,29 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_attio_lists",
+      "name": "Lists",
+      "method": "GET",
+      "url": "https://api.attio.com/v2/lists"
+    },
+    {
+      "id": "ep_attio_workspace_members",
+      "name": "Workspace Members",
+      "method": "GET",
+      "url": "https://api.attio.com/v2/workspace_members"
+    },
+    {
+      "id": "ep_attio_people_query",
+      "name": "People (body cursor — blocked v1)",
+      "method": "POST",
+      "url": "https://api.attio.com/v2/objects/people/records/query",
+      "body": {
+        "limit": 50
+      }
+    }
+  ]
+}

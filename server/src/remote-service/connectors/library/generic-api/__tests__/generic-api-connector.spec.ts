@@ -1,7 +1,7 @@
 /**
  * Tests for GenericApiConnector — the v1-blocking safety-critical scenarios
  * from the impl plan:
- *   - SAFETY #3: extractionIdPath collision hard-fails the pull with a
+ *   - SAFETY #3: idPath collision hard-fails the pull with a
  *     specific error AND no records are emitted past the collision.
  *   - SAFETY #5: testConnection maps 2xx / 401 / 403 / 404 to specific
  *     errors at the right shape.
@@ -43,7 +43,7 @@ const FOLDER_OPTS: GenericApiFolderOptions = {
   endpointId: 'ep_projects',
   probe: {
     detectedPagination: null,
-    extractionIdPath: 'id',
+    idPath: 'id',
     inferredSchema: { type: 'object', properties: { id: { type: 'string' } } },
     lastProbedAt: '2026-05-18T20:00:00Z',
   },
@@ -175,7 +175,7 @@ describe('GenericApiConnector — fetchJsonTableSpec', () => {
     ).rejects.toThrow(/probed/);
   });
 
-  it('returns a BaseJsonTableSpec with the persisted extractionIdPath as idColumnRemoteId', async () => {
+  it('returns a BaseJsonTableSpec with the persisted idPath as idColumnRemoteId', async () => {
     const connector = buildConnector();
     const spec = await connector.fetchJsonTableSpec({
       wsId: 'ep_projects',
@@ -211,7 +211,7 @@ describe('GenericApiConnector — extractConnectorErrorDetails', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SAFETY-CRITICAL #3: extractionIdPath collision hard-fails the pull
+// SAFETY-CRITICAL #3: idPath collision hard-fails the pull
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pull', () => {
@@ -264,7 +264,7 @@ describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pul
     }
   });
 
-  it('throws when extractionIdPath resolves to null on any record', async () => {
+  it('throws when idPath resolves to null on any record', async () => {
     const connector = buildConnector();
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (() =>

@@ -50,12 +50,27 @@ Workflow you must follow:
 (Authorization: Token <key>), \`"raw"\` (Authorization: <key> verbatim), or
 \`"X-API-Key"\` (X-API-Key: <key>). Pick whichever the service expects.
 
-If a specific endpoint needs anything unusual, include an \`advanced\` block on
-that entry:
-- Non-standard cursor query param: \`{ "advanced": { "cursorParam": "page_token" } }\`
-- Non-standard JSON path to records: \`{ "advanced": { "dataPath": "result.items" } }\`
-- POST list endpoint with body: \`{ "method": "POST", "body": { "filter": {} } }\`
-- Per-record enrichment URL: \`{ "advanced": { "enrichUrl": "/v1/projects/{id}" } }\`
+**URL conventions:** put only the base path and any service-specific filters
+(e.g. \`?sort=name\`) in the \`url\`. Do NOT bake in pagination boilerplate like
+\`?offset=0&limit=100\` — apiget adds offset/limit dynamically based on the
+strategy. The caller (Scratch or the apiget driver) picks the actual page-size
+value at runtime; the \`overrides\` only declare the server's *hard cap*.
+
+If a specific endpoint needs anything unusual, include an \`overrides\` block on
+that entry. The block describes HOW to fetch (param names, server constraints,
+response paths) — the caller picks HOW MUCH to fetch separately. Three groups:
+- Top-level: \`paginationType\` (\`cursor\`/\`offset\`/\`graphql\`/\`link-header\`/\`none\`), \`maxPages\`, \`enrichUrl\`
+- \`request\` — query-param names + server constraints: \`cursorParam\`, \`offsetParam\`, \`limitParam\`, \`maxPageSize\` (server's hard cap from docs — used as default page size AND as a clamp on runtime requests)
+- \`response\` — where we LOOK in the response body (lodash-style dot paths): \`cursorPath\`, \`dataPath\`, \`idPath\`
+
+Examples:
+- Non-standard cursor query param: \`{ "overrides": { "request": { "cursorParam": "page_token" } } }\`
+- Non-standard JSON path to records: \`{ "overrides": { "response": { "dataPath": "result.items" } } }\`
+- Cursor under a nested wrapper: \`{ "overrides": { "response": { "cursorPath": "pagination.next_cursor" } } }\`
+- Record's ID field is not \`id\`: \`{ "overrides": { "response": { "idPath": "uuid" } } }\`
+- API uses unusual param names + caps page size at 50: \`{ "overrides": { "request": { "cursorParam": "pageToken", "limitParam": "maxResults", "maxPageSize": 50 } } }\`
+- POST list endpoint with static body: \`{ "method": "POST", "body": { "filter": {} } }\`
+- Per-record enrichment URL: \`{ "overrides": { "enrichUrl": "/v1/projects/{id}" } }\`
 
 Hard limits — do NOT include endpoints that hit these:
 

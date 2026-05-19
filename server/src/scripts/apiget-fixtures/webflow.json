@@ -1,0 +1,24 @@
+{
+  "apiType": "rest",
+  "authHeader": { "style": "bearer" },
+  "endpoints": [
+    {
+      "id": "ep_webflow_sites",
+      "name": "Sites",
+      "method": "GET",
+      "url": "https://api.webflow.com/v2/sites"
+    },
+    {
+      "id": "ep_webflow_collections",
+      "name": "Collections (per site)",
+      "method": "GET",
+      "url": "https://api.webflow.com/v2/sites/YOUR-SITE-ID/collections"
+    },
+    {
+      "id": "ep_webflow_collection_items",
+      "name": "Collection Items",
+      "method": "GET",
+      "url": "https://api.webflow.com/v2/collections/YOUR-COLLECTION-ID/items"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "custom-header",
+    "headerName": "api-key"
+  },
+  "endpoints": [
+    {
+      "id": "ep_brevo_contacts",
+      "name": "Contacts",
+      "method": "GET",
+      "url": "https://api.brevo.com/v3/contacts"
+    },
+    {
+      "id": "ep_brevo_lists",
+      "name": "Lists",
+      "method": "GET",
+      "url": "https://api.brevo.com/v3/contacts/lists"
+    },
+    {
+      "id": "ep_brevo_email_campaigns",
+      "name": "Email Campaigns",
+      "method": "GET",
+      "url": "https://api.brevo.com/v3/emailCampaigns"
+    },
+    {
+      "id": "ep_brevo_senders",
+      "name": "Senders",
+      "method": "GET",
+      "url": "https://api.brevo.com/v3/senders"
+    }
+  ]
+}

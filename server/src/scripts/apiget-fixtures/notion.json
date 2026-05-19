@@ -1,0 +1,23 @@
+{
+  "apiType": "rest",
+  "authHeader": {
+    "style": "bearer"
+  },
+  "endpoints": [
+    {
+      "id": "ep_notion_users",
+      "name": "Users",
+      "method": "GET",
+      "url": "https://api.notion.com/v1/users"
+    },
+    {
+      "id": "ep_notion_search",
+      "name": "Search (body cursor — blocked v1)",
+      "method": "POST",
+      "url": "https://api.notion.com/v1/search",
+      "body": {
+        "page_size": 50
+      }
+    }
+  ]
+}

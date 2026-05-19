@@ -68,7 +68,20 @@ export async function* apigetStream(
   const maxPages = settings.maxPages ?? DEFAULT_MAX_PAGES;
 
   // ── Page 1 ─────────────────────────────────────────────────────────────
-  const page1Response = await sendRequest(fetchFn, buildPage1Request(settings), signal);
+  // When pagination strategy is pre-supplied (via overrides), apply its
+  // offset/limit params to the page 1 URL too — same way they get applied to
+  // page 2+ via buildNextURL. This keeps the fixture URL clean (just base
+  // path + service-specific filters) and avoids the page-1-vs-page-2 size
+  // mismatch when overrides.request.maxPageSize doesn't equal whatever
+  // `?limit=...` happened to be in the URL.
+  //
+  // Auto-detection case (settings.pagination unset) stays unchanged: page 1
+  // uses the URL as-is, strategy is detected from the response, page 2+
+  // applies the detected params.
+  const page1Settings = settings.pagination
+    ? { ...settings, url: augmentUrlForPage1(settings.url, settings.pagination) }
+    : settings;
+  const page1Response = await sendRequest(fetchFn, buildPage1Request(page1Settings), signal);
   const strategy: Strategy | null =
     settings.pagination ?? detectStrategyFromResponse({ ...page1Response, url: settings.url });
 
@@ -222,6 +235,30 @@ function buildPage1Request(settings: ApigetSettings): FetchRequest {
 function hasHeaderIgnoreCase(headers: Record<string, string>, name: string): boolean {
   const lower = name.toLowerCase();
   return Object.keys(headers).some((k) => k.toLowerCase() === lower);
+}
+
+/**
+ * Add pagination query params (offset + limit) to the page 1 URL when the
+ * strategy is offset, or just `limit` when it's cursor and a value is set.
+ * Preserves any other query params the user put in the URL (filters, sort,
+ * etc.). Called only when settings.pagination is pre-supplied; auto-detected
+ * strategies still use the URL as-is on page 1 (no strategy to apply yet).
+ */
+function augmentUrlForPage1(url: string, strategy: Strategy): string {
+  if (strategy.type !== 'offset' && strategy.type !== 'cursor') return url;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return url; // unparseable — leave as-is
+  }
+  if (strategy.type === 'offset') {
+    u.searchParams.set(strategy.offsetParam ?? 'offset', '0');
+  }
+  if (strategy.limit !== undefined && strategy.limit > 0) {
+    u.searchParams.set(strategy.limitParam ?? 'limit', String(strategy.limit));
+  }
+  return u.toString();
 }
 
 /**

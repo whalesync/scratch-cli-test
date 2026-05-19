@@ -70,6 +70,15 @@ const isEndpointsEmpty = (apiType: ApiType, rest: GenericApiRestEndpoint[], gql:
   return list.every((e) => !e.url.trim() && !(e as GenericApiGraphqlEndpoint).query?.trim());
 };
 
+const URL_MAX_DISPLAY_CHARS = 50;
+const truncateMiddle = (s: string, max: number): string => {
+  if (s.length <= max) return s;
+  // Keep the start (host + path-ish) and the very end (often a useful identifier).
+  const headLen = Math.ceil((max - 1) * 0.75);
+  const tailLen = max - 1 - headLen;
+  return s.slice(0, headLen) + '…' + (tailLen > 0 ? s.slice(s.length - tailLen) : '');
+};
+
 const describeAuth = (style: AuthStyleSelection, customHeaderName: string): string => {
   switch (style) {
     case 'bearer':
@@ -518,16 +527,10 @@ const ConfigSummary = ({ summary }: ConfigSummaryProps) => {
                 <Text
                   size="xs"
                   c="dimmed"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
+                  style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap' }}
                   title={ep.url}
                 >
-                  {ep.url}
+                  {truncateMiddle(ep.url, URL_MAX_DISPLAY_CHARS)}
                 </Text>
               </div>
             ))}
