@@ -422,12 +422,9 @@ async fn run_download(
         let master_update = update_master_worktree(ctx, &token).unwrap_or_default();
         if master_update.moved {
             // Schema files on master may have moved alongside data files;
-            // resync them into ctx.scratch_dir. file_index for cross-record
-            // remote_id lookups is also master-derived, so rebuild it here.
-            // Both are gated on `moved` so unchanged connections pay zero
-            // cost in the per-ctx loop.
+            // resync them into ctx.scratch_dir. Gated on `moved` so unchanged
+            // connections pay zero cost in the per-ctx loop.
             let _ = sync_schema_files_from_master(ctx);
-            rebuild_index_for_conn(ctx, json);
         }
         // Merge the master-side path diff into the download result so the
         // single `changed_paths` field downstream covers any tree the
@@ -1982,7 +1979,6 @@ pub async fn download_workbook(
         download_single_repo(ctx, token, folders)?;
         if update_master_worktree(ctx, token).is_ok() {
             let _ = sync_schema_files_from_master(ctx);
-            rebuild_index_for_conn(ctx, true);
         }
     }
     Ok(())
@@ -4662,34 +4658,10 @@ fn format_elapsed(ms: u128) -> String {
     }
 }
 
-fn rebuild_index_for_conn(ctx: &ConnectionContext, quiet: bool) {
-    if !ctx.master_dir.exists() {
-        return;
-    }
-    if let Some(parent) = ctx.db_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if !quiet {
-        eprint!("  Rebuilding index for {}... ", ctx.conn_dir_name);
-    }
-    match crate::shared::index::build(&ctx.master_dir, &ctx.db_path) {
-        Ok(count) => {
-            if !quiet {
-                eprintln!("{count} file(s)");
-            }
-        }
-        Err(err) => {
-            if !quiet {
-                eprintln!("warning: index rebuild failed: {err}");
-            }
-        }
-    }
-}
-
 /// Outcome of `update_master_worktree` for a single connection. Callers use
 /// `moved` to gate work that only matters when master actually advanced
-/// (sync_schema_files_from_master, rebuild_index_for_conn) and
-/// `changed_paths` to drive a targeted folder_index reindex.
+/// (sync_schema_files_from_master) and `changed_paths` to drive a targeted
+/// folder_index reindex.
 #[derive(Default)]
 struct MasterUpdateResult {
     /// `true` iff `refs/heads/main` advanced from its previous tip during

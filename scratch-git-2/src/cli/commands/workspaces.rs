@@ -691,7 +691,6 @@ pub fn setup_connection(
     let dirty_dir = layout.dirty_checkout_path(&dir_name);
     let dirty_scratch_dir = layout.connection_scratch_path(&dir_name);
     let master_dir = layout.master_worktree_path(&dir_name);
-    let db_path = layout.index_db_path(&ca.repo_path);
 
     {
         let _t = PhaseTimer::new(format!("    [{}] git_clone_bare", dir_name));
@@ -746,15 +745,6 @@ pub fn setup_connection(
                     dir_name
                 ));
                 sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
-            }
-            if let Some(parent) = db_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            {
-                let _t = PhaseTimer::new(format!("    [{}] index::build (SQLite)", dir_name));
-                if let Err(e) = crate::shared::index::build(&master_dir, &db_path) {
-                    eprintln!("  Warning: failed to build index for {}: {e}", dir_name);
-                }
             }
         }
         Err(_) => {

@@ -164,15 +164,6 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum IndexCommands {
-    /// Print index contents (for debugging)
-    Dump {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Dump only the named connection (case-sensitive)
-        #[arg(long)]
-        connection: Option<String>,
-    },
     /// List filenames in a folder whose working-tree mtime/size no longer matches the
     /// index (covers new, modified, and deleted files). Outputs a JSON array.
     #[command(name = "find-stale-files")]
@@ -213,12 +204,6 @@ enum IndexCommands {
         /// Column(s) to check for staleness (may be repeated). Omit to check all.
         #[arg(long = "column")]
         columns: Vec<String>,
-    },
-    /// Create the SQLite index DB for the workspace (first-time setup).
-    Init {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
     },
     /// Wipe + fully rebuild every folder's index in the workspace.
     #[command(name = "rebuild-all")]
@@ -540,10 +525,6 @@ async fn main() {
         ),
 
         Commands::Index { command } => match command {
-            IndexCommands::Dump {
-                workspace,
-                connection,
-            } => index::dump_command(&workspace, connection.as_deref()),
             IndexCommands::FindStaleFiles { workspace, folder } => {
                 index::find_stale_files_command(&workspace, &folder)
             }
@@ -557,7 +538,6 @@ async fn main() {
                 folder,
                 columns,
             } => index::find_stale_command(&workspace, &folder, &columns),
-            IndexCommands::Init { workspace } => index::init_command(&workspace),
             IndexCommands::RebuildAll { workspace } => index::rebuild_all_command(&workspace),
             IndexCommands::RebuildFolder {
                 workspace,

@@ -1,7 +1,7 @@
 # Simplify Local Workspace Architecture
 
 **Date**: 2026-05-17 (last updated 2026-05-19)
-**Status**: Phase 1 shipped on `dev-10144-{mr1,mr2,mr3}`. Phases 2–7 not started.
+**Status**: Phase 1 shipped on `dev-10144-{mr1,mr2,mr3}`. Phase 2 shipped on `dev-10144-mr4`. Phases 3–7 not started.
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
 
@@ -319,6 +319,8 @@ Publish (separate concern, separate CLI command):
 
 ### Phase 2 — Stop building the master `file_index` table at init/download
 
+> **Status: SHIPPED** on `dev-10144-mr4`. Pure-deletion phase. Concretely removed: eager `index::build` at `workspaces.rs:755`, `rebuild_index_for_conn` and its two callers in `files.rs` (downloads + workspace download), the `index init` + `index dump` CLI subcommands, and the now-unused `db_path` binding in `init_connection`. `shared/index.rs` itself stays (service binary depends on it; `validators::builtin::extract_id_path` is also still imported from there). Verified: full `cargo test` green (398 passes), `cargo build` clean for both binaries, `yarn lint` + `yarn build` clean from repo root.
+
 **Audit finding (2026-05-19):** There is one SQLite file per connection (`<workspace>/.repos/<conn>.db`) shared by **two** Rust modules that write **different tables** in that file:
 
 | Tables                                                                                               | Written by                                                                                                                                                            | Read by                                                                                                                  | Lifecycle                                                                                                                                                                                                                                           |
@@ -488,7 +490,7 @@ Net debt reduction: ~600 LOC from `plan_publish.rs` and friends + sparse-checkou
 | Phase                                             | Status                                                                                                             |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Phase 1 — Server `/upload-patch`                  | **Shipped** on `dev-10144-{mr1,mr2,mr3}`. See [Phase 1 implementation notes](#phase-1-implementation-notes) below. |
-| Phase 2 — Stop building master `file_index` table | Not started. Scope clarified by 2026-05-19 audit (see Phase 2 above).                                              |
+| Phase 2 — Stop building master `file_index` table | **Shipped** on `dev-10144-mr4`. See Phase 2 status line above.                                                     |
 | Phase 3 — Drop `reviewed-dirty` on init           | Not started                                                                                                        |
 | Phase 4 — Pull stash/replay                       | Not started                                                                                                        |
 | Phase 5 — Collapse to one worktree                | Not started                                                                                                        |
