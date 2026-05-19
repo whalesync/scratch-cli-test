@@ -45,4 +45,4 @@ export type {
   Strategy,
 } from './types';
 
-export { MaxPagesReachedError, NonJsonResponseError, PaginationLoopError } from './types';
+export { HttpStatusError, MaxPagesReachedError, NonJsonResponseError, PaginationLoopError } from './types';

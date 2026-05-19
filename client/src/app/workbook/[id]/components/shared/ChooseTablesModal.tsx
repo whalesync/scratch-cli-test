@@ -10,6 +10,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useWorkbook } from '@/hooks/use-workbook';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
+import { genericApiApi } from '@/lib/api/generic-api';
 import { ScratchpadApiError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
@@ -745,7 +746,29 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         const fields = fieldSelections.get(tableKey);
         const idFieldOverride = fields?.idField || undefined;
         const nameFieldOverride = fields?.nameField || undefined;
-        const options = buildOptionsForTable(tableKey);
+        let options = buildOptionsForTable(tableKey);
+        // GENERIC_API: probe the endpoint before persisting the folder so the
+        // connector's pull/fetch can rely on probe data (pagination strategy,
+        // extractionIdPath, inferred schema). table.id.wsId is the stable
+        // endpoint UUID from extras.endpoints — set by the connector class.
+        if (connectorAccount.service === 'GENERIC_API') {
+          try {
+            const probeResult = await genericApiApi.probeEndpoint(
+              workbookId,
+              connectorAccount.id,
+              table.id.wsId,
+            );
+            options = {
+              ...options,
+              genericApi: { endpointId: table.id.wsId, probe: probeResult.probe },
+            };
+          } catch (probeError) {
+            const message =
+              probeError instanceof ScratchpadApiError ? probeError.message : 'Probe failed.';
+            tableFailures.push({ displayName: table.displayName, error: `Probe failed: ${message}` });
+            continue;
+          }
+        }
         try {
           const created = await addLinkedDataFolder(
             table.id.remoteId,

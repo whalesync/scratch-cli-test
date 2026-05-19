@@ -1,14 +1,17 @@
 import { Module } from '@nestjs/common';
 import { ScratchConfigModule } from '../../config/scratch-config.module';
+import { CredentialEncryptionModule } from '../../credential-encryption/credential-encryption.module';
+import { DbModule } from '../../db/db.module';
 import { OAuthModule } from '../../oauth/oauth.module';
 import { RateLimiterModule } from '../../rate-limiter/rate-limiter.module';
 import { ConnectorsMetadataController } from './connectors-metadata.controller';
 import { ConnectorsService } from './connectors.service';
+import { GenericApiController, GenericApiProbeService } from './library/generic-api/generic-api.controller';
 
 @Module({
-  imports: [OAuthModule, RateLimiterModule, ScratchConfigModule],
-  controllers: [ConnectorsMetadataController],
-  providers: [ConnectorsService],
+  imports: [OAuthModule, RateLimiterModule, ScratchConfigModule, DbModule, CredentialEncryptionModule],
+  controllers: [ConnectorsMetadataController, GenericApiController],
+  providers: [ConnectorsService, GenericApiProbeService],
   exports: [ConnectorsService],
 })
 export class ConnectorsModule {}

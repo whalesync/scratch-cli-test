@@ -32,6 +32,7 @@ import { useState } from 'react';
 
 import { AuthMethod, useConnectors } from '@/hooks/use-connectors';
 import type { ConnectorAccount } from '@spinner/shared-types';
+import { GenericApiConnectionModal } from './GenericApiConnectionModal';
 
 export type CreateConnectionModalProps = ModalProps & {
   workbookId: string;
@@ -249,6 +250,27 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
     );
   };
 
+  // GENERIC_API uses a custom modal — its config shape (REST/GraphQL toggle,
+  // endpoint list, AI-assist buttons) doesn't fit the data-driven field
+  // pattern the rest of this modal uses.
+  if (newService === 'GENERIC_API') {
+    return (
+      <GenericApiConnectionModal
+        {...modalProps}
+        workbookId={workbookId}
+        onConnectionCreated={(account) => {
+          handleClearForm();
+          props.onClose?.();
+          onConnectionCreated?.(account);
+        }}
+        onClose={() => {
+          handleClearForm();
+          props.onClose?.();
+        }}
+      />
+    );
+  }
+
   return (
     <ModalWrapper
       title="Create Connection"
@@ -274,35 +296,47 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
     >
       <Stack>
         {error && <Alert color="red">{error}</Alert>}
-        <MantineText size="sm" fw={500} mb={4}>
-          App
-        </MantineText>
-        <SimpleGrid cols={2} spacing="xs" mb="md">
-          {availableServices.map((service) => {
-            const isSelected = newService === service;
-            return (
-              <UnstyledButton
-                key={service}
-                onClick={() => handleSelectNewService(service)}
-                style={{
-                  border: `0.5px solid ${isSelected ? 'var(--mantine-color-teal-4)' : 'var(--mantine-color-gray-3)'}`,
-                  padding: '6px 8px',
-                  backgroundColor: isSelected ? 'var(--mantine-color-teal-0)' : 'transparent',
-                  transition: 'all 0.2s ease',
-                }}
-              >
-                <Group justify="space-between" wrap="nowrap">
-                  <Group gap="xs" wrap="nowrap">
-                    <ConnectorIcon connector={service} size={20} />
-                    <MantineText size="sm" fw={500}>
-                      {getServiceName(metadata, service)}
-                    </MantineText>
+        <Group justify="space-between" align="baseline" mb={4}>
+          <MantineText size="sm" fw={500}>
+            App
+          </MantineText>
+          {availableServices.includes('GENERIC_API') && (
+            <MantineText size="xs" c="dimmed">
+              Not finding your App:{' '}
+              <Anchor component="button" type="button" size="xs" onClick={() => handleSelectNewService('GENERIC_API')}>
+                Bring your own API
+              </Anchor>
+            </MantineText>
+          )}
+        </Group>
+        <SimpleGrid cols={3} spacing="xs" mb="xs">
+          {availableServices
+            .filter((s) => s !== 'GENERIC_API')
+            .map((service) => {
+              const isSelected = newService === service;
+              return (
+                <UnstyledButton
+                  key={service}
+                  onClick={() => handleSelectNewService(service)}
+                  style={{
+                    border: `0.5px solid ${isSelected ? 'var(--mantine-color-teal-4)' : 'var(--mantine-color-gray-3)'}`,
+                    padding: '6px 8px',
+                    backgroundColor: isSelected ? 'var(--mantine-color-teal-0)' : 'transparent',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <Group justify="space-between" wrap="nowrap">
+                    <Group gap="xs" wrap="nowrap">
+                      <ConnectorIcon connector={service} size={20} />
+                      <MantineText size="sm" fw={500}>
+                        {getServiceName(metadata, service)}
+                      </MantineText>
+                    </Group>
+                    {isSelected && <Check style={{ width: 12, height: 12, color: 'var(--mantine-color-teal-6)' }} />}
                   </Group>
-                  {isSelected && <Check style={{ width: 12, height: 12, color: 'var(--mantine-color-teal-6)' }} />}
-                </Group>
-              </UnstyledButton>
-            );
-          })}
+                </UnstyledButton>
+              );
+            })}
         </SimpleGrid>
         <TextInput
           label="Name"

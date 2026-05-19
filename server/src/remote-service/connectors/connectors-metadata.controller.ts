@@ -1,8 +1,9 @@
-import { Controller, Get } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Header, Query } from '@nestjs/common';
 import { ConnectorMetadata } from '@spinner/shared-types';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { ScratchConfigService } from '../../config/scratch-config.service';
 import { getAllConnectorMetadata } from './display-names';
+import { getAiPrompt } from './library/generic-api/ai-prompts';
 
 @Controller('connectors')
 export class ConnectorsMetadataController {
@@ -24,5 +25,20 @@ export class ConnectorsMetadataController {
     }
 
     return metadata;
+  }
+
+  /**
+   * Return the AI-assist prompt the GENERIC_API connection modal copies to
+   * the user's clipboard when they click "Get AI prompt". Server-side so we
+   * can evolve the prompt as apiget grows new capabilities without a client
+   * redeploy. Cached for 5 minutes — prompts change rarely.
+   */
+  @Get('generic-api/ai-prompt')
+  @Header('Cache-Control', 'public, max-age=300')
+  getGenericApiAiPrompt(@Query('apiType') apiType?: string): { version: string; text: string } {
+    if (apiType !== 'rest' && apiType !== 'graphql') {
+      throw new BadRequestException('apiType query parameter must be "rest" or "graphql"');
+    }
+    return getAiPrompt(apiType);
   }
 }

@@ -186,3 +186,20 @@ export class NonJsonResponseError extends Error {
     this.name = 'NonJsonResponseError';
   }
 }
+
+/**
+ * Error class for non-2xx HTTP responses. Carries the status, response body
+ * (trimmed), and content-type so callers can surface a useful message instead
+ * of treating the error body as data.
+ */
+export class HttpStatusError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: string,
+    public readonly contentType: string | undefined,
+  ) {
+    const trimmedBody = body.length > 500 ? body.slice(0, 500) + '…' : body;
+    super(`HTTP ${status} from upstream API. Response body: ${trimmedBody}`);
+    this.name = 'HttpStatusError';
+  }
+}

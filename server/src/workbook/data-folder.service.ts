@@ -207,7 +207,10 @@ export class DataFolderService {
     // Fetch table spec for the first tableId
     let tableSpec: BaseJsonTableSpec;
     try {
-      tableSpec = await connector.fetchJsonTableSpec({ wsId: dto.tableId[0], remoteId: dto.tableId });
+      tableSpec = await connector.fetchJsonTableSpec(
+        { wsId: dto.tableId[0], remoteId: dto.tableId },
+        dto.options as DataFolderOptions | undefined,
+      );
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }

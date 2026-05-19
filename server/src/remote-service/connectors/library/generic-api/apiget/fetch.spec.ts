@@ -17,6 +17,7 @@ import {
   FetchFn,
   FetchRequest,
   FetchResponse,
+  HttpStatusError,
   MaxPagesReachedError,
   NonJsonResponseError,
   PaginationLoopError,
@@ -352,11 +353,20 @@ describe('apigetStream — 429 Retry-After handling', () => {
 
   it('does not retry on other 4xx errors (matches Audienceful etc.)', async () => {
     const { fetch, calls } = mockFetch([{ status: 401, headers: {}, body: '{"error":"unauthorized"}' }]);
-    // 401 is allowed to propagate as a non-2xx response with body content; the
-    // current implementation only enforces JSON content-type for 2xx responses.
-    // We just verify no automatic retry attempt was made.
+    // Non-2xx responses throw HttpStatusError so the caller sees a clear error
+    // rather than the response body being silently parsed as records. We only
+    // assert here that there was no automatic retry — that's separately
+    // verified by the HttpStatusError test below.
     await apiget(BASE_SETTINGS, { fetch }).catch(() => {});
     expect(calls).toHaveLength(1);
+  });
+
+  it('throws HttpStatusError on non-2xx responses with the body included', async () => {
+    const { fetch } = mockFetch([{ status: 401, headers: {}, body: '{"error_tag":"AUTH_INVALID_TOKEN"}' }]);
+    const error = await collectAsyncToError(apigetStream(BASE_SETTINGS, { fetch }));
+    expect(error).toBeInstanceOf(HttpStatusError);
+    expect((error as HttpStatusError).status).toBe(401);
+    expect((error as HttpStatusError).body).toContain('AUTH_INVALID_TOKEN');
   });
 });
 

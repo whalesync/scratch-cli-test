@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConnectorAccount } from '@prisma/client';
-import { Service } from '@spinner/shared-types';
+import { DataFolderOptions, Service } from '@spinner/shared-types';
+import { DbService } from 'src/db/db.service';
 import { JsonSafeObject } from 'src/utils/objects';
 import { OAuthService } from '../../oauth/oauth.service';
 import { RateLimiterFactory } from '../../rate-limiter/rate-limiter-factory.service';
@@ -17,6 +18,7 @@ export class ConnectorsService {
   constructor(
     private readonly oauthService: OAuthService,
     private readonly rateLimiterFactory: RateLimiterFactory,
+    private readonly dbService: DbService,
   ) {}
 
   getAuthParser(params: { service: Service }): AuthParser | undefined {
@@ -49,6 +51,21 @@ export class ConnectorsService {
       userId,
       getOAuthAccessToken: (id) => this.oauthService.getValidAccessToken(id),
       createRateLimiter: (id) => this.rateLimiterFactory.createLimiter({ service, connectorAccountId: id }),
+      getFolderOptionsByTableId: (id, tableId) => this.lookupFolderOptions(id, tableId),
     });
+  }
+
+  /**
+   * Implementation of `ConnectorFactoryContext.getFolderOptionsByTableId`.
+   * Direct Prisma read instead of going through DataFolderService to avoid
+   * a circular module dependency (workbook → remote-service → connectors).
+   */
+  private async lookupFolderOptions(connectorAccountId: string, tableId: string[]): Promise<DataFolderOptions | null> {
+    const folder = await this.dbService.client.dataFolder.findFirst({
+      where: { connectorAccountId, tableId: { equals: tableId } },
+      select: { options: true },
+    });
+    if (!folder) return null;
+    return (folder.options ?? {}) as DataFolderOptions;
   }
 }

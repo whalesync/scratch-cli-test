@@ -34,12 +34,14 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
     return newAccount;
   };
 
-  const updateConnectorAccount = async (id: string, dto: UpdateConnectorAccountDto) => {
+  const updateConnectorAccount = async (id: string, dto: UpdateConnectorAccountDto): Promise<ConnectorAccount> => {
     if (!workbookId) {
       throw new Error('Workbook ID is required to update a connector account');
     }
-    await connectorAccountsApi.update(workbookId, id, dto);
+    const updated = await connectorAccountsApi.update(workbookId, id, dto);
     mutate(SWR_KEYS.connectorAccounts.list(workbookId));
+    mutate(SWR_KEYS.connectorAccounts.detail(workbookId, id));
+    return updated;
   };
 
   const deleteConnectorAccount = async (id: string) => {

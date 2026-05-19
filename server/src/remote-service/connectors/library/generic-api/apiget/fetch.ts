@@ -37,6 +37,7 @@ import {
   FetchFn,
   FetchRequest,
   FetchResponse,
+  HttpStatusError,
   MaxPagesReachedError,
   NonJsonResponseError,
   PaginationLoopError,
@@ -329,11 +330,12 @@ async function sendRequest(
     }
   }
 
-  if (response.status >= 200 && response.status < 300) {
-    const contentType = response.headers['content-type'];
-    if (contentType && !contentType.includes('json')) {
-      throw new NonJsonResponseError(contentType);
-    }
+  if (response.status < 200 || response.status >= 300) {
+    throw new HttpStatusError(response.status, response.body, response.headers['content-type']);
+  }
+  const contentType = response.headers['content-type'];
+  if (contentType && !contentType.includes('json')) {
+    throw new NonJsonResponseError(contentType);
   }
   return response;
 }

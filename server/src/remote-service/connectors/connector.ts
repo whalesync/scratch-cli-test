@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { ConnectorSettingDefinition, TableDiscoveryMode } from '@spinner/shared-types';
+import { ConnectorSettingDefinition, DataFolderOptions, TableDiscoveryMode } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -107,9 +107,13 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * Uses field slugs/names as property keys in the schema.
    *
    * @param id The id of the table to fetch the JSON Table Spec for.
+   * @param pendingFolderOptions Options about to be persisted on the new DataFolder
+   *   row, supplied during create-folder before the row exists. Connectors that
+   *   need per-folder state at spec time (e.g. GENERIC_API's probe) can use this
+   *   to avoid a chicken-and-egg with the DB. Optional; most connectors ignore it.
    * @returns A BaseJsonTableSpec containing table metadata and JSON Schema.
    */
-  abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>;
+  abstract fetchJsonTableSpec(id: EntityId, pendingFolderOptions?: DataFolderOptions): Promise<BaseJsonTableSpec>;
 
   /**
    * Get a new file template for the given table spec.

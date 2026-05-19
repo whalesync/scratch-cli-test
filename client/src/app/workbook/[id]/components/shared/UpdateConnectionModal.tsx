@@ -7,12 +7,32 @@ import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { Alert, Checkbox, ModalProps, PasswordInput, Stack, TextInput } from '@mantine/core';
 import { AuthType, ConnectorAccount, ConnectorSettingDefinition } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
+import { GenericApiConnectionModal } from './GenericApiConnectionModal';
 
 interface UpdateConnectionModalProps extends ModalProps {
   connectorAccount: ConnectorAccount | null;
 }
 
 export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
+  const { connectorAccount, ...modalProps } = props;
+  const { workbook } = useActiveWorkbook();
+
+  // GENERIC_API uses the same custom modal as create — endpoint editing,
+  // AI-assist, structured extras are too rich for the data-driven field
+  // form the StandardUpdateForm renders.
+  if (connectorAccount?.service === 'GENERIC_API' && workbook?.id) {
+    return (
+      <GenericApiConnectionModal
+        {...modalProps}
+        workbookId={workbook.id}
+        existingAccount={connectorAccount}
+      />
+    );
+  }
+  return <StandardUpdateForm {...props} />;
+};
+
+const StandardUpdateForm = (props: UpdateConnectionModalProps) => {
   const { connectorAccount, ...modalProps } = props;
   const { workbook } = useActiveWorkbook();
   const { metadata } = useConnectorsMetadata();

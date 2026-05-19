@@ -1,4 +1,4 @@
-import { AuthMethod, ConnectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
+import { AuthMethod, ConnectorMetadata, ConnectorSettingDefinition, DataFolderOptions } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { RateLimiter } from '../../rate-limiter/rate-limiter';
 import { RateLimiterSpec } from '../../rate-limiter/rate-limiter.types';
@@ -21,6 +21,19 @@ export interface ConnectorFactoryContext {
   userId?: string;
   getOAuthAccessToken: (connectorAccountId: string) => Promise<string>;
   createRateLimiter: (connectorAccountId: string) => RateLimiter | undefined;
+  /**
+   * Look up `DataFolder.options` for a given (connectorAccountId, tableId)
+   * pair. Used by connectors whose `fetchJsonTableSpec` needs persisted
+   * per-folder state instead of fetching schema from a remote API.
+   *
+   * The only consumer today is GENERIC_API, which stores per-endpoint probe
+   * results in `DataFolder.options.genericApi` and reads them back at pull
+   * time. Native connectors that derive schema from a remote schema endpoint
+   * (Airtable, Notion, etc.) ignore the callback entirely.
+   *
+   * Returns null when no folder exists with that tableId for that account.
+   */
+  getFolderOptionsByTableId: (connectorAccountId: string, tableId: string[]) => Promise<DataFolderOptions | null>;
 }
 
 /**

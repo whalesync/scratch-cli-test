@@ -10,6 +10,8 @@ import type { Service } from '@spinner/shared-types';
 import {
   ConnectorAccountId,
   createConnectorAccountId,
+  GenericApiConnectorExtras,
+  isGenericApiConnectorExtras,
   ShopifyConnectorExtras,
   TableDiscoveryMode,
   UpdateConnectorAccountDto,
@@ -34,6 +36,7 @@ import { Connector } from '../connectors/connector';
 import { ConnectorsService } from '../connectors/connectors.service';
 import { getServiceAdvancedSettings, getServiceDisplayName } from '../connectors/display-names';
 import { ConnectorAuthError, exceptionForConnectorError, isUserFriendlyError } from '../connectors/error';
+import { probeAuthOnly } from '../connectors/library/generic-api/generic-api-probe';
 import { ApiQuotaResponse } from './entities/api-quota.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
@@ -118,17 +121,43 @@ export class ConnectorAccountService {
       );
     }
 
-    const { credentials: parsedCredentials, extras: parsedExtras } = await this.parseUserProvidedParams(
-      createDto.userProvidedParams || {},
-      createDto.service,
-    );
+    // ──────────────────────────────────────────────────────────────────────
+    // GENERIC_API: probe BEFORE persist — no orphan rows on auth failure.
+    // The custom modal posts { userProvidedParams: { apiKey }, extras: { apiType, authHeader, endpoints[] } }.
+    // We validate the extras shape, run a one-call probe against the first
+    // endpoint, and only proceed with row creation if it returns 2xx.
+    // ──────────────────────────────────────────────────────────────────────
+    let parsedCredentials: Record<string, string>;
+    let extras: Record<string, unknown>;
+    if (createDto.service === ServiceConst.GENERIC_API) {
+      if (!isGenericApiConnectorExtras(createDto.extras)) {
+        throw new BadRequestException('Generic API requires structured extras: { apiType, authHeader, endpoints[] }.');
+      }
+      const apiKey = createDto.userProvidedParams?.apiKey;
+      if (typeof apiKey !== 'string' || apiKey === '') {
+        throw new BadRequestException('Generic API requires an API key in userProvidedParams.apiKey.');
+      }
+      // Pre-create probe — throws on auth failure, network error, non-JSON,
+      // or non-2xx. No DB row created on failure (we haven't called .create() yet).
+      try {
+        await probeAuthOnly({ extras: createDto.extras as GenericApiConnectorExtras, apiKey });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Unknown probe failure';
+        throw new BadRequestException(`Generic API connection check failed: ${msg}`);
+      }
+      parsedCredentials = { apiKey };
+      extras = { ...createDto.extras } as Record<string, unknown>;
+    } else {
+      const parsed = await this.parseUserProvidedParams(createDto.userProvidedParams || {}, createDto.service);
+      parsedCredentials = parsed.credentials;
+      extras = { ...parsed.extras };
 
-    // For Shopify, store the shop domain in extras (not encrypted) so it can be queried directly
-    let extras: Record<string, string> = { ...parsedExtras };
-    if (createDto.service === ServiceConst.SHOPIFY && parsedCredentials.shopDomain) {
-      const shopifyExtras: ShopifyConnectorExtras = { shopDomain: parsedCredentials.shopDomain };
-      extras = { ...extras, ...shopifyExtras };
-      delete parsedCredentials.shopDomain;
+      // For Shopify, store the shop domain in extras (not encrypted) so it can be queried directly
+      if (createDto.service === ServiceConst.SHOPIFY && parsedCredentials.shopDomain) {
+        const shopifyExtras: ShopifyConnectorExtras = { shopDomain: parsedCredentials.shopDomain };
+        extras = { ...extras, ...shopifyExtras };
+        delete parsedCredentials.shopDomain;
+      }
     }
 
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(
@@ -152,7 +181,7 @@ export class ConnectorAccountService {
         repoPath,
         encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue,
         modifier: createDto.modifier,
-        extras,
+        extras: extras as Prisma.InputJsonValue,
       },
     });
 
@@ -285,6 +314,16 @@ export class ConnectorAccountService {
       const shopifyExtras: ShopifyConnectorExtras = { shopDomain: credentialsRecord.shopDomain };
       extras = { ...(extras || (currentAccount.extras as Record<string, unknown> | null) || {}), ...shopifyExtras };
       delete credentialsRecord.shopDomain;
+    }
+
+    // GENERIC_API: validate extras shape when supplied so we don't persist
+    // garbage that would break listTables / pull at runtime. Mirrors the
+    // pre-create probe's validation; the actual auth re-check happens lazily
+    // when healthStatus is reset to null below.
+    if (currentAccount.service === ServiceConst.GENERIC_API && updateDto.extras !== undefined) {
+      if (!isGenericApiConnectorExtras(updateDto.extras)) {
+        throw new BadRequestException('Generic API requires structured extras: { apiType, authHeader, endpoints[] }.');
+      }
     }
 
     const encryptedCredentials = await this.credentialEncryptionService.encryptCredentials(decryptedCredentials);
