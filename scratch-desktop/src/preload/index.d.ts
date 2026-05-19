@@ -91,18 +91,29 @@ interface ScratchDesktopAPI {
   listUnpushedChanges: (
     workspacePath: string,
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
-  listLocalPublishPlans: (workspacePath: string) => Promise<
-    Array<{
-      planId: string;
-      createdAt: string;
+  uploadWorkspaceChanges: (workspacePath: string) => Promise<{
+    status: 'uploaded' | 'no_changes' | 'up_to_date';
+    filesCreated: number;
+    filesUpdated: number;
+    filesDeleted: number;
+    createdPaths: string[];
+    updatedPaths: string[];
+    deletedPaths: string[];
+    messages: string[];
+    stalenessWarning: { newHead: string } | null;
+    connections: Array<{
       connectionName: string;
-      connectionId: string;
-      summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
-      tablePaths: string[];
-    }>
-  >;
-  deleteLocalPublishPlans: (workspacePath: string) => Promise<void>;
-  pushWorkspaceChanges: (workspacePath: string) => Promise<{ stdout: string; stderr: string }>;
+      status: 'uploaded' | 'no_changes' | 'up_to_date';
+      filesCreated: number;
+      filesUpdated: number;
+      filesDeleted: number;
+      createdPaths: string[];
+      updatedPaths: string[];
+      deletedPaths: string[];
+      messages: string[];
+    }>;
+    elapsedMs: number;
+  }>;
   pullWorkspaceChanges: (
     workspacePath: string,
     opts?: { onDelete?: string },
@@ -113,10 +124,6 @@ interface ScratchDesktopAPI {
     syncName: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
-  startPlanPublish: (workspacePath: string, filterPath?: string) => Promise<{ sessionId: string }>;
-  startPublishFromGit: (workspacePath: string) => Promise<{ sessionId: string }>;
-  triggerPublishFromGit: (workspacePath: string) => Promise<{ stdout: string; stderr: string; jobIds: string[] }>;
-  startPublishAll: (workspacePath: string) => Promise<{ sessionId: string }>;
   pullAllLinkedTables: (workspacePath: string) => Promise<{ jobIds: string[] }>;
   showInFolder: (folderPath: string) => Promise<void>;
   showItemInFolder: (filePath: string) => Promise<void>;

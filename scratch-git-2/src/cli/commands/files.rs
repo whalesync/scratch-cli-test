@@ -199,22 +199,32 @@ struct DownloadResult {
 
 #[derive(Default)]
 struct UploadResult {
-    /// Repo-relative data paths whose dirty branch moved during this
-    /// upload (locally — i.e. from `local_dirty_hash` to either `remote_hash`
-    /// in the fast-forward case or `new_dirty_hash` in the merge-commit
-    /// case). Drives the caller's per-path folder_index reindex.
+    /// Connection directory name (e.g. "HubSpot"). Empty for the aggregate
+    /// result. Lets the desktop modal render per-connection cards.
+    connection_name: String,
+    /// Repo-relative data paths whose local trees moved during this upload.
+    /// Drives the caller's per-path folder_index reindex.
     changed_paths: Vec<String>,
     status: String,
-    files_uploaded: i32,
-    files_merged: i32,
+    /// New files (present in dirty, absent from main).
+    files_created: i32,
+    /// Edits (present in both, with field-level differences).
+    files_updated: i32,
+    /// Deletes (present in main, absent from dirty).
     files_deleted: i32,
+    files_merged: i32,
     files_plan: i32,
     conflicts_auto_resolved: i32,
     retries: i32,
     messages: Vec<String>,
-    uploaded_paths: Vec<String>,
-    merged_paths: Vec<String>,
+    created_paths: Vec<String>,
+    updated_paths: Vec<String>,
     deleted_paths: Vec<String>,
+    merged_paths: Vec<String>,
+    /// Soft signal from `/upload-patch/commit` that the server has more
+    /// recent changes than what's on the client. Patches were still applied;
+    /// the desktop surfaces this as a non-blocking banner.
+    staleness_warning: Option<crate::api::StalenessWarning>,
 }
 
 #[derive(serde::Serialize)]
@@ -662,13 +672,8 @@ async fn run_upload(
         reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
     }
 
-    let result = if results.len() == 1 {
-        results.into_iter().next().unwrap_or_default()
-    } else {
-        aggregate_upload(&results)
-    };
-
-    print_upload_result(&result, started.elapsed().as_millis(), json)
+    let aggregate = aggregate_upload(&results);
+    print_upload_result(&aggregate, &results, started.elapsed().as_millis(), json)
 }
 
 /// Publish accepted edits to external connectors. Two explicit server calls
@@ -738,7 +743,9 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
         if let Some(run_job_id) = run.job_id.as_deref() {
             crate::api::poll_job(&client, run_job_id)
                 .await
-                .map_err(|e| anyhow::anyhow!("run-job poll failed for {}: {e}", ctx.conn_dir_name))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("run-job poll failed for {}: {e}", ctx.conn_dir_name)
+                })?;
         }
         if verbose {
             eprintln!(" done");
@@ -2372,8 +2379,8 @@ fn download_single_repo(
     )?
     .ok_or_else(|| anyhow::anyhow!("No merge base found between local dirty and origin/dirty"))?;
     let merge_base_map = read_git_tree(&ctx.bare_repo, &merge_base_hash)?;
-    let (merged_dirty_map, _, mut messages) =
-        prepare_upload_merge(&merge_base_map, &local_dirty_map, &remote_map, 0);
+    let (merged_dirty_map, mut messages) =
+        prepare_upload_merge(&merge_base_map, &local_dirty_map, &remote_map);
 
     let new_dirty_hash = if maps_equal(&merged_dirty_map, &remote_map) {
         git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
@@ -2545,22 +2552,38 @@ async fn upload_single_repo_via_patches(
             ));
         }
         return Ok(UploadResult {
+            connection_name: ctx.conn_dir_name.clone(),
             status: "no_changes".to_string(),
             messages,
             ..Default::default()
         });
     }
 
-    let files_uploaded = patches.iter().filter(|p| !p.patch.is_null()).count() as i32;
-    let files_deleted = patches.iter().filter(|p| p.patch.is_null()).count() as i32;
-    let uploaded_paths: Vec<String> = patches
+    let files_created = patches
         .iter()
-        .filter(|p| !p.patch.is_null())
+        .filter(|p| p.kind == PatchKind::Create)
+        .count() as i32;
+    let files_updated = patches
+        .iter()
+        .filter(|p| p.kind == PatchKind::Update)
+        .count() as i32;
+    let files_deleted = patches
+        .iter()
+        .filter(|p| p.kind == PatchKind::Delete)
+        .count() as i32;
+    let created_paths: Vec<String> = patches
+        .iter()
+        .filter(|p| p.kind == PatchKind::Create)
+        .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
+        .collect();
+    let updated_paths: Vec<String> = patches
+        .iter()
+        .filter(|p| p.kind == PatchKind::Update)
         .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
         .collect();
     let deleted_paths: Vec<String> = patches
         .iter()
-        .filter(|p| p.patch.is_null())
+        .filter(|p| p.kind == PatchKind::Delete)
         .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
         .collect();
     // The dirty branch didn't move on this upload (server is authoritative
@@ -2633,13 +2656,17 @@ async fn upload_single_repo_via_patches(
     }
 
     Ok(UploadResult {
+        connection_name: ctx.conn_dir_name.clone(),
         status: "uploaded".to_string(),
-        files_uploaded,
+        files_created,
+        files_updated,
         files_deleted,
-        uploaded_paths,
+        created_paths,
+        updated_paths,
         deleted_paths,
         changed_paths,
         messages,
+        staleness_warning: commit.staleness_warning,
         ..Default::default()
     })
 }
@@ -2670,16 +2697,16 @@ fn compute_upload_patches(
     for path in all_paths {
         let main_bytes = main_map.get(path);
         let dirty_bytes = dirty_map.get(path);
-        let patch_value = match (main_bytes, dirty_bytes) {
+        let (patch_value, kind) = match (main_bytes, dirty_bytes) {
             (Some(m), Some(d)) if m == d => continue,
             (None, None) => continue,
-            (Some(_), None) => serde_json::Value::Null,
-            (None, Some(d)) => parse_json_value(d, path, conn_dir_name)?,
+            (Some(_), None) => (serde_json::Value::Null, PatchKind::Delete),
+            (None, Some(d)) => (parse_json_value(d, path, conn_dir_name)?, PatchKind::Create),
             (Some(m), Some(d)) => {
                 let main_value = parse_json_value(m, path, conn_dir_name)?;
                 let dirty_value = parse_json_value(d, path, conn_dir_name)?;
                 match crate::commands::merge_patch::diff(&main_value, &dirty_value) {
-                    Some(patch) => patch,
+                    Some(patch) => (patch, PatchKind::Update),
                     None => continue,
                 }
             }
@@ -2687,15 +2714,24 @@ fn compute_upload_patches(
         patches.push(ComputedUploadPatch {
             path: path.to_string(),
             patch: patch_value,
+            kind,
         });
     }
     Ok(patches)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PatchKind {
+    Create,
+    Update,
+    Delete,
 }
 
 #[derive(Debug)]
 struct ComputedUploadPatch {
     path: String,
     patch: serde_json::Value,
+    kind: PatchKind,
 }
 
 fn parse_json_value(
@@ -4245,21 +4281,20 @@ fn compute_merge_actions(base: &FileMap, local: &FileMap, remote: &FileMap) -> V
     actions
 }
 
+/// Three-way merge helper used by the download flow. Returns the merged
+/// `FileMap` plus any per-action human-readable warnings. The legacy upload
+/// flow that originally produced an `UploadResult` here was deleted in the
+/// upload-patch rewrite; only the download caller remains and it discards
+/// everything except the merged map and warnings.
 fn prepare_upload_merge(
     base_map: &FileMap,
     local_map: &FileMap,
     remote_map: &FileMap,
-    attempt: i32,
-) -> (FileMap, UploadResult, Vec<String>) {
+) -> (FileMap, Vec<String>) {
     let actions = compute_merge_actions(base_map, local_map, remote_map);
 
     let mut merged = remote_map.clone();
     let mut messages = Vec::new();
-    let mut result = UploadResult {
-        status: "uploaded".to_string(),
-        retries: attempt,
-        ..Default::default()
-    };
 
     for act in &actions {
         match act {
@@ -4271,21 +4306,9 @@ fn prepare_upload_merge(
                 match content {
                     Some(content) => {
                         merged.insert(path.clone(), content.clone());
-                        if remote_map
-                            .get(path.as_str())
-                            .map(|remote| remote != content)
-                            .unwrap_or(true)
-                        {
-                            result.files_uploaded += 1;
-                            result.uploaded_paths.push(path.clone());
-                        }
                     }
                     None => {
                         merged.remove(path.as_str());
-                        if remote_map.contains_key(path.as_str()) {
-                            result.files_deleted += 1;
-                            result.deleted_paths.push(path.clone());
-                        }
                     }
                 }
                 if let Some(warning) = warning {
@@ -4302,10 +4325,6 @@ fn prepare_upload_merge(
             },
             MergeAction::Delete { path, warning } => {
                 merged.remove(path.as_str());
-                if remote_map.contains_key(path.as_str()) {
-                    result.files_deleted += 1;
-                    result.deleted_paths.push(path.clone());
-                }
                 if let Some(warning) = warning {
                     messages.push(warning.clone());
                 }
@@ -4318,14 +4337,11 @@ fn prepare_upload_merge(
             } => {
                 let content = merge_content(path, Some(base), Some(local), Some(remote));
                 merged.insert(path.clone(), content);
-                result.files_merged += 1;
-                result.merged_paths.push(path.clone());
-                result.conflicts_auto_resolved += 1;
             }
         }
     }
 
-    (merged, result, messages)
+    (merged, messages)
 }
 
 fn merge_content(
@@ -4417,18 +4433,26 @@ fn aggregate_upload(results: &[UploadResult]) -> UploadResult {
         if result.status == "up_to_date" && agg.status == "no_changes" {
             agg.status = "up_to_date".to_string();
         }
-        agg.files_uploaded += result.files_uploaded;
+        agg.files_created += result.files_created;
+        agg.files_updated += result.files_updated;
         agg.files_merged += result.files_merged;
         agg.files_deleted += result.files_deleted;
         agg.files_plan += result.files_plan;
         agg.conflicts_auto_resolved += result.conflicts_auto_resolved;
         agg.retries += result.retries;
         agg.messages.extend(result.messages.iter().cloned());
-        agg.uploaded_paths
-            .extend(result.uploaded_paths.iter().cloned());
+        agg.created_paths
+            .extend(result.created_paths.iter().cloned());
+        agg.updated_paths
+            .extend(result.updated_paths.iter().cloned());
         agg.merged_paths.extend(result.merged_paths.iter().cloned());
         agg.deleted_paths
             .extend(result.deleted_paths.iter().cloned());
+        // Take the last connection's staleness warning as the workspace-wide
+        // signal — they're all the same when present (server's `main`).
+        if let Some(staleness) = &result.staleness_warning {
+            agg.staleness_warning = Some(staleness.clone());
+        }
     }
     agg
 }
@@ -4531,19 +4555,46 @@ fn print_download_result(
     Ok(())
 }
 
-fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> anyhow::Result<()> {
+fn print_upload_result(
+    aggregate: &UploadResult,
+    per_connection: &[UploadResult],
+    elapsed_ms: u128,
+    json: bool,
+) -> anyhow::Result<()> {
     if json {
+        let connections: Vec<serde_json::Value> = per_connection
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "connectionName": c.connection_name,
+                    "status": c.status,
+                    "filesCreated": c.files_created,
+                    "filesUpdated": c.files_updated,
+                    "filesDeleted": c.files_deleted,
+                    "createdPaths": c.created_paths,
+                    "updatedPaths": c.updated_paths,
+                    "deletedPaths": c.deleted_paths,
+                    "messages": c.messages,
+                })
+            })
+            .collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": result.status,
-                "filesUploaded": result.files_uploaded,
-                "filesMerged": result.files_merged,
-                "filesDeleted": result.files_deleted,
-                "filesPlan": result.files_plan,
-                "conflictsAutoResolved": result.conflicts_auto_resolved,
-                "retries": result.retries,
-                "messages": result.messages,
+                "status": aggregate.status,
+                "filesCreated": aggregate.files_created,
+                "filesUpdated": aggregate.files_updated,
+                "filesDeleted": aggregate.files_deleted,
+                "filesMerged": aggregate.files_merged,
+                "filesPlan": aggregate.files_plan,
+                "conflictsAutoResolved": aggregate.conflicts_auto_resolved,
+                "retries": aggregate.retries,
+                "messages": aggregate.messages,
+                "createdPaths": aggregate.created_paths,
+                "updatedPaths": aggregate.updated_paths,
+                "deletedPaths": aggregate.deleted_paths,
+                "stalenessWarning": aggregate.staleness_warning,
+                "connections": connections,
                 "elapsedMs": elapsed_ms,
             }))?
         );
@@ -4551,46 +4602,53 @@ fn print_upload_result(result: &UploadResult, elapsed_ms: u128, json: bool) -> a
     }
 
     let elapsed = format_elapsed(elapsed_ms);
-    if result.status == "no_changes" {
+    if aggregate.status == "no_changes" {
         println!("No local changes to upload. ({})", elapsed);
-        for message in &result.messages {
+        for message in &aggregate.messages {
             println!("Warning: {}", message);
         }
         return Ok(());
     }
-    if result.status == "up_to_date" {
+    if aggregate.status == "up_to_date" {
         println!("Remote already has all local changes. ({})", elapsed);
-        for message in &result.messages {
+        for message in &aggregate.messages {
             println!("Warning: {}", message);
         }
         return Ok(());
     }
 
-    let total = result.files_uploaded + result.files_merged + result.files_deleted;
-    if total == 0 && result.files_plan == 0 {
+    let total = aggregate.files_created
+        + aggregate.files_updated
+        + aggregate.files_merged
+        + aggregate.files_deleted;
+    if total == 0 && aggregate.files_plan == 0 {
         println!("No changes. ({})", elapsed);
         return Ok(());
     }
 
     println!();
     let mut parts = Vec::new();
-    if result.files_uploaded > 0 {
-        parts.push(format!("{} uploaded", result.files_uploaded));
+    if aggregate.files_created > 0 {
+        parts.push(format!("{} added", aggregate.files_created));
     }
-    if result.files_merged > 0 {
-        parts.push(format!("{} merged", result.files_merged));
+    if aggregate.files_updated > 0 {
+        parts.push(format!("{} modified", aggregate.files_updated));
     }
-    if result.files_deleted > 0 {
-        parts.push(format!("{} deleted", result.files_deleted));
+    if aggregate.files_merged > 0 {
+        parts.push(format!("{} merged", aggregate.files_merged));
     }
-    if result.files_plan > 0 {
-        parts.push(format!("{} plan files pushed", result.files_plan));
+    if aggregate.files_deleted > 0 {
+        parts.push(format!("{} deleted", aggregate.files_deleted));
+    }
+    if aggregate.files_plan > 0 {
+        parts.push(format!("{} plan files pushed", aggregate.files_plan));
     }
     println!("{} ({})", parts.join(", "), elapsed);
-    print_file_list(&result.uploaded_paths);
-    print_file_list(&result.merged_paths);
-    print_file_list(&result.deleted_paths);
-    for message in &result.messages {
+    print_file_list(&aggregate.created_paths);
+    print_file_list(&aggregate.updated_paths);
+    print_file_list(&aggregate.merged_paths);
+    print_file_list(&aggregate.deleted_paths);
+    for message in &aggregate.messages {
         println!("Warning: {}", message);
     }
     Ok(())

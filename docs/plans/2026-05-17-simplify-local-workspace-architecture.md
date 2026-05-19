@@ -1,7 +1,7 @@
 # Simplify Local Workspace Architecture
 
-**Date**: 2026-05-17 (revised 2026-05-18 after `/plan-ceo-review` + `/plan-eng-review`; Phase 1 server slice landed 2026-05-18, CLI rewrite committed on `dev-10144-mr2`)
-**Status**: Phase 1 — server slice on `dev-10144-mr1` (`d6f78f14`), CLI rewrite on `dev-10144-mr2`; desktop modal still pending
+**Date**: 2026-05-17 (revised 2026-05-18 after `/plan-ceo-review` + `/plan-eng-review`; Phase 1 server slice landed 2026-05-18, CLI rewrite + decoupling on `dev-10144-mr2`, desktop modal + CLI per-connection JSON + server rate-limit skip on `dev-10144-mr3`)
+**Status**: Phase 1 — all three slices landed on `dev-10144-{mr1,mr2,mr3}`; ready to commit and merge
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
 **Scope**: Replace the three-worktree + eager SQLite + local-publish architecture of `scratchmd workspaces init` with a one-bare-repo + one-non-sparse-worktree-per-connection model. Publishing redirects to the existing server-native pipeline via a thin upload-patch shim; the working tree IS the diff source against `main`, with `gix` doing index-backed diff detection.
@@ -10,15 +10,15 @@
 
 ## Progress (2026-05-18)
 
-| Phase                                   | Status                                                                            | Notes                                                                      |
-| --------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Phase 1 — server `/upload-patch`        | **Server: `dev-10144-mr1` (`d6f78f14`); CLI: `dev-10144-mr2`; desktop: pending.** | Server + CLI both shipped; desktop modal rewrite (PR 3) is the last piece. |
-| Phase 2 — pull stash/replay             | Not started                                                                       |                                                                            |
-| Phase 3 — drop `reviewed-dirty` on init | Not started                                                                       |                                                                            |
-| Phase 4 — drop SQLite index             | Not started                                                                       |                                                                            |
-| Phase 5 — collapse to one worktree      | Not started                                                                       |                                                                            |
-| Phase 6 — parallelize connections       | Not started                                                                       |                                                                            |
-| Phase 7 — delete `run-from-git`         | Not started                                                                       | Gated on Phase 1 fully shipping (desktop).                                 |
+| Phase                                   | Status                                                                                             | Notes                                                                                             |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Phase 1 — server `/upload-patch`        | **Server: `dev-10144-mr1` (`d6f78f14`); CLI: `dev-10144-mr2`; desktop + polish: `dev-10144-mr3`.** | All three slices verified end-to-end against localhost. Ready to commit + open PR.                |
+| Phase 2 — pull stash/replay             | Not started                                                                                        |                                                                                                   |
+| Phase 3 — drop `reviewed-dirty` on init | Not started                                                                                        |                                                                                                   |
+| Phase 4 — drop SQLite index             | Not started                                                                                        |                                                                                                   |
+| Phase 5 — collapse to one worktree      | Not started                                                                                        |                                                                                                   |
+| Phase 6 — parallelize connections       | Not started                                                                                        |                                                                                                   |
+| Phase 7 — delete `run-from-git`         | Unblocked by Phase 1 desktop slice.                                                                | Awaiting ≥7-day window with zero `/run-from-git` callers + perf gate (T11) before deletion lands. |
 
 ### Phase 1 server slice — what landed
 
@@ -147,9 +147,76 @@ Fix: new optional `GCS_LOCAL_SIGNING_SA` env var. When set, `ObjectStorageServic
 
 Requires `roles/iam.serviceAccountTokenCreator` on the target SA. For the test env, that's `cloudrun-service-account@spv1eu-test.iam.gserviceaccount.com`.
 
-### Still pending for Phase 1
+### Phase 1 desktop slice — what landed (`dev-10144-mr3`)
 
-- **PR 3 — Desktop modal rewrite** (`scratch-desktop/src/renderer/src/pages/workspace/PublishChangesModal.tsx`). New state modes; staleness banner consumes `stalenessWarning` from `/commit`. Desktop imports DTOs from `@spinner/shared-types`. CLI is now reference-implementation parity for the wire flow.
+PR 3: `PublishChangesModal.tsx` rewritten end-to-end; CLI `files upload --json` extended; server gains a `@SkipApiRateLimit` decorator. Verified against localhost — upload, publish, staleness handling, and the read-only-connector failure path all behave as designed.
+
+**CLI extension (`scratch-git-2/src/cli/commands/files.rs`):**
+
+- `compute_upload_patches` tags each `ComputedUploadPatch` as `Create | Update | Delete` (lines 2652+); the previously-conflated "uploaded" count splits cleanly into create + update.
+- `UploadResult` carries per-connection `connection_name`, separate `files_created` / `files_updated` / `files_deleted` counts + matching `created_paths` / `updated_paths` / `deleted_paths` lists, and a structured `staleness_warning: Option<StalenessWarning>` (still kept as a human-readable string in `messages` for the text UI).
+- `print_upload_result` JSON output gains `connections: [...]` (per-connection breakdown with the same shape as the aggregate), top-level `stalenessWarning` field, and the new `filesCreated`/`filesUpdated`/`createdPaths`/`updatedPaths`/`stalenessWarning` keys. The previous `filesUploaded` and `uploadedPaths` keys (which lumped creates+edits) are gone — desktop is the only consumer and was rewritten in the same PR.
+- `prepare_upload_merge` simplified to drop its discarded `UploadResult` return (download flow is the only caller; the legacy upload merge path is gone).
+- `StalenessWarning` in `api/mod.rs` now derives `Clone + Serialize` so it can flow through to JSON output.
+- 1 test extended to lock in kind classification; 3 existing tests updated for the simpler `prepare_upload_merge` signature. `cargo test --bin scratchmd` runs 211 tests, all pass.
+
+**Desktop modal rewrite (`scratch-desktop/src/renderer/src/pages/workspace/PublishChangesModal.tsx`):**
+
+- New state machine: `approval → uploading → uploaded → publishing → complete | error`.
+- **Two-step UI**: upload first (single IPC call to `scratchmd --json files upload`), land on `uploaded` mode showing the per-connection diff summary, then user explicitly clicks **Publish now** or **Review on web ↗** (opens `${VITE_SCRATCH_WEB_URL}/workbook/{workspaceId}/review`; modal stays open so the user can publish after reviewing).
+- **Per-connection parallel publish** in `publishing` mode. Each connection fans out POST `/cli/v1/workbooks/:id/publish-v2/plan-job` → poll → POST `/publish-v2/run-job` → poll, via `Promise.allSettled`. One connection's failure isolates to that connection's card; the others continue.
+- **Staleness banner** consumes `stalenessWarning.newHead` from the upload result — non-blocking, dismissible, rendered above the modal content from `uploading` through `publishing`.
+- **Modal title is mode-aware** (`Publish changes` / `Uploading changes` / `Ready to publish` / `Publishing changes` / `Published` / `Publish failed`) so users always know where they are.
+- **Aggregate + per-connection diff lines** render as a single dimmed `0 added · 1 modified · 0 deleted` text line (zero counts filtered out for cleaner output), replacing the original three-colored-badge layout. Status badges in the publishing view keep their semantic colors (`green`/`red`/`gray`) since color carries state meaning there.
+- Deletes the OLD modal's "approval → planning → ready" path: no more `scratchmd plan-publish` CLI call, no more reading `.scratch/connections/*/.publish-plans/<id>/plan.json` files from disk, no more `<LiveCommandOutput>` streaming. Aggregate count of dead helpers removed: ~150 LOC out of the desktop's main process.
+
+**Desktop main + preload changes:**
+
+- New IPC channel `scratch:upload-workspace-changes` returning the structured `UploadWorkspaceResult` parsed from `scratchmd --json files upload`.
+- New `lib/publish-api.ts` (`startPlanJob`, `startRunJob`) calling the existing `/cli/v1/workbooks/:id/publish-v2/{plan,run}-job` shim endpoints.
+- Dead IPC handlers + scratchmd helpers removed: `triggerPublishFromGit`, `listLocalPublishPlans`, `deleteLocalPublishPlans`, `pushWorkspaceChanges` (renamed to `uploadWorkspaceChanges`), `startPlanPublish`, `startPublishFromGit`, `startPublishAll`, plus the `startWorkspaceInternalLiveSequence` helper whose last caller went away.
+- `WorkspacePageDebug.tsx`: deletes the three legacy debug sections (Create publish plan / Publish from git / Publish all) — they all called the now-dead `start*` IPC handlers.
+- 5 new PostHog events + tracking helpers: `PUBLISH_UPLOAD_STARTED`, `PUBLISH_UPLOAD_COMPLETED`, `PUBLISH_STARTED`, `PUBLISH_COMPLETED`, `PUBLISH_REVIEW_ON_WEB`.
+
+**Polling architecture — single shared poller (mid-test fix):**
+
+First cut of the modal had per-connection `pollJobToTerminal` loops AND a page-level useEffect poller running concurrently. With 5 connections × 2 jobs each = ~10 `/jobs/bulk-status` requests per second, which exhausted the rate-limit guard's 60-request-burst budget in ~6 seconds and produced 429s mid-publish. Fixed by consolidating to one shared poller behind a `pendingWaitsRef: Map<string, (status: JobStatus) => void>`:
+
+- ONE batched `/jobs/bulk-status` call per second, regardless of how many connections are in flight.
+- `pollJobToTerminal(jobId)` returns a Promise that registers in the map; the single poller resolves it on the tick that observes terminal state.
+- Drives BOTH (a) the `jobs` state for `<ConnectionPublishRow>` progress rendering AND (b) the per-connection state-machine `await`s.
+
+**Server — `@SkipApiRateLimit` decorator (`server/src/rate-limiter/`):**
+
+- The 429s above were the symptom; the underlying issue was that `ApiRateLimitGuard` only enforces for API-token auth (the web client uses Clerk and bypasses), and `/jobs/bulk-status` is a cheap Redis read whose natural caller is UI polling, not CLI writes. Counting it against the CLI's 60-req/min budget was wrong.
+- New `@SkipApiRateLimit()` decorator (in `api-rate-limit.decorator.ts`); the guard checks `API_RATE_LIMIT_SKIP_KEY` after the existing kill-switch and unlimited-scope checks but before consuming any points. Skip looks up handler-level metadata first, then class-level — so a controller can be skipped wholesale or only on specific handlers.
+- Applied to every read-only polling endpoint in `JobController`: `POST /jobs/bulk-status`, `GET /jobs/workbook/:workbookId/active`, `GET /jobs/:jobId/progress`, `GET /jobs/:jobId/raw`, `GET /jobs/run/:runId`. Each has a short comment explaining the polling shape.
+- Deliberately **kept rate-limited**: `GET /jobs` (paginated DB scan — not a polling shape, and a hot loop could be expensive) and `POST /jobs/:jobId/cancel` (mutating endpoint; safety net belongs here).
+- 2 new guard tests cover handler-level and class-level skip; full suite still 16 pass.
+
+#### Notable deviations from PR 3 spec
+
+| Plan said                                                                        | Shipped                                                                                                                                                                              | Why                                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Drop the pre-publish "ready" mode summary (Q1, default)                          | Two-step UI: upload → `uploaded` mode with per-connection diff summary + "Review on web" link → user clicks Publish                                                                  | Eng-review answer: explicit separation of "stage my edits server-side" from "actually publish them" matches the CLI's `upload` / `publish` split and gives users a checkpoint to review on web before dispatch.                                                                                                                                                                                                    |
+| Single-file publish path via `filterPath` (kept for back-compat)                 | `filterPath` prop dropped; per-file publish entry now opens the workspace-wide modal                                                                                                 | Q2 answer: `files upload` always uploads everything the user accepted, and "publish only this file" was never coherent with accept's all-or-nothing semantics. Simpler API, less surface area.                                                                                                                                                                                                                     |
+| Sequential per-connection publish                                                | Parallel via `Promise.allSettled` (Q3)                                                                                                                                               | Server queue handles concurrency via BullMQ; cheap to fan out. Wall-clock improvement on multi-connector workspaces, plus per-connection failure isolation falls out for free.                                                                                                                                                                                                                                     |
+| Keep IPC name `pushWorkspaceChanges` for back-compat                             | Renamed to `uploadWorkspaceChanges` (Q5)                                                                                                                                             | Function no longer "pushes" anything; rename matches the new mental model. Caller surface is small enough to absorb the rename in one PR.                                                                                                                                                                                                                                                                          |
+| Aggregate diff summary: three colored badges                                     | Single dimmed `0 added · 1 modified · 0 deleted` text line; zero counts filtered out                                                                                                 | Visual feedback during dogfooding: three colored badges + per-connection cards + status badges in publish view stacked up to "skittles." Reserving color for state badges (where it carries meaning) and using plain text for the data summary tightened the whole modal.                                                                                                                                          |
+| Modal title static `"Publish changes"`                                           | Dynamic per mode: `Uploading changes` / `Ready to publish` / `Publishing changes` / `Published` / `Publish failed`                                                                   | Static title was misleading during upload ("not publishing yet"). Dynamic title is one-line UX win, near-zero cost.                                                                                                                                                                                                                                                                                                |
+| "Review on web" opens `${webUrl}/workspace/${workspaceId}` and closes the modal  | Opens `${webUrl}/workbook/${workspaceId}/review` and leaves the modal open                                                                                                           | URL: workbook is the canonical entity name in the server URL space (workspace is desktop-only UI terminology). Don't-close: user might want to review on web then come back to publish without re-uploading.                                                                                                                                                                                                       |
+| Per-job polling acceptable (the spec assumed one bulk-status request per second) | Single shared poller behind `pendingWaitsRef`, ONE batched bulk-status call per tick                                                                                                 | Discovered mid-test when the naive impl produced 429s; the single-poller architecture is the right design regardless of the rate-limit fix and ships a cleaner mental model (each in-flight job registers a Promise, the poller resolves on terminal).                                                                                                                                                             |
+| Defer server-side rate-limit changes to follow-up                                | Server `@SkipApiRateLimit` decorator + applied to all read-only polling endpoints in `JobController` (`bulk-status`, `workbook/:id/active`, `:id/progress`, `:id/raw`, `run/:runId`) | The desktop fix alone solved the immediate bug, but the underlying mismatch (CLI rate-limit budget applied to UI polling endpoints) was the real footgun. Applying broadly to read-only polling endpoints in one go avoids the same trap re-surfacing on `PullInProgressModal` or future UI views. `GET /jobs` (paginated history, expensive) and `POST /jobs/:jobId/cancel` (mutating) deliberately stay limited. |
+
+### Phase 1 verification — localhost end-to-end
+
+Driven against `/tmp/scratchmd-profile-37373/Monorepo` (the test workspace from the original profile; 5 connectors) on 2026-05-18.
+
+- `scratchmd --json files upload` produced the exact JSON shape the desktop's `UploadWorkspaceResult` interface expects (aggregate counts, per-connection breakdown, `stalenessWarning: null` when in-sync).
+- `scratchmd --json files publish` ran plan-job + run-job for the one connection with a diff (Affinity), skipped the other 4 with `"status":"published","publishedConnections":["Affinity"],"skippedNoDiff":["HubSpot","Stripe","Airtable","Shopify"]`.
+- Affinity's run-job reported the expected read-only error (`"The Affinity connector is read-only. Updating list entries is not supported."`) — the job _completed_ but the internal `failedCount` recorded the connector failure, which the desktop modal renders as a connection-level red badge.
+- Server log trace confirmed the request path: `/upload-patch/init` → presigned URL → CLI PUT to GCS → `/upload-patch/commit` → `ApplyPatchesJob` → `ApplyPatchesService.applyPatches` → `/publish-v2/plan-job` → `PublishPlanBuildService.createPipeline` → `/publish-v2/run-job` → `PublishRunService.runPipeline`.
+- 429s went away after the polling consolidation + `@SkipApiRateLimit` change.
 
 ## Problem
 

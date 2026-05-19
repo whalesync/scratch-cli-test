@@ -260,9 +260,8 @@ fn prepare_upload_merge_keeps_schema_and_publish_plan_files() {
         ),
     ]);
 
-    let (merged, result, _) = prepare_upload_merge(&base, &local, &remote, 0);
+    let (merged, _) = prepare_upload_merge(&base, &local, &remote);
 
-    assert_eq!(result.files_uploaded, 4);
     assert!(merged.contains_key(".scratch/posts/schema.json"));
     assert!(merged.contains_key(".scratch/posts/publish-plan-123/edit/rec.json"));
     assert!(merged.contains_key(".scratch/.publish-plans/123/plan.json"));
@@ -280,10 +279,9 @@ fn prepare_upload_merge_prefers_remote_for_same_path_creates_without_base() {
         b"{\n  \"id\": 2,\n  \"name\": \"local create\",\n  \"lastUpdated\": \"2026-04-17T13:50:04.777Z\"\n}\n".to_vec(),
     )]);
 
-    let (merged, result, messages) = prepare_upload_merge(&base, &local, &remote, 0);
+    let (merged, messages) = prepare_upload_merge(&base, &local, &remote);
 
     assert!(messages.is_empty());
-    assert_eq!(result.files_uploaded, 0);
     assert_eq!(
         String::from_utf8(merged["posts/new.json"].clone()).unwrap(),
         "{\n  \"id\": 2,\n  \"name\": \"local create\",\n  \"lastUpdated\": \"2026-04-17T13:50:04.777Z\"\n}\n"
@@ -305,10 +303,9 @@ fn prepare_upload_merge_keeps_remote_last_updated_after_adjacent_local_change() 
         b"{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:23:14.551Z\"\n}".to_vec(),
     )]);
 
-    let (merged, result, messages) = prepare_upload_merge(&base, &local, &remote, 0);
+    let (merged, messages) = prepare_upload_merge(&base, &local, &remote);
 
     assert!(messages.is_empty());
-    assert_eq!(result.files_uploaded, 0);
     assert_eq!(
         String::from_utf8(merged["posts/post-1.json"].clone()).unwrap(),
         "{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:23:14.551Z\"\n}\n"
@@ -555,23 +552,31 @@ fn compute_upload_patches_emits_create_update_and_delete() {
 
     let patches = compute_upload_patches(&main_map, &dirty_map, "HubSpot").unwrap();
 
-    let by_path: HashMap<String, serde_json::Value> =
-        patches.into_iter().map(|p| (p.path, p.patch)).collect();
+    let by_path: HashMap<String, (serde_json::Value, PatchKind)> = patches
+        .into_iter()
+        .map(|p| (p.path, (p.patch, p.kind)))
+        .collect();
 
     assert_eq!(
         by_path.get("Companies/rec_keep.json"),
-        Some(&serde_json::json!({ "industry": "Devtools" })),
-        "field-level edit should produce a minimal RFC 7396 patch"
+        Some(&(
+            serde_json::json!({ "industry": "Devtools" }),
+            PatchKind::Update,
+        )),
+        "field-level edit should produce a minimal RFC 7396 patch tagged Update"
     );
     assert_eq!(
         by_path.get("Companies/rec_delete.json"),
-        Some(&serde_json::Value::Null),
-        "missing-on-dirty should produce patch=null (deletion)"
+        Some(&(serde_json::Value::Null, PatchKind::Delete)),
+        "missing-on-dirty should produce patch=null tagged Delete"
     );
     assert_eq!(
         by_path.get("Companies/rec_create.json"),
-        Some(&serde_json::json!({ "id": "rec_create", "name": "NewCo" })),
-        "new file should produce the full content as the patch"
+        Some(&(
+            serde_json::json!({ "id": "rec_create", "name": "NewCo" }),
+            PatchKind::Create,
+        )),
+        "new file should produce the full content tagged Create"
     );
 }
 

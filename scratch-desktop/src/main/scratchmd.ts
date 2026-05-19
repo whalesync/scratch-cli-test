@@ -15,7 +15,6 @@
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { app } from 'electron';
-import { readdir, readFile, rm } from 'fs/promises';
 import { join, relative, resolve } from 'path';
 import { performance } from 'perf_hooks';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
@@ -45,19 +44,30 @@ export interface FieldActionResult {
   elapsedMs: number;
 }
 
-interface LocalPublishPlan {
-  planId: string;
-  createdAt: string;
+export interface UploadConnectionResult {
   connectionName: string;
-  connectionId: string;
-  summary: {
-    edit: number;
-    create: number;
-    delete: number;
-    backfill: number;
-    rename: number;
-  };
-  tablePaths: string[];
+  status: 'uploaded' | 'no_changes' | 'up_to_date';
+  filesCreated: number;
+  filesUpdated: number;
+  filesDeleted: number;
+  createdPaths: string[];
+  updatedPaths: string[];
+  deletedPaths: string[];
+  messages: string[];
+}
+
+export interface UploadWorkspaceResult {
+  status: 'uploaded' | 'no_changes' | 'up_to_date';
+  filesCreated: number;
+  filesUpdated: number;
+  filesDeleted: number;
+  createdPaths: string[];
+  updatedPaths: string[];
+  deletedPaths: string[];
+  messages: string[];
+  stalenessWarning: { newHead: string } | null;
+  connections: UploadConnectionResult[];
+  elapsedMs: number;
 }
 
 interface ScratchmdLiveCommandOptions {
@@ -506,102 +516,15 @@ export async function listUnpublishedChanges(workspacePath: string): Promise<Unr
   return result.entries;
 }
 
-export async function listLocalPublishPlans(workspacePath: string): Promise<LocalPublishPlan[]> {
-  const plansRoot = join(workspacePath, '.scratch', 'connections', 'scratch');
-
-  try {
-    const connectionEntries = await readdir(plansRoot, { withFileTypes: true });
-    const plans = await Promise.all(
-      connectionEntries
-        .filter((entry) => entry.isDirectory())
-        .map(async (connectionEntry) => {
-          const manifestRoot = join(plansRoot, connectionEntry.name, '.publish-plans');
-
-          try {
-            const manifestEntries = await readdir(manifestRoot, { withFileTypes: true });
-            const parsedPlans = await Promise.all(
-              manifestEntries
-                .filter((entry) => entry.isDirectory())
-                .map(async (manifestEntry) => {
-                  const manifestPath = join(manifestRoot, manifestEntry.name, 'plan.json');
-                  const contents = await readFile(manifestPath, 'utf8');
-                  return JSON.parse(contents) as LocalPublishPlan;
-                }),
-            );
-            return parsedPlans;
-          } catch (error) {
-            const nodeError = error as NodeJS.ErrnoException;
-            if (nodeError.code === 'ENOENT') {
-              return [];
-            }
-            throw error;
-          }
-        }),
-    );
-
-    return plans
-      .flat()
-      .sort(
-        (left, right) =>
-          left.connectionName.localeCompare(right.connectionName) || left.planId.localeCompare(right.planId),
-      );
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError.code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
-}
-
-async function removeLegacyPublishPlanDirs(scratchDir: string): Promise<void> {
-  try {
-    const entries = await readdir(scratchDir, { withFileTypes: true });
-    await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory())
-        .map(async (entry) => {
-          const entryPath = join(scratchDir, entry.name);
-          if (entry.name.startsWith('publish-plan-')) {
-            await rm(entryPath, { recursive: true, force: true });
-            return;
-          }
-
-          if (!entry.name.startsWith('.')) {
-            await removeLegacyPublishPlanDirs(entryPath);
-          }
-        }),
-    );
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError.code === 'ENOENT') {
-      return;
-    }
-    throw error;
-  }
-}
-
-export async function deleteLocalPublishPlans(workspacePath: string): Promise<void> {
-  const plansRoot = join(workspacePath, '.scratch', 'connections', 'scratch');
-
-  try {
-    const connectionEntries = await readdir(plansRoot, { withFileTypes: true });
-    await Promise.all(
-      connectionEntries
-        .filter((entry) => entry.isDirectory())
-        .map(async (connectionEntry) => {
-          const scratchDir = join(plansRoot, connectionEntry.name);
-          await removeLegacyPublishPlanDirs(scratchDir);
-          await rm(join(scratchDir, '.publish-plans'), { recursive: true, force: true });
-        }),
-    );
-  } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError.code === 'ENOENT') {
-      return;
-    }
-    throw error;
-  }
+/**
+ * Run `scratchmd --json files upload` and parse the result. The CLI emits one
+ * RFC 7396 patch per changed data file, uploads to the server's `/upload-patch`
+ * endpoint, and polls the apply-patches job to completion. Publishing
+ * (plan-job + run-job) is a separate step driven by the renderer — see
+ * `publishApi` in the renderer.
+ */
+export async function uploadWorkspaceChanges(workspacePath: string): Promise<UploadWorkspaceResult> {
+  return runScratchmdJson<UploadWorkspaceResult>(['--json', 'files', 'upload'], workspacePath);
 }
 
 export async function acceptFieldChanges(
@@ -705,24 +628,4 @@ export async function getFolderValidationSample(workspacePath: string, folder: s
 
 export async function discardCreatedRecord(workspacePath: string, recordPath: string): Promise<void> {
   await runScratchmd(['files', 'discard-created-record', recordPath], workspacePath);
-}
-
-export async function triggerPublishFromGit(
-  workspacePath: string,
-): Promise<{ stdout: string; stderr: string; jobIds: string[] }> {
-  const result = await runScratchmdCapture(['publish-from-git'], workspacePath);
-  if (result.exitCode !== 0) {
-    const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
-    throw new Error(message);
-  }
-
-  const jobIds = Array.from(result.stdout.matchAll(/jobId:\s*([^) \n]+)/g), (match) => match[1]).filter(
-    (jobId): jobId is string => typeof jobId === 'string' && jobId.length > 0,
-  );
-  const uniqueJobIds: string[] = Array.from(new Set(jobIds));
-  return {
-    stdout: result.stdout,
-    stderr: result.stderr,
-    jobIds: uniqueJobIds,
-  };
 }

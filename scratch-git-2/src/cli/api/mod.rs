@@ -820,7 +820,7 @@ pub struct UploadPatchCommitResponse {
     pub staleness_warning: Option<StalenessWarning>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct StalenessWarning {
     #[serde(rename = "newHead")]
     pub new_head: String,

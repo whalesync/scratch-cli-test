@@ -17,7 +17,7 @@ import { WSLogger } from 'src/logger';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { CustomMetricDimension } from 'src/metrics/types';
-import { API_RATE_LIMIT_KEY, API_RATE_LIMIT_WEIGHT_KEY } from './api-rate-limit.decorator';
+import { API_RATE_LIMIT_KEY, API_RATE_LIMIT_SKIP_KEY, API_RATE_LIMIT_WEIGHT_KEY } from './api-rate-limit.decorator';
 import { RateLimiterSpec } from './rate-limiter.types';
 
 const LOG_SOURCE = 'ApiRateLimitGuard';
@@ -75,6 +75,17 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleInit, OnModuleDes
 
     // Env kill-switch or tokens with unlimited scope bypass rate limiting entirely
     if (this.configService.isApiRateLimitDisabled() || scopes.includes('rate-limit:unlimited')) {
+      return true;
+    }
+
+    // Per-handler skip — applied via @SkipApiRateLimit() on cheap read-only
+    // polling endpoints (e.g. /jobs/bulk-status). Checked on the handler first,
+    // then the class, so a controller-level skip can be opted into for one
+    // endpoint by NOT setting the metadata at the handler level.
+    const skip =
+      this.reflector.get<boolean>(API_RATE_LIMIT_SKIP_KEY, context.getHandler()) ??
+      this.reflector.get<boolean>(API_RATE_LIMIT_SKIP_KEY, context.getClass());
+    if (skip) {
       return true;
     }
 

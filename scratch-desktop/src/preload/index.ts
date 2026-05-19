@@ -122,22 +122,7 @@ const scratchDesktop = {
     workspacePath: string,
   ): Promise<Array<{ connectionName: string; path: string; status: string }>> =>
     invoke('scratch:list-unpushed-changes', workspacePath),
-  listLocalPublishPlans: (
-    workspacePath: string,
-  ): Promise<
-    Array<{
-      planId: string;
-      createdAt: string;
-      connectionName: string;
-      connectionId: string;
-      summary: { edit: number; create: number; delete: number; backfill: number; rename: number };
-      tablePaths: string[];
-    }>
-  > => invoke('scratch:list-local-publish-plans', workspacePath),
-  deleteLocalPublishPlans: (workspacePath: string): Promise<void> =>
-    invoke('scratch:delete-local-publish-plans', workspacePath),
-  pushWorkspaceChanges: (workspacePath: string): Promise<{ stdout: string; stderr: string }> =>
-    invoke('scratch:push-workspace-changes', workspacePath),
+  uploadWorkspaceChanges: (workspacePath: string) => invoke('scratch:upload-workspace-changes', workspacePath),
   pullWorkspaceChanges: (
     workspacePath: string,
     opts?: { onDelete?: string },
@@ -150,14 +135,6 @@ const scratchDesktop = {
     invoke('scratch:validate-local-sync', workspacePath, syncName),
   startRunLocalSync: (workspacePath: string, syncName: string): Promise<{ sessionId: string }> =>
     invoke('scratch:start-run-local-sync', workspacePath, syncName),
-  startPlanPublish: (workspacePath: string, filterPath?: string): Promise<{ sessionId: string }> =>
-    invoke('scratch:start-plan-publish', workspacePath, filterPath),
-  startPublishFromGit: (workspacePath: string): Promise<{ sessionId: string }> =>
-    invoke('scratch:start-publish-from-git', workspacePath),
-  triggerPublishFromGit: (workspacePath: string): Promise<{ stdout: string; stderr: string; jobIds: string[] }> =>
-    invoke('scratch:trigger-publish-from-git', workspacePath),
-  startPublishAll: (workspacePath: string): Promise<{ sessionId: string }> =>
-    invoke('scratch:start-publish-all', workspacePath),
   pullAllLinkedTables: (workspacePath: string): Promise<{ jobIds: string[] }> =>
     invoke('scratch:pull-all-linked-tables', workspacePath),
   showInFolder: (folderPath: string): Promise<void> => invoke('scratch:show-in-folder', folderPath),

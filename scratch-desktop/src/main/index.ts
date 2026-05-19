@@ -35,13 +35,11 @@ import {
 import {
   acceptFieldChanges,
   clearFolderIndex,
-  deleteLocalPublishPlans,
   discardCreatedRecord as discardCreatedRecordViaCli,
   getFolderValidationResults,
   getFolderValidationSample,
   getValidationResults,
   getValidationStats,
-  listLocalPublishPlans,
   listUnpushedChanges,
   listUnreviewedChanges,
   reindexFiles,
@@ -52,8 +50,7 @@ import {
   runScratchmdCapture,
   runScratchmdJson,
   startScratchmdLiveCommand,
-  startScratchmdLiveSequence,
-  triggerPublishFromGit,
+  uploadWorkspaceChanges,
 } from './scratchmd';
 import { initAutoUpdater } from './updater';
 import { attachWindowStatePersistence, getRestoredWindowState } from './window-state';
@@ -492,15 +489,6 @@ function startWorkspaceInternalLiveCommand(
   return startScratchmdLiveCommand(sender, args, workspacePath, { onExit: endInternalMutation });
 }
 
-function startWorkspaceInternalLiveSequence(
-  sender: Electron.WebContents,
-  workspacePath: string,
-  steps: Array<{ label: string; args: string[] }>,
-): Promise<{ sessionId: string }> {
-  const endInternalMutation = workspaceFileWatchService.beginInternalWorkspaceMutation(workspacePath);
-  return startScratchmdLiveSequence(sender, steps, workspacePath, { onExit: endInternalMutation });
-}
-
 // Auth IPC handlers
 ipcMain.handle('auth:get-credentials', () => {
   const start = performance.now();
@@ -646,16 +634,10 @@ ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: strin
   listUnreviewedChanges(workspacePath),
 );
 ipcMain.handle('scratch:list-unpushed-changes', async (_, workspacePath: string) => listUnpushedChanges(workspacePath));
-ipcMain.handle('scratch:list-local-publish-plans', async (_, workspacePath: string) =>
-  listLocalPublishPlans(workspacePath),
-);
-ipcMain.handle('scratch:delete-local-publish-plans', async (_, workspacePath: string) =>
-  deleteLocalPublishPlans(workspacePath),
-);
-ipcMain.handle('scratch:push-workspace-changes', async (_, workspacePath: string) =>
+ipcMain.handle('scratch:upload-workspace-changes', async (_, workspacePath: string) =>
   // `files upload` reindexes the affected folders itself (per-path,
   // scoped to the actually-changed records). No follow-up CLI call.
-  withWorkspaceInternalMutation(workspacePath, () => runScratchmd(['files', 'upload'], workspacePath)),
+  withWorkspaceInternalMutation(workspacePath, () => uploadWorkspaceChanges(workspacePath)),
 );
 ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string, opts?: { onDelete?: string }) => {
   const args = ['files', 'download'];
@@ -674,27 +656,10 @@ ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, s
 ipcMain.handle('scratch:start-run-local-sync', async (event, workspacePath: string, syncName: string) =>
   startWorkspaceInternalLiveCommand(event.sender, workspacePath, ['syncs', 'run-local', '--sync', syncName]),
 );
-ipcMain.handle('scratch:start-plan-publish', async (event, workspacePath: string, filterPath?: string) => {
-  const args = filterPath ? ['plan-publish', '--filter', filterPath] : ['plan-publish'];
-  return startWorkspaceInternalLiveCommand(event.sender, workspacePath, args);
-});
-ipcMain.handle('scratch:start-publish-from-git', async (event, workspacePath: string) =>
-  startWorkspaceInternalLiveCommand(event.sender, workspacePath, ['publish-from-git']),
-);
-ipcMain.handle('scratch:trigger-publish-from-git', async (_, workspacePath: string) =>
-  triggerPublishFromGit(workspacePath),
-);
 ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string) =>
   withWorkspaceInternalMutation(workspacePath, () =>
     runScratchmdJson<{ jobIds: string[] }>(['--json', 'linked', 'pull-all'], workspacePath),
   ),
-);
-ipcMain.handle('scratch:start-publish-all', async (event, workspacePath: string) =>
-  startWorkspaceInternalLiveSequence(event.sender, workspacePath, [
-    { label: 'plan-publish', args: ['plan-publish'] },
-    { label: 'files upload', args: ['files', 'upload'] },
-    { label: 'publish-from-git', args: ['publish-from-git'] },
-  ]),
 );
 ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
   const folders = await listFolders(workspacePath);

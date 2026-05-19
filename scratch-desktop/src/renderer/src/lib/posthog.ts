@@ -11,6 +11,11 @@ export enum PostHogEvents {
   PULL_ALL = 'pull_all',
   PULL_TABLE = 'pull_table',
   PUBLISH_ALL = 'publish_all',
+  PUBLISH_UPLOAD_STARTED = 'publish_upload_started',
+  PUBLISH_UPLOAD_COMPLETED = 'publish_upload_completed',
+  PUBLISH_STARTED = 'publish_started',
+  PUBLISH_COMPLETED = 'publish_completed',
+  PUBLISH_REVIEW_ON_WEB = 'publish_review_on_web',
   REFRESH_FOLDER_DATA_GRID = 'refresh_folder_data_grid',
   APP_STARTED = 'app_started',
   APP_EXITED = 'app_exited',
@@ -117,6 +122,32 @@ export async function trackPullTable(workspaceId: string, dataFolderId: string):
 
 export async function trackPublishAll(workspaceId: string): Promise<void> {
   await captureEvent(PostHogEvents.PUBLISH_ALL, { workspaceId });
+}
+
+export async function trackPublishUploadStarted(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_UPLOAD_STARTED, { workspaceId });
+}
+
+export async function trackPublishUploadCompleted(
+  workspaceId: string,
+  props: { filesCreated: number; filesUpdated: number; filesDeleted: number; connectionCount: number },
+): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_UPLOAD_COMPLETED, { workspaceId, ...props });
+}
+
+export async function trackPublishStarted(workspaceId: string, connectionCount: number): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_STARTED, { workspaceId, connectionCount });
+}
+
+export async function trackPublishCompleted(
+  workspaceId: string,
+  props: { successCount: number; failedCount: number; noDiffCount: number },
+): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_COMPLETED, { workspaceId, ...props });
+}
+
+export async function trackPublishReviewOnWeb(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_REVIEW_ON_WEB, { workspaceId });
 }
 
 export async function trackRefreshFolderDataGrid(workspaceId: string, folderPath: string | null): Promise<void> {

@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -14,11 +15,17 @@ import {
   Table,
   Text,
 } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ValidationStat } from '../../../../shared/validation-types';
-import { LiveCommandOutput } from '../../components/LiveCommandOutput';
 import { jobApi, type JobStatus } from '../../lib/job-api';
+import {
+  trackPublishCompleted,
+  trackPublishReviewOnWeb,
+  trackPublishStarted,
+  trackPublishUploadCompleted,
+  trackPublishUploadStarted,
+} from '../../lib/posthog';
+import { publishApi } from '../../lib/publish-api';
 
 interface UnreviewedChangeEntry {
   connectionName: string;
@@ -26,33 +33,37 @@ interface UnreviewedChangeEntry {
   status: string;
 }
 
-interface LocalPublishPlan {
-  planId: string;
-  createdAt: string;
-  connectionName: string;
-  connectionId: string;
-  summary: {
-    edit: number;
-    create: number;
-    delete: number;
-    backfill: number;
-    rename: number;
-  };
-  tablePaths: string[];
-}
+type PublishMode = 'approval' | 'uploading' | 'uploaded' | 'publishing' | 'complete' | 'error';
 
-type PublishMode = 'approval' | 'planning' | 'ready' | 'publishing' | 'complete' | 'error';
+type UploadResult = Awaited<ReturnType<typeof window.scratchDesktop.uploadWorkspaceChanges>>;
+type UploadConnection = UploadResult['connections'][number];
+
+interface ConnectionPublishState {
+  connectionId: string;
+  connectionName: string;
+  /**
+   * `planning` — POST plan-job, then poll until plan-job is terminal.
+   * `plan-no-diff` — server's dirty matches main; nothing to publish for this connection.
+   * `running` — plan-job done, run-job enqueued and being polled.
+   * `completed` — run-job terminal with no failures.
+   * `failed` — plan-job or run-job failed, or run-job's progress reports failures.
+   */
+  status: 'pending' | 'planning' | 'plan-no-diff' | 'running' | 'completed' | 'failed';
+  planJobId?: string;
+  runJobId?: string;
+  pipelineId?: string;
+  failureMessage?: string;
+}
 
 interface PublishChangesModalProps {
   opened: boolean;
   onClose: () => void;
   workspaceName?: string | null;
+  workspaceId?: string | null;
   localPath: string | null;
-  autoStartPlanningOnOpen?: boolean;
+  autoStartUploadOnOpen?: boolean;
   assumeUnreviewedApproved?: boolean;
   onDataRefresh: () => void;
-  /** When set, scopes the publish plan to a single file (relative path within workspace). */
-  filterPath?: string | null;
   /** The currently selected folder path in the workspace grid. */
   currentFolderPath?: string | null;
   /** Called when the user wants to view problems in the grid. */
@@ -61,6 +72,31 @@ interface PublishChangesModalProps {
 
 function isTerminalState(state: JobStatus['state']): boolean {
   return state === 'completed' || state === 'failed' || state === 'canceled' || state === 'unknown';
+}
+
+function formatDiffSummary(created: number, updated: number, deleted: number): string {
+  const parts: string[] = [];
+  if (created > 0) parts.push(`${created} added`);
+  if (updated > 0) parts.push(`${updated} modified`);
+  if (deleted > 0) parts.push(`${deleted} deleted`);
+  return parts.length > 0 ? parts.join(' · ') : 'No changes';
+}
+
+function modeTitle(mode: PublishMode): string {
+  switch (mode) {
+    case 'approval':
+      return 'Publish changes';
+    case 'uploading':
+      return 'Uploading changes';
+    case 'uploaded':
+      return 'Ready to publish';
+    case 'publishing':
+      return 'Publishing changes';
+    case 'complete':
+      return 'Published';
+    case 'error':
+      return 'Publish failed';
+  }
 }
 
 function statusColor(state: JobStatus['state']): string {
@@ -77,7 +113,7 @@ function statusColor(state: JobStatus['state']): string {
   }
 }
 
-type PublishFromGitProgress = {
+interface PublishFromGitProgress {
   status?: string;
   processedCount?: number;
   totalCount?: number;
@@ -90,7 +126,7 @@ type PublishFromGitProgress = {
   deletesPlanned?: number;
   backfillsPlanned?: number;
   renameFilesPlanned?: number;
-};
+}
 
 function hasPublishFailures(job: JobStatus | undefined): boolean {
   const progress = job?.publicProgress as PublishFromGitProgress | undefined;
@@ -142,11 +178,9 @@ function computePhaseRows(progress: PublishFromGitProgress) {
     let done: number;
 
     if (idx < currentPhaseIdx) {
-      // Phase is complete
       done = planned;
       remaining -= planned;
     } else if (idx === currentPhaseIdx) {
-      // Current phase — consume remaining processedCount
       done = Math.min(remaining, planned);
       remaining = 0;
     } else {
@@ -157,158 +191,141 @@ function computePhaseRows(progress: PublishFromGitProgress) {
   });
 }
 
-function PublishingProgress({ jobIds, jobs }: { jobIds: string[]; jobs: JobStatus[] }) {
-  const waiting = jobIds.length === 0;
+function ConnectionPublishRow({ connection, job }: { connection: ConnectionPublishState; job: JobStatus | undefined }) {
+  const progress = job?.publicProgress as PublishFromGitProgress | undefined;
+  const total = progress?.totalCount ?? 0;
+  const processed = progress?.processedCount ?? 0;
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+  const hasProgress = total > 0;
+  const rows = progress ? computePhaseRows(progress) : null;
+  const currentTable = progress?.currentTableName;
 
-  if (waiting) {
-    return (
-      <Stack gap="sm" align="center" py="md">
-        <Loader size="sm" />
-        <Text size="sm" c="dimmed">
-          Uploading reviewed files and starting the publish job…
-        </Text>
-      </Stack>
-    );
-  }
+  const statusLabel = (() => {
+    switch (connection.status) {
+      case 'pending':
+        return 'Waiting…';
+      case 'planning':
+        return 'Planning…';
+      case 'plan-no-diff':
+        return 'No changes to publish';
+      case 'running':
+        return job?.state === 'active' ? 'Publishing…' : (job?.state ?? 'queued');
+      case 'completed':
+        return 'Complete';
+      case 'failed':
+        return 'Failed';
+    }
+  })();
+
+  const statusBadgeColor = (() => {
+    switch (connection.status) {
+      case 'completed':
+        return 'green';
+      case 'failed':
+        return 'red';
+      case 'plan-no-diff':
+        return 'gray';
+      case 'running':
+        return statusColor(job?.state ?? 'created');
+      default:
+        return 'blue';
+    }
+  })();
 
   return (
-    <Stack gap="md">
-      {jobIds.map((jobId) => {
-        const job = jobs.find((j) => j.bullJobId === jobId);
-        const progress = job?.publicProgress as PublishFromGitProgress | undefined;
-        const total = progress?.totalCount ?? 0;
-        const processed = progress?.processedCount ?? 0;
-        const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
-        const hasProgress = total > 0;
-        const rows = progress ? computePhaseRows(progress) : null;
-        const currentTable = progress?.currentTableName;
-        const failedReason = job?.failedReason;
+    <Box>
+      <Group justify="space-between" mb={4}>
+        <Group gap="xs">
+          {(connection.status === 'planning' || (connection.status === 'running' && !hasProgress)) && (
+            <Loader size={12} />
+          )}
+          <Text size="sm" fw={600}>
+            {connection.connectionName}
+          </Text>
+          {currentTable && (
+            <Text size="xs" c="dimmed">
+              {currentTable}
+            </Text>
+          )}
+        </Group>
+        <Badge color={statusBadgeColor} size="sm">
+          {hasProgress && connection.status === 'running' ? `${processed} / ${total}` : statusLabel}
+        </Badge>
+      </Group>
 
-        return (
-          <Box key={jobId}>
-            <Group justify="space-between" mb={4}>
-              <Group gap="xs">
-                {!hasProgress && <Loader size={12} />}
-                <Text size="sm" fw={500}>
-                  {job?.state === 'active' ? 'Publishing…' : (job?.state ?? 'waiting')}
-                </Text>
-                {currentTable && (
-                  <Text size="xs" c="dimmed">
-                    {currentTable}
-                  </Text>
-                )}
-              </Group>
-              <Badge color={statusColor(job?.state ?? 'created')} size="sm">
-                {hasProgress ? `${processed} / ${total}` : (job?.state ?? 'waiting')}
+      {hasProgress && connection.status === 'running' && (
+        <>
+          <Progress value={pct} size="sm" mb="sm" animated={job?.state === 'active'} />
+
+          {((progress?.successCount ?? 0) > 0 || (progress?.failedCount ?? 0) > 0) && (
+            <Group gap="xs" mb="xs">
+              <Badge color="green" variant="light">
+                {(progress?.successCount ?? 0).toLocaleString()} succeeded
+              </Badge>
+              <Badge color="red" variant="light">
+                {(progress?.failedCount ?? 0).toLocaleString()} failed
               </Badge>
             </Group>
+          )}
 
-            {hasProgress && (
-              <>
-                <Progress value={pct} size="sm" mb="sm" animated={job?.state === 'active'} />
+          <Table withColumnBorders fz="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Operation</Table.Th>
+                <Table.Th>Planned</Table.Th>
+                <Table.Th>Done</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {rows!.map(({ phase, label, planned, done }) => {
+                const isActive = phase === progress?.currentPhase;
+                const isComplete = done > 0 && done >= planned && planned > 0;
+                return (
+                  <Table.Tr key={phase} bg={isActive ? 'var(--mantine-color-blue-light)' : undefined}>
+                    <Table.Td>
+                      <Group gap={4}>
+                        {isActive && <Loader size={10} />}
+                        <Text size="xs" fw={isActive ? 600 : 400} c={planned === 0 ? 'dimmed' : undefined}>
+                          {label}
+                        </Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c={planned === 0 ? 'dimmed' : undefined}>
+                        {planned === 0 ? '—' : planned.toLocaleString()}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c={isComplete ? 'green' : isActive ? 'blue' : 'dimmed'}>
+                        {planned === 0 ? '—' : done.toLocaleString()}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        </>
+      )}
 
-                {(progress?.successCount ?? 0) > 0 || (progress?.failedCount ?? 0) > 0 ? (
-                  <Group gap="xs" mb="xs">
-                    <Badge color="green" variant="light">
-                      {(progress?.successCount ?? 0).toLocaleString()} succeeded
-                    </Badge>
-                    <Badge color="red" variant="light">
-                      {(progress?.failedCount ?? 0).toLocaleString()} failed
-                    </Badge>
-                  </Group>
-                ) : null}
-
-                <Table withColumnBorders fz="xs">
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Operation</Table.Th>
-                      <Table.Th>Planned</Table.Th>
-                      <Table.Th>Done</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {rows!.map(({ phase, label, planned, done }) => {
-                      const isActive = phase === progress?.currentPhase;
-                      const isComplete = done > 0 && done >= planned && planned > 0;
-                      return (
-                        <Table.Tr key={phase} bg={isActive ? 'var(--mantine-color-blue-light)' : undefined}>
-                          <Table.Td>
-                            <Group gap={4}>
-                              {isActive && <Loader size={10} />}
-                              <Text size="xs" fw={isActive ? 600 : 400} c={planned === 0 ? 'dimmed' : undefined}>
-                                {label}
-                              </Text>
-                            </Group>
-                          </Table.Td>
-                          <Table.Td>
-                            <Text size="xs" c={planned === 0 ? 'dimmed' : undefined}>
-                              {planned === 0 ? '—' : planned.toLocaleString()}
-                            </Text>
-                          </Table.Td>
-                          <Table.Td>
-                            <Text size="xs" c={isComplete ? 'green' : isActive ? 'blue' : 'dimmed'}>
-                              {planned === 0 ? '—' : done.toLocaleString()}
-                            </Text>
-                          </Table.Td>
-                        </Table.Tr>
-                      );
-                    })}
-                  </Table.Tbody>
-                </Table>
-
-                {failedReason && (
-                  <Alert color="red" mt="sm" title="Failure details">
-                    {failedReason}
-                  </Alert>
-                )}
-              </>
-            )}
-
-            {!hasProgress && (
-              <Text size="xs" c="dimmed">
-                Waiting for job to start…
-              </Text>
-            )}
-          </Box>
-        );
-      })}
-    </Stack>
+      {connection.status === 'failed' && connection.failureMessage && (
+        <Alert color="red" mt="sm" title="Failure details">
+          {connection.failureMessage}
+        </Alert>
+      )}
+    </Box>
   );
 }
 
 async function loadValidationCounts(
   localPath: string,
-  filterPath: string | null,
 ): Promise<{ errors: number; warnings: number; records: number; stats: ValidationStat[] } | null> {
   try {
     const stats: ValidationStat[] = await window.scratchFiles.getValidationStats(localPath);
-    if (!filterPath) {
-      return {
-        errors: stats.reduce((s, r) => s + r.errors, 0),
-        warnings: stats.reduce((s, r) => s + r.warnings, 0),
-        records: stats.reduce((s, r) => s + r.records, 0),
-        stats,
-      };
-    }
-    const parts = filterPath.split('/');
-    const connectionName = parts[0];
-    const rest = parts.slice(1);
-    const lastPart = rest[rest.length - 1];
-    if (lastPart?.includes('.')) {
-      // Single record.
-      const folderAbsPath = `${localPath}/${connectionName}/${rest.slice(0, -1).join('/')}`;
-      const rows = await window.scratchFiles.getValidationResults(localPath, folderAbsPath, lastPart);
-      const errors = rows.filter((r) => r.level === 'error').length;
-      const warnings = rows.filter((r) => r.level === 'warning').length;
-      return { errors, warnings, records: errors + warnings > 0 ? 1 : 0, stats };
-    }
-    // Single table.
-    const folderPath = rest.join('/');
-    const folderStats = stats.filter((s) => s.connection === connectionName && s.folder_path === folderPath);
     return {
-      errors: folderStats.reduce((s, r) => s + r.errors, 0),
-      warnings: folderStats.reduce((s, r) => s + r.warnings, 0),
-      records: folderStats.reduce((s, r) => s + r.records, 0),
+      errors: stats.reduce((s, r) => s + r.errors, 0),
+      warnings: stats.reduce((s, r) => s + r.warnings, 0),
+      records: stats.reduce((s, r) => s + r.records, 0),
       stats,
     };
   } catch {
@@ -320,30 +337,34 @@ export function PublishChangesModal({
   opened,
   onClose,
   workspaceName,
+  workspaceId,
   localPath,
-  autoStartPlanningOnOpen = false,
+  autoStartUploadOnOpen = false,
   assumeUnreviewedApproved = false,
   onDataRefresh,
-  filterPath,
   currentFolderPath,
   onViewProblems,
 }: PublishChangesModalProps) {
-  const planningSessionIdRef = useRef<string | null>(null);
   const pollingIntervalRef = useRef<number | null>(null);
   const loggedCompleteJobIdsRef = useRef<Set<string>>(new Set());
+  /**
+   * Pending waits for jobs to reach a terminal state. A single shared poller
+   * (see useEffect below) makes ONE `/jobs/bulk-status` call per second for
+   * every job ID registered here and resolves the matching Promise when its
+   * job finishes. This replaces the per-job + page-level pollers that used
+   * to race each other against the rate-limited bulk-status endpoint.
+   */
+  const pendingWaitsRef = useRef<Map<string, (status: JobStatus) => void>>(new Map());
   const [mode, setMode] = useState<PublishMode>('approval');
   const [initializing, setInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unreviewedEntries, setUnreviewedEntries] = useState<UnreviewedChangeEntry[]>([]);
-  const [plans, setPlans] = useState<LocalPublishPlan[]>([]);
-  const [planningOutput, setPlanningOutput] = useState('');
-  const [planningRunning, setPlanningRunning] = useState(false);
-  const [planningExitCode, setPlanningExitCode] = useState<number | null>(null);
-  const [publishing, setPublishing] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const [jobIds, setJobIds] = useState<string[]>([]);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [stalenessBannerDismissed, setStalenessBannerDismissed] = useState(false);
+  const [publishConnections, setPublishConnections] = useState<ConnectionPublishState[]>([]);
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [publishErrorDetails, setPublishErrorDetails] = useState<string[]>([]);
+  const [closing, setClosing] = useState(false);
   const [validationCounts, setValidationCounts] = useState<{
     errors: number;
     warnings: number;
@@ -351,36 +372,42 @@ export function PublishChangesModal({
   } | null>(null);
   const [validationStats, setValidationStats] = useState<ValidationStat[]>([]);
 
-  const refreshPlans = useCallback(async (): Promise<LocalPublishPlan[]> => {
-    if (!localPath) {
-      return [];
-    }
-    const nextPlans = await window.scratchDesktop.listLocalPublishPlans(localPath);
-    setPlans(nextPlans);
-    return nextPlans;
-  }, [localPath]);
+  const stalenessWarning = uploadResult?.stalenessWarning ?? null;
 
-  const startPlanning = useCallback(async () => {
-    if (!localPath) {
+  const startUpload = useCallback(async () => {
+    if (!localPath || !workspaceId) {
       return;
     }
 
     try {
       setError(null);
-      setPlans([]);
-      setPlanningOutput('');
-      setPlanningExitCode(null);
-      setPlanningRunning(true);
-      setMode('planning');
-      await window.scratchDesktop.deleteLocalPublishPlans(localPath);
-      const { sessionId } = await window.scratchDesktop.startPlanPublish(localPath, filterPath ?? undefined);
-      planningSessionIdRef.current = sessionId;
+      setMode('uploading');
+      setUploadResult(null);
+      setStalenessBannerDismissed(false);
+      await trackPublishUploadStarted(workspaceId);
+
+      const result = await window.scratchDesktop.uploadWorkspaceChanges(localPath);
+      setUploadResult(result);
+
+      const connectionsWithDiff = result.connections.filter((c) => c.status === 'uploaded');
+      await trackPublishUploadCompleted(workspaceId, {
+        filesCreated: result.filesCreated,
+        filesUpdated: result.filesUpdated,
+        filesDeleted: result.filesDeleted,
+        connectionCount: connectionsWithDiff.length,
+      });
+
+      if (result.status === 'no_changes' || result.status === 'up_to_date') {
+        setMode('complete');
+        return;
+      }
+
+      setMode('uploaded');
     } catch (err) {
-      setPlanningRunning(false);
       setMode('error');
-      setError(err instanceof Error ? err.message : 'Failed to start publish plan');
+      setError(err instanceof Error ? err.message : 'Failed to upload workspace changes');
     }
-  }, [filterPath, localPath]);
+  }, [localPath, workspaceId]);
 
   const loadInitialState = useCallback(async () => {
     if (!opened || !localPath) {
@@ -391,22 +418,18 @@ export function PublishChangesModal({
     setError(null);
     setClosing(false);
     setUnreviewedEntries([]);
-    setPlans([]);
-    setPlanningOutput('');
-    setPlanningExitCode(null);
-    setPlanningRunning(false);
-    setPublishing(false);
-    setJobIds([]);
+    setUploadResult(null);
+    setStalenessBannerDismissed(false);
+    setPublishConnections([]);
     setJobs([]);
     setPublishErrorDetails([]);
     setValidationCounts(null);
     setValidationStats([]);
-    planningSessionIdRef.current = null;
 
     try {
       const [nextUnreviewed, counts] = await Promise.all([
         window.scratchDesktop.listUnreviewedChanges(localPath),
-        loadValidationCounts(localPath, filterPath ?? null),
+        loadValidationCounts(localPath),
       ]);
 
       setUnreviewedEntries(nextUnreviewed);
@@ -415,8 +438,8 @@ export function PublishChangesModal({
       );
       setValidationStats(counts?.stats ?? []);
 
-      if (autoStartPlanningOnOpen || filterPath) {
-        await startPlanning();
+      if (autoStartUploadOnOpen) {
+        await startUpload();
         return;
       }
 
@@ -428,18 +451,18 @@ export function PublishChangesModal({
         return;
       }
 
-      await startPlanning();
+      await startUpload();
     } catch (err) {
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to load publish state');
     } finally {
       setInitializing(false);
     }
-  }, [assumeUnreviewedApproved, autoStartPlanningOnOpen, filterPath, localPath, opened, startPlanning]);
+  }, [assumeUnreviewedApproved, autoStartUploadOnOpen, localPath, opened, startUpload]);
 
   const continueAfterApproval = useCallback(() => {
-    void startPlanning();
-  }, [startPlanning]);
+    void startUpload();
+  }, [startUpload]);
 
   const handleViewProblems = useCallback(() => {
     if (!localPath || !onViewProblems) return;
@@ -449,7 +472,6 @@ export function PublishChangesModal({
     let targetStat = statsWithProblems[0];
 
     if (currentFolderPath) {
-      // Derive connection name from currentFolderPath relative to localPath
       const rel = currentFolderPath.startsWith(localPath + '/')
         ? currentFolderPath.slice(localPath.length + 1)
         : currentFolderPath;
@@ -467,80 +489,130 @@ export function PublishChangesModal({
     onViewProblems(`${localPath}/${targetStat.connection}/${targetStat.folder_path}`);
   }, [currentFolderPath, localPath, onViewProblems, validationStats]);
 
-  const handleClose = useCallback(async () => {
+  const handleClose = useCallback(() => {
     if (closing) {
       return;
     }
-
     setClosing(true);
-
-    try {
-      if (localPath) {
-        await window.scratchDesktop.deleteLocalPublishPlans(localPath);
-      }
-    } catch (err) {
-      console.debug('Failed to delete local publish plans on close:', err);
-      notifications.show({
-        title: 'Publish plan cleanup failed',
-        message: err instanceof Error ? err.message : 'Failed to delete the local publish plan.',
-        color: 'red',
-      });
-    }
-
     setClosing(false);
     onClose();
-  }, [closing, localPath, onClose]);
+  }, [closing, onClose]);
+
+  const handleReviewOnWeb = useCallback(() => {
+    if (!workspaceId) return;
+    const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
+    void window.scratchAuth.openExternal(`${webUrl}/workbook/${workspaceId}/review`);
+    void trackPublishReviewOnWeb(workspaceId);
+  }, [workspaceId]);
+
+  const pollJobToTerminal = useCallback((jobId: string): Promise<JobStatus> => {
+    // Register the job in the shared pending-waits map. The single poller in
+    // the useEffect below resolves this Promise on the tick that observes
+    // the job in a terminal state.
+    return new Promise<JobStatus>((resolve) => {
+      pendingWaitsRef.current.set(jobId, resolve);
+    });
+  }, []);
+
+  /**
+   * Run plan-job → run-job for a single connection, updating
+   * `publishConnections` and `jobs` state as each phase progresses.
+   */
+  const runConnectionPublish = useCallback(
+    async (wbId: string, conn: ConnectionPublishState) => {
+      const updateConn = (next: Partial<ConnectionPublishState>) => {
+        setPublishConnections((prev) =>
+          prev.map((c) => (c.connectionId === conn.connectionId ? { ...c, ...next } : c)),
+        );
+      };
+
+      try {
+        updateConn({ status: 'planning' });
+        const plan = await publishApi.startPlanJob(wbId, conn.connectionId);
+        if (!plan.jobId || !plan.pipelineId) {
+          updateConn({ status: 'plan-no-diff' });
+          return;
+        }
+        const planJobId = String(plan.jobId);
+        updateConn({ planJobId, pipelineId: plan.pipelineId });
+        await pollJobToTerminal(planJobId);
+
+        updateConn({ status: 'running' });
+        const run = await publishApi.startRunJob(wbId, plan.pipelineId);
+        if (!run.jobId) {
+          updateConn({ status: 'failed', failureMessage: 'run-job did not return a job id' });
+          return;
+        }
+        const runJobId = String(run.jobId);
+        updateConn({ runJobId });
+        const finalJob = await pollJobToTerminal(runJobId);
+
+        if (finalJob.state !== 'completed' || hasPublishFailures(finalJob)) {
+          updateConn({
+            status: 'failed',
+            failureMessage: getPublishFailureMessage(finalJob),
+          });
+          return;
+        }
+
+        updateConn({ status: 'completed' });
+      } catch (err) {
+        updateConn({
+          status: 'failed',
+          failureMessage: err instanceof Error ? err.message : 'Unknown error while publishing',
+        });
+      }
+    },
+    [pollJobToTerminal],
+  );
 
   const triggerPublish = useCallback(async () => {
-    if (!localPath) {
+    if (!localPath || !workspaceId || !uploadResult) {
       return;
     }
 
     try {
       setError(null);
-      setPublishing(true);
-      setMode('publishing');
-      setJobIds([]);
-      setJobs([]);
       setPublishErrorDetails([]);
-      await window.scratchDesktop.pushWorkspaceChanges(localPath);
-      const result = await window.scratchDesktop.triggerPublishFromGit(localPath);
+      setMode('publishing');
 
-      if (result.jobIds.length === 0) {
-        setPublishing(false);
-        setMode('error');
-        setError(result.stdout.trim() || 'No publish jobs were queued.');
-        return;
-      }
+      const connectionsWithDiff = uploadResult.connections.filter((c) => c.status === 'uploaded');
 
-      loggedCompleteJobIdsRef.current = new Set();
-      if (localPath) {
-        const aggregateSummary = plans.reduce(
-          (acc, plan) => ({
-            edit: acc.edit + plan.summary.edit,
-            create: acc.create + plan.summary.create,
-            delete: acc.delete + plan.summary.delete,
-            backfill: acc.backfill + plan.summary.backfill,
-            rename: acc.rename + plan.summary.rename,
-          }),
-          { edit: 0, create: 0, delete: 0, backfill: 0, rename: 0 },
-        );
-        const tables = Array.from(new Set(plans.flatMap((plan) => plan.tablePaths)));
-        window.scratchDesktop.logPublishJob(localPath, {
-          event: 'start',
-          jobIds: result.jobIds,
-          tables,
-          plans: plans.length,
-          summary: aggregateSummary,
-        });
-      }
-      setJobIds(result.jobIds);
+      // workspaceConfig maps connection name → connectionId (the connector account ID).
+      const cfg = await window.scratchFiles.workspaceConfig(localPath);
+      const idByName = new Map(cfg.connections.map((c) => [c.dirName, c.id]));
+
+      const initial: ConnectionPublishState[] = connectionsWithDiff.map((c) => {
+        const connectionId = idByName.get(c.connectionName);
+        if (!connectionId) {
+          return {
+            connectionId: '',
+            connectionName: c.connectionName,
+            status: 'failed',
+            failureMessage: `Could not resolve connection id for "${c.connectionName}"`,
+          };
+        }
+        return {
+          connectionId,
+          connectionName: c.connectionName,
+          status: 'pending',
+        };
+      });
+      setPublishConnections(initial);
+      await trackPublishStarted(workspaceId, initial.length);
+
+      // Fan out plan-job → run-job per connection in parallel.
+      await Promise.allSettled(
+        initial.map(async (conn) => {
+          if (conn.status === 'failed') return;
+          await runConnectionPublish(workspaceId, conn);
+        }),
+      );
     } catch (err) {
-      setPublishing(false);
       setMode('error');
-      setError(err instanceof Error ? err.message : 'Failed to trigger publish-from-git');
+      setError(err instanceof Error ? err.message : 'Failed to start publish');
     }
-  }, [localPath, plans]);
+  }, [localPath, uploadResult, workspaceId, runConnectionPublish]);
 
   useEffect(() => {
     if (!opened) {
@@ -549,49 +621,14 @@ export function PublishChangesModal({
     void loadInitialState();
   }, [loadInitialState, opened]);
 
+  // Single consolidated poller. One `/jobs/bulk-status` request per second
+  // for every job ID registered in `pendingWaitsRef`, regardless of how many
+  // connections are publishing in parallel. Drives BOTH:
+  //   (a) the `jobs` state for `<ConnectionPublishRow>` to render live progress
+  //   (b) the per-connection `pollJobToTerminal` Promises (resolved when each
+  //       job hits a terminal state)
   useEffect(() => {
-    const unsubscribe = window.scratchDesktop.onCommandEvent((event) => {
-      if (planningSessionIdRef.current !== event.sessionId) {
-        return;
-      }
-
-      if (event.type === 'chunk') {
-        setPlanningOutput((current) => current + event.chunk);
-        return;
-      }
-
-      planningSessionIdRef.current = null;
-      setPlanningRunning(false);
-      setPlanningExitCode(event.exitCode);
-
-      if (event.exitCode !== 0) {
-        setMode('error');
-        setError(event.error || `scratchmd exited with code ${event.exitCode}`);
-        return;
-      }
-
-      void refreshPlans()
-        .then((nextPlans) => {
-          setMode('ready');
-          if (nextPlans.length === 0) {
-            notifications.show({
-              title: 'Nothing to publish',
-              message: `${workspaceName || 'Workspace'} is already in sync.`,
-              color: 'blue',
-            });
-          }
-        })
-        .catch((err) => {
-          setMode('error');
-          setError(err instanceof Error ? err.message : 'Failed to refresh publish plan state');
-        });
-    });
-
-    return unsubscribe;
-  }, [refreshPlans, workspaceName]);
-
-  useEffect(() => {
-    if (mode !== 'publishing' || jobIds.length === 0) {
+    if (mode !== 'publishing') {
       if (pollingIntervalRef.current !== null) {
         window.clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
@@ -601,38 +638,34 @@ export function PublishChangesModal({
 
     let cancelled = false;
 
-    const pullLatestWorkspaceState = async () => {
-      if (!localPath) {
+    const poll = async () => {
+      const activeJobIds = Array.from(pendingWaitsRef.current.keys());
+      if (activeJobIds.length === 0) {
         return;
       }
 
       try {
-        await window.scratchDesktop.pullWorkspaceChanges(localPath);
-        onDataRefresh();
-      } catch (err) {
-        console.debug('Post-publish pull failed:', err);
-      }
-    };
-
-    const poll = async () => {
-      try {
-        const statuses = await jobApi.getJobsStatus(jobIds);
-        if (cancelled) {
-          return;
-        }
-
-        const byId = new Map(statuses.map((job) => [job.bullJobId ?? '', job]));
-        const hydrated = jobIds.map(
-          (jobId) => byId.get(jobId) ?? { bullJobId: jobId, state: 'created' as const, type: 'publish-from-git' },
+        const statuses = await jobApi.getJobsStatus(activeJobIds);
+        if (cancelled) return;
+        const byId = new Map(statuses.map((s) => [s.bullJobId ?? '', s]));
+        const hydrated = activeJobIds.map(
+          (id) => byId.get(id) ?? { bullJobId: id, state: 'created' as const, type: 'unknown' },
         );
         setJobs(hydrated);
 
-        if (localPath) {
-          for (const job of hydrated) {
-            const jobId = job.bullJobId ?? '';
-            if (!jobId || !isTerminalState(job.state) || loggedCompleteJobIdsRef.current.has(jobId)) {
-              continue;
-            }
+        for (const job of hydrated) {
+          const jobId = job.bullJobId ?? '';
+          if (!jobId || !isTerminalState(job.state)) continue;
+
+          // Resolve the waiter so the per-connection state machine advances.
+          const resolveWaiter = pendingWaitsRef.current.get(jobId);
+          if (resolveWaiter) {
+            pendingWaitsRef.current.delete(jobId);
+            resolveWaiter(job);
+          }
+
+          // Log completion exactly once per terminal job.
+          if (localPath && !loggedCompleteJobIdsRef.current.has(jobId)) {
             loggedCompleteJobIdsRef.current.add(jobId);
             const failed = job.state !== 'completed' || hasPublishFailures(job);
             const progress = job.publicProgress as PublishFromGitProgress | undefined;
@@ -656,37 +689,8 @@ export function PublishChangesModal({
             });
           }
         }
-
-        if (hydrated.every((job) => isTerminalState(job.state))) {
-          if (pollingIntervalRef.current !== null) {
-            window.clearInterval(pollingIntervalRef.current);
-            pollingIntervalRef.current = null;
-          }
-
-          await pullLatestWorkspaceState();
-          if (cancelled) {
-            return;
-          }
-
-          setPublishing(false);
-          const failedJobs = hydrated.filter((job) => job.state !== 'completed' || hasPublishFailures(job));
-
-          if (failedJobs.length === 0) {
-            setMode('complete');
-            return;
-          }
-
-          setPublishErrorDetails(failedJobs.map((job) => getPublishFailureMessage(job)));
-          setMode('error');
-          setError(failedJobs.map((job) => getPublishFailureMessage(job)).join(' '));
-        }
       } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        setPublishing(false);
-        setMode('error');
-        setError(err instanceof Error ? err.message : 'Failed to poll publish jobs');
+        console.debug('Publish poll failed:', err);
       }
     };
 
@@ -702,34 +706,76 @@ export function PublishChangesModal({
         pollingIntervalRef.current = null;
       }
     };
-  }, [jobIds, localPath, mode, onDataRefresh]);
+  }, [mode, localPath]);
 
-  const totals = useMemo(
-    () =>
-      plans.reduce(
-        (acc, plan) => {
-          acc.edit += plan.summary.edit;
-          acc.create += plan.summary.create;
-          acc.delete += plan.summary.delete;
-          acc.backfill += plan.summary.backfill;
-          acc.rename += plan.summary.rename;
-          return acc;
-        },
-        { edit: 0, create: 0, delete: 0, backfill: 0, rename: 0 },
-      ),
-    [plans],
-  );
+  // When all per-connection publishes reach a terminal state, transition
+  // mode → complete | error and refresh local data.
+  useEffect(() => {
+    if (mode !== 'publishing' || publishConnections.length === 0) {
+      return;
+    }
+    const allTerminal = publishConnections.every(
+      (c) => c.status === 'completed' || c.status === 'failed' || c.status === 'plan-no-diff',
+    );
+    if (!allTerminal) return;
 
-  const canClose = !planningRunning && !publishing && !closing;
+    const failedConnections = publishConnections.filter((c) => c.status === 'failed');
+    const completedCount = publishConnections.filter((c) => c.status === 'completed').length;
+    const noDiffCount = publishConnections.filter((c) => c.status === 'plan-no-diff').length;
+
+    if (workspaceId) {
+      void trackPublishCompleted(workspaceId, {
+        successCount: completedCount,
+        failedCount: failedConnections.length,
+        noDiffCount,
+      });
+    }
+
+    const refreshLocal = async () => {
+      if (!localPath) return;
+      try {
+        await window.scratchDesktop.pullWorkspaceChanges(localPath);
+        onDataRefresh();
+      } catch (err) {
+        console.debug('Post-publish pull failed:', err);
+      }
+    };
+
+    void refreshLocal();
+
+    if (failedConnections.length === 0) {
+      setMode('complete');
+      return;
+    }
+    setPublishErrorDetails(failedConnections.map((c) => `${c.connectionName}: ${c.failureMessage ?? 'failed'}`));
+    setMode('error');
+    setError(failedConnections.map((c) => `${c.connectionName} failed`).join('; '));
+  }, [mode, publishConnections, workspaceId, localPath, onDataRefresh]);
+
+  const aggregateTotals = useMemo(() => {
+    if (!uploadResult) {
+      return { created: 0, updated: 0, deleted: 0 };
+    }
+    return {
+      created: uploadResult.filesCreated,
+      updated: uploadResult.filesUpdated,
+      deleted: uploadResult.filesDeleted,
+    };
+  }, [uploadResult]);
+
+  const showStalenessBanner = !!stalenessWarning && !stalenessBannerDismissed;
+  const canClose = !closing && mode !== 'uploading' && mode !== 'publishing';
 
   return (
-    <Modal
-      opened={opened}
-      onClose={canClose ? () => void handleClose() : () => undefined}
-      title={filterPath ? 'Publish file' : 'Publish changes'}
-      size="lg"
-    >
+    <Modal opened={opened} onClose={canClose ? () => handleClose() : () => undefined} title={modeTitle(mode)} size="lg">
       <Stack gap="md">
+        {showStalenessBanner && stalenessWarning && (
+          <Alert color="yellow" withCloseButton onClose={() => setStalenessBannerDismissed(true)}>
+            The server has more recent changes ({stalenessWarning.newHead.slice(0, 7)}) than what&apos;s on your
+            computer. Your edits were still uploaded; refresh after publishing finishes to pull them down.
+          </Alert>
+        )}
+
         {initializing ? (
           <Center py="md">
             <Loader size="sm" />
@@ -748,11 +794,10 @@ export function PublishChangesModal({
                   <>
                     <Text size="sm">
                       {unreviewedEntries.length} record{unreviewedEntries.length === 1 ? '' : 's'} contain unreviewed
-                      changes that will not be published.
+                      changes that will not be uploaded.
                     </Text>
                     <Text size="sm" c="dimmed">
-                      Continue to plan and publish from the reviewed local dirty branch, or cancel and review those
-                      edits first.
+                      Continue to upload the reviewed local changes, or cancel and review those edits first.
                     </Text>
                   </>
                 )}
@@ -762,7 +807,7 @@ export function PublishChangesModal({
                       View Problems
                     </Button>
                   )}
-                  <Button variant="default" onClick={() => void handleClose()} loading={closing}>
+                  <Button variant="default" onClick={() => handleClose()} loading={closing}>
                     Cancel
                   </Button>
                   <Button onClick={() => continueAfterApproval()} disabled={closing}>
@@ -772,100 +817,115 @@ export function PublishChangesModal({
               </>
             )}
 
-            {mode === 'planning' && (
+            {mode === 'uploading' && (
+              <Stack gap="lg" align="center" py="xl">
+                <Loader size="md" />
+                <Stack gap={4} align="center">
+                  <Text size="md" fw={500}>
+                    Uploading changes to the server
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    This usually takes a few seconds.
+                  </Text>
+                </Stack>
+              </Stack>
+            )}
+
+            {mode === 'uploaded' && uploadResult && (
               <>
                 <Text size="sm" c="dimmed">
-                  Building a publish plan from the reviewed local dirty branch.
+                  Your changes were uploaded to the server. Click Publish to dispatch them through the connectors, or
+                  review them on the web first.
                 </Text>
-                <LiveCommandOutput
-                  output={planningOutput}
-                  running={planningRunning}
-                  exitCode={planningExitCode}
-                  emptyMessage="Preparing publish plan..."
-                />
-              </>
-            )}
 
-            {mode === 'ready' && (
-              <>
-                {plans.length > 0 ? (
-                  <>
-                    <Text size="sm" c="dimmed">
-                      The publish plan is ready. Review the summary below, then publish when ready.
-                    </Text>
+                <Text size="sm" c="dimmed">
+                  {formatDiffSummary(aggregateTotals.created, aggregateTotals.updated, aggregateTotals.deleted)}
+                </Text>
 
-                    <Group gap="xs">
-                      <Badge color="blue">{totals.edit} edit</Badge>
-                      <Badge color="green">{totals.create} create</Badge>
-                      <Badge color="red">{totals.delete} delete</Badge>
-                      <Badge color="orange">{totals.backfill} backfill</Badge>
-                      <Badge color="grape">{totals.rename} rename</Badge>
-                    </Group>
+                <ScrollArea.Autosize mah={320}>
+                  <Stack gap="sm">
+                    {uploadResult.connections
+                      .filter((c) => c.status === 'uploaded')
+                      .map((c: UploadConnection) => (
+                        <Box
+                          key={c.connectionName}
+                          p="sm"
+                          style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 8 }}
+                        >
+                          <Group justify="space-between" align="flex-start">
+                            <Text fw={600} size="sm">
+                              {c.connectionName}
+                            </Text>
+                            <Text size="sm" c="dimmed">
+                              {formatDiffSummary(c.filesCreated, c.filesUpdated, c.filesDeleted)}
+                            </Text>
+                          </Group>
+                          {(c.createdPaths.length > 0 || c.updatedPaths.length > 0 || c.deletedPaths.length > 0) && (
+                            <Code block mt="xs">
+                              {[...c.createdPaths, ...c.updatedPaths, ...c.deletedPaths].join('\n')}
+                            </Code>
+                          )}
+                        </Box>
+                      ))}
+                  </Stack>
+                </ScrollArea.Autosize>
 
-                    <ScrollArea.Autosize mah={320}>
-                      <Stack gap="sm">
-                        {plans.map((plan) => (
-                          <Box
-                            key={`${plan.connectionId}:${plan.planId}`}
-                            p="sm"
-                            style={{ border: '1px solid var(--mantine-color-gray-3)', borderRadius: 8 }}
-                          >
-                            <Group justify="space-between" align="flex-start">
-                              <Box>
-                                <Text fw={600} size="sm">
-                                  {plan.connectionName}
-                                </Text>
-                                <Text size="xs" c="dimmed">
-                                  {new Date(plan.createdAt).toLocaleString()}
-                                </Text>
-                              </Box>
-                              <Group gap={6}>
-                                <Badge color="blue">{plan.summary.edit} edit</Badge>
-                                <Badge color="green">{plan.summary.create} create</Badge>
-                                <Badge color="red">{plan.summary.delete} delete</Badge>
-                              </Group>
-                            </Group>
-                            {plan.tablePaths.length > 0 && (
-                              <Code block mt="xs">
-                                {plan.tablePaths.join('\n')}
-                              </Code>
-                            )}
-                          </Box>
-                        ))}
-                      </Stack>
-                    </ScrollArea.Autosize>
-
-                    <Group justify="space-between">
-                      <Button variant="default" onClick={() => void handleClose()} loading={closing}>
-                        Cancel
-                      </Button>
-                      <Button onClick={() => void triggerPublish()} disabled={closing}>
-                        Publish now
-                      </Button>
-                    </Group>
-                  </>
-                ) : (
-                  <>
-                    <Text size="sm">Nothing needs to be published.</Text>
-                    <Group justify="flex-end">
-                      <Button onClick={() => void handleClose()} loading={closing}>
-                        Close
-                      </Button>
-                    </Group>
-                  </>
+                {workspaceId && (
+                  <Group justify="space-between">
+                    <Anchor onClick={handleReviewOnWeb} size="sm">
+                      Review on web ↗
+                    </Anchor>
+                  </Group>
                 )}
+
+                <Group justify="space-between">
+                  <Button variant="default" onClick={() => handleClose()} loading={closing}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => void triggerPublish()} disabled={closing}>
+                    Publish now
+                  </Button>
+                </Group>
               </>
             )}
 
-            {mode === 'publishing' && <PublishingProgress jobIds={jobIds} jobs={jobs} />}
+            {mode === 'publishing' && (
+              <Stack gap="md">
+                {publishConnections.length === 0 ? (
+                  <Stack gap="lg" align="center" py="xl">
+                    <Loader size="md" />
+                    <Stack gap={4} align="center">
+                      <Text size="md" fw={500}>
+                        Starting publish jobs
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        Building a plan for each connection.
+                      </Text>
+                    </Stack>
+                  </Stack>
+                ) : (
+                  publishConnections.map((conn) => {
+                    const activeJobId = conn.runJobId ?? conn.planJobId;
+                    const job = jobs.find((j) => j.bullJobId === activeJobId);
+                    return (
+                      <ConnectionPublishRow
+                        key={conn.connectionId || conn.connectionName}
+                        connection={conn}
+                        job={job}
+                      />
+                    );
+                  })
+                )}
+              </Stack>
+            )}
 
             {mode === 'complete' && (
               <>
                 <Alert color="green" title="All data published">
-                  All data published
+                  {workspaceName ? `${workspaceName} is now in sync.` : 'Your changes were published.'}
                 </Alert>
                 <Group justify="flex-end">
-                  <Button onClick={() => void handleClose()} loading={closing}>
+                  <Button onClick={() => handleClose()} loading={closing}>
                     Close
                   </Button>
                 </Group>
@@ -886,26 +946,21 @@ export function PublishChangesModal({
                     ))}
                   </Stack>
                 )}
-                <PublishingProgress jobIds={jobIds} jobs={jobs} />
-                {jobs.length > 0 && (
-                  <Stack gap="sm">
-                    {jobs.map((job) => (
-                      <Stack key={job.bullJobId ?? job.dbJobId ?? job.type} gap={4}>
-                        <Group justify="space-between">
-                          <Code>{job.bullJobId ?? job.dbJobId ?? job.type}</Code>
-                          <Badge color={statusColor(job.state)}>{job.state}</Badge>
-                        </Group>
-                        {job.failedReason && (
-                          <Text size="xs" c="red">
-                            {job.failedReason}
-                          </Text>
-                        )}
-                      </Stack>
-                    ))}
-                  </Stack>
-                )}
+                <Stack gap="md">
+                  {publishConnections.map((conn) => {
+                    const activeJobId = conn.runJobId ?? conn.planJobId;
+                    const job = jobs.find((j) => j.bullJobId === activeJobId);
+                    return (
+                      <ConnectionPublishRow
+                        key={conn.connectionId || conn.connectionName}
+                        connection={conn}
+                        job={job}
+                      />
+                    );
+                  })}
+                </Stack>
                 <Group justify="flex-end">
-                  <Button onClick={() => void handleClose()} loading={closing}>
+                  <Button onClick={() => handleClose()} loading={closing}>
                     Close
                   </Button>
                 </Group>

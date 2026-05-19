@@ -39,7 +39,6 @@ export function WorkspacePage() {
   const previousLocalPathRef = useRef<string | null>(null);
 
   const [publishModalOpen, setPublishModalOpen] = useState(false);
-  const [publishFilePath, setPublishFilePath] = useState<string | null>(null);
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
@@ -413,16 +412,14 @@ export function WorkspacePage() {
         opened={publishModalOpen}
         onClose={() => {
           setPublishModalOpen(false);
-          setPublishFilePath(null);
         }}
         workspaceName={workspace.name}
+        workspaceId={workspace.id}
         localPath={localPath}
         onDataRefresh={handleDataRefresh}
-        filterPath={publishFilePath}
         currentFolderPath={selectedFolderPath}
         onViewProblems={(folderPath) => {
           setPublishModalOpen(false);
-          setPublishFilePath(null);
           setSelectedFolderPath(folderPath);
           gridFilterTriggerRef.current += 1;
           setGridFilterActivation({ kind: 'has-problems', trigger: gridFilterTriggerRef.current });
@@ -475,8 +472,10 @@ export function WorkspacePage() {
         onSelectFolder={setSelectedFolderPath}
         dataRefreshKey={dataRefreshKey}
         onDataRefresh={handleDataRefresh}
-        onPublishFile={(relativePath: string) => {
-          setPublishFilePath(relativePath);
+        onPublishFile={() => {
+          // Single-file publish was removed with the upload-patch rewrite —
+          // the new flow always uploads everything the user has accepted.
+          // Per-file entry points open the same workspace-wide modal.
           setPublishModalOpen(true);
         }}
         activateGlobalFilter={gridFilterActivation}

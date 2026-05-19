@@ -167,6 +167,34 @@ describe('ApiRateLimitGuard', () => {
     }
   });
 
+  it('should skip rate limiting when @SkipApiRateLimit is set on the handler', async () => {
+    const handler = () => undefined;
+    jest.spyOn(reflector, 'get').mockImplementation((key, target) => {
+      if (key === 'API_RATE_LIMIT_SKIP' && target === handler) return true;
+      return undefined;
+    });
+    const { context } = createMockExecutionContext({
+      user: { id: 'user-1', authType: 'api-token', authSource: 'cli' },
+      handler,
+    });
+    expect(await guard.canActivate(context)).toBe(true);
+    expect(mockConsume).not.toHaveBeenCalled();
+  });
+
+  it('should skip rate limiting when @SkipApiRateLimit is set on the class', async () => {
+    const classRef = class SomeController {};
+    jest.spyOn(reflector, 'get').mockImplementation((key, target) => {
+      if (key === 'API_RATE_LIMIT_SKIP' && target === classRef) return true;
+      return undefined;
+    });
+    const { context } = createMockExecutionContext({
+      user: { id: 'user-1', authType: 'api-token', authSource: 'cli' },
+      classRef,
+    });
+    expect(await guard.canActivate(context)).toBe(true);
+    expect(mockConsume).not.toHaveBeenCalled();
+  });
+
   it('should use high rate limit spec for tokens with rate-limit:high scope', async () => {
     mockConsume.mockResolvedValueOnce({});
     const { context } = createMockExecutionContext({
