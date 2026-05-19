@@ -76,6 +76,8 @@ interface RecordDetailViewProps {
   columnDescriptions?: Map<string, string>;
   /** Set of field paths that should be treated as read-only (derived from the view). */
   readonlyFields?: Set<string>;
+  /** Map from column ID to resolved property type (e.g. 'checkbox', 'number'). */
+  columnTypes?: Map<string, string>;
   /**
    * Map from column ID to effective display path, accounting for selected subfields.
    * E.g. if the `title` column has subfield `raw` selected, this maps `"title"` → `"title.raw"`.
@@ -252,6 +254,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   columnLabels,
   columnDescriptions,
   readonlyFields: readonlyFieldsProp,
+  columnTypes,
   onSelectIndex,
   onClose,
   onRecordChanged,
@@ -713,6 +716,9 @@ export const RecordDetailView = memo(function RecordDetailView({
           ? toDisplayString(recordData.row.__masterFields[diffKey])
           : '';
 
+      const fieldType = columnTypes?.get(fieldName);
+      const isCheckbox = fieldType === 'checkbox';
+
       return {
         fieldName,
         displayLabel: columnLabels?.get(fieldName) ?? fieldName,
@@ -722,10 +728,18 @@ export const RecordDetailView = memo(function RecordDetailView({
         fromValue,
         diffKind,
         displayMode: isUnreviewed ? 'diff' : 'current',
-        editing: isEditable && editingFieldName === fieldName,
+        editing: isEditable && !isCheckbox && editingFieldName === fieldName,
         referenceValue: diffKind !== null ? fromValue : undefined,
-        readOnly: isReadOnly,
-        onClick: isEditable ? () => beginFieldEdit(fieldName) : undefined,
+        column: { readonly: isReadOnly, type: fieldType },
+        onClick: isEditable
+          ? isCheckbox
+            ? () => {
+                const toggled = value === 'true' ? 'false' : 'true';
+                editingFieldRef.current = effectivePath;
+                commitFieldEdit(effectivePath, value, toggled);
+              }
+            : () => beginFieldEdit(fieldName)
+          : undefined,
         onEditCommit: isEditable ? (nv: string) => commitFieldEdit(effectivePath, value, nv) : undefined,
         onEditCancel: isEditable ? () => cancelFieldEdit(fieldName) : undefined,
         onApprove:
@@ -750,6 +764,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     editingFieldName,
     isDeleted,
     readonlyFieldsProp,
+    columnTypes,
     recordData,
     showAllFields,
     columnEffectivePaths,

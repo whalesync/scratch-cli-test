@@ -1,8 +1,10 @@
-import { ActionIcon, Box, Group, Stack, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Checkbox, Group, Stack, Tooltip } from '@mantine/core';
+import type { TableViewCol } from '@spinner/shared-types';
 import { diffWordsWithSpace } from 'diff';
 import { Check, Columns2, Eye, Maximize2, RotateCcw, WrapText } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { formatFieldDisplay } from './field-formatters';
 
 export type FieldValueDiffKind = 'unreviewed' | 'unpublished' | null;
 export type FieldValueDisplayMode = 'diff' | 'current';
@@ -20,6 +22,8 @@ interface FieldValuePanelProps {
   onView?: () => void;
   /** When set, render an "Expand" action below Approve/Reject (used to focus this field). */
   onExpand?: () => void;
+  /** Column view metadata (readonly state, property type) from the view definition. */
+  column?: Pick<TableViewCol, 'readonly' | 'type'>;
   /** When true, before/after values render on a single line, truncated to TRUNCATED_MAX_CHARS. */
   truncate?: boolean;
   /** When true, the panel fills its parent's available vertical space instead of capping at MAX_CONTENT_HEIGHT. */
@@ -290,15 +294,18 @@ export const FieldValuePanel = memo(function FieldValuePanel({
   onUndo,
   onView,
   onExpand,
+  column,
   truncate = false,
   expanded = false,
   richDiff = false,
 }: FieldValuePanelProps) {
   const [diffViewMode, setDiffViewMode] = useDiffViewMode();
+  const readOnly = column?.readonly ?? false;
+  const fieldType = column?.type;
   const hasActions = Boolean(onApprove || onUndo || onView || onExpand);
   const actionCount = (onApprove ? 1 : 0) + (onUndo ? 1 : 0) + (onView ? 1 : 0) + (onExpand ? 1 : 0);
-  const renderedFromValue = truncate ? truncateOneLine(fromValue) : fromValue;
-  const renderedValue = truncate ? truncateOneLine(value) : value;
+  const renderedFromValue = truncate ? truncateOneLine(fromValue) : formatFieldDisplay(fromValue, fieldType);
+  const renderedValue = truncate ? truncateOneLine(value) : formatFieldDisplay(value, fieldType);
   const lineWrapStyle: React.CSSProperties = truncate
     ? { whiteSpace: 'nowrap', overflow: 'hidden' }
     : { whiteSpace: 'pre-wrap', wordBreak: 'break-word' };
@@ -415,6 +422,30 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                 </Box>
               </Box>
             )
+          ) : fieldType === 'checkbox' ? (
+            <Box
+              style={{
+                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              <Checkbox
+                checked={value === 'true'}
+                readOnly
+                tabIndex={-1}
+                size="xs"
+                styles={{
+                  input: {
+                    cursor: onClick ? 'pointer' : 'default',
+                    pointerEvents: 'none',
+                    backgroundColor: value === 'true' ? 'var(--mantine-color-gray-3)' : undefined,
+                    borderColor: 'var(--mantine-color-gray-3)',
+                    '--checkbox-icon-color': 'white',
+                  },
+                }}
+              />
+            </Box>
           ) : (
             <Box
               style={{
@@ -423,7 +454,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                 fontSize: 13,
                 lineHeight: 1.5,
                 ...lineWrapStyle,
-                color: 'var(--fg-primary)',
+                color: readOnly ? 'var(--fg-muted)' : 'var(--fg-primary)',
                 ...(truncate
                   ? {}
                   : useFullHeight

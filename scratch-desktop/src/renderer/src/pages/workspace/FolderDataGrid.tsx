@@ -44,12 +44,13 @@ import { trackRefreshFolderDataGrid } from '../../lib/posthog';
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { EditPropertyDialog } from './EditPropertyDialog';
+import { formatFieldDisplay } from './field-formatters';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
 import { RecordDetailView } from './RecordDetailView';
-import { UnifiedDiffToggleButton } from './UnifiedDiffMode';
 import { drawUnifiedDiffCell, UNIFIED_DIFF_ROW_HEIGHT } from './unified-diff-cell';
+import { UnifiedDiffToggleButton } from './UnifiedDiffMode';
 
 // ── Types ──
 
@@ -330,13 +331,8 @@ function drawWordDiffText(
 
 // ── Helpers ──
 
-function toDisplayString(value: unknown, propertyType?: TablePropertyType): string {
+function toDisplayString(value: unknown): string {
   if (value == null) return '';
-  if (propertyType === 'date' && (typeof value === 'string' || typeof value === 'number')) {
-    const d = new Date(value);
-    if (!isNaN(d.getTime()))
-      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-  }
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return JSON.stringify(value);
@@ -1466,6 +1462,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return map;
   }, [flatViewCols]);
 
+  /** Map from column ID to resolved property type (for detail view rendering, e.g. checkbox). */
+  const columnTypesMap = useMemo(() => {
+    const map = new Map<string, TablePropertyType>();
+    for (const col of flatViewCols) {
+      const t = resolveEffectiveType(col);
+      if (t) map.set(col.path, t);
+    }
+    return map;
+  }, [flatViewCols]);
+
   /** Map from column ID to effective display path, accounting for selected subfields. */
   const columnEffectivePathsMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1507,17 +1513,24 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         const viewCol = viewColMap.get(name);
         const displayName = viewCol?.name ?? name;
         const group = columnGroupMap.get(name);
+        const isTitle = name === titleColumnId;
+        const baseWidth = Math.max(120, Math.min(250, displayName.length * 9 + 40));
+        const defaultWidth = isTitle
+          ? baseWidth * 2
+          : resolveEffectiveType(viewCol) === 'date'
+            ? Math.round(baseWidth * 1.3) + 30
+            : baseWidth;
         return {
           id: name,
           title: displayName,
-          width: columnWidths[name] ?? Math.max(120, Math.min(250, displayName.length * 9 + 40)),
+          width: columnWidths[name] ?? defaultWidth,
           hasMenu: true,
           menuIcon: GridColumnMenuIcon.Dots,
           ...(group ? { group } : {}),
         };
       });
     return [statusColumn, ...dataCols];
-  }, [allColumnIds, columnGroupMap, viewColMap, columnWidths, effectiveVisibleColumns, statusColumn]);
+  }, [allColumnIds, columnGroupMap, viewColMap, columnWidths, effectiveVisibleColumns, statusColumn, titleColumnId]);
 
   /** Column IDs that should be focused for Needs review, across the current non-global query. */
   const unreviewedColumnIds: string[] = useMemo(() => {
@@ -1976,22 +1989,23 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           data: typeof val === 'boolean' ? val : undefined,
           readonly: isReadOnly,
           allowOverlay: false as const,
-          copyData: toDisplayString(val, colType),
+          copyData: toDisplayString(val),
           themeOverride,
         };
       }
       if (kind === GridCellKind.Number) {
+        const raw = toDisplayString(val);
         return {
           kind,
           data: val == null ? undefined : Number(val),
-          displayData: toDisplayString(val, colType),
+          displayData: formatFieldDisplay(raw, colType),
           allowOverlay,
-          copyData: toDisplayString(val, colType),
+          copyData: raw,
           themeOverride,
         };
       }
       if (kind === GridCellKind.Uri) {
-        const display = toDisplayString(val, colType);
+        const display = toDisplayString(val);
         return {
           kind,
           data: display,
@@ -2000,13 +2014,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           themeOverride,
         };
       }
-      const display = toDisplayString(val, colType);
+      const raw = toDisplayString(val);
+      const display = formatFieldDisplay(raw, colType);
       return {
         kind: GridCellKind.Text as const,
-        data: display,
+        data: raw,
         displayData: display,
         allowOverlay,
-        copyData: display,
+        copyData: raw,
         themeOverride,
       };
     },
@@ -2806,6 +2821,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 columnLabels={columnLabelsMap}
                 columnDescriptions={columnDescriptionsMap}
                 readonlyFields={readonlyFields}
+                columnTypes={columnTypesMap}
                 initialFocusedFieldName={detailFocusFieldName ?? undefined}
                 onSelectIndex={(nextIndex) => {
                   if (nextIndex !== detailRowIndex) setDetailFocusFieldName(null);

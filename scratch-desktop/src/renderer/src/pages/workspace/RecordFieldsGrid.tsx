@@ -1,4 +1,5 @@
 import { ActionIcon, Box, Group, Portal, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
+import type { TableViewCol } from '@spinner/shared-types';
 import { Minimize2, TriangleAlertIcon } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
@@ -33,6 +34,8 @@ export interface RecordFieldRow {
   onEditCancel?: () => void;
   onApprove?: () => void;
   onUndo?: () => void;
+  /** Column view metadata (readonly state, property type) from the view definition. */
+  column?: Pick<TableViewCol, 'readonly' | 'type'>;
 }
 
 export type { ValidationEntry } from '../../../../shared/validation-types';
@@ -444,6 +447,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
               onClick={focusedRow.onClick}
               onApprove={focusedRow.displayMode === 'diff' ? focusedRow.onApprove : undefined}
               onUndo={focusedRow.displayMode === 'diff' ? focusedRow.onUndo : undefined}
+              column={focusedRow.column}
               expanded
             />
           )}
@@ -552,6 +556,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                           onApprove={row.displayMode === 'diff' ? row.onApprove : undefined}
                           onUndo={row.displayMode === 'diff' ? row.onUndo : undefined}
                           onExpand={isMediumOrLargeChange(row) ? () => setFocusedFieldName(row.fieldName) : undefined}
+                          column={row.column}
                           richDiff={isMediumOrLargeChange(row)}
                         />
                       )}
