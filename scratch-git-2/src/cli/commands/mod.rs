@@ -6,6 +6,7 @@ pub mod index;
 pub mod linked;
 pub mod merge_patch;
 pub mod plan_publish;
+pub mod re_anchor;
 pub mod read_records;
 pub mod syncs;
 pub mod validation;
