@@ -276,13 +276,13 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
     );
     assert_eq!(std::fs::read_to_string(&view_path).unwrap(), view_content,);
 
-    // ── Assert: reviewed-dirty worktree exists ──
+    // ── Assert: reviewed-dirty worktree is NOT created (removed in Phase 3 of DEV-10144) ──
     let reviewed_dirty_dir = workspace_dir
         .join(".scratch/connections/dirty")
         .join(conn_dir_name);
     assert!(
-        reviewed_dirty_dir.exists(),
-        "reviewed-dirty worktree should exist"
+        !reviewed_dirty_dir.exists(),
+        "reviewed-dirty worktree should not be created at init"
     );
 
     // ── Assert: bare repo exists in .repos/ ──

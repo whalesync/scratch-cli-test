@@ -707,22 +707,6 @@ pub fn setup_connection(
         let _t = PhaseTimer::new(format!("    [{}] reconcile_data_folder_dirs", dir_name));
         super::files::reconcile_data_folder_dirs(&dirty_dir, &ca.data_folders)?;
     }
-    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&dir_name);
-    {
-        let _t = PhaseTimer::new(format!(
-            "    [{}] setup_sparse_worktree (reviewed-dirty)",
-            dir_name
-        ));
-        if let Err(e) =
-            crate::git_ops::setup_sparse_worktree(&bare_repo, &reviewed_dirty_dir, DIRTY_BRANCH)
-        {
-            eprintln!(
-                "  Warning: could not set up reviewed-dirty worktree for {}: {e}",
-                dir_name
-            );
-        }
-    }
-
     let main_checkout_result = {
         let _t = PhaseTimer::new(format!(
             "    [{}] git_checkout_branch_from_bare (main, sparse worktree)",

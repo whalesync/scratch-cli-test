@@ -170,7 +170,6 @@ struct ConnectionContext {
     scratch_dir: PathBuf,
     workspace_dir: PathBuf,
     master_dir: PathBuf,
-    reviewed_dirty_dir: PathBuf,
     bare_repo: PathBuf,
     db_path: PathBuf,
 }
@@ -1227,7 +1226,6 @@ fn run_accept(
             &msg,
         )?;
         update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-        update_reviewed_dirty(ctx, &new_dirty_hash)?;
         let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
         refresh_problem_record_index_for_ctx(ctx, &rel_paths, path_pairs.len() > 1)?;
 
@@ -1507,7 +1505,6 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
         &format!("Accept field '{}' in {}", field, repo_folder),
     )?;
     update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
-    update_reviewed_dirty(&ctx, &new_dirty_hash)?;
     refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
     if json {
@@ -1603,7 +1600,6 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
             &format!("Reject field '{}' in {}", field, repo_folder),
         )?;
         update_dirty_worktree_index(&ctx, &new_dirty_hash)?;
-        update_reviewed_dirty(&ctx, &new_dirty_hash)?;
     }
     refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
@@ -1636,7 +1632,6 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
 // Restore approved deletions by:
 // - grouping requested paths by connection
 // - copying the main-branch version back into the local working tree and dirty branch
-// - updating the hidden reviewed-dirty checkout for the affected connection
 fn run_restore_deleted_record(
     cwd: &Path,
     _server_url: &str,
@@ -1697,7 +1692,6 @@ fn run_restore_deleted_record(
 // Discard approved creates by:
 // - grouping requested paths by connection
 // - removing the record from the local working tree and dirty branch
-// - updating the hidden reviewed-dirty checkout for the affected connection
 // - also discarding the matching path from the remote dirty branch
 async fn run_discard_created_record(
     cwd: &Path,
@@ -2079,7 +2073,6 @@ fn build_connection_contexts(
             scratch_dir: layout.connection_scratch_path(&connection.dir_name),
             workspace_dir: layout.workbook_materialization_path(),
             master_dir: layout.master_worktree_path(&connection.dir_name),
-            reviewed_dirty_dir: layout.reviewed_dirty_checkout_path(&connection.dir_name),
             bare_repo: layout.bare_repo_path(&connection.repo_path),
             db_path: layout.index_db_path(&connection.repo_path),
         })
@@ -2154,7 +2147,6 @@ fn restore_deleted_records_locally(
         &message,
     )?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
     Ok(())
 }
 
@@ -2203,7 +2195,6 @@ fn discard_created_records_locally(
         &message,
     )?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
     Ok(())
 }
 
@@ -2339,16 +2330,6 @@ fn update_dirty_worktree_index(ctx: &ConnectionContext, hash: &str) -> anyhow::R
     crate::git_ops::worktree_reset_mixed(&ctx.dirty_dir, hash)
 }
 
-/// Ensure reviewed_dirty_dir is set up as a sparse worktree and reset it to the given dirty hash.
-fn update_reviewed_dirty(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<()> {
-    crate::git_ops::ensure_sparse_worktree(
-        &ctx.bare_repo,
-        &ctx.reviewed_dirty_dir,
-        "refs/heads/dirty",
-    )?;
-    crate::git_ops::worktree_reset_hard(&ctx.reviewed_dirty_dir, hash)
-}
-
 fn download_single_repo(
     ctx: &ConnectionContext,
     token: &str,
@@ -2466,7 +2447,6 @@ fn download_single_repo(
     materialize_local_repo(ctx, &target_map, &local_map)?;
     reconcile_data_folder_dirs(&ctx.dirty_dir, data_folders)?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
     // Validators are NOT run inline. The dead `validators::run_validations`
     // pipeline writes to validation_results_v1 which nothing in production
     // reads — the grid's validation results come from the folder_index
@@ -2869,7 +2849,6 @@ fn discard_all_full_scan(
             }
         }
     }
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
     Ok(DiscardAllResult {
         files_discarded: affected_paths.len() as i32,
@@ -2998,7 +2977,6 @@ fn discard_all_scoped_via_index(
             }
         }
     }
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
     Ok(DiscardAllResult {
         files_discarded: affected_paths.len() as i32,
@@ -3099,7 +3077,6 @@ fn discard_paths_single_repo(
             }
         }
     }
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
     Ok(DiscardAllResult {
         files_discarded: targets.len() as i32,
@@ -3195,7 +3172,6 @@ fn accept_all_full_scan(
         &commit_msg,
     )?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
     Ok(AcceptAllResult {
         files_accepted: changes.len() as i32,
@@ -3414,7 +3390,6 @@ fn accept_all_scoped_via_index(
         &commit_msg,
     )?;
     update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-    update_reviewed_dirty(ctx, &new_dirty_hash)?;
 
     Ok(AcceptAllResult {
         files_accepted: accepted_paths.len() as i32,

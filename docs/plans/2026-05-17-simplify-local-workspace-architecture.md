@@ -1,7 +1,7 @@
 # Simplify Local Workspace Architecture
 
 **Date**: 2026-05-17 (last updated 2026-05-19)
-**Status**: Phase 1 shipped on `dev-10144-{mr1,mr2,mr3}`. Phase 2 shipped on `dev-10144-mr4`. Phases 3–7 not started.
+**Status**: Phase 1 shipped on `dev-10144-{mr1,mr2,mr3}`. Phase 2 shipped on `dev-10144-mr4`. Phase 3 shipped on `dev-10144-mr6`. Phases 4–7 not started.
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
 
@@ -360,6 +360,8 @@ Publish (separate concern, separate CLI command):
 
 ### Phase 3 — Stop creating `reviewed-dirty` on init
 
+> **Status: SHIPPED** on `dev-10144-mr6`. Concretely removed: the `setup_sparse_worktree(reviewed-dirty)` block in `init_connection` (workspaces.rs:710–724), the `update_reviewed_dirty` helper (files.rs:2343), all 11 call sites in `files.rs`, and the `reviewed_dirty_dir` field on `ConnectionContext` plus its initialization. Kept: `layout.reviewed_dirty_checkout_path` (still called by `plan_publish.rs`, dying in Phase 7) and the `remove_path(&reviewed_dirty_dir)` calls in `teardown_connection`/`detach_connection` (back-compat cleanup for workspaces created before Phase 3). Test assertion in `tests/workspaces.rs` inverted to check the worktree is NOT created. Verified: `cargo build` clean (0 warnings), full `cargo test` green (398 passes), `yarn build` + `yarn lint` + `server/yarn lint-strict` clean.
+
 Once Phase 1 lands, `reviewed-dirty` is unused. Delete `layout.reviewed_dirty_checkout_path` references and the worktree setup in `workspaces.rs`. Also delete the `update_reviewed_dirty` calls in `cli/commands/files.rs` (called from accept/reject paths). Saves ~10–15s of `init` per large connection.
 
 **Why this is safe to ship before Phase 5:** the only code that reads from `reviewed-dirty` is `shared/plan_publish.rs`, which Phase 1 dead-coded at runtime by routing desktop publishes through `/upload-patch`. Stopping the writes (`update_reviewed_dirty`) means the worktree (if it still exists on an old workspace) drifts out of sync with `dirty` — but nothing reads it, so the drift is harmless. New workspaces don't create the worktree at all.
@@ -491,7 +493,7 @@ Net debt reduction: ~600 LOC from `plan_publish.rs` and friends + sparse-checkou
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Phase 1 — Server `/upload-patch`                  | **Shipped** on `dev-10144-{mr1,mr2,mr3}`. See [Phase 1 implementation notes](#phase-1-implementation-notes) below. |
 | Phase 2 — Stop building master `file_index` table | **Shipped** on `dev-10144-mr4`. See Phase 2 status line above.                                                     |
-| Phase 3 — Drop `reviewed-dirty` on init           | Not started                                                                                                        |
+| Phase 3 — Drop `reviewed-dirty` on init           | **Shipped** on `dev-10144-mr6`. See Phase 3 status line above.                                                     |
 | Phase 4 — Pull stash/replay                       | Not started                                                                                                        |
 | Phase 5 — Collapse to one worktree                | Not started                                                                                                        |
 | Phase 6 — Parallelize connections                 | Not started                                                                                                        |
