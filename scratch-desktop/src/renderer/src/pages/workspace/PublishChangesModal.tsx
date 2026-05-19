@@ -139,13 +139,13 @@ function getPublishFailureMessage(job: JobStatus): string {
   const currentPhase = progress?.currentPhase;
 
   if (job.failedReason && failedCount > 0 && currentPhase) {
-    return `${job.failedReason} (${failedCount} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase})`;
+    return `${job.failedReason} (${failedCount.toLocaleString()} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase})`;
   }
   if (job.failedReason) {
     return job.failedReason;
   }
   if (failedCount > 0 && currentPhase) {
-    return `${failedCount} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase}.`;
+    return `${failedCount.toLocaleString()} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase}.`;
   }
   return 'One or more publish jobs did not complete successfully.';
 }
@@ -793,8 +793,8 @@ export function PublishChangesModal({
                 {unreviewedEntries.length > 0 && (
                   <>
                     <Text size="sm">
-                      {unreviewedEntries.length} record{unreviewedEntries.length === 1 ? '' : 's'} contain unreviewed
-                      changes that will not be uploaded.
+                      {unreviewedEntries.length.toLocaleString()} record{unreviewedEntries.length === 1 ? '' : 's'}{' '}
+                      contain unreviewed changes that will not be uploaded.
                     </Text>
                     <Text size="sm" c="dimmed">
                       Continue to upload the reviewed local changes, or cancel and review those edits first.

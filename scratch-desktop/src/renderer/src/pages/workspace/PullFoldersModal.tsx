@@ -257,7 +257,7 @@ export function PullFoldersModal({
             <Box>
               <Group justify="space-between" mb={4}>
                 <Text size="xs" c="dimmed">
-                  {completedCount} / {jobs.length} pull jobs complete
+                  {completedCount.toLocaleString()} / {jobs.length.toLocaleString()} pull jobs complete
                 </Text>
                 {allDone && phase === 'done' && (
                   <Badge color="green" size="xs">

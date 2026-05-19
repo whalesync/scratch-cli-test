@@ -1809,7 +1809,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           notifications.show({
             color: 'green',
             title: 'Field approved',
-            message: `Approved ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
+            message: `Approved ${fileCount.toLocaleString()} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
           });
         })
         .catch((err: unknown) => {
@@ -1849,7 +1849,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           notifications.show({
             color: 'green',
             title: 'Field discarded',
-            message: `Discarded ${fileCount} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
+            message: `Discarded ${fileCount.toLocaleString()} file${fileCount === 1 ? '' : 's'} for "${columnTitle}".`,
           });
         })
         .catch((err: unknown) => {
@@ -2634,7 +2634,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 <ButtonSecondaryGhost size="compact-xs" leftSection={<Columns3 size={16} />}>
                   Columns
                   {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
-                    ? ` (${visibleColumnIds.length})`
+                    ? ` (${visibleColumnIds.length.toLocaleString()})`
                     : ''}
                 </ButtonSecondaryGhost>
               </Popover.Target>
@@ -2844,7 +2844,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             }}
           >
             <Text12Regular c="var(--fg-muted)">
-              {(diffData?.total ?? 0).toLocaleString()} rows &middot; {columns.length} columns
+              {(diffData?.total ?? 0).toLocaleString()} rows &middot; {columns.length.toLocaleString()} columns
               {sort.column && (
                 <span style={{ marginLeft: 8 }}>
                   &middot; Sorted by {sort.column === STATUS_COL_ID ? 'Status' : sort.column}{' '}
@@ -2871,7 +2871,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       flexShrink: 0,
                     }}
                   />
-                  <Text12Regular c="var(--fg-muted)">{filterCounts?.unreviewed} needs review</Text12Regular>
+                  <Text12Regular c="var(--fg-muted)">
+                    {(filterCounts?.unreviewed ?? 0).toLocaleString()} needs review
+                  </Text12Regular>
                 </Group>
               )}
               {hasChanges && (
@@ -2879,7 +2881,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   {summary.addedApproved > 0 && (
                     <Group gap={3}>
                       <Plus size={12} color="var(--create-approved-stroke)" />
-                      <Text12Regular c="var(--fg-muted)">{summary.addedApproved} added</Text12Regular>
+                      <Text12Regular c="var(--fg-muted)">{summary.addedApproved.toLocaleString()} added</Text12Regular>
                     </Group>
                   )}
                   {summary.unpublished > 0 && (
@@ -2893,13 +2895,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                           flexShrink: 0,
                         }}
                       />
-                      <Text12Regular c="var(--fg-muted)">{summary.unpublished} modified</Text12Regular>
+                      <Text12Regular c="var(--fg-muted)">{summary.unpublished.toLocaleString()} modified</Text12Regular>
                     </Group>
                   )}
                   {summary.deletedApproved > 0 && (
                     <Group gap={3}>
                       <Minus size={12} color="var(--delete-approved-stroke)" />
-                      <Text12Regular c="var(--fg-muted)">{summary.deletedApproved} deleted</Text12Regular>
+                      <Text12Regular c="var(--fg-muted)">
+                        {summary.deletedApproved.toLocaleString()} deleted
+                      </Text12Regular>
                     </Group>
                   )}
                   {summary.invalidJson > 0 && (
@@ -2927,7 +2931,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                           }}
                         />
                         <Text12Regular c="var(--fg-muted)" style={{ textDecoration: 'underline' }}>
-                          {summary.invalidJson} invalid files
+                          {summary.invalidJson.toLocaleString()} invalid files
                         </Text12Regular>
                       </Group>
                     </UnstyledButton>
@@ -2953,7 +2957,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                     <Text12Regular>&#8592;</Text12Regular>
                   </Box>
                   <Text12Regular c="var(--fg-muted)">
-                    {page} / {totalPages}
+                    {page.toLocaleString()} / {totalPages.toLocaleString()}
                   </Text12Regular>
                   <Box
                     component="button"
@@ -2999,13 +3003,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           <Text13Medium>
             {bulkActionConfirm === 'discard' ? (
               <>
-                Discard {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0)}{' '}
+                Discard {((filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0)).toLocaleString()}{' '}
                 {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0) === 1 ? 'change' : 'changes'} in{' '}
                 {selectedFolderPath?.split('/').filter(Boolean).pop() ?? 'this folder'}?
               </>
             ) : (
               <>
-                {bulkActionConfirm === 'approve' ? 'Approve' : 'Reject'} {filterCounts?.unreviewed ?? 0} pending{' '}
+                {bulkActionConfirm === 'approve' ? 'Approve' : 'Reject'}{' '}
+                {(filterCounts?.unreviewed ?? 0).toLocaleString()} pending{' '}
                 {(filterCounts?.unreviewed ?? 0) === 1 ? 'change' : 'changes'} in{' '}
                 {selectedFolderPath?.split('/').filter(Boolean).pop() ?? 'this folder'}?
               </>
@@ -3022,8 +3027,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               published state. This cannot be undone.
             </Text13Regular>
             <Text12Regular c="var(--fg-muted)" mt="xs">
-              {filterCounts?.unreviewed ?? 0} pending + {filterCounts?.unpublished ?? 0} approved ={' '}
-              {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0)} changes will be discarded.
+              {(filterCounts?.unreviewed ?? 0).toLocaleString()} pending +{' '}
+              {(filterCounts?.unpublished ?? 0).toLocaleString()} approved ={' '}
+              {((filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0)).toLocaleString()} changes will be
+              discarded.
             </Text12Regular>
           </>
         )}

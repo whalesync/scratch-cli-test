@@ -90,7 +90,7 @@ function SectionLabel({ children, count }: { children: React.ReactNode; count: n
         {children}
       </Text12Medium>
       <Text12Regular c="var(--fg-muted)" style={{ opacity: 0.7 }}>
-        · {count}
+        · {count.toLocaleString()}
       </Text12Regular>
     </Group>
   );

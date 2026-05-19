@@ -340,7 +340,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
         value: row.fieldName,
         label: row.displayLabel ?? row.fieldName,
       })),
-      { value: VIEW_ALL_VALUE, label: `All fields (${rows.length})` },
+      { value: VIEW_ALL_VALUE, label: `All fields (${rows.length.toLocaleString()})` },
     ];
     const focusedViolations = validationWarnings?.get(focusedRow.fieldName);
     const focusedHasError = focusedViolations?.some((v) => v.level === 'error');

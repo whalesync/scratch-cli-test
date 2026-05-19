@@ -245,7 +245,7 @@ export function PullInProgressModal({
             <Box>
               <Group justify="space-between" mb={4}>
                 <Text12Regular c="dimmed">
-                  {completedCount} / {jobs.length} pull jobs complete
+                  {completedCount.toLocaleString()} / {jobs.length.toLocaleString()} pull jobs complete
                 </Text12Regular>
                 {phase === 'done' && (
                   <Badge color="green" size="xs">

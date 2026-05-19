@@ -261,7 +261,7 @@ export function WorkspacePageDebug() {
       const unreviewed = await fetchUnreviewedChanges();
       if (unreviewed.length > 0) {
         const confirmed = await confirm(
-          `${unreviewed.length} records with unreviewed changes will not be published. Continue?`,
+          `${unreviewed.length.toLocaleString()} records with unreviewed changes will not be published. Continue?`,
         );
         if (!confirmed) {
           return;
@@ -550,7 +550,8 @@ export function WorkspacePageDebug() {
 
           <Group justify="space-between">
             <Text size="sm" c="dimmed">
-              {unreviewedEntries.length} unreviewed record change{unreviewedEntries.length === 1 ? '' : 's'}
+              {unreviewedEntries.length.toLocaleString()} unreviewed record change
+              {unreviewedEntries.length === 1 ? '' : 's'}
             </Text>
             <Button onClick={() => void handleAcceptAllChanges()} loading={acceptingAll}>
               Accept all changes
@@ -611,7 +612,7 @@ export function WorkspacePageDebug() {
           )}
 
           <Text size="sm" c="dimmed">
-            {unpushedEntries.length} unpushed change{unpushedEntries.length === 1 ? '' : 's'}
+            {unpushedEntries.length.toLocaleString()} unpushed change{unpushedEntries.length === 1 ? '' : 's'}
           </Text>
         </Stack>
       </Modal>
@@ -834,7 +835,7 @@ export function WorkspacePageDebug() {
           Created: {new Date(workspace.createdAt).toLocaleDateString()}
         </Text>
         <Text size="sm" c="dimmed">
-          Folders: {folderCount}
+          Folders: {folderCount.toLocaleString()}
         </Text>
       </Box>
 

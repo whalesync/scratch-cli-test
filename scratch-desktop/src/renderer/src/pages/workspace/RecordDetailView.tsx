@@ -791,7 +791,7 @@ export const RecordDetailView = memo(function RecordDetailView({
             style={{ padding: '6px 12px', borderBottom: '0.5px solid var(--fg-divider)' }}
           >
             <Text12Regular c="var(--fg-muted)" style={{ flex: 1 }}>
-              {selectedIndex + 1} of {rows.length}
+              {(selectedIndex + 1).toLocaleString()} of {rows.length.toLocaleString()}
             </Text12Regular>
             <IconButtonGhost
               size="compact-xs"
@@ -1213,7 +1213,8 @@ export const RecordDetailView = memo(function RecordDetailView({
                               </>
                             ) : (
                               <>
-                                {hiddenCount} more {hiddenCount === 1 ? 'field' : 'fields'} hidden in view
+                                {hiddenCount.toLocaleString()} more {hiddenCount === 1 ? 'field' : 'fields'} hidden in
+                                view
                                 {' \u2022 '}
                                 <UnstyledButton
                                   component="span"

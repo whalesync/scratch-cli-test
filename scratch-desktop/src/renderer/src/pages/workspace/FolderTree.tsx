@@ -288,7 +288,7 @@ function FolderTreeNodeRow({
 
         {node.folder != null && node.folder.fileCount > 0 && (
           <Text12Regular c="var(--fg-muted)" style={{ flexShrink: 0 }}>
-            {node.folder.fileCount}
+            {node.folder.fileCount.toLocaleString()}
           </Text12Regular>
         )}
 
