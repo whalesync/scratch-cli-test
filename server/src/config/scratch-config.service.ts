@@ -133,9 +133,13 @@ export class ScratchConfigService {
 
   /**
    * When true, API token requests bypass rate limiting as if every token had the `rate-limit:unlimited` scope.
+   *
+   * Defaults to true in development so the local server doesn't 429 on integration drivers,
+   * dogfooding sessions, or rapid manual workflows. Test/staging/production default to false;
+   * the env var still wins either way.
    */
   isApiRateLimitDisabled(): boolean {
-    return this.getOptionalFlagVariable('API_RATE_LIMIT_DISABLED', false);
+    return this.getOptionalFlagVariable('API_RATE_LIMIT_DISABLED', this.getScratchEnvironment() === 'development');
   }
 
   getLinearApiKey(): string | undefined {
