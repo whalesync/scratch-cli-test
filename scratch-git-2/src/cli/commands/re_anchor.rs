@@ -181,6 +181,48 @@ fn is_noop_against(entry: &AnchoredPatch, new: Option<&JsonValue>) -> bool {
     }
 }
 
+/// Compute an `AnchoredPatch` for a single file from a `(snapshot, working)`
+/// pair. The snapshot is the file's content as of the last server-known
+/// state (post-Phase-5: `refs/heads/main`); working is the user's worktree
+/// content. Returns `None` when the file is unchanged.
+///
+/// Maps to the four valid transitions:
+///
+///   - snapshot=None, working=None → no change
+///   - snapshot=Some, working=Some, equal → no change
+///   - snapshot=None, working=Some → Create (patch = the working content)
+///   - snapshot=Some, working=None → Delete (patch = null)
+///   - snapshot=Some, working=Some, different → Update (patch = `diff(snap, work)`)
+///
+/// Used by the accept-time path: every accept / accept-field / accept-all
+/// flows through this to produce the entry written into
+/// `accepted-patches.json`.
+pub fn compute_entry(
+    path: &str,
+    snapshot: Option<&JsonValue>,
+    working: Option<&JsonValue>,
+) -> Option<AnchoredPatch> {
+    match (snapshot, working) {
+        (None, None) => None,
+        (Some(s), Some(w)) if s == w => None,
+        (Some(_), None) => Some(AnchoredPatch {
+            path: path.to_string(),
+            kind: PatchKind::Delete,
+            patch: JsonValue::Null,
+        }),
+        (None, Some(w)) => Some(AnchoredPatch {
+            path: path.to_string(),
+            kind: PatchKind::Create,
+            patch: w.clone(),
+        }),
+        (Some(s), Some(w)) => merge_patch::diff(s, w).map(|p| AnchoredPatch {
+            path: path.to_string(),
+            kind: PatchKind::Update,
+            patch: p,
+        }),
+    }
+}
+
 /// Re-anchor a batch of patches. `old_at` and `new_at` look up file content
 /// per path; either may return an error which is propagated.
 pub fn re_anchor_patches<F1, F2>(
@@ -667,5 +709,54 @@ mod tests {
     fn helper_constructors_compile() {
         let _ = create("p", json!({}));
         let _ = delete("p");
+    }
+
+    // ── compute_entry ──────────────────────────────────────────────────────
+
+    #[test]
+    fn compute_entry_unchanged_returns_none() {
+        let v = json!({"a": 1});
+        assert_eq!(compute_entry("p", Some(&v), Some(&v)), None);
+        assert_eq!(compute_entry("p", None, None), None);
+    }
+
+    #[test]
+    fn compute_entry_creates_when_snapshot_absent() {
+        let w = json!({"name": "Acme"});
+        assert_eq!(
+            compute_entry("p", None, Some(&w)),
+            Some(AnchoredPatch {
+                path: "p".into(),
+                kind: PatchKind::Create,
+                patch: json!({"name": "Acme"}),
+            })
+        );
+    }
+
+    #[test]
+    fn compute_entry_deletes_when_working_absent() {
+        let s = json!({"a": 1});
+        assert_eq!(
+            compute_entry("p", Some(&s), None),
+            Some(AnchoredPatch {
+                path: "p".into(),
+                kind: PatchKind::Delete,
+                patch: JsonValue::Null,
+            })
+        );
+    }
+
+    #[test]
+    fn compute_entry_updates_with_merge_patch() {
+        let s = json!({"a": 1, "b": 2});
+        let w = json!({"a": 9, "b": 2});
+        assert_eq!(
+            compute_entry("p", Some(&s), Some(&w)),
+            Some(AnchoredPatch {
+                path: "p".into(),
+                kind: PatchKind::Update,
+                patch: json!({"a": 9}),
+            })
+        );
     }
 }

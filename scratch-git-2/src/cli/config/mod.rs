@@ -1,3 +1,4 @@
+pub mod accepted_patches;
 pub mod credentials;
 pub mod markers;
 pub mod project_config;
