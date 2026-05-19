@@ -15,7 +15,6 @@
  */
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const readline = require("node:readline/promises");
@@ -24,17 +23,13 @@ const dotenv = require("dotenv");
 
 dotenv.config({ path: path.resolve(__dirname, "../driver.env"), quiet: true });
 
-const JOB_POLL_INTERVAL_MS = 1_000;
-const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1_000;
-const JOB_POLL_NETWORK_RETRY_LIMIT = 10;
 const POSTS_TABLE_NAME = "posts";
 
 const VALID_BREAKPOINTS = new Set([
   "nowhere",
   "everywhere",
   "records-edited",
-  "publish-plan-created",
-  "publish-queued",
+  "upload-complete",
 ]);
 
 // ── Argument parsing ────────────────────────────────────────────────────────
@@ -102,7 +97,8 @@ function printHelp() {
 Usage: node scripts/driver-push.js [options]
 
 Re-edits local record files in an existing driver workspace and runs
-the full publish pipeline: accept-all → plan-publish → upload → publish-from-git.
+the full publish pipeline: accept-all → upload (via /upload-patch) → publish
+(via /publish-v2/plan-job + /run-job).
 
 Use after driver-setup has set up a workspace (--no-cleanup or --pause).
 
@@ -112,8 +108,7 @@ Options:
                              nowhere            Never pause (default)
                              everywhere         Pause after every step
                              records-edited     After local JSON files re-mutated
-                             publish-plan-created After plan-publish runs
-                             publish-queued     After publish-from-git, job IDs known
+                             upload-complete    After files upload runs, before files publish
   --stop=<mode>            Exit cleanly at a breakpoint (same step names as --pause)
   --no-edit                Skip the re-edit step — use when you've edited files manually
   --server-url <url>       Override SCRATCH_API_URL
@@ -276,122 +271,8 @@ function editLocalRecords(workspaceDir, runName) {
   return touched;
 }
 
-function extractJobIds(stdout) {
-  const matches = Array.from(
-    stdout.matchAll(/jobId:\s*([^) \n]+)/g),
-    (match) => match[1],
-  );
-  return Array.from(new Set(matches));
-}
-
-function readApiToken(serverUrl) {
-  const credsPath = path.join(os.homedir(), ".scratchmd", "credentials.yaml");
-  if (!fs.existsSync(credsPath)) {
-    throw new Error(
-      `No CLI credentials found at ${credsPath}. Run scratchmd-local auth login first.`,
-    );
-  }
-
-  const hostname = new URL(serverUrl).hostname;
-  const content = fs.readFileSync(credsPath, "utf8");
-
-  function escapeRegex(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  const blockRegex = new RegExp(
-    `^\\s{2}${escapeRegex(hostname)}:\\s*$([\\s\\S]*?)(?=^\\s{2}\\S|\\Z)`,
-    "m",
-  );
-  const defaultRegex = /^  default:\s*$([\s\S]*?)(?=^  \S|\Z)/m;
-  const blockMatch = content.match(blockRegex) || content.match(defaultRegex);
-  if (!blockMatch) {
-    throw new Error(
-      `No CLI credentials entry found for ${hostname} in ${credsPath}.`,
-    );
-  }
-
-  const tokenMatch = blockMatch[1].match(
-    /^\s{4}apiToken:\s*"?([^"\n]+)"?\s*$/m,
-  );
-  if (!tokenMatch) {
-    throw new Error(`apiToken missing for ${hostname} in ${credsPath}.`);
-  }
-
-  return tokenMatch[1].trim();
-}
-
-async function waitForJobs(serverUrl, apiToken, jobIds) {
-  const start = Date.now();
-  let lastSummary = "";
-  let consecutiveNetworkFailures = 0;
-
-  while (Date.now() - start < JOB_POLL_TIMEOUT_MS) {
-    let response;
-    try {
-      response = await fetch(
-        `${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `API-Token ${apiToken}`,
-            "User-Agent": "Scratch-cli/1.0",
-          },
-          body: JSON.stringify({ jobIds }),
-        },
-      );
-      consecutiveNetworkFailures = 0;
-    } catch (error) {
-      consecutiveNetworkFailures += 1;
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `[jobs] bulk-status poll failed (${consecutiveNetworkFailures}/${JOB_POLL_NETWORK_RETRY_LIMIT}): ${message}`,
-      );
-
-      if (consecutiveNetworkFailures >= JOB_POLL_NETWORK_RETRY_LIMIT) {
-        throw new Error(`Job polling failed repeatedly: ${message}`);
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-      continue;
-    }
-
-    if (!response.ok) {
-      throw new Error(`Job polling failed with HTTP ${response.status}`);
-    }
-
-    const statuses = await response.json();
-    const byId = new Map(statuses.map((job) => [job.bullJobId, job]));
-    const hydrated = jobIds.map(
-      (jobId) => byId.get(jobId) || { bullJobId: jobId, state: "created" },
-    );
-    const summary = hydrated
-      .map((job) => `${job.bullJobId}:${job.state}`)
-      .join(", ");
-
-    if (summary !== lastSummary) {
-      console.log(`[jobs] ${summary}`);
-      lastSummary = summary;
-    }
-
-    if (hydrated.every((job) => job.state === "completed")) return hydrated;
-
-    if (
-      hydrated.some((job) =>
-        ["failed", "canceled", "unknown"].includes(job.state),
-      )
-    ) {
-      throw new Error(`One or more jobs failed: ${summary}`);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-  }
-
-  throw new Error(
-    `Timed out waiting for publish job completion after ${JOB_POLL_TIMEOUT_MS / 1000}s`,
-  );
-}
+// (extractJobIds / readApiToken / waitForJobs removed: `scratchmd files
+// publish` polls jobs internally and exits non-zero on failure.)
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -430,7 +311,6 @@ async function main() {
   const binary = resolveBinary(
     cliArgs.binary || process.env.SCRATCH_CLI_BINARY,
   );
-  const apiToken = readApiToken(serverUrl);
   const runName = makeRunName();
 
   printSection("Re-edit configuration");
@@ -477,48 +357,26 @@ async function main() {
     noJson: true,
   });
 
-  printSection("Create publish plan");
-  runCli(binary, serverUrl, ["plan-publish"], {
-    cwd: workspaceDir,
-    noJson: true,
-  });
-
-  stopIfNeeded(cliArgs.stop, "publish-plan-created", "Publish plan created", [
-    `Workspace: ${workspaceDir}`,
-  ]);
-  await pauseIfNeeded(
-    cliArgs.pause,
-    "publish-plan-created",
-    "Publish plan created",
-    [`Workspace: ${workspaceDir}`],
-  );
-
   printSection("Upload reviewed changes");
   runCli(binary, serverUrl, ["files", "upload"], {
     cwd: workspaceDir,
     noJson: true,
   });
 
-  printSection("Trigger publish-from-git");
-  const publishResult = runCli(binary, serverUrl, ["publish-from-git"], {
+  stopIfNeeded(cliArgs.stop, "upload-complete", "Upload complete", [
+    `Workspace: ${workspaceDir}`,
+  ]);
+  await pauseIfNeeded(cliArgs.pause, "upload-complete", "Upload complete", [
+    `Workspace: ${workspaceDir}`,
+  ]);
+
+  printSection("Publish accepted changes");
+  // `files publish` drives `/publish-v2/plan-job` then `/run-job` per
+  // connection and polls each to terminal internally.
+  runCli(binary, serverUrl, ["files", "publish"], {
     cwd: workspaceDir,
     noJson: true,
   });
-  const jobIds = extractJobIds(publishResult.stdout);
-  if (jobIds.length === 0) {
-    throw new Error("publish-from-git did not return any job IDs");
-  }
-  console.log(`Queued job IDs: ${jobIds.join(", ")}`);
-
-  stopIfNeeded(cliArgs.stop, "publish-queued", "Publish job queued", [
-    `Job IDs: ${jobIds.join(", ")}`,
-  ]);
-  await pauseIfNeeded(cliArgs.pause, "publish-queued", "Publish job queued", [
-    `Job IDs: ${jobIds.join(", ")}`,
-  ]);
-
-  printSection("Wait for publish job completion");
-  await waitForJobs(serverUrl, apiToken, jobIds);
   console.log("All publish jobs completed.");
 
   console.log(`\nRe-edit cycle completed. Run name: ${runName}`);

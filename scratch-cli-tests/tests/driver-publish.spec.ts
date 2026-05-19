@@ -3,8 +3,9 @@
  *
  * The driver script is an opinionated scenario runner that works with two related
  * Postgres tables — authors and posts (posts.authorId FK → authors.id) — and
- * exercises the full publish-from-git cycle: seed DB, create workbook, pull records
- * locally, make changes, accept + upload, trigger publish, wait, download, verify.
+ * exercises the full publish cycle: seed DB, create workbook, pull records
+ * locally, make changes, accept, upload via /upload-patch, drive
+ * /publish-v2/plan-job + /run-job to completion, download, verify.
  *
  * All assertions are internal to the driver: if it exits 0 the scenario passed.
  * Run it directly with --no-cleanup --pause=everywhere for interactive step review.

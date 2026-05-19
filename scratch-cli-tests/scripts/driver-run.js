@@ -13,9 +13,6 @@ dotenv.config({ path: path.resolve(__dirname, "../driver.env"), quiet: true });
 
 const POSTS_TABLE_NAME = "posts";
 const AUTHORS_TABLE_NAME = "authors";
-const JOB_POLL_INTERVAL_MS = 1_000;
-const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1_000;
-const JOB_POLL_NETWORK_RETRY_LIMIT = 10;
 
 function parseArgs(argv) {
   const args = {
@@ -150,8 +147,9 @@ function printHelp() {
 Usage: node scripts/driver-run.js [options]
 
 Creates a fresh workbook and a fresh Postgres database, pulls records locally,
-edits them, accepts the changes, uploads them, triggers publish-from-git, and
-waits for the publish job to complete.
+edits them, accepts the changes, uploads them via /upload-patch, and runs
+"scratchmd files publish" to drive /publish-v2/plan-job + /run-job to
+completion per connection.
 
 Options:
   --pause=<mode>           Pause interactively at a breakpoint (waits for Enter then continues). Modes:
@@ -164,9 +162,7 @@ Options:
                              records-deleted  After local JSON files are deleted, before local accept
                              records-created  After new local JSON files are created, before local accept
                              remote-dirty-commit Before injecting a remote dirty commit
-                             publish-plan-created After plan-publish runs, before files upload
-                             upload-complete  After files upload runs and approved local files are checked, before publish-from-git
-                             publish-queued   After publish-from-git, job IDs known, before job wait
+                             upload-complete  After files upload runs and approved local files are checked, before files publish
                              remote-verified  After remote DB verification, before local-state verification
                              local-download-complete After the post-publish local files download, before remote DB verification
   --stop=<mode>            Exit cleanly at a breakpoint (same step names as --pause)
@@ -391,13 +387,15 @@ function runCommand(command, args, options = {}) {
   if (result.error) {
     throw result.error;
   }
-  if (typeof result.status === "number" && result.status !== 0) {
-    throw new Error(`Command failed with exit ${result.status}: ${full}`);
+  const exitStatus = typeof result.status === "number" ? result.status : null;
+  if (exitStatus !== null && exitStatus !== 0 && !options.allowFailure) {
+    throw new Error(`Command failed with exit ${exitStatus}: ${full}`);
   }
 
   return {
     stdout: result.stdout || "",
     stderr: result.stderr || "",
+    exitStatus,
   };
 }
 
@@ -1326,87 +1324,6 @@ function tableIdArgs(tableId) {
     .flatMap((part) => ["--table-id", part]);
 }
 
-async function waitForJobs(serverUrl, apiToken, jobIds, options = {}) {
-  const { allowFailure = false } = options;
-  const start = Date.now();
-  let lastSummary = "";
-  let consecutiveNetworkFailures = 0;
-
-  while (Date.now() - start < JOB_POLL_TIMEOUT_MS) {
-    let response;
-    try {
-      response = await fetch(
-        `${serverUrl.replace(/\/$/, "")}/jobs/bulk-status`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `API-Token ${apiToken}`,
-            "User-Agent": "Scratch-cli/1.0",
-          },
-          body: JSON.stringify({ jobIds }),
-        },
-      );
-      consecutiveNetworkFailures = 0;
-    } catch (error) {
-      consecutiveNetworkFailures += 1;
-      const message =
-        error instanceof Error
-          ? `${error.message}${error.cause ? ` (cause: ${String(error.cause)})` : ""}`
-          : String(error);
-      console.warn(
-        `[jobs] bulk-status poll failed (${consecutiveNetworkFailures}/${JOB_POLL_NETWORK_RETRY_LIMIT}): ${message}`,
-      );
-
-      if (consecutiveNetworkFailures >= JOB_POLL_NETWORK_RETRY_LIMIT) {
-        throw new Error(`Job polling failed repeatedly: ${message}`);
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-      continue;
-    }
-
-    if (!response.ok) {
-      throw new Error(`Job polling failed with HTTP ${response.status}`);
-    }
-
-    const statuses = await response.json();
-    const byId = new Map(statuses.map((job) => [job.bullJobId, job]));
-    const hydrated = jobIds.map(
-      (jobId) => byId.get(jobId) || { bullJobId: jobId, state: "created" },
-    );
-    const summary = hydrated
-      .map((job) => `${job.bullJobId}:${job.state}`)
-      .join(", ");
-
-    if (summary !== lastSummary) {
-      console.log(`[jobs] ${summary}`);
-      lastSummary = summary;
-    }
-
-    if (hydrated.every((job) => job.state === "completed")) {
-      return hydrated;
-    }
-
-    if (
-      hydrated.some((job) =>
-        ["failed", "canceled", "unknown"].includes(job.state),
-      )
-    ) {
-      if (allowFailure) {
-        return hydrated;
-      }
-      throw new Error(`One or more jobs failed: ${summary}`);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
-  }
-
-  throw new Error(
-    `Timed out waiting for publish job completion after ${JOB_POLL_TIMEOUT_MS / 1000}s`,
-  );
-}
-
 async function ensureServerHealthy(serverUrl) {
   const response = await fetch(`${serverUrl.replace(/\/$/, "")}/health`);
   if (!response.ok) {
@@ -1414,14 +1331,6 @@ async function ensureServerHealthy(serverUrl) {
       `Scratch server health check failed with HTTP ${response.status} at ${serverUrl}/health`,
     );
   }
-}
-
-function extractJobIds(stdout) {
-  const matches = Array.from(
-    stdout.matchAll(/jobId:\s*([^) \n]+)/g),
-    (match) => match[1],
-  );
-  return Array.from(new Set(matches));
 }
 
 const VALID_BREAKPOINTS = new Set([
@@ -1434,9 +1343,7 @@ const VALID_BREAKPOINTS = new Set([
   "records-deleted",
   "records-created",
   "remote-dirty-commit",
-  "publish-plan-created",
   "upload-complete",
-  "publish-queued",
   "remote-verified",
   "local-download-complete",
 ]);
@@ -1980,27 +1887,7 @@ async function main() {
       changeRemoteDirty(state.workspaceDir, remoteDirtyRecord, apiToken);
     }
 
-    printSection("Create publish plan");
-    await checkpointIfNeeded(
-      cliArgs.stop,
-      cliArgs.pause,
-      "__create-publish-plan",
-      "Create publish plan",
-      [`Workspace: ${state.workspaceDir}`],
-    );
-    runCli(binary, serverUrl, ["plan-publish"], {
-      cwd: state.workspaceDir,
-      noJson: true,
-    });
-
     printSection("Upload reviewed changes");
-    await checkpointIfNeeded(
-      cliArgs.stop,
-      cliArgs.pause,
-      "publish-plan-created",
-      "Upload reviewed changes",
-      [`Workspace: ${state.workspaceDir}`],
-    );
     const expectedAcceptedNames = captureExpectedNames(acceptedFiles);
     const expectedAcceptedLastUpdatedById =
       captureExpectedLastUpdatedById(acceptedEditedFiles);
@@ -2045,12 +1932,12 @@ async function main() {
       );
     }
 
-    printSection("Trigger publish-from-git");
+    printSection("Publish accepted changes");
     await checkpointIfNeeded(
       cliArgs.stop,
       cliArgs.pause,
       "upload-complete",
-      "Trigger publish-from-git",
+      "Publish accepted changes",
       [
         `Approved files: ${acceptedFiles.length + acceptedDeletedEntries.length}`,
         `Preserved: ${uploadCheck.preserved.length}`,
@@ -2058,35 +1945,17 @@ async function main() {
         `Missing: ${uploadCheck.missing.length}`,
       ],
     );
-    const publishResult = runCli(binary, serverUrl, ["publish-from-git"], {
+    // `scratchmd files publish` drives `/publish-v2/plan-job` then `/run-job`
+    // per connection and polls each to terminal internally. Non-zero exit means
+    // a job failed; for `--failing-edit-record` runs we expect that.
+    const publishResult = runCli(binary, serverUrl, ["files", "publish"], {
       cwd: state.workspaceDir,
       noJson: true,
-    });
-    const jobIds = extractJobIds(publishResult.stdout);
-    if (jobIds.length === 0) {
-      throw new Error("publish-from-git did not return any job IDs");
-    }
-    console.log(`Queued job IDs: ${jobIds.join(", ")}`);
-
-    printSection("Wait for publish job completion");
-    await checkpointIfNeeded(
-      cliArgs.stop,
-      cliArgs.pause,
-      "publish-queued",
-      "Wait for publish job completion",
-      [`Job IDs: ${jobIds.join(", ")}`],
-    );
-    const jobStatuses = await waitForJobs(serverUrl, apiToken, jobIds, {
       allowFailure: failingEditRecord !== null,
     });
-    const failedJobs = jobStatuses.filter((job) =>
-      ["failed", "canceled", "unknown"].includes(job.state),
-    );
-    if (failedJobs.length > 0) {
+    if (publishResult.exitStatus !== 0) {
       console.log(
-        `Publish reached terminal failure state for ${failedJobs.length} job(s): ${failedJobs
-          .map((job) => `${job.bullJobId}:${job.state}`)
-          .join(", ")}`,
+        `Publish reached terminal failure state (exit ${publishResult.exitStatus}).`,
       );
     } else {
       console.log("All publish jobs completed.");
