@@ -38,7 +38,7 @@ Scratch pulls records from external services (Airtable, Webflow, Hubspot, Shopif
 Once your local agent has made changes, open the Scratch desktop app to review the diff. A person reviews and approves the changes, then publishes them back to the original service (e.g. creates or updates Webflow items).
 
 - [How files are organised](.scratch/docs/structure.md)
-- [Schema files (field definitions)](.scratch/docs/schema.md)
+- [Schema files (field definitions). Must read before editing records!](.scratch/docs/schema.md)
 - [Editing data (creating, updating, deleting records)](.scratch/docs/editing-data.md)
 - [Validation (checking records before publish)](.scratch/docs/validations.md)
 - [CLI command reference](.scratch/docs/commands.md)
@@ -140,12 +140,16 @@ Each table has a `schema.json` file that describes its fields.
 These files are **read-only** — they are generated from the CMS field definitions
 and will be overwritten on the next pull.
 
-The schema is written using JSON Schema notation, with some custom extensions:
-- x-scratch-readonly: indicates the field's data MUST NOT be modified
+The schema is written using JSON Schema notation, with some important extensions:
+- x-scratch-readonly: indicates the field's data MUST NOT be modified.
 - x-scratch-connector-data-type: the service-specific type for the field, use only for context
 
 Records may contain additional fields that not documented in the schema file. Those should be
 treated as read-only unless explicitly instructed otherwise by the user.
+
+Often, different representations of the same data will be present in multiple fields (ex: body_raw,
+body_html, body_rendered, body_preview). Do not edit any fields with `x-scratch-readonly: true`
+set; those fields are derived from the one field that is writable.
 
 
 ## Location
