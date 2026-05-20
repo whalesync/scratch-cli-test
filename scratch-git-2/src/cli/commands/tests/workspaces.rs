@@ -70,45 +70,27 @@ fn derive_workbook_org_id_prefers_workbook_field_then_repo_path_prefix() {
 }
 
 #[test]
-fn include_schemas_then_sync_copies_schema_into_scratch_dir() {
+fn sync_schema_files_from_worktree_copies_schema_and_view_into_cache() {
+    // Post-slice-F: the user-facing worktree is non-sparse on `main`, so
+    // schemas + views live natively at `<worktree>/.scratch/<folder>/`.
+    // `sync_schema_files_from_worktree_paths` copies them into the per-
+    // connection cache `<workspace>/.scratch/connections/scratch/<conn>/`
+    // for the broader codebase's readers (validators, plan_publish, index).
     let tmp = TempDir::new().unwrap();
-    let source_dir = tmp.path().join("source");
-    let bare_dir = tmp.path().join("repo.git");
-    let master_dir = tmp.path().join("master");
+    let worktree_dir = tmp.path().join("HubSpot");
     let scratch_dir = tmp.path().join("scratch");
-
-    // Create a source repo with data + schema on the main branch.
-    run_git(tmp.path(), &["init", "source"]);
-    run_git(&source_dir, &["checkout", "-b", "main"]);
     write_file(
-        &source_dir.join(".scratch/Posts/schema.json"),
+        &worktree_dir.join(".scratch/Posts/schema.json"),
         r#"{"type":"object","properties":{"title":{"type":"string"}}}"#,
     );
     write_file(
-        &source_dir.join(".scratch/Posts/views/default.json"),
+        &worktree_dir.join(".scratch/Posts/views/default.json"),
         r#"{"name":"Default","cols":[]}"#,
     );
-    write_file(&source_dir.join("Posts/rec1.json"), r#"{"id":"rec1"}"#);
-    commit_all(&source_dir, "initial with schema and view");
+    write_file(&worktree_dir.join("Posts/rec1.json"), r#"{"id":"rec1"}"#);
 
-    // Push to a bare repo.
-    run_git(tmp.path(), &["init", "--bare", "repo.git"]);
-    run_git(
-        &source_dir,
-        &["remote", "add", "origin", bare_dir.to_str().unwrap()],
-    );
-    run_git(&source_dir, &["push", "origin", "main:main"]);
-
-    // Create a sparse master worktree (excludes .scratch/ by default).
-    git_checkout_branch_from_bare(&bare_dir, "main", &master_dir).unwrap();
-    assert!(
-        !master_dir.join(".scratch").exists(),
-        ".scratch/ should be excluded before include_schemas_in_sparse_checkout"
-    );
-
-    // Include schemas and views, then sync them.
-    include_schemas_in_sparse_checkout(&master_dir).unwrap();
-    sync_schema_files_from_master_checkout(&master_dir, &scratch_dir).unwrap();
+    crate::shared::review_ops::sync_schema_files_from_worktree_paths(&worktree_dir, &scratch_dir)
+        .unwrap();
 
     let schema_path = scratch_dir.join("Posts/schema.json");
     assert!(
@@ -212,31 +194,43 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
 
     let conn_dir_name = "My CMS";
 
-    // ── Assert: data files appear in the dirty checkout ──
-    let dirty_dir = workspace_dir.join(conn_dir_name);
+    // ── Assert: data files appear in the user-facing worktree ──
+    let worktree_dir = workspace_dir.join(conn_dir_name);
     assert!(
-        dirty_dir.join("Posts/hello-world.json").exists(),
-        "data file should exist in dirty checkout"
+        worktree_dir.join("Posts/hello-world.json").exists(),
+        "data file should exist in main worktree"
     );
     assert!(
-        dirty_dir.join("Posts/second-post.json").exists(),
-        "data file should exist in dirty checkout"
-    );
-
-    // ── Assert: .scratch/ is NOT in the dirty checkout (sparse checkout excludes it) ──
-    assert!(
-        !dirty_dir.join(".scratch").exists(),
-        ".scratch/ should be excluded from sparse dirty checkout"
+        worktree_dir.join("Posts/second-post.json").exists(),
+        "data file should exist in main worktree"
     );
 
-    // ── Assert: schema lands in connections/scratch/ (read by desktop app) ──
+    // ── Post-slice-F: .scratch/ IS in the non-sparse main worktree ──
+    assert!(
+        worktree_dir.join(".scratch/Posts/schema.json").exists(),
+        ".scratch/Posts/schema.json should be checked out in the non-sparse main worktree",
+    );
+    assert!(
+        worktree_dir
+            .join(".scratch/Posts/views/default.json")
+            .exists(),
+        ".scratch/Posts/views/default.json should be checked out in the non-sparse main worktree",
+    );
+
+    // ── Post-slice-F: no sparse-checkout config left behind ──
+    assert!(
+        !worktree_dir.join(".git/info/sparse-checkout").exists(),
+        ".git/info/sparse-checkout should NOT exist on a non-sparse worktree",
+    );
+
+    // ── Assert: schema lands in connections/scratch/ (cache read by desktop app) ──
     let schema_path = workspace_dir
         .join(".scratch/connections/scratch")
         .join(conn_dir_name)
         .join("Posts/schema.json");
     assert!(
         schema_path.exists(),
-        "schema.json should exist at {}",
+        "schema.json should exist in cache at {}",
         schema_path.display()
     );
     assert_eq!(
@@ -244,24 +238,13 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
         schema_content,
     );
 
-    // ── Assert: master worktree exists with data ──
+    // ── Post-slice-F: NO master worktree at .scratch/connections/master/ ──
     let master_dir = workspace_dir
         .join(".scratch/connections/master")
         .join(conn_dir_name);
     assert!(
-        master_dir.join("Posts/hello-world.json").exists(),
-        "data file should exist in master worktree"
-    );
-    // .scratch/ in master contains schema and view files (included via sparse-checkout add)
-    assert!(
-        master_dir.join(".scratch/Posts/schema.json").exists(),
-        "schema.json should be included in master worktree via sparse checkout"
-    );
-    assert!(
-        master_dir
-            .join(".scratch/Posts/views/default.json")
-            .exists(),
-        "views/default.json should be included in master worktree via sparse checkout"
+        !master_dir.exists(),
+        "master worktree should NOT be created post-slice-F",
     );
 
     // ── Assert: view file lands in connections/scratch/ alongside schema ──
@@ -271,17 +254,17 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
         .join("Posts/views/default.json");
     assert!(
         view_path.exists(),
-        "views/default.json should exist at {}",
+        "views/default.json should exist in cache at {}",
         view_path.display()
     );
     assert_eq!(std::fs::read_to_string(&view_path).unwrap(), view_content,);
 
     // ── Assert: reviewed-dirty worktree is NOT created (removed in Phase 3 of DEV-10144) ──
-    let reviewed_dirty_dir = workspace_dir
+    let reviewed_worktree_dir = workspace_dir
         .join(".scratch/connections/dirty")
         .join(conn_dir_name);
     assert!(
-        !reviewed_dirty_dir.exists(),
+        !reviewed_worktree_dir.exists(),
         "reviewed-dirty worktree should not be created at init"
     );
 
@@ -293,6 +276,20 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
     assert!(
         workspace_dir.join(".scratch/workspace").exists(),
         ".scratch/workspace/ should exist"
+    );
+
+    // ── Slice F.2.b idempotency: re-running init against the same workspace
+    //    succeeds without duplicate work. The worktree, bare repo, and
+    //    schema cache remain valid; no error bubbles up.
+    init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token")
+        .expect("re-init on existing workspace should be a no-op");
+    assert!(
+        worktree_dir.join("Posts/hello-world.json").exists(),
+        "re-init should preserve worktree data files",
+    );
+    assert!(
+        schema_path.exists(),
+        "re-init should preserve cached schema",
     );
 }
 
@@ -463,6 +460,85 @@ connections: []
     assert_eq!(
         find_existing_workspace(tmp.path().to_str().unwrap(), "wkb_test"),
         Some(workspace_dir)
+    );
+}
+
+/// Slice F.2.b: `materialize_main_worktree` must fail loudly when the
+/// worktree directory exists but isn't a valid git worktree (no `.git`
+/// gitlink + non-empty). Silent nuke would clobber user state that a manual
+/// `workspaces unsync` could have preserved.
+#[test]
+fn materialize_main_worktree_refuses_to_overwrite_non_worktree_dir() {
+    let tmp = TempDir::new().unwrap();
+    let bare = tmp.path().join("repo.git");
+    let worktree = tmp.path().join("HubSpot");
+    let scratch = tmp.path().join(".scratch/connections/scratch/HubSpot");
+
+    // Set up a minimal bare repo with a `main` ref.
+    let source = tmp.path().join("source");
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source, &["checkout", "-b", "main"]);
+    write_file(&source.join("Posts/rec1.json"), "{}");
+    commit_all(&source, "init main");
+    run_git(tmp.path(), &["init", "--bare", "repo.git"]);
+    run_git(
+        &source,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    );
+    run_git(&source, &["push", "origin", "main:main"]);
+
+    // Plant a non-empty directory at the worktree path with no `.git` gitlink —
+    // simulates a half-broken workspace that the user (or another process)
+    // partially set up.
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(worktree.join("user-file.txt"), "preserved").unwrap();
+
+    let err = materialize_main_worktree(&bare, &worktree, &scratch)
+        .expect_err("should refuse to overwrite a non-worktree directory");
+    assert!(
+        err.to_string().contains("isn't a git worktree"),
+        "error should mention the missing gitlink, got: {err}"
+    );
+    // The user file is still on disk — nothing got clobbered.
+    assert!(
+        worktree.join("user-file.txt").exists(),
+        "the user file should not be deleted by the refusal path"
+    );
+}
+
+/// Slice F.2.b: `materialize_main_worktree` is idempotent when the worktree
+/// already exists and is valid (re-running init succeeds without rebuilding).
+#[test]
+fn materialize_main_worktree_is_idempotent_on_valid_worktree() {
+    let tmp = TempDir::new().unwrap();
+    let bare = tmp.path().join("repo.git");
+    let worktree = tmp.path().join("HubSpot");
+    let scratch = tmp.path().join(".scratch/connections/scratch/HubSpot");
+
+    let source = tmp.path().join("source");
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source, &["checkout", "-b", "main"]);
+    write_file(&source.join("Posts/rec1.json"), "{}");
+    commit_all(&source, "init main");
+    run_git(tmp.path(), &["init", "--bare", "repo.git"]);
+    run_git(
+        &source,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    );
+    run_git(&source, &["push", "origin", "main:main"]);
+
+    // First call creates the worktree.
+    materialize_main_worktree(&bare, &worktree, &scratch).unwrap();
+    assert!(worktree.join(".git").is_file(), "gitlink should exist");
+    assert!(worktree.join("Posts/rec1.json").exists());
+
+    // Plant a user edit; the second call must NOT overwrite it.
+    std::fs::write(worktree.join("Posts/rec1.json"), "{\"edit\":1}").unwrap();
+    materialize_main_worktree(&bare, &worktree, &scratch).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("Posts/rec1.json")).unwrap(),
+        "{\"edit\":1}",
+        "second materialize call should be a no-op — user edits preserved"
     );
 }
 

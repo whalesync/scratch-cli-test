@@ -37,7 +37,7 @@ fn make_connection_context(root: &Path, bare_repo: &Path) -> ConnectionContext {
     ConnectionContext {
         connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
-        dirty_dir: root.join("Conn"),
+        worktree_dir: root.join("Conn"),
         scratch_dir: root.join(".scratch/connections/scratch/Conn"),
         workspace_dir: root.to_path_buf(),
         master_dir: root.join(".scratch/connections/master/Conn"),
@@ -128,7 +128,7 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
     let ctx = ConnectionContext {
         connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
-        dirty_dir: tmp.path().join("Conn"),
+        worktree_dir: tmp.path().join("Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         workspace_dir: tmp.path().to_path_buf(),
         master_dir: tmp.path().join(".scratch/connections/master/Conn"),
@@ -136,10 +136,10 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
         db_path: tmp.path().join(".repos/conn.db"),
     };
 
-    std::fs::create_dir_all(ctx.dirty_dir.join("posts")).unwrap();
+    std::fs::create_dir_all(ctx.worktree_dir.join("posts")).unwrap();
     std::fs::create_dir_all(ctx.scratch_dir.join("posts/publish-plan-1/create")).unwrap();
     std::fs::create_dir_all(ctx.scratch_dir.join(".publish-plans/1")).unwrap();
-    std::fs::write(ctx.dirty_dir.join("posts/rec1.json"), "{}").unwrap();
+    std::fs::write(ctx.worktree_dir.join("posts/rec1.json"), "{}").unwrap();
     std::fs::write(ctx.scratch_dir.join("posts/schema.json"), "{}").unwrap();
     std::fs::write(
         ctx.scratch_dir
@@ -164,8 +164,8 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
     ]);
     materialize_local_repo(&ctx, &replacement, &map).unwrap();
 
-    assert!(ctx.dirty_dir.join("posts/next.json").exists());
-    assert!(!ctx.dirty_dir.join("posts/rec1.json").exists());
+    assert!(ctx.worktree_dir.join("posts/next.json").exists());
+    assert!(!ctx.worktree_dir.join("posts/rec1.json").exists());
     assert!(ctx.scratch_dir.join("posts/schema.json").exists());
     assert!(!ctx.scratch_dir.join(".publish-plans/1/plan.json").exists());
 }
@@ -176,7 +176,7 @@ fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
     let ctx = ConnectionContext {
         connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
-        dirty_dir: tmp.path().join("Conn"),
+        worktree_dir: tmp.path().join("Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         workspace_dir: tmp.path().to_path_buf(),
         master_dir: tmp.path().join(".scratch/connections/master/Conn"),
@@ -184,9 +184,9 @@ fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
         db_path: tmp.path().join(".repos/conn.db"),
     };
 
-    std::fs::create_dir_all(ctx.dirty_dir.join("posts")).unwrap();
-    let unchanged_path = ctx.dirty_dir.join("posts/keep.json");
-    let changed_path = ctx.dirty_dir.join("posts/edit.json");
+    std::fs::create_dir_all(ctx.worktree_dir.join("posts")).unwrap();
+    let unchanged_path = ctx.worktree_dir.join("posts/keep.json");
+    let changed_path = ctx.worktree_dir.join("posts/edit.json");
     std::fs::write(&unchanged_path, b"{\"v\":1}").unwrap();
     std::fs::write(&changed_path, b"{\"v\":1}").unwrap();
 
@@ -238,12 +238,12 @@ fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
 }
 
 #[test]
-fn sync_schema_files_from_master_restores_missing_schema() {
+fn sync_schema_files_from_worktree_restores_missing_schema() {
     let tmp = TempDir::new().unwrap();
     let ctx = ConnectionContext {
         connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
-        dirty_dir: tmp.path().join("Conn"),
+        worktree_dir: tmp.path().join("Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         workspace_dir: tmp.path().to_path_buf(),
         master_dir: tmp.path().join(".scratch/connections/master/Conn"),
@@ -251,14 +251,16 @@ fn sync_schema_files_from_master_restores_missing_schema() {
         db_path: tmp.path().join(".repos/conn.db"),
     };
 
-    std::fs::create_dir_all(ctx.master_dir.join(".scratch/posts")).unwrap();
+    // Post-slice-F source: the worktree's tracked .scratch/, not the
+    // deleted master worktree.
+    std::fs::create_dir_all(ctx.worktree_dir.join(".scratch/posts")).unwrap();
     std::fs::write(
-        ctx.master_dir.join(".scratch/posts/schema.json"),
+        ctx.worktree_dir.join(".scratch/posts/schema.json"),
         "{\"schema\":{\"fields\":[]}}",
     )
     .unwrap();
 
-    sync_schema_files_from_master(&ctx).unwrap();
+    sync_schema_files_from_worktree(&ctx).unwrap();
 
     assert_eq!(
         std::fs::read_to_string(ctx.scratch_dir.join("posts/schema.json")).unwrap(),
@@ -318,7 +320,7 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
     .unwrap();
 
     let ctx = make_connection_context(tmp.path(), &bare_repo);
-    // Set up dirty_dir as a sparse worktree (no dirty ref yet; start from empty).
+    // Set up worktree_dir as a sparse worktree (no dirty ref yet; start from empty).
     crate::git_ops::commit_file_map_to_ref(
         &bare_repo,
         "refs/heads/dirty",
@@ -327,7 +329,8 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
         "init dirty",
     )
     .unwrap();
-    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.dirty_dir, "refs/heads/dirty").unwrap();
+    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.worktree_dir, "refs/heads/dirty")
+        .unwrap();
 
     // Seed an accepted Delete for the record to restore.
     {
@@ -351,7 +354,7 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
     restore_deleted_records_locally(&ctx, &["posts/restore.json".to_string()]).unwrap();
 
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/restore.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/restore.json")).unwrap(),
         "{\"id\":\"restore\",\"name\":\"from-main\"}"
     );
     let file = load_accepted(&ctx);
@@ -434,11 +437,12 @@ fn discard_created_records_locally_drops_create_entry_and_removes_worktree_file(
     )
     .unwrap();
     let ctx = make_connection_context(tmp.path(), &bare_repo);
-    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.dirty_dir, "refs/heads/dirty").unwrap();
+    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.worktree_dir, "refs/heads/dirty")
+        .unwrap();
 
     // Working file exists; accepted-patches has the corresponding Create.
     write_file(
-        &ctx.dirty_dir.join("posts/created.json"),
+        &ctx.worktree_dir.join("posts/created.json"),
         "{\"id\":\"created\"}",
     );
     {
@@ -461,7 +465,7 @@ fn discard_created_records_locally_drops_create_entry_and_removes_worktree_file(
 
     discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap();
 
-    assert!(!ctx.dirty_dir.join("posts/created.json").exists());
+    assert!(!ctx.worktree_dir.join("posts/created.json").exists());
     let file = load_accepted(&ctx);
     assert!(
         !file.patches.iter().any(|e| e.path == "posts/created.json"),
@@ -610,7 +614,7 @@ fn file_map_changed_data_paths_handles_add_modify_delete_and_filters_scratch() {
 }
 
 #[test]
-fn update_master_worktree_returns_no_move_when_main_unchanged() {
+fn update_main_worktree_after_pull_returns_no_move_when_main_unchanged() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -623,7 +627,7 @@ fn update_master_worktree_returns_no_move_when_main_unchanged() {
     let tmp = TempDir::new().unwrap();
     let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
 
-    let result = update_master_worktree(&ctx, "test-token").unwrap();
+    let result = update_main_worktree_after_pull(&ctx, "test-token").unwrap();
     // origin/main didn't advance ⇒ no move ⇒ no per-folder work needed.
     // This is the "unchanged connection in a publish flow" case where
     // run_download wants to skip rebuild_index_for_conn entirely.
@@ -635,7 +639,7 @@ fn update_master_worktree_returns_no_move_when_main_unchanged() {
 }
 
 #[test]
-fn update_master_worktree_returns_diff_when_main_advances() {
+fn update_main_worktree_after_pull_returns_diff_when_main_advances() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -647,7 +651,7 @@ fn update_master_worktree_returns_diff_when_main_advances() {
 
     // Initial call is a no-op (main is already at origin/main from clone)
     // — still needed to materialize the worktree before the next reset.
-    let initial = update_master_worktree(&ctx, "test-token").unwrap();
+    let initial = update_main_worktree_after_pull(&ctx, "test-token").unwrap();
     assert!(!initial.moved);
 
     // Advance origin/main: add one data file, modify an existing data file,
@@ -668,7 +672,7 @@ fn update_master_worktree_returns_diff_when_main_advances() {
     commit_all(&fixture.source_dir, "advance main");
     run_git(&fixture.source_dir, &["push", "origin", "main"]);
 
-    let result = update_master_worktree(&ctx, "test-token").unwrap();
+    let result = update_main_worktree_after_pull(&ctx, "test-token").unwrap();
     assert!(result.moved, "master moved ⇒ moved=true");
     let mut paths = result.changed_paths.clone();
     paths.sort();
@@ -738,7 +742,7 @@ fn empty_conn_ctx() -> ConnectionContext {
     ConnectionContext {
         connection_id: "conn_test".to_string(),
         conn_dir_name: "Conn".to_string(),
-        dirty_dir: PathBuf::new(),
+        worktree_dir: PathBuf::new(),
         scratch_dir: PathBuf::new(),
         workspace_dir: PathBuf::new(),
         master_dir: PathBuf::new(),
@@ -1199,7 +1203,7 @@ mod field_helpers {
 
 /// Build a bare repo with two data folders (posts/, articles/) on both main and dirty,
 /// where dirty differs from main in BOTH folders. Returns the bare repo path and a
-/// connection context whose dirty_dir has been materialized from the dirty branch.
+/// connection context whose worktree_dir has been materialized from the dirty branch.
 /// Seed `accepted-patches.json` so it carries the same approved-vs-published
 /// delta the legacy fixture encoded as `dirty != main`. Tests written against
 /// the pre-B model used `refs/heads/dirty` directly; the post-B model reads
@@ -1301,10 +1305,10 @@ fn create_multi_folder_fixture() -> (TempDir, ConnectionContext) {
 
     let root = tmp.path().to_path_buf();
     let ctx = make_connection_context(&root, &bare_repo);
-    // Production creates dirty_dir as a sparse worktree (see
+    // Production creates worktree_dir as a sparse worktree (see
     // `materialize_dirty_checkout` in workspaces.rs); the reset-hard in
     // discard_all_single_repo requires that. Mirror it here.
-    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.worktree_dir, "refs/heads/dirty")
         .unwrap();
 
     (tmp, ctx)
@@ -1329,11 +1333,11 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
 
     // Pending edits in both folders on top of the seeded "approved" state.
     write_file(
-        &ctx.dirty_dir.join("posts/rec1.json"),
+        &ctx.worktree_dir.join("posts/rec1.json"),
         "{\"v\":\"pending-p1\"}",
     );
     write_file(
-        &ctx.dirty_dir.join("articles/rec1.json"),
+        &ctx.worktree_dir.join("articles/rec1.json"),
         "{\"v\":\"pending-a1\"}",
     );
 
@@ -1364,11 +1368,11 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
 
     // Worktree untouched by accept.
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec1.json")).unwrap(),
         "{\"v\":\"pending-p1\"}"
     );
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("articles/rec1.json")).unwrap(),
         "{\"v\":\"pending-a1\"}"
     );
 }
@@ -1387,7 +1391,7 @@ fn accept_all_single_repo_folder_noop_when_folder_has_no_changes() {
     // approved state (= the original dirty branch content materialized into
     // the worktree).
     write_file(
-        &ctx.dirty_dir.join("articles/rec1.json"),
+        &ctx.worktree_dir.join("articles/rec1.json"),
         "{\"v\":\"pending-a1\"}",
     );
 
@@ -1416,7 +1420,7 @@ fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
     seed_accepted_patches_from_fixture(&ctx);
 
     // Delete the scoped folder's file from the working tree.
-    std::fs::remove_file(ctx.dirty_dir.join("posts/rec1.json")).unwrap();
+    std::fs::remove_file(ctx.worktree_dir.join("posts/rec1.json")).unwrap();
 
     let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
@@ -1448,11 +1452,11 @@ fn discard_all_single_repo_folder_reverts_only_target_folder() {
 
     // Pending edits in both folders on top of the seeded approved state.
     write_file(
-        &ctx.dirty_dir.join("posts/rec1.json"),
+        &ctx.worktree_dir.join("posts/rec1.json"),
         "{\"v\":\"pending-p1\"}",
     );
     write_file(
-        &ctx.dirty_dir.join("articles/rec1.json"),
+        &ctx.worktree_dir.join("articles/rec1.json"),
         "{\"v\":\"pending-a1\"}",
     );
 
@@ -1475,13 +1479,13 @@ fn discard_all_single_repo_folder_reverts_only_target_folder() {
     // Worktree for the scoped folder should be reset to main content (read
     // back as the raw bytes the fixture committed to main).
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec1.json")).unwrap(),
         "{\"v\":\"main-p1\"}"
     );
     // Worktree for the other folder must retain its pending edit — a scoped
     // discard must not wipe unrelated working-tree changes.
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("articles/rec1.json")).unwrap(),
         "{\"v\":\"pending-a1\"}"
     );
 }
@@ -1531,7 +1535,7 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
     // Pending edit only in articles/; posts/ is unchanged from its (now-
     // identical) approved state.
     write_file(
-        &ctx.dirty_dir.join("articles/rec1.json"),
+        &ctx.worktree_dir.join("articles/rec1.json"),
         "{\"v\":\"pending-a1\"}",
     );
 
@@ -1546,7 +1550,7 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
         "accepted-patches should be unchanged when target folder is clean"
     );
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("articles/rec1.json")).unwrap(),
         "{\"v\":\"pending-a1\"}"
     );
 }
@@ -1564,11 +1568,11 @@ fn discard_paths_single_repo_reverts_only_listed_paths() {
     // Pending working-tree edits in both folders on top of the approved
     // patches already seeded into accepted-patches.json.
     write_file(
-        &ctx.dirty_dir.join("posts/rec1.json"),
+        &ctx.worktree_dir.join("posts/rec1.json"),
         "{\"v\":\"pending-p1\"}",
     );
     write_file(
-        &ctx.dirty_dir.join("articles/rec1.json"),
+        &ctx.worktree_dir.join("articles/rec1.json"),
         "{\"v\":\"pending-a1\"}",
     );
 
@@ -1591,11 +1595,11 @@ fn discard_paths_single_repo_reverts_only_listed_paths() {
 
     // Worktree: listed path matches main; unlisted path keeps its pending edit.
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec1.json")).unwrap(),
         "{\"v\":\"main-p1\"}"
     );
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("articles/rec1.json")).unwrap(),
         "{\"v\":\"pending-a1\"}"
     );
 }
@@ -1626,10 +1630,10 @@ fn discard_paths_single_repo_reverts_path_with_only_unapproved_change() {
     )
     .unwrap();
     // Refresh the worktree so the pending edit below is the only diff on posts.
-    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, &new_dirty).unwrap();
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.worktree_dir, &new_dirty).unwrap();
 
     write_file(
-        &ctx.dirty_dir.join("posts/rec1.json"),
+        &ctx.worktree_dir.join("posts/rec1.json"),
         "{\"v\":\"pending-p1\"}",
     );
 
@@ -1641,7 +1645,7 @@ fn discard_paths_single_repo_reverts_path_with_only_unapproved_change() {
 
     assert_eq!(result.files_discarded, 1);
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec1.json")).unwrap(),
         "{\"v\":\"main-p1\"}"
     );
 }
@@ -1673,7 +1677,7 @@ fn discard_paths_single_repo_reverts_path_with_only_approved_change() {
         "posts entry should be removed"
     );
     assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec1.json")).unwrap(),
         "{\"v\":\"main-p1\"}"
     );
 }
@@ -1896,7 +1900,7 @@ fn reconcile_preserves_ancestors_of_wanted_folder() {
 
 // ---------------------------------------------------------------------------
 // Slice D — `download_single_repo` rewrite (refuse-or-replay model).
-// Pre-Slice-F the working tree happens to live in `ctx.dirty_dir`, but D
+// Pre-Slice-F the working tree happens to live in `ctx.worktree_dir`, but D
 // no longer uses the dirty branch for any of its semantics: re-anchor and
 // replay run against `refs/heads/main` ↔ `refs/remotes/origin/main` and the
 // per-connection `accepted-patches.json` file.
@@ -1958,7 +1962,7 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
     write_file(
-        &ctx.dirty_dir.join("posts/rec_acme.json"),
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
         "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
     );
 
@@ -1988,9 +1992,10 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
 
     // Working file = apply(new_main_blob, patch): server's name rename
     // surfaces; the user's industry edit replays on top.
-    let working: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(ctx.dirty_dir.join("posts/rec_acme.json")).unwrap())
-            .unwrap();
+    let working: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(working["name"], "Acme Inc");
     assert_eq!(working["industry"], "SaaS");
 
@@ -2027,7 +2032,7 @@ fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
     write_file(
-        &ctx.dirty_dir.join("posts/rec_acme.json"),
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
         "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
     );
 
@@ -2050,9 +2055,10 @@ fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
         reloaded.patches[0].patch,
         serde_json::json!({"industry": "SaaS"})
     );
-    let working: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(ctx.dirty_dir.join("posts/rec_acme.json")).unwrap())
-            .unwrap();
+    let working: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(working["industry"], "SaaS");
 
     // Conflict log written with the specific field name.
@@ -2276,7 +2282,7 @@ mod discard_field_helper {
         ConnectionContext {
             connection_id: "ca_test".into(),
             conn_dir_name: "HubSpot".into(),
-            dirty_dir: tmp.path().to_path_buf(),
+            worktree_dir: tmp.path().to_path_buf(),
             scratch_dir: tmp.path().to_path_buf(),
             workspace_dir: tmp.path().to_path_buf(),
             master_dir: tmp.path().to_path_buf(),
@@ -2812,5 +2818,73 @@ mod entry_points {
         )
         .unwrap_err();
         assert!(matches!(err, ReviewOpError::CreateClashesWithMain(_)));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Slice F.1 — refuse to operate on pre-slice-F workspace layouts. The
+// `WorkspaceLayout::detect_old_layout` unit tests live in `shared/layout.rs`;
+// these cover the CLI-side wiring that bails when detection fires.
+// ---------------------------------------------------------------------------
+
+mod workspace_layout_check {
+    use super::super::{check_workspace_layout_or_bail, markers};
+    use super::workspace_marker;
+    use crate::shared::layout::WorkspaceLayout;
+    use tempfile::TempDir;
+
+    fn marker_with_one_conn() -> markers::WorkspaceMarker {
+        workspace_marker(&[("HubSpot", "org/wkb/conn")])
+    }
+
+    #[test]
+    fn passes_on_fresh_new_layout() {
+        let tmp = TempDir::new().unwrap();
+        let marker = marker_with_one_conn();
+        // Nothing planted — neither the master worktree nor a sparse-checkout
+        // config exists.
+        check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ false).unwrap();
+    }
+
+    #[test]
+    fn bails_when_master_worktree_present() {
+        let tmp = TempDir::new().unwrap();
+        let layout = WorkspaceLayout::for_cli(tmp.path());
+        std::fs::create_dir_all(layout.master_worktree_path("HubSpot")).unwrap();
+        let marker = marker_with_one_conn();
+
+        let err = check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ true)
+            .expect_err("expected check to bail on pre-F layout");
+        assert!(
+            err.to_string().contains("pre-slice-F"),
+            "error message should mention pre-slice-F, got: {err}"
+        );
+    }
+
+    #[test]
+    fn bails_when_sparse_checkout_config_present() {
+        let tmp = TempDir::new().unwrap();
+        let layout = WorkspaceLayout::for_cli(tmp.path());
+        let info = layout.worktree_path("HubSpot").join(".git").join("info");
+        std::fs::create_dir_all(&info).unwrap();
+        std::fs::write(info.join("sparse-checkout"), "/*\n!.scratch/\n").unwrap();
+        let marker = marker_with_one_conn();
+
+        let err = check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ false)
+            .expect_err("expected check to bail on pre-F sparse-checkout");
+        assert!(err.to_string().contains("pre-slice-F"));
+    }
+
+    #[test]
+    fn bails_only_when_a_listed_connection_has_artifacts() {
+        // The detection scans connection dir_names from the marker — a stray
+        // master directory for a connection not in the marker should NOT
+        // trigger the refusal (the user may have manually wiped that conn).
+        let tmp = TempDir::new().unwrap();
+        let layout = WorkspaceLayout::for_cli(tmp.path());
+        std::fs::create_dir_all(layout.master_worktree_path("OldUnrelatedConn")).unwrap();
+        let marker = marker_with_one_conn();
+
+        check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ false).unwrap();
     }
 }

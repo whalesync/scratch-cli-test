@@ -1,7 +1,6 @@
 use std::io::{self, BufRead, Write as IoWrite};
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use clap::Subcommand;
 
 use crate::api::{ApiClient, ConnectorAccount, Workbook, WorkbookListResponse};
@@ -508,81 +507,21 @@ fn git_checkout_branch_from_bare(
     crate::git_ops::setup_sparse_worktree(bare_repo, work_tree, branch)
 }
 
-fn materialize_dirty_checkout(
+/// Idempotently materialize the user-facing non-sparse worktree on `main`.
+/// If the worktree already exists and is valid (`.git` gitlink + `HEAD`
+/// resolves), this is a no-op. Broken worktree dirs fail loudly so the user
+/// can `workspaces unsync` to clear them rather than silently nuking state.
+///
+/// The companion per-connection scratch cache directory
+/// (`<workspace>/.scratch/connections/scratch/<conn>/`) is created so the
+/// subsequent `sync_schema_files_from_worktree_paths` write can succeed.
+fn materialize_main_worktree(
     bare_repo: &Path,
-    dirty_dir: &Path,
+    worktree_dir: &Path,
     scratch_dir: &Path,
 ) -> anyhow::Result<()> {
-    crate::git_ops::setup_sparse_worktree(bare_repo, dirty_dir, DIRTY_BRANCH)?;
-    // .scratch/ is excluded from the sparse checkout, so no need to move it.
-    // Just ensure the scratch_dir exists for subsequent writes.
+    crate::git_ops::ensure_full_worktree(bare_repo, worktree_dir, MAIN_BRANCH)?;
     std::fs::create_dir_all(scratch_dir)?;
-    Ok(())
-}
-
-/// Adds `.scratch/**/schema.json` to the sparse-checkout rules for a worktree so that
-/// schema files are materialized on disk despite the blanket `!.scratch` exclusion.
-fn include_schemas_in_sparse_checkout(worktree: &Path) -> anyhow::Result<()> {
-    use std::process::Command;
-
-    let wt = worktree.to_str().unwrap_or_default();
-    let output = Command::new("git")
-        .args([
-            "-C",
-            wt,
-            "sparse-checkout",
-            "add",
-            ".scratch/**/schema.json",
-            ".scratch/**/views/*.json",
-        ])
-        .output()
-        .context("failed to run git sparse-checkout add")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git sparse-checkout add failed: {}", stderr.trim());
-    }
-    Ok(())
-}
-
-fn sync_schema_files_from_master_checkout(
-    master_dir: &Path,
-    scratch_dir: &Path,
-) -> anyhow::Result<()> {
-    let master_scratch_dir = master_dir.join(".scratch");
-    sync_schema_files_dir(&master_scratch_dir, &master_scratch_dir, scratch_dir)
-}
-
-fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow::Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let path = entry.path();
-        let ft = entry.file_type()?;
-        if ft.is_dir() {
-            sync_schema_files_dir(root, &path, scratch_dir)?;
-            continue;
-        }
-
-        let file_name = entry.file_name();
-        let is_schema = file_name == "schema.json";
-        let is_view = file_name.to_str().map_or(false, |n| n.ends_with(".json"))
-            && path
-                .parent()
-                .and_then(|p| p.file_name())
-                .map_or(false, |d| d == "views");
-        if !ft.is_file() || (!is_schema && !is_view) {
-            continue;
-        }
-
-        let rel = path.strip_prefix(root)?;
-        if let Some(parent) = scratch_dir.join(rel).parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::copy(&path, scratch_dir.join(rel))?;
-    }
-
     Ok(())
 }
 
@@ -672,8 +611,18 @@ fn repo_path_prefix(repo_path: &str) -> Option<&str> {
 
 // ── Connection lifecycle helpers ───────────────────────────────────────────
 
-/// Set up a single connection's local git infrastructure (bare repo, worktrees, index).
-/// Returns the number of files materialized in the dirty checkout.
+/// Set up a single connection's local git infrastructure: one bare repo + one
+/// non-sparse worktree on `main` + the per-connection schema cache. Returns
+/// the number of files in the worktree.
+///
+/// Idempotent: re-running on a workspace where the bare repo or worktree
+/// already exists succeeds without duplicate work. Broken state (e.g. a
+/// worktree dir that isn't a valid git worktree) fails loudly so the user
+/// can `workspaces unsync` to clear it rather than silently nuking state.
+///
+/// Slice F retired the previous two-worktree model (sparse `dirty` worktree
+/// + sparse `master` worktree) along with the `sync_schema_files_from_master`
+/// init-time copy — non-sparse `main` carries schemas + views natively.
 pub fn setup_connection(
     ca: &ConnectorAccount,
     dir_name: &str,
@@ -688,71 +637,56 @@ pub fn setup_connection(
     }
 
     let bare_repo = layout.bare_repo_path(&ca.repo_path);
-    let dirty_dir = layout.dirty_checkout_path(&dir_name);
-    let dirty_scratch_dir = layout.connection_scratch_path(&dir_name);
-    let master_dir = layout.master_worktree_path(&dir_name);
+    let worktree_dir = layout.worktree_path(&dir_name);
+    let scratch_dir = layout.connection_scratch_path(&dir_name);
 
     {
         let _t = PhaseTimer::new(format!("    [{}] git_clone_bare", dir_name));
-        git_clone_bare(&ca.git_url, &bare_repo, token)?;
+        // Idempotent: skip the (slow) network clone if a valid-looking bare
+        // repo already exists. Re-running init shouldn't re-download.
+        if !bare_repo.exists() {
+            git_clone_bare(&ca.git_url, &bare_repo, token)?;
+        }
     }
     {
         let _t = PhaseTimer::new(format!(
-            "    [{}] materialize_dirty_checkout (sparse worktree: dirty)",
+            "    [{}] materialize_main_worktree (non-sparse: main)",
             dir_name
         ));
-        materialize_dirty_checkout(&bare_repo, &dirty_dir, &dirty_scratch_dir)?;
+        materialize_main_worktree(&bare_repo, &worktree_dir, &scratch_dir)?;
     }
     {
         let _t = PhaseTimer::new(format!("    [{}] reconcile_data_folder_dirs", dir_name));
-        super::files::reconcile_data_folder_dirs(&dirty_dir, &ca.data_folders)?;
+        super::files::reconcile_data_folder_dirs(&worktree_dir, &ca.data_folders)?;
     }
-    let main_checkout_result = {
+    {
         let _t = PhaseTimer::new(format!(
-            "    [{}] git_checkout_branch_from_bare (main, sparse worktree)",
+            "    [{}] sync_schema_files_from_worktree",
             dir_name
         ));
-        git_checkout_branch_from_bare(&bare_repo, MAIN_BRANCH, &master_dir)
-    };
-    match main_checkout_result {
-        Ok(()) => {
-            {
-                let _t = PhaseTimer::new(format!(
-                    "    [{}] include_schemas_in_sparse_checkout",
-                    dir_name
-                ));
-                include_schemas_in_sparse_checkout(&master_dir)?;
-            }
-            {
-                let _t = PhaseTimer::new(format!(
-                    "    [{}] sync_schema_files_from_master_checkout",
-                    dir_name
-                ));
-                sync_schema_files_from_master_checkout(&master_dir, &dirty_scratch_dir)?;
-            }
-        }
-        Err(_) => {
-            eprintln!(
-                "  Note: could not create master checkout for {} (main branch may not exist)",
-                dir_name
-            );
-        }
+        crate::shared::review_ops::sync_schema_files_from_worktree_paths(
+            &worktree_dir,
+            &scratch_dir,
+        )?;
     }
 
-    let _t = PhaseTimer::new(format!("    [{}] count_files (dirty)", dir_name));
-    Ok(count_files(&dirty_dir))
+    let _t = PhaseTimer::new(format!("    [{}] count_files (worktree)", dir_name));
+    Ok(count_files(&worktree_dir))
 }
 
-/// Remove all local artifacts for a connection (bare repo, worktrees, index DB, checkout dirs).
+/// Remove all local artifacts for a connection (bare repo, worktree, index DB,
+/// connection scratch cache). The legacy pre-slice-F sparse-worktree paths
+/// (`master_worktree_path`, `reviewed_worktree_path`) are best-effort cleaned
+/// for back-compat — slice F.3 retires them entirely.
 pub fn teardown_connection(
     entry: &markers::ConnectionEntry,
     layout: &WorkspaceLayout,
 ) -> anyhow::Result<()> {
     let bare_repo = layout.bare_repo_path(&entry.repo_path);
-    let dirty_dir = layout.dirty_checkout_path(&entry.dir_name);
+    let worktree_dir = layout.worktree_path(&entry.dir_name);
     let scratch_dir = layout.connection_scratch_path(&entry.dir_name);
-    let master_dir = layout.master_worktree_path(&entry.dir_name);
-    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&entry.dir_name);
+    let legacy_master_dir = layout.master_worktree_path(&entry.dir_name);
+    let legacy_reviewed_dir = layout.reviewed_worktree_path(&entry.dir_name);
     let db_path = layout.index_db_path(&entry.repo_path);
 
     // Prune worktrees before removing the bare repo
@@ -760,10 +694,10 @@ pub fn teardown_connection(
 
     remove_path(&bare_repo);
     remove_path(&db_path);
-    remove_path(&dirty_dir);
+    remove_path(&worktree_dir);
     remove_path(&scratch_dir);
-    remove_path(&master_dir);
-    remove_path(&reviewed_dirty_dir);
+    remove_path(&legacy_master_dir);
+    remove_path(&legacy_reviewed_dir);
 
     Ok(())
 }
@@ -774,7 +708,7 @@ pub fn detach_connection(
     workspace_marker: &markers::WorkspaceMarker,
     layout: &WorkspaceLayout,
 ) -> anyhow::Result<()> {
-    let dirty_dir = layout.dirty_checkout_path(&entry.dir_name);
+    let worktree_dir = layout.worktree_path(&entry.dir_name);
 
     // Write a detached connector marker into the connection directory
     let connector_marker = markers::ConnectorMarker {
@@ -793,14 +727,16 @@ pub fn detach_connection(
     };
     let marker_content = serde_yaml::to_string(&connector_marker)
         .map_err(|e| anyhow::anyhow!("failed to serialize detached marker: {e}"))?;
-    let marker_path = dirty_dir.join(".scratchmd");
+    let marker_path = worktree_dir.join(".scratchmd");
     std::fs::write(&marker_path, marker_content)?;
 
-    // Remove git infrastructure while preserving the dirty checkout directory
+    // Remove git infrastructure while preserving the user-facing worktree
+    // directory. Legacy pre-slice-F sparse-worktree paths are best-effort
+    // cleaned for back-compat — slice F.3 retires them.
     let bare_repo = layout.bare_repo_path(&entry.repo_path);
     let scratch_dir = layout.connection_scratch_path(&entry.dir_name);
-    let master_dir = layout.master_worktree_path(&entry.dir_name);
-    let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&entry.dir_name);
+    let legacy_master_dir = layout.master_worktree_path(&entry.dir_name);
+    let legacy_reviewed_dir = layout.reviewed_worktree_path(&entry.dir_name);
     let db_path = layout.index_db_path(&entry.repo_path);
 
     prune_worktrees(&bare_repo);
@@ -808,8 +744,8 @@ pub fn detach_connection(
     remove_path(&bare_repo);
     remove_path(&db_path);
     remove_path(&scratch_dir);
-    remove_path(&master_dir);
-    remove_path(&reviewed_dirty_dir);
+    remove_path(&legacy_master_dir);
+    remove_path(&legacy_reviewed_dir);
 
     Ok(())
 }

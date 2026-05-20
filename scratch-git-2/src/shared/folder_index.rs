@@ -3282,7 +3282,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let dirty_dir = ws
+        let worktree_dir = ws
             .join(".scratch")
             .join("connections")
             .join("dirty")
@@ -3290,7 +3290,7 @@ mod tests {
             .join("posts");
 
         write_json(&working_dir, "in_working.json", r#"{"x":1}"#);
-        write_json(&dirty_dir, "dirty_only.json", r#"{"x":1}"#);
+        write_json(&worktree_dir, "dirty_only.json", r#"{"x":1}"#);
 
         let mut o = opts(&ws, "conn/posts");
         o.filters = vec![FilterSpec::HasWorking];
@@ -3656,7 +3656,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let dirty_dir = ws
+        let worktree_dir = ws
             .join(".scratch")
             .join("connections")
             .join("dirty")
@@ -3664,7 +3664,7 @@ mod tests {
             .join("posts");
 
         write_json(&working_dir, "rec.json", r#"{"a":1}"#);
-        write_json(&dirty_dir, "rec.json", r#"{"a":1}"#);
+        write_json(&worktree_dir, "rec.json", r#"{"a":1}"#);
 
         // Run twice — second run reads from index without changing flags
         let r1 = run_query(&opts(&ws, "conn/posts")).unwrap();

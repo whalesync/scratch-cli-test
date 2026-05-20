@@ -370,33 +370,147 @@ pub(crate) fn setup_sparse_worktree(
     Ok(())
 }
 
-/// Set up a sparse worktree only if one does not already exist at `worktree_path`.
-pub(crate) fn ensure_sparse_worktree(
+/// Create a non-sparse git worktree at `worktree_path` tracking `refname`.
+/// All files in the ref's tree get checked out (including `.scratch/`).
+/// Removes and recreates the directory if it already exists.
+fn setup_full_worktree(
     bare_repo: &Path,
     worktree_path: &Path,
     refname: &str,
 ) -> anyhow::Result<()> {
-    if worktree_path.join(".git").is_file() {
-        return Ok(());
+    let git_dir = bare_repo.to_str().unwrap_or_default();
+
+    // Prune stale worktree entries first so the path can be reused.
+    let _ = Command::new("git")
+        .args(["--git-dir", git_dir, "worktree", "prune"])
+        .output();
+
+    if worktree_path.exists() {
+        std::fs::remove_dir_all(worktree_path)
+            .with_context(|| format!("failed to remove {}", worktree_path.display()))?;
     }
-    setup_sparse_worktree(bare_repo, worktree_path, refname)
+
+    let output = Command::new("git")
+        .args([
+            "--git-dir",
+            git_dir,
+            "worktree",
+            "add",
+            "--force",
+            worktree_path.to_str().unwrap_or_default(),
+            refname,
+        ])
+        .output()
+        .context("failed to spawn git worktree add")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git worktree add failed: {}", stderr.trim());
+    }
+    Ok(())
 }
 
-/// `git reset --hard <hash>` in a worktree (updates HEAD, index, and working tree).
-pub(crate) fn worktree_reset_hard(worktree_path: &Path, hash: &str) -> anyhow::Result<()> {
+/// Idempotent variant of [`setup_full_worktree`]. Returns `Ok(())` without
+/// rebuilding when `worktree_path` is already a valid worktree (has a `.git`
+/// gitlink and `HEAD` resolves). Fails loudly when the directory exists but
+/// is broken — caller should `workspaces unsync` to clear it manually rather
+/// than silently nuking user state.
+pub(crate) fn ensure_full_worktree(
+    bare_repo: &Path,
+    worktree_path: &Path,
+    refname: &str,
+) -> anyhow::Result<()> {
+    if worktree_path.exists() {
+        let gitlink = worktree_path.join(".git");
+        if gitlink.is_file() {
+            // Looks like a worktree; verify HEAD resolves before declaring it OK.
+            let output = Command::new("git")
+                .args([
+                    "-C",
+                    worktree_path.to_str().unwrap_or_default(),
+                    "rev-parse",
+                    "HEAD",
+                ])
+                .output();
+            if let Ok(o) = output {
+                if o.status.success() {
+                    return Ok(());
+                }
+            }
+            anyhow::bail!(
+                "{} exists but isn't a valid worktree (HEAD doesn't resolve) — remove it with `scratchmd workspaces unsync` and re-run init",
+                worktree_path.display()
+            );
+        } else if worktree_path
+            .read_dir()
+            .is_ok_and(|mut e| e.next().is_some())
+        {
+            anyhow::bail!(
+                "{} exists and is non-empty but isn't a git worktree (no .git gitlink) — remove it with `scratchmd workspaces unsync` and re-run init",
+                worktree_path.display()
+            );
+        } else {
+            // Empty directory (probably created by an aborted prior init).
+            // Remove so `git worktree add` doesn't fail with "destination
+            // already exists".
+            std::fs::remove_dir(worktree_path).ok();
+        }
+    }
+    setup_full_worktree(bare_repo, worktree_path, refname)
+}
+
+/// `git reset --mixed <hash>` in a worktree. Updates HEAD + the index to
+/// match the commit, but does NOT touch the working tree. Used to refresh
+/// the index after `materialize_local_repo` wrote new working files, so
+/// `gix::status` returns accurate results.
+pub(crate) fn worktree_reset_mixed(worktree_path: &Path, hash: &str) -> anyhow::Result<()> {
     let output = Command::new("git")
         .args([
             "-C",
             worktree_path.to_str().unwrap_or_default(),
             "reset",
-            "--hard",
+            "--mixed",
             hash,
         ])
         .output()
-        .context("failed to spawn git reset --hard")?;
+        .context("failed to spawn git reset --mixed")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git reset --hard failed: {}", stderr.trim());
+        anyhow::bail!("git reset --mixed failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+/// `git -C <worktree> checkout <refname> -- <pathspec>` — restore the named
+/// path(s) in the worktree to whatever the ref has them at, without touching
+/// anything else in the working tree. Used post-pull to refresh the worktree's
+/// tracked `.scratch/` directory (schemas, views) after `refs/heads/main`
+/// advances. Returns `Ok(())` when the pathspec didn't match anything (git
+/// exits 0 for an empty pathspec in this mode).
+pub(crate) fn worktree_checkout_path(
+    worktree_path: &Path,
+    refname: &str,
+    pathspec: &str,
+) -> anyhow::Result<()> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            worktree_path.to_str().unwrap_or_default(),
+            "checkout",
+            refname,
+            "--",
+            pathspec,
+        ])
+        .output()
+        .context("failed to spawn git checkout <ref> -- <pathspec>")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // "did not match any file(s) known to git" is benign — the worktree
+        // simply doesn't have that path on this ref (e.g. fresh workspace
+        // with no .scratch/ committed yet). Treat as success.
+        if stderr.contains("did not match any file") {
+            return Ok(());
+        }
+        anyhow::bail!("git checkout <ref> -- <pathspec> failed: {}", stderr.trim());
     }
     Ok(())
 }

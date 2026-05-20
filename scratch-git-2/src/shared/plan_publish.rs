@@ -93,16 +93,16 @@ struct FkPath {
 // Core entry point
 // ---------------------------------------------------------------------------
 
-/// Build a publish plan by diffing `dirty_dir` against `master_dir`.
+/// Build a publish plan by diffing `worktree_dir` against `master_dir`.
 ///
-/// Writes phase files and the plan manifest under `dirty_dir/.scratch/`.
+/// Writes phase files and the plan manifest under `worktree_dir/.scratch/`.
 /// Returns `Ok(None)` if there are no changes to publish.
 /// Returns `Ok(Some(PlanResult))` with the plan metadata and per-folder reports.
 #[allow(dead_code)]
 pub fn build_publish_plan(
     conn_name: &str,
     connection_id: &str,
-    dirty_dir: &Path,
+    worktree_dir: &Path,
     master_dir: &Path,
     db_path: &Path,
     timestamp: &str,
@@ -110,21 +110,21 @@ pub fn build_publish_plan(
     build_publish_plan_with_scratch_dir(
         conn_name,
         connection_id,
-        dirty_dir,
+        worktree_dir,
         master_dir,
         db_path,
-        &dirty_dir.join(".scratch"),
+        &worktree_dir.join(".scratch"),
         timestamp,
         None,
     )
 }
 
-/// Build a publish plan by diffing `dirty_dir` against `master_dir`, writing
+/// Build a publish plan by diffing `worktree_dir` against `master_dir`, writing
 /// plan files under an explicit `scratch_dir`.
 pub fn build_publish_plan_with_scratch_dir(
     conn_name: &str,
     connection_id: &str,
-    dirty_dir: &Path,
+    worktree_dir: &Path,
     master_dir: &Path,
     db_path: &Path,
     scratch_dir: &Path,
@@ -133,7 +133,7 @@ pub fn build_publish_plan_with_scratch_dir(
 ) -> anyhow::Result<Option<PlanResult>> {
     // 1. Collect files (skip .scratch and .git dirs)
     let master_files = collect_files(master_dir)?;
-    let dirty_files = collect_files(dirty_dir)?;
+    let dirty_files = collect_files(worktree_dir)?;
 
     // 2. Classify raw diff
     let mut modified: Vec<String> = vec![];

@@ -194,11 +194,11 @@ fn table_has_columns(
 // run_validations — main entry point called from refresh_record_index_command
 // ---------------------------------------------------------------------------
 
-/// Run all configured validators for `dirty_dir` and write results to the
+/// Run all configured validators for `worktree_dir` and write results to the
 /// `validation_results` table in `db_path`.
 ///
 /// - `scratch_dir`: where `validation.json` files live (`.scratch/connections/scratch/<connection>`)
-/// - `dirty_dir`: where record JSON files live (the dirty checkout, `<connection>`)
+/// - `worktree_dir`: where record JSON files live (the dirty checkout, `<connection>`)
 /// - `workspace_dir`: base directory for resolving `python:` script paths (`.scratch/workspace`)
 ///
 /// `is_full_rebuild` controls whether stale results cleanup runs:
@@ -206,7 +206,7 @@ fn table_has_columns(
 /// - partial refresh → skip cleanup (would delete results for unprocessed records)
 pub fn run_validations(
     scratch_dir: &Path,
-    dirty_dir: &Path,
+    worktree_dir: &Path,
     workspace_dir: &Path,
     master_dir: &Path,
     db_path: &Path,
@@ -226,7 +226,7 @@ pub fn run_validations(
 
     // Walk every record file and apply configured validators.
     validate_records(
-        dirty_dir,
+        worktree_dir,
         workspace_dir,
         scratch_dir,
         master_dir,
@@ -288,10 +288,13 @@ fn split_record_path(rel_path: &str) -> anyhow::Result<(String, String)> {
 
 /// Print validation config for a connection's scratch directory.
 /// Reads from filesystem only — no DB required.
-pub fn dump_validation_config(dirty_dir: &Path) -> anyhow::Result<()> {
-    let configs = load_all_configs(dirty_dir)?;
+pub fn dump_validation_config(worktree_dir: &Path) -> anyhow::Result<()> {
+    let configs = load_all_configs(worktree_dir)?;
     if configs.is_empty() {
-        println!("No validation.json files found in {}", dirty_dir.display());
+        println!(
+            "No validation.json files found in {}",
+            worktree_dir.display()
+        );
         return Ok(());
     }
     for (folder, entries) in &configs {
@@ -428,12 +431,12 @@ pub fn run_validators_dry(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Load all `validation.json` files found under `dirty_dir`.
+/// Load all `validation.json` files found under `worktree_dir`.
 /// Returns a map from folder_path (relative) → Vec<ValidatorEntry>.
 /// Absent files are silently skipped. Malformed files produce an error.
-fn load_all_configs(dirty_dir: &Path) -> anyhow::Result<HashMap<String, Vec<ValidatorEntry>>> {
+fn load_all_configs(worktree_dir: &Path) -> anyhow::Result<HashMap<String, Vec<ValidatorEntry>>> {
     let mut configs = HashMap::new();
-    collect_configs_recursive(dirty_dir, dirty_dir, &mut configs)?;
+    collect_configs_recursive(worktree_dir, worktree_dir, &mut configs)?;
     Ok(configs)
 }
 
@@ -509,7 +512,7 @@ struct WorkItem {
     schema: Option<serde_json::Value>,
 }
 
-/// Apply all validators to all records under `dirty_dir`.
+/// Apply all validators to all records under `worktree_dir`.
 /// `workspace_dir` is used to resolve `python:` script paths.
 /// `scratch_dir` is used to load `schema.json` for record-scoped validators.
 /// `master_dir` is used to load the master-branch version of each record.
@@ -517,7 +520,7 @@ struct WorkItem {
 /// Records are validated in parallel using rayon; DB writes are serialised
 /// on the calling thread afterwards (rusqlite `Connection` is not `Send`).
 fn validate_records(
-    dirty_dir: &Path,
+    worktree_dir: &Path,
     workspace_dir: &Path,
     scratch_dir: &Path,
     master_dir: &Path,
@@ -531,9 +534,9 @@ fn validate_records(
     let mut work_items: Vec<WorkItem> = Vec::new();
     for (folder_path, _entries) in configs {
         let folder_dir = if folder_path.is_empty() {
-            dirty_dir.to_path_buf()
+            worktree_dir.to_path_buf()
         } else {
-            dirty_dir.join(folder_path)
+            worktree_dir.join(folder_path)
         };
 
         let schema = load_schema_for_folder(scratch_dir, folder_path);
@@ -563,9 +566,9 @@ fn validate_records(
         .par_iter()
         .map(|item| {
             let folder_dir = if item.folder_path.is_empty() {
-                dirty_dir.to_path_buf()
+                worktree_dir.to_path_buf()
             } else {
-                dirty_dir.join(&item.folder_path)
+                worktree_dir.join(&item.folder_path)
             };
 
             let record_path = folder_dir.join(&item.file_name);
@@ -1013,7 +1016,7 @@ mod tests {
     fn selected_validation_refresh_replaces_existing_record_results() {
         let tmp = TempDir::new().unwrap();
         let scratch_dir = tmp.path().join("scratch");
-        let dirty_dir = tmp.path().join("dirty");
+        let worktree_dir = tmp.path().join("dirty");
         let db_path = tmp.path().join("index.db");
 
         write_file(
@@ -1021,27 +1024,27 @@ mod tests {
             "posts/validation.json",
             r#"[{"field":"title","validator":"length","params":{"max":5}}]"#,
         );
-        write_file(&dirty_dir, "posts/one.json", r#"{"title":"too long"}"#);
+        write_file(&worktree_dir, "posts/one.json", r#"{"title":"too long"}"#);
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
         run_validations(
             &scratch_dir,
-            &dirty_dir,
-            &dirty_dir,
-            &dirty_dir,
+            &worktree_dir,
+            &worktree_dir,
+            &worktree_dir,
             &db_path,
             false,
             Some(&selected),
         )
         .unwrap();
 
-        write_file(&dirty_dir, "posts/one.json", r#"{"title":"ok"}"#);
+        write_file(&worktree_dir, "posts/one.json", r#"{"title":"ok"}"#);
         run_validations(
             &scratch_dir,
-            &dirty_dir,
-            &dirty_dir,
-            &dirty_dir,
+            &worktree_dir,
+            &worktree_dir,
+            &worktree_dir,
             &db_path,
             false,
             Some(&selected),
@@ -1070,7 +1073,7 @@ mod tests {
     fn selected_validation_refresh_clears_results_when_record_is_gone() {
         let tmp = TempDir::new().unwrap();
         let scratch_dir = tmp.path().join("scratch");
-        let dirty_dir = tmp.path().join("dirty");
+        let worktree_dir = tmp.path().join("dirty");
         let db_path = tmp.path().join("index.db");
 
         write_file(
@@ -1078,27 +1081,27 @@ mod tests {
             "posts/validation.json",
             r#"[{"field":"title","validator":"length","params":{"max":5}}]"#,
         );
-        write_file(&dirty_dir, "posts/one.json", r#"{"title":"too long"}"#);
+        write_file(&worktree_dir, "posts/one.json", r#"{"title":"too long"}"#);
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
         run_validations(
             &scratch_dir,
-            &dirty_dir,
-            &dirty_dir,
-            &dirty_dir,
+            &worktree_dir,
+            &worktree_dir,
+            &worktree_dir,
             &db_path,
             false,
             Some(&selected),
         )
         .unwrap();
 
-        fs::remove_file(dirty_dir.join("posts/one.json")).unwrap();
+        fs::remove_file(worktree_dir.join("posts/one.json")).unwrap();
         run_validations(
             &scratch_dir,
-            &dirty_dir,
-            &dirty_dir,
-            &dirty_dir,
+            &worktree_dir,
+            &worktree_dir,
+            &worktree_dir,
             &db_path,
             false,
             Some(&selected),
@@ -1120,7 +1123,7 @@ mod tests {
     fn selected_validation_refresh_clears_results_when_config_is_gone() {
         let tmp = TempDir::new().unwrap();
         let scratch_dir = tmp.path().join("scratch");
-        let dirty_dir = tmp.path().join("dirty");
+        let worktree_dir = tmp.path().join("dirty");
         let db_path = tmp.path().join("index.db");
 
         write_file(
@@ -1128,15 +1131,15 @@ mod tests {
             "posts/validation.json",
             r#"[{"field":"title","validator":"length","params":{"max":5}}]"#,
         );
-        write_file(&dirty_dir, "posts/one.json", r#"{"title":"too long"}"#);
+        write_file(&worktree_dir, "posts/one.json", r#"{"title":"too long"}"#);
 
         let mut selected = HashSet::new();
         selected.insert("posts/one.json".to_string());
         run_validations(
             &scratch_dir,
-            &dirty_dir,
-            &dirty_dir,
-            &dirty_dir,
+            &worktree_dir,
+            &worktree_dir,
+            &worktree_dir,
             &db_path,
             false,
             Some(&selected),
@@ -1146,9 +1149,9 @@ mod tests {
         fs::remove_file(scratch_dir.join("posts/validation.json")).unwrap();
         run_validations(
             &scratch_dir,
-            &dirty_dir,
-            &dirty_dir,
-            &dirty_dir,
+            &worktree_dir,
+            &worktree_dir,
+            &worktree_dir,
             &db_path,
             false,
             Some(&selected),

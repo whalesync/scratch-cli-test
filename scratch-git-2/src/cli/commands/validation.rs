@@ -457,14 +457,14 @@ pub fn dry_run_command(
             (Some(c), Some(s)) => (c.as_str(), s.as_str()),
             _ => anyhow::bail!("--folder is required when using --file"),
         };
-        let dirty_dir = layout.dirty_checkout_path(conn);
+        let worktree_dir = layout.worktree_path(conn);
         let master_dir = layout.master_worktree_path(conn);
 
         for file_name in files {
             let record_path = if sub.is_empty() {
-                dirty_dir.join(file_name)
+                worktree_dir.join(file_name)
             } else {
-                dirty_dir.join(sub).join(file_name)
+                worktree_dir.join(sub).join(file_name)
             };
             let bytes = std::fs::read(&record_path)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", record_path.display()))?;

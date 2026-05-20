@@ -56,7 +56,7 @@ pub struct ConnectionPaths {
     pub workspace_dir: PathBuf,
     /// The user's editable directory (`<workspace>/<conn>` pre-slice F;
     /// changes shape under slice F).
-    pub dirty_dir: PathBuf,
+    pub worktree_dir: PathBuf,
     /// Bare repo (`<workspace>/.repos/<repo-id>.git/`). Read-only from this
     /// module's perspective; callers handle ref advances.
     pub bare_repo: PathBuf,
@@ -776,7 +776,7 @@ pub fn write_or_remove_working_file(
     rel_path: &str,
     bytes: Option<&[u8]>,
 ) -> anyhow::Result<()> {
-    let disk_path = paths.dirty_dir.join(rel_path);
+    let disk_path = paths.worktree_dir.join(rel_path);
     match bytes {
         Some(content) => write_file(&disk_path, content)?,
         None => {
@@ -791,7 +791,7 @@ pub fn write_or_remove_working_file(
 }
 
 /// Write back changed working files from `next_local_map` to disk under
-/// `paths.dirty_dir`, scoped to `repo_folder`. Used by reject / discard after
+/// `paths.worktree_dir`, scoped to `repo_folder`. Used by reject / discard after
 /// they compute the new desired working-tree shape.
 pub fn apply_changed_working_files(
     paths: &ConnectionPaths,
@@ -806,7 +806,7 @@ pub fn apply_changed_working_files(
             continue;
         }
 
-        let disk_path = paths.dirty_dir.join(&path);
+        let disk_path = paths.worktree_dir.join(&path);
         match after {
             Some(content) => write_file(&disk_path, content)?,
             None => {
@@ -838,7 +838,7 @@ pub fn write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
 /// path. Mirrors what `read_main_tree` produces from git.
 pub fn read_materialized_repo(paths: &ConnectionPaths) -> anyhow::Result<FileMap> {
     let mut map = FileMap::new();
-    read_dirty_disk(&paths.dirty_dir, &paths.dirty_dir, &mut map)?;
+    read_dirty_disk(&paths.worktree_dir, &paths.worktree_dir, &mut map)?;
     read_scratch_disk(&paths.scratch_dir, &paths.scratch_dir, &mut map)?;
     Ok(map)
 }
@@ -904,12 +904,33 @@ pub fn read_scratch_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::
 // Schema sync
 // ---------------------------------------------------------------------------
 
-/// Copy `schema.json` files from the master worktree's `.scratch/` tree into
-/// the per-connection `paths.scratch_dir`. Run before field-level operations
-/// that consult the schema for type coercion.
-pub fn sync_schema_files_from_master(paths: &ConnectionPaths) -> anyhow::Result<()> {
-    let master_scratch_dir = paths.master_dir.join(".scratch");
-    sync_schema_files_dir(&master_scratch_dir, &master_scratch_dir, &paths.scratch_dir)
+/// Copy `schema.json` and `views/*.json` files from the user worktree's
+/// tracked `.scratch/` tree into the per-connection `paths.scratch_dir` cache.
+/// Run before field-level operations that consult the schema for type
+/// coercion.
+///
+/// Pre-slice-F (when the user worktree was sparse on `dirty`), this read from
+/// a second master worktree at `<workspace>/.scratch/connections/master/<conn>/`.
+/// Post-slice-F-cutover, the single non-sparse worktree on `main` carries the
+/// schemas + views natively, so the source is the user worktree itself.
+///
+/// The destination cache exists because the broader codebase
+/// (`shared/validators`, `shared/plan_publish`, `shared/index`,
+/// `cli/commands/validation`) reads schemas from `connection_scratch_path`,
+/// not from the worktree. Repointing those readers is tracked as a post-F
+/// follow-up (see slice F spec PF1).
+pub fn sync_schema_files_from_worktree(paths: &ConnectionPaths) -> anyhow::Result<()> {
+    sync_schema_files_from_worktree_paths(&paths.worktree_dir, &paths.scratch_dir)
+}
+
+/// Path-only variant of [`sync_schema_files_from_worktree`] for init-time
+/// callers that don't yet have a fully-built `ConnectionPaths`.
+pub fn sync_schema_files_from_worktree_paths(
+    worktree_dir: &Path,
+    scratch_dir: &Path,
+) -> anyhow::Result<()> {
+    let worktree_scratch = worktree_dir.join(".scratch");
+    sync_schema_files_dir(&worktree_scratch, &worktree_scratch, scratch_dir)
 }
 
 fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow::Result<()> {
@@ -925,7 +946,18 @@ fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow:
             continue;
         }
 
-        if !ft.is_file() || entry.file_name() != "schema.json" {
+        if !ft.is_file() {
+            continue;
+        }
+
+        let file_name = entry.file_name();
+        let is_schema = file_name == "schema.json";
+        let is_view = file_name.to_str().is_some_and(|n| n.ends_with(".json"))
+            && path
+                .parent()
+                .and_then(|p| p.file_name())
+                .is_some_and(|d| d == "views");
+        if !is_schema && !is_view {
             continue;
         }
 
@@ -1042,7 +1074,7 @@ fn resolve_connection_paths(
     Ok(ConnectionPaths {
         conn_dir_name: connection_dir_name.to_string(),
         workspace_dir: workspace_dir.to_path_buf(),
-        dirty_dir: layout.dirty_checkout_path(connection_dir_name),
+        worktree_dir: layout.worktree_path(connection_dir_name),
         scratch_dir: layout.connection_scratch_path(connection_dir_name),
         bare_repo: layout.bare_repo_path(&entry.repo_path),
         master_dir: layout.master_worktree_path(connection_dir_name),
@@ -1103,7 +1135,7 @@ fn validate_record_path(
 /// this entry point. See `docs/REVIEW_MODEL.md`.
 ///
 /// Errors with `ReviewOpError::WorkingFileMissing` if there's no file at
-/// `<dirty_dir>/<record_rel_path>` to read. No-op (returns
+/// `<worktree_dir>/<record_rel_path>` to read. No-op (returns
 /// `ReviewOpResult { effect: NoOp, .. }`) if the working file's field value
 /// already matches the approved value.
 pub fn accept_field(
@@ -1122,7 +1154,7 @@ pub fn accept_field(
     // Read the field's current value from the working file. This is the
     // single source of truth for "what value got accepted" — callers wrote
     // it to disk before invoking us.
-    let working_path = paths.dirty_dir.join(record_rel_path);
+    let working_path = paths.worktree_dir.join(record_rel_path);
     let working_bytes = match std::fs::read(&working_path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -1281,7 +1313,7 @@ pub fn discard_field(
 
     if matches!(patch_action, PatchAction::DroppedCreate) {
         // Patch's gone and main never had this path — remove the working file.
-        let disk_path = paths.dirty_dir.join(record_rel_path);
+        let disk_path = paths.worktree_dir.join(record_rel_path);
         if disk_path.exists() {
             std::fs::remove_file(&disk_path).map_err(ReviewOpError::Io)?;
             working_changed = true;
@@ -1290,7 +1322,7 @@ pub fn discard_field(
         // Update or no-op patch case: bring the working file's field back to
         // `published_value` (or to whatever main says if the working file
         // happens to be missing on disk).
-        let disk_path = paths.dirty_dir.join(record_rel_path);
+        let disk_path = paths.worktree_dir.join(record_rel_path);
         let current_bytes = std::fs::read(&disk_path).ok();
         let needs_write = match &current_bytes {
             Some(bytes) => {
@@ -1383,7 +1415,7 @@ pub fn restore_deleted_record(
         .ok_or_else(|| ReviewOpError::RestoreSourceMissing(workspace_path.clone()))?;
 
     accepted_patches::remove_entry(&mut file, record_rel_path);
-    write_file(&paths.dirty_dir.join(record_rel_path), &main_content)
+    write_file(&paths.worktree_dir.join(record_rel_path), &main_content)
         .map_err(ReviewOpError::Internal)?;
     accepted_patches::save_atomic(&connection_dir, &file).map_err(ReviewOpError::Internal)?;
 
@@ -1432,7 +1464,7 @@ pub fn discard_created_record(
 
     accepted_patches::remove_entry(&mut file, record_rel_path);
 
-    let disk_path = paths.dirty_dir.join(record_rel_path);
+    let disk_path = paths.worktree_dir.join(record_rel_path);
     let mut working_changed = false;
     if disk_path.exists() {
         std::fs::remove_file(&disk_path).map_err(ReviewOpError::Io)?;

@@ -51,17 +51,17 @@ fn make_workspace(conn: &str) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
     )
     .unwrap();
 
-    // dirty_checkout_path (conn_dir) must exist for the existence check in plan_publish::run
+    // worktree_path (conn_dir) must exist for the existence check in plan_publish::run
     let conn_dir = root.join(conn);
     std::fs::create_dir_all(&conn_dir).unwrap();
 
-    // reviewed_dirty_checkout_path is the actual dirty source used by plan_publish::run
-    let reviewed_dirty_dir = root
+    // reviewed_worktree_path is the actual dirty source used by plan_publish::run
+    let reviewed_worktree_dir = root
         .join(".scratch")
         .join("connections")
         .join("dirty")
         .join(conn);
-    std::fs::create_dir_all(&reviewed_dirty_dir).unwrap();
+    std::fs::create_dir_all(&reviewed_worktree_dir).unwrap();
 
     let master_dir = root
         .join(".scratch")
@@ -77,7 +77,7 @@ fn make_workspace(conn: &str) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
         .join(conn);
     let db_path = root.join(".repos").join("conn_test_id.db");
 
-    (tmp, reviewed_dirty_dir, master_dir, scratch_dir, db_path)
+    (tmp, reviewed_worktree_dir, master_dir, scratch_dir, db_path)
 }
 
 fn write_json(dir: &Path, rel: &str, v: &Value) {
@@ -264,18 +264,18 @@ fn test_asset_pseudo_refs_stripped_in_create() {
 }
 
 #[test]
-fn uses_reviewed_dirty_dir_not_working_tree() {
-    let (tmp, reviewed_dirty_dir, master_dir, scratch_dir, _) = make_workspace("my-conn");
+fn uses_reviewed_worktree_dir_not_working_tree() {
+    let (tmp, reviewed_worktree_dir, master_dir, scratch_dir, _) = make_workspace("my-conn");
     let root = tmp.path();
 
-    // reviewed_dirty_dir matches master — no changes to publish
+    // reviewed_worktree_dir matches master — no changes to publish
     write_json(
         &master_dir,
         "posts/rec1.json",
         &json!({"id": "rec1", "fields": {"title": "Committed"}}),
     );
     write_json(
-        &reviewed_dirty_dir,
+        &reviewed_worktree_dir,
         "posts/rec1.json",
         &json!({"id": "rec1", "fields": {"title": "Committed"}}),
     );
@@ -290,7 +290,7 @@ fn uses_reviewed_dirty_dir_not_working_tree() {
 
     assert!(
         find_plan_root(&scratch_dir).is_none(),
-        "plan should use reviewed_dirty_dir, ignoring unreviewed working-tree changes"
+        "plan should use reviewed_worktree_dir, ignoring unreviewed working-tree changes"
     );
 }
 
@@ -308,13 +308,13 @@ fn test_compute_changed_fields() {
     .unwrap();
     let conn_dir = root.join("c");
     std::fs::create_dir_all(&conn_dir).unwrap();
-    let reviewed_dirty_dir = root.join(".scratch/connections/dirty/c");
-    std::fs::create_dir_all(&reviewed_dirty_dir).unwrap();
+    let reviewed_worktree_dir = root.join(".scratch/connections/dirty/c");
+    std::fs::create_dir_all(&reviewed_worktree_dir).unwrap();
     let master_dir = root.join(".scratch/connections/master/c");
     let scratch_dir = root.join(".scratch/connections/scratch/c");
     std::fs::create_dir_all(&master_dir).unwrap();
     write_json(&master_dir, "t/r.json", &master);
-    write_json(&reviewed_dirty_dir, "t/r.json", &dirty);
+    write_json(&reviewed_worktree_dir, "t/r.json", &dirty);
 
     run(root, None).unwrap();
 

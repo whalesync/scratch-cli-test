@@ -9,7 +9,7 @@ use serde_json::Value as JsonValue;
 use crate::api::{ConnectorAccount, DataFolder};
 use crate::config::markers;
 use crate::shared::folder_index;
-use crate::shared::layout::WorkspaceLayout;
+use crate::shared::layout::{OldLayoutDetection, WorkspaceLayout};
 use crate::shared::review_ops::{
     self, compute_accepted_state, is_data_path_in_folder, parse_json_value_at, write_file,
     ConnectionPaths, FieldCommandResult, FileMap,
@@ -182,7 +182,7 @@ pub enum FilesCommands {
 struct ConnectionContext {
     connection_id: String,
     conn_dir_name: String,
-    dirty_dir: PathBuf,
+    worktree_dir: PathBuf,
     scratch_dir: PathBuf,
     workspace_dir: PathBuf,
     master_dir: PathBuf,
@@ -192,20 +192,20 @@ struct ConnectionContext {
 
 impl ConnectionContext {
     /// Subset of fields review_ops needs. Derives the workspace root from
-    /// `dirty_dir.parent()` because `workspace_dir` is historically the
+    /// `worktree_dir.parent()` because `workspace_dir` is historically the
     /// workbook materialization path (`<workspace>/.scratch/workspace`),
     /// not the workspace root — same derivation [`accepted_patches_dir`]
     /// used before slice H moved it to shared.
     fn to_paths(&self) -> ConnectionPaths {
         let workspace_root = self
-            .dirty_dir
+            .worktree_dir
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
         ConnectionPaths {
             conn_dir_name: self.conn_dir_name.clone(),
             workspace_dir: workspace_root,
-            dirty_dir: self.dirty_dir.clone(),
+            worktree_dir: self.worktree_dir.clone(),
             bare_repo: self.bare_repo.clone(),
             scratch_dir: self.scratch_dir.clone(),
             master_dir: self.master_dir.clone(),
@@ -247,8 +247,8 @@ fn apply_changed_working_files(
     )
 }
 
-fn sync_schema_files_from_master(ctx: &ConnectionContext) -> anyhow::Result<()> {
-    review_ops::sync_schema_files_from_master(&ctx.to_paths())
+fn sync_schema_files_from_worktree(ctx: &ConnectionContext) -> anyhow::Result<()> {
+    review_ops::sync_schema_files_from_worktree(&ctx.to_paths())
 }
 
 fn accept_field_in_folder(
@@ -410,7 +410,7 @@ fn refresh_problem_record_index_for_ctx(
     };
     if let Err(err) = validators::run_validations(
         &ctx.scratch_dir,
-        &ctx.dirty_dir,
+        &ctx.worktree_dir,
         &ctx.workspace_dir,
         &ctx.master_dir,
         &ctx.db_path,
@@ -498,7 +498,7 @@ async fn run_download(
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, _initial_contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url)?;
+        resolve_workspace_and_connections(cwd, server_url, json)?;
     let token = get_token(&workspace_server_url)?;
 
     // Workspace-wide advisory lock for the whole pull: sync, pre-flight,
@@ -566,15 +566,15 @@ async fn run_download(
         let empty = Vec::new();
         let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
         let mut download_result = download_single_repo(ctx, &workspace_dir, &token, folders)?;
-        // `update_master_worktree` is best-effort — failures here shouldn't
+        // `update_main_worktree_after_pull` is best-effort — failures here shouldn't
         // bubble up because the dirty-side download already succeeded. Fall
         // back to "no master change" on error.
-        let master_update = update_master_worktree(ctx, &token).unwrap_or_default();
+        let master_update = update_main_worktree_after_pull(ctx, &token).unwrap_or_default();
         if master_update.moved {
             // Schema files on master may have moved alongside data files;
             // resync them into ctx.scratch_dir. Gated on `moved` so unchanged
             // connections pay zero cost in the per-ctx loop.
-            let _ = sync_schema_files_from_master(ctx);
+            let _ = sync_schema_files_from_worktree(ctx);
         }
         // Merge the master-side path diff into the download result so the
         // single `changed_paths` field downstream covers any tree the
@@ -781,7 +781,7 @@ async fn run_upload(
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url)?;
+        resolve_workspace_and_connections(cwd, server_url, json)?;
     let token = get_token(&workspace_server_url)?;
 
     if contexts.is_empty() {
@@ -833,7 +833,7 @@ async fn run_upload(
 async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url)?;
+        resolve_workspace_and_connections(cwd, server_url, json)?;
     let token = get_token(&workspace_server_url)?;
 
     if contexts.is_empty() {
@@ -956,7 +956,7 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
 
 fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let (_, _, contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url)?;
+        resolve_workspace_and_connections(cwd, server_url, json)?;
     let token = get_token(&workspace_server_url)?;
 
     if contexts.is_empty() {
@@ -1066,7 +1066,7 @@ fn run_discard_all(
     skip_folder_index: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -1148,7 +1148,7 @@ fn run_reject_all(
     skip_folder_index: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -1223,7 +1223,7 @@ fn run_accept_all(
     skip_folder_index: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, workspace_dir, contexts, _) = resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -1301,6 +1301,7 @@ fn run_accept(
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
 
     if contexts.is_empty() {
@@ -1337,7 +1338,7 @@ fn run_accept(
         let ctx = &contexts[*ctx_idx];
 
         let main_map = read_main_tree(&ctx.bare_repo)?;
-        sync_schema_files_from_master(ctx)?;
+        sync_schema_files_from_worktree(ctx)?;
         let local_map = read_materialized_repo(ctx)?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
@@ -1414,6 +1415,7 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
 
     if contexts.is_empty() {
@@ -1448,7 +1450,7 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         let ctx = &contexts[*ctx_idx];
 
         let main_map = read_main_tree(&ctx.bare_repo)?;
-        sync_schema_files_from_master(ctx)?;
+        sync_schema_files_from_worktree(ctx)?;
         let local_map = read_materialized_repo(ctx)?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
@@ -1511,6 +1513,7 @@ fn run_discard(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
 
     if contexts.is_empty() {
@@ -1605,6 +1608,7 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
     let (ctx, repo_folder, display_folder) =
         resolve_folder_context(&workspace_dir, &contexts, folder)?;
@@ -1613,7 +1617,7 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
-    sync_schema_files_from_master(&ctx)?;
+    sync_schema_files_from_worktree(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
@@ -1688,6 +1692,7 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
     let (ctx, repo_folder, display_folder) =
         resolve_folder_context(&workspace_dir, &contexts, folder)?;
@@ -1696,7 +1701,7 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
-    sync_schema_files_from_master(&ctx)?;
+    sync_schema_files_from_worktree(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
@@ -1769,6 +1774,7 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
     let (ctx, repo_folder, display_folder) =
         resolve_folder_context(&workspace_dir, &contexts, folder)?;
@@ -1777,7 +1783,7 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
-    sync_schema_files_from_master(&ctx)?;
+    sync_schema_files_from_worktree(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
@@ -1861,6 +1867,7 @@ fn run_restore_deleted_record(
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
 
     if contexts.is_empty() {
@@ -1919,7 +1926,7 @@ async fn run_discard_created_record(
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, _workspace_dir, contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url)?;
+        resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -1988,7 +1995,7 @@ async fn run_discard_created_record(
 }
 
 fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -2031,7 +2038,7 @@ fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()
 }
 
 fn run_unpublished(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -2074,7 +2081,7 @@ fn run_unpublished(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<(
 }
 
 fn run_unpushed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url)?;
+    let (_, _, contexts, _) = resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
@@ -2128,7 +2135,7 @@ fn unpushed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEnt
 fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (_, _, contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url)?;
+        resolve_workspace_and_connections(cwd, server_url, json)?;
     let token = get_token(&workspace_server_url)?;
 
     if contexts.is_empty() {
@@ -2170,6 +2177,10 @@ pub async fn download_workbook(
     };
 
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    // Programmatic refresh — intentionally skips `check_workspace_layout_or_bail`.
+    // Linked-CLI callers expect a best-effort refresh post-server-mutation;
+    // refusing here would fail downstream operations the user didn't directly
+    // trigger. Old-layout workspaces show up only on user-initiated commands.
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
     let folders_by_conn =
         fetch_folders_by_connection(base_url, &workspace_marker, workbook_id).await;
@@ -2183,8 +2194,8 @@ pub async fn download_workbook(
         let empty = Vec::new();
         let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
         download_single_repo(ctx, &workspace_dir, token, folders)?;
-        if update_master_worktree(ctx, token).is_ok() {
-            let _ = sync_schema_files_from_master(ctx);
+        if update_main_worktree_after_pull(ctx, token).is_ok() {
+            let _ = sync_schema_files_from_worktree(ctx);
         }
     }
     Ok(())
@@ -2223,9 +2234,78 @@ async fn fetch_folders_by_connection(
     }
 }
 
+/// Refuse to operate on workspaces that were initialized under the
+/// pre-slice-F multi-worktree layout (sparse `dirty` worktree + sparse
+/// `master` worktree). Prints a structured `workspace_needs_reinit` error
+/// (JSON mode) or a human-readable message (otherwise), then bails so the
+/// caller exits non-zero. The user's escape hatch is `scratchmd files
+/// publish` to drain any pending edits, followed by `workspaces unsync` +
+/// `workspaces init` to re-initialize.
+///
+/// Detection is cheap (≤ 2 stat calls per connection); safe to call on
+/// every mutating or listing CLI op. `workspaces show` / `unsync` and
+/// programmatic refresh paths (`download_workbook`) intentionally skip this
+/// check — the user needs a way to inspect / tear down a stuck workspace.
+fn check_workspace_layout_or_bail(
+    workspace_dir: &Path,
+    marker: &markers::WorkspaceMarker,
+    json: bool,
+) -> anyhow::Result<()> {
+    let layout = WorkspaceLayout::for_cli(workspace_dir);
+    let dir_names: Vec<&str> = marker
+        .connections
+        .iter()
+        .map(|c| c.dir_name.as_str())
+        .collect();
+    let detection = layout.detect_old_layout(&dir_names);
+    if !detection.is_old_layout() {
+        return Ok(());
+    }
+    print_workspace_needs_reinit_result(&detection, json)?;
+    anyhow::bail!(
+        "Workspace was initialized on a pre-slice-F layout — run `scratchmd files publish` to drain any pending edits, then `workspaces unsync` + `workspaces init` to re-initialize."
+    );
+}
+
+/// Print the structured `workspace_needs_reinit` result. Mirrors the
+/// `blocked_unreviewed` pattern (slice D): JSON mode emits a machine-readable
+/// payload the desktop pattern-matches on; non-JSON mode emits human output.
+/// Caller bails immediately after so the trailing `Error:` line still appears.
+fn print_workspace_needs_reinit_result(
+    detection: &OldLayoutDetection,
+    json: bool,
+) -> anyhow::Result<()> {
+    let affected = detection.affected_connections();
+    if json {
+        let output = serde_json::json!({
+            "status": "workspace_needs_reinit",
+            "reason": "old_layout_pre_slice_f",
+            "affectedConnections": affected,
+            "connectionsWithMasterWorktree": detection.connections_with_master_worktree,
+            "connectionsWithSparseCheckout": detection.connections_with_sparse_checkout,
+            "recommendation": "Run `scratchmd files publish` to drain any pending edits, then `workspaces unsync` + `workspaces init` to re-initialize.",
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    println!("This workspace was initialized on an older layout that's no longer supported.");
+    println!();
+    println!("Affected connection(s):");
+    for name in &affected {
+        println!("  {name}");
+    }
+    println!();
+    println!("To recover:");
+    println!("  1. `scratchmd files publish` — drain any pending edits to the server.");
+    println!("  2. `scratchmd workspaces unsync` — remove the local workspace.");
+    println!("  3. `scratchmd workspaces init <workbook-id>` — re-initialize on the new layout.");
+    Ok(())
+}
+
 fn resolve_workspace_and_connections(
     cwd: &Path,
     server_url: &str,
+    json: bool,
 ) -> anyhow::Result<(
     markers::WorkspaceMarker,
     PathBuf,
@@ -2236,6 +2316,7 @@ fn resolve_workspace_and_connections(
         anyhow::anyhow!("Not inside a workspace directory. Run from a workspace directory.")
     })?;
     let workspace_marker = read_workspace_marker(&workspace_dir)?;
+    check_workspace_layout_or_bail(&workspace_dir, &workspace_marker, json)?;
     let workspace_server_url = if workspace_marker.workbook.server_url.is_empty() {
         server_url.to_string()
     } else {
@@ -2281,7 +2362,7 @@ fn build_connection_contexts(
         .map(|connection| ConnectionContext {
             connection_id: connection.id.clone(),
             conn_dir_name: connection.dir_name.clone(),
-            dirty_dir: layout.dirty_checkout_path(&connection.dir_name),
+            worktree_dir: layout.worktree_path(&connection.dir_name),
             scratch_dir: layout.connection_scratch_path(&connection.dir_name),
             workspace_dir: layout.workbook_materialization_path(),
             master_dir: layout.master_worktree_path(&connection.dir_name),
@@ -2348,7 +2429,7 @@ fn restore_deleted_records_locally(
 
     for (rel_path, content) in &to_restore {
         crate::shared::accepted_patches::remove_entry(&mut accepted_file, rel_path);
-        write_file(&ctx.dirty_dir.join(rel_path), content)?;
+        write_file(&ctx.worktree_dir.join(rel_path), content)?;
     }
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     Ok(())
@@ -2389,7 +2470,7 @@ fn discard_created_records_locally(
 
     for rel_path in &to_discard {
         crate::shared::accepted_patches::remove_entry(&mut accepted_file, rel_path);
-        let disk_path = ctx.dirty_dir.join(rel_path);
+        let disk_path = ctx.worktree_dir.join(rel_path);
         if disk_path.exists() {
             std::fs::remove_file(&disk_path).with_context(|| {
                 format!("failed to remove working file {}", disk_path.display())
@@ -2598,7 +2679,7 @@ fn read_main_tree(bare_repo: &Path) -> anyhow::Result<FileMap> {
 ///
 /// `ctx.workspace_dir` is historically the workbook materialization path
 /// (`<workspace>/.scratch/workspace`), not the workspace root, so we derive
-/// the root from `ctx.dirty_dir.parent()` (= `<workspace>/<conn>` → parent
+/// the root from `ctx.worktree_dir.parent()` (= `<workspace>/<conn>` → parent
 /// is `<workspace>`). Callers that need the accepted-patches.json directory
 /// (and can't reach the workspace root variable directly) should use this
 /// helper.
@@ -2777,7 +2858,7 @@ fn download_single_repo(
     // skip rewriting files whose content didn't move (preserves mtimes so
     // find_stale_files doesn't see every file as stale next page load).
     materialize_local_repo(ctx, &approved_map_new, &local_map)?;
-    reconcile_data_folder_dirs(&ctx.dirty_dir, data_folders)?;
+    reconcile_data_folder_dirs(&ctx.worktree_dir, data_folders)?;
 
     // Save BEFORE advancing main: a crash between these two steps leaves
     // us with the file still anchored against old main, so the next pull
@@ -3025,7 +3106,7 @@ fn discard_all_single_repo(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<DiscardAllResult> {
     let _ = workspace_dir; // retained for caller-site parity with accept_all/reject_all.
-    sync_schema_files_from_master(ctx)?;
+    sync_schema_files_from_worktree(ctx)?;
     discard_all_full_scan(ctx, repo_folder)
 }
 
@@ -3113,7 +3194,7 @@ fn discard_paths_single_repo(
     }
     let main_map = read_main_tree(&ctx.bare_repo)?;
 
-    sync_schema_files_from_master(ctx)?;
+    sync_schema_files_from_worktree(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
 
     let connection_dir = accepted_patches_dir(ctx);
@@ -3178,7 +3259,7 @@ fn accept_all_single_repo(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<AcceptAllResult> {
     let _ = workspace_dir;
-    sync_schema_files_from_master(ctx)?;
+    sync_schema_files_from_worktree(ctx)?;
     accept_all_full_scan(ctx, repo_folder)
 }
 
@@ -3245,7 +3326,7 @@ fn reject_all_single_repo(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<RejectAllResult> {
     let _ = workspace_dir;
-    sync_schema_files_from_master(ctx)?;
+    sync_schema_files_from_worktree(ctx)?;
     reject_all_full_scan(ctx, repo_folder)
 }
 
@@ -3332,7 +3413,7 @@ fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Res
         Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
         None => HashMap::new(),
     };
-    sync_schema_files_from_master(ctx)?;
+    sync_schema_files_from_worktree(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
 
     if maps_equal(&base_map, &local_map) {
@@ -3381,7 +3462,7 @@ fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
     crate::git_ops::read_tree_files(bare_repo, hash)
 }
 
-/// Reconcile the on-disk state of `ctx.dirty_dir` (user working tree) and
+/// Reconcile the on-disk state of `ctx.worktree_dir` (user working tree) and
 /// `ctx.scratch_dir` (per-connection schema/validation/publish-plan files)
 /// with `target_map`.
 ///
@@ -3406,17 +3487,17 @@ fn materialize_local_repo(
     target_map: &FileMap,
     current_map: &FileMap,
 ) -> anyhow::Result<()> {
-    std::fs::create_dir_all(&ctx.dirty_dir)?;
+    std::fs::create_dir_all(&ctx.worktree_dir)?;
     std::fs::create_dir_all(&ctx.scratch_dir)?;
 
-    // Resolve a rel_path into its on-disk path under either `dirty_dir` or
+    // Resolve a rel_path into its on-disk path under either `worktree_dir` or
     // `scratch_dir`. Returns `None` for `.scratch` (bare, no trailing slash)
     // and similar oddities — those don't materialize to a real file.
     let resolve_disk_path = |rel_path: &str| -> Option<PathBuf> {
         if let Some(scratch_rel) = rel_path.strip_prefix(".scratch/") {
             Some(ctx.scratch_dir.join(scratch_rel))
         } else if !rel_path.starts_with(".scratch") {
-            Some(ctx.dirty_dir.join(rel_path))
+            Some(ctx.worktree_dir.join(rel_path))
         } else {
             None
         }
@@ -3452,16 +3533,16 @@ fn materialize_local_repo(
     Ok(())
 }
 
-/// Reconcile on-disk folders under `dirty_dir` with the server's folder list.
+/// Reconcile on-disk folders under `worktree_dir` with the server's folder list.
 ///
 /// 1. Creates a directory for every folder path (parents included).
 /// 2. Prunes any local directory not in the server set, but only if empty —
 ///    non-empty dirs are owned by the record-file merge path.
 pub fn reconcile_data_folder_dirs(
-    dirty_dir: &Path,
+    worktree_dir: &Path,
     data_folders: &[DataFolder],
 ) -> anyhow::Result<()> {
-    if !dirty_dir.exists() {
+    if !worktree_dir.exists() {
         return Ok(());
     }
 
@@ -3474,21 +3555,21 @@ pub fn reconcile_data_folder_dirs(
         if trimmed.is_empty() {
             continue;
         }
-        let target = dirty_dir.join(trimmed);
+        let target = worktree_dir.join(trimmed);
         std::fs::create_dir_all(&target)
             .with_context(|| format!("create empty data folder dir {}", target.display()))?;
-        // Mark every ancestor up to dirty_dir as wanted so the pruner leaves
+        // Mark every ancestor up to worktree_dir as wanted so the pruner leaves
         // the chain of intermediate folders alone, even when they are not
         // themselves separate DataFolder entries.
         for ancestor in target.ancestors() {
-            if ancestor == dirty_dir {
+            if ancestor == worktree_dir {
                 break;
             }
             wanted.insert(ancestor.to_path_buf());
         }
     }
 
-    prune_empty_unknown_dirs(dirty_dir, &wanted)?;
+    prune_empty_unknown_dirs(worktree_dir, &wanted)?;
     Ok(())
 }
 
@@ -3911,21 +3992,37 @@ fn format_elapsed(ms: u128) -> String {
     }
 }
 
-/// Outcome of `update_master_worktree` for a single connection. Callers use
-/// `moved` to gate work that only matters when master actually advanced
-/// (sync_schema_files_from_master) and `changed_paths` to drive a targeted
-/// folder_index reindex.
+/// Outcome of `update_main_worktree_after_pull` for a single connection.
+/// Callers use `moved` to gate work that only matters when main actually
+/// advanced (sync_schema_files_from_worktree) and `changed_paths` to drive a
+/// targeted folder_index reindex.
 #[derive(Default)]
 struct MasterUpdateResult {
     /// `true` iff `refs/heads/main` advanced from its previous tip during
     /// this call (or was created from scratch).
     moved: bool,
     /// Repo-relative data paths whose blob OID changed between the old and
-    /// new master tree. Empty when `moved` is false. Excludes `.scratch/`.
+    /// new main tree. Empty when `moved` is false. Excludes `.scratch/`.
     changed_paths: Vec<String>,
 }
 
-fn update_master_worktree(
+/// Post-pull bookkeeping: fetch origin, advance `refs/heads/main` to match,
+/// refresh the user worktree's index + tracked `.scratch/` content, and
+/// compute the per-path diff for folder_index updates.
+///
+/// Pre-slice-F maintained a second sparse `master` worktree at
+/// `<workspace>/.scratch/connections/master/<conn>/` as the read source for
+/// schemas. Slice F retires that worktree — the single non-sparse worktree
+/// on `main` carries schemas natively. This helper now refreshes the user
+/// worktree directly:
+///
+/// 1. `worktree_reset_mixed` syncs the index without touching the working
+///    tree (record JSONs were already written by `download_single_repo`'s
+///    `materialize_local_repo`).
+/// 2. `worktree_checkout_path(_, _, ".scratch")` re-checks-out only the
+///    `.scratch/` subtree so schema files reflect the new HEAD without
+///    overwriting user record edits.
+fn update_main_worktree_after_pull(
     ctx: &ConnectionContext,
     token: &str,
 ) -> anyhow::Result<MasterUpdateResult> {
@@ -3937,12 +4034,17 @@ fn update_master_worktree(
     let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
     let moved = old_main_hash.as_deref() != Some(new_main_hash.as_str());
 
-    // Always run the worktree-update steps — they're idempotent when master
-    // is already up to date, and they recover from a state where the ref
-    // moved earlier but materialization didn't complete.
+    // Always run the worktree-update steps — they're idempotent when main is
+    // already up to date, and they recover from a state where the ref moved
+    // earlier but materialization didn't complete.
     git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
-    crate::git_ops::ensure_sparse_worktree(&ctx.bare_repo, &ctx.master_dir, "refs/heads/main")?;
-    crate::git_ops::worktree_reset_hard(&ctx.master_dir, &new_main_hash)?;
+    if ctx.worktree_dir.join(".git").exists() {
+        crate::git_ops::worktree_reset_mixed(&ctx.worktree_dir, &new_main_hash)?;
+        // Re-check-out only the tracked `.scratch/` so the next
+        // `sync_schema_files_from_worktree` reads fresh schemas. Skips
+        // record files — `materialize_local_repo` already wrote those.
+        crate::git_ops::worktree_checkout_path(&ctx.worktree_dir, &new_main_hash, ".scratch")?;
+    }
 
     let mut changed_paths = Vec::new();
     if moved {

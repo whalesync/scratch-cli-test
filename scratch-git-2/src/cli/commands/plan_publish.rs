@@ -41,16 +41,16 @@ pub fn run(workspace_start: &Path, filter: Option<&str>) -> anyhow::Result<()> {
             },
             None => None,
         };
-        let dirty_dir = layout.dirty_checkout_path(&conn_name);
+        let worktree_dir = layout.worktree_path(&conn_name);
         let master_dir = layout.master_worktree_path(&conn_name);
         let scratch_dir = layout.connection_scratch_path(&conn_name);
         let db_path = layout.index_db_path(&connection.repo_path);
         let bare_repo = layout.bare_repo_path(&connection.repo_path);
 
-        if !dirty_dir.exists() && !bare_repo.exists() {
+        if !worktree_dir.exists() && !bare_repo.exists() {
             eprintln!(
                 "  {conn_name}: dirty checkout not found at {}, skipping",
-                dirty_dir.display()
+                worktree_dir.display()
             );
             continue;
         }
@@ -63,8 +63,8 @@ pub fn run(workspace_start: &Path, filter: Option<&str>) -> anyhow::Result<()> {
             continue;
         }
 
-        let reviewed_dirty_dir = layout.reviewed_dirty_checkout_path(&conn_name);
-        let dirty_source = reviewed_dirty_dir.as_path();
+        let reviewed_worktree_dir = layout.reviewed_worktree_path(&conn_name);
+        let dirty_source = reviewed_worktree_dir.as_path();
 
         match plan_publish::build_publish_plan_with_scratch_dir(
             &conn_name,
