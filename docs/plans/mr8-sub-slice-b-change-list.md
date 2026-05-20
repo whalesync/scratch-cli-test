@@ -4,6 +4,79 @@ Working notes for the next session. Not durable documentation — once B
 ships, this gets folded into the main plan's deviation log if anything
 moved.
 
+## Progress (as of 2026-05-19)
+
+On branch `dev-10144-mr11` off `master`.
+
+| Step | Status | Notes |
+| ---- | ------ | ----- |
+| 1. `layout::connection_root_path` | ✅ committed (mr11 HEAD) | + tests for both `for_cli` and `for_service` layouts |
+| 2. `compute_accepted_state` + `apply_patch_entry_to_blob` | ✅ committed (mr11 HEAD) | 10 unit tests; `compute_unreviewed_entries` switched to `json_content_differs` so synthesized approved bytes vs worktree-written bytes don't false-positive on whitespace drift |
+| 3. `discard_field_in_folder` | ✅ committed (mr11 HEAD) | 7 unit tests; new `PatchAction` enum + `patch_object_mentions_field` helper |
+| 4. `run_accept` / `run_reject` / `run_discard` + `discard_paths_single_repo` | ✅ committed (mr11 HEAD, WIP) | Three new shared helpers landed alongside: `read_main_tree`, `parse_json_value_at`, `write_or_remove_working_file`. Two existing tests fixed up: `discard_paths_single_repo_reverts_only_listed_paths` and `..._with_only_approved_change` now seed `accepted-patches.json` via new test helper `seed_accepted_patches_from_fixture`. `cargo test --bin scratchmd`: 266 passes. |
+| 5. `accept_field` / `reject_field` rewrite + new `run_discard_field` | ⏳ not started | See "Per-field upsert algorithm" below — recommended approach |
+| 6. `_all` variants + delete `_scoped_via_index` variants | ⏳ not started | Many `accept_all_single_repo_*` / `reject_all_*` / `discard_all_*` tests will need updating (use `seed_accepted_patches_from_fixture`) |
+| 7. `restore_deleted_records_locally` / `discard_created_records_locally` | ⏳ not started | 2 existing tests; remote-cleanup hack stays untouched |
+| 8. `upload_single_repo_via_patches` → read `accepted-patches.json` verbatim | ⏳ not started | |
+| 9. Listing commands (`run_unreviewed` / `run_unpublished` / `run_unpushed`) | ⏳ not started | |
+| 10. Delete dead code (`compute_upload_patches`, local `PatchKind`, `update_dirty_worktree_index`, `_scoped_via_index` helpers) | ⏳ not started | Final `cargo build` should be warning-free |
+| 11. Test sweep across `tests/` and module tests | ⏳ not started | Expect ~20 test sites to update |
+| 12. `cargo fmt` + `yarn lint-strict` in `server/` (no-op expected) | ⏳ not started | |
+| 13. Manual dogfood | ⏳ not started | |
+
+### Where step 4 leaves the codebase
+
+The workspace is in a **mixed state** between the two models — step 4 ships
+the JSON-file model for single-path commands, but field-level / `_all` /
+`_record` / listing commands still mutate `refs/heads/dirty`. This is fine
+for an in-progress branch (nothing user-facing has shipped), but **do not
+merge mr11 until at least step 6 is complete** — `accept-all` writing to
+`dirty` while `accept` writes to `accepted-patches.json` would produce
+inconsistent views of the workspace.
+
+### Per-field upsert algorithm (for step 5)
+
+When `accept-field` moves a single field from unapproved → approved, the
+cleanest path is to:
+
+1. Read the file's current approved object: `approved_map[path]` (parsed
+   to `JsonMap`). If absent, start with empty.
+2. Read the file's current local object from `local_map[path]` (parsed).
+3. `next_approved = clone(approved); apply_nested_json_value(&mut
+   next_approved, field, local_value);`
+4. Compute the new entry via
+   `re_anchor::compute_entry(path, main_parsed.as_ref(),
+   Some(JsonValue::Object(next_approved)).as_ref())` (or `None` if
+   next_approved emptied AND main is absent).
+5. `match (existing_pos, new_entry)`: replace / insert / remove the
+   entry in the file.
+
+This reuses `compute_entry` semantics so the Create-vs-Update-vs-Delete
+decision falls out of the same machinery used by single-path accept. The
+test for `accept_field_in_folder_accepts_modified_and_created_rows_but_ignores_deleted_rows`
+needs updating to assert on `AcceptedPatchesFile` contents instead of the
+returned FileMap.
+
+For `reject-field`, the new logic is much simpler than today's hybrid:
+`local[field] ← approved[field]`. No `master_map` argument. Returns
+`(FileMap, FieldCommandResult)` (just next_local_map + result). The
+hybrid's branch 2 (already-approved → roll dirty back to master)
+disappears — see decision 35 in the main plan.
+
+For `run_discard_field`, just call `discard_field_in_folder` (already
+landed in step 3) + `save_atomic` + `apply_changed_working_files`.
+
+### Test-helper momentum
+
+`seed_accepted_patches_from_fixture` (added in step 4 at
+`scratch-git-2/src/cli/commands/tests/files.rs`) translates the legacy
+fixture's `dirty != main` state into an equivalent
+`accepted-patches.json` file. **Reuse this helper from step 5 onward** —
+every test that today relies on `create_multi_folder_fixture`'s baked-in
+"approved delta" can call it before invoking the function under test.
+The helper currently uses `merge_patch::diff`; that function stays alive
+through B regardless (re_anchor depends on it).
+
 ## State model recap (target after B)
 
 Pre-Phase-5: worktree stays at `ctx.dirty_dir` (sparse on `refs/heads/dirty`).
@@ -393,46 +466,12 @@ assert `accepted-patches.json` state instead. Expect ~20 test sites in
 
 ## Migration concern
 
-Workspaces initialized pre-B have `refs/heads/dirty` populated but no
-`accepted-patches.json`. After B ships, the FIRST run of any
-mutating command on such a workspace will read main + an empty
-accepted-patches file, ignoring whatever was on dirty. That's data
-loss.
-
-Slice F formally migrates by diffing `dirty_tree vs main_tree` and
-writing the result as `accepted-patches.json`. **B should refuse to
-mutate** if `refs/heads/dirty` is non-empty AND `accepted-patches.json`
-is missing, with an error pointing the user at re-init (the F migration
-hasn't shipped yet). Acceptable for the ~2–5 desktop users today; F
-follows soon.
-
-Alternative: do the dirty-tree → accepted-patches.json conversion
-inline at command-startup as a one-shot. Cheap to implement; could
-land in B as a transitional gate without committing to F's "re-init"
-fallback. **Prefer this** — saves the user from a manual re-init step
-during the rollout window.
-
-```
-fn ensure_accepted_patches_initialized(ctx, &main_map) -> Result<AcceptedPatchesFile>:
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
-    if accepted_patches::path(&connection_dir).exists():
-        return accepted_patches::load(&connection_dir)
-    // No file yet — bootstrap from refs/heads/dirty if it differs from main.
-    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-    if dirty_hash.is_none() || dirty_hash == main_hash:
-        return Ok(AcceptedPatchesFile::default())
-    let dirty_map = read_git_tree(&ctx.bare_repo, &dirty_hash.unwrap())?;
-    let patches = compute_upload_patches(&main_map, &dirty_map, &ctx.conn_dir_name)?;
-    let file = AcceptedPatchesFile { patches: patches.into_iter().map(into_anchored).collect() };
-    accepted_patches::save_atomic(&connection_dir, &file)?;
-    Ok(file)
-```
-
-Run at the top of every mutating command after `main_map` is in hand.
-Cheap on the steady-state path (single `exists()` check). Note: this
-keeps `compute_upload_patches` alive a bit longer — fold the bootstrap
-into B and delete `compute_upload_patches` in slice F when the migration
-is removed.
+Workspaces initialized pre-B with a populated `refs/heads/dirty` and no
+`accepted-patches.json` will silently lose their pending changes on
+first run after B. **Curtis 2026-05-19: not a concern** — small user
+base, none with significant pending local work. No bootstrap helper,
+no compatibility gate. `compute_upload_patches` gets deleted alongside
+the rest of the legacy logic in step 11.
 
 ## Commit shape
 
@@ -474,14 +513,13 @@ slice F collapses it to a non-sparse main worktree.
 1. Add `layout::connection_root_path`.
 2. Add `compute_accepted_state` + `apply_patch_entry_to_blob` + unit tests.
 3. Add `discard_field_in_folder` + unit tests.
-4. Add `ensure_accepted_patches_initialized` bootstrap helper.
-5. Rewrite `run_accept` + `run_reject` + `run_discard` (single-path).
-6. Rewrite `run_accept_field` + `run_reject_field` + new `run_discard_field`.
-7. Rewrite `run_accept_all` + `run_reject_all` + `run_discard_all`. Delete the three `_scoped_via_index` variants.
-8. Rewrite `run_restore_deleted_record` + `run_discard_created_record` (local helpers only; remote helper untouched).
-9. Switch `upload_single_repo_via_patches` to read accepted-patches.json verbatim (slice C bundled into B per the plan's "B is atomic").
-10. Rewrite listing commands (slice G bundled).
-11. Delete `compute_upload_patches`, local `PatchKind`, `ComputedUploadPatch`, `update_dirty_worktree_index`. Verify no stragglers via `cargo build`.
-12. Update tests in `tests/` and module `__tests__`. Run `cargo test --bin scratchmd` to green.
-13. `cargo fmt`. `yarn lint-strict` in `server/` if any cross-cutting types changed (they shouldn't — pure CLI work).
-14. Manual dogfood: spin up a test workspace, drive accept / reject / discard / accept-field / publish through the CLI, confirm `accepted-patches.json` looks right at each step.
+4. Rewrite `run_accept` + `run_reject` + `run_discard` (single-path).
+5. Rewrite `run_accept_field` + `run_reject_field` + new `run_discard_field`.
+6. Rewrite `run_accept_all` + `run_reject_all` + `run_discard_all`. Delete the three `_scoped_via_index` variants.
+7. Rewrite `run_restore_deleted_record` + `run_discard_created_record` (local helpers only; remote helper untouched).
+8. Switch `upload_single_repo_via_patches` to read accepted-patches.json verbatim (slice C bundled into B per the plan's "B is atomic").
+9. Rewrite listing commands (slice G bundled).
+10. Delete `compute_upload_patches`, local `PatchKind`, `ComputedUploadPatch`, `update_dirty_worktree_index`. Verify no stragglers via `cargo build`.
+11. Update tests in `tests/` and module `__tests__`. Run `cargo test --bin scratchmd` to green.
+12. `cargo fmt`. `yarn lint-strict` in `server/` if any cross-cutting types changed (they shouldn't — pure CLI work).
+13. Manual dogfood: spin up a test workspace, drive accept / reject / discard / accept-field / publish through the CLI, confirm `accepted-patches.json` looks right at each step.

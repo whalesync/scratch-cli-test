@@ -76,6 +76,14 @@ impl WorkspaceLayout {
             .join(connector_name)
     }
 
+    /// Per-connection directory for state files that live alongside the
+    /// connection (not under any of the worktree subroots). Today this
+    /// hosts `accepted-patches.json`; future per-connection state files
+    /// belong here too.
+    pub fn connection_root_path(&self, connector_name: &str) -> PathBuf {
+        self.scratch_root().join("connections").join(connector_name)
+    }
+
     pub fn master_worktree_path(&self, connector_name: &str) -> PathBuf {
         self.scratch_root()
             .join("connections")
@@ -138,6 +146,10 @@ mod tests {
             PathBuf::from("/tmp/workspace/.scratch/connections/scratch/Airtable - My Base")
         );
         assert_eq!(
+            layout.connection_root_path("Airtable - My Base"),
+            PathBuf::from("/tmp/workspace/.scratch/connections/Airtable - My Base")
+        );
+        assert_eq!(
             layout.master_worktree_path("Airtable - My Base"),
             PathBuf::from("/tmp/workspace/.scratch/connections/master/Airtable - My Base")
         );
@@ -181,6 +193,10 @@ mod tests {
         assert_eq!(
             layout.connection_scratch_path("ca789"),
             PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/connections/scratch/ca789")
+        );
+        assert_eq!(
+            layout.connection_root_path("ca789"),
+            PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/connections/ca789")
         );
         assert_eq!(
             layout.master_worktree_path("ca789"),

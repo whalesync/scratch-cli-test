@@ -1157,9 +1157,11 @@ fn run_accept(
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
-    // Group input paths by connection. Each group produces one commit.
-    // Path format: "<conn-dir-name>/<repo-relative-path>"
-    let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new(); // ctx index → [(input_path, rel_path)]
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
+    // Group input paths by connection. Path format:
+    // "<conn-dir-name>/<repo-relative-path>".
+    let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new();
     for input_path in input_paths {
         let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
             let prefix = format!("{}/", ctx.conn_dir_name);
@@ -1168,7 +1170,10 @@ fn run_accept(
                 .map(|rest| (i, rest.to_string()))
         });
         match found {
-            Some((i, rel_path)) => by_conn.entry(i).or_default().push((input_path.clone(), rel_path)),
+            Some((i, rel_path)) => by_conn
+                .entry(i)
+                .or_default()
+                .push((input_path.clone(), rel_path)),
             None => anyhow::bail!(
                 "Path '{}' does not match any connection. Expected format: <connection-name>/<relative-path>",
                 input_path
@@ -1181,15 +1186,15 @@ fn run_accept(
     for (ctx_idx, path_pairs) in &by_conn {
         let ctx = &contexts[*ctx_idx];
 
-        let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-        let base_map = match base_hash.as_deref() {
-            Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
-            None => HashMap::new(),
-        };
+        let main_map = read_main_tree(&ctx.bare_repo)?;
         sync_schema_files_from_master(ctx)?;
         let local_map = read_materialized_repo(ctx)?;
 
-        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+        let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+        let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+        let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+
+        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
         let changed_paths: std::collections::HashSet<&str> =
             changes.iter().map(|e| e.path.as_str()).collect();
 
@@ -1200,32 +1205,27 @@ fn run_accept(
             }
         }
 
-        // Build accepted_map: start from dirty branch, apply all requested files in one go
-        let mut accepted_map = base_map.clone();
         for (_, rel_path) in path_pairs {
-            match local_map.get(rel_path.as_str()) {
-                Some(content) => {
-                    accepted_map.insert(rel_path.clone(), content.clone());
+            let snapshot = parse_json_value_at(&main_map, rel_path, "refs/heads/main")?;
+            let working = parse_json_value_at(&local_map, rel_path, "working tree")?;
+            match crate::commands::re_anchor::compute_entry(
+                rel_path,
+                snapshot.as_ref(),
+                working.as_ref(),
+            ) {
+                Some(entry) => {
+                    crate::config::accepted_patches::upsert_entry(&mut accepted_file, entry);
                 }
                 None => {
-                    accepted_map.remove(rel_path.as_str());
+                    // Working == published. The unreviewed change was the
+                    // user reverting back to main; accepting it means
+                    // dropping any accepted-patches entry for this path.
+                    crate::config::accepted_patches::remove_entry(&mut accepted_file, rel_path);
                 }
             }
         }
 
-        let msg = if path_pairs.len() == 1 {
-            format!("Accept local change: {}", path_pairs[0].1)
-        } else {
-            format!("Accept {} local changes", path_pairs.len())
-        };
-
-        let new_dirty_hash = commit_file_map_to_dirty_ref(
-            &ctx.bare_repo,
-            base_hash.as_deref(),
-            &accepted_map,
-            &msg,
-        )?;
-        update_dirty_worktree_index(ctx, &new_dirty_hash)?;
+        crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
         let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
         refresh_problem_record_index_for_ctx(ctx, &rel_paths, path_pairs.len() > 1)?;
 
@@ -1270,7 +1270,8 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
-    // Group input paths by connection (same pattern as run_accept)
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+
     let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new();
     for input_path in input_paths {
         let found = contexts.iter().enumerate().find_map(|(i, ctx)| {
@@ -1280,7 +1281,10 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
                 .map(|rest| (i, rest.to_string()))
         });
         match found {
-            Some((i, rel_path)) => by_conn.entry(i).or_default().push((input_path.clone(), rel_path)),
+            Some((i, rel_path)) => by_conn
+                .entry(i)
+                .or_default()
+                .push((input_path.clone(), rel_path)),
             None => anyhow::bail!(
                 "Path '{}' does not match any connection. Expected format: <connection-name>/<relative-path>",
                 input_path
@@ -1293,40 +1297,33 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
     for (ctx_idx, path_pairs) in &by_conn {
         let ctx = &contexts[*ctx_idx];
 
-        let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-        let base_map = match base_hash.as_deref() {
-            Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
-            None => HashMap::new(),
-        };
+        let main_map = read_main_tree(&ctx.bare_repo)?;
         sync_schema_files_from_master(ctx)?;
         let local_map = read_materialized_repo(ctx)?;
 
-        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &base_map, &local_map);
+        let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+        let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+        let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+
+        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
         let changed_paths: std::collections::HashSet<&str> =
             changes.iter().map(|e| e.path.as_str()).collect();
 
-        // Validate all requested paths have unreviewed changes
         for (input_path, rel_path) in path_pairs {
             if !changed_paths.contains(rel_path.as_str()) {
                 anyhow::bail!("No unreviewed local changes for '{}'.", input_path);
             }
         }
 
-        // Restore dirty-branch version to working tree
+        // Restore working file to its approved bytes. Accepted-patches
+        // file is untouched — reject only undoes the unreviewed delta
+        // between working and approved.
         for (_, rel_path) in path_pairs {
-            let disk_path = ctx.dirty_dir.join(rel_path);
-            match base_map.get(rel_path.as_str()) {
-                Some(content) => {
-                    // File exists on dirty branch — restore it
-                    write_file(&disk_path, content)?;
-                }
-                None => {
-                    // File does not exist on dirty branch (added locally) — delete it
-                    if disk_path.exists() {
-                        std::fs::remove_file(&disk_path)?;
-                    }
-                }
-            }
+            write_or_remove_working_file(
+                ctx,
+                rel_path,
+                approved_map.get(rel_path.as_str()).map(|v| v.as_slice()),
+            )?;
         }
 
         all_rejected.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
@@ -2330,6 +2327,52 @@ fn update_dirty_worktree_index(ctx: &ConnectionContext, hash: &str) -> anyhow::R
     crate::git_ops::worktree_reset_mixed(&ctx.dirty_dir, hash)
 }
 
+/// Load the `refs/heads/main` tree as a `FileMap`. Empty map if the ref
+/// doesn't exist yet (fresh workspace, never published).
+fn read_main_tree(bare_repo: &Path) -> anyhow::Result<FileMap> {
+    match git_rev_parse_optional(bare_repo, "refs/heads/main")? {
+        Some(hash) => read_git_tree(bare_repo, &hash),
+        None => Ok(FileMap::new()),
+    }
+}
+
+/// Pull a value from a `FileMap` and parse it as JSON, attaching the
+/// source name (`refs/heads/main`, `working tree`, …) to any error so the
+/// user can see WHICH copy failed to parse.
+fn parse_json_value_at(
+    map: &FileMap,
+    rel_path: &str,
+    source: &str,
+) -> anyhow::Result<Option<JsonValue>> {
+    match map.get(rel_path) {
+        Some(bytes) => Ok(Some(serde_json::from_slice(bytes).with_context(|| {
+            format!("failed to parse {source} blob at {rel_path} as JSON")
+        })?)),
+        None => Ok(None),
+    }
+}
+
+/// Write a single working-tree file, or remove it if `bytes` is `None`.
+/// Used by reject / discard to restore approved / published state.
+fn write_or_remove_working_file(
+    ctx: &ConnectionContext,
+    rel_path: &str,
+    bytes: Option<&[u8]>,
+) -> anyhow::Result<()> {
+    let disk_path = ctx.dirty_dir.join(rel_path);
+    match bytes {
+        Some(content) => write_file(&disk_path, content)?,
+        None => {
+            if disk_path.exists() {
+                std::fs::remove_file(&disk_path).with_context(|| {
+                    format!("failed to remove working file {}", disk_path.display())
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn download_single_repo(
     ctx: &ConnectionContext,
     token: &str,
@@ -2985,49 +3028,49 @@ fn discard_all_scoped_via_index(
     })
 }
 
-/// Discard a specific set of repo-relative paths. For each path, revert both
-/// unapproved working-tree edits and approved-but-unpublished edits by replacing
-/// the entry with its content on `refs/heads/main`. Paths not present in either
-/// the pending or approved sets cause an error (the caller already knows which
-/// input path they came from via `input_by_rel`).
+/// Discard a specific set of repo-relative paths. For each path, drop any
+/// accepted-patches entry AND restore the working file to its
+/// `refs/heads/main` content. Paths that are at published state with no
+/// accepted entry and no unreviewed working edit cause an error.
 fn discard_paths_single_repo(
     ctx: &ConnectionContext,
     rel_paths: &[String],
     input_by_rel: &HashMap<&str, &str>,
 ) -> anyhow::Result<DiscardAllResult> {
-    let main_hash = match git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")? {
-        Some(hash) => hash,
-        None => {
-            return Ok(DiscardAllResult {
-                skipped_missing_main: true,
-                ..Default::default()
-            });
-        }
-    };
-    let main_map = read_git_tree(&ctx.bare_repo, &main_hash)?;
+    let main_hash_opt = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    if main_hash_opt.is_none() {
+        return Ok(DiscardAllResult {
+            skipped_missing_main: true,
+            ..Default::default()
+        });
+    }
+    let main_map = read_main_tree(&ctx.bare_repo)?;
 
-    let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-    let dirty_map = match dirty_hash.as_deref() {
-        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
-        None => HashMap::new(),
-    };
     sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
 
-    let all_pending = compute_unreviewed_entries(&ctx.conn_dir_name, &dirty_map, &local_map);
-    let all_approved = compute_unreviewed_entries(&ctx.conn_dir_name, &main_map, &dirty_map);
+    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
+    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
 
-    let mut changed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for entry in &all_pending {
-        changed.insert(entry.path.clone());
-    }
-    for entry in &all_approved {
-        changed.insert(entry.path.clone());
-    }
+    // A path is "discardable" if it has a patch entry (approved differs
+    // from published) or an unreviewed edit (working differs from
+    // approved). The discard target is the same either way: reset to
+    // published.
+    let entry_paths: std::collections::HashSet<String> = accepted_file
+        .patches
+        .iter()
+        .map(|e| e.path.clone())
+        .collect();
+    let unreviewed = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
+    let unreviewed_paths: std::collections::HashSet<&str> =
+        unreviewed.iter().map(|e| e.path.as_str()).collect();
 
     let mut targets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for rel in rel_paths {
-        if !changed.contains(rel) {
+        let has_change = entry_paths.contains(rel) || unreviewed_paths.contains(rel.as_str());
+        if !has_change {
             let input = input_by_rel
                 .get(rel.as_str())
                 .copied()
@@ -3037,46 +3080,16 @@ fn discard_paths_single_repo(
         targets.insert(rel.clone());
     }
 
-    // Build the new dirty tree: start from current dirty, then for each target
-    // path replace it with main's version (or remove it if main doesn't have it).
-    let mut discarded_map = dirty_map.clone();
     for rel in &targets {
-        match main_map.get(rel.as_str()) {
-            Some(content) => {
-                discarded_map.insert(rel.clone(), content.clone());
-            }
-            None => {
-                discarded_map.remove(rel.as_str());
-            }
-        }
+        crate::config::accepted_patches::remove_entry(&mut accepted_file, rel);
+        write_or_remove_working_file(
+            ctx,
+            rel,
+            main_map.get(rel.as_str()).map(|v| v.as_slice()),
+        )?;
     }
 
-    let commit_msg = if targets.len() == 1 {
-        let only = targets.iter().next().unwrap();
-        format!("Discard local changes in {}", only)
-    } else {
-        format!("Discard local changes in {} files", targets.len())
-    };
-    let new_dirty_hash = commit_file_map_to_dirty_ref(
-        &ctx.bare_repo,
-        dirty_hash.as_deref(),
-        &discarded_map,
-        &commit_msg,
-    )?;
-    // Update only the targeted files on disk so unrelated pending edits in
-    // other files are preserved.
-    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-    for rel in &targets {
-        let disk_path = ctx.dirty_dir.join(rel);
-        match discarded_map.get(rel.as_str()) {
-            Some(content) => write_file(&disk_path, content)?,
-            None => {
-                if disk_path.exists() {
-                    std::fs::remove_file(&disk_path)?;
-                }
-            }
-        }
-    }
+    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
 
     Ok(DiscardAllResult {
         files_discarded: targets.len() as i32,
@@ -3645,6 +3658,181 @@ fn reject_field_in_folder(
     Ok((next_local_map, next_dirty_map, result))
 }
 
+/// Folder-scoped, field-level discard. Per file in `repo_folder`, drop the
+/// named field from any accepted-patches entry AND restore the working
+/// file's value for that field to whatever `refs/heads/main` says.
+///
+/// Three outputs:
+///   - `next_local_map` — the working tree's content after the discard
+///     (caller writes it back via [`apply_changed_working_files`]).
+///   - `result.changed_paths` — workspace-prefixed paths the operation
+///     touched (caller surfaces these and reindexes the folder index).
+///   - `result.dirty_changed` — repurposed: true iff
+///     `accepted-patches.json` was mutated. The struct keeps its existing
+///     name so the field-level commands stay symmetric; step 5 of
+///     sub-slice B renames it to `patches_changed`.
+///
+/// Special handling for the lifecycle edge: stripping the last field from
+/// a `Create` entry drops the entry AND removes the working file, since
+/// "discard back to published" for a never-published record means "the
+/// record no longer exists." `Delete` entries are no-ops — use
+/// `restore-deleted-record` to undo a whole-file delete.
+fn discard_field_in_folder(
+    ctx: &ConnectionContext,
+    repo_folder: &str,
+    field: &str,
+    main_map: &FileMap,
+    file: &mut crate::config::accepted_patches::AcceptedPatchesFile,
+    local_map: &FileMap,
+) -> anyhow::Result<(FileMap, FieldCommandResult)> {
+    use crate::commands::re_anchor::PatchKind;
+
+    let mut next_local_map = local_map.clone();
+    let mut result = FieldCommandResult::default();
+    let mut entries_to_drop: Vec<String> = Vec::new();
+
+    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for key in main_map.keys() {
+        if is_data_path_in_folder(key, repo_folder) {
+            paths.insert(key.clone());
+        }
+    }
+    for key in local_map.keys() {
+        if is_data_path_in_folder(key, repo_folder) {
+            paths.insert(key.clone());
+        }
+    }
+    for entry in &file.patches {
+        if is_data_path_in_folder(&entry.path, repo_folder) {
+            paths.insert(entry.path.clone());
+        }
+    }
+
+    for path in paths {
+        let published_value = match main_map.get(path.as_str()) {
+            Some(bytes) => {
+                let obj = parse_json_object_bytes(bytes, path.as_str())?;
+                read_nested_json_value(&obj, field)
+            }
+            None => None,
+        };
+        let main_has_path = main_map.contains_key(path.as_str());
+
+        let mut patch_action = PatchAction::Untouched;
+        if let Some(entry) = file.patches.iter_mut().find(|e| e.path == path) {
+            match entry.kind {
+                PatchKind::Update => {
+                    if let JsonValue::Object(map) = &mut entry.patch {
+                        if patch_object_mentions_field(map, field) {
+                            apply_nested_json_value(map, field, None);
+                            if map.is_empty() {
+                                entries_to_drop.push(path.clone());
+                                patch_action = PatchAction::Dropped;
+                            } else {
+                                patch_action = PatchAction::Modified;
+                            }
+                        }
+                    }
+                }
+                PatchKind::Create => {
+                    if let JsonValue::Object(map) = &mut entry.patch {
+                        if patch_object_mentions_field(map, field) {
+                            apply_nested_json_value(map, field, None);
+                            if map.is_empty() {
+                                entries_to_drop.push(path.clone());
+                                patch_action = PatchAction::DroppedCreate;
+                            } else {
+                                patch_action = PatchAction::Modified;
+                            }
+                        }
+                    }
+                }
+                PatchKind::Delete => {
+                    // Field-level discard on a Delete entry is a no-op.
+                    continue;
+                }
+            }
+        }
+
+        // Update the working file's view of this field. If we just emptied
+        // a Create, the file no longer exists at the approved state and
+        // should be removed from the worktree.
+        let working_touched = match patch_action {
+            PatchAction::DroppedCreate => {
+                next_local_map.remove(path.as_str());
+                true
+            }
+            _ => {
+                let current = local_map.get(path.as_str());
+                match current {
+                    Some(bytes) => {
+                        let mut obj = parse_json_object_bytes(bytes, path.as_str())?;
+                        let current_field = read_nested_json_value(&obj, field);
+                        if current_field == published_value && matches!(patch_action, PatchAction::Untouched) {
+                            // Nothing actually moves for this path.
+                            false
+                        } else {
+                            apply_nested_json_value(&mut obj, field, published_value);
+                            next_local_map.insert(path.clone(), json_object_to_bytes(&obj)?);
+                            true
+                        }
+                    }
+                    None => {
+                        // Working file is absent. If main has the file
+                        // (we just dropped an Update entry, say), the
+                        // worktree should now mirror main for this path.
+                        if main_has_path && !matches!(patch_action, PatchAction::Untouched) {
+                            if let Some(main_bytes) = main_map.get(path.as_str()) {
+                                let mut obj =
+                                    parse_json_object_bytes(main_bytes, path.as_str())?;
+                                apply_nested_json_value(&mut obj, field, published_value);
+                                next_local_map.insert(path.clone(), json_object_to_bytes(&obj)?);
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                }
+            }
+        };
+
+        if working_touched || !matches!(patch_action, PatchAction::Untouched) {
+            result
+                .changed_paths
+                .push(format!("{}/{}", ctx.conn_dir_name, path));
+            if !matches!(patch_action, PatchAction::Untouched) {
+                result.dirty_changed = true;
+            }
+        }
+    }
+
+    for path in entries_to_drop {
+        file.patches.retain(|e| e.path != path);
+    }
+
+    Ok((next_local_map, result))
+}
+
+enum PatchAction {
+    Untouched,
+    Modified,
+    Dropped,
+    /// Like `Dropped`, but originated from a `Create` entry — the working
+    /// file should be removed since `published` has no such record.
+    DroppedCreate,
+}
+
+/// True iff the patch object's "logical" keys include `field` (supports
+/// dotted nested keys like `metadata.author`). Walks the object tree the
+/// same way `read_nested_json_value` does so the field-mention check
+/// agrees with what would actually be read at lookup time.
+fn patch_object_mentions_field(object: &JsonMap<String, JsonValue>, field: &str) -> bool {
+    read_nested_json_value(object, field).is_some()
+}
+
 fn iter_data_paths_in_folder(
     base_map: &FileMap,
     local_map: &FileMap,
@@ -4049,7 +4237,9 @@ fn compute_unreviewed_entries(
 
     let mut entries = Vec::new();
     for path in all_paths {
-        match (base_data.get(path), local_data.get(path)) {
+        let base = base_data.get(path);
+        let local = local_data.get(path);
+        match (base, local) {
             (None, Some(_)) => entries.push(UnreviewedEntry {
                 connection_name: connection_name.to_string(),
                 path: path.to_string(),
@@ -4060,16 +4250,88 @@ fn compute_unreviewed_entries(
                 path: path.to_string(),
                 status: "deleted".to_string(),
             }),
-            (Some(base), Some(local)) if base != local => entries.push(UnreviewedEntry {
-                connection_name: connection_name.to_string(),
-                path: path.to_string(),
-                status: "modified".to_string(),
-            }),
+            // JSON-compare so whitespace/key-order drift between the
+            // synthesized approved state and the worktree's actual file
+            // bytes doesn't show up as a spurious modification.
+            (Some(base), Some(local))
+                if json_content_differs(Some(base.as_slice()), Some(local.as_slice())) =>
+            {
+                entries.push(UnreviewedEntry {
+                    connection_name: connection_name.to_string(),
+                    path: path.to_string(),
+                    status: "modified".to_string(),
+                })
+            }
             _ => {}
         }
     }
 
     entries
+}
+
+/// Synthesize the "approved" `FileMap` for a connection by overlaying the
+/// per-file patches from `accepted-patches.json` on top of the current
+/// `refs/heads/main` tree.
+///
+/// Replaces the pre-B `base_map = read_git_tree(refs/heads/dirty)` reads in
+/// every accept/reject/discard pathway. The shape stays the same — keyed by
+/// repo-relative path → pretty-printed JSON bytes — so downstream consumers
+/// like `compute_unreviewed_entries` are unchanged.
+fn compute_accepted_state(
+    main_map: &FileMap,
+    file: &crate::config::accepted_patches::AcceptedPatchesFile,
+) -> anyhow::Result<FileMap> {
+    let mut out = main_map.clone();
+    for entry in &file.patches {
+        match apply_patch_entry_to_blob(main_map.get(entry.path.as_str()).map(|b| b.as_slice()), entry)? {
+            Some(bytes) => {
+                out.insert(entry.path.clone(), bytes);
+            }
+            None => {
+                out.remove(entry.path.as_str());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Per-file analogue of [`compute_accepted_state`]. Returns the approved
+/// blob bytes for a single path, or `None` when the entry says the path is
+/// approved-deleted.
+///
+/// - `Create`: `entry.patch` is the full file content; serialize it.
+/// - `Update`: parse the `main` blob (or treat as `null` if missing — this
+///   is a pathological state caused by something earlier in the pipeline;
+///   `re_anchor` converts server-side deletes to `Create` at pull time so
+///   `Update` against `None` shouldn't normally occur) and apply the RFC
+///   7396 patch.
+/// - `Delete`: returns `None` so callers can `out.remove(path)`.
+fn apply_patch_entry_to_blob(
+    main_blob: Option<&[u8]>,
+    entry: &crate::commands::re_anchor::AnchoredPatch,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    use crate::commands::re_anchor::PatchKind;
+    match entry.kind {
+        PatchKind::Delete => Ok(None),
+        PatchKind::Create => Ok(Some(serde_json::to_vec_pretty(&entry.patch).with_context(
+            || format!("failed to serialize accepted Create patch for {}", entry.path),
+        )?)),
+        PatchKind::Update => {
+            let base: JsonValue = match main_blob {
+                Some(bytes) => serde_json::from_slice(bytes).with_context(|| {
+                    format!(
+                        "failed to parse refs/heads/main blob at {} as JSON",
+                        entry.path
+                    )
+                })?,
+                None => JsonValue::Null,
+            };
+            let merged = crate::commands::merge_patch::apply(&base, &entry.patch);
+            Ok(Some(serde_json::to_vec_pretty(&merged).with_context(
+                || format!("failed to serialize accepted Update for {}", entry.path),
+            )?))
+        }
+    }
 }
 
 fn sync_schema_files_from_master(ctx: &ConnectionContext) -> anyhow::Result<()> {
