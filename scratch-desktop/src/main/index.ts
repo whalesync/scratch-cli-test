@@ -13,6 +13,7 @@ import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } fro
 import {
   acceptCellChange,
   acceptCellInputText,
+  findRecordOffset,
   getFolderMetadata,
   listFiles,
   listFolders,
@@ -80,7 +81,7 @@ function parseScratchDeepLink(url: string): { route: string; query: string } | n
       return null;
     }
     const route = `${parsed.hostname}${parsed.pathname}`.replace(/\/+$/, '');
-    if (!route.startsWith('workbook/')) {
+    if (!route.startsWith('workbook/') && route !== 'open') {
       return null;
     }
     if (route.includes('..')) {
@@ -867,6 +868,9 @@ ipcMain.handle(
 
 ipcMain.handle('files:read-folder-statuses', async (_, folderPath: string, workspacePath: string) =>
   readFolderStatuses(folderPath, workspacePath),
+);
+ipcMain.handle('files:find-record-offset', async (_, folderPath: string, workspacePath: string, filename: string) =>
+  findRecordOffset(folderPath, workspacePath, filename),
 );
 
 ipcMain.handle(

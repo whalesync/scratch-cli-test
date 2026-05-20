@@ -144,6 +144,7 @@ interface FolderDataGridProps {
   workspaceId: string;
   selectedFolderPath: string | null;
   workspacePath: string | null;
+  targetRecord?: { filename: string; trigger: string } | null;
   dataRefreshKey: number;
   onDataRefresh: () => void;
   onPublishFile?: (relativePath: string) => void;
@@ -757,6 +758,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     workspaceId,
     selectedFolderPath,
     workspacePath,
+    targetRecord,
     dataRefreshKey,
     onDataRefresh,
     activateGlobalFilter,
@@ -845,6 +847,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // here; the post-load effect picks it up and applies the narrow against the
   // freshly-computed focusColumnIds.
   const pendingColumnNarrowRef = useRef<FilterKind | null>(null);
+  const pendingRecordTargetRef = useRef<{ filename: string; trigger: string; triedOffsetLookup: boolean } | null>(null);
+  const lastRecordTargetTriggerRef = useRef<string | null>(null);
+  const recordOffsetLookupGenerationRef = useRef(0);
 
   // True when the folder just changed but the per-folder state reset hasn't been applied yet.
   // When pending, use query defaults so the reset's state flush lands on the same queryKey.
@@ -1117,6 +1122,30 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
   }, [selectedFolderPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!targetRecord || !selectedFolderPath || !workspacePath) {
+      return;
+    }
+    if (targetRecord.trigger === lastRecordTargetTriggerRef.current) {
+      return;
+    }
+
+    lastRecordTargetTriggerRef.current = targetRecord.trigger;
+    pendingRecordTargetRef.current = {
+      filename: targetRecord.filename,
+      trigger: targetRecord.trigger,
+      triedOffsetLookup: false,
+    };
+
+    setSort({ column: null, direction: null });
+    setActiveFilters([]);
+    setDetailRowIndex(null);
+    setDetailFocusFieldName(null);
+    setGridSelection(undefined);
+    setCellPopover(null);
+    setPage(1);
+  }, [selectedFolderPath, targetRecord, workspacePath]);
+
   // Same-folder case: activate filter when prop changes but folder is already current
   useEffect(() => {
     if (!activateGlobalFilter) return;
@@ -1306,6 +1335,60 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     });
     return sorted;
   }, [diffData?.rows, sort.column, sort.direction]);
+
+  useEffect(() => {
+    const pending = pendingRecordTargetRef.current;
+    if (!pending || !selectedFolderPath || !workspacePath || !hasCurrentQueryData) {
+      return;
+    }
+    if (sort.column || sort.direction || activeFilters.length > 0) {
+      return;
+    }
+
+    const rowIndex = pagedRows.findIndex((row) => row.__filename === pending.filename);
+    if (rowIndex >= 0) {
+      pendingRecordTargetRef.current = null;
+      setDetailFocusFieldName(null);
+      setDetailRowIndex(rowIndex);
+      setGridSelection(undefined);
+      setCellPopover(null);
+      return;
+    }
+
+    if (pending.triedOffsetLookup) {
+      return;
+    }
+
+    pending.triedOffsetLookup = true;
+    const lookupGeneration = ++recordOffsetLookupGenerationRef.current;
+    void window.scratchFiles.findRecordOffset(selectedFolderPath, workspacePath, pending.filename).then((offset) => {
+      if (lookupGeneration !== recordOffsetLookupGenerationRef.current) {
+        return;
+      }
+      if (pendingRecordTargetRef.current?.trigger !== pending.trigger) {
+        return;
+      }
+      if (offset === null) {
+        pendingRecordTargetRef.current = null;
+        notifications.show({
+          title: 'Record not found',
+          message: `${pending.filename} was not found in this folder.`,
+          color: 'red',
+        });
+        return;
+      }
+      setPage(Math.floor(offset / PAGE_SIZE) + 1);
+    });
+  }, [
+    activeFilters.length,
+    hasCurrentQueryData,
+    pagedRows,
+    selectedFolderPath,
+    sort.column,
+    sort.direction,
+    workspacePath,
+  ]);
+
   const totalPages = Math.max(1, Math.ceil((diffData?.total ?? 0) / PAGE_SIZE));
 
   useEffect(() => {

@@ -369,6 +369,8 @@ const scratchFiles = {
     workspacePath: string,
   ): Promise<{ unreviewedFilenames: string[]; unpublishedFilenames: string[] }> =>
     invoke('files:read-folder-statuses', folderPath, workspacePath),
+  findRecordOffset: (folderPath: string, workspacePath: string, filename: string): Promise<number | null> =>
+    invoke('files:find-record-offset', folderPath, workspacePath, filename),
   readDiffGridData: (
     folderPath: string,
     workspacePath: string,

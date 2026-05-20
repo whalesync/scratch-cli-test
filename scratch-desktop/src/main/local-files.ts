@@ -1561,6 +1561,38 @@ function sortDiffRows(rows: DiffRow[], sortBy?: string, sortOrder?: 'asc' | 'des
   });
 }
 
+export async function findRecordOffset(
+  folderPath: string,
+  workspacePath: string,
+  filename: string,
+): Promise<number | null> {
+  const versionFolders = [
+    folderPath,
+    getVersionFolderPath(folderPath, workspacePath, 'dirty'),
+    getVersionFolderPath(folderPath, workspacePath, 'main'),
+  ];
+  const names = new Set<string>();
+
+  for (const versionFolder of versionFolders) {
+    try {
+      const versionNames = await getCachedFileNames(versionFolder);
+      for (const name of versionNames) {
+        if (extname(name).toLowerCase() === '.json') {
+          names.add(name);
+        }
+      }
+    } catch {
+      // Version folders may not exist for brand-new or partially initialized workspaces.
+    }
+  }
+
+  const sortedNames = Array.from(names).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }),
+  );
+  const offset = sortedNames.findIndex((name) => name === filename);
+  return offset >= 0 ? offset : null;
+}
+
 export async function readDiffRecordData(
   folderPath: string,
   workspacePath: string,

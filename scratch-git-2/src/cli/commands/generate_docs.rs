@@ -43,6 +43,20 @@ Once your local agent has made changes, open the Scratch desktop app to review t
 - [Validation (checking records before publish)](.scratch/docs/validations.md)
 - [CLI command reference](.scratch/docs/commands.md)
 
+## Scratch Desktop deep links
+
+When pointing the user back to the Scratch desktop app, create a deep link from the absolute local path and URL-encode the full path:
+
+```
+scratch://open?path=<url-encoded-absolute-path>?source=claude-code
+```
+
+The source should be the name of the tool that generated the deep link, e.g. `claude-code` or `claude-cowork`.
+
+- Workspace: encode this workspace root path.
+- Folder: encode the folder path, e.g. `{{workspace}}/My Website/Blog Posts`.
+- Record: encode the record file path, e.g. `{{workspace}}/My Website/Blog Posts/example.json`.
+
 ## Troubleshooting with `workspace.log`
 
 The Scratch desktop app writes a rolling log to `workspace.log` at the root of this workspace. The log tracks operations performed by the desktop app and the CLI along with errors and warnings.

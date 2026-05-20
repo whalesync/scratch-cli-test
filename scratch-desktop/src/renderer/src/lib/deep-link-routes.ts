@@ -2,7 +2,37 @@
  * Maps web-style deep link paths (after scratch://) to HashRouter paths in the desktop app.
  * Unsupported views fall back to the workspace root until the desktop app gains parity.
  */
+import { sanitizeDeepLinkSource } from './deep-link-source';
+
 const WORKBOOK_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+interface LocalWorkspaceEntry {
+  id: string;
+  path: string;
+}
+
+function normalizeFsPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function isSameOrChildPath(path: string, possibleParent: string): boolean {
+  return path === possibleParent || path.startsWith(`${possibleParent}/`);
+}
+
+function appendDeepLinkNonce(route: string): string {
+  const [pathname, query = ''] = route.split('?');
+  const params = new URLSearchParams(query);
+  params.set('_dl', String(Date.now()));
+  const nextQuery = params.toString();
+  return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
+function copySanitizedSource(from: URLSearchParams, to: URLSearchParams): void {
+  const source = sanitizeDeepLinkSource(from.get('source'));
+  if (source) {
+    to.set('source', source);
+  }
+}
 
 export function mapWebWorkbookPathToDesktopRoute(route: string): string {
   const normalized = route.replace(/^\/+|\/+$/g, '');
@@ -27,4 +57,53 @@ export function mapWebWorkbookPathToDesktopRoute(route: string): string {
   }
 
   return `/workspace/${workbookId}`;
+}
+
+export async function mapDeepLinkToDesktopRoute(route: string, query: string): Promise<string> {
+  const normalized = route.replace(/^\/+|\/+$/g, '');
+  const segments = normalized.split('/').filter(Boolean);
+
+  if (segments[0] === 'open') {
+    const params = new URLSearchParams(query);
+    const rawPath = params.get('path');
+    if (!rawPath) {
+      return '/';
+    }
+
+    const targetPath = normalizeFsPath(rawPath);
+    const localWorkspaces = await window.scratchDesktop.getWorkspacesRegistry();
+    const workspace = localWorkspaces
+      .map((entry: LocalWorkspaceEntry) => ({ ...entry, normalizedPath: normalizeFsPath(entry.path) }))
+      .filter((entry) => isSameOrChildPath(targetPath, entry.normalizedPath))
+      .sort((a, b) => b.normalizedPath.length - a.normalizedPath.length)[0];
+
+    if (!workspace) {
+      return '/';
+    }
+
+    const relativePath =
+      targetPath === workspace.normalizedPath ? '' : targetPath.slice(workspace.normalizedPath.length + 1);
+    const nextParams = new URLSearchParams();
+    if (relativePath) {
+      nextParams.set('path', relativePath);
+    }
+    copySanitizedSource(params, nextParams);
+    nextParams.set('_dl', String(Date.now()));
+    return `/workspace/${workspace.id}${nextParams.toString() ? `?${nextParams.toString()}` : ''}`;
+  }
+
+  const workbookRoute = mapWebWorkbookPathToDesktopRoute(route);
+  if (workbookRoute === '/') {
+    return workbookRoute;
+  }
+  const params = new URLSearchParams(query);
+  const source = sanitizeDeepLinkSource(params.get('source'));
+  if (source) {
+    params.set('source', source);
+  } else {
+    params.delete('source');
+  }
+  params.set('_dl', String(Date.now()));
+  const nextQuery = params.toString();
+  return appendDeepLinkNonce(nextQuery ? `${workbookRoute}?${nextQuery}` : workbookRoute);
 }

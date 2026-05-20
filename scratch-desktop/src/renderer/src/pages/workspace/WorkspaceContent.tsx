@@ -19,6 +19,7 @@ interface WorkspaceContentProps {
   localPath: string | null;
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string | null) => void;
+  targetRecord?: { filename: string; trigger: string } | null;
   dataRefreshKey: number;
   onDataRefresh: () => void;
   onPublishFile?: (relativePath: string) => void;
@@ -37,6 +38,7 @@ export function WorkspaceContent({
   localPath,
   selectedFolderPath,
   onSelectFolder,
+  targetRecord,
   dataRefreshKey,
   onDataRefresh,
   onPublishFile,
@@ -160,6 +162,7 @@ export function WorkspaceContent({
         workspaceId={workspace.id}
         selectedFolderPath={selectedFolderPath}
         workspacePath={localPath}
+        targetRecord={targetRecord}
         dataRefreshKey={dataRefreshKey}
         onDataRefresh={onDataRefresh}
         onPublishFile={onPublishFile}

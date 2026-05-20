@@ -1,4 +1,5 @@
 import { User } from '../types/user';
+import { sanitizeDeepLinkSource } from './deep-link-source';
 
 export enum PostHogEvents {
   PAGE_VIEW = '$pageview',
@@ -21,6 +22,7 @@ export enum PostHogEvents {
   APP_EXITED = 'app_exited',
   CHECK_FOR_UPDATES = 'check_for_updates',
   INSTALL_UPDATE = 'install_update',
+  DEEP_LINK_PROCESSED = 'deep_link_processed',
 }
 
 export type PickParentFolderFlow = 'download' | 'create';
@@ -170,6 +172,17 @@ export async function trackInstallUpdate(props: { targetVersion: string }): Prom
   // sendImmediately: quitAndInstall() restarts the app moments after the click,
   // so we need the request to leave via sendBeacon rather than the batch queue.
   await captureEvent(PostHogEvents.INSTALL_UPDATE, props, { sendImmediately: true });
+}
+
+export async function trackDeepLinkProcessed(props: {
+  workspaceId: string;
+  targetType: 'workspace' | 'folder' | 'record';
+  source?: string;
+  pathDepth?: number;
+}): Promise<void> {
+  const { source, ...rest } = props;
+  const sanitizedSource = sanitizeDeepLinkSource(source);
+  await captureEvent(PostHogEvents.DEEP_LINK_PROCESSED, sanitizedSource ? { ...rest, source: sanitizedSource } : rest);
 }
 
 export async function identifyUser(user: User, email: string | undefined): Promise<void> {

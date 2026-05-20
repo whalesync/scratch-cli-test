@@ -26,10 +26,13 @@ function OpenInDesktopInner(): ReactElement {
 
   const query = searchParams.toString();
   const querySuffix = query ? `?${query}` : '';
+  const deepLinkParams = new URLSearchParams(query);
+  deepLinkParams.set('source', 'webapp');
+  const deepLinkQuerySuffix = deepLinkParams.toString() ? `?${deepLinkParams.toString()}` : '';
 
   const webPath = `/${segments.join('/')}`;
   const isValid = segments[0] === 'workbook' && segments.length >= 2;
-  const deepLink = isValid ? `scratch://${segments.join('/')}${querySuffix}` : '';
+  const deepLink = isValid ? `scratch://${segments.join('/')}${deepLinkQuerySuffix}` : '';
 
   const invalidPathTrackedKeyRef = useRef<string | null>(null);
   const timeoutAnalyticsSentRef = useRef(false);

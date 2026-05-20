@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { mapWebWorkbookPathToDesktopRoute } from '../lib/deep-link-routes';
+import { mapDeepLinkToDesktopRoute } from '../lib/deep-link-routes';
 import { useAuth } from '../providers/AuthProvider';
 
 const PENDING_DEEP_LINK_KEY = 'scratch-pending-deep-link';
@@ -22,24 +22,23 @@ export function DeepLinkBridge(): null {
     }
 
     const unsubscribe = api.onDeepLink((route, query) => {
-      const desktopRoute = mapWebWorkbookPathToDesktopRoute(route);
-      const target = `${desktopRoute}${query}`;
-
       const now = Date.now();
       if (now - lastNavAtRef.current < NAV_DEBOUNCE_MS) {
         return;
       }
       lastNavAtRef.current = now;
 
-      if (isAuthenticated) {
-        void navigate(target);
-      } else {
-        try {
-          sessionStorage.setItem(PENDING_DEEP_LINK_KEY, target);
-        } catch {
-          /* ignore quota / private mode */
+      void mapDeepLinkToDesktopRoute(route, query).then((target) => {
+        if (isAuthenticated) {
+          void navigate(target);
+        } else {
+          try {
+            sessionStorage.setItem(PENDING_DEEP_LINK_KEY, target);
+          } catch {
+            /* ignore quota / private mode */
+          }
         }
-      }
+      });
     });
 
     return unsubscribe;

@@ -284,6 +284,7 @@ interface ScratchFilesAPI {
     folderPath: string,
     workspacePath: string,
   ) => Promise<{ unreviewedFilenames: string[]; unpublishedFilenames: string[] }>;
+  findRecordOffset: (folderPath: string, workspacePath: string, filename: string) => Promise<number | null>;
   readDiffGridData: (
     folderPath: string,
     workspacePath: string,

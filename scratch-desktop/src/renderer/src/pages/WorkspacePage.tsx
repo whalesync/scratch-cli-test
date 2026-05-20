@@ -1,7 +1,7 @@
 import { Alert, Box, Center, Group, Loader, Modal, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular, TextMono12Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
@@ -10,7 +10,7 @@ import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { jobApi } from '../lib/job-api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
-import { trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
+import { trackDeepLinkProcessed, trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
 import { Workspace } from '../types/workspace';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
@@ -25,9 +25,53 @@ function isNoConnectionsScratchmdError(message: string): boolean {
 
 const FOCUS_SYNC_THROTTLE_MS = 10_000;
 
+interface DeepLinkedWorkspacePath {
+  folderPath: string;
+  recordFilename: string | null;
+  trigger: string;
+}
+
+function normalizeFsPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function resolveDeepLinkedWorkspacePath(
+  localPath: string,
+  rawPath: string,
+  trigger: string,
+): DeepLinkedWorkspacePath | null {
+  const normalizedLocalPath = normalizeFsPath(localPath);
+  const normalizedRawPath = normalizeFsPath(rawPath);
+  const relativePath =
+    normalizedRawPath === normalizedLocalPath
+      ? ''
+      : normalizedRawPath.startsWith(`${normalizedLocalPath}/`)
+        ? normalizedRawPath.slice(normalizedLocalPath.length + 1)
+        : normalizedRawPath.replace(/^\/+/, '');
+
+  if (!relativePath) {
+    return null;
+  }
+
+  const segments = relativePath.split('/').filter(Boolean);
+  const lastSegment = segments[segments.length - 1] ?? '';
+  const isRecordPath = /\.json$/i.test(lastSegment);
+  const folderSegments = isRecordPath ? segments.slice(0, -1) : segments;
+  if (folderSegments.length === 0) {
+    return null;
+  }
+
+  return {
+    folderPath: `${normalizedLocalPath}/${folderSegments.join('/')}`,
+    recordFilename: isRecordPath ? lastSegment : null,
+    trigger,
+  };
+}
+
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +86,7 @@ export function WorkspacePage() {
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
+  const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
   const [validateEnabled, setValidateEnabled] = useState(false);
@@ -62,6 +107,7 @@ export function WorkspacePage() {
   const previousConnectionCountRef = useRef<number | null>(null);
   const selectedFolderPathRef = useRef(selectedFolderPath);
   selectedFolderPathRef.current = selectedFolderPath;
+  const lastTrackedDeepLinkRef = useRef<string | null>(null);
 
   const fetchWorkspace = useCallback(
     async (options?: {
@@ -307,6 +353,48 @@ export function WorkspacePage() {
   }, [localPath]);
 
   useEffect(() => {
+    const trigger = searchParams.get('_dl');
+    const rawPath = searchParams.get('path');
+    const source = searchParams.get('source') ?? undefined;
+    if (!trigger) {
+      setDeepLinkedPath(null);
+      return;
+    }
+
+    if (!rawPath) {
+      setDeepLinkedPath(null);
+      if (workspace?.id && lastTrackedDeepLinkRef.current !== trigger) {
+        lastTrackedDeepLinkRef.current = trigger;
+        void trackDeepLinkProcessed({ workspaceId: workspace.id, targetType: 'workspace', source });
+      }
+      return;
+    }
+
+    if (!localPath) {
+      setDeepLinkedPath(null);
+      return;
+    }
+
+    const resolved = resolveDeepLinkedWorkspacePath(localPath, rawPath, trigger);
+    setDeepLinkedPath(resolved);
+    if (resolved) {
+      setSelectedFolderPath(resolved.folderPath);
+      if (workspace?.id && lastTrackedDeepLinkRef.current !== trigger) {
+        lastTrackedDeepLinkRef.current = trigger;
+        void trackDeepLinkProcessed({
+          workspaceId: workspace.id,
+          targetType: resolved.recordFilename ? 'record' : 'folder',
+          source,
+          pathDepth: resolved.folderPath
+            .slice(normalizeFsPath(localPath).length + 1)
+            .split('/')
+            .filter(Boolean).length,
+        });
+      }
+    }
+  }, [localPath, searchParams, workspace?.id]);
+
+  useEffect(() => {
     if (!localPath || !watchingEnabled) {
       void window.scratchDesktop.clearWorkspaceFileWatch();
       return;
@@ -470,6 +558,11 @@ export function WorkspacePage() {
         localPath={localPath}
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={setSelectedFolderPath}
+        targetRecord={
+          deepLinkedPath?.recordFilename && deepLinkedPath.folderPath === selectedFolderPath
+            ? { filename: deepLinkedPath.recordFilename, trigger: deepLinkedPath.trigger }
+            : null
+        }
         dataRefreshKey={dataRefreshKey}
         onDataRefresh={handleDataRefresh}
         onPublishFile={() => {

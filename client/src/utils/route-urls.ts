@@ -2,14 +2,21 @@
  * Maps a Scratch web path to scratch:// for the desktop app.
  * Supports /workbook/... and /workspace/{workbookId}/... (workspace URLs open that workbook in desktop).
  */
+function appendWebappSource(deepLink: string): string {
+  const separator = deepLink.includes('?') ? '&' : '?';
+  return `${deepLink}${separator}source=webapp`;
+}
+
 export function desktopDeepLinkFromWebPath(webPath: string): string | null {
   const trimmed = webPath.replace(/^\/+/, '');
-  if (trimmed.startsWith('workbook/')) {
-    return `scratch://${trimmed}`;
+  const [pathname, query = ''] = trimmed.split('?');
+  const querySuffix = query ? `?${query}` : '';
+  if (pathname.startsWith('workbook/')) {
+    return appendWebappSource(`scratch://${pathname}${querySuffix}`);
   }
-  const workspaceMatch = /^workspace\/([^/]+)/.exec(trimmed);
+  const workspaceMatch = /^workspace\/([^/]+)/.exec(pathname);
   if (workspaceMatch) {
-    return `scratch://workbook/${workspaceMatch[1]}`;
+    return appendWebappSource(`scratch://workbook/${workspaceMatch[1]}${querySuffix}`);
   }
   return null;
 }
@@ -78,7 +85,7 @@ export class RouteUrls {
    * Desktop maps web-style workbook/* paths via mapWebWorkbookPathToDesktopRoute.
    */
   static desktopDeepLinkForWorkbook(workbookId: string): string {
-    return `scratch://workbook/${workbookId}`;
+    return appendWebappSource(`scratch://workbook/${workbookId}`);
   }
 
   /** @see desktopDeepLinkFromWebPath */
