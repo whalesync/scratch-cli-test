@@ -26,6 +26,7 @@ module "eu_production" {
   enable_alerts                  = true
   enable_email_notifications     = true
   enable_pagerduty_notifications = true
+  enable_slack_notifications     = true
 
   # Scratch Git
   enable_scratch_git                  = true

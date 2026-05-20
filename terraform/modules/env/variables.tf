@@ -157,6 +157,18 @@ variable "enable_pagerduty_notifications" {
   description = "Whether to enable the Pager Duty notification channel for alerts."
 }
 
+variable "enable_slack_notifications" {
+  type        = bool
+  default     = false
+  description = "Whether to enable the Slack notification channel for alerts."
+}
+
+variable "alert_notification_channel" {
+  type        = string
+  default     = "#feed-gcp-alerts"
+  description = "Slack channel to send alerts to."
+}
+
 variable "client_service_min_instance_count" {
   type        = number
   default     = 1

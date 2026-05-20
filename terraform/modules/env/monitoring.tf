@@ -8,6 +8,7 @@ locals {
   ])
   warning_notification_channels = compact([
     var.enable_email_notifications ? google_monitoring_notification_channel.team_email[0].name : "",
+    var.enable_slack_notifications ? google_monitoring_notification_channel.slack[0].name : "",
   ])
   alert_database_id             = "${var.gcp_project_id}:${module.db_primary.instance_id}"
   db_connection_alert_threshold = var.db_connection_limit * 0.95
@@ -42,6 +43,27 @@ resource "google_monitoring_notification_channel" "pagerduty" {
   }
   force_delete = false
   depends_on   = [google_project_service.services]
+}
+
+# Note: this channel must be created manually in the GCP console first (so the
+# Slack OAuth flow can supply an auth_token), then imported into terraform state.
+# Changing it later via terraform also requires providing the auth_token, which is
+# why we ignore_changes on labels["auth_token"].
+resource "google_monitoring_notification_channel" "slack" {
+  count = var.enable_slack_notifications ? 1 : 0
+
+  display_name = "${var.alert_notification_channel} in Slack"
+  type         = "slack"
+  force_delete = false
+  labels = {
+    channel_name = var.alert_notification_channel
+    team         = "Whalesync"
+  }
+  depends_on = [google_project_service.services]
+
+  lifecycle {
+    ignore_changes = [labels["auth_token"]]
+  }
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
