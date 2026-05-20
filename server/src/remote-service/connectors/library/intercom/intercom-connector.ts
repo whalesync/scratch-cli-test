@@ -189,12 +189,13 @@ export class IntercomConnector extends Connector {
           ? this.client.searchConversationsUpdatedSince(updatedSinceQuery, 20, hydrate, resumeProgress?.startingAfter)
           : this.client.listConversations(20, hydrate, resumeProgress?.startingAfter);
 
-        for await (const conversations of conversationPages) {
-          const lastConvo = conversations[conversations.length - 1];
-          const lastId = lastConvo ? String((lastConvo as Record<string, unknown>).id) : undefined;
+        // Persist the Intercom-provided cursor (`pages.next.starting_after`),
+        // never a conversation id — Intercom rejects ids with "Invalid
+        // starting_after param". `nextCursor` is undefined on the final page.
+        for await (const { items: conversations, nextCursor } of conversationPages) {
           await callback({
             files: conversations as unknown as ConnectorFile[],
-            connectorProgress: lastId ? { startingAfter: lastId } : {},
+            connectorProgress: nextCursor ? { startingAfter: nextCursor } : {},
           });
         }
         return newWatermark ? { newWatermark } : {};

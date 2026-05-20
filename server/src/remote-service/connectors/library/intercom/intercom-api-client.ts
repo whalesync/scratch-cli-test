@@ -18,6 +18,17 @@ const INTERCOM_API_BASE_URL = 'https://api.intercom.io';
 const INTERCOM_API_VERSION = '2.11';
 
 /**
+ * A page of conversations plus the opaque cursor returned by Intercom for the
+ * next page (or undefined if this was the last page). Callers persist
+ * `nextCursor` for crash-resume — Intercom rejects record ids passed as
+ * `starting_after`.
+ */
+export interface IntercomConversationPage {
+  items: (IntercomConversation | IntercomConversationListItem)[];
+  nextCursor: string | undefined;
+}
+
+/**
  * Custom error class for Intercom API errors.
  */
 export class IntercomError extends Error {
@@ -237,6 +248,11 @@ export class IntercomApiClient {
    * (`POST /conversations/search`). `fetchPage` performs one request given the
    * current cursor and returns the parsed response body.
    *
+   * Yields each page alongside `nextCursor`, the opaque cursor returned by
+   * Intercom in `pages.next.starting_after`. Callers persist `nextCursor` (not
+   * a record id) for crash-resume — Intercom rejects ids passed as
+   * `starting_after` with "Invalid starting_after param".
+   *
    * When `hydrate` is true, each conversation is individually fetched via
    * getConversation to include `conversation_parts` (one API call per
    * conversation — slow for large workspaces). When false, conversations are
@@ -248,13 +264,14 @@ export class IntercomApiClient {
     ) => Promise<IntercomCursorPaginatedResponse<IntercomConversationListItem>>,
     hydrate: boolean,
     resumeAfter?: string,
-  ): AsyncGenerator<(IntercomConversation | IntercomConversationListItem)[], void> {
+  ): AsyncGenerator<IntercomConversationPage, void> {
     let startingAfter: string | undefined = resumeAfter;
     let hasMore = true;
 
     while (hasMore) {
       const data = await fetchPage(startingAfter);
       const items = data.conversations ?? [];
+      const nextCursor = data.pages.next?.starting_after;
 
       if (items.length > 0) {
         if (hydrate) {
@@ -267,15 +284,15 @@ export class IntercomApiClient {
             }
           }
           if (fullConversations.length > 0) {
-            yield fullConversations;
+            yield { items: fullConversations, nextCursor };
           }
         } else {
-          yield items;
+          yield { items, nextCursor };
         }
       }
 
-      if (data.pages.next?.starting_after) {
-        startingAfter = data.pages.next.starting_after;
+      if (nextCursor) {
+        startingAfter = nextCursor;
       } else {
         hasMore = false;
       }
@@ -296,7 +313,7 @@ export class IntercomApiClient {
     pageSize = 20,
     hydrate = true,
     resumeAfter?: string,
-  ): AsyncGenerator<(IntercomConversation | IntercomConversationListItem)[], void> {
+  ): AsyncGenerator<IntercomConversationPage, void> {
     return this.paginateConversations(
       async (startingAfter) => {
         const params: Record<string, unknown> = { per_page: pageSize };
@@ -326,7 +343,7 @@ export class IntercomApiClient {
     pageSize = 20,
     hydrate = true,
     resumeAfter?: string,
-  ): AsyncGenerator<(IntercomConversation | IntercomConversationListItem)[], void> {
+  ): AsyncGenerator<IntercomConversationPage, void> {
     return this.paginateConversations(
       async (startingAfter) => {
         const pagination: Record<string, unknown> = { per_page: pageSize };

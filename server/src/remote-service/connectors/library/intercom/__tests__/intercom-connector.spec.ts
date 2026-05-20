@@ -160,6 +160,21 @@ async function* asyncGen<T>(pages: T[][]): AsyncGenerator<T[], void> {
   }
 }
 
+/**
+ * Helper to create an async generator of conversation pages with the
+ * `{ items, nextCursor }` shape. `cursors[i]` is the cursor that goes with
+ * `pages[i]`; default is `undefined` for every page (single terminal page).
+ */
+// eslint-disable-next-line @typescript-eslint/require-await
+async function* convoPagesGen<T>(
+  pages: T[][],
+  cursors: (string | undefined)[] = [],
+): AsyncGenerator<{ items: T[]; nextCursor: string | undefined }, void> {
+  for (let i = 0; i < pages.length; i++) {
+    yield { items: pages[i], nextCursor: cursors[i] };
+  }
+}
+
 describe('IntercomConnector', () => {
   let connector: IntercomConnector;
 
@@ -312,7 +327,7 @@ describe('IntercomConnector', () => {
 
     it('pulls conversations with hydration by default', async () => {
       const conversations = [makeConversation({ id: '1' }), makeConversation({ id: '2' })];
-      mockListConversations.mockReturnValue(asyncGen([conversations]));
+      mockListConversations.mockReturnValue(convoPagesGen([conversations]));
 
       const collected: ConnectorFile[][] = [];
       const callback = jest.fn((params: { files: ConnectorFile[] }) => {
@@ -330,7 +345,7 @@ describe('IntercomConnector', () => {
 
     it('skips hydration when excludeConversationParts is set', async () => {
       const conversations = [makeConversation({ id: '1' })];
-      mockListConversations.mockReturnValue(asyncGen([conversations]));
+      mockListConversations.mockReturnValue(convoPagesGen([conversations]));
 
       const callback = jest.fn(() => Promise.resolve());
 
@@ -375,7 +390,7 @@ describe('IntercomConnector', () => {
   describe('pullRecordFiles (incremental)', () => {
     it('searches conversations updated since `since` and returns a newWatermark', async () => {
       const conversations = [makeConversation({ id: '1' }), makeConversation({ id: '2' })];
-      mockSearchConversationsUpdatedSince.mockReturnValue(asyncGen([conversations]));
+      mockSearchConversationsUpdatedSince.mockReturnValue(convoPagesGen([conversations]));
       const since = new Date('2026-05-01T12:00:00.000Z');
 
       const callback = jest.fn(() => Promise.resolve());
@@ -404,7 +419,7 @@ describe('IntercomConnector', () => {
     });
 
     it('passes hydrate=false to search when excludeConversationParts is set', async () => {
-      mockSearchConversationsUpdatedSince.mockReturnValue(asyncGen([[makeConversation({ id: '1' })]]));
+      mockSearchConversationsUpdatedSince.mockReturnValue(convoPagesGen([[makeConversation({ id: '1' })]]));
       const since = new Date('2026-05-01T12:00:00.000Z');
 
       await connector.pullRecordFiles(
@@ -427,7 +442,7 @@ describe('IntercomConnector', () => {
     });
 
     it('forwards a resume cursor from progress.startingAfter to the search', async () => {
-      mockSearchConversationsUpdatedSince.mockReturnValue(asyncGen([[makeConversation({ id: '1' })]]));
+      mockSearchConversationsUpdatedSince.mockReturnValue(convoPagesGen([[makeConversation({ id: '1' })]]));
       const since = new Date('2026-05-01T12:00:00.000Z');
 
       await connector.pullRecordFiles(
@@ -446,7 +461,7 @@ describe('IntercomConnector', () => {
     });
 
     it('falls back to a full list (and returns {}) when incremental but `since` is missing', async () => {
-      mockListConversations.mockReturnValue(asyncGen([[makeConversation({ id: '1' })]]));
+      mockListConversations.mockReturnValue(convoPagesGen([[makeConversation({ id: '1' })]]));
 
       const result = await connector.pullRecordFiles(
         buildTableSpec('conversations'),

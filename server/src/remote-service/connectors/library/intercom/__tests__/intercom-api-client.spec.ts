@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { IntercomApiClient, IntercomError } from '../intercom-api-client';
+import { IntercomApiClient, IntercomConversationPage, IntercomError } from '../intercom-api-client';
 
 // Mock create-api-client to return a mock axios instance
 const mockGet = jest.fn();
@@ -409,13 +409,14 @@ describe('IntercomApiClient', () => {
       // Hydration call
       mockGet.mockResolvedValueOnce({ data: fullConversation });
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.listConversations()) {
         pages.push(page);
       }
 
       expect(pages).toHaveLength(1);
-      expect(pages[0]).toHaveLength(1);
+      expect(pages[0].items).toHaveLength(1);
+      expect(pages[0].nextCursor).toBeUndefined();
       expect(mockGet).toHaveBeenCalledWith('/conversations/1');
     });
 
@@ -445,12 +446,14 @@ describe('IntercomApiClient', () => {
         })
         .mockResolvedValueOnce({ data: fullConv2 }); // hydrate conv2
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.listConversations(1)) {
         pages.push(page);
       }
 
       expect(pages).toHaveLength(2);
+      expect(pages[0].nextCursor).toBe('abc');
+      expect(pages[1].nextCursor).toBeUndefined();
       expect(mockGet).toHaveBeenCalledWith('/conversations', { params: { per_page: 1, starting_after: 'abc' } });
     });
 
@@ -464,7 +467,7 @@ describe('IntercomApiClient', () => {
         },
       });
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.listConversations()) {
         pages.push(page);
       }
@@ -484,13 +487,14 @@ describe('IntercomApiClient', () => {
         },
       });
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.listConversations(20, false)) {
         pages.push(page);
       }
 
       expect(pages).toHaveLength(1);
-      expect(pages[0]).toEqual([listItem]);
+      expect(pages[0].items).toEqual([listItem]);
+      expect(pages[0].nextCursor).toBeUndefined();
       // Should NOT have made a hydration call to /conversations/1
       expect(mockGet).toHaveBeenCalledTimes(1);
       expect(mockGet).toHaveBeenCalledWith('/conversations', { params: { per_page: 20 } });
@@ -554,13 +558,14 @@ describe('IntercomApiClient', () => {
       // Hydration call goes through GET /conversations/{id}
       mockGet.mockResolvedValueOnce({ data: fullConversation });
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.searchConversationsUpdatedSince(query)) {
         pages.push(page);
       }
 
       expect(pages).toHaveLength(1);
-      expect(pages[0]).toEqual([fullConversation]);
+      expect(pages[0].items).toEqual([fullConversation]);
+      expect(pages[0].nextCursor).toBeUndefined();
       expect(mockPost).toHaveBeenCalledWith('/conversations/search', {
         query,
         sort: { field: 'updated_at', order: 'ascending' },
@@ -594,12 +599,14 @@ describe('IntercomApiClient', () => {
         });
       mockGet.mockResolvedValueOnce({ data: fullConv1 }).mockResolvedValueOnce({ data: fullConv2 });
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.searchConversationsUpdatedSince(query, 1)) {
         pages.push(page);
       }
 
       expect(pages).toHaveLength(2);
+      expect(pages[0].nextCursor).toBe('abc');
+      expect(pages[1].nextCursor).toBeUndefined();
       // Second page request threads the cursor into pagination.starting_after.
       expect(mockPost).toHaveBeenLastCalledWith('/conversations/search', {
         query,
@@ -619,12 +626,12 @@ describe('IntercomApiClient', () => {
         },
       });
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.searchConversationsUpdatedSince(query, 20, false)) {
         pages.push(page);
       }
 
-      expect(pages).toEqual([[listItem]]);
+      expect(pages).toEqual([{ items: [listItem], nextCursor: undefined }]);
       // No hydration GET /conversations/1
       expect(mockGet).not.toHaveBeenCalled();
     });
@@ -639,7 +646,7 @@ describe('IntercomApiClient', () => {
         },
       });
 
-      const pages: unknown[][] = [];
+      const pages: IntercomConversationPage[] = [];
       for await (const page of client.searchConversationsUpdatedSince(query, 20, true, 'resume_cursor')) {
         pages.push(page);
       }
