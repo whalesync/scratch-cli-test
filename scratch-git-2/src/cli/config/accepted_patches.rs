@@ -83,17 +83,6 @@ pub fn save_atomic(connection_dir: &Path, file: &AcceptedPatchesFile) -> anyhow:
     Ok(())
 }
 
-/// Delete the file (used after a successful publish — the patches have been
-/// shipped). No-op if absent.
-pub fn clear(connection_dir: &Path) -> anyhow::Result<()> {
-    let p = path(connection_dir);
-    match fs::remove_file(&p) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("failed to remove {}", p.display())),
-    }
-}
-
 /// Get the existing patch entry for a path, if any.
 pub fn get_entry<'a>(file: &'a AcceptedPatchesFile, path: &str) -> Option<&'a AnchoredPatch> {
     file.patches.iter().find(|e| e.path == path)
@@ -304,22 +293,5 @@ mod tests {
         remove_field(&mut f, "d", "x");
         assert_eq!(f.patches.len(), 2);
         assert_eq!(f.patches[0].patch, json!({"a": 1}));
-    }
-
-    #[test]
-    fn clear_removes_file_idempotent() {
-        let dir = tempdir().unwrap();
-        save_atomic(
-            dir.path(),
-            &AcceptedPatchesFile {
-                patches: vec![entry("p", PatchKind::Delete, JsonValue::Null)],
-            },
-        )
-        .unwrap();
-        assert!(path(dir.path()).exists());
-        clear(dir.path()).unwrap();
-        assert!(!path(dir.path()).exists());
-        // Second clear is a no-op, not an error.
-        clear(dir.path()).unwrap();
     }
 }

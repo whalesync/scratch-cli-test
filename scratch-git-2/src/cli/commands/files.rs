@@ -791,25 +791,14 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
             eprintln!(" done");
         }
 
-        // After a successful publish, the server's `main` has advanced for
-        // this connector. Fetch + advance the local `main` ref so the next
-        // `files upload` correctly sees no diff against the local patch file.
-        crate::git_ops::fetch_origin(&ctx.bare_repo, &token)?;
-        if let Some(new_main_hash) =
-            git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
-        {
-            git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
-        }
-
-        // Patches that drove this publish are now reflected in `refs/heads/
-        // main`, so the local accepted-patches file should be empty going
-        // forward. (Single-user assumption: the user doesn't `accept` more
-        // changes between `upload` and `publish`. If they did, those entries
-        // are lost — slice D's pull re-anchor will reintroduce a tighter
-        // model later.)
-        let layout = WorkspaceLayout::for_cli(&workspace_dir);
-        let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
-        crate::config::accepted_patches::clear(&connection_dir)?;
+        // After a successful run-job, fetch origin and reconcile the local
+        // patch file against the server's view of `main`. Patches whose
+        // outcome actually landed in `main` get dropped by re-anchor's
+        // no-op detection; patches whose connector batch failed silently
+        // (DEV-10175) survive. Replaces a prior unconditional `clear` that
+        // erased the user's accepted edits regardless of connector-level
+        // success.
+        reconcile_accepted_after_publish(ctx, &workspace_dir, &token)?;
 
         published_connections.push(ctx.conn_dir_name.clone());
     }
@@ -2545,6 +2534,94 @@ fn write_or_remove_working_file(
             }
         }
     }
+    Ok(())
+}
+
+/// Reconcile `accepted-patches.json` with the server's view of `main` after a
+/// successful run-job. Fixes DEV-10175: the prior implementation
+/// unconditionally cleared the patch file whenever the run-job reported
+/// orchestrator-level success, even though the run-job marks itself
+/// "completed" when an underlying connector batch fails (e.g. Airtable 401).
+/// Result was that the user's accepted edits were erased locally even though
+/// nothing actually landed on `main`.
+///
+/// Flow:
+///   1. Snapshot the pre-fetch `refs/heads/main` (the anchor for the file
+///      we hold).
+///   2. Fetch origin so `refs/remotes/origin/main` reflects what the server
+///      actually committed.
+///   3. Re-anchor each patch via [`re_anchor::re_anchor_patches`]:
+///        - patches whose intended outcome now matches `new_main` get dropped
+///          by [`re_anchor::re_anchor_one`]'s no-op detection (= successful
+///          publish);
+///        - patches whose connector batch failed survive verbatim (the blob
+///          on `new_main` still has the old value, so the patch is still
+///          meaningful) and are ready for the next publish attempt.
+///   4. Append same-field collisions to `.scratch/conflicts.log`. Possible
+///      when an unrelated push advanced `main` between our upload-time apply
+///      and the run-job's commit window; user-wins is the policy.
+///   5. Save the re-anchored patch file atomically BEFORE advancing the local
+///      `main` ref — mirrors [`download_single_repo`]'s crash-recovery
+///      ordering (crash between save and ref-advance leaves the file anchored
+///      against the new main while the ref still points to the old main; the
+///      next pull recomputes and converges).
+fn reconcile_accepted_after_publish(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    token: &str,
+) -> anyhow::Result<()> {
+    let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
+    let new_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?;
+
+    let main_map_old = match old_main_hash.as_deref() {
+        Some(h) => read_git_tree(&ctx.bare_repo, h)?,
+        None => FileMap::new(),
+    };
+    let main_map_new = match new_main_hash.as_deref() {
+        Some(h) => read_git_tree(&ctx.bare_repo, h)?,
+        None => FileMap::new(),
+    };
+
+    let connection_dir = accepted_patches_dir(ctx);
+    let accepted = crate::config::accepted_patches::load(&connection_dir)?;
+
+    let re_anchored = crate::commands::re_anchor::re_anchor_patches(
+        &accepted.patches,
+        |path| parse_json_value_at(&main_map_old, path, "refs/heads/main (pre-publish)"),
+        |path| {
+            parse_json_value_at(
+                &main_map_new,
+                path,
+                "refs/remotes/origin/main (post-publish)",
+            )
+        },
+    )?;
+
+    for conflict in &re_anchored.conflicts {
+        let entry = crate::config::conflicts_log::ConflictEntry {
+            ts: crate::config::conflicts_log::now_rfc3339(),
+            connector_account_id: ctx.connection_id.clone(),
+            path: conflict.path.clone(),
+            conflicting_keys: conflict.conflicting_keys.clone(),
+        };
+        if let Err(err) = crate::config::conflicts_log::append(workspace_dir, &entry) {
+            eprintln!(
+                "Warning: failed to append conflict for {} to conflicts.log: {err}",
+                conflict.path
+            );
+        }
+    }
+
+    let new_accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+        patches: re_anchored.patches,
+    };
+    crate::config::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
+
+    if let Some(hash) = new_main_hash.as_deref() {
+        git_update_ref(&ctx.bare_repo, "refs/heads/main", hash)?;
+    }
+
     Ok(())
 }
 

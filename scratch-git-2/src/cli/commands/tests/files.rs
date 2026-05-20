@@ -2094,6 +2094,165 @@ fn download_returns_up_to_date_when_server_main_unchanged() {
     assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
 }
 
+// ---------------------------------------------------------------------------
+// DEV-10175 — `reconcile_accepted_after_publish` keeps patches whose connector
+// batch failed silently and drops ones that genuinely landed in `main`.
+// Replaces the prior unconditional `clear` that erased the patch file
+// regardless of connector-level outcome.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reconcile_keeps_patch_when_server_main_did_not_advance() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // Seed: main has Acme with industry=Tech. User accepted industry → SaaS.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::commands::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+        }],
+    };
+    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // Connector batch failed → server's main did NOT advance.
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+
+    // Patch must still be there for the next publish attempt.
+    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(
+        reloaded.patches.len(),
+        1,
+        "patch must survive failed publish"
+    );
+    assert_eq!(
+        reloaded.patches[0].patch,
+        serde_json::json!({"industry": "SaaS"})
+    );
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+#[test]
+fn reconcile_drops_patch_when_server_published_the_change() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // Seed: main has Acme with industry=Tech. User accepted industry → SaaS.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::commands::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+        }],
+    };
+    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // Server committed the user's edit verbatim — new main blob has
+    // industry=SaaS. Re-anchor's no-op detection should drop the patch.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        "publish lands user's edit",
+    );
+
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+
+    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    assert!(
+        reloaded.patches.is_empty(),
+        "patch must drop after publish lands"
+    );
+    // Local main advanced to match origin.
+    let local_main = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
+    let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
+    assert_eq!(local_main, origin_main);
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+#[test]
+fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // Seed: two records on main.
+    seed_main_with_record(&fixture, &ctx, "posts/rec_a.json", "{\n  \"v\": 1\n}\n");
+    seed_main_with_record(&fixture, &ctx, "posts/rec_b.json", "{\n  \"v\": 1\n}\n");
+
+    // User accepted both → v: 2.
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+        patches: vec![
+            crate::commands::re_anchor::AnchoredPatch {
+                path: "posts/rec_a.json".to_string(),
+                kind: crate::commands::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({"v": 2}),
+            },
+            crate::commands::re_anchor::AnchoredPatch {
+                path: "posts/rec_b.json".to_string(),
+                kind: crate::commands::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({"v": 2}),
+            },
+        ],
+    };
+    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // Connector succeeded for A, failed for B → only A lands on main.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_a.json",
+        "{\n  \"v\": 2\n}\n",
+        "publish lands A",
+    );
+
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+
+    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(
+        reloaded.patches.len(),
+        1,
+        "B's patch must survive partial publish"
+    );
+    assert_eq!(reloaded.patches[0].path, "posts/rec_b.json");
+    assert_eq!(reloaded.patches[0].patch, serde_json::json!({"v": 2}));
+}
+
 mod accepted_state_helpers {
     use super::super::super::re_anchor::{AnchoredPatch, PatchKind};
     use super::super::*;
