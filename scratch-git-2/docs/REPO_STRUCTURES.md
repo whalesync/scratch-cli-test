@@ -20,10 +20,12 @@ The workbook config repo reuses the same pattern with workbookId in place of con
 
 ## Branches
 
-| Branch  | Owner  | Purpose                                     |
-| ------- | ------ | ------------------------------------------- |
-| `main`  | Server | Published/pulled truth — server writes here |
-| `dirty` | CLI    | User's working copy — CLI pushes here       |
+| Branch  | Owner  | Purpose                                                                                              |
+| ------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| `main`  | Server | Published/pulled truth — server writes here.                                                         |
+| `dirty` | Server | Approved-but-not-yet-published staging area on the server. CLI ships RFC 7396 patches via `/upload-patch` and the server applies them here; the publish pipeline reads from here. |
+
+The local CLI no longer pushes to `dirty`. The user's accepted-but-not-published edits live in `<workspace>/.scratch/connections/<conn>/accepted-patches.json` — see [REVIEW_MODEL.md](REVIEW_MODEL.md).
 
 ## Connection Repo (inside git)
 
@@ -31,27 +33,22 @@ The workbook config repo reuses the same pattern with workbookId in place of con
 {folder}/
   record-1.json
   record-2.json
-  scratch_pending_abc.json        # New records not yet published
+  scratch_pending_abc.json        # New records not yet published (legacy run-from-git flow only)
 .scratch/
   {folder}/
     schema.json                   # Table schema + FK annotations
-    publish-plan-{ts}/            # Phase files for active plan
+    publish-plan-{ts}/            # Phase files for legacy run-from-git plan; absent in the /upload-patch flow
       edit/
-        record-1.json             # { content, changedFields }
       create/
-        scratch_pending_abc.json  # Stripped JSON (no pending refs)
       delete/
-        record-3.json             # { remoteId }
       backfill/
-        record-1.json             # { content, changedFields }
       rename/
-        scratch_pending_abc.json  # {} placeholder
   .publish-plans/
     {ts}/
-      plan.json                   # Plan manifest (summary, tablePaths)
+      plan.json                   # Plan manifest (summary, tablePaths) — legacy flow only
 ```
 
-Phase dirs only exist when a publish plan is active. `cleanup_old_plan_dirs` removes previous plans on new plan creation.
+The `publish-plan-{ts}/` and `.publish-plans/` directories exist only inside the **server-side** bare repo when the legacy `publish-from-git` job runs. The newer `/upload-patch` → `publish-v2/plan-job` flow does not write phase files into the repo. Phase 7 of the workspace-simplification plan removes the legacy paths entirely.
 
 ## Workbook Config Repo (inside git)
 
@@ -117,23 +114,29 @@ Problems with this layout:
 {workspace}/
   .scratch/
     .scratchmd                         # Single file — all metadata (workbook + all connections)
+    lock                               # Workspace-wide file lock for mutating CLI ops
     connections/
+      {CONNECTOR-NAME}/
+        accepted-patches.json          # User's approved-but-not-published edits — see REVIEW_MODEL.md
       scratch/
+        {CONNECTOR-NAME}/              # Per-connection schema files + validator config
       master/
-      dirty/                          # Ephemeral reviewed snapshots used only when working tree has unreviewed edits
+        {CONNECTOR-NAME}/              # Worktree of refs/heads/main (snapshot source for diff detection)
+    workspace/                         # Materialization of workbook config repo
+      syncs/*.json
+      transformers/*.rhai
+      docs.md
     docs/
   .repos/                              # Bare repos, mirroring service disk layout exactly
     {connectorAccountId}.git
     {connectorAccountId}.db
     {workbookId}.git                   # Workbook config repo
-  .scratch/workspace/                  # Materialization of workbook config repo
-    syncs/*.json
-    transformers/*.rhai
-    docs.md
-  {CONNECTOR-NAME}/                    # Dirty branch checkout — the area the user lives in
+  {CONNECTOR-NAME}/                    # Worktree where the user edits records
     {folder}/
       *.json                           # Record files only — no .scratchmd, no .git, no .scratch
 ```
+
+The Phase 3 cleanup removed the `connections/dirty/{CONNECTOR-NAME}/` "reviewed-dirty" worktree (no longer materialized at init). Phase 5 will collapse the user-facing worktree (`{CONNECTOR-NAME}/`) to a plain non-sparse worktree of `refs/heads/main` and retire `connections/master/` — for now the master worktree still hosts the schema-file sync source.
 
 Key properties:
 
@@ -205,7 +208,7 @@ The result is that `{CONNECTOR-NAME}/` is a completely plain directory — no gi
 
 This is also why we do **not** want the user-facing data folders to be real Git worktrees. Real linked worktrees come with `.git` pointers, branch checkout ownership, and Git lifecycle rules (`git worktree add/remove`) that are easy to leak or misuse. We already saw the downside of that on the service side: a leaked linked worktree can keep `dirty` checked out and block pushes. The manually managed approach avoids that entire class of problems. We materialize plain directories on demand, operate against them with explicit `--git-dir/--work-tree`, and delete or refresh them whenever needed.
 
-The same approach applies to the master checkout at `.scratch/connections/master/{CONNECTOR-NAME}/`, to the planner-only reviewed snapshots under `.scratch/connections/dirty/{CONNECTOR-NAME}/`, and to the service's temporary materializations under `.temp/`.
+The same approach applies to the master checkout at `.scratch/connections/master/{CONNECTOR-NAME}/` and to the service's temporary materializations under `.temp/`.
 
 ---
 
@@ -224,11 +227,14 @@ Derived paths (same formula on both sides):
 | ------------------------ | ----------------------------------------------------------- |
 | Bare repo                | `{reposdir}/{repo_basename}.git`                            |
 | Index DB                 | `{reposdir}/{repo_basename}.db`                             |
-| Dirty checkout           | `{loculdir}/{connector_name}/`                              |
+| User-facing worktree     | `{loculdir}/{connector_name}/`                              |
+| Connection root          | `{loculdir}/.scratch/connections/{connector_name}/`         |
+| └─ Accepted patches      | `{connection_root}/accepted-patches.json`                   |
 | Connection scratch       | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
 | Master worktree          | `{loculdir}/.scratch/connections/master/{connector_name}/`  |
-| Reviewed dirty snapshot  | `{loculdir}/.scratch/connections/dirty/{connector_name}/`   |
 | Workbook materialization | `{loculdir}/.scratch/workspace/`                            |
+
+The "user-facing worktree" row is still labelled `dirty_checkout_path` in the Rust source (`WorkspaceLayout::dirty_checkout_path`) for historical reasons; Phase 5's rename will line up with the post-B model where the worktree lives on `main`, not `dirty`.
 
 This is implemented as `WorkspaceLayout` in `src/shared/layout.rs`.
 
@@ -293,11 +299,11 @@ The worktree path differs between CLI (persistent) and service (temporary under 
 
 ## Manual Verification Checklist
 
-Use this as the refactor acceptance test:
+Use this as a refactor acceptance test for layout-affecting changes:
 
-1. Download a workbook locally
-2. Make changes
-3. Create a publish plan
-4. Upload
-5. Ask the Nest server to execute the publish plan
-6. Verify the git backend service still works with all old functionality, including UI/DB-based syncs, publish plans, and other existing service flows
+1. `scratchmd workspaces init` a workbook locally — verify the `{workspace}/` tree matches the [CLI Local Disk new layout](#cli-local-disk--new-layout).
+2. Edit a record file in the user-facing worktree.
+3. `scratchmd files accept <path>` — verify `<workspace>/.scratch/connections/<conn>/accepted-patches.json` is created with the expected `Update`/`Create`/`Delete` entry. See [REVIEW_MODEL.md](REVIEW_MODEL.md) for the accept/reject/discard semantics that get exercised here.
+4. `scratchmd files upload` — verify the patch file ships to the server (server's `dirty` branch advances).
+5. `scratchmd files publish` — verify the publish plan executes, local `refs/heads/main` advances, and `accepted-patches.json` is cleared.
+6. Verify the git backend service still works with all server-side flows — UI/DB-based syncs and the legacy `publish-from-git` path (until Phase 7 removes it).

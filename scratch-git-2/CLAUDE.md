@@ -38,3 +38,4 @@ Always run commands from inside `scratch-git-2/` (or the repo root using Turbore
 - [MIGRATION_PLAN.md](docs/MIGRATION_PLAN.md) — plan to migrate business logic from NestJS/Postgres into Rust/git
 - [TEST_LOOP.md](docs/TEST_LOOP.md) — end-to-end test guide ⚠️ partially outdated (uses old binary name `scratchmd2` and old workspace paths — treat as conceptual reference)
 - [REPO_STRUCTURES.md](docs/REPO_STRUCTURES.md) — CLI and service directory layouts, repo identity, branch conventions, materialize-perform-commit-cleanup pattern
+- [REVIEW_MODEL.md](docs/REVIEW_MODEL.md) — accept / reject / discard semantics, the published/approved/local state model, and the `accepted-patches.json` shape

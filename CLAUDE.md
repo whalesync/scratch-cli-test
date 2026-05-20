@@ -162,6 +162,8 @@ Redis pub/sub → WebSocket gateway → connected clients. Multiple server insta
 
 - [Main README](/README.md)
 - [Connector Development Guide](/server/src/remote-service/connectors/CONNECTOR_GUIDE.md)
+- [scratchmd CLI: Review Model](/scratch-git-2/docs/REVIEW_MODEL.md) — accept / reject / discard semantics and the published/approved/local state model
+- [scratchmd CLI: Repo Structures](/scratch-git-2/docs/REPO_STRUCTURES.md) — CLI and service on-disk layouts
 - Module-specific docs: `/server/src/*/README.md`
 - [GitLab Pipeline Schedules](https://gitlab.com/whalesync/spinner/-/pipeline_schedules)
 

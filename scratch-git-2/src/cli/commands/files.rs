@@ -2199,8 +2199,7 @@ fn restore_deleted_records_locally(
     ctx: &ConnectionContext,
     rel_paths: &[String],
 ) -> anyhow::Result<()> {
-    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
     let main_map = read_main_tree(&ctx.bare_repo)?;
 
@@ -2241,8 +2240,7 @@ fn discard_created_records_locally(
     ctx: &ConnectionContext,
     rel_paths: &[String],
 ) -> anyhow::Result<()> {
-    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
     let main_map = read_main_tree(&ctx.bare_repo)?;
 
@@ -2417,6 +2415,19 @@ fn read_main_tree(bare_repo: &Path) -> anyhow::Result<FileMap> {
         Some(hash) => read_git_tree(bare_repo, &hash),
         None => Ok(FileMap::new()),
     }
+}
+
+/// Resolve `<workspace>/.scratch/connections/<conn>` for a context.
+///
+/// `ctx.workspace_dir` is historically the workbook materialization path
+/// (`<workspace>/.scratch/workspace`), not the workspace root, so we derive
+/// the root from `ctx.dirty_dir.parent()` (= `<workspace>/<conn>` → parent
+/// is `<workspace>`). Callers that need the accepted-patches.json directory
+/// (and can't reach the workspace root variable directly) should use this
+/// helper.
+fn accepted_patches_dir(ctx: &ConnectionContext) -> PathBuf {
+    let workspace_root = ctx.dirty_dir.parent().unwrap_or(Path::new("."));
+    WorkspaceLayout::for_cli(workspace_root).connection_root_path(&ctx.conn_dir_name)
 }
 
 /// Pull a value from a `FileMap` and parse it as JSON, attaching the
@@ -2629,8 +2640,7 @@ async fn upload_single_repo_via_patches(
 
     // Working-tree unreviewed check stays — surface a warning if the user has
     // local edits that aren't accepted yet (those won't be uploaded).
-    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
@@ -2821,9 +2831,7 @@ fn discard_all_full_scan(
     };
     let main_map = read_git_tree(&ctx.bare_repo, &main_hash)?;
 
-    let workspace_dir = ctx.workspace_dir.clone();
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
 
     let local_map = read_materialized_repo(ctx)?;
@@ -2895,8 +2903,7 @@ fn discard_paths_single_repo(
     sync_schema_files_from_master(ctx)?;
     let local_map = read_materialized_repo(ctx)?;
 
-    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
 
@@ -2966,9 +2973,7 @@ fn accept_all_full_scan(
     ctx: &ConnectionContext,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<AcceptAllResult> {
-    let workspace_dir = ctx.workspace_dir.clone();
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
     let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
@@ -3035,9 +3040,7 @@ fn reject_all_full_scan(
     ctx: &ConnectionContext,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<RejectAllResult> {
-    let workspace_dir = ctx.workspace_dir.clone();
-    let layout = WorkspaceLayout::for_cli(&workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
     let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
@@ -3075,8 +3078,7 @@ fn reject_all_full_scan(
 /// `apply(main, accepted-patches.json)`). These are local edits that haven't
 /// been accepted yet.
 fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
-    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
     let main_map = read_main_tree(&ctx.bare_repo)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
@@ -3093,8 +3095,7 @@ fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedE
 /// patch kind.
 fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
     use crate::commands::re_anchor::PatchKind;
-    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
-    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
     Ok(accepted_file
         .patches
