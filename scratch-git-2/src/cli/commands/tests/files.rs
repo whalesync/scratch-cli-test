@@ -885,389 +885,429 @@ fn empty_conn_ctx() -> ConnectionContext {
     }
 }
 
-#[test]
-fn accept_field_in_folder_accepts_modified_and_created_rows_but_ignores_deleted_rows() {
-    let ctx = empty_conn_ctx();
+mod field_helpers {
+    use super::*;
+    use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
+    use crate::config::accepted_patches::AcceptedPatchesFile;
+    use serde_json::{json, Value as JsonValue};
 
-    let base_map = HashMap::from([
-        (
+    fn entry(path: &str, kind: PatchKind, patch: JsonValue) -> AnchoredPatch {
+        AnchoredPatch {
+            path: path.into(),
+            kind,
+            patch,
+        }
+    }
+
+    fn json_pretty(value: &str) -> Vec<u8> {
+        // Match what `apply_patch_entry_to_blob` / json_object_to_bytes
+        // would emit — pretty-printed JSON, no trailing newline. Tests
+        // operate on JSON-equivalent bytes; we don't rely on byte equality.
+        let v: JsonValue = serde_json::from_str(value).unwrap();
+        serde_json::to_vec_pretty(&v).unwrap()
+    }
+
+    fn parsed(bytes: &[u8]) -> JsonValue {
+        serde_json::from_slice(bytes).unwrap()
+    }
+
+    #[test]
+    fn accept_field_inserts_update_patch_for_modified_row() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
             "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"name":"Before","ts":"a"}"#),
-        ),
-        (
-            "public/smoke_records/record-3.json".to_string(),
-            json_bytes(r#"{"id":3,"name":"Deleted dirty","ts":"c"}"#),
-        ),
-    ]);
-    let local_map = HashMap::from([
-        (
+            json_pretty(r#"{"id":1,"name":"Before","ts":"a"}"#),
+        )]);
+        let local = HashMap::from([(
             "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"name":"After","ts":"a"}"#),
-        ),
-        (
+            json_pretty(r#"{"id":1,"name":"After","ts":"a"}"#),
+        )]);
+        let mut file = AcceptedPatchesFile::default();
+
+        let result =
+            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
+                .unwrap();
+
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(file.patches[0].path, "public/smoke_records/record-1.json");
+        assert_eq!(file.patches[0].kind, PatchKind::Update);
+        assert_eq!(file.patches[0].patch, json!({"name": "After"}));
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/public/smoke_records/record-1.json".to_string()]
+        );
+        assert!(result.patches_changed);
+    }
+
+    #[test]
+    fn accept_field_inserts_create_patch_for_locally_created_row() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::new();
+        let local = HashMap::from([(
             "public/smoke_records/record-2.json".to_string(),
-            json_bytes(r#"{"id":2,"name":"Created","ts":"b"}"#),
-        ),
-    ]);
+            json_pretty(r#"{"id":2,"name":"Created","ts":"b"}"#),
+        )]);
+        let mut file = AcceptedPatchesFile::default();
 
-    let (accepted_map, result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
-            .unwrap();
+        let result =
+            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
+                .unwrap();
 
-    assert_eq!(
-        String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"id\": 1,\n  \"name\": \"After\",\n  \"ts\": \"a\"\n}"
-    );
-    assert_eq!(
-        String::from_utf8(accepted_map["public/smoke_records/record-2.json"].clone()).unwrap(),
-        "{\n  \"name\": \"Created\"\n}"
-    );
-    assert!(accepted_map.contains_key("public/smoke_records/record-3.json"));
-    assert_eq!(
-        result.changed_paths,
-        vec![
-            "Conn/public/smoke_records/record-1.json".to_string(),
-            "Conn/public/smoke_records/record-2.json".to_string(),
-        ]
-    );
-    assert!(result.dirty_changed);
-}
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(file.patches[0].kind, PatchKind::Create);
+        // Only the accepted field appears in the Create payload — accept-field
+        // ships exactly the field the user accepted, not the rest of the row.
+        assert_eq!(file.patches[0].patch, json!({"name": "Created"}));
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/public/smoke_records/record-2.json".to_string()]
+        );
+        assert!(result.patches_changed);
+    }
 
-#[test]
-fn reject_field_in_folder_discards_unreviewed_and_undoes_unpublished_for_one_field() {
-    let ctx = empty_conn_ctx();
-
-    let base_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"name":"Dirty","ts":"a"}"#),
-        ),
-        (
+    #[test]
+    fn accept_field_skips_locally_deleted_files() {
+        // Whole-file delete is not a field-level target.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
             "public/smoke_records/record-3.json".to_string(),
-            json_bytes(r#"{"id":3,"name":"Created approved"}"#),
-        ),
-        (
-            "public/smoke_records/record-4.json".to_string(),
-            json_bytes(r#"{"id":4,"name":"Deleted dirty"}"#),
-        ),
-    ]);
-    let local_map = HashMap::from([
-        (
+            json_pretty(r#"{"id":3,"name":"On main","ts":"c"}"#),
+        )]);
+        let local = HashMap::new();
+        let mut file = AcceptedPatchesFile::default();
+
+        let result =
+            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
+                .unwrap();
+
+        assert!(file.patches.is_empty());
+        assert!(result.changed_paths.is_empty());
+        assert!(!result.patches_changed);
+    }
+
+    #[test]
+    fn accept_field_merges_field_into_existing_update_entry() {
+        // Existing patch already touches a different field; accept-field on
+        // a new field should fold it into the same Update entry.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","industry":"Other","employees":5}"#),
+        )]);
+        let local = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","industry":"SaaS","employees":10}"#),
+        )]);
+        let mut file = AcceptedPatchesFile {
+            patches: vec![entry(
+                "Companies/rec_1.json",
+                PatchKind::Update,
+                json!({"employees": 10}),
+            )],
+        };
+
+        let result =
+            accept_field_in_folder(&ctx, "Companies", "industry", &main, &mut file, &local)
+                .unwrap();
+
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(file.patches[0].kind, PatchKind::Update);
+        assert_eq!(
+            file.patches[0].patch,
+            json!({"employees": 10, "industry": "SaaS"})
+        );
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/Companies/rec_1.json".to_string()]
+        );
+        assert!(result.patches_changed);
+    }
+
+    #[test]
+    fn accept_field_is_noop_when_field_already_matches_approved() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
             "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"name":"Local edit","ts":"a"}"#),
-        ),
-        (
-            "public/smoke_records/record-2.json".to_string(),
-            json_bytes(r#"{"id":2,"name":"Created local"}"#),
-        ),
-        (
-            "public/smoke_records/record-3.json".to_string(),
-            json_bytes(r#"{"id":3,"name":"Created approved"}"#),
-        ),
-    ]);
-    let master_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"name":"Dirty","ts":"a"}"#),
-        ),
-        (
-            "public/smoke_records/record-3.json".to_string(),
-            json_bytes(r#"{"id":3}"#),
-        ),
-    ]);
+            json_pretty(r#"{"id":1,"name":"Stable"}"#),
+        )]);
+        let local = main.clone();
+        let mut file = AcceptedPatchesFile::default();
 
-    let (next_local_map, next_dirty_map, result) = reject_field_in_folder(
-        &ctx,
-        "public/smoke_records",
-        "name",
-        &base_map,
-        &local_map,
-        &master_map,
-    )
-    .unwrap();
+        let result =
+            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
+                .unwrap();
 
-    assert_eq!(
-        String::from_utf8(next_local_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"id\": 1,\n  \"name\": \"Dirty\",\n  \"ts\": \"a\"\n}"
-    );
-    assert_eq!(
-        String::from_utf8(next_local_map["public/smoke_records/record-2.json"].clone()).unwrap(),
-        "{\n  \"id\": 2\n}"
-    );
-    assert_eq!(
-        String::from_utf8(next_local_map["public/smoke_records/record-3.json"].clone()).unwrap(),
-        "{\n  \"id\": 3\n}"
-    );
-    assert_eq!(
-        String::from_utf8(next_dirty_map["public/smoke_records/record-3.json"].clone()).unwrap(),
-        "{\n  \"id\": 3\n}"
-    );
-    assert!(next_dirty_map.contains_key("public/smoke_records/record-4.json"));
-    assert_eq!(
-        result.changed_paths,
-        vec![
-            "Conn/public/smoke_records/record-1.json".to_string(),
-            "Conn/public/smoke_records/record-2.json".to_string(),
-            "Conn/public/smoke_records/record-3.json".to_string(),
-        ]
-    );
-    assert!(result.dirty_changed);
-}
+        assert!(file.patches.is_empty());
+        assert!(result.changed_paths.is_empty());
+        assert!(!result.patches_changed);
+    }
 
-#[test]
-fn field_commands_handle_nested_paths_and_prune_empty_parents() {
-    let ctx = empty_conn_ctx();
+    #[test]
+    fn accept_field_handles_nested_paths() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
+        )]);
+        let local = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"author":{"name":"After","role":"editor"}}"#),
+        )]);
+        let mut file = AcceptedPatchesFile::default();
 
-    let base_map = HashMap::from([(
-        "public/smoke_records/record-1.json".to_string(),
-        json_bytes(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
-    )]);
-    let accept_local_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"author":{"name":"After","role":"editor"}}"#),
-        ),
-        (
-            "public/smoke_records/record-2.json".to_string(),
-            json_bytes(r#"{"id":2,"author":{"name":"Created"}}"#),
-        ),
-    ]);
-    let reject_local_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"author":{"name":"After","role":"editor"}}"#),
-        ),
-        (
-            "public/smoke_records/record-2.json".to_string(),
-            json_bytes(r#"{"id":2,"author":{"name":"Created"}}"#),
-        ),
-        (
-            "public/smoke_records/record-3.json".to_string(),
-            json_bytes(r#"{"id":3,"author":{"name":"Approved nested"}}"#),
-        ),
-    ]);
-    let dirty_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
-        ),
-        (
-            "public/smoke_records/record-3.json".to_string(),
-            json_bytes(r#"{"id":3,"author":{"name":"Approved nested"}}"#),
-        ),
-    ]);
-    let master_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
-        ),
-        (
-            "public/smoke_records/record-3.json".to_string(),
-            json_bytes(r#"{"id":3}"#),
-        ),
-    ]);
+        let result =
+            accept_field_in_folder(&ctx, "Posts", "author.name", &main, &mut file, &local).unwrap();
 
-    let (accepted_map, accept_result) = accept_field_in_folder(
-        &ctx,
-        "public/smoke_records",
-        "author.name",
-        &base_map,
-        &accept_local_map,
-    )
-    .unwrap();
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(file.patches[0].kind, PatchKind::Update);
+        assert_eq!(file.patches[0].patch, json!({"author": {"name": "After"}}));
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/Posts/rec_1.json".to_string()]
+        );
+    }
 
-    assert_eq!(
-        String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"id\": 1,\n  \"author\": {\n    \"name\": \"After\",\n    \"role\": \"editor\"\n  }\n}"
-    );
-    assert_eq!(
-        String::from_utf8(accepted_map["public/smoke_records/record-2.json"].clone()).unwrap(),
-        "{\n  \"author\": {\n    \"name\": \"Created\"\n  }\n}"
-    );
-    assert_eq!(accept_result.changed_paths.len(), 2);
+    #[test]
+    fn accept_field_only_touches_requested_folder() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([
+            (
+                "Posts/rec_1.json".to_string(),
+                json_pretty(r#"{"id":1,"name":"Before"}"#),
+            ),
+            (
+                "Articles/rec_1.json".to_string(),
+                json_pretty(r#"{"id":10,"name":"Other before"}"#),
+            ),
+        ]);
+        let local = HashMap::from([
+            (
+                "Posts/rec_1.json".to_string(),
+                json_pretty(r#"{"id":1,"name":"After"}"#),
+            ),
+            (
+                "Articles/rec_1.json".to_string(),
+                json_pretty(r#"{"id":10,"name":"Other after"}"#),
+            ),
+        ]);
+        let mut file = AcceptedPatchesFile::default();
 
-    let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
-        &ctx,
-        "public/smoke_records",
-        "author.name",
-        &dirty_map,
-        &reject_local_map,
-        &master_map,
-    )
-    .unwrap();
+        let result =
+            accept_field_in_folder(&ctx, "Posts", "name", &main, &mut file, &local).unwrap();
 
-    assert_eq!(
-        String::from_utf8(next_local_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"id\": 1,\n  \"author\": {\n    \"name\": \"Before\",\n    \"role\": \"editor\"\n  }\n}"
-    );
-    assert_eq!(
-        String::from_utf8(next_local_map["public/smoke_records/record-2.json"].clone()).unwrap(),
-        "{\n  \"id\": 2\n}"
-    );
-    assert_eq!(
-        String::from_utf8(next_local_map["public/smoke_records/record-3.json"].clone()).unwrap(),
-        "{\n  \"id\": 3\n}"
-    );
-    assert_eq!(
-        String::from_utf8(next_dirty_map["public/smoke_records/record-3.json"].clone()).unwrap(),
-        "{\n  \"id\": 3\n}"
-    );
-    assert_eq!(reject_result.changed_paths.len(), 3);
-    assert!(reject_result.dirty_changed);
-}
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(file.patches[0].path, "Posts/rec_1.json");
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/Posts/rec_1.json".to_string()]
+        );
+    }
 
-#[test]
-fn reject_field_in_folder_deletes_created_file_when_last_field_is_removed() {
-    let ctx = empty_conn_ctx();
+    #[test]
+    fn reject_field_restores_working_to_approved_for_unreviewed_field() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"name":"Dirty","ts":"a"}"#),
+        )]);
+        let local = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"name":"Local edit","ts":"a"}"#),
+        )]);
+        // No patch entry — approved = main.
+        let file = AcceptedPatchesFile::default();
 
-    let base_map = HashMap::new();
-    let local_map = HashMap::from([(
-        "public/smoke_records/record-1.json".to_string(),
-        json_bytes(r#"{"name":"Only field"}"#),
-    )]);
-    let master_map = HashMap::new();
+        let (next_local, result) =
+            reject_field_in_folder(&ctx, "Posts", "name", &main, &file, &local).unwrap();
 
-    let (next_local_map, next_dirty_map, result) = reject_field_in_folder(
-        &ctx,
-        "public/smoke_records",
-        "name",
-        &base_map,
-        &local_map,
-        &master_map,
-    )
-    .unwrap();
+        assert_eq!(
+            parsed(&next_local["Posts/rec_1.json"]),
+            json!({"id":1,"name":"Dirty","ts":"a"})
+        );
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/Posts/rec_1.json".to_string()]
+        );
+        // Reject NEVER mutates the patch file (decision 35).
+        assert!(!result.patches_changed);
+    }
 
-    assert!(!next_local_map.contains_key("public/smoke_records/record-1.json"));
-    assert!(next_dirty_map.is_empty());
-    assert_eq!(
-        result.changed_paths,
-        vec!["Conn/public/smoke_records/record-1.json".to_string()]
-    );
-    assert!(!result.dirty_changed);
-}
+    #[test]
+    fn reject_field_uses_apply_patch_entry_to_compute_approved_value() {
+        // Approved value is the result of applying the patch entry to main —
+        // not main directly. Field-level reject restores `local[field]` to
+        // that synthesized approved value.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"name":"Main name"}"#),
+        )]);
+        let local = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"name":"Local typo"}"#),
+        )]);
+        let file = AcceptedPatchesFile {
+            patches: vec![entry(
+                "Posts/rec_1.json",
+                PatchKind::Update,
+                json!({"name": "Approved edit"}),
+            )],
+        };
 
-#[test]
-fn field_commands_are_noop_when_target_field_has_no_relevant_changes() {
-    let ctx = empty_conn_ctx();
+        let (next_local, _result) =
+            reject_field_in_folder(&ctx, "Posts", "name", &main, &file, &local).unwrap();
 
-    let base_map = HashMap::from([(
-        "public/smoke_records/record-1.json".to_string(),
-        json_bytes(r#"{"id":1,"name":"Stable","ts":"a"}"#),
-    )]);
-    let local_map = HashMap::from([(
-        "public/smoke_records/record-1.json".to_string(),
-        json_bytes(r#"{"id":1,"name":"Stable","ts":"a"}"#),
-    )]);
-    let master_map = base_map.clone();
+        assert_eq!(
+            parsed(&next_local["Posts/rec_1.json"]),
+            json!({"id":1,"name":"Approved edit"})
+        );
+    }
 
-    let (accepted_map, accept_result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
-            .unwrap();
-    let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
-        &ctx,
-        "public/smoke_records",
-        "name",
-        &base_map,
-        &local_map,
-        &master_map,
-    )
-    .unwrap();
+    #[test]
+    fn reject_field_is_noop_when_field_already_matches_approved() {
+        // Decision 35: already-approved fields are not reject-field's
+        // concern. Discard-field is the operation that rolls approved back
+        // to published.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Posts/rec_3.json".to_string(),
+            json_pretty(r#"{"id":3}"#),
+        )]);
+        let local = HashMap::from([(
+            "Posts/rec_3.json".to_string(),
+            json_pretty(r#"{"id":3,"name":"Created approved"}"#),
+        )]);
+        // Patch entry already approves the {name: "Created approved"} edit.
+        let file = AcceptedPatchesFile {
+            patches: vec![entry(
+                "Posts/rec_3.json",
+                PatchKind::Update,
+                json!({"name": "Created approved"}),
+            )],
+        };
 
-    assert_eq!(accepted_map, base_map);
-    assert!(accept_result.changed_paths.is_empty());
-    assert!(!accept_result.dirty_changed);
-    assert_eq!(next_local_map, local_map);
-    assert_eq!(next_dirty_map, base_map);
-    assert!(reject_result.changed_paths.is_empty());
-    assert!(!reject_result.dirty_changed);
-}
+        let (next_local, result) =
+            reject_field_in_folder(&ctx, "Posts", "name", &main, &file, &local).unwrap();
 
-#[test]
-fn field_commands_only_touch_requested_folder() {
-    let ctx = empty_conn_ctx();
+        // Working unchanged.
+        assert_eq!(
+            parsed(&next_local["Posts/rec_3.json"]),
+            json!({"id":3,"name":"Created approved"})
+        );
+        assert!(result.changed_paths.is_empty());
+        assert!(!result.patches_changed);
+    }
 
-    let base_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"name":"Before"}"#),
-        ),
-        (
-            "public/other_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":10,"name":"Other before"}"#),
-        ),
-    ]);
-    let local_map = HashMap::from([
-        (
-            "public/smoke_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":1,"name":"After"}"#),
-        ),
-        (
-            "public/other_records/record-1.json".to_string(),
-            json_bytes(r#"{"id":10,"name":"Other after"}"#),
-        ),
-    ]);
-    let master_map = base_map.clone();
+    #[test]
+    fn reject_field_deletes_created_file_when_last_field_is_removed() {
+        // A locally-created file whose only field is unreviewed: rejecting
+        // restores approved (= "missing"), so the working file is removed.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::new();
+        let local = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Only field"}"#),
+        )]);
+        let file = AcceptedPatchesFile::default();
 
-    let (accepted_map, accept_result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
-            .unwrap();
-    let (next_local_map, next_dirty_map, reject_result) = reject_field_in_folder(
-        &ctx,
-        "public/smoke_records",
-        "name",
-        &base_map,
-        &local_map,
-        &master_map,
-    )
-    .unwrap();
+        let (next_local, result) =
+            reject_field_in_folder(&ctx, "Posts", "name", &main, &file, &local).unwrap();
 
-    assert_eq!(
-        String::from_utf8(accepted_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"id\": 1,\n  \"name\": \"After\"\n}"
-    );
-    assert_eq!(
-        accepted_map["public/other_records/record-1.json"],
-        base_map["public/other_records/record-1.json"]
-    );
-    assert_eq!(
-        String::from_utf8(next_local_map["public/smoke_records/record-1.json"].clone()).unwrap(),
-        "{\n  \"id\": 1,\n  \"name\": \"Before\"\n}"
-    );
-    assert_eq!(
-        next_local_map["public/other_records/record-1.json"],
-        local_map["public/other_records/record-1.json"]
-    );
-    assert_eq!(
-        next_dirty_map["public/other_records/record-1.json"],
-        base_map["public/other_records/record-1.json"]
-    );
-    assert_eq!(
-        accept_result.changed_paths,
-        vec!["Conn/public/smoke_records/record-1.json".to_string()]
-    );
-    assert_eq!(
-        reject_result.changed_paths,
-        vec!["Conn/public/smoke_records/record-1.json".to_string()]
-    );
-}
+        assert!(!next_local.contains_key("Posts/rec_1.json"));
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/Posts/rec_1.json".to_string()]
+        );
+        assert!(!result.patches_changed);
+    }
 
-#[test]
-fn accept_field_in_folder_ignores_unpublished_only_changes() {
-    let ctx = empty_conn_ctx();
+    #[test]
+    fn reject_field_skips_locally_deleted_files() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Posts/rec_4.json".to_string(),
+            json_pretty(r#"{"id":4,"name":"On main"}"#),
+        )]);
+        let local = HashMap::new();
+        // User accepted a Delete; working file is also missing. No field-
+        // level action applies — discard-field would re-instate the file.
+        let file = AcceptedPatchesFile {
+            patches: vec![entry("Posts/rec_4.json", PatchKind::Delete, JsonValue::Null)],
+        };
 
-    let base_map = HashMap::from([(
-        "public/smoke_records/record-1.json".to_string(),
-        json_bytes(r#"{"id":1,"name":"Approved value"}"#),
-    )]);
-    let local_map = base_map.clone();
+        let (next_local, result) =
+            reject_field_in_folder(&ctx, "Posts", "name", &main, &file, &local).unwrap();
 
-    let (accepted_map, result) =
-        accept_field_in_folder(&ctx, "public/smoke_records", "name", &base_map, &local_map)
-            .unwrap();
+        assert!(next_local.is_empty());
+        assert!(result.changed_paths.is_empty());
+        assert!(!result.patches_changed);
+    }
 
-    assert_eq!(accepted_map, base_map);
-    assert!(result.changed_paths.is_empty());
-    assert!(!result.dirty_changed);
+    #[test]
+    fn reject_field_handles_nested_paths() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"author":{"name":"Before","role":"editor"}}"#),
+        )]);
+        let local = HashMap::from([(
+            "Posts/rec_1.json".to_string(),
+            json_pretty(r#"{"id":1,"author":{"name":"After","role":"editor"}}"#),
+        )]);
+        let file = AcceptedPatchesFile::default();
+
+        let (next_local, result) =
+            reject_field_in_folder(&ctx, "Posts", "author.name", &main, &file, &local).unwrap();
+
+        assert_eq!(
+            parsed(&next_local["Posts/rec_1.json"]),
+            json!({"id":1,"author":{"name":"Before","role":"editor"}})
+        );
+        assert_eq!(result.changed_paths.len(), 1);
+    }
+
+    #[test]
+    fn reject_field_only_touches_requested_folder() {
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([
+            (
+                "Posts/rec_1.json".to_string(),
+                json_pretty(r#"{"id":1,"name":"Before"}"#),
+            ),
+            (
+                "Articles/rec_1.json".to_string(),
+                json_pretty(r#"{"id":10,"name":"Other before"}"#),
+            ),
+        ]);
+        let local = HashMap::from([
+            (
+                "Posts/rec_1.json".to_string(),
+                json_pretty(r#"{"id":1,"name":"After"}"#),
+            ),
+            (
+                "Articles/rec_1.json".to_string(),
+                json_pretty(r#"{"id":10,"name":"Other after"}"#),
+            ),
+        ]);
+        let file = AcceptedPatchesFile::default();
+
+        let (next_local, result) =
+            reject_field_in_folder(&ctx, "Posts", "name", &main, &file, &local).unwrap();
+
+        assert_eq!(
+            parsed(&next_local["Posts/rec_1.json"]),
+            json!({"id":1,"name":"Before"})
+        );
+        // Articles untouched.
+        assert_eq!(
+            parsed(&next_local["Articles/rec_1.json"]),
+            json!({"id":10,"name":"Other after"})
+        );
+        assert_eq!(
+            result.changed_paths,
+            vec!["Conn/Posts/rec_1.json".to_string()]
+        );
+    }
 }
 
 /// Build a bare repo with two data folders (posts/, articles/) on both main and dirty,
@@ -2184,7 +2224,7 @@ mod discard_field_helper {
             result.changed_paths,
             vec!["HubSpot/Companies/rec_1.json".to_string()]
         );
-        assert!(result.dirty_changed);
+        assert!(result.patches_changed);
     }
 
     #[test]
@@ -2213,7 +2253,7 @@ mod discard_field_helper {
             result.changed_paths,
             vec!["HubSpot/Companies/rec_new.json".to_string()]
         );
-        assert!(result.dirty_changed);
+        assert!(result.patches_changed);
     }
 
     #[test]
@@ -2267,7 +2307,7 @@ mod discard_field_helper {
         assert_eq!(file.patches[0].kind, PatchKind::Delete);
         assert!(next_local.is_empty(), "working untouched (still absent)");
         assert!(result.changed_paths.is_empty());
-        assert!(!result.dirty_changed);
+        assert!(!result.patches_changed);
     }
 
     #[test]
@@ -2296,7 +2336,7 @@ mod discard_field_helper {
             vec!["HubSpot/Companies/rec_1.json".to_string()]
         );
         // Working changed but no patch movement.
-        assert!(!result.dirty_changed);
+        assert!(!result.patches_changed);
     }
 
     #[test]
@@ -2336,6 +2376,6 @@ mod discard_field_helper {
 
         assert_eq!(parsed(&next_local, "Companies/rec_1.json"), json!({"x": "v"}));
         assert!(result.changed_paths.is_empty());
-        assert!(!result.dirty_changed);
+        assert!(!result.patches_changed);
     }
 }

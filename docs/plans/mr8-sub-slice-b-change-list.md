@@ -6,15 +6,15 @@ moved.
 
 ## Progress (as of 2026-05-19)
 
-On branch `dev-10144-mr11` off `master`.
+On branch `dev-10144-mr12` off `master` (mr11 was used for steps 1–4; mr12 picks up at step 5).
 
 | Step | Status | Notes |
 | ---- | ------ | ----- |
-| 1. `layout::connection_root_path` | ✅ committed (mr11 HEAD) | + tests for both `for_cli` and `for_service` layouts |
-| 2. `compute_accepted_state` + `apply_patch_entry_to_blob` | ✅ committed (mr11 HEAD) | 10 unit tests; `compute_unreviewed_entries` switched to `json_content_differs` so synthesized approved bytes vs worktree-written bytes don't false-positive on whitespace drift |
-| 3. `discard_field_in_folder` | ✅ committed (mr11 HEAD) | 7 unit tests; new `PatchAction` enum + `patch_object_mentions_field` helper |
-| 4. `run_accept` / `run_reject` / `run_discard` + `discard_paths_single_repo` | ✅ committed (mr11 HEAD, WIP) | Three new shared helpers landed alongside: `read_main_tree`, `parse_json_value_at`, `write_or_remove_working_file`. Two existing tests fixed up: `discard_paths_single_repo_reverts_only_listed_paths` and `..._with_only_approved_change` now seed `accepted-patches.json` via new test helper `seed_accepted_patches_from_fixture`. `cargo test --bin scratchmd`: 266 passes. |
-| 5. `accept_field` / `reject_field` rewrite + new `run_discard_field` | ⏳ not started | See "Per-field upsert algorithm" below — recommended approach |
+| 1. `layout::connection_root_path` | ✅ committed (mr11) | + tests for both `for_cli` and `for_service` layouts |
+| 2. `compute_accepted_state` + `apply_patch_entry_to_blob` | ✅ committed (mr11) | 10 unit tests; `compute_unreviewed_entries` switched to `json_content_differs` so synthesized approved bytes vs worktree-written bytes don't false-positive on whitespace drift |
+| 3. `discard_field_in_folder` | ✅ committed (mr11) | 7 unit tests; new `PatchAction` enum + `patch_object_mentions_field` helper |
+| 4. `run_accept` / `run_reject` / `run_discard` + `discard_paths_single_repo` | ✅ committed (mr11, WIP) | Three new shared helpers landed alongside: `read_main_tree`, `parse_json_value_at`, `write_or_remove_working_file`. Two existing tests fixed up: `discard_paths_single_repo_reverts_only_listed_paths` and `..._with_only_approved_change` now seed `accepted-patches.json` via new test helper `seed_accepted_patches_from_fixture`. `cargo test --bin scratchmd`: 266 passes. |
+| 5. `accept_field` / `reject_field` rewrite + new `run_discard_field` | ✅ committed (mr12 HEAD, WIP) | `FieldCommandResult.dirty_changed` renamed to `patches_changed`. New `field_paths_in_folder` + `approved_object_for_path` shared helpers (consumed by all three field-level routines). `accept_field_in_folder` routes through `re_anchor::compute_entry` so Create/Update/Delete shape decisions reuse the same machinery as single-path accept. `reject_field_in_folder` is strict per decision 35 — no patch file writes, no master/dirty hybrid. New `DiscardField` clap variant; new `run_discard_field` command. Existing 7 module-level field tests deleted; 14 new tests added in a `field_helpers` submodule asserting on `AcceptedPatchesFile` shape (Update/Create kinds, patch content, `changed_paths`, `patches_changed`). Five `discard_field_helper` test sites updated for the rename. `cargo test`: 273 + 169 + 16 + 2 = 460 passes, 0 failures. |
 | 6. `_all` variants + delete `_scoped_via_index` variants | ⏳ not started | Many `accept_all_single_repo_*` / `reject_all_*` / `discard_all_*` tests will need updating (use `seed_accepted_patches_from_fixture`) |
 | 7. `restore_deleted_records_locally` / `discard_created_records_locally` | ⏳ not started | 2 existing tests; remote-cleanup hack stays untouched |
 | 8. `upload_single_repo_via_patches` → read `accepted-patches.json` verbatim | ⏳ not started | |
@@ -24,15 +24,15 @@ On branch `dev-10144-mr11` off `master`.
 | 12. `cargo fmt` + `yarn lint-strict` in `server/` (no-op expected) | ⏳ not started | |
 | 13. Manual dogfood | ⏳ not started | |
 
-### Where step 4 leaves the codebase
+### Where step 5 leaves the codebase
 
-The workspace is in a **mixed state** between the two models — step 4 ships
-the JSON-file model for single-path commands, but field-level / `_all` /
-`_record` / listing commands still mutate `refs/heads/dirty`. This is fine
-for an in-progress branch (nothing user-facing has shipped), but **do not
-merge mr11 until at least step 6 is complete** — `accept-all` writing to
-`dirty` while `accept` writes to `accepted-patches.json` would produce
-inconsistent views of the workspace.
+The workspace is still in a **mixed state** between the two models — single-
+path commands (step 4) and field-level commands (step 5) now write to
+`accepted-patches.json`, but the `_all` variants, `restore_deleted_record` /
+`discard_created_record`, listing commands, and `upload` still touch the
+`dirty` branch. **Do not merge mr12 until at least step 6 is complete** —
+`accept-all` writing to `dirty` while `accept` and `accept-field` write to
+`accepted-patches.json` would produce inconsistent views of the workspace.
 
 ### Per-field upsert algorithm (for step 5)
 
