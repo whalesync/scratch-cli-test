@@ -7,6 +7,7 @@ import {
   CloudUpload,
   Download,
   HardDriveDownload as DownloadIcon,
+  ExternalLink,
   Eye,
   EyeOff,
   ShieldCheck,
@@ -36,6 +37,8 @@ interface WorkspaceHeaderProps {
   onToggleValidate?: () => void;
 }
 
+const isMac = window.electron?.process?.platform === 'darwin';
+
 const RE_DOWNLOAD_TOOLTIP = 'Re-download latest file updates from Scratch Web';
 const PULL_ALL_TOOLTIP = 'Pull the latest data from all connected services';
 const PUBLISH_ALL_TOOLTIP = 'Publish all pending local changes to connected services';
@@ -63,6 +66,31 @@ export function WorkspaceHeader({
   const compact = width > 0 && width < 800;
 
   const anyRunning = reDownloading || pullingAll || publishingAll;
+
+  const handleOpenIn = () => {
+    if (!localPath) return;
+    const q = encodeURIComponent(`I'm working on my Scratch workspace, "${workspace.name}".`);
+    window.scratchDesktop.showNativeContextMenu(
+      [
+        { id: 'reveal', label: isMac ? 'Finder' : 'Explorer' },
+        { id: 'terminal', label: isMac ? 'Terminal' : 'PowerShell' },
+        { id: 'sep', label: '', type: 'separator' },
+        { id: 'claude-cowork', label: 'Claude Cowork' },
+        { id: 'claude-code', label: 'Claude Code' },
+      ],
+      (id) => {
+        if (id === 'claude-cowork' || id === 'claude-code') {
+          const path = id === 'claude-cowork' ? 'cowork' : 'code';
+          const claudeUrl = `claude://${path}/new?q=${q}&folder=${encodeURIComponent(localPath)}`;
+          void window.scratchAuth.openExternal(claudeUrl).catch(() => {
+            void window.scratchAuth.openExternal('https://claude.ai/download');
+          });
+        }
+        if (id === 'reveal') void window.scratchDesktop.showInFolder(localPath);
+        if (id === 'terminal') void window.scratchDesktop.openInTerminal(localPath);
+      },
+    );
+  };
 
   return (
     <Group
@@ -105,6 +133,18 @@ export function WorkspaceHeader({
 
       {/* Action buttons */}
       <Group gap="xs">
+        {localPath &&
+          (compact ? (
+            <Tooltip label="Open in...">
+              <IconButtonGhost size="compact-xs" onClick={handleOpenIn}>
+                <ExternalLink size={12} />
+              </IconButtonGhost>
+            </Tooltip>
+          ) : (
+            <ButtonSecondaryGhost size="compact-xs" leftSection={<ExternalLink size={12} />} onClick={handleOpenIn}>
+              Open in...
+            </ButtonSecondaryGhost>
+          ))}
         {!isDownloaded &&
           (compact ? (
             <Tooltip label="Download">
