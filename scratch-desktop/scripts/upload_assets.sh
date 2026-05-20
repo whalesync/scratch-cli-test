@@ -44,21 +44,50 @@ fi
 # Strip the {?name,label} template suffix from upload_url.
 UPLOAD_URL_BASE="${RELEASE_UPLOAD_URL%%\{*}"
 
-# List current assets once so we can match by name without a GET per file.
-EXISTING_ASSETS_JSON=$(curl -sS --fail-with-body -H "Authorization: token $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github.v3+json" \
-  "https://api.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}/assets?per_page=100")
+ASSETS_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}/assets?per_page=100"
 
-delete_asset_if_exists() {
+fetch_assets() {
+  local out_var=$1
+  local attempt=1
+  local max_attempts=5
+  local body
+  local http_code
+  while [ $attempt -le $max_attempts ]; do
+    http_code=$(curl -sS -o /tmp/list_assets_body -w "%{http_code}" \
+      -H "Authorization: token $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github.v3+json" \
+      "$ASSETS_URL") || http_code="000"
+    if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+      body=$(cat /tmp/list_assets_body)
+      printf -v "$out_var" '%s' "$body"
+      return 0
+    fi
+    if [ "$http_code" = "429" ] || [ "$http_code" -ge 500 ] || [ "$http_code" = "000" ]; then
+      echo "  List assets attempt $attempt failed with HTTP $http_code; retrying..."
+      sleep $((attempt * 3))
+      attempt=$((attempt + 1))
+      continue
+    fi
+    echo "ERROR: Failed to list release assets (HTTP $http_code). Response body:"
+    cat /tmp/list_assets_body
+    return 1
+  done
+  echo "ERROR: Failed to list release assets after $max_attempts attempts."
+  cat /tmp/list_assets_body
+  return 1
+}
+
+# List current assets once so we can match by name without a GET per file.
+# Refreshed on-demand in upload_with_retry when a parallel job re-creates an
+# asset after this snapshot.
+fetch_assets EXISTING_ASSETS_JSON
+
+delete_asset_by_id() {
   local fname=$1
-  local asset_id
+  local asset_id=$2
   local attempt=1
   local max_attempts=5
   local http_code
-  asset_id=$(echo "$EXISTING_ASSETS_JSON" | jq -r --arg n "$fname" '.[] | select(.name == $n) | .id // empty')
-  if [ -z "$asset_id" ]; then
-    return 0
-  fi
   echo "  Deleting pre-existing asset $fname (id=$asset_id)..."
   while [ $attempt -le $max_attempts ]; do
     http_code=$(curl -sS -o /tmp/delete_asset_body -w "%{http_code}" -X DELETE \
@@ -88,11 +117,43 @@ delete_asset_if_exists() {
   return 1
 }
 
+delete_asset_if_exists() {
+  local fname=$1
+  local asset_id
+  asset_id=$(echo "$EXISTING_ASSETS_JSON" | jq -r --arg n "$fname" '.[] | select(.name == $n) | .id // empty' | head -n 1)
+  if [ -z "$asset_id" ]; then
+    return 0
+  fi
+  delete_asset_by_id "$fname" "$asset_id"
+}
+
+# Resolve a 422 already_exists race by re-querying live assets, finding any
+# asset still holding $fname, and deleting it. Returns 0 if the name is now
+# free (either nothing matched or delete succeeded), 1 otherwise.
+resolve_name_conflict() {
+  local fname=$1
+  local fresh_assets
+  local asset_id
+  if ! fetch_assets fresh_assets; then
+    return 1
+  fi
+  asset_id=$(echo "$fresh_assets" | jq -r --arg n "$fname" '.[] | select(.name == $n) | .id // empty' | head -n 1)
+  if [ -z "$asset_id" ]; then
+    # Name is free now — another job may have deleted it between our upload
+    # attempt and this re-list. Caller should just retry the upload.
+    return 0
+  fi
+  echo "  Found conflicting asset $fname (id=$asset_id) created after our snapshot — deleting before retry."
+  delete_asset_by_id "$fname" "$asset_id"
+}
+
 upload_with_retry() {
   local file=$1
   local fname=$2
   local attempt=1
   local max_attempts=3
+  local conflict_attempts=0
+  local max_conflict_attempts=3
   local http_code
   local encoded_fname
   # Test builds use product name "Scratch (Test)", so artifact filenames contain
@@ -108,6 +169,24 @@ upload_with_retry() {
 
     if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
       return 0
+    fi
+
+    # 422 already_exists: a parallel platform job created an asset with this
+    # name after our initial snapshot, so our pre-upload delete missed it.
+    # Re-query live state, delete the current owner, and retry — without
+    # consuming an upload retry slot, since this is a different failure mode
+    # from transient API errors.
+    if [ "$http_code" = "422" ] \
+      && jq -e '.errors[]? | select(.code == "already_exists" and .field == "name")' /tmp/upload_body >/dev/null 2>&1 \
+      && [ "$conflict_attempts" -lt "$max_conflict_attempts" ]; then
+      conflict_attempts=$((conflict_attempts + 1))
+      echo "  Upload of $fname returned 422 already_exists (conflict $conflict_attempts/$max_conflict_attempts); resolving race with a parallel job."
+      if ! resolve_name_conflict "$fname"; then
+        echo "  Could not resolve already_exists conflict for $fname. Last upload response body:"
+        cat /tmp/upload_body
+        return 1
+      fi
+      continue
     fi
 
     # Retry on 5xx, rate limit (429), and transport failure (000); bail on other 4xx.
