@@ -64,7 +64,7 @@ function makeFixture() {
   git(tmp, `clone --bare "${sourceDir}" "${bareRepo}"`);
 
   writeFileSync(
-    join(scratchRoot, 'workspace.yaml'),
+    join(scratchRoot, '.scratchmd'),
     `version: "3"
 workbook:
   id: wkb_test
@@ -84,17 +84,26 @@ connections:
   return { workspaceDir: tmp, scratchRoot };
 }
 
+// Caller-writes-working-file-first: acceptField reads the field value from
+// the working file at <workspace>/<conn>/<recordRelPath>. Each test that
+// exercises a non-default value writes that working file first.
+function writeWorking(workspaceDir, recordRelPath, body) {
+  const fp = join(workspaceDir, CONN, recordRelPath);
+  mkdirSync(dirname(fp), { recursive: true });
+  writeFileSync(fp, body);
+}
+
 test('acceptField round-trip writes the patch entry', async () => {
   const native = loadNative();
   const { workspaceDir, scratchRoot } = makeFixture();
 
-  const result = await native.acceptField(
+  writeWorking(
     workspaceDir,
-    CONN,
     'Companies/rec_acme.json',
-    'industry',
-    'SaaS',
+    JSON.stringify({ name: 'Acme', industry: 'SaaS' }, null, 2),
   );
+
+  const result = await native.acceptField(workspaceDir, CONN, 'Companies/rec_acme.json', 'industry');
 
   assert.equal(result.workspacePath, 'HubSpot/Companies/rec_acme.json');
   assert.equal(result.patchesChanged, true);
@@ -109,9 +118,44 @@ test('acceptField round-trip writes the patch entry', async () => {
   assert.deepEqual(file.patches[0].patch, { industry: 'SaaS' });
 });
 
+test('discardField drops patch entry and restores working file from main', async () => {
+  const native = loadNative();
+  const { workspaceDir, scratchRoot } = makeFixture();
+
+  // Accept first so there's a patch entry to discard.
+  writeWorking(
+    workspaceDir,
+    'Companies/rec_acme.json',
+    JSON.stringify({ name: 'Acme', industry: 'SaaS' }, null, 2),
+  );
+  await native.acceptField(workspaceDir, CONN, 'Companies/rec_acme.json', 'industry');
+  const patchPath = join(scratchRoot, 'connections', CONN, 'accepted-patches.json');
+  assert.equal(JSON.parse(readFileSync(patchPath, 'utf8')).patches.length, 1);
+
+  const result = await native.discardField(workspaceDir, CONN, 'Companies/rec_acme.json', 'industry');
+  assert.equal(result.workspacePath, 'HubSpot/Companies/rec_acme.json');
+  assert.equal(result.patchesChanged, true);
+  assert.equal(result.workingChanged, true);
+  assert.equal(result.effect, 'PatchDropped');
+
+  // Patch file emptied (entry dropped).
+  assert.equal(JSON.parse(readFileSync(patchPath, 'utf8')).patches.length, 0);
+
+  // Working file now matches main's industry value (Other).
+  const workingPath = join(workspaceDir, CONN, 'Companies/rec_acme.json');
+  const obj = JSON.parse(readFileSync(workingPath, 'utf8'));
+  assert.equal(obj.industry, 'Other');
+});
+
 test('acceptField throws LOCK_BUSY when the workspace lock is held by a live PID', async () => {
   const native = loadNative();
   const { workspaceDir, scratchRoot } = makeFixture();
+
+  writeWorking(
+    workspaceDir,
+    'Companies/rec_acme.json',
+    JSON.stringify({ name: 'Acme', industry: 'SaaS' }, null, 2),
+  );
 
   // Mimic another process holding the lock by writing the lock file with the
   // current PID. workspace_lock checks liveness via kill(0); the current PID
@@ -123,14 +167,7 @@ test('acceptField throws LOCK_BUSY when the workspace lock is held by a live PID
   // override it. Our binding encodes the custom code as a message prefix
   // (`LOCK_BUSY: <human description>`); the desktop's TS shim parses that.
   await assert.rejects(
-    () =>
-      native.acceptField(
-        workspaceDir,
-        CONN,
-        'Companies/rec_acme.json',
-        'industry',
-        'SaaS',
-      ),
+    () => native.acceptField(workspaceDir, CONN, 'Companies/rec_acme.json', 'industry'),
     (err) => err.message.startsWith('LOCK_BUSY:'),
   );
 });

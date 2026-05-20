@@ -17,7 +17,7 @@
 import { app } from 'electron';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 import type { ReviewOpResult } from '../../../../scratch-git-2/napi/index.d.ts';
 
@@ -51,7 +51,12 @@ interface NativeModule {
     connectionDirName: string,
     recordRelPath: string,
     field: string,
-    localValue: unknown,
+  ): Promise<ReviewOpResult>;
+  discardField(
+    workspaceDir: string,
+    connectionDirName: string,
+    recordRelPath: string,
+    field: string,
   ): Promise<ReviewOpResult>;
 }
 
@@ -81,6 +86,7 @@ export type NativeErrorCode =
   | 'NOT_AN_APPROVED_DELETE'
   | 'NOT_AN_APPROVED_CREATE'
   | 'RESTORE_SOURCE_MISSING'
+  | 'WORKING_FILE_MISSING'
   | 'CREATE_CLASHES_WITH_MAIN'
   | 'INVALID_JSON'
   | 'INTERNAL';
@@ -93,6 +99,7 @@ const KNOWN_CODES: readonly NativeErrorCode[] = [
   'NOT_AN_APPROVED_DELETE',
   'NOT_AN_APPROVED_CREATE',
   'RESTORE_SOURCE_MISSING',
+  'WORKING_FILE_MISSING',
   'CREATE_CLASHES_WITH_MAIN',
   'INVALID_JSON',
   'INTERNAL',
@@ -120,9 +127,10 @@ export function parseNativeErrorCode(err: unknown): NativeErrorCode | undefined 
 }
 
 /**
- * Accept `localValue` for `field` on `recordRelPath` under `connectionDirName`
- * inside `workspaceDir`. Updates `accepted-patches.json` atomically; the
- * working file on disk is not touched. Lock contention surfaces with
+ * Accept the working file's current value for `field` on `recordRelPath`.
+ * Caller must have written the new value to the working file BEFORE calling
+ * this — the binding reads from disk and folds it into
+ * `accepted-patches.json`. Lock contention surfaces with
  * `parseNativeErrorCode(err) === 'LOCK_BUSY'`.
  */
 export async function acceptField(
@@ -130,9 +138,87 @@ export async function acceptField(
   connectionDirName: string,
   recordRelPath: string,
   field: string,
-  localValue: unknown,
 ): Promise<ReviewOpResult> {
-  return loadNative().acceptField(workspaceDir, connectionDirName, recordRelPath, field, localValue);
+  return loadNative().acceptField(workspaceDir, connectionDirName, recordRelPath, field);
+}
+
+/**
+ * Discard `field` on `recordRelPath`. Drops the field from any patch entry
+ * AND restores the working file's value for that field to whatever `main`
+ * says. Same error contract as `acceptField`.
+ */
+export async function discardField(
+  workspaceDir: string,
+  connectionDirName: string,
+  recordRelPath: string,
+  field: string,
+): Promise<ReviewOpResult> {
+  return loadNative().discardField(workspaceDir, connectionDirName, recordRelPath, field);
+}
+
+/**
+ * Convert the `(workspacePath, folderPath, filename)` triple that the cell-
+ * edit IPC handlers pass in into the `(connectionDirName, recordRelPath)`
+ * pair the napi binding accepts.
+ *
+ * - `workspacePath` is the workspace root (absolute).
+ * - `folderPath` is the data folder (`<workspace>/<conn>/<folder...>`, absolute).
+ * - `filename` is the record file name (e.g. `"rec_acme.json"`).
+ *
+ * Returns `{ connectionDirName: "HubSpot", recordRelPath: "Companies/rec_acme.json" }`
+ * for `workspacePath=/abs/workspace`, `folderPath=/abs/workspace/HubSpot/Companies`,
+ * `filename="rec_acme.json"`. The repo-relative path inside the napi crate
+ * (and in `accepted-patches.json`) is the part of the workspace-relative
+ * folder path AFTER the connection name, joined with the filename.
+ */
+export function deriveRecordPaths(
+  workspacePath: string,
+  folderPath: string,
+  filename: string,
+): { connectionDirName: string; recordRelPath: string } {
+  const workspaceRelativeFolder = relative(workspacePath, folderPath);
+  if (workspaceRelativeFolder === '' || workspaceRelativeFolder.startsWith('..')) {
+    throw new Error(
+      `folderPath ${JSON.stringify(folderPath)} is not inside workspace ${JSON.stringify(workspacePath)}`,
+    );
+  }
+  // Always use POSIX separators inside the workspace — `accepted-patches.json`
+  // and the napi binding both expect `/`-joined repo-relative paths.
+  const parts = workspaceRelativeFolder.split(/[\\/]/);
+  const [connectionDirName, ...rest] = parts;
+  const recordRelPath = [...rest, filename].join('/');
+  return { connectionDirName, recordRelPath };
+}
+
+/**
+ * Convenience wrapper for the cell-edit hot path. Takes the `(workspacePath,
+ * folderPath, filename, fieldName)` shape the IPC handlers already have and
+ * calls `acceptField` against the derived `(conn, recordRelPath)`. The
+ * caller is responsible for writing the new value to the working file
+ * BEFORE invoking this.
+ */
+export async function acceptCellField(args: {
+  workspacePath: string;
+  folderPath: string;
+  filename: string;
+  fieldName: string;
+}): Promise<ReviewOpResult> {
+  const { connectionDirName, recordRelPath } = deriveRecordPaths(args.workspacePath, args.folderPath, args.filename);
+  return acceptField(args.workspacePath, connectionDirName, recordRelPath, args.fieldName);
+}
+
+/**
+ * Discard-the-field analogue of `acceptCellField`. Used by the
+ * `files:undo-approved-cell-change` IPC handler.
+ */
+export async function discardCellField(args: {
+  workspacePath: string;
+  folderPath: string;
+  filename: string;
+  fieldName: string;
+}): Promise<ReviewOpResult> {
+  const { connectionDirName, recordRelPath } = deriveRecordPaths(args.workspacePath, args.folderPath, args.filename);
+  return discardField(args.workspacePath, connectionDirName, recordRelPath, args.fieldName);
 }
 
 export type { ReviewOpResult };

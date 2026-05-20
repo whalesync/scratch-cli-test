@@ -82,3 +82,14 @@ fi
 
 cp "$DYLIB_PATH" "$OUT_NODE"
 echo "Wrote $OUT_NODE ($(du -h "$OUT_NODE" | cut -f1))"
+
+# On macOS, dyld validation kills any process that tries to `dlopen` a
+# .node whose on-disk signature doesn't match what it had at first load —
+# which fires every time we rebuild during dev. An ad-hoc sign clears the
+# signature cache so subsequent `require(...)` calls work. Cheap enough to
+# do on every build; release builds get re-signed during electron-builder's
+# notarization step anyway.
+if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$OUT_NODE" >/dev/null 2>&1 || \
+    echo "WARN: ad-hoc codesign of $OUT_NODE failed; dlopen may SIGKILL on macOS"
+fi

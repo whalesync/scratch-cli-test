@@ -2536,7 +2536,8 @@ mod entry_points {
     /// Build a workspace at <tmp>/ with one connection ("HubSpot") whose
     /// bare repo lives at <workspace>/.repos/conn1.git/ (matching the layout
     /// `WorkspaceLayout::for_cli(_).bare_repo_path("conn1")` resolves). Writes
-    /// workspace.yaml so `resolve_connection_paths` can find the connection.
+    /// the `.scratchmd` workspace marker so `resolve_connection_paths` can
+    /// find the connection.
     fn make_fixture() -> EpFixture {
         let tmp = TempDir::new().unwrap();
         let workspace_dir = tmp.path().to_path_buf();
@@ -2570,7 +2571,7 @@ mod entry_points {
             "version: \"3\"\nworkbook:\n  id: wkb_test\n  name: Test\n  orgId: org_test\n  serverUrl: http://localhost\n  initializedAt: 2026-01-01T00:00:00Z\nconnections:\n  - id: conn_test\n    displayName: HubSpot\n    service: AIRTABLE\n    repoPath: {}\n    dirName: {}\n",
             REPO_ID, CONN,
         );
-        std::fs::write(scratch_root.join("workspace.yaml"), marker).unwrap();
+        std::fs::write(scratch_root.join(".scratchmd"), marker).unwrap();
 
         let connection_dir = layout.connection_root_path(CONN);
         std::fs::create_dir_all(&connection_dir).unwrap();
@@ -2603,6 +2604,16 @@ mod entry_points {
         crate::shared::accepted_patches::load(&fx.connection_dir).unwrap()
     }
 
+    /// Write a working-file record (under `<workspace>/<CONN>/<rel_path>`) so
+    /// `accept_field` has something to read. `accept_field` is now disk-as-truth:
+    /// the field's value is whatever the working file says it is when the
+    /// entry point is called.
+    fn write_working(fx: &EpFixture, rel_path: &str, content: &str) {
+        let path = fx.workspace_dir.join(CONN).join(rel_path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
     #[test]
     fn accept_field_round_trip_persists_patch_file() {
         if !git_available() {
@@ -2615,13 +2626,20 @@ mod entry_points {
             "Companies/rec_acme.json",
             "{\n  \"name\": \"Acme\",\n  \"industry\": \"Other\"\n}\n",
         );
+        // The new accept_field reads the field value from the working file —
+        // caller (the desktop, or the CLI) is responsible for writing it
+        // first.
+        write_working(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        );
 
         let result = accept_field(
             &fx.workspace_dir,
             CONN,
             "Companies/rec_acme.json",
             "industry",
-            &json!("SaaS"),
             LockMode::DefaultBlocking,
         )
         .unwrap();
@@ -2651,6 +2669,11 @@ mod entry_points {
             "Companies/rec_acme.json",
             "{\n  \"name\": \"Acme\"\n}\n",
         );
+        write_working(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        );
 
         // Mimic another live process holding the lock by writing the lock file
         // with the current PID. workspace_lock checks liveness via kill(0).
@@ -2669,7 +2692,6 @@ mod entry_points {
             CONN,
             "Companies/rec_acme.json",
             "industry",
-            &json!("SaaS"),
             LockMode::ShortWait,
         )
         .unwrap_err();
@@ -2696,6 +2718,11 @@ mod entry_points {
             "Companies/rec_acme.json",
             "{\n  \"name\": \"Acme\",\n  \"industry\": \"Other\"\n}\n",
         );
+        write_working(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        );
 
         // First accept a single-field change so the entry exists.
         accept_field(
@@ -2703,7 +2730,6 @@ mod entry_points {
             CONN,
             "Companies/rec_acme.json",
             "industry",
-            &json!("SaaS"),
             LockMode::DefaultBlocking,
         )
         .unwrap();

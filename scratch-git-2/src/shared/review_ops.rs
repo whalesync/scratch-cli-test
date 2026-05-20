@@ -161,6 +161,8 @@ pub enum ReviewOpError {
     NotAnApprovedCreate(String),
     #[error("'{0}' does not exist on main and cannot be restored")]
     RestoreSourceMissing(String),
+    #[error("'{0}' does not exist in the working tree — write the value before calling accept")]
+    WorkingFileMissing(String),
     #[error("'{0}' exists on main and cannot be discarded as an approved create")]
     CreateClashesWithMain(String),
     #[error("workspace lock held by another scratchmd process (pid {pid})")]
@@ -1010,7 +1012,11 @@ fn resolve_connection_paths(
     connection_dir_name: &str,
 ) -> Result<ConnectionPaths, ReviewOpError> {
     let layout = WorkspaceLayout::for_cli(workspace_dir);
-    let marker_path = layout.scratch_root().join("workspace.yaml");
+    // The canonical workspace marker lives at `<workspace>/.scratch/.scratchmd`.
+    // Mirrors `cli/config/markers::marker_path`. Don't confuse with
+    // `<workspace>/.scratch/workspace/` (the materialization directory) — same
+    // prefix, different role.
+    let marker_path = layout.scratch_root().join(".scratchmd");
     let content = match std::fs::read_to_string(&marker_path) {
         Ok(c) => c,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -1088,19 +1094,23 @@ fn validate_record_path(
 }
 
 /// Public entry point. Accept the user's `local_value` for `field` on
-/// `record_rel_path` under `connection_dir_name`. Updates
-/// `accepted-patches.json` so the field's approved value matches `local_value`;
-/// the working file on disk is not touched (accept moves the patch, not the
-/// worktree — see `docs/REVIEW_MODEL.md`).
+/// `record_rel_path` under `connection_dir_name`. Reads the field's current
+/// value from the working file on disk and folds it into
+/// `accepted-patches.json` so the field's approved value matches what's on
+/// disk now. The working file itself is not touched — callers (the desktop's
+/// cell-edit IPC handlers, the CLI's accept-field command) are responsible
+/// for writing the user's typed value to the working file BEFORE calling
+/// this entry point. See `docs/REVIEW_MODEL.md`.
 ///
-/// No-op (returns `ReviewOpResult { effect: NoOp, .. }`) if the new approved
-/// value already matches `local_value`.
+/// Errors with `ReviewOpError::WorkingFileMissing` if there's no file at
+/// `<dirty_dir>/<record_rel_path>` to read. No-op (returns
+/// `ReviewOpResult { effect: NoOp, .. }`) if the working file's field value
+/// already matches the approved value.
 pub fn accept_field(
     workspace_dir: &Path,
     connection_dir_name: &str,
     record_rel_path: &str,
     field: &str,
-    local_value: &JsonValue,
     lock_mode: LockMode,
 ) -> Result<ReviewOpResult, ReviewOpError> {
     let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
@@ -1108,6 +1118,21 @@ pub fn accept_field(
     let workspace_path = workspace_path_for(&paths, record_rel_path);
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
+
+    // Read the field's current value from the working file. This is the
+    // single source of truth for "what value got accepted" — callers wrote
+    // it to disk before invoking us.
+    let working_path = paths.dirty_dir.join(record_rel_path);
+    let working_bytes = match std::fs::read(&working_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ReviewOpError::WorkingFileMissing(workspace_path));
+        }
+        Err(err) => return Err(ReviewOpError::Io(err)),
+    };
+    let working_obj = parse_json_object_bytes(&working_bytes, record_rel_path)
+        .map_err(ReviewOpError::Internal)?;
+    let local_value = read_nested_json_value(&working_obj, field);
 
     let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
     let connection_dir = accepted_patches_dir(&paths);
@@ -1119,9 +1144,7 @@ pub fn accept_field(
         .as_ref()
         .and_then(|obj| read_nested_json_value(obj, field));
 
-    if approved_value.as_ref() == Some(local_value)
-        || (approved_value.is_none() && local_value.is_null())
-    {
+    if local_value == approved_value {
         return Ok(ReviewOpResult {
             workspace_path,
             patches_changed: false,
@@ -1130,19 +1153,12 @@ pub fn accept_field(
         });
     }
 
-    // Compose the new approved object: existing approved (or empty if missing)
-    // with `field ← local_value`. Then ask compute_entry to produce the right
-    // Create / Update / Delete shape.
+    // Compose the new approved object: existing approved (or empty if
+    // missing) with the field set to the working file's current value. Then
+    // ask `compute_entry` to produce the right Create / Update / Delete
+    // shape.
     let mut next_approved = approved_obj_opt.unwrap_or_default();
-    apply_nested_json_value(
-        &mut next_approved,
-        field,
-        if local_value.is_null() {
-            None
-        } else {
-            Some(local_value.clone())
-        },
-    );
+    apply_nested_json_value(&mut next_approved, field, local_value);
 
     let main_parsed = parse_json_value_at(&main_map, record_rel_path, "refs/heads/main")
         .map_err(ReviewOpError::Internal)?;

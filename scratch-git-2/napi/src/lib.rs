@@ -13,7 +13,6 @@ use napi_derive::napi;
 use scratch_git_2::shared::review_ops::{
     self, LockMode, ReviewOpEffect, ReviewOpError, ReviewOpResult as RustReviewOpResult,
 };
-use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 
 /// Result shape returned to JS. Mirrors `review_ops::ReviewOpResult` with
@@ -63,6 +62,7 @@ fn map_err(err: ReviewOpError) -> Error {
         ReviewOpError::NotAnApprovedDelete(_) => (Status::InvalidArg, "NOT_AN_APPROVED_DELETE"),
         ReviewOpError::NotAnApprovedCreate(_) => (Status::InvalidArg, "NOT_AN_APPROVED_CREATE"),
         ReviewOpError::RestoreSourceMissing(_) => (Status::InvalidArg, "RESTORE_SOURCE_MISSING"),
+        ReviewOpError::WorkingFileMissing(_) => (Status::InvalidArg, "WORKING_FILE_MISSING"),
         ReviewOpError::CreateClashesWithMain(_) => (Status::InvalidArg, "CREATE_CLASHES_WITH_MAIN"),
         ReviewOpError::InvalidJson { .. } => (Status::GenericFailure, "INVALID_JSON"),
         ReviewOpError::Io(_) | ReviewOpError::Internal(_) => (Status::GenericFailure, "INTERNAL"),
@@ -70,14 +70,17 @@ fn map_err(err: ReviewOpError) -> Error {
     Error::new(status, format!("{code}: {err}"))
 }
 
-/// Accept the user's `localValue` for `field` on `recordRelPath` under
-/// `connectionDirName` inside `workspaceDir`. Updates `accepted-patches.json`
-/// so the field's approved value matches `localValue`; the working file is
-/// not touched.
+/// Accept the working file's current value for `field` on `recordRelPath`
+/// under `connectionDirName` inside `workspaceDir`. The caller must have
+/// already written the user's typed value to the working file at
+/// `<connectionDirName>/<recordRelPath>` before calling this — the binding
+/// reads the field's value from disk and folds it into
+/// `accepted-patches.json`. The working file itself is not touched here.
 ///
 /// Returns a `ReviewOpResult` describing what changed; throws an `Error` whose
-/// `.code` is one of `LOCK_BUSY`, `WORKSPACE_NOT_FOUND`, `UNKNOWN_CONNECTION`,
-/// `NOT_A_RECORD_PATH`, `INVALID_JSON`, `INTERNAL`.
+/// message is prefixed with one of `LOCK_BUSY`, `WORKSPACE_NOT_FOUND`,
+/// `UNKNOWN_CONNECTION`, `NOT_A_RECORD_PATH`, `WORKING_FILE_MISSING`,
+/// `INVALID_JSON`, `INTERNAL`.
 ///
 /// Uses `LockMode::ShortWait` (100ms budget) so the Electron main thread
 /// surfaces `LOCK_BUSY` instead of freezing on a contended lock.
@@ -87,16 +90,47 @@ pub async fn accept_field(
     connection_dir_name: String,
     record_rel_path: String,
     field: String,
-    local_value: serde_json::Value,
 ) -> Result<ReviewOpResult> {
-    let value: JsonValue = local_value;
     napi::tokio::task::spawn_blocking(move || {
         review_ops::accept_field(
             &PathBuf::from(&workspace_dir),
             &connection_dir_name,
             &record_rel_path,
             &field,
-            &value,
+            LockMode::ShortWait,
+        )
+    })
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
+    .map(Into::into)
+    .map_err(map_err)
+}
+
+/// Discard the user's pending change for `field` on `recordRelPath`. Drops
+/// the field from any accepted-patches entry AND restores the working file's
+/// value for that field to whatever `refs/heads/main` says. Mirrors the
+/// `Discard` semantics in `docs/REVIEW_MODEL.md`.
+///
+/// Stripping the last field from a `Create` entry drops the entry and
+/// removes the working file (the record rolls back to "never existed").
+/// `Delete` entries are no-ops at the field level — use a different entry
+/// point for whole-file restore.
+///
+/// Uses `LockMode::ShortWait` (100ms budget); same error shape as
+/// `acceptField`.
+#[napi]
+pub async fn discard_field(
+    workspace_dir: String,
+    connection_dir_name: String,
+    record_rel_path: String,
+    field: String,
+) -> Result<ReviewOpResult> {
+    napi::tokio::task::spawn_blocking(move || {
+        review_ops::discard_field(
+            &PathBuf::from(&workspace_dir),
+            &connection_dir_name,
+            &record_rel_path,
+            &field,
             LockMode::ShortWait,
         )
     })

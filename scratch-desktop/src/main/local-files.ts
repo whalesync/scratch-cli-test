@@ -7,8 +7,7 @@
  * Target format: Rust CLI / .scratch workspace layout.
  */
 
-import { execFile } from 'child_process';
-import { copyFile, mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
 import { basename, dirname, extname, join, relative, sep } from 'path';
 import { parse } from 'yaml';
 
@@ -16,6 +15,7 @@ import type { TableView } from '@spinner/shared-types';
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { buildColumnDefinitions, createFallbackTableView } from '../shared/schema-columns';
+import { acceptCellField, discardCellField } from './native/scratchmd-native';
 import {
   getFilenamesWithErrors,
   listUnpublishedChanges,
@@ -135,14 +135,6 @@ interface CachedDirListing {
 }
 
 const dirCache = new Map<string, CachedDirListing>();
-
-interface ConnectionPaths {
-  subPath: string;
-  workingConnPath: string;
-  reviewedDirtyConnPath: string;
-}
-
-type JsonFieldValue = { exists: true; value: unknown } | { exists: false };
 
 // ── Public functions ──
 
@@ -874,84 +866,6 @@ function getVersionFolderPath(folderPath: string, workspacePath: string, version
   const prefix =
     version === 'dirty' ? join('.scratch', 'connections', 'dirty') : join('.scratch', 'connections', 'master');
   return subPath ? join(workspacePath, prefix, connName, subPath) : join(workspacePath, prefix, connName);
-}
-
-function getConnectionPaths(folderPath: string, workspacePath: string): ConnectionPaths {
-  const rel = relative(workspacePath, folderPath);
-  const parts = rel.split(sep).filter(Boolean);
-  const connName = parts[0];
-  if (!connName || connName.startsWith('.')) {
-    throw new Error(`Folder path ${folderPath} is not inside a workspace connection.`);
-  }
-  const subPath = parts.slice(1).join(sep);
-  return {
-    subPath,
-    workingConnPath: join(workspacePath, connName),
-    reviewedDirtyConnPath: join(workspacePath, '.scratch', 'connections', 'dirty', connName),
-  };
-}
-
-function toGitPath(path: string): string {
-  return path.split(sep).join('/');
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function runGit(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, encoding: 'utf8' }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(stderr.trim() || stdout.trim() || error.message));
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-  });
-}
-
-async function commitReviewedDirtyFile(folderPath: string, workspacePath: string, filename: string): Promise<void> {
-  const { subPath, workingConnPath, reviewedDirtyConnPath } = getConnectionPaths(folderPath, workspacePath);
-  const reviewedDirtyGitPath = join(reviewedDirtyConnPath, '.git');
-  const workingGitPath = join(workingConnPath, '.git');
-
-  if (!(await pathExists(reviewedDirtyGitPath))) {
-    console.debug('[acceptCellChange] reviewed dirty checkout is not a git worktree; skipping dirty ref update');
-    return;
-  }
-
-  const repoRelativePath = toGitPath(subPath ? join(subPath, filename) : filename);
-  await runGit(reviewedDirtyConnPath, ['add', '--', repoRelativePath]);
-
-  const { stdout: status } = await runGit(reviewedDirtyConnPath, ['status', '--porcelain', '--', repoRelativePath]);
-  if (status.trim() === '') {
-    console.debug('[acceptCellChange] dirty ref already matches approved value');
-    return;
-  }
-
-  await runGit(reviewedDirtyConnPath, [
-    '-c',
-    'user.name=Scratch',
-    '-c',
-    'user.email=scratch@example.com',
-    'commit',
-    '-m',
-    `Accept local cell change: ${repoRelativePath}`,
-    '--',
-    repoRelativePath,
-  ]);
-
-  const { stdout } = await runGit(reviewedDirtyConnPath, ['rev-parse', 'HEAD']);
-  const newDirtyHash = stdout.trim();
-  if (newDirtyHash && (await pathExists(workingGitPath))) {
-    await runGit(workingConnPath, ['reset', '--mixed', newDirtyHash]);
-  }
 }
 
 async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): Promise<JsonFileSnapshot> {
@@ -1721,15 +1635,21 @@ export async function acceptCellChange(
   value: string,
 ): Promise<{ value: unknown }> {
   const parsed = coerceCellInputText(value);
-
-  await applyAcceptedCellValue(folderPath, workspacePath, filename, fieldName, parsed);
-
+  // Single source of truth: write the user's typed value to the working
+  // file first, then ask the napi binding to snapshot the field's current
+  // disk value into `accepted-patches.json`. The order matters — accept
+  // reads from disk.
+  await writeWorkingFileField(join(folderPath, filename), fieldName, parsed);
+  await acceptCellField({ workspacePath, folderPath, filename, fieldName });
   return { value: parsed };
 }
 
 /**
  * Applies direct user-entered cell text using the folder schema to determine
- * how that text should be stored on disk.
+ * how that text should be stored on disk. Coercion stays in TS because it
+ * reads the on-disk schema files; the result is written to the working file,
+ * then the napi binding snapshots that disk state into
+ * `accepted-patches.json`.
  */
 export async function acceptCellInputText(
   folderPath: string,
@@ -1741,41 +1661,51 @@ export async function acceptCellInputText(
   const relPath = relative(workspacePath, folderPath);
   const schema = await readConnectionSchema(workspacePath, relPath);
   const parsed = coerceCellInputTextWithSchema(schema, fieldName, value);
-
-  await applyAcceptedCellValue(folderPath, workspacePath, filename, fieldName, parsed);
-
+  await writeWorkingFileField(join(folderPath, filename), fieldName, parsed);
+  await acceptCellField({ workspacePath, folderPath, filename, fieldName });
   return { value: parsed };
 }
 
-async function applyAcceptedCellValue(
-  folderPath: string,
-  workspacePath: string,
-  filename: string,
-  fieldName: string,
-  value: unknown,
-): Promise<void> {
-  const workingFile = join(folderPath, filename);
-  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
-  const dirtyFile = join(dirtyPath, filename);
+/**
+ * Set a nested field on the JSON object at `filePath`. Dot-separated
+ * `fieldName` drills into nested objects. Used by the cell-edit handlers to
+ * keep the on-disk working file in sync with the value the user just
+ * accepted (the napi binding only writes `accepted-patches.json`, not the
+ * worktree).
+ */
+async function writeWorkingFileField(filePath: string, fieldName: string, value: unknown): Promise<void> {
+  let obj: Record<string, unknown> = {};
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    const parsed: unknown = JSON.parse(content);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      obj = parsed as Record<string, unknown>;
+    }
+  } catch (err) {
+    if (!isFileNotFoundError(err)) throw err;
+  }
 
-  console.debug('[acceptCellChange] working:', workingFile);
-  console.debug('[acceptCellChange] dirty:  ', dirtyFile);
-  console.debug('[acceptCellChange] field:', fieldName, '→', JSON.stringify(value));
+  const parts = fieldName.split('.');
+  let cur: Record<string, unknown> = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (typeof cur[part] !== 'object' || cur[part] === null || Array.isArray(cur[part])) {
+      cur[part] = {};
+    }
+    cur = cur[part] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]] = value;
 
-  await patchJsonField(workingFile, fieldName, value);
-  console.debug('[acceptCellChange] working file patched');
-
-  await patchJsonField(dirtyFile, fieldName, value);
-  console.debug('[acceptCellChange] dirty file patched');
-
-  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
-  console.debug('[acceptCellChange] dirty ref updated');
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(obj, null, 2));
 }
 
 /**
- * Reverts a reviewed-but-unpublished cell back to the master value in both
- * editable copies. This intentionally reads master in the main process so
- * nullable, numeric, object, and missing values are preserved exactly.
+ * Reverts a reviewed-but-unpublished cell back to the published (main) value.
+ * Delegates to the napi binding's `discardField`, which mirrors the field-
+ * level `Discard` semantics in `scratch-git-2/docs/REVIEW_MODEL.md`: drop the
+ * field from `accepted-patches.json` AND restore the working file's value to
+ * what `refs/heads/main` says.
  */
 export async function undoApprovedCellChange(
   folderPath: string,
@@ -1783,164 +1713,17 @@ export async function undoApprovedCellChange(
   filename: string,
   fieldName: string,
 ): Promise<void> {
-  const workingFile = join(folderPath, filename);
-  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
-  const dirtyFile = join(dirtyPath, filename);
-  const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
-  const masterFile = join(masterPath, filename);
-  const masterValue = await readJsonField(masterFile, fieldName);
-
-  console.debug('[undoApprovedCellChange] working:', workingFile);
-  console.debug('[undoApprovedCellChange] dirty:  ', dirtyFile);
-  console.debug('[undoApprovedCellChange] master: ', masterFile);
-  console.debug(
-    '[undoApprovedCellChange] field:',
-    fieldName,
-    '→',
-    masterValue.exists ? JSON.stringify(masterValue.value) : '<missing>',
-  );
-
-  await applyJsonField(workingFile, fieldName, masterValue);
-  console.debug('[undoApprovedCellChange] working file patched');
-
-  await applyJsonField(dirtyFile, fieldName, masterValue);
-  console.debug('[undoApprovedCellChange] dirty file patched');
-
-  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
-  console.debug('[undoApprovedCellChange] dirty ref updated');
+  await discardCellField({ workspacePath, folderPath, filename, fieldName });
 }
 
-/**
- * Restores a deleted record that was already approved (deletedUnpublished).
- * Copies the master file back to both working and dirty locations.
- */
-export async function restoreDeletedRecord(folderPath: string, workspacePath: string, filename: string): Promise<void> {
-  const workingFile = join(folderPath, filename);
-  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
-  const dirtyFile = join(dirtyPath, filename);
-  const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
-  const masterFile = join(masterPath, filename);
-
-  console.debug('[restoreDeletedRecord] master:', masterFile);
-  console.debug('[restoreDeletedRecord] → working:', workingFile);
-  console.debug('[restoreDeletedRecord] → dirty:  ', dirtyFile);
-
-  await copyFile(masterFile, workingFile);
-  await mkdir(dirtyPath, { recursive: true });
-  await copyFile(masterFile, dirtyFile);
-  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
-  console.debug('[restoreDeletedRecord] restored');
-}
-
-/**
- * Discards a created record by removing its working and dirty files.
- */
-export async function discardCreatedRecord(folderPath: string, workspacePath: string, filename: string): Promise<void> {
-  const workingFile = join(folderPath, filename);
-  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
-  const dirtyFile = join(dirtyPath, filename);
-
-  console.debug('[discardCreatedRecord] removing working:', workingFile);
-  console.debug('[discardCreatedRecord] removing dirty:  ', dirtyFile);
-
-  await unlink(workingFile).catch(() => {});
-  await unlink(dirtyFile).catch(() => {});
-  await commitReviewedDirtyFile(folderPath, workspacePath, filename);
-  console.debug('[discardCreatedRecord] discarded');
-}
-
-async function patchJsonField(filePath: string, fieldName: string, value: unknown): Promise<void> {
-  const obj = (await readJsonObject(filePath)) ?? {};
-  setNestedValue(obj, fieldName, value);
-  await writeJsonObject(filePath, obj);
-}
-
-async function applyJsonField(filePath: string, fieldName: string, value: JsonFieldValue): Promise<void> {
-  if (value.exists) {
-    await patchJsonField(filePath, fieldName, value.value);
-    return;
-  }
-  await removeJsonField(filePath, fieldName);
-}
-
-async function readJsonField(filePath: string, fieldName: string): Promise<JsonFieldValue> {
-  const obj = await readJsonObject(filePath);
-  if (!obj) return { exists: false };
-  return getNestedValue(obj, fieldName);
-}
-
-async function readJsonObject(filePath: string): Promise<Record<string, unknown> | null> {
-  try {
-    const content = await readFile(filePath, 'utf-8');
-    const parsed: unknown = JSON.parse(content);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-    throw new Error(`JSON file ${filePath} does not contain an object`);
-  } catch (err) {
-    if (isFileNotFoundError(err)) return null;
-    throw err;
-  }
-}
-
-async function writeJsonObject(filePath: string, obj: Record<string, unknown>): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(obj, null, 2));
-}
-
-async function removeJsonField(filePath: string, fieldName: string): Promise<void> {
-  const obj = await readJsonObject(filePath);
-  if (!obj) return;
-  deleteNestedValue(obj, fieldName);
-  await writeJsonObject(filePath, obj);
-}
-
-function setNestedValue(obj: Record<string, unknown>, dotPath: string, value: unknown): void {
-  const parts = dotPath.split('.');
-  let current: Record<string, unknown> = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i];
-    if (typeof current[part] !== 'object' || current[part] === null) {
-      current[part] = {};
-    }
-    current = current[part] as Record<string, unknown>;
-  }
-  const lastPart = parts[parts.length - 1];
-  current[lastPart] = value;
-}
-
-function getNestedValue(obj: Record<string, unknown>, dotPath: string): JsonFieldValue {
-  const parts = dotPath.split('.');
-  let current: unknown = obj;
-  for (const part of parts) {
-    if (typeof current !== 'object' || current === null || Array.isArray(current) || !(part in current)) {
-      return { exists: false };
-    }
-    current = (current as Record<string, unknown>)[part];
-  }
-  return { exists: true, value: current };
-}
-
-function deleteNestedValue(obj: Record<string, unknown>, dotPath: string): boolean {
-  const parts = dotPath.split('.');
-  return deleteNestedValueAt(obj, parts, 0);
-}
-
-function deleteNestedValueAt(current: Record<string, unknown>, parts: string[], index: number): boolean {
-  const part = parts[index];
-  if (index === parts.length - 1) {
-    delete current[part];
-  } else {
-    const child = current[part];
-    if (typeof child === 'object' && child !== null && !Array.isArray(child)) {
-      const childIsEmpty = deleteNestedValueAt(child as Record<string, unknown>, parts, index + 1);
-      if (childIsEmpty) {
-        delete current[part];
-      }
-    }
-  }
-  return Object.keys(current).length === 0;
-}
+// Note: `restoreDeletedRecord` and `discardCreatedRecord` used to live here
+// as direct local-filesystem helpers that wrote to the dirty worktree + ref.
+// They were dead before slice H.3 — the IPC handlers in `index.ts` route
+// through `restoreDeletedRecordViaCli` / `discardCreatedRecordViaCli` (shell-
+// out to the `scratchmd` binary), which has the all-or-nothing batch
+// semantics. Removed in H.3 along with the no-longer-needed JSON-field
+// helpers (`patchJsonField`, `commitReviewedDirtyFile`, etc.) since the
+// remaining cell-edit handlers now delegate to the napi binding.
 
 function isFileNotFoundError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT';

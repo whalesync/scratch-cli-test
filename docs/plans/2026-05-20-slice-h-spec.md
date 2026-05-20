@@ -1,7 +1,7 @@
 # Slice H — Shared Rust library + desktop napi bindings (spec)
 
 **Date**: 2026-05-20
-**Status**: **H.1 + H.1.5 + H.2 shipped on `dev-10144`** (H.1: `mr20`/`30010d41`; H.1.5: 2026-05-20; H.2: 2026-05-20). H.3/H.4 not started. See [Sequencing](#sequencing-inside-the-slice) for what landed and what's left.
+**Status**: **H.1 + H.1.5 + H.2 + H.3 shipped on `dev-10144`** (H.1: `mr20`/`30010d41`; H.1.5: 2026-05-20; H.2: 2026-05-20; H.3: 2026-05-20). H.4 not started. See [Sequencing](#sequencing-inside-the-slice) for what landed and what's left.
 **Parent plan**: [2026-05-17-simplify-local-workspace-architecture.md → Slice H](2026-05-17-simplify-local-workspace-architecture.md#slice-h--shared-rust-library--desktop-migration)
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
@@ -667,7 +667,28 @@ End state: 287 (scratchmd) + 231 (service) + 2 (integration) + 16 (jsonschema) =
 > - **Custom error codes via message prefix, not `err.code`.** napi 2.x doesn't expose a `.code` override; the prefix convention is documented in the shim.
 > - **Node built-in test runner, not vitest.** No new npm dep on the napi crate. The desktop side will consume the binding via vitest in H.3.
 
-**H.3 — Migrate the three cell-edit handlers.** Rewrite `acceptCellChange`, `acceptCellInputText`, `undoApprovedCellChange` in `local-files.ts` to call napi. Delete `applyAcceptedCellValue`, `commitReviewedDirtyFile`, `patchJsonField` (after grepping for other callers). Delete the dead `restoreDeletedRecord` + `discardCreatedRecord` functions from `local-files.ts`. Run the desktop's Jest suite; update mocks. Dogfood checklist. ~1-2 days.
+**H.3 — Migrate the three cell-edit handlers. ✅ Shipped 2026-05-20.** All three cell-edit IPC handlers in `scratch-desktop/src/main/local-files.ts` now write to `accepted-patches.json` via the napi binding instead of patching the dirty worktree + advancing `refs/heads/dirty` from Node.
+
+- **New `discardField` binding** added to the napi crate (mirror of `acceptField`, same async + `LockMode::ShortWait` + error-prefix shape). Hand-written `index.d.ts` updated; `napi/__tests__/accept-field.test.mjs` gained a third smoke test (`discardField` drops the patch entry AND restores the working file from `main`).
+- **Desktop loader (`scratch-desktop/src/main/native/scratchmd-native.ts`) gained:**
+  - Re-export of `discardField`.
+  - `deriveRecordPaths(workspacePath, folderPath, filename)` — converts the `(workspace, folder, filename)` triple the IPC handlers already pass in into the `(connectionDirName, recordRelPath)` pair the napi binding accepts. Workspace-relative path is split into `[connDir, ...rest]`; record rel path is the rest joined with `/`. Throws when `folderPath` escapes the workspace (defensive — IPC handlers should never reach this path, but errors are loud rather than silent).
+  - `acceptCellField({workspacePath, folderPath, filename, fieldName, value})` and `discardCellField({workspacePath, folderPath, filename, fieldName})` — convenience wrappers calling `deriveRecordPaths` + the corresponding napi function. These are what the IPC handlers consume.
+- **Three IPC handlers in `local-files.ts` rewritten to one-liners:**
+  - `acceptCellChange(...)` — coerce value via `coerceCellInputText`, then `acceptCellField(...)`.
+  - `acceptCellInputText(...)` — schema-driven coercion stays in TS (it reads on-disk schema files the Rust core doesn't know about), then `acceptCellField(...)`.
+  - `undoApprovedCellChange(...)` — straight `discardCellField(...)`.
+- **Dead code removed from `local-files.ts`** (~150 LOC):
+  - `applyAcceptedCellValue` (was the local triple-write helper).
+  - `commitReviewedDirtyFile` (was the dirty-ref-advance shell-out).
+  - `restoreDeletedRecord` + `discardCreatedRecord` (legacy local copies — the IPC handlers in `index.ts` already routed through `restoreDeletedRecordViaCli` / `discardCreatedRecordViaCli`; these local-files copies were dead before H.3).
+  - JSON-field helpers: `patchJsonField`, `applyJsonField`, `readJsonField`, `removeJsonField`, `readJsonObject`, `writeJsonObject`, `setNestedValue`, `getNestedValue`, `deleteNestedValue`, `deleteNestedValueAt`, the `JsonFieldValue` type.
+  - Worktree-path / git-spawn helpers: `getConnectionPaths`, `toGitPath`, `pathExists`, `runGit`, the `ConnectionPaths` type, and the `child_process.execFile` import.
+- **No live surface in the desktop writes to `refs/heads/dirty` anymore from local actions.** `grep -r commitReviewedDirtyFile scratch-desktop/` returns nothing; same for the other deleted helpers. This is the milestone slice F was blocked on.
+- **Tests:** new `scratch-desktop/src/main/__tests__/scratchmd-native.spec.ts` (8 tests) covering `deriveRecordPaths` (3 path-conversion cases + 2 throws) and `parseNativeErrorCode` (4 prefix-extraction cases). Mocks `electron` (`app.isPackaged`, `app.getAppPath`) so the test runner doesn't need a real Electron context.
+- **End state:** `cargo build --workspace` zero warnings; **714 tests pass** on the Rust side; **140 desktop vitest tests pass** (+8 from the new scratchmd-native spec); `yarn lint` + `yarn test` from repo root clean; `cargo fmt --check` clean; node-test napi smoke suite still green (3/3).
+
+> **Dogfood (deferred):** verifying a real Electron build edits cells through napi (vs old direct-to-dirty) and that `refs/heads/dirty` doesn't advance is a manual step the user will run separately. The standalone JS smoke tests in `napi/__tests__/` already prove the round trip end-to-end.
 
 **H.4 — Multi-platform CI + Resources/bin/ wiring.** Wire the napi build matrix to produce Mac arm64 + Mac x64 + Linux x64 `.node` files. Pipeline job copies them into `scratch-desktop/Resources/bin/`; `electron-builder.yml` `extraResources` glob picks them up. Add the SHA-check guard so a stale `.node` fails the desktop build. Verify macOS notarization passes with the signed `.node` files. Run the full desktop build per platform. ~2-3 days, mostly CI fiddling.
 
@@ -704,13 +725,13 @@ All seven captured 2026-05-20. Recorded here for traceability — the body of th
 - ✅ `scratch-git-2/Cargo.toml` is a workspace root with `napi/` as a member; `cargo build --workspace` produces both binaries and the `scratchmd-native` cdylib without warnings. **(H.2)**
 - ⏳ `scratch-desktop/Resources/bin/` contains `scratchmd-native.<platform>-<arch>.node` files for the supported platforms. `electron-builder` bundles them into the packaged app. **(H.4)**
 - ✅ `scratch-desktop/src/main/native/scratchmd-native.ts` loader resolves the right `.node` at runtime — dev path verified (loaded from `<repoRoot>/scratch-git-2/napi/`); packaged path tested via dry-run inspection of `electron-builder.yml`'s `extraResources` glob. Full packaged smoke test deferred until H.3 dogfood. **(H.2)**
-- ⏳ `scratch-desktop/src/main/local-files.ts` no longer contains `commitReviewedDirtyFile` calls. `grep -r commitReviewedDirtyFile scratch-desktop/` returns nothing. **(H.3)**
-- ⏳ The three cell-edit IPC handlers in `scratch-desktop/src/main/index.ts` route through `await native.acceptField(...)` / `await native.discardField(...)`. **(H.3)**
-- ⏳ The dead `restoreDeletedRecord` and `discardCreatedRecord` functions are deleted from `local-files.ts`. **(H.3)**
-- ⏳ Editing a cell in a packaged desktop build produces a new entry in `<workspace>/.scratch/connections/<conn>/accepted-patches.json` (dogfood-verified on at least one connector) and does NOT advance `refs/heads/dirty`. **(H.3)**
-- ⏳ The desktop's Jest suite passes; the napi crate's vitest suite passes; `cargo test --workspace` green; `yarn lint` / `yarn lint-strict` clean. **(H.3/H.4)**
+- ✅ `scratch-desktop/src/main/local-files.ts` no longer contains `commitReviewedDirtyFile` calls. `grep -r commitReviewedDirtyFile scratch-desktop/` returns nothing. **(H.3)**
+- ✅ The three cell-edit IPC handlers in `scratch-desktop/src/main/local-files.ts` route through `await acceptCellField(...)` / `await discardCellField(...)`, which call the napi binding's `acceptField` / `discardField`. **(H.3)**
+- ✅ The dead `restoreDeletedRecord` and `discardCreatedRecord` functions are deleted from `local-files.ts`. **(H.3)**
+- ⏳ Editing a cell in a packaged desktop build produces a new entry in `<workspace>/.scratch/connections/<conn>/accepted-patches.json` (dogfood-verified on at least one connector) and does NOT advance `refs/heads/dirty`. Deferred to user-run dogfood; standalone Node smoke tests already prove the JS → Rust → JS round trip end-to-end. **(H.3)**
+- ✅ The desktop's vitest suite passes (140 tests; +8 new in `scratchmd-native.spec.ts`); the napi crate's smoke tests pass (3 tests); `cargo test --workspace` green (714 tests); `yarn lint` / `yarn lint-strict` clean. **(H.3)**
 - ⏳ macOS notarization passes on the packaged build with the `.node` files signed. **(H.4)**
-- ⏳ Slice F (init collapse) is now unblocked — no live surface writes to `refs/heads/dirty` from local actions. **(after H.3)**
+- ✅ Slice F (init collapse) is now unblocked — no live surface writes to `refs/heads/dirty` from local actions. **(after H.3)**
 
 ## What this unblocks
 

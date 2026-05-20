@@ -13,20 +13,23 @@ export interface ReviewOpResult {
 }
 
 /**
- * Accept `localValue` for `field` on `recordRelPath` under
- * `connectionDirName` inside `workspaceDir`. Updates
- * `accepted-patches.json` so the field's approved value matches
- * `localValue`.
+ * Accept the working file's current value for `field` on `recordRelPath`
+ * under `connectionDirName` inside `workspaceDir`. The caller must have
+ * already written the user's typed value to the working file before
+ * invoking this — the binding reads from disk. Updates
+ * `accepted-patches.json` atomically; the working file itself is not
+ * touched.
  *
  * Errors come through as `Error` instances whose `message` is prefixed with
  * a stable code: `"<CODE>: <human description>"`. Known codes:
  *
- *   - `LOCK_BUSY`             — workspace lock held by another process
- *   - `WORKSPACE_NOT_FOUND`   — no `workspace.yaml` at `workspaceDir`
- *   - `UNKNOWN_CONNECTION`    — `connectionDirName` not in `workspace.yaml`
- *   - `NOT_A_RECORD_PATH`     — `recordRelPath` isn't a data record path
- *   - `INVALID_JSON`          — main blob or working file isn't parseable JSON
- *   - `INTERNAL`              — any other I/O or unexpected error
+ *   - `LOCK_BUSY`               — workspace lock held by another process
+ *   - `WORKSPACE_NOT_FOUND`     — no `.scratchmd` marker at `workspaceDir/.scratch/`
+ *   - `UNKNOWN_CONNECTION`      — `connectionDirName` not in the workspace marker
+ *   - `NOT_A_RECORD_PATH`       — `recordRelPath` isn't a data record path
+ *   - `WORKING_FILE_MISSING`    — there's no file at `<conn>/<recordRelPath>` to read from
+ *   - `INVALID_JSON`            — main blob or working file isn't parseable JSON
+ *   - `INTERNAL`                — any other I/O or unexpected error
  *
  * Why not `err.code`: napi-rs 2.x reserves `err.code` for napi `Status` and
  * doesn't let Rust override it. The desktop shim parses the message prefix.
@@ -36,5 +39,20 @@ export function acceptField(
   connectionDirName: string,
   recordRelPath: string,
   field: string,
-  localValue: unknown,
+): Promise<ReviewOpResult>;
+
+/**
+ * Discard the pending change for `field` on `recordRelPath`. Drops the field
+ * from any `accepted-patches.json` entry AND restores the working file's
+ * value for that field to whatever `refs/heads/main` says. Stripping the
+ * last field from a `Create` entry removes the entry and the working file.
+ * `Delete` entries are no-ops at the field level.
+ *
+ * Same error-prefix convention as `acceptField`.
+ */
+export function discardField(
+  workspaceDir: string,
+  connectionDirName: string,
+  recordRelPath: string,
+  field: string,
 ): Promise<ReviewOpResult>;
