@@ -24,7 +24,6 @@
 // of per-item annotations.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -38,10 +37,10 @@ use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
 // Types
 // ---------------------------------------------------------------------------
 
-/// Map of repo-relative path → file content. Mirrors what `git ls-tree` /
-/// `git cat-file --batch` produces for a tree, and what `read_dirty_disk` +
-/// `read_scratch_disk` produce for the on-disk working tree.
-pub type FileMap = HashMap<String, Vec<u8>>;
+/// Map of repo-relative path → file content. Re-exported from `shared::git_local`
+/// where the actual definition lives — the canonical `FileMap` type is shared
+/// across `git_local`, `review_ops`, and `cli::git_ops`.
+pub use crate::shared::git_local::FileMap;
 
 /// Subset of cli's `ConnectionContext` that review_ops actually uses. CLI
 /// callers build this from a `ConnectionContext`; future napi callers build it
@@ -91,6 +90,102 @@ pub enum PatchAction {
     /// Like `Dropped`, but originated from a `Create` entry — the working
     /// file should be removed since `published` has no such record.
     DroppedCreate,
+}
+
+// ---------------------------------------------------------------------------
+// Public entry-point types — see slice H spec (DEV-10144)
+// ---------------------------------------------------------------------------
+
+/// How the public entry points should acquire `.scratch/lock`. CLI callers
+/// (terminal scripts) want the 30-second blocking wait; napi callers on the
+/// Electron main thread want a bounded short wait that surfaces a structured
+/// `LOCK_BUSY` error to the renderer.
+#[derive(Debug, Clone, Copy)]
+pub enum LockMode {
+    /// 30-second blocking wait. Matches CLI's existing `workspace_lock::acquire`.
+    DefaultBlocking,
+    /// 100ms bounded wait, then `ReviewOpError::LockBusy`.
+    ShortWait,
+}
+
+/// Coarse-grained "what happened" tag the desktop renderer can pattern-match
+/// on. Strings live in the renderer; this is just a Rust enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewOpEffect {
+    /// The operation was a no-op (local already matched approved, or there
+    /// was nothing to discard).
+    NoOp,
+    /// `accepted-patches.json` gained or updated an entry for the record.
+    PatchUpserted,
+    /// The patch entry was removed (e.g. discard emptied the last field, or
+    /// restore_deleted_record dropped a `Delete`).
+    PatchDropped,
+    /// The working file was rewritten or removed. (Mutually compatible with
+    /// `PatchUpserted` / `PatchDropped`; this enum returns the *primary*
+    /// effect from the caller's point of view.)
+    WorkingRestored,
+}
+
+/// Result of a public entry point. Drives the desktop's reindex + folder grid
+/// refresh on the calling side; CLI command wrappers use `workspace_path` for
+/// printing and `patches_changed` to decide whether to refresh the folder
+/// index's `approved_patches_mtime` column.
+#[derive(Debug, Clone)]
+pub struct ReviewOpResult {
+    /// Workspace-prefixed path of the touched record, e.g.
+    /// `"HubSpot/Companies/rec_123.json"`. Empty when nothing matched (no-op
+    /// from a path-resolution failure won't reach here — those become errors).
+    pub workspace_path: String,
+    /// True iff `accepted-patches.json` was rewritten.
+    pub patches_changed: bool,
+    /// True iff the working file on disk was created, rewritten, or removed.
+    pub working_changed: bool,
+    /// Primary effect from the caller's perspective. See [`ReviewOpEffect`].
+    pub effect: ReviewOpEffect,
+}
+
+/// Error shape for the public entry points. napi maps `LockBusy` to
+/// `err.code = 'LOCK_BUSY'` so the renderer can show a "another operation in
+/// progress" toast; everything else surfaces as a generic error.
+#[derive(thiserror::Error, Debug)]
+pub enum ReviewOpError {
+    #[error("workspace not found at {0}")]
+    WorkspaceNotFound(PathBuf),
+    #[error("connection '{0}' not registered in workspace.yaml")]
+    UnknownConnection(String),
+    #[error("'{path}' is not a record file under '{connection}'")]
+    NotARecordPath { connection: String, path: String },
+    #[error("'{0}' is not an approved deleted record")]
+    NotAnApprovedDelete(String),
+    #[error("'{0}' is not an approved created record")]
+    NotAnApprovedCreate(String),
+    #[error("'{0}' does not exist on main and cannot be restored")]
+    RestoreSourceMissing(String),
+    #[error("'{0}' exists on main and cannot be discarded as an approved create")]
+    CreateClashesWithMain(String),
+    #[error("workspace lock held by another scratchmd process (pid {pid})")]
+    LockBusy { pid: u32, lock_path: PathBuf },
+    #[error("invalid JSON in '{path}': {source}")]
+    InvalidJson {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Internal(#[from] anyhow::Error),
+}
+
+impl From<crate::shared::workspace_lock::LockError> for ReviewOpError {
+    fn from(err: crate::shared::workspace_lock::LockError) -> Self {
+        match err {
+            crate::shared::workspace_lock::LockError::Busy { pid, lock_path } => {
+                ReviewOpError::LockBusy { pid, lock_path }
+            }
+            crate::shared::workspace_lock::LockError::Io(io_err) => ReviewOpError::Io(io_err),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -867,6 +962,475 @@ pub fn normalize_crlf(data: Vec<u8>) -> Vec<u8> {
         index += 1;
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points (slice H.1.5) — single-record I/O-bundling ops the napi
+// binding calls. CLI command wrappers can use these too, or call the folder-
+// scoped helpers above directly when they're operating across many records.
+//
+// Each entry point bundles:
+//   1. Resolve `(workspace_dir, connection_dir_name)` → `ConnectionPaths`.
+//   2. Acquire `.scratch/lock` via the requested `LockMode`.
+//   3. Open the bare repo and read `refs/heads/main` into a FileMap.
+//   4. Load `accepted-patches.json`.
+//   5. Mutate the patches file + the working file as the op demands.
+//   6. Atomic save + return a `ReviewOpResult`.
+//
+// Mirrors the layout from `docs/plans/2026-05-20-slice-h-spec.md`.
+// ---------------------------------------------------------------------------
+
+const WORKSPACE_LOCK_SHORT_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Connection lookup record loaded from `<workspace>/.scratch/workspace.yaml`.
+/// Mirrors the subset of cli's `markers::ConnectionEntry` review_ops needs;
+/// keeping a private shape here avoids dragging cli's full marker module into
+/// shared until slice F retires the worktree layout.
+#[derive(serde::Deserialize)]
+struct LocalConnectionEntry {
+    #[serde(rename = "repoPath", default)]
+    repo_path: String,
+    #[serde(rename = "dirName", default)]
+    dir_name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct LocalWorkspaceMarker {
+    #[serde(default)]
+    connections: Vec<LocalConnectionEntry>,
+}
+
+/// Resolve `(workspace_dir, connection_dir_name)` to a `ConnectionPaths` by
+/// reading the workspace marker at `<workspace>/.scratch/workspace.yaml`. The
+/// entry points call this before doing anything else; failures surface as
+/// `WorkspaceNotFound` (marker missing or unreadable) or `UnknownConnection`
+/// (no entry matches `connection_dir_name`).
+fn resolve_connection_paths(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+) -> Result<ConnectionPaths, ReviewOpError> {
+    let layout = WorkspaceLayout::for_cli(workspace_dir);
+    let marker_path = layout.scratch_root().join("workspace.yaml");
+    let content = match std::fs::read_to_string(&marker_path) {
+        Ok(c) => c,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ReviewOpError::WorkspaceNotFound(
+                workspace_dir.to_path_buf(),
+            ));
+        }
+        Err(err) => return Err(ReviewOpError::Io(err)),
+    };
+    let marker: LocalWorkspaceMarker = serde_yaml::from_str(&content)
+        .map_err(|err| ReviewOpError::Internal(anyhow::anyhow!(err)))?;
+    let entry = marker
+        .connections
+        .into_iter()
+        .find(|c| c.dir_name == connection_dir_name)
+        .ok_or_else(|| ReviewOpError::UnknownConnection(connection_dir_name.to_string()))?;
+    if entry.repo_path.is_empty() {
+        return Err(ReviewOpError::UnknownConnection(
+            connection_dir_name.to_string(),
+        ));
+    }
+
+    Ok(ConnectionPaths {
+        conn_dir_name: connection_dir_name.to_string(),
+        workspace_dir: workspace_dir.to_path_buf(),
+        dirty_dir: layout.dirty_checkout_path(connection_dir_name),
+        scratch_dir: layout.connection_scratch_path(connection_dir_name),
+        bare_repo: layout.bare_repo_path(&entry.repo_path),
+        master_dir: layout.master_worktree_path(connection_dir_name),
+    })
+}
+
+/// Acquire `.scratch/lock` using the requested mode. CLI's 30s blocking
+/// behavior maps to `DefaultBlocking`; napi's short-wait maps to `ShortWait`.
+fn acquire_lock(
+    workspace_dir: &Path,
+    mode: LockMode,
+) -> Result<crate::shared::workspace_lock::WorkspaceLockGuard, ReviewOpError> {
+    match mode {
+        LockMode::DefaultBlocking => crate::shared::workspace_lock::acquire(workspace_dir)
+            .map_err(|err| ReviewOpError::Internal(err)),
+        LockMode::ShortWait => crate::shared::workspace_lock::try_acquire_with_short_wait(
+            workspace_dir,
+            WORKSPACE_LOCK_SHORT_WAIT,
+        )
+        .map_err(ReviewOpError::from),
+    }
+}
+
+fn read_main_tree_for_entry_point(bare_repo: &Path) -> Result<FileMap, ReviewOpError> {
+    match crate::shared::git_local::rev_parse_optional_to_string(bare_repo, "refs/heads/main")
+        .map_err(ReviewOpError::Internal)?
+    {
+        Some(hash) => crate::shared::git_local::read_tree_files(bare_repo, &hash)
+            .map_err(ReviewOpError::Internal),
+        None => Ok(FileMap::new()),
+    }
+}
+
+fn workspace_path_for(paths: &ConnectionPaths, rel: &str) -> String {
+    format!("{}/{}", paths.conn_dir_name, rel)
+}
+
+fn validate_record_path(
+    paths: &ConnectionPaths,
+    record_rel_path: &str,
+) -> Result<(), ReviewOpError> {
+    if !is_data_path_in_folder(record_rel_path, "") {
+        return Err(ReviewOpError::NotARecordPath {
+            connection: paths.conn_dir_name.clone(),
+            path: record_rel_path.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Public entry point. Accept the user's `local_value` for `field` on
+/// `record_rel_path` under `connection_dir_name`. Updates
+/// `accepted-patches.json` so the field's approved value matches `local_value`;
+/// the working file on disk is not touched (accept moves the patch, not the
+/// worktree — see `docs/REVIEW_MODEL.md`).
+///
+/// No-op (returns `ReviewOpResult { effect: NoOp, .. }`) if the new approved
+/// value already matches `local_value`.
+pub fn accept_field(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    record_rel_path: &str,
+    field: &str,
+    local_value: &JsonValue,
+    lock_mode: LockMode,
+) -> Result<ReviewOpResult, ReviewOpError> {
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+    validate_record_path(&paths, record_rel_path)?;
+    let workspace_path = workspace_path_for(&paths, record_rel_path);
+
+    let _lock = acquire_lock(workspace_dir, lock_mode)?;
+
+    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let connection_dir = accepted_patches_dir(&paths);
+    let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
+
+    let approved_obj_opt = approved_object_for_path(&main_map, &file, record_rel_path)
+        .map_err(ReviewOpError::Internal)?;
+    let approved_value = approved_obj_opt
+        .as_ref()
+        .and_then(|obj| read_nested_json_value(obj, field));
+
+    if approved_value.as_ref() == Some(local_value)
+        || (approved_value.is_none() && local_value.is_null())
+    {
+        return Ok(ReviewOpResult {
+            workspace_path,
+            patches_changed: false,
+            working_changed: false,
+            effect: ReviewOpEffect::NoOp,
+        });
+    }
+
+    // Compose the new approved object: existing approved (or empty if missing)
+    // with `field ← local_value`. Then ask compute_entry to produce the right
+    // Create / Update / Delete shape.
+    let mut next_approved = approved_obj_opt.unwrap_or_default();
+    apply_nested_json_value(
+        &mut next_approved,
+        field,
+        if local_value.is_null() {
+            None
+        } else {
+            Some(local_value.clone())
+        },
+    );
+
+    let main_parsed = parse_json_value_at(&main_map, record_rel_path, "refs/heads/main")
+        .map_err(ReviewOpError::Internal)?;
+    let next_approved_value = if next_approved.is_empty() && main_parsed.is_none() {
+        None
+    } else {
+        Some(JsonValue::Object(next_approved))
+    };
+
+    let mut patches_changed = false;
+    let mut effect = ReviewOpEffect::NoOp;
+    match crate::shared::re_anchor::compute_entry(
+        record_rel_path,
+        main_parsed.as_ref(),
+        next_approved_value.as_ref(),
+    ) {
+        Some(new_entry) => {
+            accepted_patches::upsert_entry(&mut file, new_entry);
+            patches_changed = true;
+            effect = ReviewOpEffect::PatchUpserted;
+        }
+        None => {
+            if accepted_patches::get_entry(&file, record_rel_path).is_some() {
+                accepted_patches::remove_entry(&mut file, record_rel_path);
+                patches_changed = true;
+                effect = ReviewOpEffect::PatchDropped;
+            }
+        }
+    }
+
+    if patches_changed {
+        accepted_patches::save_atomic(&connection_dir, &file).map_err(ReviewOpError::Internal)?;
+    }
+
+    Ok(ReviewOpResult {
+        workspace_path,
+        patches_changed,
+        working_changed: false,
+        effect,
+    })
+}
+
+/// Public entry point. Discard the field on `record_rel_path`: drop it from
+/// any patch entry AND restore the working file's value for that field to
+/// whatever `refs/heads/main` says. Stripping the last field from a `Create`
+/// entry drops the entry AND removes the working file (the record is being
+/// rolled back to "never existed"). `Delete` entries are no-ops at the
+/// field level — use `restore_deleted_record` to undo a whole-file delete.
+pub fn discard_field(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    record_rel_path: &str,
+    field: &str,
+    lock_mode: LockMode,
+) -> Result<ReviewOpResult, ReviewOpError> {
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+    validate_record_path(&paths, record_rel_path)?;
+    let workspace_path = workspace_path_for(&paths, record_rel_path);
+
+    let _lock = acquire_lock(workspace_dir, lock_mode)?;
+
+    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let connection_dir = accepted_patches_dir(&paths);
+    let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
+
+    let published_value = match main_map.get(record_rel_path) {
+        Some(bytes) => {
+            let obj =
+                parse_json_object_bytes(bytes, record_rel_path).map_err(ReviewOpError::Internal)?;
+            read_nested_json_value(&obj, field)
+        }
+        None => None,
+    };
+    let main_has_path = main_map.contains_key(record_rel_path);
+
+    let mut patch_action = PatchAction::Untouched;
+    if let Some(entry) = file.patches.iter_mut().find(|e| e.path == record_rel_path) {
+        match entry.kind {
+            PatchKind::Update => {
+                if let JsonValue::Object(map) = &mut entry.patch {
+                    if patch_object_mentions_field(map, field) {
+                        apply_nested_json_value(map, field, None);
+                        patch_action = if map.is_empty() {
+                            PatchAction::Dropped
+                        } else {
+                            PatchAction::Modified
+                        };
+                    }
+                }
+            }
+            PatchKind::Create => {
+                if let JsonValue::Object(map) = &mut entry.patch {
+                    if patch_object_mentions_field(map, field) {
+                        apply_nested_json_value(map, field, None);
+                        patch_action = if map.is_empty() {
+                            PatchAction::DroppedCreate
+                        } else {
+                            PatchAction::Modified
+                        };
+                    }
+                }
+            }
+            PatchKind::Delete => {
+                // Field-level discard on a Delete entry is a no-op.
+                return Ok(ReviewOpResult {
+                    workspace_path,
+                    patches_changed: false,
+                    working_changed: false,
+                    effect: ReviewOpEffect::NoOp,
+                });
+            }
+        }
+    }
+
+    let mut patches_changed = matches!(
+        patch_action,
+        PatchAction::Modified | PatchAction::Dropped | PatchAction::DroppedCreate
+    );
+    let mut working_changed = false;
+
+    if matches!(patch_action, PatchAction::DroppedCreate) {
+        // Patch's gone and main never had this path — remove the working file.
+        let disk_path = paths.dirty_dir.join(record_rel_path);
+        if disk_path.exists() {
+            std::fs::remove_file(&disk_path).map_err(ReviewOpError::Io)?;
+            working_changed = true;
+        }
+    } else {
+        // Update or no-op patch case: bring the working file's field back to
+        // `published_value` (or to whatever main says if the working file
+        // happens to be missing on disk).
+        let disk_path = paths.dirty_dir.join(record_rel_path);
+        let current_bytes = std::fs::read(&disk_path).ok();
+        let needs_write = match &current_bytes {
+            Some(bytes) => {
+                let obj = parse_json_object_bytes(bytes, record_rel_path)
+                    .map_err(ReviewOpError::Internal)?;
+                let current_field = read_nested_json_value(&obj, field);
+                // Skip the rewrite if the working file already matches
+                // published AND nothing in the patch moved. Matches the
+                // folder helper's "Untouched + already-matching" branch.
+                !(current_field == published_value
+                    && matches!(patch_action, PatchAction::Untouched))
+            }
+            None => main_has_path && !matches!(patch_action, PatchAction::Untouched),
+        };
+
+        if needs_write {
+            let base_bytes = current_bytes
+                .as_deref()
+                .or_else(|| main_map.get(record_rel_path).map(|v| v.as_slice()));
+            if let Some(bytes) = base_bytes {
+                let mut obj = parse_json_object_bytes(bytes, record_rel_path)
+                    .map_err(ReviewOpError::Internal)?;
+                apply_nested_json_value(&mut obj, field, published_value);
+                let new_bytes = json_object_to_bytes(&obj).map_err(ReviewOpError::Internal)?;
+                write_or_remove_working_file(&paths, record_rel_path, Some(&new_bytes))
+                    .map_err(ReviewOpError::Internal)?;
+                working_changed = true;
+            }
+        }
+    }
+
+    // Drop the entry from the patch file last so the working-file write above
+    // had its chance to inspect it.
+    if matches!(
+        patch_action,
+        PatchAction::Dropped | PatchAction::DroppedCreate
+    ) {
+        accepted_patches::remove_entry(&mut file, record_rel_path);
+    }
+
+    if patches_changed {
+        accepted_patches::save_atomic(&connection_dir, &file).map_err(ReviewOpError::Internal)?;
+    } else {
+        patches_changed = false;
+    }
+
+    let effect = match (patches_changed, working_changed) {
+        (true, _) if matches!(patch_action, PatchAction::Modified) => ReviewOpEffect::PatchUpserted,
+        (true, _) => ReviewOpEffect::PatchDropped,
+        (false, true) => ReviewOpEffect::WorkingRestored,
+        (false, false) => ReviewOpEffect::NoOp,
+    };
+
+    Ok(ReviewOpResult {
+        workspace_path,
+        patches_changed,
+        working_changed,
+        effect,
+    })
+}
+
+/// Public entry point. Undo an accepted delete on `record_rel_path`. Errors
+/// when the path doesn't have a `Delete` entry in `accepted-patches.json` or
+/// when `refs/heads/main` doesn't have the path (we'd have nothing to
+/// restore from).
+pub fn restore_deleted_record(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    record_rel_path: &str,
+    lock_mode: LockMode,
+) -> Result<ReviewOpResult, ReviewOpError> {
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+    validate_record_path(&paths, record_rel_path)?;
+    let workspace_path = workspace_path_for(&paths, record_rel_path);
+
+    let _lock = acquire_lock(workspace_dir, lock_mode)?;
+
+    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let connection_dir = accepted_patches_dir(&paths);
+    let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
+
+    let entry = accepted_patches::get_entry(&file, record_rel_path)
+        .ok_or_else(|| ReviewOpError::NotAnApprovedDelete(workspace_path.clone()))?;
+    if entry.kind != PatchKind::Delete {
+        return Err(ReviewOpError::NotAnApprovedDelete(workspace_path));
+    }
+    let main_content = main_map
+        .get(record_rel_path)
+        .cloned()
+        .ok_or_else(|| ReviewOpError::RestoreSourceMissing(workspace_path.clone()))?;
+
+    accepted_patches::remove_entry(&mut file, record_rel_path);
+    write_file(&paths.dirty_dir.join(record_rel_path), &main_content)
+        .map_err(ReviewOpError::Internal)?;
+    accepted_patches::save_atomic(&connection_dir, &file).map_err(ReviewOpError::Internal)?;
+
+    Ok(ReviewOpResult {
+        workspace_path,
+        patches_changed: true,
+        working_changed: true,
+        effect: ReviewOpEffect::PatchDropped,
+    })
+}
+
+/// Public entry point. Undo an accepted create on `record_rel_path`. Errors
+/// when the path doesn't have a `Create` entry or when `refs/heads/main`
+/// already contains the path (the record was, in fact, published — discarding
+/// the local "create" would silently drop the user's record metadata).
+///
+/// Does NOT do the remote-dirty-cleanup hack that the CLI's
+/// `run_discard_created_record` performs (calling
+/// `discard_remote_dirty_changes`); that's a CLI-only orchestration concern
+/// that stays in the CLI command wrapper.
+pub fn discard_created_record(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    record_rel_path: &str,
+    lock_mode: LockMode,
+) -> Result<ReviewOpResult, ReviewOpError> {
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+    validate_record_path(&paths, record_rel_path)?;
+    let workspace_path = workspace_path_for(&paths, record_rel_path);
+
+    let _lock = acquire_lock(workspace_dir, lock_mode)?;
+
+    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let connection_dir = accepted_patches_dir(&paths);
+    let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
+
+    if main_map.contains_key(record_rel_path) {
+        return Err(ReviewOpError::CreateClashesWithMain(workspace_path));
+    }
+
+    let entry = accepted_patches::get_entry(&file, record_rel_path)
+        .ok_or_else(|| ReviewOpError::NotAnApprovedCreate(workspace_path.clone()))?;
+    if entry.kind != PatchKind::Create {
+        return Err(ReviewOpError::NotAnApprovedCreate(workspace_path));
+    }
+
+    accepted_patches::remove_entry(&mut file, record_rel_path);
+
+    let disk_path = paths.dirty_dir.join(record_rel_path);
+    let mut working_changed = false;
+    if disk_path.exists() {
+        std::fs::remove_file(&disk_path).map_err(ReviewOpError::Io)?;
+        working_changed = true;
+    }
+
+    accepted_patches::save_atomic(&connection_dir, &file).map_err(ReviewOpError::Internal)?;
+
+    Ok(ReviewOpResult {
+        workspace_path,
+        patches_changed: true,
+        working_changed,
+        effect: ReviewOpEffect::PatchDropped,
+    })
 }
 
 // ---------------------------------------------------------------------------

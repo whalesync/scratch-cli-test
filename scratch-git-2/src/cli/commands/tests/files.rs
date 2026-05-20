@@ -2501,3 +2501,290 @@ mod discard_field_helper {
         assert!(!result.patches_changed);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Slice H.1.5 — public entry-point tests. Exercises the I/O-bundling
+// `accept_field` / `discard_field` / `restore_deleted_record` /
+// `discard_created_record` paths end-to-end against a real workspace + bare
+// repo. The folder-scoped helpers (`accept_field_in_folder` etc.) have their
+// own tests above; this block focuses on the per-record wrappers napi calls.
+// ---------------------------------------------------------------------------
+
+mod entry_points {
+    use super::*;
+    use crate::shared::accepted_patches::AcceptedPatchesFile;
+    use crate::shared::layout::WorkspaceLayout;
+    use crate::shared::re_anchor::PatchKind;
+    use crate::shared::review_ops::{
+        accept_field, discard_created_record, discard_field, restore_deleted_record, LockMode,
+        ReviewOpEffect, ReviewOpError,
+    };
+    use serde_json::json;
+    use std::io::Write;
+
+    const CONN: &str = "HubSpot";
+    const REPO_ID: &str = "conn1";
+
+    struct EpFixture {
+        _tmp: TempDir,
+        workspace_dir: PathBuf,
+        bare_repo: PathBuf,
+        source_dir: PathBuf,
+        connection_dir: PathBuf,
+    }
+
+    /// Build a workspace at <tmp>/ with one connection ("HubSpot") whose
+    /// bare repo lives at <workspace>/.repos/conn1.git/ (matching the layout
+    /// `WorkspaceLayout::for_cli(_).bare_repo_path("conn1")` resolves). Writes
+    /// workspace.yaml so `resolve_connection_paths` can find the connection.
+    fn make_fixture() -> EpFixture {
+        let tmp = TempDir::new().unwrap();
+        let workspace_dir = tmp.path().to_path_buf();
+
+        let layout = WorkspaceLayout::for_cli(&workspace_dir);
+        let bare_repo = layout.bare_repo_path(REPO_ID);
+        let scratch_root = layout.scratch_root();
+        let source_dir = tmp.path().join("source");
+
+        std::fs::create_dir_all(&scratch_root).unwrap();
+        std::fs::create_dir_all(bare_repo.parent().unwrap()).unwrap();
+
+        run_git(tmp.path(), &["init", "source"]);
+        run_git(&source_dir, &["checkout", "-b", "main"]);
+        // Need at least one commit on main so refs/heads/main resolves.
+        std::fs::create_dir_all(source_dir.join(".scratch")).unwrap();
+        std::fs::write(source_dir.join(".scratch/seed"), b"init").unwrap();
+        commit_all(&source_dir, "init main");
+
+        run_git(
+            tmp.path(),
+            &[
+                "clone",
+                "--bare",
+                source_dir.to_str().unwrap(),
+                bare_repo.to_str().unwrap(),
+            ],
+        );
+
+        let marker = format!(
+            "version: \"3\"\nworkbook:\n  id: wkb_test\n  name: Test\n  orgId: org_test\n  serverUrl: http://localhost\n  initializedAt: 2026-01-01T00:00:00Z\nconnections:\n  - id: conn_test\n    displayName: HubSpot\n    service: AIRTABLE\n    repoPath: {}\n    dirName: {}\n",
+            REPO_ID, CONN,
+        );
+        std::fs::write(scratch_root.join("workspace.yaml"), marker).unwrap();
+
+        let connection_dir = layout.connection_root_path(CONN);
+        std::fs::create_dir_all(&connection_dir).unwrap();
+
+        EpFixture {
+            _tmp: tmp,
+            workspace_dir,
+            bare_repo,
+            source_dir,
+            connection_dir,
+        }
+    }
+
+    fn seed_main(fx: &EpFixture, rel_path: &str, content: &str) {
+        write_file(&fx.source_dir.join(rel_path), content);
+        commit_all(&fx.source_dir, &format!("seed {rel_path}"));
+        run_git(
+            &fx.bare_repo,
+            &[
+                "--git-dir",
+                fx.bare_repo.to_str().unwrap(),
+                "fetch",
+                fx.source_dir.to_str().unwrap(),
+                "main:main",
+            ],
+        );
+    }
+
+    fn load_patches(fx: &EpFixture) -> AcceptedPatchesFile {
+        crate::shared::accepted_patches::load(&fx.connection_dir).unwrap()
+    }
+
+    #[test]
+    fn accept_field_round_trip_persists_patch_file() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"Other\"\n}\n",
+        );
+
+        let result = accept_field(
+            &fx.workspace_dir,
+            CONN,
+            "Companies/rec_acme.json",
+            "industry",
+            &json!("SaaS"),
+            LockMode::DefaultBlocking,
+        )
+        .unwrap();
+
+        assert!(result.patches_changed);
+        assert!(!result.working_changed);
+        assert_eq!(result.effect, ReviewOpEffect::PatchUpserted);
+        assert_eq!(result.workspace_path, "HubSpot/Companies/rec_acme.json");
+
+        let file = load_patches(&fx);
+        assert_eq!(file.patches.len(), 1);
+        let entry = &file.patches[0];
+        assert_eq!(entry.path, "Companies/rec_acme.json");
+        assert_eq!(entry.kind, PatchKind::Update);
+        assert_eq!(entry.patch, json!({"industry": "SaaS"}));
+    }
+
+    #[test]
+    fn accept_field_returns_lock_busy_when_held() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\"\n}\n",
+        );
+
+        // Mimic another live process holding the lock by writing the lock file
+        // with the current PID. workspace_lock checks liveness via kill(0).
+        let lock_path = fx.workspace_dir.join(".scratch/lock");
+        std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        writeln!(f, "{}", std::process::id()).unwrap();
+        drop(f);
+
+        let err = accept_field(
+            &fx.workspace_dir,
+            CONN,
+            "Companies/rec_acme.json",
+            "industry",
+            &json!("SaaS"),
+            LockMode::ShortWait,
+        )
+        .unwrap_err();
+        match err {
+            ReviewOpError::LockBusy { pid, .. } => {
+                assert_eq!(pid, std::process::id());
+            }
+            other => panic!("expected LockBusy, got {other:?}"),
+        }
+
+        // Cleanup so the TempDir drop succeeds.
+        let _ = std::fs::remove_file(&lock_path);
+    }
+
+    #[test]
+    fn discard_field_drops_patch_entry_when_empty() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\",\n  \"industry\": \"Other\"\n}\n",
+        );
+
+        // First accept a single-field change so the entry exists.
+        accept_field(
+            &fx.workspace_dir,
+            CONN,
+            "Companies/rec_acme.json",
+            "industry",
+            &json!("SaaS"),
+            LockMode::DefaultBlocking,
+        )
+        .unwrap();
+        assert_eq!(load_patches(&fx).patches.len(), 1);
+
+        // Now discard that same field — entry should disappear since it
+        // only held the one key.
+        let result = discard_field(
+            &fx.workspace_dir,
+            CONN,
+            "Companies/rec_acme.json",
+            "industry",
+            LockMode::DefaultBlocking,
+        )
+        .unwrap();
+        assert!(result.patches_changed);
+        assert!(matches!(result.effect, ReviewOpEffect::PatchDropped));
+        assert!(load_patches(&fx).patches.is_empty());
+    }
+
+    #[test]
+    fn restore_deleted_record_errors_on_non_delete_entry() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\"\n}\n",
+        );
+        // Seed an Update entry, not a Delete.
+        let file = AcceptedPatchesFile {
+            patches: vec![crate::shared::re_anchor::AnchoredPatch {
+                path: "Companies/rec_acme.json".into(),
+                kind: PatchKind::Update,
+                patch: json!({"industry": "SaaS"}),
+            }],
+        };
+        crate::shared::accepted_patches::save_atomic(&fx.connection_dir, &file).unwrap();
+
+        let err = restore_deleted_record(
+            &fx.workspace_dir,
+            CONN,
+            "Companies/rec_acme.json",
+            LockMode::DefaultBlocking,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReviewOpError::NotAnApprovedDelete(_)));
+    }
+
+    #[test]
+    fn discard_created_record_errors_when_main_has_path() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        // The record exists on main; can\u2019t be a "Create" lifecycle.
+        seed_main(
+            &fx,
+            "Companies/rec_acme.json",
+            "{\n  \"name\": \"Acme\"\n}\n",
+        );
+        let file = AcceptedPatchesFile {
+            patches: vec![crate::shared::re_anchor::AnchoredPatch {
+                path: "Companies/rec_acme.json".into(),
+                kind: PatchKind::Create,
+                patch: json!({"name": "Acme"}),
+            }],
+        };
+        crate::shared::accepted_patches::save_atomic(&fx.connection_dir, &file).unwrap();
+
+        let err = discard_created_record(
+            &fx.workspace_dir,
+            CONN,
+            "Companies/rec_acme.json",
+            LockMode::DefaultBlocking,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReviewOpError::CreateClashesWithMain(_)));
+    }
+}

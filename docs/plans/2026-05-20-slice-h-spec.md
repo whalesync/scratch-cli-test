@@ -1,7 +1,7 @@
 # Slice H — Shared Rust library + desktop napi bindings (spec)
 
 **Date**: 2026-05-20
-**Status**: **H.1 shipped on `dev-10144-mr20` (`30010d41`).** H.1.5/H.2/H.3/H.4 not started. See [Sequencing](#sequencing-inside-the-slice) for what landed and what's left.
+**Status**: **H.1 + H.1.5 shipped on `dev-10144`** (H.1: `mr20`/`30010d41`; H.1.5: 2026-05-20). H.2/H.3/H.4 not started. See [Sequencing](#sequencing-inside-the-slice) for what landed and what's left.
 **Parent plan**: [2026-05-17-simplify-local-workspace-architecture.md → Slice H](2026-05-17-simplify-local-workspace-architecture.md#slice-h--shared-rust-library--desktop-migration)
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
@@ -624,11 +624,28 @@ Five PRs, each shippable on its own. H.1 split into H.1 + H.1.5 once the git-rea
 
 > **Deviation captured during H.1, deferred to H.1.5:** the spec's "I/O-bundling public entry points" (`accept_field`, `discard_field`, `restore_deleted_record`, `discard_created_record` with `LockMode` baked in) were **not** added in H.1. They need to read `refs/heads/main` to build a `FileMap`, which means calling git. `git_ops` is still in `cli/`, so `shared/review_ops` can't reach it without a cross-module hack. The compute layer they sit on is fully ready; what's left is plumbing one git-read call. H.1.5 picks this up — see below.
 
-**H.1.5 — Add public entry points (and the git plumbing they need).** ~150 LOC. Two paths to pick from when starting:
-- **(a)** Hoist `cli/git_ops/local.rs` to `shared/git_local.rs` (~550 LOC); update `cli/git_ops.rs` to re-export for back-compat (~10 callers in cli). Cleaner long-term.
-- **(b)** Extract just `read_tree_files` + `rev_parse_optional_to_string` + `open_bare_repo` into a small `shared/git_local.rs` (~150 LOC). Less invasive. `cli/git_ops` keeps its full surface for the remaining 8 functions.
+**H.1.5 — Add public entry points (and the git plumbing they need). ✅ Shipped 2026-05-20.** Picked option **(b)** — extracted `open_bare_repo`, `read_tree_files`, `rev_parse_optional_to_string`, and the `FileMap` type into a new `shared/git_local.rs` (~170 LOC including the inline `normalize_crlf` helper). `cli/git_ops.rs` re-exports them for the two existing CLI callers (`git_rev_parse_optional` + `read_git_tree` in `files.rs`); `shared/review_ops::FileMap` now re-exports from `git_local::FileMap` so the type is canonical. The cli's full git surface (worktree-add, fetch, push, merge-base, ref mutation) stays in `cli/git_ops/local.rs` — those are orchestration concerns, not pure reads.
 
-Once one of those lands, write the four `pub async`-ready entry points in `shared/review_ops` that bundle: acquire lock (via `LockMode`) → read main_map → read accepted_patches → call helper → save accepted_patches atomically → write working files → return `ReviewOpResult`. Add `ReviewOpResult` / `ReviewOpEffect` / `ReviewOpError` types. ~1 day. CLI's `run_accept_field` / `run_reject_field` / `run_discard_field` / `run_restore_deleted_record` / `run_discard_created_record` thin to one call into the new entry points + folder-index reindex + printing.
+Also moved `cli/config/workspace_lock.rs` → `shared/workspace_lock.rs` (with a re-export from `cli/config/mod.rs::pub use crate::shared::workspace_lock`) so `shared/review_ops` can acquire `.scratch/lock` without depending on `cli/`. Both the CLI's existing `crate::config::workspace_lock::acquire(...)` call sites and the new entry points compile against the same module.
+
+Added the four public entry points to `shared/review_ops`:
+- `accept_field(workspace_dir, conn, record_rel_path, field, local_value, lock_mode)`
+- `discard_field(workspace_dir, conn, record_rel_path, field, lock_mode)`
+- `restore_deleted_record(workspace_dir, conn, record_rel_path, lock_mode)`
+- `discard_created_record(workspace_dir, conn, record_rel_path, lock_mode)`
+
+Each bundles: resolve `(workspace_dir, conn_dir_name)` → `ConnectionPaths` (via a small private `resolve_connection_paths` helper that reads `.scratch/workspace.yaml` with a tiny serde-only `LocalWorkspaceMarker` shape) → `acquire_lock(workspace_dir, lock_mode)` → `read_main_tree_for_entry_point` (via `shared::git_local`) → `accepted_patches::load` → mutate → `accepted_patches::save_atomic` → write/remove working file → return `ReviewOpResult`. Added types: `LockMode`, `ReviewOpResult`, `ReviewOpEffect`, `ReviewOpError` (with `From<workspace_lock::LockError>` impl for clean `LOCK_BUSY` mapping).
+
+> **Deviation from the original H.1.5 sketch:** the spec text said "CLI's `run_accept_field` / `run_reject_field` / `run_discard_field` / `run_restore_deleted_record` / `run_discard_created_record` thin to one call into the new entry points." On implementation, the fit is poor:
+>
+> - The four entry points are **per-record**; the three field-level CLI commands (`run_accept_field` / `run_reject_field` / `run_discard_field`) are **folder-scoped**. Looping per-record would acquire the lock once per file (wasteful, and breaks folder-batch atomicity).
+> - `run_restore_deleted_record` / `run_discard_created_record` use **batch helpers with all-or-nothing validation** (validate all paths, then apply all). Looping the per-record entry point would lose atomicity if one path in a multi-path call fails after others succeeded.
+>
+> Resolution: CLI wrappers stay as-is using the existing folder/batch helpers in `shared::review_ops`. The new entry points are the napi-facing surface; the CLI's batch surface coexists. The entry points get exercised end-to-end in five new unit tests (see below). H.3 wires the desktop's per-cell handlers to the entry points where the per-record shape is the natural fit.
+
+5 new unit tests in `cli/commands/tests/files.rs::entry_points`: `accept_field_round_trip_persists_patch_file`, `accept_field_returns_lock_busy_when_held`, `discard_field_drops_patch_entry_when_empty`, `restore_deleted_record_errors_on_non_delete_entry`, `discard_created_record_errors_when_main_has_path`. Each spins up a real bare repo at `<workspace>/.repos/conn1.git/` and writes `<workspace>/.scratch/workspace.yaml` so `resolve_connection_paths` resolves.
+
+End state: 287 (scratchmd) + 231 (service) + 2 (integration) + 16 (jsonschema) = **536 tests pass** (+10 from H.1: +5 new entry-point tests + 5 `workspace_lock` tests now visible to the service binary). `cargo build` clean (0 warnings on both binaries), `cargo fmt --check` clean, `yarn lint` from repo root clean.
 
 **H.2 — Add `napi/` crate + first binding (`acceptField`) + dev loop.** Create the napi crate with one async function. Get `napi build --release` producing a Mac arm64 `.node` at `scratch-git-2/napi/scratchmd-native.darwin-arm64.node`. Wire the `scratchmd-native.ts` loader in `scratch-desktop/src/main/native/` with both dev and packaged path branches. Add the `scratch-desktop/scripts/build-native.sh` convenience script + `predev` hook. Stand up the napi vitest suite. Don't migrate the desktop handlers yet. The validation here is "can I call this from a Node REPL and see `accepted-patches.json` update?" ~2-3 days.
 
@@ -665,7 +682,7 @@ All seven captured 2026-05-20. Recorded here for traceability — the body of th
 
 - ✅ `shared/review_ops.rs` exists with the helper layer (`ConnectionPaths`, `FieldCommandResult`, `PatchAction`, accept/reject/discard in-folder fns, FS-only helpers); `cargo test` green on both binaries. **(H.1)**
 - ✅ `workspace_lock` exposes `try_acquire_with_short_wait(_, timeout) -> Result<_, LockError>` for napi callers. **(H.1)**
-- ⏳ `shared/review_ops.rs` exposes the four documented public entry points (`accept_field`, `discard_field`, `restore_deleted_record`, `discard_created_record`), each accepting a `LockMode`. CLI command wrappers in `cli/commands/files.rs::run_accept_field` etc. are thin wrappers around these. **(H.1.5)**
+- ✅ `shared/review_ops.rs` exposes the four documented public entry points (`accept_field`, `discard_field`, `restore_deleted_record`, `discard_created_record`), each accepting a `LockMode`. Each bundles lock + main_map read + patches load + compute + atomic save + working-file write. **(H.1.5)** _Note: the parent spec line "CLI command wrappers thin to one call around these" did not survive contact with implementation — see the H.1.5 deviation note for why CLI wrappers stay folder/batch-scoped against existing helpers._
 - ⏳ `scratch-git-2/Cargo.toml` is a workspace root with `napi/` as a member; `cargo build --workspace` produces both binaries and the `scratchmd-native` cdylib without warnings. **(H.2)**
 - ⏳ `scratch-desktop/Resources/bin/` contains `scratchmd-native.<platform>-<arch>.node` files for the supported platforms. `electron-builder` bundles them into the packaged app. **(H.4)**
 - ⏳ `scratch-desktop/src/main/native/scratchmd-native.ts` loader resolves the right `.node` at runtime (packaged + dev paths both work). **(H.2)**

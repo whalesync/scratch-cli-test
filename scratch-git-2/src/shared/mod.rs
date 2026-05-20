@@ -1,5 +1,6 @@
 pub mod accepted_patches;
 pub mod folder_index;
+pub mod git_local;
 pub mod git_path;
 pub mod index;
 pub mod json_path;
@@ -10,3 +11,4 @@ pub mod plan_publish;
 pub mod re_anchor;
 pub mod review_ops;
 pub mod validators;
+pub mod workspace_lock;

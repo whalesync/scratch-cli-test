@@ -2,8 +2,12 @@ pub mod conflicts_log;
 pub mod credentials;
 pub mod markers;
 pub mod project_config;
-pub mod workspace_lock;
 pub mod workspaces;
+
+// Re-export the moved workspace_lock module so existing `crate::config::workspace_lock::*`
+// call sites keep compiling. The implementation moved to `shared/` in slice H.1.5 so
+// `shared::review_ops` can acquire it without depending on cli/.
+pub use crate::shared::workspace_lock;
 
 /// Resolve workspace ID from an explicit flag value or the nearest .scratchmd marker.
 pub fn resolve_workspace_id(explicit: Option<&str>) -> anyhow::Result<String> {

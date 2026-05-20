@@ -1,15 +1,17 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read as IoRead, Write as IoWrite};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use anyhow::Context;
 
 // Local Git helpers only deal with repository contents already on disk:
 // resolving refs, reading trees, materializing files, and writing commits.
+// Pure read helpers (open_bare_repo, read_tree_files, rev_parse_optional_to_string,
+// FileMap) moved to `shared::git_local` in slice H.1.5 so shared::review_ops
+// can use them without depending on cli/.
 use super::{open_bare_repo, FileMap};
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn rev_parse_to_string(bare_repo: &Path, rev: &str) -> anyhow::Result<String> {
     let repo = open_bare_repo(bare_repo)?;
     let id = repo.rev_parse_single(rev).with_context(|| {
@@ -19,17 +21,6 @@ pub(crate) fn rev_parse_to_string(bare_repo: &Path, rev: &str) -> anyhow::Result
         )
     })?;
     Ok(id.detach().to_string())
-}
-
-pub(crate) fn rev_parse_optional_to_string(
-    bare_repo: &Path,
-    rev: &str,
-) -> anyhow::Result<Option<String>> {
-    let repo = open_bare_repo(bare_repo)?;
-    match repo.rev_parse_single(rev) {
-        Ok(id) => Ok(Some(id.detach().to_string())),
-        Err(_) => Ok(None),
-    }
 }
 
 pub(crate) fn merge_base_to_string(
@@ -72,125 +63,6 @@ pub(crate) fn update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyho
     )
     .with_context(|| format!("failed to update ref {refname} in {}", bare_repo.display()))?;
     Ok(())
-}
-
-pub(crate) fn read_tree_files(bare_repo: &Path, treeish: &str) -> anyhow::Result<FileMap> {
-    read_tree_files_batched(bare_repo, treeish)
-}
-
-/// Read all blob contents for a tree using `git ls-tree` piped into
-/// `git cat-file --batch`. This is dramatically faster than per-blob
-/// lookups via gix for large repos (e.g. 0.5s vs 39s for 23k files).
-fn read_tree_files_batched(bare_repo: &Path, treeish: &str) -> anyhow::Result<FileMap> {
-    let git_dir = bare_repo.to_str().unwrap_or_default();
-
-    // Step 1: Get the list of (mode, hash, path) entries via ls-tree.
-    let ls_output = Command::new("git")
-        .args(["--git-dir", git_dir, "ls-tree", "-r", treeish])
-        .output()
-        .context("failed to run git ls-tree")?;
-    if !ls_output.status.success() {
-        let stderr = String::from_utf8_lossy(&ls_output.stderr);
-        anyhow::bail!("git ls-tree failed: {}", stderr.trim());
-    }
-
-    // Parse ls-tree output: "<mode> <type> <hash>\t<path>\n"
-    let mut entries: Vec<(String, String)> = Vec::new(); // (hash, path)
-    for line in ls_output.stdout.split(|&b| b == b'\n') {
-        if line.is_empty() {
-            continue;
-        }
-        let line_str = String::from_utf8_lossy(line);
-        // Format: "100644 blob <hash>\t<path>"
-        let Some(tab_pos) = line_str.find('\t') else {
-            continue;
-        };
-        let meta = &line_str[..tab_pos];
-        let path = &line_str[tab_pos + 1..];
-
-        let parts: Vec<&str> = meta.split(' ').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-        let obj_type = parts[1];
-        if obj_type != "blob" {
-            continue;
-        }
-        let hash = parts[2];
-        entries.push((hash.to_string(), path.to_string()));
-    }
-
-    if entries.is_empty() {
-        return Ok(FileMap::new());
-    }
-
-    // Step 2: Feed all hashes into `git cat-file --batch` to read blob contents.
-    let mut cat_file = Command::new("git")
-        .args(["--git-dir", git_dir, "cat-file", "--batch"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .context("failed to spawn git cat-file --batch")?;
-
-    let mut stdin = cat_file
-        .stdin
-        .take()
-        .context("failed to open cat-file stdin")?;
-    let stdout = cat_file
-        .stdout
-        .take()
-        .context("failed to open cat-file stdout")?;
-
-    // Write all hashes to stdin in a separate thread to avoid deadlock.
-    let hashes: Vec<String> = entries.iter().map(|(h, _)| h.clone()).collect();
-    let writer_thread = std::thread::spawn(move || -> anyhow::Result<()> {
-        for hash in &hashes {
-            writeln!(stdin, "{}", hash)?;
-        }
-        drop(stdin); // Close stdin to signal EOF
-        Ok(())
-    });
-
-    // Read responses from stdout.
-    let mut reader = BufReader::new(stdout);
-    let mut out = FileMap::new();
-    let mut header_buf = String::new();
-
-    for (_hash, path) in &entries {
-        header_buf.clear();
-        reader
-            .read_line(&mut header_buf)
-            .context("failed to read cat-file header")?;
-        // Header format: "<hash> <type> <size>\n"
-        let header = header_buf.trim_end();
-        let size: usize = header
-            .rsplit(' ')
-            .next()
-            .and_then(|s| s.parse().ok())
-            .with_context(|| format!("failed to parse cat-file header: {header}"))?;
-
-        let mut blob = vec![0u8; size];
-        reader
-            .read_exact(&mut blob)
-            .context("failed to read cat-file blob data")?;
-
-        // cat-file emits a trailing newline after each blob
-        let mut trailing = [0u8; 1];
-        reader.read_exact(&mut trailing).ok();
-
-        out.insert(path.replace('\\', "/"), normalize_crlf(blob));
-    }
-
-    writer_thread
-        .join()
-        .map_err(|_| anyhow::anyhow!("cat-file writer thread panicked"))??;
-
-    let status = cat_file.wait().context("failed to wait for cat-file")?;
-    if !status.success() {
-        anyhow::bail!("git cat-file --batch exited with status {}", status);
-    }
-
-    Ok(out)
 }
 
 pub(crate) fn commit_file_map_to_ref(
@@ -527,22 +399,4 @@ pub(crate) fn worktree_reset_hard(worktree_path: &Path, hash: &str) -> anyhow::R
         anyhow::bail!("git reset --hard failed: {}", stderr.trim());
     }
     Ok(())
-}
-
-fn normalize_crlf(mut bytes: Vec<u8>) -> Vec<u8> {
-    if bytes.windows(2).any(|window| window == b"\r\n") {
-        let mut normalized = Vec::with_capacity(bytes.len());
-        let mut idx = 0usize;
-        while idx < bytes.len() {
-            if idx + 1 < bytes.len() && bytes[idx] == b'\r' && bytes[idx + 1] == b'\n' {
-                normalized.push(b'\n');
-                idx += 2;
-            } else {
-                normalized.push(bytes[idx]);
-                idx += 1;
-            }
-        }
-        bytes = normalized;
-    }
-    bytes
 }

@@ -16,6 +16,11 @@
 //!   Electron main thread where any longer wait would feel like UI jank. See
 //!   the slice H spec (DEV-10144) for the 100ms budget rationale.
 
+// Service binary doesn't acquire this lock — only the CLI and the future napi
+// binding do. Suppress dead_code warnings on the service-side build the same
+// way `shared::review_ops` does.
+#![allow(dead_code)]
+
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
