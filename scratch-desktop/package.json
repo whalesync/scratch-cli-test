@@ -7,7 +7,10 @@
   "homepage": "https://scratch.md",
   "license": "UNLICENSED",
   "scripts": {
+    "build:native": "bash scripts/build-native.sh",
+    "predev": "bash scripts/build-native.sh",
     "dev": "electron-vite dev",
+    "prebuild": "bash scripts/build-native.sh",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",

@@ -1,3 +1,9 @@
+# Cargo workspace root. The existing `scratch-git-2` crate (service + scratchmd
+# binaries) is the workspace's `.` member; `napi/` (slice H.2, DEV-10144) is the
+# cdylib that exposes the shared/review_ops entry points to Node via napi-rs.
+[workspace]
+members = [".", "napi"]
+
 [package]
 name = "scratch-git-2"
 version = "0.1.0"
@@ -59,3 +65,8 @@ tower = { version = "0.5.3", features = ["util"] }
 # Without this, cold CI builds (no cargo cache) OOM during linking.
 [profile.dev]
 debug = "line-tables-only"
+
+# Keep release symbols thin so the napi `.node` ships small (slice H.2).
+[profile.release]
+lto = true
+strip = "symbols"

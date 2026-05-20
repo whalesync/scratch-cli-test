@@ -1,0 +1,22 @@
+[package]
+name = "scratchmd-native"
+version = "0.1.0"
+edition = "2021"
+description = "Native node addon exposing shared::review_ops to scratch-desktop's Electron main process"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Reuse the existing crate's shared::review_ops + types. This is a path dep
+# inside the same workspace; the napi crate is not published to crates.io.
+scratch-git-2 = { path = ".." }
+napi = { version = "2", default-features = false, features = ["napi8", "serde-json", "tokio_rt"] }
+# `type-def` makes napi-derive emit TS type definitions that `napi build --dts`
+# stitches into the generated `index.d.ts`.
+napi-derive = { version = "2", features = ["type-def"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+anyhow = "1"
+
+[build-dependencies]
+napi-build = "2"

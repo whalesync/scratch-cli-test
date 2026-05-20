@@ -48,6 +48,14 @@ asarUnpack:
 extraResources:
   - from: build/icons
     to: icons
+  # scratchmd-native cdylib (slice H.2 of DEV-10144). Glob covers the
+  # `-gnu` ABI suffix on Linux. The Electron main-process loader resolves
+  # the platform-correct .node at runtime — see
+  # `src/main/native/scratchmd-native.ts`.
+  - from: ../scratch-git-2/napi/
+    to: bin/
+    filter:
+      - 'scratchmd-native.*.node'
 
 afterPack: scripts/afterPack.cjs
 
