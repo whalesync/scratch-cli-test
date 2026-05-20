@@ -1,7 +1,7 @@
 # Slice H — Shared Rust library + desktop napi bindings (spec)
 
 **Date**: 2026-05-20
-**Status**: Spec — not started.
+**Status**: **H.1 shipped on `dev-10144-mr20` (`30010d41`).** H.1.5/H.2/H.3/H.4 not started. See [Sequencing](#sequencing-inside-the-slice) for what landed and what's left.
 **Parent plan**: [2026-05-17-simplify-local-workspace-architecture.md → Slice H](2026-05-17-simplify-local-workspace-architecture.md#slice-h--shared-rust-library--desktop-migration)
 **Linear**: [DEV-10144](https://linear.app/whalesync/issue/DEV-10144/scratchmd-simplify-workspaces-init-drop-worktrees-move-publish-to)
 **Author**: Curtis Fonger
@@ -618,9 +618,17 @@ Dogfood is the e2e. Same pattern as sub-slice B: build the desktop, edit a cell,
 
 ## Sequencing inside the slice
 
-Four PRs, each shippable on its own and incremental.
+Five PRs, each shippable on its own. H.1 split into H.1 + H.1.5 once the git-read dependency surfaced during implementation (see deviation note in H.1).
 
-**H.1 — Cargo workspace + hoist `review_ops` (no behavior change).** Convert `scratch-git-2/Cargo.toml` to a workspace root with `.` as the only member. Move the helpers from `cli/commands/files.rs` into `shared/review_ops.rs` (or `shared/review_ops/{accept,discard,restore,common}.rs` if it splits naturally). Update CLI command wrappers to call the new public entry points. All existing tests pass. `cargo build --bin scratchmd` and `--bin scratch-git-2` clean. Pure refactor. ~1-2 days.
+**H.1 — Hoist `review_ops` core to `shared/` (no behavior change). ✅ Shipped 2026-05-20 (`dev-10144-mr20`, commit `30010d41`).** Moved `cli/commands/re_anchor.rs` → `shared/re_anchor.rs` and `cli/config/accepted_patches.rs` → `shared/accepted_patches.rs` (git tracked both renames). Created `shared/review_ops.rs` (~700 LOC of helpers + `ConnectionPaths` struct + 10 unit tests for `compute_accepted_state` + `apply_patch_entry_to_blob`). Added `LockError` enum and `try_acquire_with_short_wait(workspace_dir, timeout) -> Result<_, LockError>` to `workspace_lock`; existing `acquire(_) -> anyhow::Result<_>` now delegates with 30s timeout. CLI's `files.rs` shrunk by ~900 LOC via thin `&ConnectionContext`-shaped wrappers that call into `review_ops`. End state: 282 (scratchmd) + 226 (service) + 2 (integration) + 16 (jsonschema) = **526 tests pass**, `cargo build` clean (0 warnings on both binaries), `cargo fmt --check` clean, `yarn lint` clean.
+
+> **Deviation captured during H.1, deferred to H.1.5:** the spec's "I/O-bundling public entry points" (`accept_field`, `discard_field`, `restore_deleted_record`, `discard_created_record` with `LockMode` baked in) were **not** added in H.1. They need to read `refs/heads/main` to build a `FileMap`, which means calling git. `git_ops` is still in `cli/`, so `shared/review_ops` can't reach it without a cross-module hack. The compute layer they sit on is fully ready; what's left is plumbing one git-read call. H.1.5 picks this up — see below.
+
+**H.1.5 — Add public entry points (and the git plumbing they need).** ~150 LOC. Two paths to pick from when starting:
+- **(a)** Hoist `cli/git_ops/local.rs` to `shared/git_local.rs` (~550 LOC); update `cli/git_ops.rs` to re-export for back-compat (~10 callers in cli). Cleaner long-term.
+- **(b)** Extract just `read_tree_files` + `rev_parse_optional_to_string` + `open_bare_repo` into a small `shared/git_local.rs` (~150 LOC). Less invasive. `cli/git_ops` keeps its full surface for the remaining 8 functions.
+
+Once one of those lands, write the four `pub async`-ready entry points in `shared/review_ops` that bundle: acquire lock (via `LockMode`) → read main_map → read accepted_patches → call helper → save accepted_patches atomically → write working files → return `ReviewOpResult`. Add `ReviewOpResult` / `ReviewOpEffect` / `ReviewOpError` types. ~1 day. CLI's `run_accept_field` / `run_reject_field` / `run_discard_field` / `run_restore_deleted_record` / `run_discard_created_record` thin to one call into the new entry points + folder-index reindex + printing.
 
 **H.2 — Add `napi/` crate + first binding (`acceptField`) + dev loop.** Create the napi crate with one async function. Get `napi build --release` producing a Mac arm64 `.node` at `scratch-git-2/napi/scratchmd-native.darwin-arm64.node`. Wire the `scratchmd-native.ts` loader in `scratch-desktop/src/main/native/` with both dev and packaged path branches. Add the `scratch-desktop/scripts/build-native.sh` convenience script + `predev` hook. Stand up the napi vitest suite. Don't migrate the desktop handlers yet. The validation here is "can I call this from a Node REPL and see `accepted-patches.json` update?" ~2-3 days.
 
@@ -628,7 +636,7 @@ Four PRs, each shippable on its own and incremental.
 
 **H.4 — Multi-platform CI + Resources/bin/ wiring.** Wire the napi build matrix to produce Mac arm64 + Mac x64 + Linux x64 `.node` files. Pipeline job copies them into `scratch-desktop/Resources/bin/`; `electron-builder.yml` `extraResources` glob picks them up. Add the SHA-check guard so a stale `.node` fails the desktop build. Verify macOS notarization passes with the signed `.node` files. Run the full desktop build per platform. ~2-3 days, mostly CI fiddling.
 
-Total estimate: ~7-10 days of focused work. The risk concentrates in H.4 (CI/packaging) and H.2 (first-time napi-rs setup); the actual logic migration in H.3 is the smallest piece because the Rust core is already done.
+Total estimate: ~7-10 days of focused work. H.1 done; ~6-9 left. The risk concentrates in H.4 (CI/packaging) and H.2 (first-time napi-rs setup); the actual logic migration in H.3 is the smallest piece because the Rust core is already done.
 
 ## Resolved decisions
 
@@ -655,17 +663,19 @@ All seven captured 2026-05-20. Recorded here for traceability — the body of th
 
 ## Done when
 
-- `scratch-git-2/Cargo.toml` is a workspace root with `napi/` as a member; `cargo build --workspace` produces both binaries and the `scratchmd-native` cdylib without warnings.
-- `shared/review_ops.rs` exposes the four documented public entry points, each accepting a `LockMode`. CLI command wrappers in `cli/commands/files.rs::run_accept_field` etc. are thin wrappers around these. `cargo test --workspace` green.
-- `scratch-desktop/Resources/bin/` contains `scratchmd-native.<platform>-<arch>.node` files for the supported platforms. `electron-builder` bundles them into the packaged app.
-- `scratch-desktop/src/main/native/scratchmd-native.ts` loader resolves the right `.node` at runtime (packaged + dev paths both work).
-- `scratch-desktop/src/main/local-files.ts` no longer contains `commitReviewedDirtyFile` calls. `grep -r commitReviewedDirtyFile scratch-desktop/` returns nothing.
-- The three cell-edit IPC handlers in `scratch-desktop/src/main/index.ts` route through `await native.acceptField(...)` / `await native.discardField(...)`.
-- The dead `restoreDeletedRecord` and `discardCreatedRecord` functions are deleted from `local-files.ts`.
-- Editing a cell in a packaged desktop build produces a new entry in `<workspace>/.scratch/connections/<conn>/accepted-patches.json` (dogfood-verified on at least one connector) and does NOT advance `refs/heads/dirty`.
-- The desktop's Jest suite passes; the napi crate's vitest suite passes; `cargo test --workspace` green; `yarn lint` / `yarn lint-strict` clean.
-- macOS notarization passes on the packaged build with the `.node` files signed.
-- Slice F (init collapse) is now unblocked — no live surface writes to `refs/heads/dirty` from local actions.
+- ✅ `shared/review_ops.rs` exists with the helper layer (`ConnectionPaths`, `FieldCommandResult`, `PatchAction`, accept/reject/discard in-folder fns, FS-only helpers); `cargo test` green on both binaries. **(H.1)**
+- ✅ `workspace_lock` exposes `try_acquire_with_short_wait(_, timeout) -> Result<_, LockError>` for napi callers. **(H.1)**
+- ⏳ `shared/review_ops.rs` exposes the four documented public entry points (`accept_field`, `discard_field`, `restore_deleted_record`, `discard_created_record`), each accepting a `LockMode`. CLI command wrappers in `cli/commands/files.rs::run_accept_field` etc. are thin wrappers around these. **(H.1.5)**
+- ⏳ `scratch-git-2/Cargo.toml` is a workspace root with `napi/` as a member; `cargo build --workspace` produces both binaries and the `scratchmd-native` cdylib without warnings. **(H.2)**
+- ⏳ `scratch-desktop/Resources/bin/` contains `scratchmd-native.<platform>-<arch>.node` files for the supported platforms. `electron-builder` bundles them into the packaged app. **(H.4)**
+- ⏳ `scratch-desktop/src/main/native/scratchmd-native.ts` loader resolves the right `.node` at runtime (packaged + dev paths both work). **(H.2)**
+- ⏳ `scratch-desktop/src/main/local-files.ts` no longer contains `commitReviewedDirtyFile` calls. `grep -r commitReviewedDirtyFile scratch-desktop/` returns nothing. **(H.3)**
+- ⏳ The three cell-edit IPC handlers in `scratch-desktop/src/main/index.ts` route through `await native.acceptField(...)` / `await native.discardField(...)`. **(H.3)**
+- ⏳ The dead `restoreDeletedRecord` and `discardCreatedRecord` functions are deleted from `local-files.ts`. **(H.3)**
+- ⏳ Editing a cell in a packaged desktop build produces a new entry in `<workspace>/.scratch/connections/<conn>/accepted-patches.json` (dogfood-verified on at least one connector) and does NOT advance `refs/heads/dirty`. **(H.3)**
+- ⏳ The desktop's Jest suite passes; the napi crate's vitest suite passes; `cargo test --workspace` green; `yarn lint` / `yarn lint-strict` clean. **(H.3/H.4)**
+- ⏳ macOS notarization passes on the packaged build with the `.node` files signed. **(H.4)**
+- ⏳ Slice F (init collapse) is now unblocked — no live surface writes to `refs/heads/dirty` from local actions. **(after H.3)**
 
 ## What this unblocks
 

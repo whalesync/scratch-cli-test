@@ -4,15 +4,17 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 use clap::Subcommand;
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use serde_json::Value as JsonValue;
 
 use crate::api::{ConnectorAccount, DataFolder};
 use crate::config::markers;
 use crate::shared::folder_index;
 use crate::shared::layout::WorkspaceLayout;
+use crate::shared::review_ops::{
+    self, compute_accepted_state, is_data_path_in_folder, parse_json_value_at, write_file,
+    ConnectionPaths, FieldCommandResult, FileMap,
+};
 use crate::shared::validators;
-
-type FileMap = HashMap<String, Vec<u8>>;
 
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum OnDeleteAction {
@@ -188,6 +190,121 @@ struct ConnectionContext {
     db_path: PathBuf,
 }
 
+impl ConnectionContext {
+    /// Subset of fields review_ops needs. Derives the workspace root from
+    /// `dirty_dir.parent()` because `workspace_dir` is historically the
+    /// workbook materialization path (`<workspace>/.scratch/workspace`),
+    /// not the workspace root — same derivation [`accepted_patches_dir`]
+    /// used before slice H moved it to shared.
+    fn to_paths(&self) -> ConnectionPaths {
+        let workspace_root = self
+            .dirty_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        ConnectionPaths {
+            conn_dir_name: self.conn_dir_name.clone(),
+            workspace_dir: workspace_root,
+            dirty_dir: self.dirty_dir.clone(),
+            bare_repo: self.bare_repo.clone(),
+            scratch_dir: self.scratch_dir.clone(),
+            master_dir: self.master_dir.clone(),
+        }
+    }
+}
+
+// Thin wrappers that adapt this module's `ConnectionContext` to
+// `review_ops::ConnectionPaths` so existing call sites don't have to change.
+// Slice H.2 may inline these once napi callers force a different style.
+
+fn accepted_patches_dir(ctx: &ConnectionContext) -> PathBuf {
+    review_ops::accepted_patches_dir(&ctx.to_paths())
+}
+
+fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
+    review_ops::read_materialized_repo(&ctx.to_paths())
+}
+
+fn write_or_remove_working_file(
+    ctx: &ConnectionContext,
+    rel_path: &str,
+    bytes: Option<&[u8]>,
+) -> anyhow::Result<()> {
+    review_ops::write_or_remove_working_file(&ctx.to_paths(), rel_path, bytes)
+}
+
+fn apply_changed_working_files(
+    ctx: &ConnectionContext,
+    previous_local_map: &FileMap,
+    next_local_map: &FileMap,
+    repo_folder: &str,
+) -> anyhow::Result<()> {
+    review_ops::apply_changed_working_files(
+        &ctx.to_paths(),
+        previous_local_map,
+        next_local_map,
+        repo_folder,
+    )
+}
+
+fn sync_schema_files_from_master(ctx: &ConnectionContext) -> anyhow::Result<()> {
+    review_ops::sync_schema_files_from_master(&ctx.to_paths())
+}
+
+fn accept_field_in_folder(
+    ctx: &ConnectionContext,
+    repo_folder: &str,
+    field: &str,
+    main_map: &FileMap,
+    file: &mut crate::shared::accepted_patches::AcceptedPatchesFile,
+    local_map: &FileMap,
+) -> anyhow::Result<FieldCommandResult> {
+    review_ops::accept_field_in_folder(
+        &ctx.conn_dir_name,
+        repo_folder,
+        field,
+        main_map,
+        file,
+        local_map,
+    )
+}
+
+fn reject_field_in_folder(
+    ctx: &ConnectionContext,
+    repo_folder: &str,
+    field: &str,
+    main_map: &FileMap,
+    file: &crate::shared::accepted_patches::AcceptedPatchesFile,
+    local_map: &FileMap,
+) -> anyhow::Result<(FileMap, FieldCommandResult)> {
+    review_ops::reject_field_in_folder(
+        &ctx.conn_dir_name,
+        repo_folder,
+        field,
+        main_map,
+        file,
+        local_map,
+    )
+}
+
+fn discard_field_in_folder(
+    ctx: &ConnectionContext,
+    repo_folder: &str,
+    field: &str,
+    main_map: &FileMap,
+    file: &mut crate::shared::accepted_patches::AcceptedPatchesFile,
+    local_map: &FileMap,
+) -> anyhow::Result<(FileMap, FieldCommandResult)> {
+    review_ops::discard_field_in_folder(
+        &ctx.conn_dir_name,
+        repo_folder,
+        field,
+        main_map,
+        file,
+        local_map,
+    )
+}
+
 #[derive(Default)]
 struct WorkspaceSyncResult {
     connections_added: Vec<String>,
@@ -273,16 +390,6 @@ struct DiscardAllResult {
     files_discarded: i32,
     discarded_paths: Vec<String>,
     skipped_missing_main: bool,
-}
-
-#[derive(Default)]
-struct FieldCommandResult {
-    changed_paths: Vec<String>,
-    /// True iff the call mutated `accepted-patches.json`. Caller decides
-    /// whether to save_atomic. Reject leaves this false (reject never writes
-    /// to the patch file — see decision 35); accept and discard set it when
-    /// they upsert or remove an entry.
-    patches_changed: bool,
 }
 
 #[derive(Default)]
@@ -1234,7 +1341,7 @@ fn run_accept(
         let local_map = read_materialized_repo(ctx)?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
-        let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+        let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
         let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
 
         let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
@@ -1251,24 +1358,24 @@ fn run_accept(
         for (_, rel_path) in path_pairs {
             let snapshot = parse_json_value_at(&main_map, rel_path, "refs/heads/main")?;
             let working = parse_json_value_at(&local_map, rel_path, "working tree")?;
-            match crate::commands::re_anchor::compute_entry(
+            match crate::shared::re_anchor::compute_entry(
                 rel_path,
                 snapshot.as_ref(),
                 working.as_ref(),
             ) {
                 Some(entry) => {
-                    crate::config::accepted_patches::upsert_entry(&mut accepted_file, entry);
+                    crate::shared::accepted_patches::upsert_entry(&mut accepted_file, entry);
                 }
                 None => {
                     // Working == published. The unreviewed change was the
                     // user reverting back to main; accepting it means
                     // dropping any accepted-patches entry for this path.
-                    crate::config::accepted_patches::remove_entry(&mut accepted_file, rel_path);
+                    crate::shared::accepted_patches::remove_entry(&mut accepted_file, rel_path);
                 }
             }
         }
 
-        crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+        crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
         let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
         refresh_problem_record_index_for_ctx(ctx, &rel_paths, path_pairs.len() > 1)?;
 
@@ -1345,7 +1452,7 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         let local_map = read_materialized_repo(ctx)?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
-        let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+        let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
         let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
 
         let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
@@ -1508,7 +1615,7 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let main_map = read_main_tree(&ctx.bare_repo)?;
     sync_schema_files_from_master(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
-    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
     let result = accept_field_in_folder(
         &ctx,
@@ -1545,7 +1652,7 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     }
 
     if result.patches_changed {
-        crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+        crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     }
     refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
@@ -1591,7 +1698,7 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let main_map = read_main_tree(&ctx.bare_repo)?;
     sync_schema_files_from_master(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
-    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
     let (next_local_map, result) = reject_field_in_folder(
         &ctx,
@@ -1672,7 +1779,7 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
     let main_map = read_main_tree(&ctx.bare_repo)?;
     sync_schema_files_from_master(&ctx)?;
     let local_map = read_materialized_repo(&ctx)?;
-    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
     let (next_local_map, result) = discard_field_in_folder(
         &ctx,
@@ -1710,7 +1817,7 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
 
     apply_changed_working_files(&ctx, &local_map, &next_local_map, &repo_folder)?;
     if result.patches_changed {
-        crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+        crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     }
     refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
 
@@ -2217,17 +2324,17 @@ fn restore_deleted_records_locally(
     rel_paths: &[String],
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
-    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let main_map = read_main_tree(&ctx.bare_repo)?;
 
     let mut to_restore: Vec<(String, Vec<u8>)> = Vec::with_capacity(rel_paths.len());
     for rel_path in rel_paths {
         let display_path = format!("{}/{}", ctx.conn_dir_name, rel_path);
-        let Some(entry) = crate::config::accepted_patches::get_entry(&accepted_file, rel_path)
+        let Some(entry) = crate::shared::accepted_patches::get_entry(&accepted_file, rel_path)
         else {
             anyhow::bail!("'{}' is not an approved deleted record.", display_path);
         };
-        if entry.kind != crate::commands::re_anchor::PatchKind::Delete {
+        if entry.kind != crate::shared::re_anchor::PatchKind::Delete {
             anyhow::bail!("'{}' is not an approved deleted record.", display_path);
         }
         let Some(main_content) = main_map.get(rel_path.as_str()) else {
@@ -2240,10 +2347,10 @@ fn restore_deleted_records_locally(
     }
 
     for (rel_path, content) in &to_restore {
-        crate::config::accepted_patches::remove_entry(&mut accepted_file, rel_path);
+        crate::shared::accepted_patches::remove_entry(&mut accepted_file, rel_path);
         write_file(&ctx.dirty_dir.join(rel_path), content)?;
     }
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     Ok(())
 }
 
@@ -2258,7 +2365,7 @@ fn discard_created_records_locally(
     rel_paths: &[String],
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
-    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let main_map = read_main_tree(&ctx.bare_repo)?;
 
     let mut to_discard: Vec<String> = Vec::with_capacity(rel_paths.len());
@@ -2270,18 +2377,18 @@ fn discard_created_records_locally(
                 display_path
             );
         }
-        let Some(entry) = crate::config::accepted_patches::get_entry(&accepted_file, rel_path)
+        let Some(entry) = crate::shared::accepted_patches::get_entry(&accepted_file, rel_path)
         else {
             anyhow::bail!("'{}' is not an approved created record.", display_path);
         };
-        if entry.kind != crate::commands::re_anchor::PatchKind::Create {
+        if entry.kind != crate::shared::re_anchor::PatchKind::Create {
             anyhow::bail!("'{}' is not an approved created record.", display_path);
         }
         to_discard.push(rel_path.clone());
     }
 
     for rel_path in &to_discard {
-        crate::config::accepted_patches::remove_entry(&mut accepted_file, rel_path);
+        crate::shared::accepted_patches::remove_entry(&mut accepted_file, rel_path);
         let disk_path = ctx.dirty_dir.join(rel_path);
         if disk_path.exists() {
             std::fs::remove_file(&disk_path).with_context(|| {
@@ -2289,7 +2396,7 @@ fn discard_created_records_locally(
             })?;
         }
     }
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     Ok(())
 }
 
@@ -2427,7 +2534,7 @@ fn detect_selected_connection(
 /// unreviewed and blocks the pull at the workspace level.
 fn detect_unreviewed_for_pull(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
     let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let main_map = read_main_tree(&ctx.bare_repo)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
     let local_map = read_materialized_repo(ctx)?;
@@ -2495,48 +2602,6 @@ fn read_main_tree(bare_repo: &Path) -> anyhow::Result<FileMap> {
 /// is `<workspace>`). Callers that need the accepted-patches.json directory
 /// (and can't reach the workspace root variable directly) should use this
 /// helper.
-fn accepted_patches_dir(ctx: &ConnectionContext) -> PathBuf {
-    let workspace_root = ctx.dirty_dir.parent().unwrap_or(Path::new("."));
-    WorkspaceLayout::for_cli(workspace_root).connection_root_path(&ctx.conn_dir_name)
-}
-
-/// Pull a value from a `FileMap` and parse it as JSON, attaching the
-/// source name (`refs/heads/main`, `working tree`, …) to any error so the
-/// user can see WHICH copy failed to parse.
-fn parse_json_value_at(
-    map: &FileMap,
-    rel_path: &str,
-    source: &str,
-) -> anyhow::Result<Option<JsonValue>> {
-    match map.get(rel_path) {
-        Some(bytes) => Ok(Some(serde_json::from_slice(bytes).with_context(|| {
-            format!("failed to parse {source} blob at {rel_path} as JSON")
-        })?)),
-        None => Ok(None),
-    }
-}
-
-/// Write a single working-tree file, or remove it if `bytes` is `None`.
-/// Used by reject / discard to restore approved / published state.
-fn write_or_remove_working_file(
-    ctx: &ConnectionContext,
-    rel_path: &str,
-    bytes: Option<&[u8]>,
-) -> anyhow::Result<()> {
-    let disk_path = ctx.dirty_dir.join(rel_path);
-    match bytes {
-        Some(content) => write_file(&disk_path, content)?,
-        None => {
-            if disk_path.exists() {
-                std::fs::remove_file(&disk_path).with_context(|| {
-                    format!("failed to remove working file {}", disk_path.display())
-                })?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Reconcile `accepted-patches.json` with the server's view of `main` after a
 /// successful run-job. Fixes DEV-10175: the prior implementation
 /// unconditionally cleared the patch file whenever the run-job reported
@@ -2584,9 +2649,9 @@ fn reconcile_accepted_after_publish(
     };
 
     let connection_dir = accepted_patches_dir(ctx);
-    let accepted = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    let re_anchored = crate::commands::re_anchor::re_anchor_patches(
+    let re_anchored = crate::shared::re_anchor::re_anchor_patches(
         &accepted.patches,
         |path| parse_json_value_at(&main_map_old, path, "refs/heads/main (pre-publish)"),
         |path| {
@@ -2613,10 +2678,10 @@ fn reconcile_accepted_after_publish(
         }
     }
 
-    let new_accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+    let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
         patches: re_anchored.patches,
     };
-    crate::config::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
 
     if let Some(hash) = new_main_hash.as_deref() {
         git_update_ref(&ctx.bare_repo, "refs/heads/main", hash)?;
@@ -2651,7 +2716,7 @@ fn download_single_repo(
     data_folders: &[DataFolder],
 ) -> anyhow::Result<DownloadResult> {
     let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let main_map_old = read_main_tree(&ctx.bare_repo)?;
     let local_map = read_materialized_repo(ctx)?;
 
@@ -2679,7 +2744,7 @@ fn download_single_repo(
     // possible; only file-lifecycle changes (server deleted what user
     // updated, etc.) rewrite the entry shape. See decisions in
     // `re_anchor.rs`.
-    let re_anchored = crate::commands::re_anchor::re_anchor_patches(
+    let re_anchored = crate::shared::re_anchor::re_anchor_patches(
         &accepted_file.patches,
         |path| parse_json_value_at(&main_map_old, path, "refs/heads/main (pre-fetch)"),
         |path| parse_json_value_at(&main_map_new, path, "refs/remotes/origin/main (post-fetch)"),
@@ -2703,7 +2768,7 @@ fn download_single_repo(
         }
     }
 
-    let new_accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+    let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
         patches: re_anchored.patches,
     };
     let approved_map_new = compute_accepted_state(&main_map_new, &new_accepted)?;
@@ -2718,7 +2783,7 @@ fn download_single_repo(
     // us with the file still anchored against old main, so the next pull
     // recomputes and converges. Inverse order would orphan the file against
     // a stale anchor.
-    crate::config::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
     git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
 
     // Summary counts come from the actual local_map → approved_map_new
@@ -2789,7 +2854,7 @@ async fn upload_single_repo_via_patches(
     // Working-tree unreviewed check stays — surface a warning if the user has
     // local edits that aren't accepted yet (those won't be uploaded).
     let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
@@ -2813,7 +2878,7 @@ async fn upload_single_repo_via_patches(
         });
     }
 
-    use crate::commands::re_anchor::PatchKind as AnchoredKind;
+    use crate::shared::re_anchor::PatchKind as AnchoredKind;
     let files_created = accepted_file
         .patches
         .iter()
@@ -2980,7 +3045,7 @@ fn discard_all_full_scan(
     let main_map = read_git_tree(&ctx.bare_repo, &main_hash)?;
 
     let connection_dir = accepted_patches_dir(ctx);
-    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
     let local_map = read_materialized_repo(ctx)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
@@ -3012,15 +3077,15 @@ fn discard_all_full_scan(
 
     let mut patches_changed = false;
     for path in &affected_paths {
-        if crate::config::accepted_patches::get_entry(&accepted_file, path).is_some() {
-            crate::config::accepted_patches::remove_entry(&mut accepted_file, path);
+        if crate::shared::accepted_patches::get_entry(&accepted_file, path).is_some() {
+            crate::shared::accepted_patches::remove_entry(&mut accepted_file, path);
             patches_changed = true;
         }
         write_or_remove_working_file(ctx, path, main_map.get(path.as_str()).map(|v| v.as_slice()))?;
     }
 
     if patches_changed {
-        crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+        crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     }
 
     Ok(DiscardAllResult {
@@ -3052,7 +3117,7 @@ fn discard_paths_single_repo(
     let local_map = read_materialized_repo(ctx)?;
 
     let connection_dir = accepted_patches_dir(ctx);
-    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
 
     // A path is "discardable" if it has a patch entry (approved differs
@@ -3082,11 +3147,11 @@ fn discard_paths_single_repo(
     }
 
     for rel in &targets {
-        crate::config::accepted_patches::remove_entry(&mut accepted_file, rel);
+        crate::shared::accepted_patches::remove_entry(&mut accepted_file, rel);
         write_or_remove_working_file(ctx, rel, main_map.get(rel.as_str()).map(|v| v.as_slice()))?;
     }
 
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
 
     Ok(DiscardAllResult {
         files_discarded: targets.len() as i32,
@@ -3124,7 +3189,7 @@ fn accept_all_full_scan(
     let connection_dir = accepted_patches_dir(ctx);
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
-    let mut accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
     let local_map = read_materialized_repo(ctx)?;
 
@@ -3144,23 +3209,23 @@ fn accept_all_full_scan(
     for entry in &changes {
         let snapshot = parse_json_value_at(&main_map, &entry.path, "refs/heads/main")?;
         let working = parse_json_value_at(&local_map, &entry.path, "working tree")?;
-        match crate::commands::re_anchor::compute_entry(
+        match crate::shared::re_anchor::compute_entry(
             &entry.path,
             snapshot.as_ref(),
             working.as_ref(),
         ) {
             Some(new_entry) => {
-                crate::config::accepted_patches::upsert_entry(&mut accepted_file, new_entry);
+                crate::shared::accepted_patches::upsert_entry(&mut accepted_file, new_entry);
             }
             None => {
                 // No-op accept (working == main with no patch needed). Drop any
                 // stale entry so the file ends up genuinely at published.
-                crate::config::accepted_patches::remove_entry(&mut accepted_file, &entry.path);
+                crate::shared::accepted_patches::remove_entry(&mut accepted_file, &entry.path);
             }
         }
     }
 
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
 
     Ok(AcceptAllResult {
         files_accepted: changes.len() as i32,
@@ -3191,7 +3256,7 @@ fn reject_all_full_scan(
     let connection_dir = accepted_patches_dir(ctx);
 
     let main_map = read_main_tree(&ctx.bare_repo)?;
-    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
     let local_map = read_materialized_repo(ctx)?;
 
@@ -3227,7 +3292,7 @@ fn reject_all_full_scan(
 /// been accepted yet.
 fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
     let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     let main_map = read_main_tree(&ctx.bare_repo)?;
     let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
     let local_map = read_materialized_repo(ctx)?;
@@ -3242,9 +3307,9 @@ fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedE
 /// yet published. One UnreviewedEntry per patch entry; status comes from the
 /// patch kind.
 fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
-    use crate::commands::re_anchor::PatchKind;
+    use crate::shared::re_anchor::PatchKind;
     let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     Ok(accepted_file
         .patches
         .iter()
@@ -3314,549 +3379,6 @@ fn commit_file_map_to_dirty_ref(
 
 fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
     crate::git_ops::read_tree_files(bare_repo, hash)
-}
-
-fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
-    let mut map = FileMap::new();
-    read_dirty_disk(&ctx.dirty_dir, &ctx.dirty_dir, &mut map)?;
-    read_scratch_disk(&ctx.scratch_dir, &ctx.scratch_dir, &mut map)?;
-    Ok(map)
-}
-
-/// Folder-scoped, field-level accept. For each file in `repo_folder` where
-/// `local[field] != approved[field]`, fold that field's local value into the
-/// file's `accepted-patches.json` entry (creating, updating, or removing the
-/// entry as the new approved state demands). Working files are NOT touched —
-/// accept moves the patch, not the worktree.
-///
-/// The approved state for a path is `apply(main_blob, patch_entry)` when an
-/// entry exists, else `main_blob` itself. The new patch entry comes from
-/// `re_anchor::compute_entry(path, main, next_approved)`, which produces the
-/// right `Create` / `Update` / `Delete` shape automatically.
-///
-/// Whole-file deletes (`local` missing, anything in approved) are skipped —
-/// field-level accept doesn't apply to a file that no longer exists locally.
-fn accept_field_in_folder(
-    ctx: &ConnectionContext,
-    repo_folder: &str,
-    field: &str,
-    main_map: &FileMap,
-    file: &mut crate::config::accepted_patches::AcceptedPatchesFile,
-    local_map: &FileMap,
-) -> anyhow::Result<FieldCommandResult> {
-    let mut result = FieldCommandResult::default();
-    let paths = field_paths_in_folder(main_map, local_map, file, repo_folder);
-
-    for path in paths {
-        let Some(local_content) = local_map.get(path.as_str()) else {
-            // Locally deleted: whole-file delete is not a field-level target.
-            continue;
-        };
-        let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
-
-        let approved_obj_opt = approved_object_for_path(main_map, file, &path)?;
-        let approved_value = approved_obj_opt
-            .as_ref()
-            .and_then(|obj| read_nested_json_value(obj, field));
-        let local_value = read_nested_json_value(&local_obj, field);
-
-        if local_value == approved_value {
-            continue;
-        }
-
-        // Compose the new approved object: existing approved (or empty if
-        // missing) with `field ← local_value` applied.
-        let mut next_approved = approved_obj_opt.unwrap_or_default();
-        apply_nested_json_value(&mut next_approved, field, local_value);
-
-        let main_parsed = parse_json_value_at(main_map, path.as_str(), "refs/heads/main")?;
-        let next_approved_value = if next_approved.is_empty() && main_parsed.is_none() {
-            // Both ends agree the file shouldn't exist — drop any entry.
-            None
-        } else {
-            Some(JsonValue::Object(next_approved))
-        };
-
-        match crate::commands::re_anchor::compute_entry(
-            path.as_str(),
-            main_parsed.as_ref(),
-            next_approved_value.as_ref(),
-        ) {
-            Some(new_entry) => {
-                crate::config::accepted_patches::upsert_entry(file, new_entry);
-            }
-            None => {
-                crate::config::accepted_patches::remove_entry(file, path.as_str());
-            }
-        }
-
-        result
-            .changed_paths
-            .push(format!("{}/{}", ctx.conn_dir_name, path));
-        result.patches_changed = true;
-    }
-
-    Ok(result)
-}
-
-/// Folder-scoped, field-level reject. For each file in `repo_folder` where
-/// `local[field] != approved[field]`, restore the working file's field to its
-/// approved value. The accepted-patches file is **not** touched — reject only
-/// undoes the unreviewed delta between working and approved (decision 35).
-///
-/// Pre-B `reject_field` had a hybrid second branch that also rolled the dirty
-/// branch back to master when a field was already approved. That behavior is
-/// now exclusively `discard_field_in_folder`'s job; reject is a no-op on an
-/// already-approved field.
-fn reject_field_in_folder(
-    ctx: &ConnectionContext,
-    repo_folder: &str,
-    field: &str,
-    main_map: &FileMap,
-    file: &crate::config::accepted_patches::AcceptedPatchesFile,
-    local_map: &FileMap,
-) -> anyhow::Result<(FileMap, FieldCommandResult)> {
-    let mut next_local_map = local_map.clone();
-    let mut result = FieldCommandResult::default();
-    let paths = field_paths_in_folder(main_map, local_map, file, repo_folder);
-
-    for path in paths {
-        let Some(local_content) = local_map.get(path.as_str()) else {
-            // Locally deleted: field-level reject doesn't apply.
-            continue;
-        };
-        let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
-
-        let approved_obj_opt = approved_object_for_path(main_map, file, &path)?;
-        let approved_value = approved_obj_opt
-            .as_ref()
-            .and_then(|obj| read_nested_json_value(obj, field));
-        let local_value = read_nested_json_value(&local_obj, field);
-
-        if local_value == approved_value {
-            continue;
-        }
-
-        let mut next_local_obj = local_obj;
-        apply_nested_json_value(&mut next_local_obj, field, approved_value);
-        if next_local_obj.is_empty() {
-            // Restoring the only field of a created-only file to "approved =
-            // doesn't exist" means the working file shouldn't exist either.
-            next_local_map.remove(path.as_str());
-        } else {
-            next_local_map.insert(path.clone(), json_object_to_bytes(&next_local_obj)?);
-        }
-
-        result
-            .changed_paths
-            .push(format!("{}/{}", ctx.conn_dir_name, path));
-    }
-
-    Ok((next_local_map, result))
-}
-
-/// Enumerate in-folder paths that any of (main, local, patch entries) cares
-/// about. Field-level commands walk this union so a path that exists only in
-/// the patch (locally deleted but with an accepted edit, say) still gets
-/// considered.
-fn field_paths_in_folder(
-    main_map: &FileMap,
-    local_map: &FileMap,
-    file: &crate::config::accepted_patches::AcceptedPatchesFile,
-    repo_folder: &str,
-) -> Vec<String> {
-    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for key in main_map.keys() {
-        if is_data_path_in_folder(key, repo_folder) {
-            paths.insert(key.clone());
-        }
-    }
-    for key in local_map.keys() {
-        if is_data_path_in_folder(key, repo_folder) {
-            paths.insert(key.clone());
-        }
-    }
-    for entry in &file.patches {
-        if is_data_path_in_folder(&entry.path, repo_folder) {
-            paths.insert(entry.path.clone());
-        }
-    }
-    paths.into_iter().collect()
-}
-
-/// Return the parsed "approved" object for a path: the per-file
-/// `apply(main_blob, patch_entry)` if an entry exists, else the parsed main
-/// blob, else `None` (path is approved-deleted or simply doesn't exist).
-fn approved_object_for_path(
-    main_map: &FileMap,
-    file: &crate::config::accepted_patches::AcceptedPatchesFile,
-    path: &str,
-) -> anyhow::Result<Option<JsonMap<String, JsonValue>>> {
-    if let Some(entry) = crate::config::accepted_patches::get_entry(file, path) {
-        match apply_patch_entry_to_blob(main_map.get(path).map(|v| v.as_slice()), entry)? {
-            Some(bytes) => Ok(Some(parse_json_object_bytes(&bytes, path)?)),
-            None => Ok(None),
-        }
-    } else if let Some(bytes) = main_map.get(path) {
-        Ok(Some(parse_json_object_bytes(bytes, path)?))
-    } else {
-        Ok(None)
-    }
-}
-
-/// Folder-scoped, field-level discard. Per file in `repo_folder`, drop the
-/// named field from any accepted-patches entry AND restore the working
-/// file's value for that field to whatever `refs/heads/main` says.
-///
-/// Three outputs:
-///   - `next_local_map` — the working tree's content after the discard
-///     (caller writes it back via [`apply_changed_working_files`]).
-///   - `result.changed_paths` — workspace-prefixed paths the operation
-///     touched (caller surfaces these and reindexes the folder index).
-///   - `result.patches_changed` — true iff the call mutated
-///     `accepted-patches.json`. Caller decides whether to save_atomic.
-///
-/// Special handling for the lifecycle edge: stripping the last field from
-/// a `Create` entry drops the entry AND removes the working file, since
-/// "discard back to published" for a never-published record means "the
-/// record no longer exists." `Delete` entries are no-ops — use
-/// `restore-deleted-record` to undo a whole-file delete.
-fn discard_field_in_folder(
-    ctx: &ConnectionContext,
-    repo_folder: &str,
-    field: &str,
-    main_map: &FileMap,
-    file: &mut crate::config::accepted_patches::AcceptedPatchesFile,
-    local_map: &FileMap,
-) -> anyhow::Result<(FileMap, FieldCommandResult)> {
-    use crate::commands::re_anchor::PatchKind;
-
-    let mut next_local_map = local_map.clone();
-    let mut result = FieldCommandResult::default();
-    let mut entries_to_drop: Vec<String> = Vec::new();
-
-    let paths = field_paths_in_folder(main_map, local_map, file, repo_folder);
-
-    for path in paths {
-        let published_value = match main_map.get(path.as_str()) {
-            Some(bytes) => {
-                let obj = parse_json_object_bytes(bytes, path.as_str())?;
-                read_nested_json_value(&obj, field)
-            }
-            None => None,
-        };
-        let main_has_path = main_map.contains_key(path.as_str());
-
-        let mut patch_action = PatchAction::Untouched;
-        if let Some(entry) = file.patches.iter_mut().find(|e| e.path == path) {
-            match entry.kind {
-                PatchKind::Update => {
-                    if let JsonValue::Object(map) = &mut entry.patch {
-                        if patch_object_mentions_field(map, field) {
-                            apply_nested_json_value(map, field, None);
-                            if map.is_empty() {
-                                entries_to_drop.push(path.clone());
-                                patch_action = PatchAction::Dropped;
-                            } else {
-                                patch_action = PatchAction::Modified;
-                            }
-                        }
-                    }
-                }
-                PatchKind::Create => {
-                    if let JsonValue::Object(map) = &mut entry.patch {
-                        if patch_object_mentions_field(map, field) {
-                            apply_nested_json_value(map, field, None);
-                            if map.is_empty() {
-                                entries_to_drop.push(path.clone());
-                                patch_action = PatchAction::DroppedCreate;
-                            } else {
-                                patch_action = PatchAction::Modified;
-                            }
-                        }
-                    }
-                }
-                PatchKind::Delete => {
-                    // Field-level discard on a Delete entry is a no-op.
-                    continue;
-                }
-            }
-        }
-
-        // Update the working file's view of this field. If we just emptied
-        // a Create, the file no longer exists at the approved state and
-        // should be removed from the worktree.
-        let working_touched = match patch_action {
-            PatchAction::DroppedCreate => {
-                next_local_map.remove(path.as_str());
-                true
-            }
-            _ => {
-                let current = local_map.get(path.as_str());
-                match current {
-                    Some(bytes) => {
-                        let mut obj = parse_json_object_bytes(bytes, path.as_str())?;
-                        let current_field = read_nested_json_value(&obj, field);
-                        if current_field == published_value
-                            && matches!(patch_action, PatchAction::Untouched)
-                        {
-                            // Nothing actually moves for this path.
-                            false
-                        } else {
-                            apply_nested_json_value(&mut obj, field, published_value);
-                            next_local_map.insert(path.clone(), json_object_to_bytes(&obj)?);
-                            true
-                        }
-                    }
-                    None => {
-                        // Working file is absent. If main has the file
-                        // (we just dropped an Update entry, say), the
-                        // worktree should now mirror main for this path.
-                        if main_has_path && !matches!(patch_action, PatchAction::Untouched) {
-                            if let Some(main_bytes) = main_map.get(path.as_str()) {
-                                let mut obj = parse_json_object_bytes(main_bytes, path.as_str())?;
-                                apply_nested_json_value(&mut obj, field, published_value);
-                                next_local_map.insert(path.clone(), json_object_to_bytes(&obj)?);
-                                true
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                }
-            }
-        };
-
-        if working_touched || !matches!(patch_action, PatchAction::Untouched) {
-            result
-                .changed_paths
-                .push(format!("{}/{}", ctx.conn_dir_name, path));
-            if !matches!(patch_action, PatchAction::Untouched) {
-                result.patches_changed = true;
-            }
-        }
-    }
-
-    for path in entries_to_drop {
-        file.patches.retain(|e| e.path != path);
-    }
-
-    Ok((next_local_map, result))
-}
-
-enum PatchAction {
-    Untouched,
-    Modified,
-    Dropped,
-    /// Like `Dropped`, but originated from a `Create` entry — the working
-    /// file should be removed since `published` has no such record.
-    DroppedCreate,
-}
-
-/// True iff the patch object's "logical" keys include `field` (supports
-/// dotted nested keys like `metadata.author`). Walks the object tree the
-/// same way `read_nested_json_value` does so the field-mention check
-/// agrees with what would actually be read at lookup time.
-fn patch_object_mentions_field(object: &JsonMap<String, JsonValue>, field: &str) -> bool {
-    read_nested_json_value(object, field).is_some()
-}
-
-fn iter_data_paths_in_folder(
-    base_map: &FileMap,
-    local_map: &FileMap,
-    master_map: Option<&FileMap>,
-    repo_folder: &str,
-) -> Vec<String> {
-    let mut paths = std::collections::BTreeSet::new();
-
-    for key in base_map.keys() {
-        if is_data_path_in_folder(key, repo_folder) {
-            paths.insert(key.clone());
-        }
-    }
-    for key in local_map.keys() {
-        if is_data_path_in_folder(key, repo_folder) {
-            paths.insert(key.clone());
-        }
-    }
-    if let Some(master_map) = master_map {
-        for key in master_map.keys() {
-            if is_data_path_in_folder(key, repo_folder) {
-                paths.insert(key.clone());
-            }
-        }
-    }
-
-    paths.into_iter().collect()
-}
-
-fn is_data_path_in_folder(path: &str, repo_folder: &str) -> bool {
-    !path.starts_with(".scratch/")
-        && path.ends_with(".json")
-        && (repo_folder.is_empty() || path.starts_with(&format!("{repo_folder}/")))
-}
-
-fn parse_json_object_bytes(
-    content: &[u8],
-    path: &str,
-) -> anyhow::Result<JsonMap<String, JsonValue>> {
-    let parsed: JsonValue = serde_json::from_slice(content)
-        .map_err(|err| anyhow::anyhow!("Failed to parse JSON in '{}': {}", path, err))?;
-    match parsed {
-        JsonValue::Object(obj) => Ok(obj),
-        _ => anyhow::bail!(
-            "JSON record '{}' must have an object at the top level.",
-            path
-        ),
-    }
-}
-
-fn json_object_to_bytes(object: &JsonMap<String, JsonValue>) -> anyhow::Result<Vec<u8>> {
-    Ok(serde_json::to_vec_pretty(&JsonValue::Object(
-        object.clone(),
-    ))?)
-}
-
-fn read_nested_json_value(object: &JsonMap<String, JsonValue>, field: &str) -> Option<JsonValue> {
-    let mut current = object.get(field.split('.').next()?)?;
-    let mut parts = field.split('.');
-    parts.next()?;
-
-    for part in parts {
-        current = current.as_object()?.get(part)?;
-    }
-
-    Some(current.clone())
-}
-
-fn apply_nested_json_value(
-    object: &mut JsonMap<String, JsonValue>,
-    field: &str,
-    value: Option<JsonValue>,
-) {
-    let parts: Vec<&str> = field.split('.').filter(|part| !part.is_empty()).collect();
-    if parts.is_empty() {
-        return;
-    }
-    apply_nested_json_value_parts(object, &parts, value);
-}
-
-fn apply_nested_json_value_parts(
-    object: &mut JsonMap<String, JsonValue>,
-    parts: &[&str],
-    value: Option<JsonValue>,
-) -> bool {
-    if parts.len() == 1 {
-        match value {
-            Some(value) => {
-                object.insert(parts[0].to_string(), value);
-            }
-            None => {
-                object.remove(parts[0]);
-            }
-        }
-        return object.is_empty();
-    }
-
-    let key = parts[0].to_string();
-    let child = object
-        .entry(key.clone())
-        .or_insert_with(|| JsonValue::Object(JsonMap::new()));
-    if !child.is_object() {
-        *child = JsonValue::Object(JsonMap::new());
-    }
-    let should_prune =
-        apply_nested_json_value_parts(child.as_object_mut().unwrap(), &parts[1..], value);
-    if should_prune {
-        object.remove(&key);
-    }
-    object.is_empty()
-}
-
-fn apply_changed_working_files(
-    ctx: &ConnectionContext,
-    previous_local_map: &FileMap,
-    next_local_map: &FileMap,
-    repo_folder: &str,
-) -> anyhow::Result<()> {
-    for path in iter_data_paths_in_folder(previous_local_map, next_local_map, None, repo_folder) {
-        let before = previous_local_map.get(path.as_str());
-        let after = next_local_map.get(path.as_str());
-        if before == after {
-            continue;
-        }
-
-        let disk_path = ctx.dirty_dir.join(&path);
-        match after {
-            Some(content) => write_file(&disk_path, content)?,
-            None => {
-                if disk_path.exists() {
-                    std::fs::remove_file(&disk_path)?;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn read_dirty_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        let ft = entry.file_type()?;
-
-        if ft.is_dir() {
-            match name_str.as_ref() {
-                "syncs" => continue,
-                value if value.starts_with('.') => continue,
-                _ => read_dirty_disk(root, &entry.path(), map)?,
-            }
-        } else if ft.is_file() {
-            if name_str.starts_with('.') {
-                continue;
-            }
-            let rel = entry.path().strip_prefix(root)?.to_slash_lossy();
-            let content = normalize_crlf(std::fs::read(entry.path())?);
-            map.insert(rel, content);
-        }
-    }
-
-    Ok(())
-}
-
-fn read_scratch_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        let ft = entry.file_type()?;
-
-        if ft.is_dir() {
-            if name_str.starts_with('.') && name_str != ".publish-plans" {
-                continue;
-            }
-            read_scratch_disk(root, &entry.path(), map)?;
-        } else if ft.is_file() {
-            if name_str.starts_with('.') {
-                continue;
-            }
-            let rel = entry.path().strip_prefix(root)?.to_slash_lossy();
-            let content = normalize_crlf(std::fs::read(entry.path())?);
-            map.insert(format!(".scratch/{rel}"), content);
-        }
-    }
-
-    Ok(())
 }
 
 /// Reconcile the on-disk state of `ctx.dirty_dir` (user working tree) and
@@ -4090,116 +3612,6 @@ fn compute_unreviewed_entries(
     entries
 }
 
-/// Synthesize the "approved" `FileMap` for a connection by overlaying the
-/// per-file patches from `accepted-patches.json` on top of the current
-/// `refs/heads/main` tree.
-///
-/// Replaces the pre-B `base_map = read_git_tree(refs/heads/dirty)` reads in
-/// every accept/reject/discard pathway. The shape stays the same — keyed by
-/// repo-relative path → pretty-printed JSON bytes — so downstream consumers
-/// like `compute_unreviewed_entries` are unchanged.
-fn compute_accepted_state(
-    main_map: &FileMap,
-    file: &crate::config::accepted_patches::AcceptedPatchesFile,
-) -> anyhow::Result<FileMap> {
-    let mut out = main_map.clone();
-    for entry in &file.patches {
-        match apply_patch_entry_to_blob(
-            main_map.get(entry.path.as_str()).map(|b| b.as_slice()),
-            entry,
-        )? {
-            Some(bytes) => {
-                out.insert(entry.path.clone(), bytes);
-            }
-            None => {
-                out.remove(entry.path.as_str());
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// Per-file analogue of [`compute_accepted_state`]. Returns the approved
-/// blob bytes for a single path, or `None` when the entry says the path is
-/// approved-deleted.
-///
-/// - `Create`: `entry.patch` is the full file content; serialize it.
-/// - `Update`: parse the `main` blob (or treat as `null` if missing — this
-///   is a pathological state caused by something earlier in the pipeline;
-///   `re_anchor` converts server-side deletes to `Create` at pull time so
-///   `Update` against `None` shouldn't normally occur) and apply the RFC
-///   7396 patch.
-/// - `Delete`: returns `None` so callers can `out.remove(path)`.
-fn apply_patch_entry_to_blob(
-    main_blob: Option<&[u8]>,
-    entry: &crate::commands::re_anchor::AnchoredPatch,
-) -> anyhow::Result<Option<Vec<u8>>> {
-    use crate::commands::re_anchor::PatchKind;
-    match entry.kind {
-        PatchKind::Delete => Ok(None),
-        PatchKind::Create => Ok(Some(serde_json::to_vec_pretty(&entry.patch).with_context(
-            || {
-                format!(
-                    "failed to serialize accepted Create patch for {}",
-                    entry.path
-                )
-            },
-        )?)),
-        PatchKind::Update => {
-            let base: JsonValue = match main_blob {
-                Some(bytes) => serde_json::from_slice(bytes).with_context(|| {
-                    format!(
-                        "failed to parse refs/heads/main blob at {} as JSON",
-                        entry.path
-                    )
-                })?,
-                None => JsonValue::Null,
-            };
-            let merged = crate::shared::merge_patch::apply(&base, &entry.patch);
-            Ok(Some(serde_json::to_vec_pretty(&merged).with_context(
-                || format!("failed to serialize accepted Update for {}", entry.path),
-            )?))
-        }
-    }
-}
-
-fn sync_schema_files_from_master(ctx: &ConnectionContext) -> anyhow::Result<()> {
-    let master_scratch_dir = ctx.master_dir.join(".scratch");
-    sync_schema_files_dir(&master_scratch_dir, &master_scratch_dir, &ctx.scratch_dir)
-}
-
-fn sync_schema_files_dir(root: &Path, dir: &Path, scratch_dir: &Path) -> anyhow::Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(dir)?.flatten() {
-        let path = entry.path();
-        let ft = entry.file_type()?;
-        if ft.is_dir() {
-            sync_schema_files_dir(root, &path, scratch_dir)?;
-            continue;
-        }
-
-        if !ft.is_file() || entry.file_name() != "schema.json" {
-            continue;
-        }
-
-        let rel = path.strip_prefix(root)?;
-        write_file(&scratch_dir.join(rel), &std::fs::read(&path)?)?;
-    }
-
-    Ok(())
-}
-
-fn write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, content)?;
-    Ok(())
-}
-
 /// Repo-relative data paths whose content differs between `old` and `new`.
 /// Includes adds (in `new` only), deletes (in `old` only), and modifications.
 /// Filters out `.scratch/` and non-`.json` entries — the folder_index only
@@ -4229,28 +3641,6 @@ fn file_map_changed_data_paths(old: &FileMap, new: &FileMap) -> Vec<String> {
     }
 
     changed
-}
-
-fn is_binary(data: &[u8]) -> bool {
-    data.contains(&0)
-}
-
-fn normalize_crlf(data: Vec<u8>) -> Vec<u8> {
-    if !data.contains(&b'\r') || is_binary(&data) {
-        return data;
-    }
-
-    let mut out = Vec::with_capacity(data.len());
-    let mut index = 0;
-    while index < data.len() {
-        if data[index] == b'\r' && index + 1 < data.len() && data[index + 1] == b'\n' {
-            index += 1;
-        } else {
-            out.push(data[index]);
-        }
-        index += 1;
-    }
-    out
 }
 
 fn maps_equal(left: &FileMap, right: &FileMap) -> bool {

@@ -13,6 +13,11 @@
 //! the same `Vec<AnchoredPatch>` shape as `working-patches.json` and the
 //! upload-patch DTO. All mutating callers must hold the workspace `.scratch/lock`.
 
+// `shared` is compiled for both binaries; only the CLI reaches into this
+// module today. Allow at module scope to keep the service binary's build
+// warning-clean without per-item annotations.
+#![allow(dead_code)]
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,7 +26,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
+use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
 
 const FILENAME: &str = "accepted-patches.json";
 

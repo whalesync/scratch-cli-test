@@ -7,6 +7,14 @@
 //! Single-worktree workspaces (post Phase 5) lose the implicit serialization
 //! the three-worktree design had, so any mutating CLI op (`upload`, `accept`,
 //! `discard`, `download`, …) must hold this lock for the duration of its work.
+//!
+//! Two acquire entry points:
+//! - [`acquire`] — blocks up to [`WAIT_TIMEOUT`] (30s). Right for terminal CLI
+//!   invocations where the user is happy to wait.
+//! - [`try_acquire_with_short_wait`] — caller-specified wait budget; returns
+//!   a structured [`LockError::Busy`] on timeout. Right for napi callers on the
+//!   Electron main thread where any longer wait would feel like UI jank. See
+//!   the slice H spec (DEV-10144) for the 100ms budget rationale.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -17,9 +25,10 @@ use anyhow::Context;
 
 const LOCK_FILENAME: &str = "lock";
 const SCRATCH_DIRNAME: &str = ".scratch";
-/// How long to wait for a contended lock before giving up.
+/// How long [`acquire`] (the CLI-default entry point) waits on a contended lock.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-/// Poll interval while waiting on a contended lock.
+/// Default poll interval while waiting on a contended lock. Per-call we clamp
+/// this to `timeout / 4` so short-wait callers still get a few retry chances.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// RAII guard that releases the workspace lock when dropped.
@@ -35,19 +44,91 @@ impl Drop for WorkspaceLockGuard {
     }
 }
 
+/// Structured error from [`try_acquire_with_short_wait`]. The CLI's [`acquire`]
+/// wraps these into `anyhow::Error` for scriptability; napi callers consume
+/// them directly so they can map `Busy` to a `LOCK_BUSY` JS exception code.
+#[derive(Debug)]
+pub enum LockError {
+    /// Lock held by another live process; gave up waiting.
+    Busy { pid: u32, lock_path: PathBuf },
+    /// Filesystem error opening, creating, or removing the lock file.
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for LockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LockError::Busy { pid, lock_path } => write!(
+                f,
+                "workspace is locked by another scratchmd process (pid {pid}); lock at {}",
+                lock_path.display()
+            ),
+            LockError::Io(err) => write!(f, "lock io error: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for LockError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            LockError::Io(err) => Some(err),
+            LockError::Busy { .. } => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for LockError {
+    fn from(err: std::io::Error) -> Self {
+        LockError::Io(err)
+    }
+}
+
 /// Acquire the workspace-level mutating-op lock. Blocks up to [`WAIT_TIMEOUT`]
-/// waiting on a contending PID; returns an error if the wait times out.
+/// (30s) waiting on a contending PID; returns an error if the wait times out.
+///
+/// This is the CLI-default entry point — terminal invocations are happy to
+/// wait. For napi callers on the Electron main thread, use
+/// [`try_acquire_with_short_wait`] instead.
 pub fn acquire(workspace_dir: &Path) -> anyhow::Result<WorkspaceLockGuard> {
+    try_acquire_with_short_wait(workspace_dir, WAIT_TIMEOUT)
+        .map_err(|err| match err {
+            LockError::Busy { pid, lock_path } => anyhow::anyhow!(
+                "workspace is locked by another scratchmd process (pid {pid}); \
+             timed out after {}s waiting at {}",
+                WAIT_TIMEOUT.as_secs(),
+                lock_path.display()
+            ),
+            LockError::Io(io_err) => {
+                anyhow::Error::from(io_err).context("failed to acquire workspace lock")
+            }
+        })
+        .with_context(|| {
+            format!(
+                "failed to acquire workspace lock at {}",
+                lock_path(workspace_dir).display()
+            )
+        })
+}
+
+/// Acquire the lock with a caller-specified wait budget. Returns
+/// [`LockError::Busy`] if `timeout` elapses with the lock still held by a live
+/// process; [`LockError::Io`] for filesystem errors.
+///
+/// Use ~100ms for napi callers on the Electron main thread; the existing
+/// [`acquire`] (30s) is right for terminal CLI use.
+pub fn try_acquire_with_short_wait(
+    workspace_dir: &Path,
+    timeout: Duration,
+) -> Result<WorkspaceLockGuard, LockError> {
     let lock_path = lock_path(workspace_dir);
     let scratch_dir = lock_path
         .parent()
         .expect("lock_path always has a parent — see lock_path()");
-    std::fs::create_dir_all(scratch_dir).with_context(|| {
-        format!(
-            "failed to create scratch directory at {}",
-            scratch_dir.display()
-        )
-    })?;
+    std::fs::create_dir_all(scratch_dir)?;
+
+    // Poll no slower than POLL_INTERVAL, but tighten to timeout/4 for callers
+    // with sub-second budgets so they get at least a few retry chances.
+    let poll_interval = std::cmp::min(POLL_INTERVAL, timeout / 4).max(Duration::from_millis(1));
 
     let start = std::time::Instant::now();
     loop {
@@ -57,15 +138,10 @@ pub fn acquire(workspace_dir: &Path) -> anyhow::Result<WorkspaceLockGuard> {
                 // The lock file exists. Decide whether the holder is still alive.
                 match read_owning_pid(&lock_path) {
                     Some(pid) if pid_is_alive(pid) => {
-                        if start.elapsed() >= WAIT_TIMEOUT {
-                            anyhow::bail!(
-                                "workspace is locked by another scratchmd process (pid {pid}); \
-                                 timed out after {}s waiting at {}",
-                                WAIT_TIMEOUT.as_secs(),
-                                lock_path.display()
-                            );
+                        if start.elapsed() >= timeout {
+                            return Err(LockError::Busy { pid, lock_path });
                         }
-                        std::thread::sleep(POLL_INTERVAL);
+                        std::thread::sleep(poll_interval);
                         continue;
                     }
                     Some(stale_pid) => {
@@ -86,12 +162,7 @@ pub fn acquire(workspace_dir: &Path) -> anyhow::Result<WorkspaceLockGuard> {
                 // re-evaluate the new owner's liveness.
                 let _ = std::fs::remove_file(&lock_path);
             }
-            Err(err) => {
-                return Err(anyhow::Error::from(err).context(format!(
-                    "failed to acquire workspace lock at {}",
-                    lock_path.display()
-                )));
-            }
+            Err(err) => return Err(LockError::Io(err)),
         }
     }
 }
@@ -197,5 +268,39 @@ mod tests {
         // Reclaim should have rewritten the file with our own PID.
         let owner = read_owning_pid(&lock).unwrap();
         assert_eq!(owner, std::process::id());
+    }
+
+    #[test]
+    fn try_acquire_with_short_wait_returns_busy_on_held_lock() {
+        let dir = TempDir::new().unwrap();
+        let _held = acquire(dir.path()).unwrap();
+
+        let started = std::time::Instant::now();
+        let result = try_acquire_with_short_wait(dir.path(), Duration::from_millis(100));
+        let elapsed = started.elapsed();
+
+        match result {
+            Err(LockError::Busy { pid, .. }) => {
+                assert_eq!(pid, std::process::id());
+            }
+            Err(LockError::Io(err)) => panic!("expected Busy, got Io({err})"),
+            Ok(_) => panic!("expected Busy, got Ok"),
+        }
+        // Allow generous slack for slow CI runners; the contract is "doesn't
+        // block for 30s", not "exactly 100ms".
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "short-wait should not block for the full default timeout (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn try_acquire_with_short_wait_succeeds_when_uncontended() {
+        let dir = TempDir::new().unwrap();
+        let guard = try_acquire_with_short_wait(dir.path(), Duration::from_millis(100))
+            .expect("uncontended acquire should succeed");
+        assert!(lock_path(dir.path()).exists());
+        drop(guard);
+        assert!(!lock_path(dir.path()).exists());
     }
 }

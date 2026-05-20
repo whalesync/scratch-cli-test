@@ -1,3 +1,4 @@
+pub mod accepted_patches;
 pub mod folder_index;
 pub mod git_path;
 pub mod index;
@@ -6,4 +7,6 @@ pub mod layout;
 pub mod merge;
 pub mod merge_patch;
 pub mod plan_publish;
+pub mod re_anchor;
+pub mod review_ops;
 pub mod validators;

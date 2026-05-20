@@ -331,8 +331,8 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
 
     // Seed an accepted Delete for the record to restore.
     {
-        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
-        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
         let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         save_atomic(
@@ -381,8 +381,8 @@ fn restore_deleted_records_locally_errors_when_entry_is_not_a_delete() {
 
     let ctx = make_connection_context(tmp.path(), &bare_repo);
     {
-        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
-        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
         let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         save_atomic(
@@ -442,8 +442,8 @@ fn discard_created_records_locally_drops_create_entry_and_removes_worktree_file(
         "{\"id\":\"created\"}",
     );
     {
-        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
-        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
         let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         save_atomic(
@@ -490,8 +490,8 @@ fn discard_created_records_locally_errors_when_main_has_the_path() {
 
     let ctx = make_connection_context(tmp.path(), &bare_repo);
     {
-        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
-        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
         let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         save_atomic(
@@ -749,8 +749,8 @@ fn empty_conn_ctx() -> ConnectionContext {
 
 mod field_helpers {
     use super::*;
-    use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
-    use crate::config::accepted_patches::AcceptedPatchesFile;
+    use crate::shared::accepted_patches::AcceptedPatchesFile;
+    use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
     use serde_json::{json, Value as JsonValue};
 
     fn entry(path: &str, kind: PatchKind, patch: JsonValue) -> AnchoredPatch {
@@ -1208,8 +1208,8 @@ mod field_helpers {
 /// state to an `accepted-patches.json` file before invoking the
 /// function under test.
 fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
-    use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
-    use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+    use crate::shared::accepted_patches::{save_atomic, AcceptedPatchesFile};
+    use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
     use serde_json::Value as JsonValue;
 
     let main_map = read_main_tree(&ctx.bare_repo).unwrap();
@@ -1311,10 +1311,10 @@ fn create_multi_folder_fixture() -> (TempDir, ConnectionContext) {
 }
 
 /// Load `accepted-patches.json` for a test ctx.
-fn load_accepted(ctx: &ConnectionContext) -> crate::config::accepted_patches::AcceptedPatchesFile {
+fn load_accepted(ctx: &ConnectionContext) -> crate::shared::accepted_patches::AcceptedPatchesFile {
     let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
-    crate::config::accepted_patches::load(&connection_dir).unwrap()
+    crate::shared::accepted_patches::load(&connection_dir).unwrap()
 }
 
 #[test]
@@ -1350,7 +1350,7 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
         .expect("posts entry should exist post-accept");
     assert_eq!(
         posts.kind,
-        crate::commands::re_anchor::PatchKind::Update,
+        crate::shared::re_anchor::PatchKind::Update,
         "posts is an edit over main"
     );
     assert_eq!(posts.patch, serde_json::json!({"v": "pending-p1"}));
@@ -1429,7 +1429,7 @@ fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
         .iter()
         .find(|e| e.path == "posts/rec1.json")
         .expect("posts entry should be replaced with a Delete");
-    assert_eq!(posts.kind, crate::commands::re_anchor::PatchKind::Delete);
+    assert_eq!(posts.kind, crate::shared::re_anchor::PatchKind::Delete);
     assert!(
         file.patches.iter().any(|e| e.path == "articles/rec1.json"),
         "articles entry must remain untouched"
@@ -1585,7 +1585,7 @@ fn discard_paths_single_repo_reverts_only_listed_paths() {
     // accepted-patches.json: posts entry dropped, articles entry kept.
     let connection_dir =
         WorkspaceLayout::for_cli(&ctx.workspace_dir).connection_root_path(&ctx.conn_dir_name);
-    let file = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    let file = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(file.patches.len(), 1, "only articles entry should remain");
     assert_eq!(file.patches[0].path, "articles/rec1.json");
 
@@ -1667,7 +1667,7 @@ fn discard_paths_single_repo_reverts_path_with_only_approved_change() {
     assert_eq!(result.files_discarded, 1);
     let connection_dir =
         WorkspaceLayout::for_cli(&ctx.workspace_dir).connection_root_path(&ctx.conn_dir_name);
-    let file = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    let file = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert!(
         !file.patches.iter().any(|e| e.path == "posts/rec1.json"),
         "posts entry should be removed"
@@ -1949,14 +1949,14 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
     // (`apply(main, patch)`); the accept-time path always leaves
     // local == approved.
     let connection_dir = accepted_patches_dir(&ctx);
-    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
-        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
             path: "posts/rec_acme.json".to_string(),
-            kind: crate::commands::re_anchor::PatchKind::Update,
+            kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
         }],
     };
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
     write_file(
         &ctx.dirty_dir.join("posts/rec_acme.json"),
         "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
@@ -1979,7 +1979,7 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
     assert_eq!(local_main, origin_main, "local main must advance to origin");
 
     // Patch preserved verbatim — server didn't touch industry.
-    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(reloaded.patches.len(), 1);
     assert_eq!(
         reloaded.patches[0].patch,
@@ -2018,14 +2018,14 @@ fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
     );
 
     let connection_dir = accepted_patches_dir(&ctx);
-    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
-        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
             path: "posts/rec_acme.json".to_string(),
-            kind: crate::commands::re_anchor::PatchKind::Update,
+            kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
         }],
     };
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
     write_file(
         &ctx.dirty_dir.join("posts/rec_acme.json"),
         "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
@@ -2045,7 +2045,7 @@ fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
     assert_eq!(result.conflicts_auto_resolved, 1);
 
     // User wins: patch unchanged.
-    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(
         reloaded.patches[0].patch,
         serde_json::json!({"industry": "SaaS"})
@@ -2121,20 +2121,20 @@ fn reconcile_keeps_patch_when_server_main_did_not_advance() {
         "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
     );
     let connection_dir = accepted_patches_dir(&ctx);
-    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
-        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
             path: "posts/rec_acme.json".to_string(),
-            kind: crate::commands::re_anchor::PatchKind::Update,
+            kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
         }],
     };
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
 
     // Connector batch failed → server's main did NOT advance.
     reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
 
     // Patch must still be there for the next publish attempt.
-    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(
         reloaded.patches.len(),
         1,
@@ -2167,14 +2167,14 @@ fn reconcile_drops_patch_when_server_published_the_change() {
         "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
     );
     let connection_dir = accepted_patches_dir(&ctx);
-    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
-        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
             path: "posts/rec_acme.json".to_string(),
-            kind: crate::commands::re_anchor::PatchKind::Update,
+            kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
         }],
     };
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
 
     // Server committed the user's edit verbatim — new main blob has
     // industry=SaaS. Re-anchor's no-op detection should drop the patch.
@@ -2187,7 +2187,7 @@ fn reconcile_drops_patch_when_server_published_the_change() {
 
     reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
 
-    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert!(
         reloaded.patches.is_empty(),
         "patch must drop after publish lands"
@@ -2217,21 +2217,21 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
 
     // User accepted both → v: 2.
     let connection_dir = accepted_patches_dir(&ctx);
-    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
         patches: vec![
-            crate::commands::re_anchor::AnchoredPatch {
+            crate::shared::re_anchor::AnchoredPatch {
                 path: "posts/rec_a.json".to_string(),
-                kind: crate::commands::re_anchor::PatchKind::Update,
+                kind: crate::shared::re_anchor::PatchKind::Update,
                 patch: serde_json::json!({"v": 2}),
             },
-            crate::commands::re_anchor::AnchoredPatch {
+            crate::shared::re_anchor::AnchoredPatch {
                 path: "posts/rec_b.json".to_string(),
-                kind: crate::commands::re_anchor::PatchKind::Update,
+                kind: crate::shared::re_anchor::PatchKind::Update,
                 patch: serde_json::json!({"v": 2}),
             },
         ],
     };
-    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
 
     // Connector succeeded for A, failed for B → only A lands on main.
     advance_remote_main(
@@ -2243,7 +2243,7 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
 
     reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
 
-    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(
         reloaded.patches.len(),
         1,
@@ -2253,184 +2253,10 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
     assert_eq!(reloaded.patches[0].patch, serde_json::json!({"v": 2}));
 }
 
-mod accepted_state_helpers {
-    use super::super::super::re_anchor::{AnchoredPatch, PatchKind};
-    use super::super::*;
-    use crate::config::accepted_patches::AcceptedPatchesFile;
-    use serde_json::{json, Value as JsonValue};
-
-    fn map_of(pairs: &[(&str, &str)]) -> FileMap {
-        let mut m = FileMap::new();
-        for (k, v) in pairs {
-            m.insert((*k).to_string(), v.as_bytes().to_vec());
-        }
-        m
-    }
-
-    fn entry(path: &str, kind: PatchKind, patch: JsonValue) -> AnchoredPatch {
-        AnchoredPatch {
-            path: path.into(),
-            kind,
-            patch,
-        }
-    }
-
-    fn json_bytes(v: &JsonValue) -> Vec<u8> {
-        serde_json::to_vec_pretty(v).unwrap()
-    }
-
-    #[test]
-    fn compute_accepted_state_with_empty_file_returns_main_map() {
-        let main = map_of(&[("Companies/rec_1.json", "{\"name\":\"Acme\"}")]);
-        let file = AcceptedPatchesFile::default();
-        let approved = compute_accepted_state(&main, &file).unwrap();
-        assert_eq!(approved, main);
-    }
-
-    #[test]
-    fn compute_accepted_state_applies_update_via_merge_patch() {
-        let base = json!({"name": "Acme", "industry": "Other"});
-        let main = {
-            let mut m = FileMap::new();
-            m.insert("Companies/rec_1.json".into(), json_bytes(&base));
-            m
-        };
-        let file = AcceptedPatchesFile {
-            patches: vec![entry(
-                "Companies/rec_1.json",
-                PatchKind::Update,
-                json!({"industry": "SaaS"}),
-            )],
-        };
-        let approved = compute_accepted_state(&main, &file).unwrap();
-        let expected = json_bytes(&json!({"name": "Acme", "industry": "SaaS"}));
-        assert_eq!(
-            approved.get("Companies/rec_1.json").map(|v| v.as_slice()),
-            Some(expected.as_slice())
-        );
-    }
-
-    #[test]
-    fn compute_accepted_state_inserts_create_entries() {
-        let main = FileMap::new();
-        let new_record = json!({"name": "New Co"});
-        let file = AcceptedPatchesFile {
-            patches: vec![entry(
-                "Companies/rec_new.json",
-                PatchKind::Create,
-                new_record.clone(),
-            )],
-        };
-        let approved = compute_accepted_state(&main, &file).unwrap();
-        assert_eq!(
-            approved.get("Companies/rec_new.json").map(|v| v.as_slice()),
-            Some(json_bytes(&new_record).as_slice())
-        );
-    }
-
-    #[test]
-    fn compute_accepted_state_removes_delete_entries() {
-        let main = map_of(&[("Companies/rec_1.json", "{\"name\":\"Acme\"}")]);
-        let file = AcceptedPatchesFile {
-            patches: vec![entry(
-                "Companies/rec_1.json",
-                PatchKind::Delete,
-                JsonValue::Null,
-            )],
-        };
-        let approved = compute_accepted_state(&main, &file).unwrap();
-        assert!(approved.is_empty());
-    }
-
-    #[test]
-    fn compute_accepted_state_handles_multiple_entries_in_order() {
-        let main = {
-            let mut m = FileMap::new();
-            m.insert(
-                "Companies/rec_1.json".into(),
-                json_bytes(&json!({"name": "Acme"})),
-            );
-            m.insert(
-                "Companies/rec_keep.json".into(),
-                json_bytes(&json!({"name": "Keep"})),
-            );
-            m
-        };
-        let file = AcceptedPatchesFile {
-            patches: vec![
-                entry(
-                    "Companies/rec_1.json",
-                    PatchKind::Update,
-                    json!({"industry": "SaaS"}),
-                ),
-                entry(
-                    "Companies/rec_2.json",
-                    PatchKind::Create,
-                    json!({"name": "Beta"}),
-                ),
-                entry(
-                    "Companies/rec_keep.json",
-                    PatchKind::Delete,
-                    JsonValue::Null,
-                ),
-            ],
-        };
-        let approved = compute_accepted_state(&main, &file).unwrap();
-        assert_eq!(approved.len(), 2);
-        assert!(approved.contains_key("Companies/rec_1.json"));
-        assert!(approved.contains_key("Companies/rec_2.json"));
-        assert!(!approved.contains_key("Companies/rec_keep.json"));
-    }
-
-    #[test]
-    fn apply_patch_entry_to_blob_create_serializes_full_content() {
-        let e = entry("p.json", PatchKind::Create, json!({"name": "Acme"}));
-        let out = apply_patch_entry_to_blob(None, &e).unwrap();
-        assert_eq!(out, Some(json_bytes(&json!({"name": "Acme"}))));
-    }
-
-    #[test]
-    fn apply_patch_entry_to_blob_update_merges_keys() {
-        let main_blob = json_bytes(&json!({"name": "Acme", "industry": "Other"}));
-        let e = entry("p.json", PatchKind::Update, json!({"industry": "SaaS"}));
-        let out = apply_patch_entry_to_blob(Some(&main_blob), &e).unwrap();
-        assert_eq!(
-            out,
-            Some(json_bytes(&json!({"name": "Acme", "industry": "SaaS"})))
-        );
-    }
-
-    #[test]
-    fn apply_patch_entry_to_blob_update_with_null_key_deletes_field() {
-        let main_blob = json_bytes(&json!({"name": "Acme", "draft": true}));
-        let e = entry("p.json", PatchKind::Update, json!({"draft": null}));
-        let out = apply_patch_entry_to_blob(Some(&main_blob), &e).unwrap();
-        assert_eq!(out, Some(json_bytes(&json!({"name": "Acme"}))));
-    }
-
-    #[test]
-    fn apply_patch_entry_to_blob_delete_returns_none() {
-        let main_blob = json_bytes(&json!({"name": "Acme"}));
-        let e = entry("p.json", PatchKind::Delete, JsonValue::Null);
-        let out = apply_patch_entry_to_blob(Some(&main_blob), &e).unwrap();
-        assert!(out.is_none());
-    }
-
-    #[test]
-    fn apply_patch_entry_to_blob_update_against_missing_main_treats_as_null() {
-        // Pathological state but we don't want to panic. RFC 7396 apply on
-        // null + an object patch produces a fresh object from the patch's
-        // non-null keys.
-        let e = entry("p.json", PatchKind::Update, json!({"name": "Acme"}));
-        let out = apply_patch_entry_to_blob(None, &e).unwrap();
-        assert_eq!(out, Some(json_bytes(&json!({"name": "Acme"}))));
-    }
-}
-
 mod discard_field_helper {
-    use super::super::super::re_anchor::{AnchoredPatch, PatchKind};
     use super::super::*;
-    use crate::config::accepted_patches::AcceptedPatchesFile;
+    use crate::shared::accepted_patches::AcceptedPatchesFile;
+    use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
     use serde_json::{json, Value as JsonValue};
     use std::path::PathBuf;
     use tempfile::TempDir;
