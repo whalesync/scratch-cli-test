@@ -15,8 +15,10 @@
 //! semantics — the patch value is preserved, but the collision is logged for
 //! audit and telemetry).
 //!
-//! Not yet called from the binary — Phase 4's pull rewrite will wire it in
-//! once the download flow switches from three-way merge to stash/replay.
+//! `compute_entry` is wired into accept-time paths today (single-path,
+//! field, and _all). `re_anchor_one` / `re_anchor_patches` ship as helpers
+//! for slice D's pull rewrite — kept compiling so the next slice can hook
+//! them in without resurrecting deleted code.
 
 #![allow(dead_code)]
 

@@ -366,7 +366,7 @@ fn commit_file_map_to_dirty_ref_does_not_commit_temp_index_files() {
 }
 
 #[test]
-fn restore_deleted_records_locally_restores_main_version_into_working_and_dirty() {
+fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -390,7 +390,7 @@ fn restore_deleted_records_locally_restores_main_version_into_working_and_dirty(
     .unwrap();
 
     let ctx = make_connection_context(tmp.path(), &bare_repo);
-    // Set up dirty_dir as a sparse worktree (no dirty ref yet; start from empty)
+    // Set up dirty_dir as a sparse worktree (no dirty ref yet; start from empty).
     crate::git_ops::commit_file_map_to_ref(
         &bare_repo,
         "refs/heads/dirty",
@@ -400,23 +400,83 @@ fn restore_deleted_records_locally_restores_main_version_into_working_and_dirty(
     )
     .unwrap();
     crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.dirty_dir, "refs/heads/dirty").unwrap();
+
+    // Seed an accepted Delete for the record to restore.
+    {
+        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
+        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
+        let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+        save_atomic(
+            &connection_dir,
+            &AcceptedPatchesFile {
+                patches: vec![AnchoredPatch {
+                    path: "posts/restore.json".into(),
+                    kind: PatchKind::Delete,
+                    patch: serde_json::Value::Null,
+                }],
+            },
+        )
+        .unwrap();
+    }
+
     restore_deleted_records_locally(&ctx, &["posts/restore.json".to_string()]).unwrap();
 
     assert_eq!(
         std::fs::read_to_string(ctx.dirty_dir.join("posts/restore.json")).unwrap(),
         "{\"id\":\"restore\",\"name\":\"from-main\"}"
     );
-
-    let dirty_hash = git_rev_parse(&bare_repo, "refs/heads/dirty").unwrap();
-    let dirty_map = read_git_tree(&bare_repo, &dirty_hash).unwrap();
-    assert_eq!(
-        String::from_utf8(dirty_map["posts/restore.json"].clone()).unwrap(),
-        "{\"id\":\"restore\",\"name\":\"from-main\"}"
+    let file = load_accepted(&ctx);
+    assert!(
+        !file.patches.iter().any(|e| e.path == "posts/restore.json"),
+        "Delete entry should have been removed"
     );
 }
 
 #[test]
-fn discard_created_records_locally_removes_from_working_and_dirty() {
+fn restore_deleted_records_locally_errors_when_entry_is_not_a_delete() {
+    let tmp = TempDir::new().unwrap();
+    let bare_repo = tmp.path().join("repo.git");
+    run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
+    let main_files = HashMap::from([(
+        "posts/restore.json".to_string(),
+        b"{\"id\":\"restore\"}".to_vec(),
+    )]);
+    crate::git_ops::commit_file_map_to_ref(
+        &bare_repo,
+        "refs/heads/main",
+        None,
+        &main_files,
+        "main",
+    )
+    .unwrap();
+
+    let ctx = make_connection_context(tmp.path(), &bare_repo);
+    {
+        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
+        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
+        let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+        save_atomic(
+            &connection_dir,
+            &AcceptedPatchesFile {
+                patches: vec![AnchoredPatch {
+                    path: "posts/restore.json".into(),
+                    kind: PatchKind::Update,
+                    patch: serde_json::json!({"name": "edit"}),
+                }],
+            },
+        )
+        .unwrap();
+    }
+
+    let err =
+        restore_deleted_records_locally(&ctx, &["posts/restore.json".to_string()]).unwrap_err();
+    assert!(err.to_string().contains("not an approved deleted record"));
+}
+
+#[test]
+fn discard_created_records_locally_drops_create_entry_and_removes_worktree_file() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -425,7 +485,8 @@ fn discard_created_records_locally_removes_from_working_and_dirty() {
     let tmp = TempDir::new().unwrap();
     let bare_repo = tmp.path().join("repo.git");
     run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
-
+    // Empty main — the path doesn't exist on main, which is the precondition
+    // for a "Create" entry to be valid.
     crate::git_ops::commit_file_map_to_ref(
         &bare_repo,
         "refs/heads/main",
@@ -434,33 +495,93 @@ fn discard_created_records_locally_removes_from_working_and_dirty() {
         "main seed",
     )
     .unwrap();
+    // Set up a dirty branch + sparse worktree so the path layout matches what
+    // production looks like, but the dirty ref is irrelevant to the new logic.
+    crate::git_ops::commit_file_map_to_ref(
+        &bare_repo,
+        "refs/heads/dirty",
+        None,
+        &HashMap::new(),
+        "init dirty",
+    )
+    .unwrap();
+    let ctx = make_connection_context(tmp.path(), &bare_repo);
+    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.dirty_dir, "refs/heads/dirty").unwrap();
 
-    let dirty_files = HashMap::from([(
+    // Working file exists; accepted-patches has the corresponding Create.
+    write_file(
+        &ctx.dirty_dir.join("posts/created.json"),
+        "{\"id\":\"created\"}",
+    );
+    {
+        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
+        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
+        let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+        save_atomic(
+            &connection_dir,
+            &AcceptedPatchesFile {
+                patches: vec![AnchoredPatch {
+                    path: "posts/created.json".into(),
+                    kind: PatchKind::Create,
+                    patch: serde_json::json!({"id": "created"}),
+                }],
+            },
+        )
+        .unwrap();
+    }
+
+    discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap();
+
+    assert!(!ctx.dirty_dir.join("posts/created.json").exists());
+    let file = load_accepted(&ctx);
+    assert!(
+        !file.patches.iter().any(|e| e.path == "posts/created.json"),
+        "Create entry should have been removed"
+    );
+}
+
+#[test]
+fn discard_created_records_locally_errors_when_main_has_the_path() {
+    let tmp = TempDir::new().unwrap();
+    let bare_repo = tmp.path().join("repo.git");
+    run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
+    // Main HAS the path — this is the "not a created record" failure case.
+    let main_files = HashMap::from([(
         "posts/created.json".to_string(),
         b"{\"id\":\"created\"}".to_vec(),
     )]);
     crate::git_ops::commit_file_map_to_ref(
         &bare_repo,
-        "refs/heads/dirty",
-        git_rev_parse_optional(&bare_repo, "refs/heads/main")
-            .unwrap()
-            .as_deref(),
-        &dirty_files,
-        "dirty seed",
+        "refs/heads/main",
+        None,
+        &main_files,
+        "main",
     )
     .unwrap();
 
     let ctx = make_connection_context(tmp.path(), &bare_repo);
-    // Set up dirty_dir as a sparse worktree; sparse checkout populates posts/created.json
-    crate::git_ops::setup_sparse_worktree(&bare_repo, &ctx.dirty_dir, "refs/heads/dirty").unwrap();
+    {
+        use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
+        use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
+        let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
+        let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+        save_atomic(
+            &connection_dir,
+            &AcceptedPatchesFile {
+                patches: vec![AnchoredPatch {
+                    path: "posts/created.json".into(),
+                    kind: PatchKind::Create,
+                    patch: serde_json::json!({"id": "created"}),
+                }],
+            },
+        )
+        .unwrap();
+    }
 
-    discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap();
-
-    assert!(!ctx.dirty_dir.join("posts/created.json").exists());
-
-    let dirty_hash = git_rev_parse(&bare_repo, "refs/heads/dirty").unwrap();
-    let dirty_map = read_git_tree(&bare_repo, &dirty_hash).unwrap();
-    assert!(!dirty_map.contains_key("posts/created.json"));
+    let err =
+        discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap_err();
+    assert!(err.to_string().contains("exists on main"));
 }
 
 #[test]
@@ -519,111 +640,6 @@ fn git_push_force_overwrites_diverged_remote_dirty_branch() {
 
     let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
     assert_eq!(remote_dirty, local_commit);
-}
-
-#[test]
-fn compute_upload_patches_emits_create_update_and_delete() {
-    // Three records that exercise all three transition shapes that the
-    // upload-patch flow must produce: a new file, a field-level edit, and
-    // a deletion. The output is the on-the-wire payload the server sees.
-    let mut main_map = FileMap::new();
-    main_map.insert(
-        "Companies/rec_keep.json".to_string(),
-        b"{\"id\":\"rec_keep\",\"name\":\"Acme\",\"industry\":\"SaaS\"}".to_vec(),
-    );
-    main_map.insert(
-        "Companies/rec_delete.json".to_string(),
-        b"{\"id\":\"rec_delete\"}".to_vec(),
-    );
-
-    let mut dirty_map = FileMap::new();
-    dirty_map.insert(
-        "Companies/rec_keep.json".to_string(),
-        b"{\"id\":\"rec_keep\",\"name\":\"Acme\",\"industry\":\"Devtools\"}".to_vec(),
-    );
-    dirty_map.insert(
-        "Companies/rec_create.json".to_string(),
-        b"{\"id\":\"rec_create\",\"name\":\"NewCo\"}".to_vec(),
-    );
-
-    let patches = compute_upload_patches(&main_map, &dirty_map, "HubSpot").unwrap();
-
-    let by_path: HashMap<String, (serde_json::Value, PatchKind)> = patches
-        .into_iter()
-        .map(|p| (p.path, (p.patch, p.kind)))
-        .collect();
-
-    assert_eq!(
-        by_path.get("Companies/rec_keep.json"),
-        Some(&(
-            serde_json::json!({ "industry": "Devtools" }),
-            PatchKind::Update,
-        )),
-        "field-level edit should produce a minimal RFC 7396 patch tagged Update"
-    );
-    assert_eq!(
-        by_path.get("Companies/rec_delete.json"),
-        Some(&(serde_json::Value::Null, PatchKind::Delete)),
-        "missing-on-dirty should produce patch=null tagged Delete"
-    );
-    assert_eq!(
-        by_path.get("Companies/rec_create.json"),
-        Some(&(
-            serde_json::json!({ "id": "rec_create", "name": "NewCo" }),
-            PatchKind::Create,
-        )),
-        "new file should produce the full content tagged Create"
-    );
-}
-
-#[test]
-fn compute_upload_patches_skips_unchanged_and_non_data_paths() {
-    let mut main_map = FileMap::new();
-    main_map.insert(
-        "Companies/rec_same.json".to_string(),
-        b"{\"id\":\"rec_same\",\"name\":\"X\"}".to_vec(),
-    );
-    main_map.insert(
-        ".scratch/should-skip.json".to_string(),
-        b"{\"internal\":true}".to_vec(),
-    );
-    main_map.insert("Companies/schema.txt".to_string(), b"not json".to_vec());
-
-    let mut dirty_map = main_map.clone();
-    dirty_map.insert(
-        ".scratch/should-skip.json".to_string(),
-        b"{\"internal\":false}".to_vec(),
-    );
-    dirty_map.insert("Companies/schema.txt".to_string(), b"different".to_vec());
-
-    let patches = compute_upload_patches(&main_map, &dirty_map, "HubSpot").unwrap();
-    assert!(
-        patches.is_empty(),
-        "non-data paths and unchanged files must not surface as patches; got {:?}",
-        patches.iter().map(|p| &p.path).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn compute_upload_patches_errors_on_unparseable_json() {
-    let mut main_map = FileMap::new();
-    main_map.insert(
-        "Companies/rec.json".to_string(),
-        b"{\"id\":\"rec\"}".to_vec(),
-    );
-
-    let mut dirty_map = FileMap::new();
-    dirty_map.insert(
-        "Companies/rec.json".to_string(),
-        b"{ not valid json".to_vec(),
-    );
-
-    let err = compute_upload_patches(&main_map, &dirty_map, "HubSpot").unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Companies/rec.json") && msg.to_lowercase().contains("parse"),
-        "unparseable JSON must surface as a precise error pointing at the file; got: {msg}"
-    );
 }
 
 #[test]
@@ -924,9 +940,15 @@ mod field_helpers {
         )]);
         let mut file = AcceptedPatchesFile::default();
 
-        let result =
-            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
-                .unwrap();
+        let result = accept_field_in_folder(
+            &ctx,
+            "public/smoke_records",
+            "name",
+            &main,
+            &mut file,
+            &local,
+        )
+        .unwrap();
 
         assert_eq!(file.patches.len(), 1);
         assert_eq!(file.patches[0].path, "public/smoke_records/record-1.json");
@@ -949,9 +971,15 @@ mod field_helpers {
         )]);
         let mut file = AcceptedPatchesFile::default();
 
-        let result =
-            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
-                .unwrap();
+        let result = accept_field_in_folder(
+            &ctx,
+            "public/smoke_records",
+            "name",
+            &main,
+            &mut file,
+            &local,
+        )
+        .unwrap();
 
         assert_eq!(file.patches.len(), 1);
         assert_eq!(file.patches[0].kind, PatchKind::Create);
@@ -976,9 +1004,15 @@ mod field_helpers {
         let local = HashMap::new();
         let mut file = AcceptedPatchesFile::default();
 
-        let result =
-            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
-                .unwrap();
+        let result = accept_field_in_folder(
+            &ctx,
+            "public/smoke_records",
+            "name",
+            &main,
+            &mut file,
+            &local,
+        )
+        .unwrap();
 
         assert!(file.patches.is_empty());
         assert!(result.changed_paths.is_empty());
@@ -1033,9 +1067,15 @@ mod field_helpers {
         let local = main.clone();
         let mut file = AcceptedPatchesFile::default();
 
-        let result =
-            accept_field_in_folder(&ctx, "public/smoke_records", "name", &main, &mut file, &local)
-                .unwrap();
+        let result = accept_field_in_folder(
+            &ctx,
+            "public/smoke_records",
+            "name",
+            &main,
+            &mut file,
+            &local,
+        )
+        .unwrap();
 
         assert!(file.patches.is_empty());
         assert!(result.changed_paths.is_empty());
@@ -1169,10 +1209,7 @@ mod field_helpers {
         // concern. Discard-field is the operation that rolls approved back
         // to published.
         let ctx = empty_conn_ctx();
-        let main = HashMap::from([(
-            "Posts/rec_3.json".to_string(),
-            json_pretty(r#"{"id":3}"#),
-        )]);
+        let main = HashMap::from([("Posts/rec_3.json".to_string(), json_pretty(r#"{"id":3}"#))]);
         let local = HashMap::from([(
             "Posts/rec_3.json".to_string(),
             json_pretty(r#"{"id":3,"name":"Created approved"}"#),
@@ -1232,7 +1269,11 @@ mod field_helpers {
         // User accepted a Delete; working file is also missing. No field-
         // level action applies — discard-field would re-instate the file.
         let file = AcceptedPatchesFile {
-            patches: vec![entry("Posts/rec_4.json", PatchKind::Delete, JsonValue::Null)],
+            patches: vec![entry(
+                "Posts/rec_4.json",
+                PatchKind::Delete,
+                JsonValue::Null,
+            )],
         };
 
         let (next_local, result) =
@@ -1320,7 +1361,6 @@ mod field_helpers {
 /// fixture's dirty/main divergence call this helper to translate that
 /// state to an `accepted-patches.json` file before invoking the
 /// function under test.
-#[allow(dead_code)]
 fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
     use crate::commands::re_anchor::{AnchoredPatch, PatchKind};
     use crate::config::accepted_patches::{save_atomic, AcceptedPatchesFile};
@@ -1424,6 +1464,13 @@ fn create_multi_folder_fixture() -> (TempDir, ConnectionContext) {
     (tmp, ctx)
 }
 
+/// Load `accepted-patches.json` for a test ctx.
+fn load_accepted(ctx: &ConnectionContext) -> crate::config::accepted_patches::AcceptedPatchesFile {
+    let layout = WorkspaceLayout::for_cli(&ctx.workspace_dir);
+    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    crate::config::accepted_patches::load(&connection_dir).unwrap()
+}
+
 #[test]
 fn accept_all_single_repo_folder_accepts_only_target_folder() {
     if !git_available() {
@@ -1432,8 +1479,9 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
     }
 
     let (_tmp, ctx) = create_multi_folder_fixture();
+    seed_accepted_patches_from_fixture(&ctx);
 
-    // Pending edits in both folders.
+    // Pending edits in both folders on top of the seeded "approved" state.
     write_file(
         &ctx.dirty_dir.join("posts/rec1.json"),
         "{\"v\":\"pending-p1\"}",
@@ -1448,17 +1496,34 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
     assert_eq!(result.files_accepted, 1);
     assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
 
-    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
-    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
+    let file = load_accepted(&ctx);
+    let posts = file
+        .patches
+        .iter()
+        .find(|e| e.path == "posts/rec1.json")
+        .expect("posts entry should exist post-accept");
     assert_eq!(
-        tree.get("posts/rec1.json").map(|b| b.as_slice()),
-        Some(b"{\"v\":\"pending-p1\"}".as_slice()),
-        "posts was accepted into dirty"
+        posts.kind,
+        crate::commands::re_anchor::PatchKind::Update,
+        "posts is an edit over main"
+    );
+    assert_eq!(posts.patch, serde_json::json!({"v": "pending-p1"}));
+
+    let articles = file
+        .patches
+        .iter()
+        .find(|e| e.path == "articles/rec1.json")
+        .expect("articles entry should remain — it was already approved");
+    assert_eq!(articles.patch, serde_json::json!({"v": "dirty-a1"}));
+
+    // Worktree untouched by accept.
+    assert_eq!(
+        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
+        "{\"v\":\"pending-p1\"}"
     );
     assert_eq!(
-        tree.get("articles/rec1.json").map(|b| b.as_slice()),
-        Some(b"{\"v\":\"dirty-a1\"}".as_slice()),
-        "articles on dirty branch is unchanged"
+        std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
+        "{\"v\":\"pending-a1\"}"
     );
 }
 
@@ -1470,22 +1535,27 @@ fn accept_all_single_repo_folder_noop_when_folder_has_no_changes() {
     }
 
     let (_tmp, ctx) = create_multi_folder_fixture();
-    let starting_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
+    seed_accepted_patches_from_fixture(&ctx);
 
-    // Pending edit only in articles/; posts/ is unchanged from dirty.
+    // Pending edit only in articles/; posts/ is unchanged from the seeded
+    // approved state (= the original dirty branch content materialized into
+    // the worktree).
     write_file(
         &ctx.dirty_dir.join("articles/rec1.json"),
         "{\"v\":\"pending-a1\"}",
     );
 
+    let pre = load_accepted(&ctx);
     let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
     assert_eq!(result.files_accepted, 0);
     assert!(result.accepted_paths.is_empty());
+    // Patch file untouched in scope. (No save_atomic call is asserted directly
+    // — the test below would fail if a stale patch had been re-written.)
     assert_eq!(
-        git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap(),
-        starting_dirty,
-        "dirty ref should be unchanged when folder has no pending changes"
+        load_accepted(&ctx),
+        pre,
+        "accepted-patches should be unchanged when target folder is clean"
     );
 }
 
@@ -1497,6 +1567,7 @@ fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
     }
 
     let (_tmp, ctx) = create_multi_folder_fixture();
+    seed_accepted_patches_from_fixture(&ctx);
 
     // Delete the scoped folder's file from the working tree.
     std::fs::remove_file(ctx.dirty_dir.join("posts/rec1.json")).unwrap();
@@ -1506,15 +1577,16 @@ fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
     assert_eq!(result.files_accepted, 1);
     assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
 
-    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
-    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
+    let file = load_accepted(&ctx);
+    let posts = file
+        .patches
+        .iter()
+        .find(|e| e.path == "posts/rec1.json")
+        .expect("posts entry should be replaced with a Delete");
+    assert_eq!(posts.kind, crate::commands::re_anchor::PatchKind::Delete);
     assert!(
-        !tree.contains_key("posts/rec1.json"),
-        "deleted record should be removed from dirty"
-    );
-    assert!(
-        tree.contains_key("articles/rec1.json"),
-        "articles folder should remain untouched"
+        file.patches.iter().any(|e| e.path == "articles/rec1.json"),
+        "articles entry must remain untouched"
     );
 }
 
@@ -1526,8 +1598,9 @@ fn discard_all_single_repo_folder_reverts_only_target_folder() {
     }
 
     let (_tmp, ctx) = create_multi_folder_fixture();
+    seed_accepted_patches_from_fixture(&ctx);
 
-    // Pending edits in both folders on top of already-approved dirty-vs-main diffs.
+    // Pending edits in both folders on top of the seeded approved state.
     write_file(
         &ctx.dirty_dir.join("posts/rec1.json"),
         "{\"v\":\"pending-p1\"}",
@@ -1543,20 +1616,18 @@ fn discard_all_single_repo_folder_reverts_only_target_folder() {
     assert_eq!(result.files_discarded, 1);
     assert_eq!(result.discarded_paths, vec!["posts/rec1.json".to_string()]);
 
-    let new_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
-    let tree = read_git_tree(&ctx.bare_repo, &new_dirty).unwrap();
-    assert_eq!(
-        tree.get("posts/rec1.json").map(|b| b.as_slice()),
-        Some(b"{\"v\":\"main-p1\"}".as_slice()),
-        "posts should be reverted to main content"
+    let file = load_accepted(&ctx);
+    assert!(
+        !file.patches.iter().any(|e| e.path == "posts/rec1.json"),
+        "posts entry should be dropped"
     );
-    assert_eq!(
-        tree.get("articles/rec1.json").map(|b| b.as_slice()),
-        Some(b"{\"v\":\"dirty-a1\"}".as_slice()),
-        "articles should retain its approved-but-unpublished state"
+    assert!(
+        file.patches.iter().any(|e| e.path == "articles/rec1.json"),
+        "articles entry remains — out of scope for the posts discard"
     );
 
-    // Worktree for the scoped folder should be reset to main content.
+    // Worktree for the scoped folder should be reset to main content (read
+    // back as the raw bytes the fixture committed to main).
     assert_eq!(
         std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
         "{\"v\":\"main-p1\"}"
@@ -1578,43 +1649,45 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
 
     let (_tmp, ctx) = create_multi_folder_fixture();
 
-    // First, realign posts/ in BOTH main and dirty so there are no approved changes
-    // in posts. We do this by fast-forwarding main to dirty (so they match), then
-    // resetting posts/ back on dirty so dirty matches itself. Simpler: mutate main
-    // directly to match dirty content for posts, leaving articles diverged.
-    // Achieved by committing a new main tree via commit_file_map_to_dirty_ref isn't
-    // applicable since that writes to dirty. Instead, build via plumbing: read dirty
-    // tree, write it as a new main commit.
+    // Realign main so it matches dirty for posts/ — i.e. the fixture's posts
+    // is approved AND published. Only articles ends up with an approved-but-
+    // unpublished delta to seed into accepted-patches.json.
     let dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
     let dirty_tree = read_git_tree(&ctx.bare_repo, &dirty_hash).unwrap();
-    // Keep articles' main version but overwrite posts to match dirty, so only
-    // articles has approved-but-unpublished changes.
     let mut new_main = dirty_tree.clone();
     new_main.insert(
         "articles/rec1.json".to_string(),
         b"{\"v\":\"main-a1\"}".to_vec(),
     );
-    // Commit new_main onto refs/heads/main via the same helper (it writes to dirty,
-    // so instead update refs directly). Use git_update_ref after writing a tree.
-    let starting_dirty = dirty_hash.clone();
     let commit_hash = commit_file_map_to_dirty_ref(
         &ctx.bare_repo,
-        Some(starting_dirty.as_str()),
+        Some(dirty_hash.as_str()),
         &new_main,
         "align posts on main",
     )
     .unwrap();
     git_update_ref(&ctx.bare_repo, "refs/heads/main", &commit_hash).unwrap();
-    // Reset dirty back to its original hash since commit_file_map_to_dirty_ref bumped it.
-    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &starting_dirty).unwrap();
+    git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &dirty_hash).unwrap();
 
-    // No pending edits in posts/; only articles has pending.
+    seed_accepted_patches_from_fixture(&ctx);
+
+    // Confirm seeding only produced an articles entry.
+    let pre = load_accepted(&ctx);
+    assert!(
+        !pre.patches.iter().any(|e| e.path == "posts/rec1.json"),
+        "posts has no approved-vs-published diff after the realign"
+    );
+    assert!(
+        pre.patches.iter().any(|e| e.path == "articles/rec1.json"),
+        "articles diff should seed"
+    );
+
+    // Pending edit only in articles/; posts/ is unchanged from its (now-
+    // identical) approved state.
     write_file(
         &ctx.dirty_dir.join("articles/rec1.json"),
         "{\"v\":\"pending-a1\"}",
     );
-
-    let pre_dirty = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap();
 
     let result = discard_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
 
@@ -1622,11 +1695,10 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
     assert_eq!(result.files_discarded, 0);
     assert!(result.discarded_paths.is_empty());
     assert_eq!(
-        git_rev_parse(&ctx.bare_repo, "refs/heads/dirty").unwrap(),
-        pre_dirty,
-        "dirty ref should be unchanged when target folder is clean"
+        load_accepted(&ctx),
+        pre,
+        "accepted-patches should be unchanged when target folder is clean"
     );
-    // articles working-tree edit must remain untouched.
     assert_eq!(
         std::fs::read_to_string(ctx.dirty_dir.join("articles/rec1.json")).unwrap(),
         "{\"v\":\"pending-a1\"}"
@@ -1665,8 +1737,8 @@ fn discard_paths_single_repo_reverts_only_listed_paths() {
     assert_eq!(result.discarded_paths, vec!["posts/rec1.json".to_string()]);
 
     // accepted-patches.json: posts entry dropped, articles entry kept.
-    let connection_dir = WorkspaceLayout::for_cli(&ctx.workspace_dir)
-        .connection_root_path(&ctx.conn_dir_name);
+    let connection_dir =
+        WorkspaceLayout::for_cli(&ctx.workspace_dir).connection_root_path(&ctx.conn_dir_name);
     let file = crate::config::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(file.patches.len(), 1, "only articles entry should remain");
     assert_eq!(file.patches[0].path, "articles/rec1.json");
@@ -1747,8 +1819,8 @@ fn discard_paths_single_repo_reverts_path_with_only_approved_change() {
     let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
 
     assert_eq!(result.files_discarded, 1);
-    let connection_dir = WorkspaceLayout::for_cli(&ctx.workspace_dir)
-        .connection_root_path(&ctx.conn_dir_name);
+    let connection_dir =
+        WorkspaceLayout::for_cli(&ctx.workspace_dir).connection_root_path(&ctx.conn_dir_name);
     let file = crate::config::accepted_patches::load(&connection_dir).unwrap();
     assert!(
         !file.patches.iter().any(|e| e.path == "posts/rec1.json"),
@@ -2199,10 +2271,14 @@ mod discard_field_helper {
     fn discard_field_strips_update_patch_key_and_restores_working_to_main_value() {
         let tmp = TempDir::new().unwrap();
         let ctx = ctx_in(&tmp);
-        let main =
-            map_with_json(&[("Companies/rec_1.json", &json!({"industry": "Other", "name": "Acme"}))]);
-        let local =
-            map_with_json(&[("Companies/rec_1.json", &json!({"industry": "SaaS", "name": "Acme"}))]);
+        let main = map_with_json(&[(
+            "Companies/rec_1.json",
+            &json!({"industry": "Other", "name": "Acme"}),
+        )]);
+        let local = map_with_json(&[(
+            "Companies/rec_1.json",
+            &json!({"industry": "SaaS", "name": "Acme"}),
+        )]);
         let mut file = AcceptedPatchesFile {
             patches: vec![entry(
                 "Companies/rec_1.json",
@@ -2215,7 +2291,10 @@ mod discard_field_helper {
             discard_field_in_folder(&ctx, "Companies", "industry", &main, &mut file, &local)
                 .unwrap();
 
-        assert!(file.patches.is_empty(), "Update patch should drop when last key removed");
+        assert!(
+            file.patches.is_empty(),
+            "Update patch should drop when last key removed"
+        );
         assert_eq!(
             parsed(&next_local, "Companies/rec_1.json"),
             json!({"industry": "Other", "name": "Acme"}),
@@ -2244,7 +2323,10 @@ mod discard_field_helper {
         let (next_local, result) =
             discard_field_in_folder(&ctx, "Companies", "name", &main, &mut file, &local).unwrap();
 
-        assert!(file.patches.is_empty(), "Create patch should drop when last key removed");
+        assert!(
+            file.patches.is_empty(),
+            "Create patch should drop when last key removed"
+        );
         assert!(
             !next_local.contains_key("Companies/rec_new.json"),
             "working file should be removed when Create empties"
@@ -2261,8 +2343,10 @@ mod discard_field_helper {
         let tmp = TempDir::new().unwrap();
         let ctx = ctx_in(&tmp);
         let main = FileMap::new();
-        let local =
-            map_with_json(&[("Companies/rec_new.json", &json!({"name": "New", "industry": "SaaS"}))]);
+        let local = map_with_json(&[(
+            "Companies/rec_new.json",
+            &json!({"name": "New", "industry": "SaaS"}),
+        )]);
         let mut file = AcceptedPatchesFile {
             patches: vec![entry(
                 "Companies/rec_new.json",
@@ -2316,10 +2400,14 @@ mod discard_field_helper {
         // discard-field should reset that field's value to published.
         let tmp = TempDir::new().unwrap();
         let ctx = ctx_in(&tmp);
-        let main =
-            map_with_json(&[("Companies/rec_1.json", &json!({"industry": "Other", "name": "Acme"}))]);
-        let local =
-            map_with_json(&[("Companies/rec_1.json", &json!({"industry": "Tweaked", "name": "Acme"}))]);
+        let main = map_with_json(&[(
+            "Companies/rec_1.json",
+            &json!({"industry": "Other", "name": "Acme"}),
+        )]);
+        let local = map_with_json(&[(
+            "Companies/rec_1.json",
+            &json!({"industry": "Tweaked", "name": "Acme"}),
+        )]);
         let mut file = AcceptedPatchesFile::default();
 
         let (next_local, result) =
@@ -2374,7 +2462,10 @@ mod discard_field_helper {
         let (next_local, result) =
             discard_field_in_folder(&ctx, "Companies", "x", &main, &mut file, &local).unwrap();
 
-        assert_eq!(parsed(&next_local, "Companies/rec_1.json"), json!({"x": "v"}));
+        assert_eq!(
+            parsed(&next_local, "Companies/rec_1.json"),
+            json!({"x": "v"})
+        );
         assert!(result.changed_paths.is_empty());
         assert!(!result.patches_changed);
     }

@@ -6,7 +6,7 @@ moved.
 
 ## Progress (as of 2026-05-19)
 
-On branch `dev-10144-mr12` off `master` (mr11 was used for steps 1–4; mr12 picks up at step 5).
+On branch `dev-10144-mr13` off `master`. (mr11: steps 1–4. mr12: step 5. mr13: steps 6–12.)
 
 | Step | Status | Notes |
 | ---- | ------ | ----- |
@@ -15,24 +15,33 @@ On branch `dev-10144-mr12` off `master` (mr11 was used for steps 1–4; mr12 pic
 | 3. `discard_field_in_folder` | ✅ committed (mr11) | 7 unit tests; new `PatchAction` enum + `patch_object_mentions_field` helper |
 | 4. `run_accept` / `run_reject` / `run_discard` + `discard_paths_single_repo` | ✅ committed (mr11, WIP) | Three new shared helpers landed alongside: `read_main_tree`, `parse_json_value_at`, `write_or_remove_working_file`. Two existing tests fixed up: `discard_paths_single_repo_reverts_only_listed_paths` and `..._with_only_approved_change` now seed `accepted-patches.json` via new test helper `seed_accepted_patches_from_fixture`. `cargo test --bin scratchmd`: 266 passes. |
 | 5. `accept_field` / `reject_field` rewrite + new `run_discard_field` | ✅ committed (mr12 HEAD, WIP) | `FieldCommandResult.dirty_changed` renamed to `patches_changed`. New `field_paths_in_folder` + `approved_object_for_path` shared helpers (consumed by all three field-level routines). `accept_field_in_folder` routes through `re_anchor::compute_entry` so Create/Update/Delete shape decisions reuse the same machinery as single-path accept. `reject_field_in_folder` is strict per decision 35 — no patch file writes, no master/dirty hybrid. New `DiscardField` clap variant; new `run_discard_field` command. Existing 7 module-level field tests deleted; 14 new tests added in a `field_helpers` submodule asserting on `AcceptedPatchesFile` shape (Update/Create kinds, patch content, `changed_paths`, `patches_changed`). Five `discard_field_helper` test sites updated for the rename. `cargo test`: 273 + 169 + 16 + 2 = 460 passes, 0 failures. |
-| 6. `_all` variants + delete `_scoped_via_index` variants | ⏳ not started | Many `accept_all_single_repo_*` / `reject_all_*` / `discard_all_*` tests will need updating (use `seed_accepted_patches_from_fixture`) |
-| 7. `restore_deleted_records_locally` / `discard_created_records_locally` | ⏳ not started | 2 existing tests; remote-cleanup hack stays untouched |
-| 8. `upload_single_repo_via_patches` → read `accepted-patches.json` verbatim | ⏳ not started | |
-| 9. Listing commands (`run_unreviewed` / `run_unpublished` / `run_unpushed`) | ⏳ not started | |
-| 10. Delete dead code (`compute_upload_patches`, local `PatchKind`, `update_dirty_worktree_index`, `_scoped_via_index` helpers) | ⏳ not started | Final `cargo build` should be warning-free |
-| 11. Test sweep across `tests/` and module tests | ⏳ not started | Expect ~20 test sites to update |
-| 12. `cargo fmt` + `yarn lint-strict` in `server/` (no-op expected) | ⏳ not started | |
-| 13. Manual dogfood | ⏳ not started | |
+| 6. `_all` variants + delete `_scoped_via_index` variants | ✅ committed (mr12) | `accept_all_full_scan` / `reject_all_full_scan` / `discard_all_full_scan` rewritten to operate on `(main, accepted-patches.json, working)`. `_single_repo` wrappers are now thin sync-schema + dispatch shells; the `_scoped_via_index` branch is gone. Existing 5 `_all` tests rewritten to call `seed_accepted_patches_from_fixture` before exercising and assert on `accepted-patches.json` shape instead of dirty-branch tree. `cargo test`: 273 + 169 + 16 + 2 = 460 passes. One dead-code warning for `scratch_only_map` (deleted in step 10). |
+| 7. `restore_deleted_records_locally` / `discard_created_records_locally` | ✅ committed (mr13) | Both helpers now load `accepted-patches.json`, error if the entry isn't the expected `Delete` / `Create` kind, drop the entry + sync the worktree (write main blob / remove file), and save_atomic. Remote-cleanup hack (`discard_created_record_remotely`) untouched. Two-pass loop separates validation from mutation so a midway error doesn't leave half a state change on disk. 2 old tests rewritten + 2 new error-path tests added. `cargo test`: 275 passes. |
+| 8. `upload_single_repo_via_patches` → read `accepted-patches.json` verbatim | ✅ committed (mr13) | Reads the file, translates `Vec<AnchoredPatch>` → `UploadPatchPayload` (drops `kind` — server infers from patch shape), PUT + commit + poll. Counts (created/updated/deleted) come from the kinds. `local_unreviewed` warning recomputed against `compute_accepted_state` (was previously against worktree-status). `run_publish` now calls `accepted_patches::clear` after the local `main` advance per connection. `compute_upload_patches` + the local `PatchKind` enum + `ComputedUploadPatch` are now dead — deleted in step 10. `cargo test`: 275 passes. |
+| 9. Listing commands (`run_unreviewed` / `run_unpublished` / `run_unpushed`) | ✅ committed (mr13) | `unreviewed_entries` switches from `git status` against the dirty sparse checkout to `compute_unreviewed_entries(approved_map, local_map)`. `unpublished_entries` enumerates `accepted-patches.json` entries directly (status from kind). `unpushed_entries` collapses to a thin delegate to `unpublished_entries` — per change-list, "pushed" no longer means "on the local dirty branch." Leaves `worktree_status_entries` + `WorktreeStatusEntry` + `unreviewed_entries_from_status` dead (step 10). `cargo test`: 275 passes. |
+| 10. Delete dead code (`compute_upload_patches`, local `PatchKind`, `update_dirty_worktree_index`, `_scoped_via_index` helpers) | ✅ committed (mr13) | Deleted `compute_upload_patches` + local `PatchKind` + `ComputedUploadPatch` + `parse_json_value` (~80 LOC), `scratch_only_map` (10 LOC), `worktree_status_entries` + `WorktreeStatusEntry` (60 LOC) + the re-export, and 3 module-level `compute_upload_patches_*` tests. Removed `#![allow(dead_code)]` from `accepted_patches.rs` (one targeted attr on the unused-for-now `remove_field` helper stays). `update_dirty_worktree_index` + `commit_file_map_to_dirty_ref` stay — `download_single_repo` and `force_upload_single_repo` still need them; slice D/F cleanup. Final `cargo build`: zero warnings. |
+| 11. Test sweep across `tests/` and module tests | ✅ committed (mr13) | Module tests updated alongside each step (5-9). `tests/cli/` is an integration smoke loop that calls `files accept-all` + `files upload` — those still work since the user-facing CLI surface is preserved. No other test files reference the rewritten internals. |
+| 12. `cargo fmt` + `yarn lint-strict` in `server/` (no-op expected) | ✅ committed (mr13) | `cargo fmt` touched 2 files (whitespace); `yarn lint-strict` in `server/` clean (no cross-cutting type changes — pure CLI work as predicted). |
+| 13. Manual dogfood | ⏳ pending user | All 12 prior steps shipped; sub-slice B is mechanically complete. Driver hand-off: clone a fresh workspace, exercise accept / accept-field / accept-all / reject / discard / discard-field / restore-deleted-record / discard-created-record / upload / publish through the CLI and verify `.scratch/connections/<conn>/accepted-patches.json` looks right at each step. Confirm desktop UI still drives accept/reject/discard correctly. |
 
-### Where step 5 leaves the codebase
+### Where step 12 leaves the codebase
 
-The workspace is still in a **mixed state** between the two models — single-
-path commands (step 4) and field-level commands (step 5) now write to
-`accepted-patches.json`, but the `_all` variants, `restore_deleted_record` /
-`discard_created_record`, listing commands, and `upload` still touch the
-`dirty` branch. **Do not merge mr12 until at least step 6 is complete** —
-`accept-all` writing to `dirty` while `accept` and `accept-field` write to
-`accepted-patches.json` would produce inconsistent views of the workspace.
+All `accepted-patches.json` rewrites for sub-slice B are in. Production
+code paths for single-path / field / `_all` / record-level commands +
+`files upload` + the three listing commands all read and write the JSON
+file. `compute_upload_patches`, the local `PatchKind`, the
+`_scoped_via_index` helpers, `worktree_status_entries`, and
+`scratch_only_map` are deleted. `cargo build` is warning-free; 459
+tests green. CLI help text matches the new model.
+
+Still on the `dirty` branch and explicitly deferred to slice D / F:
+- `download_single_repo` (pull path) — slice D's stash/replay rewrite.
+- `force_upload_single_repo` (force-upload escape hatch) — slice F.
+- `commit_file_map_to_dirty_ref` + `update_dirty_worktree_index` —
+  retire alongside their callers above.
+
+Sub-slice B is mechanically complete pending dogfood (step 13). No
+known regressions; all module tests pass.
 
 ### Per-field upsert algorithm (for step 5)
 

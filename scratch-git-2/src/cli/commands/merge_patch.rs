@@ -19,9 +19,8 @@ use serde_json::Value as JsonValue;
 ///     and for each key in `patch`: `null` deletes, an object value recurses,
 ///     anything else replaces.
 ///
-/// Not yet called from the binary — wired in by Phase 4's pull rewrite
-/// (used by `re_anchor` to reconstruct user-intended content).
-#[allow(dead_code)]
+/// Used by `re_anchor` to reconstruct user-intended content and by
+/// `apply_patch_entry_to_blob` to synthesize the approved blob.
 pub fn apply(target: &JsonValue, patch: &JsonValue) -> JsonValue {
     let patch_obj = match patch {
         JsonValue::Object(o) => o,

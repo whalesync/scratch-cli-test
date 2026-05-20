@@ -13,8 +13,6 @@
 //! the same `Vec<AnchoredPatch>` shape as `working-patches.json` and the
 //! upload-patch DTO. All mutating callers must hold the workspace `.scratch/lock`.
 
-#![allow(dead_code)]
-
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -139,6 +137,11 @@ pub fn remove_entry(file: &mut AcceptedPatchesFile, path: &str) {
 /// object is empty, removes the entry entirely. No-op on Create / Delete
 /// entries (the field-level concept doesn't apply — restoring a single field
 /// of a `Create` requires the caller to handle worktree restoration directly).
+///
+/// `discard_field_in_folder` mutates `entry.patch` inline rather than going
+/// through this helper (it needs richer Create handling than the no-op
+/// here). Slice D's pull rewrite may use this against `working-patches.json`.
+#[allow(dead_code)]
 pub fn remove_field(file: &mut AcceptedPatchesFile, path: &str, field: &str) {
     let mut drop_entry_for_path: Option<String> = None;
     if let Some(entry) = file.patches.iter_mut().find(|e| e.path == path) {

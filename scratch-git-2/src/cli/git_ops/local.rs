@@ -547,68 +547,6 @@ pub(crate) fn worktree_reset_mixed(worktree_path: &Path, hash: &str) -> anyhow::
     Ok(())
 }
 
-pub(crate) struct WorktreeStatusEntry {
-    pub(crate) x: u8,
-    pub(crate) y: u8,
-    pub(crate) path: String,
-}
-
-/// Returns git status entries for the worktree using `--porcelain=v1 -z`.
-/// Returns an empty list if `worktree_path` is not a git worktree.
-pub(crate) fn worktree_status_entries(
-    worktree_path: &Path,
-) -> anyhow::Result<Vec<WorktreeStatusEntry>> {
-    if !worktree_path.join(".git").exists() {
-        return Ok(vec![]);
-    }
-
-    let output = Command::new("git")
-        .args([
-            "-C",
-            worktree_path.to_str().unwrap_or_default(),
-            "status",
-            "--porcelain=v1",
-            "-z",
-        ])
-        .output()
-        .context("failed to spawn git status")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git status failed: {}", stderr.trim());
-    }
-
-    let mut entries = Vec::new();
-    let bytes = &output.stdout;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        if i + 3 > bytes.len() {
-            break;
-        }
-        let x = bytes[i];
-        let y = bytes[i + 1];
-        // bytes[i+2] is a space separator
-        let path_start = i + 3;
-        let Some(nul_offset) = bytes[path_start..].iter().position(|&b| b == 0) else {
-            break;
-        };
-        let path =
-            String::from_utf8_lossy(&bytes[path_start..path_start + nul_offset]).into_owned();
-        i = path_start + nul_offset + 1;
-
-        // Renames / copies have a second NUL-terminated original path — consume it
-        if x == b'R' || x == b'C' || y == b'R' || y == b'C' {
-            if let Some(nul2) = bytes[i..].iter().position(|&b| b == 0) {
-                i += nul2 + 1;
-            }
-        }
-
-        entries.push(WorktreeStatusEntry { x, y, path });
-    }
-
-    Ok(entries)
-}
-
 fn normalize_crlf(mut bytes: Vec<u8>) -> Vec<u8> {
     if bytes.windows(2).any(|window| window == b"\r\n") {
         let mut normalized = Vec::with_capacity(bytes.len());
