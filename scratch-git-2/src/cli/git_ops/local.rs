@@ -9,6 +9,7 @@ use anyhow::Context;
 // resolving refs, reading trees, materializing files, and writing commits.
 use super::{open_bare_repo, FileMap};
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn rev_parse_to_string(bare_repo: &Path, rev: &str) -> anyhow::Result<String> {
     let repo = open_bare_repo(bare_repo)?;
     let id = repo.rev_parse_single(rev).with_context(|| {
@@ -524,25 +525,6 @@ pub(crate) fn worktree_reset_hard(worktree_path: &Path, hash: &str) -> anyhow::R
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git reset --hard failed: {}", stderr.trim());
-    }
-    Ok(())
-}
-
-/// `git reset --mixed <hash>` in a worktree (updates HEAD and index; leaves working tree intact).
-pub(crate) fn worktree_reset_mixed(worktree_path: &Path, hash: &str) -> anyhow::Result<()> {
-    let output = Command::new("git")
-        .args([
-            "-C",
-            worktree_path.to_str().unwrap_or_default(),
-            "reset",
-            "--mixed",
-            hash,
-        ])
-        .output()
-        .context("failed to spawn git reset --mixed")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git reset --mixed failed: {}", stderr.trim());
     }
     Ok(())
 }

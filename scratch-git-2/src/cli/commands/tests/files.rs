@@ -238,78 +238,6 @@ fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
 }
 
 #[test]
-fn prepare_upload_merge_keeps_schema_and_publish_plan_files() {
-    let base = HashMap::from([("posts/rec.json".to_string(), b"{\"v\":1}".to_vec())]);
-    let remote = base.clone();
-    let local = HashMap::from([
-        ("posts/rec.json".to_string(), b"{\"v\":2}".to_vec()),
-        (
-            ".scratch/posts/schema.json".to_string(),
-            b"{\"schema\":{}}".to_vec(),
-        ),
-        (
-            ".scratch/posts/publish-plan-123/edit/rec.json".to_string(),
-            b"{\"content\":{}}".to_vec(),
-        ),
-        (
-            ".scratch/.publish-plans/123/plan.json".to_string(),
-            b"{\"summary\":{}}".to_vec(),
-        ),
-    ]);
-
-    let (merged, _) = prepare_upload_merge(&base, &local, &remote);
-
-    assert!(merged.contains_key(".scratch/posts/schema.json"));
-    assert!(merged.contains_key(".scratch/posts/publish-plan-123/edit/rec.json"));
-    assert!(merged.contains_key(".scratch/.publish-plans/123/plan.json"));
-}
-
-#[test]
-fn prepare_upload_merge_prefers_remote_for_same_path_creates_without_base() {
-    let base = HashMap::new();
-    let local = HashMap::from([(
-        "posts/new.json".to_string(),
-        b"{\n  \"name\": \"local create\"\n}\n".to_vec(),
-    )]);
-    let remote = HashMap::from([(
-        "posts/new.json".to_string(),
-        b"{\n  \"id\": 2,\n  \"name\": \"local create\",\n  \"lastUpdated\": \"2026-04-17T13:50:04.777Z\"\n}\n".to_vec(),
-    )]);
-
-    let (merged, messages) = prepare_upload_merge(&base, &local, &remote);
-
-    assert!(messages.is_empty());
-    assert_eq!(
-        String::from_utf8(merged["posts/new.json"].clone()).unwrap(),
-        "{\n  \"id\": 2,\n  \"name\": \"local create\",\n  \"lastUpdated\": \"2026-04-17T13:50:04.777Z\"\n}\n"
-    );
-}
-
-#[test]
-fn prepare_upload_merge_keeps_remote_last_updated_after_adjacent_local_change() {
-    let base = HashMap::from([(
-        "posts/post-1.json".to_string(),
-        b"{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": 1,\n  \"lastUpdated\": \"2026-04-20T12:13:07.502Z\"\n}".to_vec(),
-    )]);
-    let local = HashMap::from([(
-        "posts/post-1.json".to_string(),
-        b"{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:13:07.502Z\"\n}".to_vec(),
-    )]);
-    let remote = HashMap::from([(
-        "posts/post-1.json".to_string(),
-        b"{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:23:14.551Z\"\n}".to_vec(),
-    )]);
-
-    let (merged, messages) = prepare_upload_merge(&base, &local, &remote);
-
-    assert!(messages.is_empty());
-    assert_eq!(
-        String::from_utf8(merged["posts/post-1.json"].clone()).unwrap(),
-        "{\n  \"id\": 1,\n  \"name\": \"Post 1\",\n  \"ts\": \"2026-04-20T12:13:07.502Z\",\n  \"authorId\": null,\n  \"lastUpdated\": \"2026-04-20T12:23:14.551Z\"\n}\n"
-    );
-}
-
-#[test]
 fn sync_schema_files_from_master_restores_missing_schema() {
     let tmp = TempDir::new().unwrap();
     let ctx = ConnectionContext {
@@ -640,88 +568,6 @@ fn git_push_force_overwrites_diverged_remote_dirty_branch() {
 
     let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
     assert_eq!(remote_dirty, local_commit);
-}
-
-#[test]
-fn download_single_repo_uses_real_merge_base_and_rebases_working_tree() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let fixture = create_bare_fixture();
-    let tmp = TempDir::new().unwrap();
-    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
-
-    write_file(
-        &fixture.source_dir.join("posts/rec1.json"),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"draft\",\n  \"note\": \"base\"\n}\n",
-    );
-    commit_all(&fixture.source_dir, "rich base");
-    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
-
-    crate::git_ops::fetch_origin(&fixture.local_bare, "test-token").unwrap();
-    let rich_base_hash = git_rev_parse(&fixture.local_bare, "refs/remotes/origin/dirty").unwrap();
-    git_update_ref(&fixture.local_bare, "refs/heads/dirty", &rich_base_hash).unwrap();
-
-    write_file(
-        &fixture.source_dir.join("posts/rec1.json"),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"base\",\n  \"status\": \"published\",\n  \"note\": \"base\"\n}\n",
-    );
-    commit_all(&fixture.source_dir, "remote dirty update");
-    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
-    let latest_remote_hash = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
-
-    let local_parent = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
-    let mut local_files = read_git_tree(&fixture.local_bare, &local_parent).unwrap();
-    local_files.insert(
-        "posts/rec1.json".to_string(),
-        b"{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"draft\",\n  \"note\": \"base\"\n}\n".to_vec(),
-    );
-    commit_file_map_to_dirty_ref(
-        &fixture.local_bare,
-        Some(local_parent.as_str()),
-        &local_files,
-        "local approved update",
-    )
-    .unwrap();
-
-    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.dirty_dir, "refs/heads/dirty")
-        .unwrap();
-    write_file(
-        &ctx.dirty_dir.join("posts/rec1.json"),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"draft\",\n  \"note\": \"local note\"\n}\n",
-    );
-
-    let result = download_single_repo(&ctx, "test-token", &[]).unwrap();
-    assert_eq!(result.status, "downloaded");
-
-    let final_local_dirty = git_rev_parse(&fixture.local_bare, "refs/heads/dirty").unwrap();
-    let merge_base = crate::git_ops::merge_base_to_string(
-        &fixture.local_bare,
-        "refs/heads/dirty",
-        "refs/remotes/origin/dirty",
-    )
-    .unwrap();
-    assert_eq!(merge_base, Some(latest_remote_hash));
-
-    let final_dirty_map = read_git_tree(&fixture.local_bare, &final_local_dirty).unwrap();
-    assert_eq!(
-        String::from_utf8(final_dirty_map["posts/rec1.json"].clone()).unwrap(),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"published\",\n  \"note\": \"base\"\n}\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(ctx.dirty_dir.join("posts/rec1.json")).unwrap(),
-        "{\n  \"id\": \"rec1\",\n  \"name\": \"approved\",\n  \"status\": \"published\",\n  \"note\": \"local note\"\n}\n"
-    );
-    // The path that actually moved on the dirty side should surface in
-    // changed_paths so the caller can drive a targeted folder_index reindex
-    // instead of a workspace-wide sweep.
-    assert_eq!(
-        result.changed_paths,
-        vec!["posts/rec1.json".to_string()],
-        "download should report the modified data path in changed_paths"
-    );
 }
 
 #[test]
@@ -2046,6 +1892,206 @@ fn reconcile_preserves_ancestors_of_wanted_folder() {
     assert!(root.join("A").is_dir());
     assert!(root.join("A/B").is_dir());
     assert!(root.join("A/B/C").is_dir());
+}
+
+// ---------------------------------------------------------------------------
+// Slice D — `download_single_repo` rewrite (refuse-or-replay model).
+// Pre-Slice-F the working tree happens to live in `ctx.dirty_dir`, but D
+// no longer uses the dirty branch for any of its semantics: re-anchor and
+// replay run against `refs/heads/main` ↔ `refs/remotes/origin/main` and the
+// per-connection `accepted-patches.json` file.
+// ---------------------------------------------------------------------------
+
+fn seed_main_with_record(
+    fixture: &BareFixture,
+    ctx: &ConnectionContext,
+    rel_path: &str,
+    content: &str,
+) -> String {
+    run_git(&fixture.source_dir, &["checkout", "main"]);
+    write_file(&fixture.source_dir.join(rel_path), content);
+    commit_all(&fixture.source_dir, &format!("seed {rel_path}"));
+    run_git(&fixture.source_dir, &["push", "origin", "main:main"]);
+    crate::git_ops::fetch_origin(&ctx.bare_repo, "test-token").unwrap();
+    let new_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
+    git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main).unwrap();
+    new_main
+}
+
+fn advance_remote_main(fixture: &BareFixture, rel_path: &str, content: &str, msg: &str) {
+    run_git(&fixture.source_dir, &["checkout", "main"]);
+    write_file(&fixture.source_dir.join(rel_path), content);
+    commit_all(&fixture.source_dir, msg);
+    run_git(&fixture.source_dir, &["push", "origin", "main:main"]);
+}
+
+#[test]
+fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // Seed: main has Acme with industry=Tech.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    // User accepted industry → SaaS. Working file holds the approved value
+    // (`apply(main, patch)`); the accept-time path always leaves
+    // local == approved.
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::commands::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+        }],
+    };
+    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    write_file(
+        &ctx.dirty_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    // Server independently renames the record (touches `name`, not `industry`).
+    advance_remote_main(
+        &fixture,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme Inc\",\n  \"industry\": \"Tech\"\n}\n",
+        "server renames Acme",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert_eq!(result.conflicts_auto_resolved, 0);
+    let local_main = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
+    let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
+    assert_eq!(local_main, origin_main, "local main must advance to origin");
+
+    // Patch preserved verbatim — server didn't touch industry.
+    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(reloaded.patches.len(), 1);
+    assert_eq!(
+        reloaded.patches[0].patch,
+        serde_json::json!({"industry": "SaaS"})
+    );
+
+    // Working file = apply(new_main_blob, patch): server's name rename
+    // surfaces; the user's industry edit replays on top.
+    let working: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.dirty_dir.join("posts/rec_acme.json")).unwrap())
+            .unwrap();
+    assert_eq!(working["name"], "Acme Inc");
+    assert_eq!(working["industry"], "SaaS");
+
+    // No conflict log written — disjoint fields.
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+#[test]
+fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::commands::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::commands::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+        }],
+    };
+    crate::config::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    write_file(
+        &ctx.dirty_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    // Server changes the SAME field to a different value.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Marketing\"\n}\n",
+        "server changes industry",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert_eq!(result.conflicts_auto_resolved, 1);
+
+    // User wins: patch unchanged.
+    let reloaded = crate::config::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(
+        reloaded.patches[0].patch,
+        serde_json::json!({"industry": "SaaS"})
+    );
+    let working: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.dirty_dir.join("posts/rec_acme.json")).unwrap())
+            .unwrap();
+    assert_eq!(working["industry"], "SaaS");
+
+    // Conflict log written with the specific field name.
+    let log_path = workspace_dir.join(".scratch/conflicts.log");
+    assert!(log_path.exists());
+    let log_content = std::fs::read_to_string(&log_path).unwrap();
+    let entry: crate::config::conflicts_log::ConflictEntry =
+        serde_json::from_str(log_content.trim_end()).unwrap();
+    assert_eq!(entry.path, "posts/rec_acme.json");
+    assert_eq!(entry.connector_account_id, ctx.connection_id);
+    assert_eq!(entry.conflicting_keys, vec!["industry"]);
+}
+
+#[test]
+fn download_returns_up_to_date_when_server_main_unchanged() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec.json",
+        "{\n  \"name\": \"X\"\n}\n",
+    );
+
+    // No server-side advance — should short-circuit to up_to_date with no
+    // ref bump, no conflict log, no patch-file mutation.
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    assert_eq!(result.status, "up_to_date");
+    assert_eq!(result.files_created, 0);
+    assert_eq!(result.files_updated, 0);
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
 }
 
 mod accepted_state_helpers {

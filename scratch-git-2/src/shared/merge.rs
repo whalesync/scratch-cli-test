@@ -1,3 +1,10 @@
+// scratchmd's three-way merge path was removed in Slice D
+// (docs/plans/2026-05-17-simplify-local-workspace-architecture.md). The
+// service binary still uses `merge_file_contents` for its rebase machinery,
+// so the module stays — but the scratchmd build sees the whole chain as
+// dead. `#![allow(dead_code)]` keeps the warnings off without per-fn noise.
+#![allow(dead_code)]
+
 /// 3-way merge of file contents with conflict resolution using "ours" strategy.
 /// Returns the merged string, or an error message on failure.
 pub fn merge_file_contents(base: &str, ours: &str, theirs: &str) -> Result<String, String> {

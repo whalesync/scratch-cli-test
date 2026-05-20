@@ -26,7 +26,7 @@ pub enum OnDeleteAction {
 
 #[derive(Subcommand)]
 pub enum FilesCommands {
-    /// Download remote changes and three-way merge with local edits
+    /// Download remote changes — re-anchors accepted patches against the new server `main` and replays them onto the worktree. Refuses with a structured error if any unreviewed working-tree edits exist.
     Download {
         /// What to do when a connection was removed from the server
         #[arg(long, value_enum, default_value = "prompt")]
@@ -394,6 +394,12 @@ async fn run_download(
         resolve_workspace_and_connections(cwd, server_url)?;
     let token = get_token(&workspace_server_url)?;
 
+    // Workspace-wide advisory lock for the whole pull: sync, pre-flight,
+    // fetch, re-anchor, materialize, ref bump. Matches run_upload's
+    // discipline; replaces the implicit serialization the three-worktree
+    // model used to give us.
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     // Workspace sync phase: detect structural drift and reconcile
     let sync_result = sync_workspace_structure(
         &workspace_dir,
@@ -427,6 +433,23 @@ async fn run_download(
     )
     .await;
 
+    // Pre-flight: refuse the pull if any connection has unreviewed
+    // working-tree edits. All-or-nothing — partial pulls leave the workspace
+    // in a confusing mixed state. No fetch happens; the user must
+    // `accept-all` or `discard-all` before retrying. See [Slice D in
+    // docs/plans/2026-05-17-simplify-local-workspace-architecture.md].
+    let mut blocked: Vec<UnreviewedEntry> = Vec::new();
+    for ctx in &contexts {
+        blocked.extend(detect_unreviewed_for_pull(ctx)?);
+    }
+    if !blocked.is_empty() {
+        print_blocked_unreviewed_result(&blocked, started.elapsed().as_millis(), json)?;
+        anyhow::bail!(
+            "{} unreviewed record(s) — run `scratchmd files accept-all` or `discard-all`, then retry.",
+            blocked.len()
+        );
+    }
+
     let mut results = Vec::new();
     let mut all_changed_workspace_paths: Vec<String> = Vec::new();
     for ctx in &contexts {
@@ -435,7 +458,7 @@ async fn run_download(
         }
         let empty = Vec::new();
         let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
-        let mut download_result = download_single_repo(ctx, &token, folders)?;
+        let mut download_result = download_single_repo(ctx, &workspace_dir, &token, folders)?;
         // `update_master_worktree` is best-effort — failures here shouldn't
         // bubble up because the dirty-side download already succeeded. Fall
         // back to "no master change" on error.
@@ -2055,10 +2078,15 @@ pub async fn download_workbook(
     let folders_by_conn =
         fetch_folders_by_connection(base_url, &workspace_marker, workbook_id).await;
 
+    // Programmatic refresh — called by linked CLI commands after a server
+    // mutation. Skips the workspace-lock + pre-flight unreviewed check that
+    // user-initiated `scratchmd files download` performs; unreviewed edits
+    // in the worktree would be silently overwritten here. Acceptable because
+    // linked CRUD users aren't typically mid-edit on records.
     for ctx in &contexts {
         let empty = Vec::new();
         let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
-        download_single_repo(ctx, token, folders)?;
+        download_single_repo(ctx, &workspace_dir, token, folders)?;
         if update_master_worktree(ctx, token).is_ok() {
             let _ = sync_schema_files_from_master(ctx);
         }
@@ -2404,8 +2432,61 @@ fn detect_selected_connection(
         .map(|connection| connection.dir_name.clone())
 }
 
-fn update_dirty_worktree_index(ctx: &ConnectionContext, hash: &str) -> anyhow::Result<()> {
-    crate::git_ops::worktree_reset_mixed(&ctx.dirty_dir, hash)
+/// Compute the unreviewed working-tree edits for a single connection. The
+/// "approved" snapshot is `apply(refs/heads/main, accepted-patches.json)`.
+/// Any file whose working content differs from approved counts as
+/// unreviewed and blocks the pull at the workspace level.
+fn detect_unreviewed_for_pull(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    let connection_dir = accepted_patches_dir(ctx);
+    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let main_map = read_main_tree(&ctx.bare_repo)?;
+    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+    let local_map = read_materialized_repo(ctx)?;
+    Ok(compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &approved_map,
+        &local_map,
+    ))
+}
+
+/// Print the structured `blocked_unreviewed` result. Caller bails with
+/// non-zero immediately after, so the desktop can pattern-match on the JSON
+/// payload while shell users see both the human output and an Error: line.
+fn print_blocked_unreviewed_result(
+    blocked: &[UnreviewedEntry],
+    elapsed_ms: u128,
+    json: bool,
+) -> anyhow::Result<()> {
+    let paths: Vec<String> = blocked
+        .iter()
+        .map(|e| format!("{}/{}", e.connection_name, e.path))
+        .collect();
+    if json {
+        let output = serde_json::json!({
+            "status": "blocked_unreviewed",
+            "unreviewedCount": blocked.len(),
+            "paths": paths,
+            "elapsedMs": elapsed_ms,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    let elapsed = format_elapsed(elapsed_ms);
+    println!(
+        "Cannot refresh — {} unreviewed record(s) ({}):",
+        blocked.len(),
+        elapsed
+    );
+    let preview_limit = paths.len().min(10);
+    for path in &paths[..preview_limit] {
+        println!("  {path}");
+    }
+    if paths.len() > preview_limit {
+        println!("  ... and {} more", paths.len() - preview_limit);
+    }
+    println!();
+    println!("Run `scratchmd files accept-all` or `scratchmd files discard-all`, then retry.");
+    Ok(())
 }
 
 /// Load the `refs/heads/main` tree as a `FileMap`. Empty map if the ref
@@ -2467,131 +2548,121 @@ fn write_or_remove_working_file(
     Ok(())
 }
 
+/// Pull the latest server state for one connection.
+///
+/// Pre-fetch invariant: the caller has already verified the connection has no
+/// unreviewed working-tree edits (see [`run_download`]'s pre-flight pass).
+/// Without that, replaying the new `main` blobs would silently overwrite
+/// in-flight user typing.
+///
+/// Flow:
+///   1. Read the pre-fetch `refs/heads/main` tree + `accepted-patches.json`
+///      (the user's accepted-pending-publish edits, anchored against old main).
+///   2. Fetch origin and resolve the new `main` hash. No-op if unchanged.
+///   3. Re-anchor each accepted patch from (old_main_blob → new_main_blob) via
+///      `re_anchor::re_anchor_patches`. Same-field collisions log to
+///      `.scratch/conflicts.log` (user wins).
+///   4. Compute the new approved map = `apply(new_main, re_anchored_patches)`
+///      and materialize it to the worktree, replacing the three-way merge.
+///   5. Persist the re-anchored patch file BEFORE advancing the local ref so
+///      a mid-flight crash leaves us anchored against the still-current old
+///      main and the next run converges (idempotent).
 fn download_single_repo(
     ctx: &ConnectionContext,
+    workspace_dir: &Path,
     token: &str,
     data_folders: &[DataFolder],
 ) -> anyhow::Result<DownloadResult> {
+    let connection_dir = accepted_patches_dir(ctx);
+    let accepted_file = crate::config::accepted_patches::load(&connection_dir)?;
+    let main_map_old = read_main_tree(&ctx.bare_repo)?;
+    let local_map = read_materialized_repo(ctx)?;
+
     crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
 
-    let local_dirty_hash = git_rev_parse(&ctx.bare_repo, "refs/heads/dirty")?;
-    let remote_hash = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-
-    if local_dirty_hash == remote_hash {
+    let Some(new_main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
+    else {
+        // Fresh repo with nothing published yet — nothing to pull.
+        return Ok(DownloadResult {
+            status: "up_to_date".to_string(),
+            ..Default::default()
+        });
+    };
+    let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    if old_main_hash.as_deref() == Some(new_main_hash.as_str()) {
         return Ok(DownloadResult {
             status: "up_to_date".to_string(),
             ..Default::default()
         });
     }
 
-    let local_dirty_map = read_git_tree(&ctx.bare_repo, &local_dirty_hash)?;
-    let remote_map = read_git_tree(&ctx.bare_repo, &remote_hash)?;
-    let merge_base_hash = crate::git_ops::merge_base_to_string(
-        &ctx.bare_repo,
-        "refs/heads/dirty",
-        "refs/remotes/origin/dirty",
-    )?
-    .ok_or_else(|| anyhow::anyhow!("No merge base found between local dirty and origin/dirty"))?;
-    let merge_base_map = read_git_tree(&ctx.bare_repo, &merge_base_hash)?;
-    let (merged_dirty_map, mut messages) =
-        prepare_upload_merge(&merge_base_map, &local_dirty_map, &remote_map);
+    let main_map_new = read_git_tree(&ctx.bare_repo, &new_main_hash)?;
 
-    let new_dirty_hash = if maps_equal(&merged_dirty_map, &remote_map) {
-        git_update_ref(&ctx.bare_repo, "refs/heads/dirty", &remote_hash)?;
-        remote_hash.clone()
-    } else {
-        commit_file_map_to_dirty_ref(
-            &ctx.bare_repo,
-            Some(remote_hash.as_str()),
-            &merged_dirty_map,
-            "Download from Scratch CLI",
-        )?
-    };
+    // Re-anchor preserves the user's RFC 7396 patch verbatim wherever
+    // possible; only file-lifecycle changes (server deleted what user
+    // updated, etc.) rewrite the entry shape. See decisions in
+    // `re_anchor.rs`.
+    let re_anchored = crate::commands::re_anchor::re_anchor_patches(
+        &accepted_file.patches,
+        |path| parse_json_value_at(&main_map_old, path, "refs/heads/main (pre-fetch)"),
+        |path| parse_json_value_at(&main_map_new, path, "refs/remotes/origin/main (post-fetch)"),
+    )?;
 
-    let local_map = read_materialized_repo(ctx)?;
-    let actions = compute_merge_actions(&local_dirty_map, &local_map, &merged_dirty_map);
-
-    let mut result = DownloadResult {
-        status: "downloaded".to_string(),
-        messages: std::mem::take(&mut messages),
-        ..Default::default()
-    };
-    let mut target_map = merged_dirty_map.clone();
-
-    for act in &actions {
-        match act {
-            MergeAction::KeepLocal { path, content, .. } => match content {
-                Some(content) => {
-                    target_map.insert(path.clone(), content.clone());
-                }
-                None => {
-                    target_map.remove(path.as_str());
-                }
-            },
-            MergeAction::WriteRemote { path, content } => {
-                if let Some(content) = content {
-                    if local_dirty_map.contains_key(path.as_str()) {
-                        result.files_updated += 1;
-                    } else {
-                        result.files_created += 1;
-                    }
-                    target_map.insert(path.clone(), content.clone());
-                } else {
-                    result.files_deleted += 1;
-                    target_map.remove(path.as_str());
-                }
-            }
-            MergeAction::Delete { path, warning } => {
-                result.files_deleted += 1;
-                target_map.remove(path.as_str());
-                if let Some(warning) = warning {
-                    result.messages.push(warning.clone());
-                }
-            }
-            MergeAction::Merge {
-                path,
-                base,
-                local,
-                remote,
-            } => {
-                let merged = merge_content(path, Some(base), Some(local), Some(remote));
-                target_map.insert(path.clone(), merged);
-                result.files_merged += 1;
-                result.conflicts_auto_resolved += 1;
-            }
+    // User-wins is the policy, so the patches are unchanged; the log
+    // captures what we silently overrode. Append failures are non-fatal —
+    // we'd rather complete the pull than refuse on log I/O.
+    for conflict in &re_anchored.conflicts {
+        let entry = crate::config::conflicts_log::ConflictEntry {
+            ts: crate::config::conflicts_log::now_rfc3339(),
+            connector_account_id: ctx.connection_id.clone(),
+            path: conflict.path.clone(),
+            conflicting_keys: conflict.conflicting_keys.clone(),
+        };
+        if let Err(err) = crate::config::conflicts_log::append(workspace_dir, &entry) {
+            eprintln!(
+                "Warning: failed to append conflict for {} to conflicts.log: {err}",
+                conflict.path
+            );
         }
     }
 
-    // Compute the set of data paths whose content actually moved on either
-    // tree we care about for the folder_index:
-    //   - dirty branch: `local_dirty_map` → `merged_dirty_map`
-    //   - working tree: `local_map`       → `target_map`
-    // MergeActions over-count here because compute_merge_actions emits
-    // `WriteRemote` even when remote == base (no actual content move);
-    // diffing the maps directly avoids that false positive.
-    let mut changed_paths_set: HashSet<String> = HashSet::new();
-    for path in file_map_changed_data_paths(&local_dirty_map, &merged_dirty_map) {
-        changed_paths_set.insert(path);
-    }
-    for path in file_map_changed_data_paths(&local_map, &target_map) {
-        changed_paths_set.insert(path);
-    }
-    result.changed_paths = changed_paths_set.into_iter().collect();
+    let new_accepted = crate::config::accepted_patches::AcceptedPatchesFile {
+        patches: re_anchored.patches,
+    };
+    let approved_map_new = compute_accepted_state(&main_map_new, &new_accepted)?;
 
-    // local_map is the snapshot we read earlier; pass it so materialize can
+    // local_map is the snapshot we read above; pass it so materialize can
     // skip rewriting files whose content didn't move (preserves mtimes so
     // find_stale_files doesn't see every file as stale next page load).
-    materialize_local_repo(ctx, &target_map, &local_map)?;
+    materialize_local_repo(ctx, &approved_map_new, &local_map)?;
     reconcile_data_folder_dirs(&ctx.dirty_dir, data_folders)?;
-    update_dirty_worktree_index(ctx, &new_dirty_hash)?;
-    // Validators are NOT run inline. The dead `validators::run_validations`
-    // pipeline writes to validation_results_v1 which nothing in production
-    // reads — the grid's validation results come from the folder_index
-    // pipeline (validate_page_records, writing validation_results__v1).
-    // After the per-path folder_index reindex the caller does next, our
-    // affected rows will have working_mtime moved and stale validation,
-    // so the next paginate-records --validate re-runs validators lazily
-    // for whatever page the user actually views.
+
+    // Save BEFORE advancing main: a crash between these two steps leaves
+    // us with the file still anchored against old main, so the next pull
+    // recomputes and converges. Inverse order would orphan the file against
+    // a stale anchor.
+    crate::config::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
+    git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
+
+    // Summary counts come from the actual local_map → approved_map_new
+    // delta, so they match exactly what changed on disk for the user.
+    let changed_paths = file_map_changed_data_paths(&local_map, &approved_map_new);
+    let mut result = DownloadResult {
+        status: "downloaded".to_string(),
+        conflicts_auto_resolved: re_anchored.conflicts.len() as i32,
+        changed_paths,
+        ..Default::default()
+    };
+    for path in &result.changed_paths {
+        let was_present = local_map.contains_key(path.as_str());
+        let now_present = approved_map_new.contains_key(path.as_str());
+        match (was_present, now_present) {
+            (false, true) => result.files_created += 1,
+            (true, true) => result.files_updated += 1,
+            (true, false) => result.files_deleted += 1,
+            (false, false) => {}
+        }
+    }
 
     Ok(result)
 }
@@ -3136,6 +3207,7 @@ fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Res
     Ok(true)
 }
 
+#[cfg(test)]
 fn git_rev_parse(bare_repo: &Path, rev: &str) -> anyhow::Result<String> {
     crate::git_ops::rev_parse_to_string(bare_repo, rev)
 }
@@ -4051,28 +4123,6 @@ fn write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-enum MergeAction {
-    KeepLocal {
-        path: String,
-        content: Option<Vec<u8>>,
-        warning: Option<String>,
-    },
-    WriteRemote {
-        path: String,
-        content: Option<Vec<u8>>,
-    },
-    Delete {
-        path: String,
-        warning: Option<String>,
-    },
-    Merge {
-        path: String,
-        base: Vec<u8>,
-        local: Vec<u8>,
-        remote: Vec<u8>,
-    },
-}
-
 /// Repo-relative data paths whose content differs between `old` and `new`.
 /// Includes adds (in `new` only), deletes (in `old` only), and modifications.
 /// Filters out `.scratch/` and non-`.json` entries — the folder_index only
@@ -4102,187 +4152,6 @@ fn file_map_changed_data_paths(old: &FileMap, new: &FileMap) -> Vec<String> {
     }
 
     changed
-}
-
-fn compute_merge_actions(base: &FileMap, local: &FileMap, remote: &FileMap) -> Vec<MergeAction> {
-    let mut all_paths: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for key in base.keys() {
-        all_paths.insert(key);
-    }
-    for key in local.keys() {
-        all_paths.insert(key);
-    }
-    for key in remote.keys() {
-        all_paths.insert(key);
-    }
-
-    let mut actions = Vec::new();
-
-    for path in all_paths {
-        let base_content = base.get(path);
-        let local_content = local.get(path);
-        let remote_content = remote.get(path);
-
-        let local_changed = local_content != base_content;
-        let remote_changed = remote_content != base_content;
-
-        if !local_changed {
-            match remote_content {
-                Some(content) => actions.push(MergeAction::WriteRemote {
-                    path: path.to_string(),
-                    content: Some(content.clone()),
-                }),
-                None if base_content.is_some() => actions.push(MergeAction::Delete {
-                    path: path.to_string(),
-                    warning: None,
-                }),
-                None => {}
-            }
-        } else if !remote_changed {
-            match local_content {
-                Some(content) => actions.push(MergeAction::KeepLocal {
-                    path: path.to_string(),
-                    content: Some(content.clone()),
-                    warning: None,
-                }),
-                None => actions.push(MergeAction::Delete {
-                    path: path.to_string(),
-                    warning: None,
-                }),
-            }
-        } else {
-            match (local_content, remote_content) {
-                (Some(local_content), Some(remote_content)) => {
-                    if let Some(base_content) = base_content {
-                        actions.push(MergeAction::Merge {
-                            path: path.to_string(),
-                            base: base_content.clone(),
-                            local: local_content.clone(),
-                            remote: remote_content.clone(),
-                        });
-                    } else {
-                        // Both sides added the same path with no merge base. This happens
-                        // after publish creates a remote record from a local new file:
-                        // the remote copy is the authoritative enriched version (for
-                        // example with server-assigned IDs/timestamps), so prefer it.
-                        actions.push(MergeAction::WriteRemote {
-                            path: path.to_string(),
-                            content: Some(remote_content.clone()),
-                        });
-                    }
-                }
-                (Some(local_content), None) => actions.push(MergeAction::KeepLocal {
-                    path: path.to_string(),
-                    content: Some(local_content.clone()),
-                    warning: Some(format!(
-                        "Remote deleted {} but local has changes; keeping local version",
-                        path
-                    )),
-                }),
-                (None, Some(remote_content)) => actions.push(MergeAction::WriteRemote {
-                    path: path.to_string(),
-                    content: Some(remote_content.clone()),
-                }),
-                (None, None) => actions.push(MergeAction::Delete {
-                    path: path.to_string(),
-                    warning: None,
-                }),
-            }
-        }
-    }
-
-    actions
-}
-
-/// Three-way merge helper used by the download flow. Returns the merged
-/// `FileMap` plus any per-action human-readable warnings. The legacy upload
-/// flow that originally produced an `UploadResult` here was deleted in the
-/// upload-patch rewrite; only the download caller remains and it discards
-/// everything except the merged map and warnings.
-fn prepare_upload_merge(
-    base_map: &FileMap,
-    local_map: &FileMap,
-    remote_map: &FileMap,
-) -> (FileMap, Vec<String>) {
-    let actions = compute_merge_actions(base_map, local_map, remote_map);
-
-    let mut merged = remote_map.clone();
-    let mut messages = Vec::new();
-
-    for act in &actions {
-        match act {
-            MergeAction::KeepLocal {
-                path,
-                content,
-                warning,
-            } => {
-                match content {
-                    Some(content) => {
-                        merged.insert(path.clone(), content.clone());
-                    }
-                    None => {
-                        merged.remove(path.as_str());
-                    }
-                }
-                if let Some(warning) = warning {
-                    messages.push(warning.clone());
-                }
-            }
-            MergeAction::WriteRemote { path, content } => match content {
-                Some(content) => {
-                    merged.insert(path.clone(), content.clone());
-                }
-                None => {
-                    merged.remove(path.as_str());
-                }
-            },
-            MergeAction::Delete { path, warning } => {
-                merged.remove(path.as_str());
-                if let Some(warning) = warning {
-                    messages.push(warning.clone());
-                }
-            }
-            MergeAction::Merge {
-                path,
-                base,
-                local,
-                remote,
-            } => {
-                let content = merge_content(path, Some(base), Some(local), Some(remote));
-                merged.insert(path.clone(), content);
-            }
-        }
-    }
-
-    (merged, messages)
-}
-
-fn merge_content(
-    _path: &str,
-    base: Option<&Vec<u8>>,
-    local: Option<&Vec<u8>>,
-    remote: Option<&Vec<u8>>,
-) -> Vec<u8> {
-    if local.map(|value| is_binary(value)).unwrap_or(false)
-        || remote.map(|value| is_binary(value)).unwrap_or(false)
-    {
-        return local.or(remote).cloned().unwrap_or_default();
-    }
-
-    let base_str = base
-        .map(|value| String::from_utf8_lossy(value).into_owned())
-        .unwrap_or_default();
-    let local_str = local
-        .map(|value| String::from_utf8_lossy(value).into_owned())
-        .unwrap_or_default();
-    let remote_str = remote
-        .map(|value| String::from_utf8_lossy(value).into_owned())
-        .unwrap_or_default();
-
-    match crate::shared::merge::merge_file_contents(&base_str, &local_str, &remote_str) {
-        Ok(merged) => merged.into_bytes(),
-        Err(_) => local.cloned().unwrap_or_default(),
-    }
 }
 
 fn is_binary(data: &[u8]) -> bool {
