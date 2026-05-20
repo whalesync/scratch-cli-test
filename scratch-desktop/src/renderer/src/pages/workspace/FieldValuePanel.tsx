@@ -462,7 +462,7 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                     : { maxHeight: MAX_CONTENT_HEIGHT, overflowY: 'auto' }),
               }}
             >
-              {renderedValue}
+              {renderedValue || <span style={{ color: 'var(--fg-muted)' }}>{'\u2014'}</span>}
             </Box>
           )}
         </Box>

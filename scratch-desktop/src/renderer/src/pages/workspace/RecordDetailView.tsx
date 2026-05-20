@@ -1,4 +1,4 @@
-import { Box, Group, Loader, ScrollArea, Stack, UnstyledButton } from '@mantine/core';
+import { Box, Divider, Group, Loader, ScrollArea, Stack, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
   Braces,
@@ -1060,122 +1060,126 @@ export const RecordDetailView = memo(function RecordDetailView({
 
           {/* Delete banner */}
           {isDeleted && recordData && (
-            <Group
-              gap={8}
-              align="center"
-              wrap="nowrap"
-              mb="xs"
-              style={{
-                padding: '8px 12px',
-                backgroundColor:
-                  recordData.row.__rowStatus === 'deleted'
-                    ? 'var(--delete-needs-review-bg)'
-                    : 'var(--delete-approved-bg)',
-                color:
-                  recordData.row.__rowStatus === 'deleted'
-                    ? 'var(--delete-needs-review-stroke)'
-                    : 'var(--delete-approved-stroke)',
-              }}
-            >
-              <StyledLucideIcon Icon={Trash2} size="sm" c="currentColor" />
-              <Text12Regular c="currentColor" style={{ flex: 1 }}>
-                {recordData.row.__rowStatus === 'deleted'
-                  ? 'Record removed'
-                  : 'This record will be deleted on next publish'}
-              </Text12Regular>
-              {recordData.row.__rowStatus === 'deleted' && (
-                <>
-                  <ButtonSecondaryGhost
-                    size="compact-xs"
-                    c="currentColor"
-                    leftSection={<Check size={12} />}
-                    onClick={handleAccept}
-                    disabled={!currentRecordCliPath}
-                  >
-                    Approve
-                  </ButtonSecondaryGhost>
+            <>
+              <Group
+                gap={8}
+                align="center"
+                wrap="nowrap"
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor:
+                    recordData.row.__rowStatus === 'deleted'
+                      ? 'var(--delete-needs-review-bg)'
+                      : 'var(--delete-approved-bg)',
+                  color:
+                    recordData.row.__rowStatus === 'deleted'
+                      ? 'var(--delete-needs-review-stroke)'
+                      : 'var(--delete-approved-stroke)',
+                }}
+              >
+                <StyledLucideIcon Icon={Trash2} size="sm" c="currentColor" />
+                <Text12Regular c="currentColor" style={{ flex: 1 }}>
+                  {recordData.row.__rowStatus === 'deleted'
+                    ? 'Record removed'
+                    : 'This record will be deleted on next publish'}
+                </Text12Regular>
+                {recordData.row.__rowStatus === 'deleted' && (
+                  <>
+                    <ButtonSecondaryGhost
+                      size="compact-xs"
+                      c="currentColor"
+                      leftSection={<Check size={12} />}
+                      onClick={handleAccept}
+                      disabled={!currentRecordCliPath}
+                    >
+                      Approve
+                    </ButtonSecondaryGhost>
+                    <ButtonSecondaryGhost
+                      size="compact-xs"
+                      c="currentColor"
+                      leftSection={<RotateCcw size={12} />}
+                      onClick={handleReject}
+                      disabled={!currentRecordCliPath}
+                    >
+                      Reject
+                    </ButtonSecondaryGhost>
+                  </>
+                )}
+                {recordData.row.__rowStatus === 'deletedUnpublished' && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="currentColor"
                     leftSection={<RotateCcw size={12} />}
-                    onClick={handleReject}
-                    disabled={!currentRecordCliPath}
+                    onClick={handleRestore}
                   >
-                    Reject
+                    Restore
                   </ButtonSecondaryGhost>
-                </>
-              )}
-              {recordData.row.__rowStatus === 'deletedUnpublished' && (
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  c="currentColor"
-                  leftSection={<RotateCcw size={12} />}
-                  onClick={handleRestore}
-                >
-                  Restore
-                </ButtonSecondaryGhost>
-              )}
-            </Group>
+                )}
+              </Group>{' '}
+              <Divider />
+            </>
           )}
 
           {/* Create banner */}
           {isCreated && recordData && (
-            <Group
-              gap={8}
-              align="center"
-              wrap="nowrap"
-              mb="xs"
-              style={{
-                padding: '8px 12px',
-                backgroundColor:
-                  recordData.row.__rowStatus === 'added'
-                    ? 'var(--create-needs-review-bg)'
-                    : 'var(--create-approved-bg)',
-                color:
-                  recordData.row.__rowStatus === 'added'
-                    ? 'var(--create-needs-review-stroke)'
-                    : 'var(--create-approved-stroke)',
-              }}
-            >
-              <StyledLucideIcon Icon={FilePlus} size="sm" c="currentColor" />
-              <Text12Regular c="currentColor" style={{ flex: 1 }}>
-                {recordData.row.__rowStatus === 'added'
-                  ? 'Record added'
-                  : 'This record will be created on next publish'}
-              </Text12Regular>
-              {recordData.row.__rowStatus === 'added' && (
-                <>
+            <>
+              <Group
+                gap={8}
+                align="center"
+                wrap="nowrap"
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor:
+                    recordData.row.__rowStatus === 'added'
+                      ? 'var(--create-needs-review-bg)'
+                      : 'var(--create-approved-bg)',
+                  color:
+                    recordData.row.__rowStatus === 'added'
+                      ? 'var(--create-needs-review-stroke)'
+                      : 'var(--create-approved-stroke)',
+                }}
+              >
+                <StyledLucideIcon Icon={FilePlus} size="sm" c="currentColor" />
+                <Text12Regular c="currentColor" style={{ flex: 1 }}>
+                  {recordData.row.__rowStatus === 'added'
+                    ? 'Record added'
+                    : 'This record will be created on next publish'}
+                </Text12Regular>
+                {recordData.row.__rowStatus === 'added' && (
+                  <>
+                    <ButtonSecondaryGhost
+                      size="compact-xs"
+                      c="currentColor"
+                      leftSection={<Check size={12} />}
+                      onClick={handleAccept}
+                      disabled={!currentRecordCliPath}
+                    >
+                      Approve
+                    </ButtonSecondaryGhost>
+                    <ButtonSecondaryGhost
+                      size="compact-xs"
+                      c="currentColor"
+                      leftSection={<RotateCcw size={12} />}
+                      onClick={handleReject}
+                      disabled={!currentRecordCliPath}
+                    >
+                      Reject
+                    </ButtonSecondaryGhost>
+                  </>
+                )}
+                {recordData.row.__rowStatus === 'addedUnpublished' && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="currentColor"
-                    leftSection={<Check size={12} />}
-                    onClick={handleAccept}
-                    disabled={!currentRecordCliPath}
+                    leftSection={<Trash2 size={12} />}
+                    onClick={handleDiscardCreate}
                   >
-                    Approve
+                    Discard
                   </ButtonSecondaryGhost>
-                  <ButtonSecondaryGhost
-                    size="compact-xs"
-                    c="currentColor"
-                    leftSection={<RotateCcw size={12} />}
-                    onClick={handleReject}
-                    disabled={!currentRecordCliPath}
-                  >
-                    Reject
-                  </ButtonSecondaryGhost>
-                </>
-              )}
-              {recordData.row.__rowStatus === 'addedUnpublished' && (
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  c="currentColor"
-                  leftSection={<Trash2 size={12} />}
-                  onClick={handleDiscardCreate}
-                >
-                  Discard
-                </ButtonSecondaryGhost>
-              )}
-            </Group>
+                )}
+              </Group>
+              <Divider />
+            </>
           )}
 
           {/* Content */}

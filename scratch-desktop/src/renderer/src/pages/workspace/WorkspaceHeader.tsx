@@ -69,7 +69,9 @@ export function WorkspaceHeader({
 
   const handleOpenIn = () => {
     if (!localPath) return;
-    const q = encodeURIComponent(`I'm working on my Scratch workspace, "${workspace.name}".`);
+    const q = encodeURIComponent(
+      `I'm working on my Scratch workspace, "${workspace.name}". It is described at \`${localPath}/CLAUDE.md\`.  `,
+    );
     window.scratchDesktop.showNativeContextMenu(
       [
         { id: 'reveal', label: isMac ? 'Finder' : 'Explorer' },
@@ -80,8 +82,8 @@ export function WorkspaceHeader({
       ],
       (id) => {
         if (id === 'claude-cowork' || id === 'claude-code') {
-          const path = id === 'claude-cowork' ? 'cowork' : 'code';
-          const claudeUrl = `claude://${path}/new?q=${q}&folder=${encodeURIComponent(localPath)}`;
+          const product = id === 'claude-cowork' ? 'cowork' : 'code';
+          const claudeUrl = `claude://${product}/new?q=${q}&folder=${encodeURIComponent(localPath)}`;
           void window.scratchAuth.openExternal(claudeUrl).catch(() => {
             void window.scratchAuth.openExternal('https://claude.ai/download');
           });

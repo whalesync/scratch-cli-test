@@ -1,10 +1,16 @@
 import { ActionIcon, Box, Group, Portal, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
 import type { TableViewCol } from '@spinner/shared-types';
-import { Minimize2, TriangleAlertIcon } from 'lucide-react';
+import { Maximize2, TriangleAlertIcon } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
-import { Text12Medium, Text12Regular, Text9Regular, TextMono9Regular } from '../../components/base/text';
+import {
+  Text12Medium,
+  Text12Regular,
+  Text9Regular,
+  TextMono12Regular,
+  TextMono9Regular,
+} from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
@@ -56,7 +62,6 @@ interface RecordFieldsGridProps {
 
 const FLOATING_PANEL_GAP = 5;
 const LABEL_COLUMN_WIDTH = 280;
-const VIEW_ALL_VALUE = '__view_all_fields__';
 
 function validationLevelColor(level: ValidationEntry['level']): string {
   return level === 'error' ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)';
@@ -338,13 +343,12 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     ) : null;
 
   if (focusedRow) {
-    const fieldOptions = [
-      ...rows.map((row) => ({
-        value: row.fieldName,
-        label: row.displayLabel ?? row.fieldName,
-      })),
-      { value: VIEW_ALL_VALUE, label: `All fields (${rows.length.toLocaleString()})` },
-    ];
+    const fieldOptions = rows.map((row) => ({
+      value: row.fieldName,
+      label: row.groupName
+        ? `${row.groupName} \u2022 ${row.displayLabel ?? row.fieldName}`
+        : (row.displayLabel ?? row.fieldName),
+    }));
     const focusedViolations = validationWarnings?.get(focusedRow.fieldName);
     const focusedHasError = focusedViolations?.some((v) => v.level === 'error');
     return (
@@ -352,75 +356,72 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
         <Box
           style={{
             display: 'flex',
-            alignItems: 'center',
-            gap: 8,
+            flexDirection: 'column',
+            gap: 4,
             backgroundColor: 'var(--bg-panel)',
             borderBottom: '1px solid var(--fg-divider)',
-            padding: '4px 16px 4px 12px',
+            padding: '6px 16px',
           }}
         >
-          <Select
-            data={fieldOptions}
-            value={focusedRow.fieldName}
-            onChange={(next) => {
-              if (next === VIEW_ALL_VALUE) {
-                setFocusedFieldName(null);
-              } else if (next) {
-                setFocusedFieldName(next);
-              }
+          <Box
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr',
+              columnGap: 8,
+              rowGap: 2,
+              alignItems: 'center',
             }}
-            allowDeselect={false}
-            searchable={fieldOptions.length > 8}
-            variant="unstyled"
-            comboboxProps={{ withinPortal: true, zIndex: 10020, width: 'target' }}
-            aria-label="Focused field"
-            renderOption={({ option }) => (
-              <Box
-                style={{
-                  width: '100%',
-                  ...(option.value === VIEW_ALL_VALUE
-                    ? {
-                        paddingTop: 6,
-                        marginTop: 2,
-                        borderTop: '1px solid var(--fg-divider)',
-                      }
-                    : {}),
+          >
+            <TextMono12Regular c="var(--fg-muted)">FIELD:</TextMono12Regular>
+            <Group gap={8} align="center" wrap="nowrap">
+              <Select
+                data={fieldOptions}
+                value={focusedRow.fieldName}
+                onChange={(next) => {
+                  if (next) {
+                    setFocusedFieldName(next);
+                  }
                 }}
-              >
-                {option.label}
-              </Box>
+                onClear={() => setFocusedFieldName(null)}
+                clearable
+                searchable={true}
+                allowDeselect={false}
+                size="sm"
+                miw={300}
+                comboboxProps={{ withinPortal: true, zIndex: 10020, width: 'target' }}
+                aria-label="Focused field"
+              />
+              {focusedViolations && focusedViolations.length > 0 && (
+                <ValidationTooltip violations={focusedViolations}>
+                  <Box style={{ display: 'flex', alignItems: 'center', cursor: 'default' }}>
+                    <TriangleAlertIcon
+                      size={16}
+                      color={focusedHasError ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
+                    />
+                  </Box>
+                </ValidationTooltip>
+              )}
+            </Group>
+            {(focusedRow.displayLabel !== focusedRow.fieldName ||
+              (focusedRow.description &&
+                focusedRow.description !== focusedRow.fieldName &&
+                focusedRow.description !== (focusedRow.displayLabel ?? focusedRow.fieldName)) ||
+              focusedRow.column?.readonly) && (
+              <>
+                <Box /> {/* empty cell to skip the label column */}
+                <Stack gap={2} ml="sm" my="xs" c="var(--fg-secondary)">
+                  {focusedRow.displayLabel !== focusedRow.fieldName && (
+                    <TextMono9Regular>{focusedRow.fieldName}</TextMono9Regular>
+                  )}
+                  {focusedRow.description &&
+                    focusedRow.description !== focusedRow.fieldName &&
+                    focusedRow.description !== (focusedRow.displayLabel ?? focusedRow.fieldName) && (
+                      <Text9Regular>{focusedRow.description}</Text9Regular>
+                    )}
+                  {focusedRow.column?.readonly && <TextMono9Regular>Read-only</TextMono9Regular>}
+                </Stack>
+              </>
             )}
-            styles={{
-              input: {
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--fg-primary)',
-                paddingLeft: 4,
-              },
-            }}
-          />
-          {focusedViolations && focusedViolations.length > 0 && (
-            <ValidationTooltip violations={focusedViolations}>
-              <Box style={{ display: 'flex', alignItems: 'center', cursor: 'default' }}>
-                <TriangleAlertIcon
-                  size={16}
-                  color={focusedHasError ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
-                />
-              </Box>
-            </ValidationTooltip>
-          )}
-          <Box style={{ marginLeft: 'auto', width: 28, display: 'flex', justifyContent: 'center' }}>
-            <Tooltip label="Minimize" position="left" withArrow zIndex={10020}>
-              <ActionIcon
-                variant="subtle"
-                size={24}
-                radius={3}
-                aria-label="Minimize"
-                onClick={() => setFocusedFieldName(null)}
-              >
-                <StyledLucideIcon Icon={Minimize2} size={14} strokeWidth={2.25} />
-              </ActionIcon>
-            </Tooltip>
           </Box>
         </Box>
 
@@ -460,13 +461,21 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
 
   return (
     <ScrollArea style={{ flex: 1 }}>
+      <style>{`.record-fields-grid-row:hover .record-fields-grid-expand-btn { opacity: 1 !important; }`}</style>
       <Table
         horizontalSpacing="md"
         verticalSpacing={0}
         withRowBorders
         styles={{
-          table: { tableLayout: 'fixed' },
-          th: { backgroundColor: 'var(--bg-panel)', position: 'sticky', top: 0, zIndex: 1 },
+          table: { tableLayout: 'fixed', margin: 0 },
+          th: {
+            backgroundColor: 'var(--bg-panel)',
+            position: 'sticky',
+            top: 0,
+            zIndex: 1,
+            paddingTop: 12,
+            paddingBottom: 12,
+          },
           td: { verticalAlign: 'top', paddingTop: 4, paddingBottom: 4 },
         }}
       >
@@ -500,8 +509,8 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                     </Table.Td>
                   </Table.Tr>
                 )}
-                <Table.Tr style={groupBarStyle}>
-                  <Table.Td style={{ width: 280, height: 40 }} py="xs">
+                <Table.Tr className="record-fields-grid-row" style={groupBarStyle}>
+                  <Table.Td style={{ width: 280, height: 40, position: 'relative' }} py="xs">
                     <Group w="100%" align="top">
                       <Stack gap="xs" flex={1}>
                         <Text12Medium
@@ -519,6 +528,25 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                             <Text9Regular c="var(--fg-secondary)">{row.description}</Text9Regular>
                           )}
                       </Stack>
+                      <Tooltip label="Expand field" position="top" withArrow zIndex={10020}>
+                        <ActionIcon
+                          variant="transparent"
+                          size={20}
+                          radius={3}
+                          aria-label="Expand field"
+                          onClick={() => setFocusedFieldName(row.fieldName)}
+                          className="record-fields-grid-expand-btn"
+                          style={{
+                            border: '0.5px solid var(--fg-divider)',
+                            backgroundColor: 'var(--bg-base)',
+                            borderRadius: 3,
+                            opacity: 0,
+                            transition: 'opacity 100ms ease',
+                          }}
+                        >
+                          <StyledLucideIcon Icon={Maximize2} size={12} strokeWidth={2} />
+                        </ActionIcon>
+                      </Tooltip>
                       {validationWarnings?.has(row.fieldName) &&
                         (() => {
                           const vs = validationWarnings.get(row.fieldName)!;
@@ -555,7 +583,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                           onClick={row.onClick}
                           onApprove={row.displayMode === 'diff' ? row.onApprove : undefined}
                           onUndo={row.displayMode === 'diff' ? row.onUndo : undefined}
-                          onExpand={isMediumOrLargeChange(row) ? () => setFocusedFieldName(row.fieldName) : undefined}
                           column={row.column}
                           richDiff={isMediumOrLargeChange(row)}
                         />
