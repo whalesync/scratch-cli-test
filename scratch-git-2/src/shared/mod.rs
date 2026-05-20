@@ -4,5 +4,6 @@ pub mod index;
 pub mod json_path;
 pub mod layout;
 pub mod merge;
+pub mod merge_patch;
 pub mod plan_publish;
 pub mod validators;

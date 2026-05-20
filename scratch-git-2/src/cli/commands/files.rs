@@ -4155,7 +4155,7 @@ fn apply_patch_entry_to_blob(
                 })?,
                 None => JsonValue::Null,
             };
-            let merged = crate::commands::merge_patch::apply(&base, &entry.patch);
+            let merged = crate::shared::merge_patch::apply(&base, &entry.patch);
             Ok(Some(serde_json::to_vec_pretty(&merged).with_context(
                 || format!("failed to serialize accepted Update for {}", entry.path),
             )?))

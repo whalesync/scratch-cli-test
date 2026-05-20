@@ -25,7 +25,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::commands::merge_patch;
+use crate::shared::merge_patch;
 
 /// Kind of patch entry. Persisted in `working-patches.json` and
 /// `accepted-patches.json` (Phase 5). Matches the on-wire `kind` field of the

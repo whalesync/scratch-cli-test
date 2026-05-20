@@ -1249,7 +1249,7 @@ fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
             (Some(m), Some(d)) if m != d => {
                 let mv: JsonValue = serde_json::from_slice(m).unwrap();
                 let dv: JsonValue = serde_json::from_slice(d).unwrap();
-                let p = crate::commands::merge_patch::diff(&mv, &dv).unwrap();
+                let p = crate::shared::merge_patch::diff(&mv, &dv).unwrap();
                 AnchoredPatch {
                     path: path.clone(),
                     kind: PatchKind::Update,

@@ -1364,14 +1364,21 @@ export async function readDiffGridDataPageV2(
   }
 
   // Map global-scope DiffGridFilters to CLI filter ops. Column/text filters stay desktop-side.
+  //
+  // Slice E (2026-05-20) flipped the column semantics in `folder_index`:
+  //   - `approvedChanges = 1` now means "the path has a patch entry in
+  //     accepted-patches.json" — i.e. approved-pending-publish (UI: unpublished).
+  //   - `unapprovedChanges = 1` now means "working file differs from
+  //     apply(main, patch_entry_or_empty)" — i.e. unreviewed working-tree edits.
+  // The CLI filter op names are kept stable; only the UI-kind mapping flips.
   const cliFilters: ReadRecordsFilterOp[] = [];
   const desktopFilters: DiffGridFilter[] = [];
   for (const f of opts.filters ?? []) {
     if (f.scope === 'global') {
       if (f.kind === 'unreviewed') {
-        cliFilters.push({ op: 'approvedChanges' });
-      } else if (f.kind === 'unpublished') {
         cliFilters.push({ op: 'unapprovedChanges' });
+      } else if (f.kind === 'unpublished') {
+        cliFilters.push({ op: 'approvedChanges' });
       } else if (f.kind === 'has-problems') {
         cliFilters.push({ op: 'hasErrors' });
       }

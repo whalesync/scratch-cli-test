@@ -5,6 +5,13 @@
 //! user wants published). The server applies these patches via
 //! `applyJsonMergePatch` in `server/src/publish-plan/apply-patches.service.ts`
 //! — the two implementations MUST stay semantically equivalent.
+//!
+//! Lives in `shared/` (not `cli/`) so `shared/folder_index.rs` can apply
+//! patches when computing approvedChanges / unapprovedChanges from
+//! `accepted-patches.json`. The `service` binary doesn't use `diff` directly;
+//! the module-level allow keeps that side warning-free.
+
+#![allow(dead_code)]
 
 use serde_json::Value as JsonValue;
 

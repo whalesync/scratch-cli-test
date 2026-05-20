@@ -20,7 +20,7 @@ use crate::shared::validators::{run_validators_dry, ValidatorEntry};
 /// sweep in `open_conn` drops everything that doesn't match, and the next
 /// pagination request rebuilds cold from the JSON files on disk. The index is
 /// derivative — JSON is authoritative — so cold rebuild is always safe.
-const INDEX_SCHEMA_VERSION: u32 = 2;
+const INDEX_SCHEMA_VERSION: u32 = 3;
 
 fn version_suffix() -> String {
     format!("__v{INDEX_SCHEMA_VERSION}")
@@ -151,6 +151,178 @@ impl ToSql for DynParam {
             DynParam::Int(i) => i.to_sql(),
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Accepted-patches index (Phase 5 / Slice E)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Kind of patch entry in `accepted-patches.json`. Matches the wire format
+/// (lowercase enum names in serde) of `cli::commands::re_anchor::PatchKind`.
+/// folder_index keeps its own copy rather than importing the cli/ type so
+/// shared/ doesn't take a dependency on cli/.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcceptedKind {
+    Create,
+    Update,
+    Delete,
+}
+
+#[derive(Debug)]
+struct AcceptedEntry {
+    kind: AcceptedKind,
+    patch: serde_json::Value,
+}
+
+/// Snapshot of `accepted-patches.json` for one connection, keyed by
+/// repo-relative path. `patch_mtime` is the file's mtime in nanoseconds, or
+/// `None` if the file doesn't exist; `find_stale_files` uses it to flag rows
+/// whose cached approvedChanges / unapprovedChanges bits predate the latest
+/// accept / reject / discard.
+#[derive(Debug, Default)]
+struct PatchIndex {
+    patch_mtime: Option<i64>,
+    entries: HashMap<String, AcceptedEntry>,
+}
+
+fn resolve_accepted_patches_path(workspace: &Path, folder: &str) -> PathBuf {
+    let conn = conn_name_from_folder(folder);
+    workspace
+        .join(".scratch")
+        .join("connections")
+        .join(conn)
+        .join("accepted-patches.json")
+}
+
+fn folder_sub_path(folder: &str) -> &str {
+    let normalized = folder.trim_start_matches('/');
+    match normalized.find('/') {
+        Some(idx) => &normalized[idx + 1..],
+        None => "",
+    }
+}
+
+/// Build the repo-relative path that `accepted-patches.json` would use for a
+/// given filename within a folder. Folder `"MyConn/Companies"` + filename
+/// `"rec_1.json"` → `"Companies/rec_1.json"`.
+fn repo_relative_path_for_filename(folder: &str, filename: &str) -> String {
+    let sub = folder_sub_path(folder);
+    if sub.is_empty() {
+        filename.to_string()
+    } else {
+        format!("{sub}/{filename}")
+    }
+}
+
+/// Read `accepted-patches.json` for the connection and index entries by path.
+/// Returns an empty index (with mtime captured) if the file is missing,
+/// empty, or malformed — folder_index is best-effort here; the CLI's
+/// accept / discard paths validate before write.
+fn load_patch_index(workspace: &Path, folder: &str) -> PatchIndex {
+    let path = resolve_accepted_patches_path(workspace, folder);
+    let patch_mtime = file_mtime_size(&path).map(|(m, _)| m);
+
+    let bytes = match fs::read(&path) {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            return PatchIndex {
+                patch_mtime,
+                entries: HashMap::new(),
+            };
+        }
+    };
+    let root: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => {
+            return PatchIndex {
+                patch_mtime,
+                entries: HashMap::new(),
+            };
+        }
+    };
+    let Some(arr) = root.get("patches").and_then(|v| v.as_array()) else {
+        return PatchIndex {
+            patch_mtime,
+            entries: HashMap::new(),
+        };
+    };
+
+    let mut entries = HashMap::new();
+    for entry in arr {
+        let Some(entry_path) = entry.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let kind = match entry.get("kind").and_then(|v| v.as_str()) {
+            Some("create") => AcceptedKind::Create,
+            Some("update") => AcceptedKind::Update,
+            Some("delete") => AcceptedKind::Delete,
+            _ => continue,
+        };
+        let patch = entry
+            .get("patch")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        entries.insert(entry_path.to_string(), AcceptedEntry { kind, patch });
+    }
+    PatchIndex {
+        patch_mtime,
+        entries,
+    }
+}
+
+/// Synthesize the "approved" JSON value for one record file:
+///   - no entry → published (`main_json`, or `None` if the path isn't on `main`)
+///   - `Delete`   → `None` (the file is approved-deleted)
+///   - `Create`   → `entry.patch` (full content)
+///   - `Update`   → `apply(main_json_or_null, entry.patch)` — RFC 7396
+fn approved_json_for_entry(
+    main_json: Option<&serde_json::Value>,
+    entry: Option<&AcceptedEntry>,
+) -> Option<serde_json::Value> {
+    match entry {
+        None => main_json.cloned(),
+        Some(e) => match e.kind {
+            AcceptedKind::Delete => None,
+            AcceptedKind::Create => Some(e.patch.clone()),
+            AcceptedKind::Update => {
+                let base = main_json.cloned().unwrap_or(serde_json::Value::Null);
+                Some(crate::shared::merge_patch::apply(&base, &e.patch))
+            }
+        },
+    }
+}
+
+/// Compute the (approvedChanges, unapprovedChanges) bit pair for a single file.
+///
+///   - `approvedChanges = 1` iff the path has an entry in `accepted-patches.json`.
+///   - `unapprovedChanges = 1` iff the working file differs from the approved
+///     value (= `apply(main, patch_entry_or_empty)`). Presence mismatch (file
+///     missing on one side, present on the other) counts as differing. A
+///     present-but-unparseable working file also counts as differing — the bit
+///     stays "true" so the row doesn't silently green.
+fn compute_review_bits(
+    patch_entry: Option<&AcceptedEntry>,
+    working_stat: Option<(i64, i64)>,
+    working_json: Option<&serde_json::Value>,
+    master_json: Option<&serde_json::Value>,
+) -> (i32, i32) {
+    let approved_changes: i32 = i32::from(patch_entry.is_some());
+
+    let approved_json = approved_json_for_entry(master_json, patch_entry);
+
+    let unapproved_changes: i32 = match (working_stat.is_some(), &approved_json) {
+        (false, None) => 0,
+        (false, Some(_)) | (true, None) => 1,
+        (true, Some(a)) => match working_json {
+            Some(w) => i32::from(w != a),
+            // Working file present on disk but failed to parse — treat as a
+            // change so parse_error rows show up in the unapproved list rather
+            // than silently passing.
+            None => 1,
+        },
+    };
+
+    (approved_changes, unapproved_changes)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -408,6 +580,7 @@ fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
             master_size               INTEGER,
             approvedChanges           INTEGER NOT NULL DEFAULT 0,
             unapprovedChanges         INTEGER NOT NULL DEFAULT 0,
+            accepted_patches_mtime    INTEGER,
             parse_error               TEXT,
             has_errors                INTEGER NOT NULL DEFAULT 0,
             validated_mtime_working   INTEGER,
@@ -521,13 +694,14 @@ struct StoredRow {
     dirty_size: Option<i64>,
     master_mtime: Option<i64>,
     master_size: Option<i64>,
+    accepted_patches_mtime: Option<i64>,
 }
 
 fn load_stored_rows(conn: &Connection, table: &str) -> anyhow::Result<HashMap<String, StoredRow>> {
     let tq = quote_ident(table);
     let mut stmt = conn.prepare(&format!(
         "SELECT filename, working_mtime, working_size, dirty_mtime, dirty_size,
-                master_mtime, master_size
+                master_mtime, master_size, accepted_patches_mtime
          FROM {tq}"
     ))?;
     let rows = stmt.query_map([], |row| {
@@ -540,6 +714,7 @@ fn load_stored_rows(conn: &Connection, table: &str) -> anyhow::Result<HashMap<St
                 dirty_size: row.get(4)?,
                 master_mtime: row.get(5)?,
                 master_size: row.get(6)?,
+                accepted_patches_mtime: row.get(7)?,
             },
         ))
     })?;
@@ -564,16 +739,31 @@ fn version_changed(
 }
 
 /// Refresh the index for this folder: insert new files, update stale ones,
-/// delete files no longer present in any of the three directory trees.
+/// delete files no longer present in either filesystem tree.
 /// All mutations are wrapped in a single BEGIN IMMEDIATE transaction.
-fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> anyhow::Result<()> {
+///
+/// Slice E (2026-05-20) replaces the three-worktree comparison with a compute
+/// driven by `accepted-patches.json`:
+///   - `approvedChanges = 1` iff the path appears in the patch file.
+///   - `unapprovedChanges = 1` iff the working file differs from
+///     `apply(refs/heads/main blob, patch_entry_or_empty)`.
+/// The `dirty_mtime` / `dirty_size` columns are now written as NULL — the
+/// old "reviewed-dirty" worktree at `<ws>/.scratch/connections/dirty/<conn>`
+/// is dead post-Phase-3 and removed entirely by Slice F.
+fn refresh_index(
+    conn: &mut Connection,
+    workspace: &Path,
+    folder: &str,
+    paths: &FolderPaths,
+    table: &str,
+) -> anyhow::Result<()> {
+    let patch_index = load_patch_index(workspace, folder);
+
     let working_files = scan_json_files(&paths.working);
-    let dirty_files = scan_json_files(&paths.dirty);
     let master_files = scan_json_files(&paths.master);
 
     let all_on_disk: HashSet<String> = working_files
         .iter()
-        .chain(dirty_files.iter())
         .chain(master_files.iter())
         .cloned()
         .collect();
@@ -583,7 +773,7 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
     let mut to_upsert: Vec<String> = Vec::new();
     let mut to_delete: Vec<String> = Vec::new();
 
-    // Files in DB but gone from every directory → delete.
+    // Files in DB but gone from both directories → delete.
     for filename in stored.keys() {
         if !all_on_disk.contains(filename) {
             to_delete.push(filename.clone());
@@ -593,15 +783,14 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
     // All on-disk files: new or stale?
     for filename in &all_on_disk {
         let working_stat = file_mtime_size(&paths.working.join(filename));
-        let dirty_stat = file_mtime_size(&paths.dirty.join(filename));
         let master_stat = file_mtime_size(&paths.master.join(filename));
 
         match stored.get(filename) {
             None => to_upsert.push(filename.clone()),
             Some(row) => {
                 if version_changed(working_stat, row.working_mtime, row.working_size)
-                    || version_changed(dirty_stat, row.dirty_mtime, row.dirty_size)
                     || version_changed(master_stat, row.master_mtime, row.master_size)
+                    || row.accepted_patches_mtime != patch_index.patch_mtime
                 {
                     to_upsert.push(filename.clone());
                 }
@@ -625,11 +814,9 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
 
     for filename in &to_upsert {
         let working_path = paths.working.join(filename);
-        let dirty_path = paths.dirty.join(filename);
         let master_path = paths.master.join(filename);
 
         let working_stat = file_mtime_size(&working_path);
-        let dirty_stat = file_mtime_size(&dirty_path);
         let master_stat = file_mtime_size(&master_path);
 
         let mut parse_error: Option<String> = None;
@@ -638,12 +825,6 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
         if let Some(e) = working_err {
             parse_error = Some(format!("working: {e}"));
         }
-        let (_dirty_bytes, dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
-        if let Some(e) = dirty_err {
-            if parse_error.is_none() {
-                parse_error = Some(format!("dirty: {e}"));
-            }
-        }
         let (_master_bytes, master_json, master_err) = read_bytes_and_json(&master_path);
         if let Some(e) = master_err {
             if parse_error.is_none() {
@@ -651,27 +832,14 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
             }
         }
 
-        // approvedChanges/unapprovedChanges flip on presence diff (add/delete)
-        // OR on semantic JSON content diff. Using `serde_json::Value` equality
-        // (rather than raw bytes) means a whitespace- or key-order-only edit
-        // followed by a revert correctly clears the bit even when the editor
-        // doesn't reproduce the exact original byte stream.
-        let approved_changes: i32 = if working_stat.is_some() != dirty_stat.is_some() {
-            1
-        } else {
-            match (&working_json, &dirty_json) {
-                (Some(w), Some(d)) => i32::from(w != d),
-                _ => 0,
-            }
-        };
-        let unapproved_changes: i32 = if dirty_stat.is_some() != master_stat.is_some() {
-            1
-        } else {
-            match (&dirty_json, &master_json) {
-                (Some(d), Some(m)) => i32::from(d != m),
-                _ => 0,
-            }
-        };
+        let rel_path = repo_relative_path_for_filename(folder, filename);
+        let patch_entry = patch_index.entries.get(&rel_path);
+        let (approved_changes, unapproved_changes) = compute_review_bits(
+            patch_entry,
+            working_stat,
+            working_json.as_ref(),
+            master_json.as_ref(),
+        );
 
         tx.execute(
             &format!(
@@ -680,29 +848,30 @@ fn refresh_index(conn: &mut Connection, paths: &FolderPaths, table: &str) -> any
                     working_mtime, working_size,
                     dirty_mtime,   dirty_size,
                     master_mtime,  master_size,
-                    approvedChanges, unapprovedChanges, parse_error
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                    approvedChanges, unapprovedChanges,
+                    accepted_patches_mtime, parse_error
+                 ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(filename) DO UPDATE SET
-                    working_mtime    = excluded.working_mtime,
-                    working_size     = excluded.working_size,
-                    dirty_mtime      = excluded.dirty_mtime,
-                    dirty_size       = excluded.dirty_size,
-                    master_mtime     = excluded.master_mtime,
-                    master_size      = excluded.master_size,
-                    approvedChanges  = excluded.approvedChanges,
-                    unapprovedChanges= excluded.unapprovedChanges,
-                    parse_error      = excluded.parse_error"
+                    working_mtime          = excluded.working_mtime,
+                    working_size           = excluded.working_size,
+                    dirty_mtime            = NULL,
+                    dirty_size             = NULL,
+                    master_mtime           = excluded.master_mtime,
+                    master_size            = excluded.master_size,
+                    approvedChanges        = excluded.approvedChanges,
+                    unapprovedChanges      = excluded.unapprovedChanges,
+                    accepted_patches_mtime = excluded.accepted_patches_mtime,
+                    parse_error            = excluded.parse_error"
             ),
             params![
                 filename,
                 working_stat.map(|(m, _)| m),
                 working_stat.map(|(_, s)| s),
-                dirty_stat.map(|(m, _)| m),
-                dirty_stat.map(|(_, s)| s),
                 master_stat.map(|(m, _)| m),
                 master_stat.map(|(_, s)| s),
                 approved_changes,
                 unapproved_changes,
+                patch_index.patch_mtime,
                 parse_error,
             ],
         )?;
@@ -1841,6 +2010,7 @@ const CORE_COLUMNS: &[&str] = &[
     "master_size",
     "approvedChanges",
     "unapprovedChanges",
+    "accepted_patches_mtime",
     "parse_error",
     "has_errors",
     "validated_mtime_working",
@@ -1911,6 +2081,14 @@ pub fn find_stale_files(
     let working_files = scan_json_files(&paths.working);
     let stored = load_stored_rows(&conn, &table)?;
 
+    // accepted-patches.json mtime: any row whose cached mtime predates the
+    // current file mtime needs its approvedChanges/unapprovedChanges bits
+    // recomputed. Coarse — the whole table refreshes when the file changes —
+    // but that matches the patch file's per-connection scope, and the
+    // per-row reindex hot path is small (working + master read + 1 upsert).
+    let current_patch_mtime =
+        file_mtime_size(&resolve_accepted_patches_path(workspace, folder)).map(|(m, _)| m);
+
     let mut stale: HashSet<String> = HashSet::new();
 
     // Working files: new or mtime changed.
@@ -1918,7 +2096,10 @@ pub fn find_stale_files(
         let stat = file_mtime_size(&paths.working.join(filename));
         let needs_reindex = match stored.get(filename) {
             None => true,
-            Some(row) => version_changed(stat, row.working_mtime, row.working_size),
+            Some(row) => {
+                version_changed(stat, row.working_mtime, row.working_size)
+                    || row.accepted_patches_mtime != current_patch_mtime
+            }
         };
         if needs_reindex {
             stale.insert(filename.clone());
@@ -1927,6 +2108,14 @@ pub fn find_stale_files(
     // Rows that claim a working file but it's gone.
     for (filename, row) in &stored {
         if row.working_mtime.is_some() && !working_files.contains(filename) {
+            stale.insert(filename.clone());
+        }
+    }
+    // Rows whose working file no longer exists AND whose patch-mtime is out
+    // of date (e.g. an Update entry was discarded → row should flip its bits
+    // even though the working file is unchanged-because-still-absent).
+    for (filename, row) in &stored {
+        if row.accepted_patches_mtime != current_patch_mtime && !stale.contains(filename) {
             stale.insert(filename.clone());
         }
     }
@@ -2060,9 +2249,10 @@ fn select_filenames_where(
         .map_err(Into::into)
 }
 
-/// Reindex specific files: reads all three versions (working/dirty/master),
-/// computes approvedChanges/unapprovedChanges, updates the base row, and
-/// refreshes the value for every active field column.
+/// Reindex specific files: reads the working file + `refs/heads/main` blob
+/// (via the master worktree) + the connection's `accepted-patches.json`,
+/// computes approvedChanges/unapprovedChanges per Slice E, updates the base
+/// row, and refreshes the value for every active field column.
 /// Pass `debug = true` to print per-batch progress to stderr.
 pub fn reindex_files(
     workspace: &Path,
@@ -2080,6 +2270,7 @@ pub fn reindex_files(
     let db_path = resolve_db_path(workspace, folder, db_path_override);
     let paths = resolve_folder_paths(workspace, folder);
     let table = table_name_from_folder(folder);
+    let patch_index = load_patch_index(workspace, folder);
 
     let mut conn = open_conn(&db_path)?;
     ensure_schema(&conn, &table)?;
@@ -2093,23 +2284,15 @@ pub fn reindex_files(
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for filename in chunk {
             let working_path = paths.working.join(filename);
-            let dirty_path = paths.dirty.join(filename);
             let master_path = paths.master.join(filename);
 
             let working_stat = file_mtime_size(&working_path);
-            let dirty_stat = file_mtime_size(&dirty_path);
             let master_stat = file_mtime_size(&master_path);
 
             let mut parse_error: Option<String> = None;
             let (_working_bytes, working_json, working_err) = read_bytes_and_json(&working_path);
             if let Some(e) = working_err {
                 parse_error = Some(format!("working: {e}"));
-            }
-            let (_dirty_bytes, dirty_json, dirty_err) = read_bytes_and_json(&dirty_path);
-            if let Some(e) = dirty_err {
-                if parse_error.is_none() {
-                    parse_error = Some(format!("dirty: {e}"));
-                }
             }
             let (_master_bytes, master_json, master_err) = read_bytes_and_json(&master_path);
             if let Some(e) = master_err {
@@ -2118,26 +2301,14 @@ pub fn reindex_files(
                 }
             }
 
-            // Semantic JSON diff — see refresh_index for the rationale.
-            let approved: i32 = if working_stat.is_some() != dirty_stat.is_some() {
-                1
-            } else {
-                match (&working_json, &dirty_json) {
-                    (Some(w), Some(d)) => i32::from(w != d),
-                    _ => 0,
-                }
-            };
-            let unapproved: i32 = if dirty_stat.is_some() != master_stat.is_some() {
-                1
-            } else {
-                match (&dirty_json, &master_json) {
-                    (Some(d), Some(m)) => i32::from(d != m),
-                    _ => 0,
-                }
-            };
+            let rel_path = repo_relative_path_for_filename(folder, filename);
+            let patch_entry = patch_index.entries.get(&rel_path);
 
-            // If the file is gone from all three trees, remove it from the index.
-            if working_stat.is_none() && dirty_stat.is_none() && master_stat.is_none() {
+            // If the file is gone from both trees AND has no pending patch
+            // entry, drop the row entirely. A surviving entry (e.g. a
+            // `Create` whose working file was deleted out-of-band) keeps the
+            // row alive so the pending edit stays visible to the desktop.
+            if working_stat.is_none() && master_stat.is_none() && patch_entry.is_none() {
                 tx.execute(
                     &format!("DELETE FROM {tq} WHERE filename = ?1"),
                     params![filename],
@@ -2145,30 +2316,38 @@ pub fn reindex_files(
                 continue;
             }
 
+            let (approved, unapproved) = compute_review_bits(
+                patch_entry,
+                working_stat,
+                working_json.as_ref(),
+                master_json.as_ref(),
+            );
+
             tx.execute(
                 &format!(
                     "INSERT INTO {tq} (filename,
                         working_mtime, working_size, dirty_mtime, dirty_size,
-                        master_mtime, master_size, approvedChanges, unapprovedChanges, parse_error)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+                        master_mtime, master_size, approvedChanges, unapprovedChanges,
+                        accepted_patches_mtime, parse_error)
+                     VALUES (?1,?2,?3,NULL,NULL,?4,?5,?6,?7,?8,?9)
                      ON CONFLICT(filename) DO UPDATE SET
                         working_mtime=excluded.working_mtime, working_size=excluded.working_size,
-                        dirty_mtime=excluded.dirty_mtime,   dirty_size=excluded.dirty_size,
+                        dirty_mtime=NULL, dirty_size=NULL,
                         master_mtime=excluded.master_mtime, master_size=excluded.master_size,
                         approvedChanges=excluded.approvedChanges,
                         unapprovedChanges=excluded.unapprovedChanges,
+                        accepted_patches_mtime=excluded.accepted_patches_mtime,
                         parse_error=excluded.parse_error"
                 ),
                 params![
                     filename,
                     working_stat.map(|(m, _)| m),
                     working_stat.map(|(_, s)| s),
-                    dirty_stat.map(|(m, _)| m),
-                    dirty_stat.map(|(_, s)| s),
                     master_stat.map(|(m, _)| m),
                     master_stat.map(|(_, s)| s),
                     approved,
                     unapproved,
+                    patch_index.patch_mtime,
                     parse_error,
                 ],
             )?;
@@ -2422,11 +2601,11 @@ pub fn reindex_table(
     conn.execute_batch(&format!("DELETE FROM {tq};"))
         .context("failed to clear rows before reindex")?;
 
-    // Rebuild base rows from all three versions (reads JSON for approvedChanges).
+    // Rebuild base rows from working + master + accepted-patches.json.
     if debug {
-        eprintln!("[reindex]    rebuilding base rows (all 3 versions)...");
+        eprintln!("[reindex]    rebuilding base rows...");
     }
-    refresh_index(&mut conn, &paths, &table)?;
+    refresh_index(&mut conn, workspace, folder, &paths, &table)?;
     if debug {
         let n: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |r| r.get(0))?;
         eprintln!("[reindex]    {n} base rows written");
@@ -2651,6 +2830,20 @@ mod tests {
         fs::write(dir.join(filename), content).unwrap();
     }
 
+    /// Write `<ws>/.scratch/connections/<conn>/accepted-patches.json` with the
+    /// supplied entries. Slice E's compute reads this file to populate
+    /// approvedChanges / unapprovedChanges.
+    fn seed_patch_file(ws: &Path, conn: &str, patches: serde_json::Value) {
+        let conn_dir = ws.join(".scratch").join("connections").join(conn);
+        fs::create_dir_all(&conn_dir).unwrap();
+        let body = serde_json::json!({ "patches": patches });
+        fs::write(
+            conn_dir.join("accepted-patches.json"),
+            serde_json::to_string_pretty(&body).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn opts(workspace: &Path, folder: &str) -> QueryOptions {
         QueryOptions {
             workspace: workspace.to_path_buf(),
@@ -2692,44 +2885,47 @@ mod tests {
         assert_eq!(result.filenames, vec!["rec1.json"]);
         assert_eq!(result.summary.total, 1);
         assert_eq!(result.summary.working_only, 1);
-        // working present + dirty absent flips approvedChanges (the file is a
-        // pending local addition).
-        assert_eq!(result.summary.approved_changes, 1);
+        // No accepted-patches entry → not approved-pending-publish.
+        assert_eq!(result.summary.approved_changes, 0);
+        // Working file exists but approved value is None (no patch entry, no
+        // master) → working differs from approved → unreviewed.
+        assert_eq!(result.summary.unapproved_changes, 1);
         assert!(result.parse_errors.is_empty());
     }
 
     #[test]
     fn test_approved_changes_flag() {
+        // approvedChanges = 1 iff the path appears in accepted-patches.json.
+        // Setup: a Create patch for rec1.json, working file matches the patch
+        // content exactly → approved-pending-publish, no unreviewed delta.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let dirty_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("dirty")
-            .join("conn")
-            .join("posts");
 
         write_json(&working_dir, "rec1.json", r#"{"title":"new"}"#);
-        write_json(&dirty_dir, "rec1.json", r#"{"title":"old"}"#);
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([{
+                "path": "posts/rec1.json",
+                "kind": "create",
+                "patch": { "title": "new" },
+            }]),
+        );
 
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
         assert_eq!(result.summary.approved_changes, 1);
-        // dirty present + master absent flips unapprovedChanges (the record exists
-        // in the accepted branch but not yet in the published one).
-        assert_eq!(result.summary.unapproved_changes, 1);
+        assert_eq!(result.summary.unapproved_changes, 0);
     }
 
     #[test]
     fn test_unapproved_changes_flag() {
+        // unapprovedChanges = 1 iff working differs from apply(main, patch_or_empty).
+        // Setup: master has a published value, working has a local edit, NO
+        // patch entry → approved == published, working ≠ approved.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
-        let dirty_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("dirty")
-            .join("conn")
-            .join("posts");
+        let working_dir = ws.join("conn").join("posts");
         let master_dir = ws
             .join(".scratch")
             .join("connections")
@@ -2737,10 +2933,11 @@ mod tests {
             .join("conn")
             .join("posts");
 
-        write_json(&dirty_dir, "rec1.json", r#"{"title":"draft"}"#);
+        write_json(&working_dir, "rec1.json", r#"{"title":"draft"}"#);
         write_json(&master_dir, "rec1.json", r#"{"title":"published"}"#);
 
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(result.summary.approved_changes, 0);
         assert_eq!(result.summary.unapproved_changes, 1);
     }
 
@@ -2758,20 +2955,22 @@ mod tests {
 
     #[test]
     fn test_filter_approved_changes() {
+        // ApprovedChanges filter returns paths present in accepted-patches.json.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let dirty_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("dirty")
-            .join("conn")
-            .join("posts");
 
         write_json(&working_dir, "changed.json", r#"{"title":"v2"}"#);
-        write_json(&dirty_dir, "changed.json", r#"{"title":"v1"}"#);
         write_json(&working_dir, "same.json", r#"{"title":"v1"}"#);
-        write_json(&dirty_dir, "same.json", r#"{"title":"v1"}"#);
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([{
+                "path": "posts/changed.json",
+                "kind": "create",
+                "patch": { "title": "v2" },
+            }]),
+        );
 
         let mut o = opts(&ws, "conn/posts");
         o.filters = vec![FilterSpec::ApprovedChanges];
@@ -3101,24 +3300,20 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_has_dirty() {
+    fn test_filter_has_dirty_returns_nothing_post_slice_e() {
+        // The HasDirty filter and the `dirty_mtime/dirty_size` columns are
+        // dead since Slice E stopped writing the dirty filesystem tree.
+        // Filter still parses but returns nothing — Slice F removes the
+        // columns and filter entirely.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let dirty_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("dirty")
-            .join("conn")
-            .join("posts");
-
         write_json(&working_dir, "working_only.json", r#"{"x":1}"#);
-        write_json(&dirty_dir, "has_dirty.json", r#"{"x":1}"#);
 
         let mut o = opts(&ws, "conn/posts");
         o.filters = vec![FilterSpec::HasDirty];
         let result = run_query(&o).unwrap();
-        assert_eq!(result.filenames, vec!["has_dirty.json"]);
+        assert!(result.filenames.is_empty());
     }
 
     #[test]
@@ -3144,14 +3339,12 @@ mod tests {
 
     #[test]
     fn test_filter_unapproved_changes() {
+        // UnapprovedChanges filter returns paths where working ≠ approved.
+        // pending.json: working diverges from master, no patch entry → unreviewed.
+        // clean.json:   working matches master → reviewed.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
-        let dirty_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("dirty")
-            .join("conn")
-            .join("posts");
+        let working_dir = ws.join("conn").join("posts");
         let master_dir = ws
             .join(".scratch")
             .join("connections")
@@ -3159,11 +3352,9 @@ mod tests {
             .join("conn")
             .join("posts");
 
-        // dirty != master → unapproved
-        write_json(&dirty_dir, "pending.json", r#"{"v":2}"#);
+        write_json(&working_dir, "pending.json", r#"{"v":2}"#);
         write_json(&master_dir, "pending.json", r#"{"v":1}"#);
-        // dirty == master → not unapproved
-        write_json(&dirty_dir, "clean.json", r#"{"v":1}"#);
+        write_json(&working_dir, "clean.json", r#"{"v":1}"#);
         write_json(&master_dir, "clean.json", r#"{"v":1}"#);
 
         let mut o = opts(&ws, "conn/posts");
@@ -3228,31 +3419,28 @@ mod tests {
 
     #[test]
     fn test_combined_filters_and_semantics() {
+        // ApprovedChanges (= has patch entry) AND status=published.
+        // Three records, two with patch entries, one of those matches status.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let dirty_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("dirty")
-            .join("conn")
-            .join("posts");
 
-        // approved change AND status=published
         write_json(
             &working_dir,
             "pub_changed.json",
             r#"{"status":"published"}"#,
         );
-        write_json(&dirty_dir, "pub_changed.json", r#"{"status":"draft"}"#);
-
-        // approved change BUT status=draft
         write_json(&working_dir, "draft_changed.json", r#"{"status":"draft"}"#);
-        write_json(&dirty_dir, "draft_changed.json", r#"{"status":"old"}"#);
-
-        // status=published but no change
         write_json(&working_dir, "pub_clean.json", r#"{"status":"published"}"#);
-        write_json(&dirty_dir, "pub_clean.json", r#"{"status":"published"}"#);
+
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([
+                { "path": "posts/pub_changed.json",   "kind": "create", "patch": { "status": "published" } },
+                { "path": "posts/draft_changed.json", "kind": "create", "patch": { "status": "draft" } },
+            ]),
+        );
 
         let mut o = opts(&ws, "conn/posts");
         o.filters = vec![
@@ -3290,20 +3478,18 @@ mod tests {
     }
 
     #[test]
-    fn test_summary_dirty_only() {
+    fn test_summary_dirty_only_is_always_zero_post_slice_e() {
+        // dirty_only counts rows that exist only in the (now-dead) dirty
+        // worktree. After Slice E nothing populates dirty_mtime, so the
+        // bucket is permanently 0. Slice F removes the summary field
+        // entirely along with the column.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
-        let dirty_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("dirty")
-            .join("conn")
-            .join("posts");
-
-        write_json(&dirty_dir, "review_only.json", r#"{"x":1}"#);
+        let working_dir = ws.join("conn").join("posts");
+        write_json(&working_dir, "rec.json", r#"{"x":1}"#);
 
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
-        assert_eq!(result.summary.dirty_only, 1);
+        assert_eq!(result.summary.dirty_only, 0);
         assert_eq!(result.summary.total, 1);
     }
 
@@ -3311,30 +3497,83 @@ mod tests {
 
     #[test]
     fn test_file_content_change_updates_index() {
+        // Editing the working file should flip unapprovedChanges from 0 to 1
+        // (working diverges from approved). Verifies the mtime-based
+        // staleness path picks up working-file edits.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let dirty_dir = ws
+        let master_dir = ws
             .join(".scratch")
             .join("connections")
-            .join("dirty")
+            .join("master")
             .join("conn")
             .join("posts");
 
-        // Initial: working == dirty → no approved change
+        // Initial: working == master → approved == published, no unreviewed delta.
         write_json(&working_dir, "rec.json", r#"{"title":"same"}"#);
-        write_json(&dirty_dir, "rec.json", r#"{"title":"same"}"#);
+        write_json(&master_dir, "rec.json", r#"{"title":"same"}"#);
 
         let r1 = run_query(&opts(&ws, "conn/posts")).unwrap();
-        assert_eq!(r1.summary.approved_changes, 0);
+        assert_eq!(r1.summary.unapproved_changes, 0);
 
-        // Simulate edit: working diverges from dirty
-        // Sleep briefly to ensure mtime changes on systems with 1-second resolution
+        // Sleep briefly to ensure mtime changes on systems with 1-second resolution.
         std::thread::sleep(std::time::Duration::from_millis(10));
         write_json(&working_dir, "rec.json", r#"{"title":"edited"}"#);
 
         let r2 = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r2.summary.unapproved_changes, 1);
+    }
+
+    #[test]
+    fn test_patch_file_change_invalidates_rows() {
+        // Slice E: when accepted-patches.json changes, the per-row
+        // approvedChanges / unapprovedChanges bits must be recomputed on the
+        // next refresh — even though the working file's mtime is unchanged.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+        let master_dir = ws
+            .join(".scratch")
+            .join("connections")
+            .join("master")
+            .join("conn")
+            .join("posts");
+
+        // Initial: working == master, no patch entry → fully published.
+        write_json(&working_dir, "rec.json", r#"{"title":"hi"}"#);
+        write_json(&master_dir, "rec.json", r#"{"title":"hi"}"#);
+
+        let r1 = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r1.summary.approved_changes, 0);
+        assert_eq!(r1.summary.unapproved_changes, 0);
+
+        // Seed an Update entry. The working file is untouched but the patch
+        // file's mtime advances — the row should re-evaluate to approved=1
+        // (entry exists) and unapproved=1 (working ≠ apply(master, patch)).
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([{
+                "path": "posts/rec.json",
+                "kind": "update",
+                "patch": { "title": "renamed" },
+            }]),
+        );
+
+        let r2 = run_query(&opts(&ws, "conn/posts")).unwrap();
         assert_eq!(r2.summary.approved_changes, 1);
+        assert_eq!(r2.summary.unapproved_changes, 1);
+
+        // Remove the patch entry (= the user discarded). Working still
+        // untouched but the row should flip back.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        seed_patch_file(&ws, "conn", serde_json::json!([]));
+
+        let r3 = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r3.summary.approved_changes, 0);
+        assert_eq!(r3.summary.unapproved_changes, 0);
     }
 
     #[test]
