@@ -430,19 +430,8 @@ fn collect_nested_conflicts(
         // Recurse into the sub-object only when all four sides are objects;
         // otherwise the comparison happens at this level (the values are
         // wholly replaced rather than recursively merged per RFC 7396).
-        if patch_v.is_object()
-            && intended_v.is_object()
-            && new_v.is_object()
-            && old_v.is_object()
-        {
-            collect_nested_conflicts(
-                patch_v,
-                &intended_v,
-                &new_v,
-                Some(&old_v),
-                &key_path,
-                out,
-            );
+        if patch_v.is_object() && intended_v.is_object() && new_v.is_object() && old_v.is_object() {
+            collect_nested_conflicts(patch_v, &intended_v, &new_v, Some(&old_v), &key_path, out);
             continue;
         }
 

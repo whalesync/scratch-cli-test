@@ -779,7 +779,7 @@ async fn run_upload(
             println!("Uploading {}...", ctx.conn_dir_name);
         }
         let upload_result =
-            upload_single_repo_via_patches(ctx, &client, &token, workbook_id, verbose).await?;
+            upload_single_repo_via_patches(ctx, &client, workbook_id, verbose).await?;
         for path in &upload_result.changed_paths {
             all_changed_workspace_paths.push(format!("{}/{}", ctx.conn_dir_name, path));
         }
@@ -815,6 +815,23 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
     }
 
     let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    // Pre-flight: refuse the publish if any connection has unreviewed
+    // working-tree edits. The user must explicitly accept or discard them
+    // first — same model as pull's `blocked_unreviewed`, and the same
+    // structured payload shape so the desktop modal can pattern-match. Uses
+    // the gix::status-backed fast path (~210ms warm per connection).
+    let mut blocked: Vec<UnreviewedEntry> = Vec::new();
+    for ctx in &contexts {
+        blocked.extend(detect_unreviewed_fast(ctx, false)?);
+    }
+    if !blocked.is_empty() {
+        print_blocked_unreviewed_result(&blocked, started.elapsed().as_millis(), json)?;
+        anyhow::bail!(
+            "{} unreviewed record(s) — run `scratchmd files accept-all` or `discard-all`, then retry.",
+            blocked.len()
+        );
+    }
 
     let client = crate::api::ApiClient::new(&workspace_server_url, token.clone());
     let workbook_id = workspace_marker.workbook.id.as_str();
@@ -1936,9 +1953,12 @@ fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
+    // Uses the gix::status-backed fast helper so the desktop's pre-publish
+    // modal load (which spawns `scratchmd --json files unreviewed`) doesn't
+    // pay the multi-second tree-walk cost the old `unreviewed_entries` did.
     let mut entries = Vec::new();
     for ctx in &contexts {
-        entries.extend(unreviewed_entries(ctx)?);
+        entries.extend(detect_unreviewed_fast(ctx, false)?);
     }
     entries.sort_by(|left, right| {
         left.connection_name
@@ -2569,6 +2589,109 @@ fn detect_unreviewed_for_pull(ctx: &ConnectionContext) -> anyhow::Result<Vec<Unr
     ))
 }
 
+/// Fast variant of [`detect_unreviewed_for_pull`] that uses `gix::status`
+/// (index-backed, parallel) instead of walking both `refs/heads/main` and the
+/// worktree fully. ~210ms warm on a 110k-file connection vs. multi-second
+/// tree-walks; the gating cost of "should Publish be enabled?".
+///
+/// `gix::status` answers "working tree differs from index"; the index reflects
+/// `refs/heads/main` after [`worktree_reset_mixed`] (run on init + pull). For
+/// paths the user has *accepted* (entries in `accepted-patches.json`), the
+/// working tree is intentionally != index — those are NOT unreviewed. We
+/// filter by membership in `accepted-patches.json` and only fall back to the
+/// expensive per-file JSON compare for the (typically tiny) intersection.
+///
+/// If `short_circuit` is true, returns as soon as the first unreviewed path is
+/// found — for the "any?" check that gates the Publish action.
+fn detect_unreviewed_fast(
+    ctx: &ConnectionContext,
+    short_circuit: bool,
+) -> anyhow::Result<Vec<UnreviewedEntry>> {
+    let connection_dir = accepted_patches_dir(ctx);
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+    let patched_paths: HashSet<String> = accepted_file
+        .patches
+        .iter()
+        .map(|p| p.path.clone())
+        .collect();
+
+    let repo = gix::open(&ctx.worktree_dir)
+        .with_context(|| format!("failed to open worktree at {}", ctx.worktree_dir.display()))?;
+    let platform = repo.status(gix::progress::Discard)?;
+    let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
+
+    let mut entries: Vec<UnreviewedEntry> = Vec::new();
+    let mut ambiguous: Vec<(String, &'static str)> = Vec::new();
+
+    use gix::status::index_worktree::iter::Summary;
+    for item in iter {
+        let item = item?;
+        let summary = match item.summary() {
+            Some(s) => s,
+            None => continue,
+        };
+        let status = match summary {
+            Summary::Modified => "modified",
+            Summary::Added => "added",
+            Summary::Removed => "deleted",
+            // Renames/copies don't fire in practice (rewrite tracking is on
+            // by default but our adds aren't matched against deletes); treat
+            // defensively as a modification.
+            Summary::Renamed | Summary::Copied => "modified",
+            // Conflict / TypeChange / IntentToAdd are not states we produce.
+            // Skip rather than spam the user.
+            Summary::Conflict | Summary::TypeChange | Summary::IntentToAdd => continue,
+        };
+
+        let rel_path: String = String::from_utf8_lossy(item.rela_path()).into_owned();
+        if !is_data_path_in_folder(&rel_path, "") {
+            continue;
+        }
+
+        if patched_paths.contains(&rel_path) {
+            ambiguous.push((rel_path, status));
+        } else {
+            entries.push(UnreviewedEntry {
+                connection_name: ctx.conn_dir_name.clone(),
+                path: rel_path,
+                status: status.to_string(),
+            });
+            if short_circuit {
+                return Ok(entries);
+            }
+        }
+    }
+
+    if !ambiguous.is_empty() {
+        // Only paths in `accepted-patches.json` reach here. For each, check
+        // whether the working content matches `apply(main_blob, patch_entry)`.
+        // If not, the user has stacked unreviewed edits on top of accepted
+        // ones — count as unreviewed.
+        let main_map = read_main_tree(&ctx.bare_repo)?;
+        for (rel_path, status) in ambiguous {
+            let entry = match accepted_file.patches.iter().find(|p| p.path == rel_path) {
+                Some(e) => e,
+                None => continue, // shouldn't happen — patched_paths was built from accepted_file
+            };
+            let main_blob = main_map.get(&rel_path).map(|v| v.as_slice());
+            let expected = review_ops::apply_patch_entry_to_blob(main_blob, entry)?;
+            let actual = std::fs::read(ctx.worktree_dir.join(&rel_path)).ok();
+            if json_content_differs(expected.as_deref(), actual.as_deref()) {
+                entries.push(UnreviewedEntry {
+                    connection_name: ctx.conn_dir_name.clone(),
+                    path: rel_path,
+                    status: status.to_string(),
+                });
+                if short_circuit {
+                    return Ok(entries);
+                }
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
 /// Print the structured `blocked_unreviewed` result. Caller bails with
 /// non-zero immediately after, so the desktop can pattern-match on the JSON
 /// payload while shell users see both the human output and an Error: line.
@@ -2833,74 +2956,39 @@ fn download_single_repo(
     Ok(result)
 }
 
-/// Phase 1 of the upload-patch flow. Publishes the local connection's
-/// accepted state by:
+/// Upload the connection's accepted edits to the server. Reads
+/// `accepted-patches.json` (which IS the wire format), PUTs it to a presigned
+/// GCS URL, then POSTs `/upload-patch/commit` so the server applies the
+/// patches to its dirty branch as a single commit. No publish is triggered —
+/// the caller runs `scratchmd files publish` separately.
 ///
-///   1. Fetching origin so `refs/remotes/origin/main` reflects the server's
-///      current view of published state.
-///   2. Computing per-file RFC 7396 merge patches between local `main` (the
-///      last-fetched server state) and local `dirty` (the user's locally
-///      accepted edits).
-///   3. Uploading the patch payload via `/upload-patch/init` → presigned GCS
-///      PUT → `/upload-patch/commit`. The server applies the patches to its
-///      dirty branch as one commit, then triggers the existing publish-v2
-///      plan-job + run-job pipeline.
-///   4. Polling the publish job to completion (or surfacing its failure).
-///   5. Fetching again so the local `main` ref advances to include the
-///      just-published commit. Without this, the user would see "no_changes"
-///      based on stale local state on the next run.
-///
-/// Replaces the legacy local-merge-and-push path (which built publish plans
-/// client-side and pushed them to `refs/heads/dirty`). The local `dirty`
-/// branch is no longer authoritative for what gets published — the diff
-/// against local `main` is. Local refs are left alone except for advancing
-/// `main` after a successful publish.
+/// Skips entirely (no network, no tree walks) when there's nothing to upload.
+/// `baseHead` is the local `refs/heads/main` SHA: the snapshot the accepted
+/// patches were anchored against. The server uses it for the staleness
+/// signal (returned in `stalenessWarning`).
 async fn upload_single_repo_via_patches(
     ctx: &ConnectionContext,
     client: &crate::api::ApiClient,
-    token: &str,
     workbook_id: &str,
     verbose: bool,
 ) -> anyhow::Result<UploadResult> {
-    if verbose {
-        eprint!("  Fetching remote changes...");
-    }
-    crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
-    if verbose {
-        eprintln!(" done");
-    }
-
-    // baseHead is the local `main` for staleness detection on the server —
-    // unchanged semantics from the dirty-branch flow.
-    let main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
-        .or(git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?);
-
-    // Working-tree unreviewed check stays — surface a warning if the user has
-    // local edits that aren't accepted yet (those won't be uploaded).
+    // Cheap read first — skip the rest if nothing to upload.
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-
-    let main_map = read_main_tree(&ctx.bare_repo)?;
-    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-    let local_map = read_materialized_repo(ctx)?;
-    let local_unreviewed =
-        compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
-
     if accepted_file.patches.is_empty() {
-        let mut messages = Vec::new();
-        if !local_unreviewed.is_empty() {
-            messages.push(format!(
-                "{} record(s) have unreviewed local changes and will not be uploaded. Run `scratchmd files accept-all` first.",
-                local_unreviewed.len()
-            ));
-        }
         return Ok(UploadResult {
             connection_name: ctx.conn_dir_name.clone(),
             status: "no_changes".to_string(),
-            messages,
             ..Default::default()
         });
     }
+
+    // baseHead = the local snapshot the user's accepted patches were anchored
+    // against. Server compares it against its own `main` to populate
+    // `stalenessWarning`. Pre-cleanup we ran `fetch_origin` here first; that
+    // made baseHead equal the server's main by construction, so the staleness
+    // check could never fire. Dropped.
+    let main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
 
     use crate::shared::re_anchor::PatchKind as AnchoredKind;
     let files_created = accepted_file
@@ -2979,7 +3067,12 @@ async fn upload_single_repo_via_patches(
         eprintln!(" done");
     }
 
+    // Surface a warning if the user has on-disk edits that haven't been
+    // accepted yet — those don't ride along with this upload. Uses the
+    // gix::status-backed fast path (~210ms warm) so the courtesy check
+    // doesn't dominate the upload time.
     let mut messages = Vec::new();
+    let local_unreviewed = detect_unreviewed_fast(ctx, false)?;
     if !local_unreviewed.is_empty() {
         messages.push(format!(
             "{} record(s) have unreviewed local changes and were not uploaded. Run `scratchmd files accept-all` first.",
@@ -3311,21 +3404,6 @@ fn reject_all_full_scan(
     })
 }
 
-/// Files whose working content differs from approved (= what's in
-/// `apply(main, accepted-patches.json)`). These are local edits that haven't
-/// been accepted yet.
-fn unreviewed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
-    let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let main_map = read_main_tree(&ctx.bare_repo)?;
-    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-    let local_map = read_materialized_repo(ctx)?;
-    Ok(compute_unreviewed_entries(
-        &ctx.conn_dir_name,
-        &approved_map,
-        &local_map,
-    ))
-}
 
 /// Files with an entry in `accepted-patches.json` — i.e. approved but not
 /// yet published. One UnreviewedEntry per patch entry; status comes from the

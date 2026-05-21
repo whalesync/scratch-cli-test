@@ -1089,7 +1089,8 @@ fn refresh_index(
         if let Some(e) = working_err {
             parse_error = Some(format!("working: {e}"));
         }
-        let (_master_bytes, master_json, master_err) = parse_blob_to_json(master_blobs.get(filename));
+        let (_master_bytes, master_json, master_err) =
+            parse_blob_to_json(master_blobs.get(filename));
         if let Some(e) = master_err {
             if parse_error.is_none() {
                 parse_error = Some(format!("master: {e}"));
@@ -2576,8 +2577,7 @@ pub fn reindex_files(
     // only the blobs we're about to reindex — reading the whole folder
     // costs ~1s on 9k records but contributes nothing when only 1 file is
     // stale (the desktop's hot path).
-    let filename_filter: std::collections::HashSet<String> =
-        filenames.iter().cloned().collect();
+    let filename_filter: std::collections::HashSet<String> = filenames.iter().cloned().collect();
     let master_blobs = read_main_blobs_for_folder_filtered(workspace, folder, &filename_filter)?;
 
     let mut conn = open_conn(&db_path)?;
@@ -2714,9 +2714,7 @@ pub fn reindex_files(
                 let mt_q = quote_ident(&format!("{col}:mt"));
                 let sz_q = quote_ident(&format!("{col}:sz"));
                 tx.execute(
-                    &format!(
-                        "UPDATE {tq} SET {col_q}=?1, {mt_q}=?2, {sz_q}=?3 WHERE filename=?4"
-                    ),
+                    &format!("UPDATE {tq} SET {col_q}=?1, {mt_q}=?2, {sz_q}=?3 WHERE filename=?4"),
                     params![
                         value,
                         row.working_stat.map(|(m, _)| m),

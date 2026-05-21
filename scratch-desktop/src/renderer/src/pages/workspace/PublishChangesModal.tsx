@@ -464,6 +464,53 @@ export function PublishChangesModal({
     void startUpload();
   }, [startUpload]);
 
+  /**
+   * When unreviewed working-tree edits exist at modal-open, the user can't
+   * just "Continue to upload" — the CLI's `files publish` pre-flight refuses
+   * with `blocked_unreviewed`, so we'd hit that wall later anyway. Force the
+   * choice up front: accept the edits (they ride along) or discard them
+   * (they don't), then proceed straight into upload. Symmetric with pull's
+   * three-button "Accept all and refresh / Discard all and refresh / Cancel"
+   * modal.
+   */
+  const handleAcceptAllAndUpload = useCallback(async () => {
+    if (!localPath) return;
+    try {
+      setError(null);
+      setInitializing(true);
+      const result = await window.scratchDesktop.acceptAllChanges(localPath);
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr.trim() || 'scratchmd files accept-all failed');
+      }
+      setUnreviewedEntries([]);
+      await startUpload();
+    } catch (err) {
+      setMode('error');
+      setError(err instanceof Error ? err.message : 'Failed to accept unreviewed changes');
+    } finally {
+      setInitializing(false);
+    }
+  }, [localPath, startUpload]);
+
+  const handleDiscardAllAndUpload = useCallback(async () => {
+    if (!localPath) return;
+    try {
+      setError(null);
+      setInitializing(true);
+      const result = await window.scratchDesktop.discardAllChanges(localPath);
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr.trim() || 'scratchmd files discard-all failed');
+      }
+      setUnreviewedEntries([]);
+      await startUpload();
+    } catch (err) {
+      setMode('error');
+      setError(err instanceof Error ? err.message : 'Failed to discard unreviewed changes');
+    } finally {
+      setInitializing(false);
+    }
+  }, [localPath, startUpload]);
+
   const handleViewProblems = useCallback(() => {
     if (!localPath || !onViewProblems) return;
     const statsWithProblems = validationStats.filter((s) => s.records > 0);
@@ -794,10 +841,11 @@ export function PublishChangesModal({
                   <>
                     <Text size="sm">
                       {unreviewedEntries.length.toLocaleString()} record{unreviewedEntries.length === 1 ? '' : 's'}{' '}
-                      contain unreviewed changes that will not be uploaded.
+                      contain unreviewed local edits.
                     </Text>
                     <Text size="sm" c="dimmed">
-                      Continue to upload the reviewed local changes, or cancel and review those edits first.
+                      Publishing is blocked until you decide what to do with these edits. Accept them to publish the new
+                      values, or discard them to revert to the last accepted state.
                     </Text>
                   </>
                 )}
@@ -810,9 +858,24 @@ export function PublishChangesModal({
                   <Button variant="default" onClick={() => handleClose()} loading={closing}>
                     Cancel
                   </Button>
-                  <Button onClick={() => continueAfterApproval()} disabled={closing}>
-                    {validationCounts && validationCounts.records > 0 ? 'Ignore and Continue' : 'Continue'}
-                  </Button>
+                  {unreviewedEntries.length > 0 ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        onClick={() => void handleDiscardAllAndUpload()}
+                        disabled={closing || initializing}
+                      >
+                        Discard and publish
+                      </Button>
+                      <Button onClick={() => void handleAcceptAllAndUpload()} disabled={closing || initializing}>
+                        Accept and publish
+                      </Button>
+                    </>
+                  ) : (
+                    <Button onClick={() => continueAfterApproval()} disabled={closing}>
+                      {validationCounts && validationCounts.records > 0 ? 'Ignore and Continue' : 'Continue'}
+                    </Button>
+                  )}
                 </Group>
               </>
             )}
