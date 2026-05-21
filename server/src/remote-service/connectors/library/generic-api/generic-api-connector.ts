@@ -325,8 +325,7 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
     }
     if (error instanceof MaxPagesReachedError) {
       return {
-        userFriendlyMessage:
-          'Hit the default 1000-page cap for this endpoint. If your endpoint legitimately has more pages, raise maxPages in advanced settings.',
+        userFriendlyMessage: `Hit the ${error.maxPages}-page cap for this endpoint. If your endpoint legitimately has more pages, raise maxPages in advanced settings.`,
       };
     }
     if (error instanceof NonJsonResponseError) {

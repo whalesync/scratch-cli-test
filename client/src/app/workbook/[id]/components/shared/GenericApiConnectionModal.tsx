@@ -7,9 +7,11 @@ import { ScratchpadApiError } from '@/lib/api/error';
 import {
   ActionIcon,
   Alert,
+  Divider,
   Group,
   Modal,
   ModalProps,
+  NumberInput,
   PasswordInput,
   SegmentedControl,
   Select,
@@ -22,13 +24,14 @@ import {
 import {
   ConnectorAccount,
   GenericApiConnectorExtras,
+  GenericApiEndpointOverrides,
   GenericApiGraphqlEndpoint,
   GenericApiRestEndpoint,
   isGenericApiConnectorExtras,
   validatePastedConfig,
 } from '@spinner/shared-types';
-import { Plus, Sparkles, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Copy, Plus, Settings, Sparkles, Trash2 } from 'lucide-react';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
 
 export type GenericApiConnectionModalProps = ModalProps & {
   workbookId: string;
@@ -79,6 +82,45 @@ const truncateMiddle = (s: string, max: number): string => {
   return s.slice(0, headLen) + '…' + (tailLen > 0 ? s.slice(s.length - tailLen) : '');
 };
 
+// Strip blank/undefined leaves from a per-endpoint overrides object. Returns
+// undefined if nothing is set, so we don't persist a no-op `overrides: {}`.
+const cleanOverrides = (o: GenericApiEndpointOverrides | undefined): GenericApiEndpointOverrides | undefined => {
+  if (!o) return undefined;
+  const cleanLeaf = <T extends Record<string, unknown>>(obj: T | undefined): Partial<T> | undefined => {
+    if (!obj) return undefined;
+    const out: Partial<T> = {};
+    for (const k of Object.keys(obj) as Array<keyof T>) {
+      const v = obj[k];
+      if (v !== undefined && v !== '' && v !== null) out[k] = v;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  const next: GenericApiEndpointOverrides = {};
+  if (o.paginationType) next.paginationType = o.paginationType;
+  if (o.maxPages !== undefined) next.maxPages = o.maxPages;
+  if (o.enrichUrl && o.enrichUrl.trim()) next.enrichUrl = o.enrichUrl.trim();
+  const req = cleanLeaf(o.request);
+  if (req) next.request = req;
+  const res = cleanLeaf(o.response);
+  if (res) next.response = res;
+  return Object.keys(next).length > 0 ? next : undefined;
+};
+
+const copyConfigJson = async (extras: GenericApiConnectorExtras) => {
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(extras, null, 2));
+    ScratchpadNotifications.success({
+      title: 'Config JSON copied',
+      message: 'Paste it anywhere — the exact shape Scratch stores.',
+    });
+  } catch (e) {
+    ScratchpadNotifications.error({
+      title: 'Failed to copy',
+      message: e instanceof Error ? e.message : 'Unknown error',
+    });
+  }
+};
+
 const describeAuth = (style: AuthStyleSelection, customHeaderName: string): string => {
   switch (style) {
     case 'bearer':
@@ -96,6 +138,7 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
   const { workbookId, existingAccount, onConnectionCreated, onConnectionUpdated, ...modalProps } = props;
   const { createConnectorAccount, updateConnectorAccount } = useConnectorAccounts(workbookId);
   const isEditMode = !!existingAccount;
+  const opened = modalProps.opened;
 
   const [displayName, setDisplayName] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -117,10 +160,11 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
-  // Prepopulate from an existing account when in edit mode. Triggered whenever
-  // the modal opens with a different account so re-opens reset cleanly.
+  // Prepopulate from an existing account when in edit mode. Re-runs every time
+  // the modal opens — onExitTransitionEnd resets state between opens, so
+  // depending on `existingAccount` alone misses the re-open case.
   useEffect(() => {
-    if (!existingAccount) return;
+    if (!opened || !existingAccount) return;
     setDisplayName(existingAccount.displayName);
     setApiKey(''); // blank = keep existing encrypted key
     const extras = existingAccount.extras;
@@ -139,7 +183,7 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
       }
       setUserConfigured(true);
     }
-  }, [existingAccount]);
+  }, [existingAccount, opened]);
 
   const summary = useMemo(() => {
     type EndpointRow = { name: string; method?: string; url: string };
@@ -193,7 +237,12 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
         : { style: authStyle };
     const endpoints: GenericApiConnectorExtras['endpoints'] =
       apiType === 'rest'
-        ? restEndpoints.map((e) => ({ ...e, url: e.url.trim(), name: e.name?.trim() || undefined }))
+        ? restEndpoints.map((e) => ({
+            ...e,
+            url: e.url.trim(),
+            name: e.name?.trim() || undefined,
+            overrides: cleanOverrides(e.overrides),
+          }))
         : graphqlEndpoints.map((e) => ({ ...e, url: e.url.trim(), name: e.name?.trim() || undefined }));
     return { apiType, authHeader, endpoints };
   };
@@ -354,6 +403,12 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
     }
   };
 
+  // Esc should close only the topmost modal. Each Mantine Modal listens on
+  // `document.keydown` independently, so a single Esc would otherwise close the
+  // whole stack. Outer modals disable their own Esc handling while any inner
+  // modal is open.
+  const anyChildOpen = manualOpen || aiOpen;
+
   return (
     <ModalWrapper
       title={isEditMode ? 'Edit generic API connection' : 'Connect to a generic API'}
@@ -368,27 +423,38 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
         ),
       }}
       {...modalProps}
+      closeOnEscape={!anyChildOpen}
       onExitTransitionEnd={reset}
     >
       <Stack gap="md">
         {error && <Alert color="red">{error}</Alert>}
 
-        <TextInput
-          label="Connection name"
-          placeholder="e.g. Clover API"
-          required
-          value={displayName}
-          onChange={(e) => setDisplayName(e.currentTarget.value)}
-        />
+        <Group gap="xs" wrap="nowrap" align="center">
+          <Text size="sm" w={80} style={{ flexShrink: 0 }}>
+            Name
+          </Text>
+          <TextInput
+            placeholder="e.g. Clover API"
+            required
+            value={displayName}
+            onChange={(e) => setDisplayName(e.currentTarget.value)}
+            style={{ flex: 1 }}
+          />
+        </Group>
+        <Group gap="xs" wrap="nowrap" align="center">
+          <Text size="sm" w={80} style={{ flexShrink: 0 }}>
+            API key
+          </Text>
+          <PasswordInput
+            placeholder={isEditMode ? 'Leave blank to keep current key' : 'Pasted from your API provider'}
+            required={!isEditMode}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.currentTarget.value)}
+            style={{ flex: 1 }}
+          />
+        </Group>
 
-        <PasswordInput
-          label="API key"
-          placeholder={isEditMode ? 'Leave blank to keep current key' : 'Pasted from your API provider'}
-          description={isEditMode ? 'Type a new key only if you want to replace the stored one.' : undefined}
-          required={!isEditMode}
-          value={apiKey}
-          onChange={(e) => setApiKey(e.currentTarget.value)}
-        />
+        <ConfigSummary summary={summary} onCopyJson={() => copyConfigJson(buildExtras())} />
 
         <Group justify="center" gap="md" my="md">
           <ButtonSecondaryOutline
@@ -405,8 +471,6 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
             {summary.hasEndpoints ? 'Edit Tables Manually' : 'Add Tables Manually'}
           </ButtonSecondaryOutline>
         </Group>
-
-        <ConfigSummary summary={summary} />
       </Stack>
 
       <ManualEditorModal
@@ -464,9 +528,10 @@ interface ConfigSummaryProps {
     authLabel: string;
     apiTypeLabel: string;
   };
+  onCopyJson: () => void;
 }
 
-const ConfigSummary = ({ summary }: ConfigSummaryProps) => {
+const ConfigSummary = ({ summary, onCopyJson }: ConfigSummaryProps) => {
   if (!summary.hasAnything) {
     return (
       <Alert color="gray" variant="light">
@@ -481,12 +546,23 @@ const ConfigSummary = ({ summary }: ConfigSummaryProps) => {
       gap={6}
       p="sm"
       style={{
+        position: 'relative',
         border: '0.5px solid var(--mantine-color-gray-3)',
         borderRadius: 4,
         minWidth: 0,
         overflow: 'hidden',
       }}
     >
+      <Tooltip label="Copy config JSON" position="left">
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          onClick={onCopyJson}
+          style={{ position: 'absolute', top: 6, right: 6 }}
+        >
+          <Copy size={14} />
+        </ActionIcon>
+      </Tooltip>
       <Group gap="xs" wrap="nowrap">
         <Text size="xs" c="dimmed" w={80}>
           API style
@@ -516,14 +592,20 @@ const ConfigSummary = ({ summary }: ConfigSummaryProps) => {
                   overflow: 'hidden',
                 }}
               >
-                <Text size="sm" fw={500} style={{ flexShrink: 0 }}>
+                <Text
+                  size="sm"
+                  fw={500}
+                  style={{
+                    width: 140,
+                    flexShrink: 0,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                  title={ep.name}
+                >
                   {ep.name}
                 </Text>
-                {ep.method && (
-                  <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-                    {ep.method}
-                  </Text>
-                )}
                 <Text
                   size="xs"
                   c="dimmed"
@@ -582,8 +664,20 @@ const ManualEditorModal = ({
   onApplied,
   markAuthChanged,
 }: ManualEditorProps) => {
+  // Count of nested per-endpoint settings modals currently open. When non-zero,
+  // disable Esc-to-close on this modal so the keystroke only closes the
+  // topmost (settings) modal. Each RestEndpointRow calls onNestedOpenChange on
+  // open/close to maintain the count.
+  const [nestedOpen, setNestedOpen] = useState(0);
+  const onNestedOpenChange = (open: boolean) => setNestedOpen((c) => Math.max(0, c + (open ? 1 : -1)));
   return (
-    <Modal opened={opened} onClose={onClose} title="Edit endpoints manually" size="lg">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Edit endpoints manually"
+      size="lg"
+      closeOnEscape={nestedOpen === 0}
+    >
       <Stack gap="md">
         <Stack gap={4}>
           <Text size="sm" fw={500}>
@@ -629,7 +723,11 @@ const ManualEditorModal = ({
           Endpoints
         </Text>
         {apiType === 'rest' ? (
-          <RestEndpointList endpoints={restEndpoints} onChange={setRestEndpoints} />
+          <RestEndpointList
+            endpoints={restEndpoints}
+            onChange={setRestEndpoints}
+            onNestedOpenChange={onNestedOpenChange}
+          />
         ) : (
           <GraphqlEndpointList endpoints={graphqlEndpoints} onChange={setGraphqlEndpoints} />
         )}
@@ -749,54 +847,35 @@ const AiAssistModal = ({
 interface RestListProps {
   endpoints: GenericApiRestEndpoint[];
   onChange: (next: GenericApiRestEndpoint[]) => void;
+  onNestedOpenChange?: (open: boolean) => void;
 }
 
-const RestEndpointList = ({ endpoints, onChange }: RestListProps) => {
+const RestEndpointList = ({ endpoints, onChange, onNestedOpenChange }: RestListProps) => {
   const update = (idx: number, patch: Partial<GenericApiRestEndpoint>) => {
     onChange(endpoints.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
   };
+  const remove = (idx: number) => onChange(endpoints.filter((_, i) => i !== idx));
   return (
     <Stack gap="xs">
+      <Group gap="xs" wrap="nowrap" px={4}>
+        <Text size="xs" c="dimmed" w={160} style={{ flexShrink: 0 }}>
+          Name
+        </Text>
+        <Text size="xs" c="dimmed" style={{ flex: 1 }}>
+          URL
+        </Text>
+        {/* spacer to match the two trailing action icons (28px each + 8px gap) */}
+        <div style={{ width: 64, flexShrink: 0 }} />
+      </Group>
       {endpoints.map((ep, idx) => (
-        <Stack
+        <RestEndpointRow
           key={ep.id}
-          gap={6}
-          p="sm"
-          style={{ border: '0.5px solid var(--mantine-color-gray-3)', borderRadius: 4 }}
-        >
-          <Group gap="xs" wrap="nowrap" align="flex-end">
-            <Select
-              label={idx === 0 ? 'Method' : undefined}
-              data={['GET', 'POST']}
-              value={ep.method}
-              onChange={(v) => v && update(idx, { method: v as 'GET' | 'POST' })}
-              w={90}
-            />
-            <TextInput
-              label={idx === 0 ? 'URL' : undefined}
-              placeholder="https://api.example.com/v1/projects"
-              value={ep.url}
-              onChange={(e) => update(idx, { url: e.currentTarget.value })}
-              style={{ flex: 1 }}
-            />
-            <Tooltip label="Remove endpoint" position="left">
-              <ActionIcon
-                variant="subtle"
-                color="red"
-                onClick={() => onChange(endpoints.filter((_, i) => i !== idx))}
-                disabled={endpoints.length === 1}
-              >
-                <Trash2 size={14} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
-          <TextInput
-            placeholder="Display name (optional — derived from path if blank)"
-            value={ep.name ?? ''}
-            onChange={(e) => update(idx, { name: e.currentTarget.value })}
-            size="xs"
-          />
-        </Stack>
+          endpoint={ep}
+          removable={endpoints.length > 1}
+          onChange={(patch) => update(idx, patch)}
+          onRemove={() => remove(idx)}
+          onSettingsOpenChange={onNestedOpenChange}
+        />
       ))}
       <ButtonSecondaryOutline onClick={() => onChange([...endpoints, blankRestEndpoint()])}>
         <Group gap={4} wrap="nowrap">
@@ -806,6 +885,233 @@ const RestEndpointList = ({ endpoints, onChange }: RestListProps) => {
     </Stack>
   );
 };
+
+interface RestEndpointRowProps {
+  endpoint: GenericApiRestEndpoint;
+  removable: boolean;
+  onChange: (patch: Partial<GenericApiRestEndpoint>) => void;
+  onRemove: () => void;
+  onSettingsOpenChange?: (open: boolean) => void;
+}
+
+const RestEndpointRow = ({
+  endpoint,
+  removable,
+  onChange,
+  onRemove,
+  onSettingsOpenChange,
+}: RestEndpointRowProps) => {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = () => {
+    setSettingsOpen(true);
+    onSettingsOpenChange?.(true);
+  };
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    onSettingsOpenChange?.(false);
+  };
+  const hasAdvanced =
+    endpoint.method === 'POST' ||
+    !!endpoint.body ||
+    !!cleanOverrides(endpoint.overrides);
+  return (
+    <>
+      <Group gap="xs" wrap="nowrap" align="center">
+        <TextInput
+          placeholder="Projects"
+          value={endpoint.name ?? ''}
+          onChange={(e) => onChange({ name: e.currentTarget.value })}
+          w={160}
+        />
+        <TextInput
+          placeholder="https://api.example.com/v1/projects?offset=0&limit=100"
+          value={endpoint.url}
+          onChange={(e) => onChange({ url: e.currentTarget.value })}
+          style={{ flex: 1 }}
+        />
+        <Tooltip label={hasAdvanced ? 'Endpoint settings (customised)' : 'Endpoint settings'} position="top">
+          <ActionIcon
+            variant={hasAdvanced ? 'light' : 'subtle'}
+            color={hasAdvanced ? 'blue' : undefined}
+            onClick={openSettings}
+          >
+            <Settings size={14} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="Remove endpoint" position="left">
+          <ActionIcon variant="subtle" color="red" onClick={onRemove} disabled={!removable}>
+            <Trash2 size={14} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+      <RestEndpointSettingsModal
+        opened={settingsOpen}
+        onClose={closeSettings}
+        endpoint={endpoint}
+        onChange={onChange}
+      />
+    </>
+  );
+};
+
+interface RestEndpointSettingsModalProps {
+  opened: boolean;
+  onClose: () => void;
+  endpoint: GenericApiRestEndpoint;
+  onChange: (patch: Partial<GenericApiRestEndpoint>) => void;
+}
+
+const RestEndpointSettingsModal = ({ opened, onClose, endpoint, onChange }: RestEndpointSettingsModalProps) => {
+  const overrides = endpoint.overrides ?? {};
+  const request = overrides.request ?? {};
+  const response = overrides.response ?? {};
+
+  const patchOverrides = (patch: Partial<GenericApiEndpointOverrides>) => {
+    onChange({ overrides: { ...overrides, ...patch } });
+  };
+  const patchRequest = (patch: Partial<NonNullable<GenericApiEndpointOverrides['request']>>) => {
+    patchOverrides({ request: { ...request, ...patch } });
+  };
+  const patchResponse = (patch: Partial<NonNullable<GenericApiEndpointOverrides['response']>>) => {
+    patchOverrides({ response: { ...response, ...patch } });
+  };
+
+  const title = endpoint.name?.trim() || endpoint.url || 'Endpoint';
+  return (
+    <Modal opened={opened} onClose={onClose} title={`Settings — ${title}`} size="md">
+      <Stack gap="xs">
+        <SettingsRow label="method">
+          <SegmentedControl
+            size="xs"
+            data={['GET', 'POST']}
+            value={endpoint.method}
+            onChange={(v) => onChange({ method: v as 'GET' | 'POST' })}
+          />
+        </SettingsRow>
+        <SettingsRow label="paginationType">
+          <Select
+            size="xs"
+            data={[
+              { value: '', label: 'auto-detect' },
+              { value: 'cursor', label: 'cursor' },
+              { value: 'offset', label: 'offset' },
+              { value: 'graphql', label: 'graphql' },
+              { value: 'link-header', label: 'link-header' },
+              { value: 'none', label: 'none' },
+            ]}
+            value={overrides.paginationType ?? ''}
+            onChange={(v) =>
+              patchOverrides({
+                paginationType: (v || undefined) as GenericApiEndpointOverrides['paginationType'],
+              })
+            }
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+        <SettingsRow label="maxPages">
+          <NumberInput
+            size="xs"
+            value={overrides.maxPages ?? ''}
+            onChange={(v) => patchOverrides({ maxPages: typeof v === 'number' ? v : undefined })}
+            placeholder="1000"
+            min={1}
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+        <SettingsRow label="enrichUrl">
+          <TextInput
+            size="xs"
+            value={overrides.enrichUrl ?? ''}
+            onChange={(e) => patchOverrides({ enrichUrl: e.currentTarget.value || undefined })}
+            placeholder="/v1/projects/{id}"
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+
+        <Divider label="request" labelPosition="left" my={4} />
+        <SettingsRow label="cursorParam">
+          <TextInput
+            size="xs"
+            value={request.cursorParam ?? ''}
+            onChange={(e) => patchRequest({ cursorParam: e.currentTarget.value || undefined })}
+            placeholder="cursor"
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+        <SettingsRow label="offsetParam">
+          <TextInput
+            size="xs"
+            value={request.offsetParam ?? ''}
+            onChange={(e) => patchRequest({ offsetParam: e.currentTarget.value || undefined })}
+            placeholder="offset"
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+        <SettingsRow label="limitParam">
+          <TextInput
+            size="xs"
+            value={request.limitParam ?? ''}
+            onChange={(e) => patchRequest({ limitParam: e.currentTarget.value || undefined })}
+            placeholder="limit"
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+        <SettingsRow label="maxPageSize">
+          <NumberInput
+            size="xs"
+            value={request.maxPageSize ?? ''}
+            onChange={(v) => patchRequest({ maxPageSize: typeof v === 'number' ? v : undefined })}
+            placeholder="100"
+            min={1}
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+
+        <Divider label="response" labelPosition="left" my={4} />
+        <SettingsRow label="dataPath">
+          <TextInput
+            size="xs"
+            value={response.dataPath ?? ''}
+            onChange={(e) => patchResponse({ dataPath: e.currentTarget.value || undefined })}
+            placeholder="data"
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+        <SettingsRow label="cursorPath">
+          <TextInput
+            size="xs"
+            value={response.cursorPath ?? ''}
+            onChange={(e) => patchResponse({ cursorPath: e.currentTarget.value || undefined })}
+            placeholder="next_cursor"
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+        <SettingsRow label="idPath">
+          <TextInput
+            size="xs"
+            value={response.idPath ?? ''}
+            onChange={(e) => patchResponse({ idPath: e.currentTarget.value || undefined })}
+            placeholder="id"
+            style={{ flex: 1 }}
+          />
+        </SettingsRow>
+
+        <Group justify="flex-end" mt="sm">
+          <ButtonPrimaryLight onClick={onClose}>Done</ButtonPrimaryLight>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+};
+
+const SettingsRow = ({ label, children }: { label: string; children: ReactNode }) => (
+  <Group gap="xs" wrap="nowrap" align="center">
+    <Text size="xs" c="dimmed" w={120} ff="monospace" style={{ flexShrink: 0 }}>
+      {label}
+    </Text>
+    <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+  </Group>
+);
 
 interface GraphqlListProps {
   endpoints: GenericApiGraphqlEndpoint[];

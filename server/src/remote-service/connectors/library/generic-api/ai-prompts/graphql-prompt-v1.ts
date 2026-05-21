@@ -12,6 +12,11 @@ Scratch's generic-API connector backs GraphQL with a small utility called
 \`pageInfo.hasNextPage\` + \`pageInfo.endCursor\` + \`nodes\` (or \`edges\`). apiget
 injects the cursor as a \`variables.after\` value on subsequent pages.
 
+**The connection must be at the top level of the response** —
+\`data.<topField>.pageInfo\` is auto-detected, but \`data.viewer.repositories.pageInfo\`
+(and any other nesting) is NOT. If the natural query nests, either flatten it
+to a top-level field or add an \`overrides\` block (see below).
+
 The user already has their API key — your only job is to produce the JSON
 config block they paste back into Scratch. Do NOT explain how to obtain an
 API key.
@@ -59,6 +64,29 @@ query Issues($after: String) {
 Each endpoint is one entity = one GraphQL query. The \`url\` is the GraphQL
 endpoint URL; the \`query\` is the full query string. Embed \`\\n\` for newlines
 in the query string so the JSON parses cleanly.
+
+**Nested-Relay endpoints need explicit overrides.** When the connection lives
+under a parent field (e.g. GitHub's \`data.viewer.repositories\` or
+\`data.organization.teams\`), set \`paginationType: "graphql"\` plus the response
+paths so apiget knows where to look:
+
+\`\`\`json
+{
+  "name": "MyRepos",
+  "url": "https://api.github.com/graphql",
+  "query": "query MyRepos($after: String) {\\n  viewer {\\n    repositories(first: 50, after: $after) {\\n      pageInfo { hasNextPage endCursor }\\n      nodes { id name updatedAt }\\n    }\\n  }\\n}",
+  "overrides": {
+    "paginationType": "graphql",
+    "response": {
+      "cursorPath": "data.viewer.repositories.pageInfo.endCursor",
+      "dataPath": "data.viewer.repositories.nodes"
+    }
+  }
+}
+\`\`\`
+
+For top-level connections (the default example), no overrides are needed —
+auto-detect handles them.
 
 Hard limits — do NOT include endpoints that hit these:
 

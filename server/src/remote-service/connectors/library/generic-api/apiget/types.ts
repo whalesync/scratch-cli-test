@@ -170,7 +170,7 @@ export class PaginationLoopError extends Error {
 
 /** Error class for the maxPages backstop. */
 export class MaxPagesReachedError extends Error {
-  constructor(maxPages: number) {
+  constructor(public readonly maxPages: number) {
     super(
       `Hit the ${maxPages}-page maxPages backstop. If your endpoint legitimately ` +
         `has more pages, raise maxPages in advanced settings.`,

@@ -33,8 +33,8 @@ Workflow you must follow:
 {
   "authHeader": "Bearer",
   "endpoints": [
-    { "name": "Projects", "method": "GET", "url": "https://api.example.com/v1/projects" },
-    { "name": "Tasks",    "method": "GET", "url": "https://api.example.com/v1/tasks" }
+    { "name": "Projects", "method": "GET", "url": "https://api.example.com/v1/projects?offset=0&limit=100" },
+    { "name": "Tasks",    "method": "GET", "url": "https://api.example.com/v1/tasks?offset=0&limit=100" }
   ]
 }
 ```
@@ -43,27 +43,68 @@ Workflow you must follow:
 (Authorization: Token <key>), `"raw"` (Authorization: <key> verbatim), or
 `"X-API-Key"` (X-API-Key: <key>). Pick whichever the service expects.
 
-**URL conventions:** put only the base path and any service-specific filters
-(e.g. `?sort=name`) in the `url`. Do NOT bake in pagination boilerplate like
-`?offset=0&limit=100` — apiget adds offset/limit dynamically based on the
-strategy. The caller (Scratch or the apiget driver) picks the actual page-size
-value at runtime; the `overrides` only declare the server's *hard cap*.
+**URL conventions for GET endpoints:** put the first-page pagination params
+directly on the URL.
 
-If a specific endpoint needs anything unusual, include an `overrides` block on
-that entry. The block describes HOW to fetch (param names, server constraints,
-response paths) — the caller picks HOW MUCH to fetch separately. Three groups:
-- Top-level: `paginationType` (`cursor`/`offset`/`graphql`/`link-header`/`none`), `maxPages`, `enrichUrl`
-- `request` — query-param names + server constraints: `cursorParam`, `offsetParam`, `limitParam`, `maxPageSize` (server's hard cap from docs — used as default page size AND as a clamp on runtime requests)
-- `response` — where we LOOK in the response body (lodash-style dot paths): `cursorPath`, `dataPath`, `idPath`
+- Offset-style APIs: `?offset=0&limit=N`
+- Cursor-style APIs that take a page-size param: `?limit=N` (no cursor yet —
+  you only get one after page 1)
 
-Examples:
-- Non-standard cursor query param: `{ "overrides": { "request": { "cursorParam": "page_token" } } }`
-- Non-standard JSON path to records: `{ "overrides": { "response": { "dataPath": "result.items" } } }`
-- Cursor under a nested wrapper: `{ "overrides": { "response": { "cursorPath": "pagination.next_cursor" } } }`
-- Record's ID field is not `id`: `{ "overrides": { "response": { "idPath": "uuid" } } }`
-- API uses unusual param names + caps page size at 50: `{ "overrides": { "request": { "cursorParam": "pageToken", "limitParam": "maxResults", "maxPageSize": 50 } } }`
+`N` should be the **maximum page size the API documents**. If you can't find
+the cap documented, fall back to `100`. apiget reads page 1 with the URL as
+written, auto-detects the pagination shape from the response, and locks the
+param names from what it sees in the URL. It may pick a smaller page size at
+runtime — your URL value just sets the upper bound. Service-specific filters
+go on the URL too (e.g. `?sort=name`, `?status=active`).
+
+**When to add an `overrides` block:** ONLY when the URL + auto-detection can't
+get apiget all the way there. apiget already recognizes these param names
+straight from the URL — if your API uses one of them, do NOT add an override:
+
+- **offset param**: `offset`, `skip`, `start`
+- **limit param**: `limit`, `count`, `per_page`, `perPage`, `page_size`, `pageSize`, `take`
+- **cursor param**: `cursor`, `after`, `next_cursor`, `page_token`, `continuation_token`
+
+apiget also auto-detects these response shapes:
+
+- **records array**: top-level `data`, `results`, `items`, `records`, `entries`, `list`, `posts`
+- **cursor field**: same list above, scanned at top level and nested under `pagination`, `paging`, `pageInfo`, `meta`
+- **id field**: `id`
+
+Add `overrides` only when the API differs from those defaults. The block has
+three groups:
+
+- Top-level: `paginationType` (`cursor`/`offset`/`link-header`/`none`), `maxPages`
+- `request` — non-default query-param names + server constraints: `cursorParam`, `offsetParam`, `limitParam`, `maxPageSize`
+- `response` — non-default response paths (lodash-style dot paths): `cursorPath`, `dataPath`, `idPath`
+
+**IMPORTANT — pagination overrides REPLACE auto-detection, they don't merge.**
+The moment you set ANY of `paginationType`, `request.cursorParam`,
+`request.offsetParam`, `request.limitParam`, `request.maxPageSize`,
+`response.cursorPath`, or `response.dataPath`, apiget stops auto-detecting and
+uses ONLY what you provide. Always include the FULL strategy for that endpoint:
+
+- For cursor pagination: `paginationType: "cursor"` + `request.cursorParam` + `response.cursorPath` + `response.dataPath` (if records aren't at a default name).
+- For offset pagination: `paginationType: "offset"` + `request.offsetParam` (if non-default) + `request.limitParam` (if non-default) + `response.dataPath` (if non-default).
+- For link-header pagination: `paginationType: "link-header"`. No request/response fields needed.
+
+A partial pagination override (e.g. just `cursorParam` with no `cursorPath`) is
+worse than no override at all — apiget stops after page 1 with the user's pull
+silently incomplete.
+
+Examples (each is a case where the override is required because the default
+doesn't match):
+- API uses `?pageToken=` cursor + `nextPageToken` field, records at `data`:
+  `{ "overrides": { "paginationType": "cursor", "request": { "cursorParam": "pageToken" }, "response": { "cursorPath": "nextPageToken", "dataPath": "data" } } }`
+- Records live under `result.items`, otherwise offset-style:
+  `{ "overrides": { "paginationType": "offset", "response": { "dataPath": "result.items" } } }`
+- Cursor at `meta.next_token`, records at default `data`:
+  `{ "overrides": { "paginationType": "cursor", "response": { "cursorPath": "meta.next_token", "dataPath": "data" } } }`
+- Record's ID field is `uuid` (the ID is the only customization — no pagination override):
+  `{ "overrides": { "response": { "idPath": "uuid" } } }`
+- API uses unusual names AND caps page size at 50:
+  `{ "overrides": { "paginationType": "cursor", "request": { "cursorParam": "pageToken", "limitParam": "maxResults", "maxPageSize": 50 }, "response": { "cursorPath": "nextPageToken", "dataPath": "data" } } }`
 - POST list endpoint with static body: `{ "method": "POST", "body": { "filter": {} } }`
-- Per-record enrichment URL: `{ "overrides": { "enrichUrl": "/v1/projects/{id}" } }`
 
 Hard limits — do NOT include endpoints that hit these:
 
