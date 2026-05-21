@@ -11,8 +11,10 @@
  * pull time. The custom connection modal + AI-assist buttons + probe flow
  * land in PR 3-5; this PR (PR 2) is the connector class + registration only.
  *
- * The connector is registered with `visible: false` in metadata so it does
- * NOT appear in the picker until the PostHog flag flip in PR 6.
+ * Registered with `visible: true` so the connector appears in the standard
+ * "Add connection" picker. The earlier ADMIN_ONLY_SERVICES gate was removed
+ * (commit f4c3776e) and `visible: false` was the remaining hidden flag —
+ * now flipped so all users see it in production.
  */
 
 import { Type } from '@sinclair/typebox';
@@ -82,10 +84,8 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
     record: 'record',
     records: 'records',
     logo: '/logo-color.svg',
-    // The connector
-    // can still be loaded server-side (so internal tests / scripts work) but
-    // the standard "Add connection" UI does not show it.
-    visible: false,
+    // Visible to all users in the standard "Add connection" picker.
+    visible: true,
     supportedAuthMethods: ['user_provided_params'],
     defaultAuthMethod: 'user_provided_params',
     credentialFields: {
