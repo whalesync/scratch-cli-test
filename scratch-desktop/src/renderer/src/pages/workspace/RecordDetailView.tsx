@@ -717,7 +717,6 @@ export const RecordDetailView = memo(function RecordDetailView({
           : '';
 
       const fieldType = columnTypes?.get(fieldName);
-      const isCheckbox = fieldType === 'checkbox';
 
       return {
         fieldName,
@@ -728,11 +727,11 @@ export const RecordDetailView = memo(function RecordDetailView({
         fromValue,
         diffKind,
         displayMode: isUnreviewed ? 'diff' : 'current',
-        editing: isEditable && !isCheckbox && editingFieldName === fieldName,
+        editing: isEditable && editingFieldName === fieldName,
         referenceValue: diffKind !== null ? fromValue : undefined,
         column: { readonly: isReadOnly, type: fieldType },
         onClick: isEditable
-          ? isCheckbox
+          ? fieldType === 'checkbox'
             ? () => {
                 const toggled = value === 'true' ? 'false' : 'true';
                 editingFieldRef.current = effectivePath;

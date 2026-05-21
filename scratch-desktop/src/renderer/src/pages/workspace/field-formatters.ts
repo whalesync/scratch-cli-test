@@ -42,3 +42,14 @@ export function formatFieldDisplay(value: string, fieldType: string | undefined)
       return value;
   }
 }
+
+/**
+ * Format a cell value for display, handling checkbox fields as plain text ("true" / "false")
+ * and delegating everything else to `formatFieldDisplay`.
+ */
+export function formatCellText(value: string, fieldType: string | undefined): string {
+  if (fieldType === 'checkbox') {
+    return value === 'true' ? 'true' : 'false';
+  }
+  return formatFieldDisplay(value, fieldType);
+}

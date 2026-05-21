@@ -6,7 +6,7 @@ import {
   type Theme,
 } from '@glideapps/glide-data-grid';
 import type { FieldChangeClassification } from '../../../../shared/field-change-classification';
-import type { FieldValueDiffKind } from './FieldValuePanel';
+import type { FieldValueDiffKind } from './field-value-types';
 
 /**
  * Canvas drawing for experimental "Unified Diffs" in FolderDataGrid. Kept separate

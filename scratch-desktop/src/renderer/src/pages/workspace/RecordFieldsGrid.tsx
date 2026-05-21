@@ -1,6 +1,18 @@
-import { ActionIcon, Box, Group, Portal, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Box,
+  Group,
+  Menu,
+  Portal,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Textarea,
+  Tooltip,
+} from '@mantine/core';
 import type { TableViewCol } from '@spinner/shared-types';
-import { Maximize2, TriangleAlertIcon } from 'lucide-react';
+import { Check, RotateCcw, Settings2, TriangleAlertIcon } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
@@ -12,8 +24,19 @@ import {
   TextMono9Regular,
 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { CollapsibleRow } from './collapsible-row';
+import {
+  IconActionButton,
+  InlineWordsDiff,
+  SideBySideCurrentDiff,
+  SideBySideDiff,
+  SideBySideNewDiff,
+} from './diff-renderers';
+import { FieldCellValue } from './field-cell-renderer';
+import type { FieldValueDiffKind, FieldValueDisplayMode } from './field-value-types';
+import { DIFF_REMOVED_BG, DIFF_REMOVED_FG, DIFF_TEXT_STYLE, getAddedBg } from './field-value-types';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
-import { FieldValuePanel, type FieldValueDiffKind, type FieldValueDisplayMode } from './FieldValuePanel';
+import { useDiffViewMode } from './use-diff-view-mode';
 
 function isMediumOrLargeChange(row: RecordFieldRow): boolean {
   if (row.diffKind == null) return false;
@@ -62,6 +85,7 @@ interface RecordFieldsGridProps {
 
 const FLOATING_PANEL_GAP = 5;
 const LABEL_COLUMN_WIDTH = 280;
+const CONTROLS_COLUMN_WIDTH = 60;
 
 function validationLevelColor(level: ValidationEntry['level']): string {
   return level === 'error' ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)';
@@ -254,6 +278,130 @@ function diffBorderColor(diffKind: FieldValueDiffKind): string {
   return 'transparent';
 }
 
+/** Renders approve/reject action buttons in the Controls column. */
+function ControlsCell({ row }: { row: RecordFieldRow }) {
+  const showApprove = row.displayMode === 'diff' && row.onApprove;
+  const showUndo = row.displayMode === 'diff' && row.onUndo;
+  if (!showApprove && !showUndo) return null;
+  return (
+    <Stack gap={6} align="center" justify="center" style={{ padding: '2px 0' }}>
+      {showApprove && <IconActionButton label="Approve" onClick={row.onApprove!} tone="approve" icon={Check} />}
+      {showUndo && <IconActionButton label="Reject" onClick={row.onUndo!} tone="undo" icon={RotateCcw} />}
+    </Stack>
+  );
+}
+
+/** Render the value cell(s) for a single row in inline mode. */
+function InlineValueCell({ row }: { row: RecordFieldRow }) {
+  if (row.editing) {
+    return null; // handled separately
+  }
+
+  const clickProps = row.onClick
+    ? {
+        onClick: row.onClick,
+        role: 'button' as const,
+        tabIndex: 0,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            row.onClick!();
+          }
+        },
+        style: { cursor: 'text' as const },
+      }
+    : { style: { cursor: 'default' as const } };
+
+  const isDiff = row.displayMode === 'diff' && row.diffKind != null;
+
+  if (isDiff && isMediumOrLargeChange(row)) {
+    return (
+      <Box {...clickProps}>
+        <InlineWordsDiff fromValue={row.fromValue ?? ''} value={row.value} diffKind={row.diffKind} />
+      </Box>
+    );
+  }
+
+  if (isDiff) {
+    return (
+      <Box {...clickProps}>
+        <Box style={{ padding: '6px 12px 2px', ...DIFF_TEXT_STYLE }}>
+          <span
+            style={{
+              color: DIFF_REMOVED_FG,
+              textDecoration: 'line-through',
+              backgroundColor: DIFF_REMOVED_BG,
+              boxDecorationBreak: 'clone',
+              WebkitBoxDecorationBreak: 'clone',
+              padding: '0 2px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {row.fromValue ?? ''}
+          </span>
+        </Box>
+        <Box style={{ padding: '2px 12px 8px', ...DIFF_TEXT_STYLE }}>
+          <span
+            style={{
+              backgroundColor: getAddedBg(row.diffKind),
+              color: 'var(--modified-needs-review-stroke)',
+              boxDecorationBreak: 'clone',
+              WebkitBoxDecorationBreak: 'clone',
+              padding: '0 2px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {row.value}
+          </span>
+        </Box>
+      </Box>
+    );
+  }
+
+  // Non-diff: plain value
+  return (
+    <Box {...clickProps}>
+      <FieldCellValue value={row.value} column={row.column} muted={row.column?.readonly ?? false} />
+    </Box>
+  );
+}
+
+/** The diff settings menu (side-by-side vs inline toggle). */
+function DiffViewModeMenu({
+  diffViewMode,
+  setDiffViewMode,
+}: {
+  diffViewMode: string;
+  setDiffViewMode: (mode: 'side-by-side' | 'inline-words') => void;
+}) {
+  return (
+    <Menu position="bottom-end" withinPortal zIndex={10020}>
+      <Menu.Target>
+        <ActionIcon variant="subtle" size={20} radius={3} aria-label="Compare changes">
+          <StyledLucideIcon Icon={Settings2} size={14} strokeWidth={2} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Compare changes</Menu.Label>
+        <Menu.Item
+          onClick={() => setDiffViewMode('side-by-side')}
+          rightSection={diffViewMode === 'side-by-side' ? <StyledLucideIcon Icon={Check} size={14} /> : undefined}
+        >
+          Side-by-side
+        </Menu.Item>
+        <Menu.Item
+          onClick={() => setDiffViewMode('inline-words')}
+          rightSection={diffViewMode === 'inline-words' ? <StyledLucideIcon Icon={Check} size={14} /> : undefined}
+        >
+          Inline
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
 export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   rows,
   footer,
@@ -264,6 +412,9 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   const [editingAnchorEl, setEditingAnchorEl] = useState<HTMLDivElement | null>(null);
   const [editingAnchorRect, setEditingAnchorRect] = useState<DOMRect | null>(null);
   const [focusedFieldName, setFocusedFieldNameInternal] = useState<string | null>(initialFocusedFieldName ?? null);
+  const [diffViewMode, setDiffViewMode] = useDiffViewMode();
+  const hasDiffs = useMemo(() => rows.some((row) => row.diffKind != null), [rows]);
+  const isSideBySide = diffViewMode === 'side-by-side';
 
   const setFocusedFieldName = (next: string | null) => {
     setFocusedFieldNameInternal(next);
@@ -342,6 +493,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
       </Portal>
     ) : null;
 
+  // --- Focused field view ---
   if (focusedRow) {
     const fieldOptions = rows.map((row) => ({
       value: row.fieldName,
@@ -351,6 +503,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     }));
     const focusedViolations = validationWarnings?.get(focusedRow.fieldName);
     const focusedHasError = focusedViolations?.some((v) => v.level === 'error');
+    const focusedIsDiff = focusedRow.diffKind != null;
     return (
       <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <Box
@@ -401,6 +554,18 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                   </Box>
                 </ValidationTooltip>
               )}
+              {focusedIsDiff && focusedRow.onApprove && (
+                <IconActionButton label="Approve" onClick={focusedRow.onApprove} tone="approve" icon={Check} />
+              )}
+              {focusedIsDiff && focusedRow.onUndo && (
+                <IconActionButton label="Reject" onClick={focusedRow.onUndo} tone="undo" icon={RotateCcw} />
+              )}
+              {hasDiffs && (
+                <>
+                  <Box style={{ flex: 1 }} />
+                  <DiffViewModeMenu diffViewMode={diffViewMode} setDiffViewMode={setDiffViewMode} />
+                </>
+              )}
             </Group>
             {(focusedRow.displayLabel !== focusedRow.fieldName ||
               (focusedRow.description &&
@@ -439,18 +604,70 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
             <Box ref={setEditingAnchorEl} style={{ display: 'grid', gap: 6 }}>
               <FieldEditor row={focusedRow} />
             </Box>
-          ) : (
-            <FieldValuePanel
-              value={focusedRow.value}
-              fromValue={focusedRow.fromValue}
-              diffKind={focusedRow.diffKind}
-              displayMode={focusedRow.displayMode}
+          ) : focusedIsDiff ? (
+            <Box
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                cursor: focusedRow.onClick ? 'text' : 'default',
+              }}
               onClick={focusedRow.onClick}
-              onApprove={focusedRow.displayMode === 'diff' ? focusedRow.onApprove : undefined}
-              onUndo={focusedRow.displayMode === 'diff' ? focusedRow.onUndo : undefined}
-              column={focusedRow.column}
-              expanded
-            />
+              role={focusedRow.onClick ? 'button' : undefined}
+              tabIndex={focusedRow.onClick ? 0 : undefined}
+              onKeyDown={
+                focusedRow.onClick
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        focusedRow.onClick!();
+                      }
+                    }
+                  : undefined
+              }
+            >
+              {isSideBySide ? (
+                <SideBySideDiff
+                  fromValue={focusedRow.fromValue ?? ''}
+                  value={focusedRow.value}
+                  diffKind={focusedRow.diffKind}
+                />
+              ) : (
+                <InlineWordsDiff
+                  fromValue={focusedRow.fromValue ?? ''}
+                  value={focusedRow.value}
+                  diffKind={focusedRow.diffKind}
+                />
+              )}
+            </Box>
+          ) : (
+            <Box
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                cursor: focusedRow.onClick ? 'text' : 'default',
+              }}
+              onClick={focusedRow.onClick}
+              role={focusedRow.onClick ? 'button' : undefined}
+              tabIndex={focusedRow.onClick ? 0 : undefined}
+              onKeyDown={
+                focusedRow.onClick
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        focusedRow.onClick!();
+                      }
+                    }
+                  : undefined
+              }
+            >
+              <FieldCellValue
+                value={focusedRow.value}
+                column={focusedRow.column}
+                muted={focusedRow.column?.readonly ?? false}
+              />
+            </Box>
           )}
         </Box>
 
@@ -459,115 +676,156 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     );
   }
 
+  // --- Table view ---
+  // Column layout via CSS grid instead of <table> so rows can be individually collapsible.
+  // Side-by-side: Field | Current | New | Controls
+  // Inline:       Field | Value | Controls
+  const gridColumns = isSideBySide
+    ? `${LABEL_COLUMN_WIDTH}px 4px 1fr 1fr ${CONTROLS_COLUMN_WIDTH}px`
+    : `${LABEL_COLUMN_WIDTH}px 4px 1fr ${CONTROLS_COLUMN_WIDTH}px`;
+
+  const headerStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: gridColumns,
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
+    backgroundColor: 'var(--bg-panel)',
+    borderBottom: '1px solid var(--mantine-color-default-border)',
+    padding: '12px 16px',
+    gap: 0,
+    alignItems: 'center',
+  };
+
+  const rowGridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: gridColumns,
+    padding: '4px 16px',
+    gap: 0,
+    alignItems: 'start',
+  };
+
   return (
     <ScrollArea style={{ flex: 1 }}>
       <style>{`.record-fields-grid-row:hover .record-fields-grid-expand-btn { opacity: 1 !important; }`}</style>
-      <Table
-        horizontalSpacing="md"
-        verticalSpacing={0}
-        withRowBorders
-        styles={{
-          table: { tableLayout: 'fixed', margin: 0 },
-          th: {
-            backgroundColor: 'var(--bg-panel)',
-            position: 'sticky',
-            top: 0,
-            zIndex: 1,
-            paddingTop: 12,
-            paddingBottom: 12,
-          },
-          td: { verticalAlign: 'top', paddingTop: 4, paddingBottom: 4 },
-        }}
-      >
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th style={{ width: LABEL_COLUMN_WIDTH }}>
-              <Text12Medium c="var(--fg-muted)">Field</Text12Medium>
-            </Table.Th>
-            <Table.Th>
-              <Text12Medium c="var(--fg-muted)">Value</Text12Medium>
-            </Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {rows.map((row, idx) => {
-            const groupName = row.groupName;
-            const prevGroup = idx > 0 ? rows[idx - 1].groupName : undefined;
-            const isGroupStart = groupName != null && groupName !== prevGroup;
-            const isInGroup = groupName != null;
+      {/* Header */}
+      <Box style={headerStyle}>
+        <TextMono12Regular c="var(--fg-muted)">FIELD</TextMono12Regular>
+        <Box /> {/* diff border spacer */}
+        {isSideBySide ? (
+          <>
+            <TextMono12Regular c="var(--fg-muted)" style={{ padding: '0 12px' }}>
+              CURRENT
+            </TextMono12Regular>
+            <TextMono12Regular c="var(--fg-muted)" style={{ padding: '0 12px' }}>
+              NEW
+            </TextMono12Regular>
+          </>
+        ) : (
+          <TextMono12Regular c="var(--fg-muted)" style={{ padding: '0 12px' }}>
+            VALUE
+          </TextMono12Regular>
+        )}
+        <Box style={{ display: 'flex', justifyContent: 'center' }}>
+          {hasDiffs && <DiffViewModeMenu diffViewMode={diffViewMode} setDiffViewMode={setDiffViewMode} />}
+        </Box>
+      </Box>
 
-            const groupBarStyle = isInGroup ? { borderLeft: '6px solid var(--fg-divider)' } : undefined;
+      {/* Rows */}
+      {rows.map((row, idx) => {
+        const groupName = row.groupName;
+        const prevGroup = idx > 0 ? rows[idx - 1].groupName : undefined;
+        const isGroupStart = groupName != null && groupName !== prevGroup;
+        const isInGroup = groupName != null;
 
-            return (
-              <React.Fragment key={row.fieldName}>
-                {isGroupStart && (
-                  <Table.Tr style={{ borderLeft: '6px solid var(--fg-divider)' }}>
-                    <Table.Td colSpan={2} style={{ paddingTop: 12, paddingBottom: 8 }}>
-                      <Text9Regular c="var(--fg-muted)" fw={700} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
-                        {groupName}
-                      </Text9Regular>
-                    </Table.Td>
-                  </Table.Tr>
-                )}
-                <Table.Tr className="record-fields-grid-row" style={groupBarStyle}>
-                  <Table.Td style={{ width: 280, height: 40, position: 'relative' }} py="xs">
-                    <Group w="100%" align="top">
-                      <Stack gap="xs" flex={1}>
-                        <Text12Medium
-                          c="var(--fg-primary)"
-                          style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}
-                        >
-                          {row.displayLabel ?? row.fieldName}
-                        </Text12Medium>
-                        {row.displayLabel !== row.fieldName && (
-                          <TextMono9Regular c="var(--fg-secondary)">{row.fieldName}</TextMono9Regular>
+        return (
+          <React.Fragment key={row.fieldName}>
+            {isGroupStart && (
+              <Box
+                style={{
+                  borderLeft: '6px solid var(--fg-divider)',
+                  borderBottom: '1px solid var(--mantine-color-default-border)',
+                  padding: '12px 16px 8px',
+                }}
+              >
+                <Text9Regular c="var(--fg-muted)" fw={700} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                  {groupName}
+                </Text9Regular>
+              </Box>
+            )}
+            <CollapsibleRow
+              expandButtonLeft={
+                isSideBySide
+                  ? `calc(${LABEL_COLUMN_WIDTH + 4 + 16}px + (100% - ${LABEL_COLUMN_WIDTH + 4 + CONTROLS_COLUMN_WIDTH + 32}px) / 2)`
+                  : undefined
+              }
+            >
+              {() => (
+                <Box
+                  className="record-fields-grid-row"
+                  style={{
+                    ...rowGridStyle,
+                    ...(isInGroup ? { borderLeft: '6px solid var(--fg-divider)' } : {}),
+                  }}
+                >
+                  {/* Field name column */}
+                  <Group h="100%" mih={40} py={8} pr={8} align="top">
+                    <Stack gap="xs" flex={1}>
+                      <Text12Medium
+                        c="var(--fg-primary)"
+                        style={{
+                          wordBreak: 'break-all',
+                          whiteSpace: 'pre-wrap',
+                          lineHeight: 1.5,
+                          cursor: 'pointer',
+                          textDecoration: 'none',
+                        }}
+                        onClick={() => setFocusedFieldName(row.fieldName)}
+                        onMouseOver={(e: React.MouseEvent<HTMLElement>) => {
+                          e.currentTarget.style.textDecoration = 'underline';
+                        }}
+                        onMouseOut={(e: React.MouseEvent<HTMLElement>) => {
+                          e.currentTarget.style.textDecoration = 'none';
+                        }}
+                      >
+                        {row.displayLabel ?? row.fieldName}
+                      </Text12Medium>
+                      {row.displayLabel !== row.fieldName && (
+                        <TextMono9Regular c="var(--fg-secondary)">{row.fieldName}</TextMono9Regular>
+                      )}
+                      {row.description &&
+                        row.description !== row.fieldName &&
+                        row.description !== (row.displayLabel ?? row.fieldName) && (
+                          <Text9Regular c="var(--fg-secondary)">{row.description}</Text9Regular>
                         )}
-                        {row.description &&
-                          row.description !== row.fieldName &&
-                          row.description !== (row.displayLabel ?? row.fieldName) && (
-                            <Text9Regular c="var(--fg-secondary)">{row.description}</Text9Regular>
-                          )}
-                      </Stack>
-                      <Tooltip label="Expand field" position="top" withArrow zIndex={10020}>
-                        <ActionIcon
-                          variant="transparent"
-                          size={20}
-                          radius={3}
-                          aria-label="Expand field"
-                          onClick={() => setFocusedFieldName(row.fieldName)}
-                          className="record-fields-grid-expand-btn"
-                          style={{
-                            border: '0.5px solid var(--fg-divider)',
-                            backgroundColor: 'var(--bg-base)',
-                            borderRadius: 3,
-                            opacity: 0,
-                            transition: 'opacity 100ms ease',
-                          }}
-                        >
-                          <StyledLucideIcon Icon={Maximize2} size={12} strokeWidth={2} />
-                        </ActionIcon>
-                      </Tooltip>
-                      {validationWarnings?.has(row.fieldName) &&
-                        (() => {
-                          const vs = validationWarnings.get(row.fieldName)!;
-                          const hasErr = vs.some((v) => v.level === 'error');
-                          if (vs.length === 0) return null;
-                          return (
-                            <ValidationTooltip violations={vs}>
-                              <Box
-                                w={16}
-                                h={16}
-                                c={hasErr ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
-                              >
-                                <TriangleAlertIcon size={16} />
-                              </Box>
-                            </ValidationTooltip>
-                          );
-                        })()}
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <Box style={{ borderLeft: `4px solid ${diffBorderColor(row.diffKind)}` }}>
+                    </Stack>
+                    {validationWarnings?.has(row.fieldName) &&
+                      (() => {
+                        const vs = validationWarnings.get(row.fieldName)!;
+                        const hasErr = vs.some((v) => v.level === 'error');
+                        if (vs.length === 0) return null;
+                        return (
+                          <ValidationTooltip violations={vs}>
+                            <Box
+                              w={16}
+                              h={16}
+                              c={hasErr ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)'}
+                            >
+                              <TriangleAlertIcon size={16} />
+                            </Box>
+                          </ValidationTooltip>
+                        );
+                      })()}
+                  </Group>
+
+                  {/* Diff border indicator */}
+                  <Box style={{ backgroundColor: diffBorderColor(row.diffKind), alignSelf: 'stretch' }} />
+
+                  {/* Value column(s) */}
+                  {isSideBySide ? (
+                    <SideBySideValueCells row={row} setEditingAnchorEl={setEditingAnchorEl} />
+                  ) : (
+                    <Box>
                       {row.editing ? (
                         <Box style={{ display: 'grid', gap: 6 }}>
                           <Box ref={setEditingAnchorEl}>
@@ -575,29 +833,94 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                           </Box>
                         </Box>
                       ) : (
-                        <FieldValuePanel
-                          value={row.value}
-                          fromValue={row.fromValue}
-                          diffKind={row.diffKind}
-                          displayMode={row.displayMode}
-                          onClick={row.onClick}
-                          onApprove={row.displayMode === 'diff' ? row.onApprove : undefined}
-                          onUndo={row.displayMode === 'diff' ? row.onUndo : undefined}
-                          column={row.column}
-                          richDiff={isMediumOrLargeChange(row)}
-                        />
+                        <InlineValueCell row={row} />
                       )}
                     </Box>
-                  </Table.Td>
-                </Table.Tr>
-              </React.Fragment>
-            );
-          })}
-        </Table.Tbody>
-      </Table>
+                  )}
+
+                  {/* Controls column */}
+                  <Box style={{ display: 'flex', justifyContent: 'center', alignSelf: 'start', paddingTop: 8 }}>
+                    <ControlsCell row={row} />
+                  </Box>
+                </Box>
+              )}
+            </CollapsibleRow>
+          </React.Fragment>
+        );
+      })}
       {footer}
 
       {editingAnchorOverlay}
     </ScrollArea>
   );
 });
+
+/** Renders the Current and New value cells for side-by-side mode. */
+function SideBySideValueCells({
+  row,
+  setEditingAnchorEl,
+}: {
+  row: RecordFieldRow;
+  setEditingAnchorEl: (el: HTMLDivElement | null) => void;
+}) {
+  const clickProps = row.onClick
+    ? {
+        onClick: row.onClick,
+        role: 'button' as const,
+        tabIndex: 0,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            row.onClick!();
+          }
+        },
+        style: { cursor: 'text' as const },
+      }
+    : { style: { cursor: 'default' as const } };
+
+  if (row.editing) {
+    // Editing spans both value columns
+    return (
+      <Box style={{ gridColumn: 'span 2', display: 'grid', gap: 6 }}>
+        <Box ref={setEditingAnchorEl}>
+          <FieldEditor row={row} />
+        </Box>
+      </Box>
+    );
+  }
+
+  const isDiff = row.diffKind != null;
+
+  if (isDiff) {
+    // Changed field: word-level diff — Current highlights removed words, New highlights added words
+    const fromValue = row.fromValue ?? '';
+    return (
+      <>
+        <Box style={{ minWidth: 0 }}>
+          <SideBySideCurrentDiff fromValue={fromValue} value={row.value} />
+        </Box>
+        <Box style={{ minWidth: 0 }}>
+          <Box {...clickProps}>
+            <SideBySideNewDiff fromValue={fromValue} value={row.value} diffKind={row.diffKind} />
+          </Box>
+        </Box>
+      </>
+    );
+  }
+
+  // Unchanged field: Current shows value, New shows "(unchanged)"
+  return (
+    <>
+      <Box style={{ minWidth: 0 }}>
+        <Box {...clickProps}>
+          <FieldCellValue value={row.value} column={row.column} muted={row.column?.readonly ?? false} />
+        </Box>
+      </Box>
+      <Box style={{ minWidth: 0 }}>
+        <Box style={{ padding: '8px 12px', ...DIFF_TEXT_STYLE }}>
+          <span style={{ color: 'var(--fg-muted)', fontStyle: 'italic' }}>(unchanged)</span>
+        </Box>
+      </Box>
+    </>
+  );
+}
