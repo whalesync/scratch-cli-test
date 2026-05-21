@@ -117,8 +117,14 @@ Bootstrap test desktop release:
 
 # -----------------------------------------------------------------------------
 # BUILD CLI — cross-compile scratchmd for darwin-arm64, linux-x64, windows-x64.
+# Also cross-compile the scratchmd-native cdylib (slice H.4 of DEV-10144) for
+# darwin-arm64 + linux-x64-gnu and drop the .node files into the same
+# cli-binaries/<triple>/ tree so the desktop's afterPack hook can copy the
+# platform-correct .node into the packaged Resources/bin/. Windows napi is
+# deferred — the desktop's local cell-edit actions throw at runtime on Windows
+# until that lands; same surface as it was before slice H.
 #
-# Single job per variant (all three targets in one cargo run) to keep the cross-
+# Single job per variant (all targets in one cargo run) to keep the cross-
 # compile cache happy — parallel jobs would race on `pull-push`. The job
 # `needs:` bootstrap so it fires only when a release is actually being cut.
 # -----------------------------------------------------------------------------
@@ -148,6 +154,13 @@ Bootstrap test desktop release:
     - cp target/aarch64-apple-darwin/release/scratchmd cli-binaries/aarch64-apple-darwin/scratchmd
     - cp target/x86_64-unknown-linux-gnu/release/scratchmd cli-binaries/x86_64-unknown-linux-gnu/scratchmd
     - cp target/x86_64-pc-windows-gnu/release/scratchmd.exe cli-binaries/x86_64-pc-windows-gnu/scratchmd.exe
+    # scratchmd-native (napi cdylib): same toolchain, mac arm64 + linux x64 only.
+    # The dylib/so is renamed to match the loader's expected platform-arch[-abi]
+    # filename in scratch-desktop/src/main/native/scratchmd-native.ts.
+    - cargo zigbuild --release -p scratchmd-native --target aarch64-apple-darwin
+    - cargo zigbuild --release -p scratchmd-native --target x86_64-unknown-linux-gnu
+    - cp target/aarch64-apple-darwin/release/libscratchmd_native.dylib cli-binaries/aarch64-apple-darwin/scratchmd-native.darwin-arm64.node
+    - cp target/x86_64-unknown-linux-gnu/release/libscratchmd_native.so cli-binaries/x86_64-unknown-linux-gnu/scratchmd-native.linux-x64-gnu.node
 
 Build CLI for prod desktop release:
   extends: .build_cli_for_desktop

@@ -48,14 +48,14 @@ asarUnpack:
 extraResources:
   - from: build/icons
     to: icons
-  # scratchmd-native cdylib (slice H.2 of DEV-10144). Glob covers the
-  # `-gnu` ABI suffix on Linux. The Electron main-process loader resolves
-  # the platform-correct .node at runtime — see
-  # `src/main/native/scratchmd-native.ts`.
-  - from: ../scratch-git-2/napi/
-    to: bin/
-    filter:
-      - 'scratchmd-native.*.node'
+
+# scratchmd CLI binary AND the scratchmd-native cdylib (slice H of DEV-10144)
+# are copied into Resources/bin/ by scripts/afterPack.cjs from
+# scratch-git-2/cli-binaries/<rust-target>/. The .node is platform-arch-
+# specific and the loader at src/main/native/scratchmd-native.ts looks for
+# the exact filename the napi/CI rename writes. Bundling via extraResources
+# would risk shipping a stale dev-machine .node on builds where CI artifacts
+# aren't yet present in scratch-git-2/napi/.
 
 afterPack: scripts/afterPack.cjs
 

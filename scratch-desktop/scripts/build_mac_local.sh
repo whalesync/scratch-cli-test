@@ -28,12 +28,18 @@ export SCRATCH_DEFAULT_URL="${SCRATCH_DEFAULT_URL:-}"
 # Xcode on a native Mac (see gitlab-runners/docker/hasty-dolphin.dockerfile).
 if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && "$RUST_TARGET" == "aarch64-apple-darwin" ]]; then
   cargo build --release --bin scratchmd --target "$RUST_TARGET"
+  cargo build --release -p scratchmd-native --target "$RUST_TARGET"
 else
   cargo zigbuild --release --bin scratchmd --target "$RUST_TARGET"
+  cargo zigbuild --release -p scratchmd-native --target "$RUST_TARGET"
 fi
 mkdir -p "cli-binaries/$RUST_TARGET"
 cp "target/$RUST_TARGET/release/scratchmd" "cli-binaries/$RUST_TARGET/scratchmd"
+# scratchmd-native cdylib (slice H of DEV-10144). afterPack.cjs copies the
+# .node from this path into the packaged .app's Resources/bin/.
+cp "target/$RUST_TARGET/release/libscratchmd_native.dylib" "cli-binaries/$RUST_TARGET/scratchmd-native.darwin-arm64.node"
 echo "==> CLI binary: $SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd"
+echo "==> napi addon: $SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd-native.darwin-arm64.node"
 
 echo "==> Building Scratch.app (electron-vite + electron-builder --mac, ad-hoc / unsigned)"
 cd "$SCRATCH_DESKTOP"

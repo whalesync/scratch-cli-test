@@ -10,7 +10,7 @@
 # Env:
 #   ENV_FILE — defaults to scratch-desktop/.env.signing-credentials (CSC_*, APPLE_*; see build_mac_local_signed.sh)
 #   SEMVER   — if not passed as $1, taken from this env or from package.json
-#   BUILD_SCRATCHMD — default 1: run cargo zigbuild in scratch-git-2; set 0 to skip if cli-binaries is ready
+#   BUILD_SCRATCHMD — default 1: cargo zigbuild scratchmd + scratchmd-native in scratch-git-2; set 0 to skip if cli-binaries (CLI + .node) is ready
 #   SCRATCH_DEFAULT_URL — passed to scratchmd build; default https://api.scratch.md (CI prod)
 #
 # Output: dist-release/ like the Package prod macOS job.
@@ -99,18 +99,29 @@ fi
 export SEMVER
 
 CLI_BIN="$SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd"
-if [[ ! -f "$CLI_BIN" ]] || [[ "${BUILD_SCRATCHMD:-1}" == "1" ]]; then
+NATIVE_NODE="$SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd-native.darwin-arm64.node"
+if [[ ! -f "$CLI_BIN" ]] || [[ ! -f "$NATIVE_NODE" ]] || [[ "${BUILD_SCRATCHMD:-1}" == "1" ]]; then
   echo "==> Building scratchmd ($RUST_TARGET) in scratch-git-2 (SCRATCH_DEFAULT_URL=${SCRATCH_DEFAULT_URL:-https://api.scratch.md})"
   cd "$SCRATCH_GIT_2"
   export SCRATCH_DEFAULT_URL="${SCRATCH_DEFAULT_URL:-https://api.scratch.md}"
   cargo zigbuild --release --bin scratchmd --target "$RUST_TARGET"
+  # scratchmd-native cdylib (slice H of DEV-10144). afterPack.cjs copies the
+  # .node from cli-binaries/<triple>/ into the packaged .app's Resources/bin/.
+  cargo zigbuild --release -p scratchmd-native --target "$RUST_TARGET"
   mkdir -p "cli-binaries/$RUST_TARGET"
   cp "target/$RUST_TARGET/release/scratchmd" "cli-binaries/$RUST_TARGET/scratchmd"
+  cp "target/$RUST_TARGET/release/libscratchmd_native.dylib" "$NATIVE_NODE"
   echo "==> CLI: $CLI_BIN"
+  echo "==> napi: $NATIVE_NODE"
 else
   echo "==> Using existing CLI (BUILD_SCRATCHMD=0): $CLI_BIN" >&2
+  echo "==> Using existing napi (BUILD_SCRATCHMD=0): $NATIVE_NODE" >&2
   if [[ ! -f "$CLI_BIN" ]]; then
     echo "ERROR: Missing $CLI_BIN — run without BUILD_SCRATCHMD=0 or run the scratchmd build first." >&2
+    exit 1
+  fi
+  if [[ ! -f "$NATIVE_NODE" ]]; then
+    echo "ERROR: Missing $NATIVE_NODE — run without BUILD_SCRATCHMD=0 or run the scratchmd build first." >&2
     exit 1
   fi
 fi
