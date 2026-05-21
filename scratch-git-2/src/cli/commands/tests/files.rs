@@ -2837,3 +2837,166 @@ mod workspace_layout_check {
         check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ false).unwrap();
     }
 }
+
+// ---------------------------------------------------------------------------
+// `refresh_workbook_for_contexts` — programmatic refresh path used by linked
+// CLI commands after a server-side mutation. Asserts the new lock + pre-flight
+// behavior added on mr28: skip-and-warn when any worktree edits are
+// unreviewed; otherwise advance local main + materialize blobs.
+//
+// Uses a custom inline fixture (rather than `create_bare_fixture`) because
+// the latter seeds `syncs/a.json` on main, which `read_dirty_disk` filters
+// out of worktree reads while `read_main_tree` includes it from git — a
+// known asymmetry that would spuriously trip pre-flight here.
+// ---------------------------------------------------------------------------
+
+struct RefreshFixture {
+    _tmp: TempDir,
+    source_dir: PathBuf,
+    remote_bare: PathBuf,
+    local_bare: PathBuf,
+}
+
+fn create_refresh_fixture() -> RefreshFixture {
+    let tmp = TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let remote_bare = tmp.path().join("remote.git");
+    let local_bare = tmp.path().join("local.git");
+
+    run_git(tmp.path(), &["init", "source"]);
+    run_git(&source_dir, &["checkout", "-b", "main"]);
+    write_file(
+        &source_dir.join("posts/seed.json"),
+        "{\n  \"name\": \"Seed\"\n}\n",
+    );
+    commit_all(&source_dir, "seed main");
+
+    run_git(tmp.path(), &["init", "--bare", "remote.git"]);
+    run_git(
+        &source_dir,
+        &["remote", "add", "origin", remote_bare.to_str().unwrap()],
+    );
+    run_git(&source_dir, &["push", "origin", "main:main"]);
+
+    run_git(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            remote_bare.to_str().unwrap(),
+            local_bare.to_str().unwrap(),
+        ],
+    );
+
+    RefreshFixture {
+        _tmp: tmp,
+        source_dir,
+        remote_bare: remote_bare.clone(),
+        local_bare,
+    }
+}
+
+fn refresh_advance_remote(fixture: &RefreshFixture, rel_path: &str, content: &str, msg: &str) {
+    run_git(&fixture.source_dir, &["checkout", "main"]);
+    write_file(&fixture.source_dir.join(rel_path), content);
+    commit_all(&fixture.source_dir, msg);
+    run_git(&fixture.source_dir, &["push", "origin", "main:main"]);
+    let _ = &fixture.remote_bare;
+}
+
+#[test]
+fn refresh_workbook_skips_when_any_field_is_unreviewed() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_refresh_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // Worktree starts in sync with main, then the user types an unreviewed
+    // edit (local != approved == published).
+    write_file(
+        &ctx.worktree_dir.join("posts/seed.json"),
+        "{\n  \"name\": \"Seed\"\n}\n",
+    );
+    let unreviewed_content = "{\n  \"name\": \"User-typing\"\n}\n";
+    write_file(
+        &ctx.worktree_dir.join("posts/seed.json"),
+        unreviewed_content,
+    );
+
+    // Server independently advances main while the user has unreviewed work.
+    refresh_advance_remote(
+        &fixture,
+        "posts/other.json",
+        "{\n  \"name\": \"Server-added\"\n}\n",
+        "server adds other",
+    );
+
+    let local_main_before = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
+    let folders: HashMap<String, Vec<DataFolder>> = HashMap::new();
+    refresh_workbook_for_contexts(&workspace_dir, &[ctx.clone()], &folders, "test-token").unwrap();
+
+    // Worktree untouched — user's in-flight typing preserved.
+    let working = std::fs::read_to_string(ctx.worktree_dir.join("posts/seed.json")).unwrap();
+    assert_eq!(
+        working, unreviewed_content,
+        "worktree must not be overwritten when unreviewed edits exist"
+    );
+    // Server's new file was NOT materialized.
+    assert!(
+        !ctx.worktree_dir.join("posts/other.json").exists(),
+        "server-side changes must not be materialized when blocked"
+    );
+    // Local main unchanged.
+    let local_main_after = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
+    assert_eq!(
+        local_main_before, local_main_after,
+        "refresh must not advance refs/heads/main when blocked"
+    );
+}
+
+#[test]
+fn refresh_workbook_advances_main_when_clean() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_refresh_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // Worktree starts in sync with main: local == approved == published.
+    write_file(
+        &ctx.worktree_dir.join("posts/seed.json"),
+        "{\n  \"name\": \"Seed\"\n}\n",
+    );
+
+    // Server advances main.
+    refresh_advance_remote(
+        &fixture,
+        "posts/seed.json",
+        "{\n  \"name\": \"After server\"\n}\n",
+        "server change",
+    );
+
+    let folders: HashMap<String, Vec<DataFolder>> = HashMap::new();
+    refresh_workbook_for_contexts(&workspace_dir, &[ctx.clone()], &folders, "test-token").unwrap();
+
+    // Local main advanced.
+    let local_main = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
+    let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
+    assert_eq!(local_main, origin_main, "local main must advance to origin");
+
+    // Worktree materialized with the new server content.
+    let working = std::fs::read_to_string(ctx.worktree_dir.join("posts/seed.json")).unwrap();
+    assert!(
+        working.contains("After server"),
+        "worktree must reflect new server content, got: {working}"
+    );
+}

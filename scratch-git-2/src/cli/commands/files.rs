@@ -2046,15 +2046,58 @@ pub async fn download_workbook(
     let folders_by_conn =
         fetch_folders_by_connection(base_url, &workspace_marker, workbook_id).await;
 
-    // Programmatic refresh — called by linked CLI commands after a server
-    // mutation. Skips the workspace-lock + pre-flight unreviewed check that
-    // user-initiated `scratchmd files download` performs; unreviewed edits
-    // in the worktree would be silently overwritten here. Acceptable because
-    // linked CRUD users aren't typically mid-edit on records.
-    for ctx in &contexts {
+    refresh_workbook_for_contexts(&workspace_dir, &contexts, &folders_by_conn, token)
+}
+
+/// Inner refresh loop for the programmatic post-server-mutation path. Holds
+/// the workspace-wide lock for the duration of pre-flight + materialize so a
+/// concurrent `scratchmd files accept-field` (or any other mutating CLI op)
+/// can't race against the blobs being written.
+///
+/// If any connection has unreviewed working-tree edits, the function warns on
+/// stderr and returns Ok(()) without touching the worktree. The linked-table
+/// action that triggered the refresh already succeeded server-side (its JSON
+/// result is on stdout); silently overwriting in-flight typing would be the
+/// worse failure mode. The user re-runs `scratchmd files download` explicitly
+/// after `accept-all` / `discard-all` to bring local in sync.
+fn refresh_workbook_for_contexts(
+    workspace_dir: &Path,
+    contexts: &[ConnectionContext],
+    folders_by_conn: &HashMap<String, Vec<DataFolder>>,
+    token: &str,
+) -> anyhow::Result<()> {
+    let _lock = crate::config::workspace_lock::acquire(workspace_dir)?;
+
+    let mut blocked: Vec<UnreviewedEntry> = Vec::new();
+    for ctx in contexts {
+        blocked.extend(detect_unreviewed_for_pull(ctx)?);
+    }
+    if !blocked.is_empty() {
+        let paths: Vec<String> = blocked
+            .iter()
+            .map(|e| format!("{}/{}", e.connection_name, e.path))
+            .collect();
+        eprintln!(
+            "Warning: skipping local refresh — {} unreviewed record(s):",
+            paths.len()
+        );
+        let preview_limit = paths.len().min(10);
+        for path in &paths[..preview_limit] {
+            eprintln!("  {path}");
+        }
+        if paths.len() > preview_limit {
+            eprintln!("  ... and {} more", paths.len() - preview_limit);
+        }
+        eprintln!(
+            "Run `scratchmd files accept-all` or `discard-all`, then `scratchmd files download` to sync."
+        );
+        return Ok(());
+    }
+
+    for ctx in contexts {
         let empty = Vec::new();
         let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
-        download_single_repo(ctx, &workspace_dir, token, folders)?;
+        download_single_repo(ctx, workspace_dir, token, folders)?;
         if update_main_worktree_after_pull(ctx, token).is_ok() {
             let _ = sync_schema_files_from_worktree(ctx);
         }
