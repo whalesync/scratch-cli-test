@@ -1,4 +1,4 @@
-//! Write CLAUDE.md and .scratch/docs/ into an initialised workspace.
+//! Write AGENTS.md (+ CLAUDE.md symlink) and .scratch/docs/ into an initialised workspace.
 //!
 //! Called automatically at the end of `workspaces init` and `files download`.
 
@@ -8,7 +8,14 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     let docs_dir = workspace.join(".scratch/docs");
     std::fs::create_dir_all(&docs_dir)?;
 
-    std::fs::write(workspace.join("CLAUDE.md"), claude_md(workbook_name))?;
+    std::fs::write(workspace.join("AGENTS.md"), claude_md(workbook_name))?;
+    let symlink_path = workspace.join("CLAUDE.md");
+    // Remove any existing file/symlink so we can recreate it
+    let _ = std::fs::remove_file(&symlink_path);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("AGENTS.md", &symlink_path)?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file("AGENTS.md", &symlink_path)?;
     std::fs::write(docs_dir.join("structure.md"), STRUCTURE_DOC)?;
     std::fs::write(docs_dir.join("schema.md"), SCHEMA_DOC)?;
     std::fs::write(docs_dir.join("commands.md"), COMMANDS_DOC)?;
@@ -26,7 +33,7 @@ pub fn resolve_workspace_for_docs(path: &Path) -> anyhow::Result<std::path::Path
 }
 
 // ---------------------------------------------------------------------------
-// CLAUDE.md
+// AGENTS.md
 // ---------------------------------------------------------------------------
 
 fn claude_md(workbook_name: &str) -> String {
@@ -102,7 +109,7 @@ My-Project/
     connections/              <- shared connection metadata (see below)
     docs/                     <- generated docs + helper files
     workspace/                <- workbook config repo materialized locally
-  CLAUDE.md
+  AGENTS.md              <- also symlinked as CLAUDE.md
 ```
 
 ## The connection internals
@@ -307,7 +314,7 @@ Run `scratchmd <command> --help` for full flag details.
 
 | Command | Description |
 |---|---|
-| `generate-docs [--workspace <dir>]` | Regenerate CLAUDE.md and `.scratch/docs/` in the workspace |
+| `generate-docs [--workspace <dir>]` | Regenerate AGENTS.md (+ CLAUDE.md symlink) and `.scratch/docs/` in the workspace |
 "#;
 
 // ---------------------------------------------------------------------------

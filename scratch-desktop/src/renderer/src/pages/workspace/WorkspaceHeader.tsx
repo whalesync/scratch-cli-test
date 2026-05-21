@@ -69,9 +69,6 @@ export function WorkspaceHeader({
 
   const handleOpenIn = () => {
     if (!localPath) return;
-    const q = encodeURIComponent(
-      `I'm working on my Scratch workspace, "${workspace.name}". It is described at \`${localPath}/CLAUDE.md\`.  `,
-    );
     window.scratchDesktop.showNativeContextMenu(
       [
         { id: 'reveal', label: isMac ? 'Finder' : 'Explorer' },
@@ -79,17 +76,41 @@ export function WorkspaceHeader({
         { id: 'sep', label: '', type: 'separator' },
         { id: 'claude-cowork', label: 'Claude Cowork' },
         { id: 'claude-code', label: 'Claude Code' },
+        { id: 'codex', label: 'Codex' },
       ],
       (id) => {
-        if (id === 'claude-cowork' || id === 'claude-code') {
-          const product = id === 'claude-cowork' ? 'cowork' : 'code';
-          const claudeUrl = `claude://${product}/new?q=${q}&folder=${encodeURIComponent(localPath)}`;
-          void window.scratchAuth.openExternal(claudeUrl).catch(() => {
-            void window.scratchAuth.openExternal('https://claude.ai/download');
-          });
+        switch (id) {
+          case 'reveal': {
+            void window.scratchDesktop.showInFolder(localPath);
+            break;
+          }
+
+          case 'terminal': {
+            void window.scratchDesktop.openInTerminal(localPath);
+            break;
+          }
+
+          case 'claude-cowork':
+          case 'claude-code': {
+            const product = id === 'claude-cowork' ? 'cowork' : 'code';
+            const prompt = buildAgentPrompt(workspace.name, localPath, 'CLAUDE.md');
+            const claudeUrl = `claude://${product}/new?q=${encodeURIComponent(prompt)}&folder=${encodeURIComponent(localPath)}`;
+            void window.scratchAuth.openExternal(claudeUrl).catch(() => {
+              void window.scratchAuth.openExternal('https://claude.ai/download');
+            });
+            break;
+          }
+
+          case 'codex': {
+            // TODO: There's also originUrl that can be used to try to match an existing workspace.
+            const prompt = buildAgentPrompt(workspace.name, localPath, 'AGENTS.md');
+            const codexUrl = `codex://new?prompt=${encodeURIComponent(prompt)}&path=${encodeURIComponent(localPath)}`;
+            void window.scratchAuth.openExternal(codexUrl).catch(() => {
+              void window.scratchAuth.openExternal('https://openai.com/codex/');
+            });
+            break;
+          }
         }
-        if (id === 'reveal') void window.scratchDesktop.showInFolder(localPath);
-        if (id === 'terminal') void window.scratchDesktop.openInTerminal(localPath);
       },
     );
   };
@@ -229,4 +250,8 @@ export function WorkspaceHeader({
       </Group>
     </Group>
   );
+}
+
+function buildAgentPrompt(workspaceName: string | null, localPath: string, agentFile: string): string {
+  return `I'm working on my Scratch workspace, "${workspaceName ?? ''}". It is described at \`${localPath}/${agentFile}\`.  `;
 }

@@ -100,7 +100,7 @@ enum Commands {
         #[arg(long, default_value = ".")]
         workspace: std::path::PathBuf,
     },
-    /// Regenerate CLAUDE.md and .scratch/docs/ in the current workspace
+    /// Regenerate AGENTS.md (+ CLAUDE.md symlink) and .scratch/docs/ in the current workspace
     #[command(name = "generate-docs")]
     GenerateDocs {
         /// Workspace directory (default: current directory)
