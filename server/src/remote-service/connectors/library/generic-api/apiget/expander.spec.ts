@@ -4,11 +4,23 @@
  */
 
 import { buildChildrenURL, expandNested } from './expander';
+import { setupSsrfTestEnv, wrapWithSsrfGuard } from './test-helpers';
 import type { ExpanderConfig, FetchFn, FetchResponse } from './types';
 
-const noopFetch: FetchFn = () => {
+// Route every scripted fetch through the SSRF guard's URL validation +
+// redirect re-validation. Regressions in the guard will break expander tests
+// too. See test-helpers.ts.
+let dnsSpy: jest.SpyInstance;
+beforeEach(() => {
+  dnsSpy = setupSsrfTestEnv();
+});
+afterEach(() => {
+  dnsSpy.mockRestore();
+});
+
+const noopFetch: FetchFn = wrapWithSsrfGuard(() => {
   throw new Error('fetch should not be called for this case');
-};
+});
 
 describe('buildChildrenURL', () => {
   it('substitutes {fieldName} placeholders from the record', () => {
@@ -151,7 +163,9 @@ describe('expandNested', () => {
       }),
     ];
     let i = 0;
-    const fetch: FetchFn = () => Promise.resolve<FetchResponse>({ status: 200, headers: {}, body: responses[i++] });
+    const fetch: FetchFn = wrapWithSsrfGuard(() =>
+      Promise.resolve<FetchResponse>({ status: 200, headers: {}, body: responses[i++] }),
+    );
 
     const records: unknown[] = [{ id: 'a', has_children: true }];
     await expandNested(records, baseConfig, fetch);
@@ -178,10 +192,10 @@ describe('expandNested', () => {
 // ----------------------------------------------------------------------------
 
 function makeFetchMap(map: Record<string, unknown>): FetchFn {
-  return (req) => {
+  return wrapWithSsrfGuard((req) => {
     if (!(req.url in map)) {
       return Promise.resolve<FetchResponse>({ status: 404, headers: {}, body: '' });
     }
     return Promise.resolve<FetchResponse>({ status: 200, headers: {}, body: JSON.stringify(map[req.url]) });
-  };
+  });
 }

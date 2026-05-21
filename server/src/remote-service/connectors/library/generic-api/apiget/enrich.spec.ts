@@ -3,7 +3,19 @@
  */
 
 import { COMMON_ID_FIELDS, enrichRecords, findIdField, inferDetailURL } from './enrich';
+import { setupSsrfTestEnv, wrapWithSsrfGuard } from './test-helpers';
 import type { FetchFn, FetchResponse } from './types';
+
+// Route every scripted fetch in this file through the SSRF guard's URL
+// validation + redirect re-validation. Regressions in the guard will break
+// enrich tests too. See test-helpers.ts.
+let dnsSpy: jest.SpyInstance;
+beforeEach(() => {
+  dnsSpy = setupSsrfTestEnv();
+});
+afterEach(() => {
+  dnsSpy.mockRestore();
+});
 
 describe('findIdField', () => {
   it('finds id field with each of the common names in order', () => {
@@ -71,7 +83,7 @@ describe('inferDetailURL', () => {
 describe('enrichRecords', () => {
   it('replaces each record in place with the full detail-endpoint version', async () => {
     const calls: string[] = [];
-    const fetch: FetchFn = (req) => {
+    const fetch: FetchFn = wrapWithSsrfGuard((req) => {
       calls.push(req.url);
       const id = req.url.split('/').pop();
       return Promise.resolve({
@@ -79,7 +91,7 @@ describe('enrichRecords', () => {
         headers: {},
         body: JSON.stringify({ id, name: `Full record ${id}`, extra: 'detail-only-field' }),
       });
-    };
+    });
 
     const records: unknown[] = [
       { id: 'a', name: 'shallow A' },
@@ -93,38 +105,43 @@ describe('enrichRecords', () => {
   });
 
   it('unwraps `data` wrapper if the detail response has one', async () => {
-    const fetch: FetchFn = (req) => {
+    const fetch: FetchFn = wrapWithSsrfGuard((req) => {
       const id = req.url.split('/').pop();
       return Promise.resolve({
         status: 200,
         headers: {},
         body: JSON.stringify({ data: { id, name: `Wrapped ${id}` } }),
       });
-    };
+    });
     const records: unknown[] = [{ id: 'a' }];
     await enrichRecords(records, 'https://api.example.com/items', fetch);
     expect(records[0]).toEqual({ id: 'a', name: 'Wrapped a' });
   });
 
   it('throws when a record has no detectable ID field', async () => {
-    const fetch: FetchFn = () => Promise.resolve<FetchResponse>({ status: 200, headers: {}, body: '{}' });
+    const fetch: FetchFn = wrapWithSsrfGuard(() =>
+      Promise.resolve<FetchResponse>({ status: 200, headers: {}, body: '{}' }),
+    );
     const records: unknown[] = [{ name: 'no id here' }];
     await expect(enrichRecords(records, 'https://api.example.com/x', fetch)).rejects.toThrow(/ID field/);
   });
 
   it('throws when the detail endpoint returns a non-2xx', async () => {
-    const fetch: FetchFn = () => Promise.resolve<FetchResponse>({ status: 404, headers: {}, body: 'not found' });
+    const fetch: FetchFn = wrapWithSsrfGuard(() =>
+      Promise.resolve<FetchResponse>({ status: 404, headers: {}, body: 'not found' }),
+    );
     const records: unknown[] = [{ id: 'a' }];
     await expect(enrichRecords(records, 'https://api.example.com/x', fetch)).rejects.toThrow(/HTTP 404/);
   });
 
   it('calls progressFn after each successful enrichment', async () => {
-    const fetch: FetchFn = (req) =>
+    const fetch: FetchFn = wrapWithSsrfGuard((req) =>
       Promise.resolve<FetchResponse>({
         status: 200,
         headers: {},
         body: JSON.stringify({ id: req.url.split('/').pop() }),
-      });
+      }),
+    );
     const progress: Array<[number, number]> = [];
     const records: unknown[] = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
     await enrichRecords(records, 'https://api.example.com/x', fetch, (current, total) => {
@@ -138,19 +155,20 @@ describe('enrichRecords', () => {
   });
 
   it('returns silently on empty records array', async () => {
-    const fetch: FetchFn = () => {
+    const fetch: FetchFn = wrapWithSsrfGuard(() => {
       throw new Error('should not be called');
-    };
+    });
     await expect(enrichRecords([], 'https://api.example.com/x', fetch)).resolves.toBeUndefined();
   });
 
   it('skips non-record entries (e.g. raw strings) without throwing', async () => {
-    const fetch: FetchFn = (req) =>
+    const fetch: FetchFn = wrapWithSsrfGuard((req) =>
       Promise.resolve<FetchResponse>({
         status: 200,
         headers: {},
         body: JSON.stringify({ id: req.url.split('/').pop(), enriched: true }),
-      });
+      }),
+    );
     const records: unknown[] = ['not a record', { id: 'a' }];
     await enrichRecords(records, 'https://api.example.com/x', fetch);
     expect(records[0]).toBe('not a record');

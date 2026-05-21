@@ -46,6 +46,7 @@ import {
   MaxPagesReachedError,
   NonJsonResponseError,
   PaginationLoopError,
+  ssrfSafeFetch,
   Strategy,
 } from '../remote-service/connectors/library/generic-api/apiget';
 import { applyOverridesToSettings } from '../remote-service/connectors/library/generic-api/apply-overrides';
@@ -391,20 +392,14 @@ async function main(): Promise<void> {
  */
 function makeCapturingFetch(capture: { status: number; body: string }[]): FetchFn {
   return async (request) => {
-    const response = await globalThis.fetch(request.url, {
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-      signal: request.signal,
-      redirect: 'follow',
-    });
-    const body = await response.text();
-    const headers: Record<string, string> = {};
-    response.headers.forEach((value, key) => {
-      headers[key.toLowerCase()] = value;
-    });
-    capture.push({ status: response.status, body });
-    return { status: response.status, headers, body };
+    // Route through the same SSRF-guarded transport prod uses. The driver now
+    // exercises the full guard path (URL validation + DNS + private-IP blocklist
+    // + pinned-connect undici Agent + redirect re-validation + body cap) so any
+    // regression in those layers fails the driver against real fixtures — same
+    // surface the client hits.
+    const response = await ssrfSafeFetch(request);
+    capture.push({ status: response.status, body: response.body });
+    return response;
   };
 }
 

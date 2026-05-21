@@ -45,4 +45,5 @@ export type {
   Strategy,
 } from './types';
 
+export { SsrfError, assertSafeUrl, blockReasonForIp, ssrfSafeFetch } from './ssrf-fetch';
 export { HttpStatusError, MaxPagesReachedError, NonJsonResponseError, PaginationLoopError } from './types';

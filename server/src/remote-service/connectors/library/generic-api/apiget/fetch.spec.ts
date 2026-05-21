@@ -12,6 +12,7 @@
  */
 
 import { apiget, apigetStream } from './fetch';
+import { setupSsrfTestEnv, wrapWithSsrfGuard } from './test-helpers';
 import {
   ApigetSettings,
   FetchFn,
@@ -27,18 +28,33 @@ import {
 // Test helpers
 // =============================================================================
 
+// Route every scripted fetch in this file through `wrapWithSsrfGuard`, which
+// runs the same URL validation + redirect re-validation that production
+// `ssrfSafeFetch` does. A regression in `assertSafeUrl`, the IP blocklist, or
+// the redirect loop now breaks apiget fixture tests — not just the SSRF spec.
+//
+// Each test gets a beforeEach that stubs `dns.lookup` to a public IP so URLs
+// like `https://api.example.com/...` pass the guard.
+let dnsSpy: jest.SpyInstance;
+beforeEach(() => {
+  dnsSpy = setupSsrfTestEnv();
+});
+afterEach(() => {
+  dnsSpy.mockRestore();
+});
+
 /** Build a mock fetch that returns scripted responses in order. */
 function mockFetch(responses: FetchResponse[]): { fetch: FetchFn; calls: FetchRequest[] } {
   const calls: FetchRequest[] = [];
   let i = 0;
-  const fetch: FetchFn = (request) => {
+  const scripted: FetchFn = (request) => {
     calls.push(request);
     if (i >= responses.length) {
       throw new Error(`mockFetch ran out of scripted responses after ${calls.length} calls`);
     }
     return Promise.resolve(responses[i++]);
   };
-  return { fetch, calls };
+  return { fetch: wrapWithSsrfGuard(scripted), calls };
 }
 
 /** Build a mock fetch that responds based on the request URL (route-style). */
@@ -47,11 +63,11 @@ function mockFetchByRoute(handler: (req: FetchRequest) => FetchResponse): {
   calls: FetchRequest[];
 } {
   const calls: FetchRequest[] = [];
-  const fetch: FetchFn = (request) => {
+  const scripted: FetchFn = (request) => {
     calls.push(request);
     return Promise.resolve(handler(request));
   };
-  return { fetch, calls };
+  return { fetch: wrapWithSsrfGuard(scripted), calls };
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json' };

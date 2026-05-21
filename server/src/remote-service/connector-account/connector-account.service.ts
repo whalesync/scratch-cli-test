@@ -142,8 +142,27 @@ export class ConnectorAccountService {
       try {
         await probeAuthOnly({ extras: createDto.extras as GenericApiConnectorExtras, apiKey });
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Unknown probe failure';
-        throw new BadRequestException(`Generic API connection check failed: ${msg}`);
+        // Log verbose detail server-side. For SSRF rejections specifically,
+        // `internalDetails` includes the resolved IP / hostname / block reason;
+        // surfacing that to the API caller turns the connector into an internal
+        // DNS / IP oracle, so the public message stays generic.
+        //
+        // undici/native fetch throws TypeError("fetch failed") with the real
+        // network error on `.cause` — flatten the chain so logs name the
+        // actual failure (ENOTFOUND, ECONNREFUSED, TLS error, etc.).
+        const internalDetails =
+          e !== null && typeof e === 'object' && 'internalDetails' in e && typeof e.internalDetails === 'string'
+            ? e.internalDetails
+            : describeErrorChain(e);
+        WSLogger.warn({
+          source: 'connector-account',
+          message: 'GENERIC_API pre-create probe failed',
+          workbookId,
+          service: createDto.service,
+          internalDetails,
+        });
+        const publicMsg = e instanceof Error ? e.message : 'Unknown probe failure';
+        throw new BadRequestException(`Generic API connection check failed: ${publicMsg}`);
       }
       parsedCredentials = { apiKey };
       extras = { ...createDto.extras } as Record<string, unknown>;
@@ -724,4 +743,29 @@ export class ConnectorAccountService {
     }
     return { supported: true, quota: result.quota };
   }
+}
+
+/**
+ * Flatten an error chain into a single string for log output. Walks `.cause`
+ * (undici / native fetch attach the real network error there) and appends
+ * common Node error codes. Without this, undici failures only ever log
+ * "fetch failed" and the actual ENOTFOUND / ECONNREFUSED / TLS error is lost.
+ */
+function describeErrorChain(e: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  let depth = 0;
+  while (cur && depth < 5) {
+    if (cur instanceof Error) {
+      const code = (cur as Error & { code?: string }).code;
+      parts.push(code ? `${cur.message} [${code}]` : cur.message);
+      cur = (cur as Error & { cause?: unknown }).cause;
+    } else {
+      // Avoid `String(<plain object>)` returning '[object Object]'.
+      parts.push(typeof cur === 'string' ? cur : JSON.stringify(cur));
+      cur = undefined;
+    }
+    depth++;
+  }
+  return parts.join(' ← ');
 }

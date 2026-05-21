@@ -29,6 +29,7 @@ import {
   hasMorePages,
   parseNextLink,
 } from './pagination';
+import { ssrfSafeFetch } from './ssrf-fetch';
 import {
   ApigetOpts,
   ApigetResult,
@@ -322,25 +323,13 @@ async function postprocessRecords(
 // =============================================================================
 
 /**
- * Default fetch transport — native `fetch`. The caller can inject a different
- * `FetchFn` via `opts.fetch` to use Scratch's `createApiClient` (axios + rate
- * limiter + WSLogger) instead.
+ * Default fetch transport — routes through the SSRF-safe transport in
+ * `ssrf-fetch.ts` which performs HTTPS-only + DNS + private-IP + redirect
+ * + body-cap checks. The caller can inject a different `FetchFn` via
+ * `opts.fetch` to bypass this (e.g. tests, or a connector that wraps the
+ * safe transport with rate-limiting / retry).
  */
-async function defaultFetch(request: FetchRequest): Promise<FetchResponse> {
-  const response = await globalThis.fetch(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-    signal: request.signal,
-    redirect: 'follow',
-  });
-  const body = await response.text();
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    headers[key.toLowerCase()] = value;
-  });
-  return { status: response.status, headers, body };
-}
+const defaultFetch: FetchFn = ssrfSafeFetch;
 
 /**
  * Send a request with one retry on 429 (honoring `Retry-After`). This is the

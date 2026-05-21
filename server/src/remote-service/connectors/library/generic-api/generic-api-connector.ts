@@ -27,6 +27,7 @@ import {
   isGenericApiConnectorExtras,
 } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector } from '../../connector';
@@ -53,6 +54,8 @@ import {
   MaxPagesReachedError,
   NonJsonResponseError,
   PaginationLoopError,
+  SsrfError,
+  ssrfSafeFetch,
   Strategy,
 } from './apiget';
 import { applyOverridesToSettings } from './apply-overrides';
@@ -317,6 +320,18 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
+    if (error instanceof SsrfError) {
+      // Log verbose detail (resolved IP, exact block reason, hostname) server-side.
+      // The user-facing message stays generic so the connector cannot be used
+      // as an internal-DNS / internal-IP oracle.
+      WSLogger.warn({
+        source: 'generic-api',
+        message: 'SSRF guard rejected an endpoint URL',
+        connectorAccountId: this.connectorAccountId,
+        internalDetails: error.internalDetails,
+      });
+      return { userFriendlyMessage: error.message };
+    }
     if (error instanceof PaginationLoopError) {
       return {
         userFriendlyMessage:
@@ -435,27 +450,21 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
   }
 
   /**
-   * Wraps the default native-fetch in `this.rateLimiter.withRetry(...)` so
+   * Wraps the SSRF-safe transport in `this.rateLimiter.withRetry(...)` so
    * apiget's HTTP calls participate in the connection's rate limit. Audienceful
    * and other connectors do the same via their own api-client wrappers; for
    * GENERIC_API we wire it at the fetch layer because apiget doesn't know
    * about Scratch's RateLimiter.
+   *
+   * The SSRF guard (HTTPS-only, private-IP rejection, redirect re-validation,
+   * 10MB body cap) lives in `ssrfSafeFetch` so this code path and apiget's
+   * default transport share the same chokepoint.
    */
   private makeRateLimitedFetch(): (request: FetchRequest) => Promise<FetchResponse> {
     const limiter = this.rateLimiter;
-    const rawFetch = async (request: FetchRequest): Promise<FetchResponse> => {
-      const response = await globalThis.fetch(request.url, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-        signal: request.signal,
-        redirect: 'follow',
-      });
-      return toFetchResponse(response);
-    };
-    if (!limiter) return rawFetch;
+    if (!limiter) return ssrfSafeFetch;
     return (request: FetchRequest) =>
-      limiter.withRetry(() => rawFetch(request), {
+      limiter.withRetry(() => ssrfSafeFetch(request), {
         isRateLimited: (e) => isAxiosError(e) && e.response?.status === 429,
       });
   }
@@ -464,19 +473,6 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers — exported only as needed for tests; rest are file-local.
 // ─────────────────────────────────────────────────────────────────────────────
-
-async function toFetchResponse(response: Response): Promise<{
-  status: number;
-  headers: Record<string, string>;
-  body: string;
-}> {
-  const body = await response.text();
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    headers[key.toLowerCase()] = value;
-  });
-  return { status: response.status, headers, body };
-}
 
 /**
  * Compose the HTTP headers for an apiget request from the connection's

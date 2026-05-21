@@ -10,10 +10,54 @@
  * every preset, extractConnectorErrorDetails maps known errors correctly.
  */
 
+// Mock undici BEFORE importing the connector so the SSRF transport under the
+// hood picks up the mocked `fetch`. Real `Agent` is preserved so the agent the
+// transport creates still constructs cleanly.
+jest.mock('undici', () => {
+  const actual = jest.requireActual<typeof import('undici')>('undici');
+  return { ...actual, fetch: jest.fn() };
+});
+
 import { DataFolderOptions, GenericApiConnectorExtras, GenericApiFolderOptions } from '@spinner/shared-types';
+import { promises as dns } from 'dns';
+import * as undici from 'undici';
 import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
 import { MaxPagesReachedError, NonJsonResponseError, PaginationLoopError } from '../apiget';
 import { buildAuthHeaders, endpointToTableId, GenericApiConnector } from '../generic-api-connector';
+
+const undiciFetchMock = undici.fetch as unknown as jest.Mock;
+
+/**
+ * Stub `dns.lookup` to resolve "api.example.com" (and any other host) to a
+ * public IP so the SSRF guard lets the request through to the mocked
+ * `undici.fetch`. Without this, CI gets ENOTFOUND first and never reaches
+ * the test's intended assertion.
+ */
+let dnsLookupSpy: jest.SpyInstance | undefined;
+beforeEach(() => {
+  dnsLookupSpy = jest.spyOn(dns, 'lookup').mockResolvedValue([{ address: '8.8.8.8', family: 4 }] as never);
+  undiciFetchMock.mockReset();
+});
+afterEach(() => {
+  dnsLookupSpy?.mockRestore();
+});
+
+/**
+ * Helper that primes the undici.fetch mock with one canned response. Returns
+ * a no-op restorer for the existing finally-block call sites — the actual
+ * cleanup happens via `mockReset` in `beforeEach`.
+ */
+function stubUndiciFetch(response: { status: number; body: string; headers?: Record<string, string> }) {
+  undiciFetchMock.mockResolvedValueOnce(
+    new Response(response.body, {
+      status: response.status,
+      headers: new Headers(response.headers ?? { 'content-type': 'application/json' }),
+    }) as unknown as undici.Response,
+  );
+  return () => {
+    /* no-op — beforeEach handles reset */
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test scaffolding
@@ -223,17 +267,11 @@ describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pul
     // a single-page response.
     const connector = buildConnector();
 
-    // Patch globalThis.fetch for this test. The connector's makeRateLimitedFetch
-    // ultimately calls globalThis.fetch when no limiter is configured.
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (() => {
-      return Promise.resolve(
-        new Response(JSON.stringify([{ id: 'dup' }, { id: 'dup' }]), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      );
-    }) as typeof globalThis.fetch;
+    // Stub undici.fetch — the transport ssrfSafeFetch actually uses.
+    const restore = stubUndiciFetch({
+      status: 200,
+      body: JSON.stringify([{ id: 'dup' }, { id: 'dup' }]),
+    });
 
     try {
       const callbackCalls: Array<{ files: ConnectorFile[] }> = [];
@@ -260,20 +298,16 @@ describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pul
       // leak past the collision check; per impl plan no partial files on disk).
       expect(callbackCalls).toHaveLength(0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restore();
     }
   });
 
   it('throws when idPath resolves to null on any record', async () => {
     const connector = buildConnector();
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        new Response(JSON.stringify([{ id: 'a' }, { not_id: 'b' }]), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      )) as typeof globalThis.fetch;
+    const restore = stubUndiciFetch({
+      status: 200,
+      body: JSON.stringify([{ id: 'a' }, { not_id: 'b' }]),
+    });
 
     try {
       const tableSpec: BaseJsonTableSpec = {
@@ -289,7 +323,7 @@ describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pul
         } as DataFolderOptions),
       ).rejects.toThrow(/missing or null remote ID/);
     } finally {
-      globalThis.fetch = originalFetch;
+      restore();
     }
   });
 });
@@ -299,22 +333,13 @@ describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pul
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('GenericApiConnector — SAFETY: testConnection branches', () => {
-  /** Stub globalThis.fetch to return one canned response for the test. */
+  /** Stub undici.fetch to return one canned response for the test. */
   function withMockedFetch<T>(
     response: { status: number; body: string; headers?: Record<string, string> },
     run: () => Promise<T>,
   ): Promise<T> {
-    const original = globalThis.fetch;
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        new Response(response.body, {
-          status: response.status,
-          headers: response.headers ?? { 'content-type': 'application/json' },
-        }),
-      )) as typeof globalThis.fetch;
-    return run().finally(() => {
-      globalThis.fetch = original;
-    });
+    const restore = stubUndiciFetch(response);
+    return run().finally(restore);
   }
 
   it('throws with "No endpoints configured" when extras.endpoints is empty', async () => {

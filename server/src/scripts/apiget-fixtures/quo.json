@@ -55,6 +55,24 @@
           "dataPath": "data"
         }
       }
+    },
+    {
+      "id": "ep_quo_conversations",
+      "name": "Conversations",
+      "method": "GET",
+      "url": "https://api.openphone.com/v1/conversations",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "pageToken",
+          "limitParam": "maxResults",
+          "maxPageSize": 50
+        },
+        "response": {
+          "cursorPath": "nextPageToken",
+          "dataPath": "data"
+        }
+      }
     }
   ]
 }
