@@ -1,7 +1,7 @@
 # Slice F — Init collapse to one non-sparse `main` worktree
 
 **Date**: 2026-05-20
-**Status**: **F.1 + F.2.a + F.2.b shipped 2026-05-20.** F.3 (cleanup) + F.4 (perf measurement) not started.
+**Status**: **F.1 + F.2.a + F.2.b + F.3 shipped 2026-05-20.** F.4 (perf measurement) not started.
 **Parent plan**: [`2026-05-17-simplify-local-workspace-architecture.md`](2026-05-17-simplify-local-workspace-architecture.md) — see [Phase 5](2026-05-17-simplify-local-workspace-architecture.md#phase-5--collapse-to-one-worktree-per-connection) for the design spec.
 **Author**: Curtis Fonger
 
@@ -297,15 +297,81 @@ Tests:
 
 **Done when:** a fresh `init` produces one non-sparse `main` worktree per connection; all post-Slice-B CLI commands work against it; `cargo test --workspace` green; `yarn lint` + `yarn build` clean.
 
-### F.3 — Clean up `WorkspaceLayout::reviewed_dirty_checkout_path` + legacy refs
+### F.3 — Clean up legacy layout helpers + fix latent validator regression
 
-Pure deletion. Nothing references these paths after F.2 except dead code.
+> **Status: SHIPPED 2026-05-20.** Wider than the original "pure deletion"
+> framing once a latent validator regression surfaced during the audit. The
+> F.2.b cutover left `ConnectionContext::master_dir` pointing at a
+> non-existent path, so `validators::run_validations` silently passed `None`
+> for every `master_record` lookup and the readonly-field check no-op'd.
+> F.3 fixes that and prunes the now-unused layout surface.
+>
+> **What shipped:**
+>
+> - **Validator repoint to bare repo.** `run_validations`'s `master_dir:
+>   &Path` parameter replaced with `bare_repo: &Path`. `validate_records`
+>   pre-loads `refs/heads/main` once via
+>   `shared::git_local::read_tree_files(bare_repo, "refs/heads/main")` and
+>   per-record lookups hit the in-memory `FileMap`. `load_master_record`
+>   renamed to `lookup_master_record` and now does the in-memory lookup.
+>   Single production caller (`cli/commands/files.rs::run_validations`
+>   wrapper) updated to pass `&ctx.bare_repo`.
+> - **`validation dry-run` repoint.** The `validation` CLI command's
+>   per-record on-disk master read also went to the deleted master worktree.
+>   Now reads the workspace marker to find the connection's `repo_path`,
+>   resolves the bare repo path via `layout.bare_repo_path`, and reads from
+>   `refs/heads/main` via the same `read_tree_files` helper. `--master` JSON
+>   override path unchanged.
+> - **`ConnectionContext::master_dir` field deleted** along with the
+>   `master_dir:` assignment in `build_connection_contexts` and 5 test
+>   fixtures. `ConnectionPaths::master_dir` field deleted along with the
+>   `master_dir:` assignment in `review_ops::resolve_connection_paths`.
+> - **`WorkspaceLayout::master_worktree_path` deleted** —
+>   `detect_old_layout` was the last in-tree reader and now inlines the
+>   path (`scratch_root().join("connections").join("master").join(name)`).
+>   The new helper is the only post-F.3 reference to the legacy layout's
+>   shape, with its purpose documented.
+> - **`WorkspaceLayout::reviewed_worktree_path` deleted** — only
+>   `teardown_connection` / `detach_connection` referenced it, and the
+>   cleanup hooks for both `legacy_master_dir` and `legacy_reviewed_dir`
+>   are gone (F.1 forces re-init via `workspaces unsync`, which removes
+>   the whole workspace tree anyway).
+> - **`shared/index.rs::master_dir` + `master_dir_for_layout` deleted** —
+>   dead-coded by Phase 2; the inline test that asserted their paths
+>   dropped along with them.
+> - **`shared/layout.rs` test sweep**: dropped the four assertions that
+>   referenced the deleted helpers; added a `legacy_master_worktree(path,
+>   conn)` test-local helper for the F.1 detection tests since they still
+>   need to plant the legacy directory on disk.
+> - **`cli/commands/plan_publish.rs` inlined** the two legacy paths it
+>   needed (`master_dir`, `reviewed_worktree_dir`) with a comment that
+>   the whole file dies in Phase 7. Skip messages updated to drop
+>   "sparse" / "dirty checkout" terminology.
+> - **New regression test**
+>   `readonly_validator_reads_master_from_bare_repo_refs_heads_main` in
+>   `shared/validators/mod.rs::tests`. Spins up a real bare repo with one
+>   committed record, writes a changed version to the worktree + a
+>   `schema.json` marking the field readonly + a `validation.json` with
+>   the `enforce_schema` record-scoped validator, calls `run_validations`,
+>   asserts the violation lands in the `validation_results` table with
+>   `level=warning` and a "read-only" message. Catches future regressions
+>   where the master-record lookup chain breaks.
+> - **End state:** `cargo build --workspace` zero warnings; **738 cargo
+>   tests pass** (+3 from F.2.b's 735); `cargo fmt --check` clean; `yarn
+>   lint` from repo root clean; napi smoke 3/3 green. F.1's
+>   `workspace_needs_reinit` refusal still fires on pre-F workspaces
+>   (verified end-to-end against `/tmp/fake-old-workspace`).
 
-- `WorkspaceLayout::reviewed_dirty_checkout_path` deleted.
-- `teardown_connection` / `detach_connection` lose the `remove_path(&reviewed_dirty_dir)` line. (Pre-F.3 workspaces are guaranteed gone by the F.1 refusal + user-triggered re-init.)
-- Any leftover `DIRTY_BRANCH` references in `service/`, `plan_publish.rs`, etc. that are now unreachable get deleted.
+Pure deletion plus the validator fix.
 
-**Done when:** `grep -r "reviewed_dirty\|DIRTY_BRANCH\|master_worktree" src/cli src/shared` returns nothing.
+- ✅ `WorkspaceLayout::reviewed_dirty_checkout_path` (renamed `reviewed_worktree_path` in F.2.a) deleted.
+- ✅ `teardown_connection` / `detach_connection` lose the `remove_path(&legacy_*)` lines.
+- ✅ `WorkspaceLayout::master_worktree_path` deleted (inlined in `detect_old_layout`).
+- ✅ `ConnectionContext::master_dir` + `ConnectionPaths::master_dir` deleted.
+- ✅ Validators retargeted from disk-via-master-worktree to bare-repo-via-`refs/heads/main`. New regression test.
+- N/A `DIRTY_BRANCH` constant remains in `workspaces.rs` — still used by `materialize_workbook_checkout`'s fallback path for the workbook config repo (separate concern from per-connection worktrees). Server-side `DIRTY_BRANCH` references stay (server still uses the dirty branch as its publish working area).
+
+**Done when:** `grep -r "master_worktree_path\|reviewed_worktree_path\|reviewed_dirty_checkout_path" src/cli src/shared` returns nothing. ✅ Verified.
 
 ### F.4 — Init perf measurement + parent-plan status update
 

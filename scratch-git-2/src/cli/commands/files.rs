@@ -185,7 +185,6 @@ struct ConnectionContext {
     worktree_dir: PathBuf,
     scratch_dir: PathBuf,
     workspace_dir: PathBuf,
-    master_dir: PathBuf,
     bare_repo: PathBuf,
     db_path: PathBuf,
 }
@@ -208,7 +207,6 @@ impl ConnectionContext {
             worktree_dir: self.worktree_dir.clone(),
             bare_repo: self.bare_repo.clone(),
             scratch_dir: self.scratch_dir.clone(),
-            master_dir: self.master_dir.clone(),
         }
     }
 }
@@ -412,7 +410,7 @@ fn refresh_problem_record_index_for_ctx(
         &ctx.scratch_dir,
         &ctx.worktree_dir,
         &ctx.workspace_dir,
-        &ctx.master_dir,
+        &ctx.bare_repo,
         &ctx.db_path,
         rebuild,
         selected_paths.as_ref(),
@@ -2365,7 +2363,6 @@ fn build_connection_contexts(
             worktree_dir: layout.worktree_path(&connection.dir_name),
             scratch_dir: layout.connection_scratch_path(&connection.dir_name),
             workspace_dir: layout.workbook_materialization_path(),
-            master_dir: layout.master_worktree_path(&connection.dir_name),
             bare_repo: layout.bare_repo_path(&connection.repo_path),
             db_path: layout.index_db_path(&connection.repo_path),
         })

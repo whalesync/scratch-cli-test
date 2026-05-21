@@ -458,7 +458,29 @@ pub fn dry_run_command(
             _ => anyhow::bail!("--folder is required when using --file"),
         };
         let worktree_dir = layout.worktree_path(conn);
-        let master_dir = layout.master_worktree_path(conn);
+
+        // Per-record published-version lookup against the connection's bare
+        // repo at `refs/heads/main:<rel>`. Pre-slice-F this read from a
+        // sparse `master` worktree on disk; that worktree no longer exists.
+        // `--master` still wins when set; this is the on-disk fallback.
+        let main_files = if master_json.is_some() {
+            crate::shared::git_local::FileMap::new()
+        } else {
+            let marker_path = crate::config::markers::marker_path(&workspace);
+            let bare_repo_path = match crate::config::markers::read(&marker_path) {
+                Ok(crate::config::markers::Marker::Workspace(marker)) => marker
+                    .connections
+                    .iter()
+                    .find(|c| c.dir_name == conn)
+                    .map(|c| layout.bare_repo_path(&c.repo_path)),
+                _ => None,
+            };
+            match bare_repo_path {
+                Some(bare) => crate::shared::git_local::read_tree_files(&bare, "refs/heads/main")
+                    .unwrap_or_default(),
+                None => crate::shared::git_local::FileMap::new(),
+            }
+        };
 
         for file_name in files {
             let record_path = if sub.is_empty() {
@@ -472,15 +494,14 @@ pub fn dry_run_command(
                 .map_err(|e| anyhow::anyhow!("invalid JSON in {}: {e}", record_path.display()))?;
 
             let disk_master: Option<serde_json::Value> = if master_json.is_none() {
-                let master_path = if sub.is_empty() {
-                    master_dir.join(file_name)
+                let key = if sub.is_empty() {
+                    file_name.clone()
                 } else {
-                    master_dir.join(sub).join(file_name)
+                    format!("{sub}/{file_name}")
                 };
-                match std::fs::read(&master_path) {
-                    Ok(bytes) => serde_json::from_slice(&bytes).ok(),
-                    Err(_) => None,
-                }
+                main_files
+                    .get(&key)
+                    .and_then(|b| serde_json::from_slice(b).ok())
             } else {
                 None
             };

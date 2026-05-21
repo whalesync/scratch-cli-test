@@ -675,9 +675,13 @@ pub fn setup_connection(
 }
 
 /// Remove all local artifacts for a connection (bare repo, worktree, index DB,
-/// connection scratch cache). The legacy pre-slice-F sparse-worktree paths
-/// (`master_worktree_path`, `reviewed_worktree_path`) are best-effort cleaned
-/// for back-compat — slice F.3 retires them entirely.
+/// connection scratch cache).
+///
+/// Pre-slice-F workspaces additionally had `.scratch/connections/master/<conn>/`
+/// and `.scratch/connections/dirty/<conn>/` directories. F.1 refuses to
+/// operate on those workspaces, so the user must `workspaces unsync` to clear
+/// them — which removes the whole workspace tree from disk, picking up any
+/// legacy directories en route. No explicit cleanup needed here.
 pub fn teardown_connection(
     entry: &markers::ConnectionEntry,
     layout: &WorkspaceLayout,
@@ -685,8 +689,6 @@ pub fn teardown_connection(
     let bare_repo = layout.bare_repo_path(&entry.repo_path);
     let worktree_dir = layout.worktree_path(&entry.dir_name);
     let scratch_dir = layout.connection_scratch_path(&entry.dir_name);
-    let legacy_master_dir = layout.master_worktree_path(&entry.dir_name);
-    let legacy_reviewed_dir = layout.reviewed_worktree_path(&entry.dir_name);
     let db_path = layout.index_db_path(&entry.repo_path);
 
     // Prune worktrees before removing the bare repo
@@ -696,8 +698,6 @@ pub fn teardown_connection(
     remove_path(&db_path);
     remove_path(&worktree_dir);
     remove_path(&scratch_dir);
-    remove_path(&legacy_master_dir);
-    remove_path(&legacy_reviewed_dir);
 
     Ok(())
 }
@@ -731,12 +731,13 @@ pub fn detach_connection(
     std::fs::write(&marker_path, marker_content)?;
 
     // Remove git infrastructure while preserving the user-facing worktree
-    // directory. Legacy pre-slice-F sparse-worktree paths are best-effort
-    // cleaned for back-compat — slice F.3 retires them.
+    // directory. Pre-slice-F sparse-worktree paths under
+    // `.scratch/connections/{master,dirty}/<conn>/` aren't present on any
+    // workspace that init-ed post-slice-F; F.1 refuses pre-F workspaces, so
+    // they reach this path only after the user re-init'd (and the legacy
+    // paths are gone).
     let bare_repo = layout.bare_repo_path(&entry.repo_path);
     let scratch_dir = layout.connection_scratch_path(&entry.dir_name);
-    let legacy_master_dir = layout.master_worktree_path(&entry.dir_name);
-    let legacy_reviewed_dir = layout.reviewed_worktree_path(&entry.dir_name);
     let db_path = layout.index_db_path(&entry.repo_path);
 
     prune_worktrees(&bare_repo);
@@ -744,8 +745,6 @@ pub fn detach_connection(
     remove_path(&bare_repo);
     remove_path(&db_path);
     remove_path(&scratch_dir);
-    remove_path(&legacy_master_dir);
-    remove_path(&legacy_reviewed_dir);
 
     Ok(())
 }

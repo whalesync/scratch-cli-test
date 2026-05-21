@@ -42,28 +42,31 @@ pub fn run(workspace_start: &Path, filter: Option<&str>) -> anyhow::Result<()> {
             None => None,
         };
         let worktree_dir = layout.worktree_path(&conn_name);
-        let master_dir = layout.master_worktree_path(&conn_name);
+        // Pre-slice-F multi-worktree paths, inlined here so this dead-coded
+        // command still compiles. Phase 1 dead-coded the only caller; Phase 7
+        // deletes the whole file along with `shared/plan_publish.rs`.
+        let connections_root = layout.scratch_root().join("connections");
+        let master_dir = connections_root.join("master").join(&conn_name);
         let scratch_dir = layout.connection_scratch_path(&conn_name);
         let db_path = layout.index_db_path(&connection.repo_path);
         let bare_repo = layout.bare_repo_path(&connection.repo_path);
 
         if !worktree_dir.exists() && !bare_repo.exists() {
             eprintln!(
-                "  {conn_name}: dirty checkout not found at {}, skipping",
+                "  {conn_name}: worktree not found at {}, skipping",
                 worktree_dir.display()
             );
             continue;
         }
         if !master_dir.exists() {
             eprintln!(
-                "  {conn_name}: master worktree not found at {}, skipping",
+                "  {conn_name}: legacy master worktree not found at {}, skipping (this command is dead-coded post-Phase-1 and slated for Phase 7 deletion)",
                 master_dir.display()
             );
-            eprintln!("    Run 'scratchmd workspaces init' to set up the master worktree.");
             continue;
         }
 
-        let reviewed_worktree_dir = layout.reviewed_worktree_path(&conn_name);
+        let reviewed_worktree_dir = connections_root.join("dirty").join(&conn_name);
         let dirty_source = reviewed_worktree_dir.as_path();
 
         match plan_publish::build_publish_plan_with_scratch_dir(

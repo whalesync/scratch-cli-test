@@ -54,17 +54,14 @@ pub struct ConnectionPaths {
     /// Workspace root (`<workspace>`). The lock file and `.scratch/connections/<conn>`
     /// hang off this.
     pub workspace_dir: PathBuf,
-    /// The user's editable directory (`<workspace>/<conn>` pre-slice F;
-    /// changes shape under slice F).
+    /// The user's editable directory — one non-sparse worktree on
+    /// `refs/heads/main` post-slice F.
     pub worktree_dir: PathBuf,
     /// Bare repo (`<workspace>/.repos/<repo-id>.git/`). Read-only from this
     /// module's perspective; callers handle ref advances.
     pub bare_repo: PathBuf,
     /// Per-connection scratch dir for `.scratch/` schema/validation/state.
     pub scratch_dir: PathBuf,
-    /// The `master` worktree directory; `sync_schema_files_from_master` reads
-    /// schema files out of it.
-    pub master_dir: PathBuf,
 }
 
 /// Per-call summary of what a field-level accept / reject / discard touched.
@@ -1077,7 +1074,6 @@ fn resolve_connection_paths(
         worktree_dir: layout.worktree_path(connection_dir_name),
         scratch_dir: layout.connection_scratch_path(connection_dir_name),
         bare_repo: layout.bare_repo_path(&entry.repo_path),
-        master_dir: layout.master_worktree_path(connection_dir_name),
     })
 }
 

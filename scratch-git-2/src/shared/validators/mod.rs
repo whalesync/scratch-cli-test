@@ -198,8 +198,13 @@ fn table_has_columns(
 /// `validation_results` table in `db_path`.
 ///
 /// - `scratch_dir`: where `validation.json` files live (`.scratch/connections/scratch/<connection>`)
-/// - `worktree_dir`: where record JSON files live (the dirty checkout, `<connection>`)
+/// - `worktree_dir`: where record JSON files live (the user worktree, `<connection>`)
 /// - `workspace_dir`: base directory for resolving `python:` script paths (`.scratch/workspace`)
+/// - `bare_repo`: per-connection bare git repo. Read-only validators look up
+///   the published version of each record at `refs/heads/main:<rel>`. Pass an
+///   empty path if read-only checks aren't needed (the lookup degrades to
+///   "no master record", and readonly violations silently skip — matches the
+///   "new record" branch).
 ///
 /// `is_full_rebuild` controls whether stale results cleanup runs:
 /// - full rebuild → clean up rows whose records no longer exist in record_index
@@ -208,7 +213,7 @@ pub fn run_validations(
     scratch_dir: &Path,
     worktree_dir: &Path,
     workspace_dir: &Path,
-    master_dir: &Path,
+    bare_repo: &Path,
     db_path: &Path,
     is_full_rebuild: bool,
     selected_paths: Option<&std::collections::HashSet<String>>,
@@ -229,7 +234,7 @@ pub fn run_validations(
         worktree_dir,
         workspace_dir,
         scratch_dir,
-        master_dir,
+        bare_repo,
         &configs,
         &conn,
         selected_paths,
@@ -515,7 +520,8 @@ struct WorkItem {
 /// Apply all validators to all records under `worktree_dir`.
 /// `workspace_dir` is used to resolve `python:` script paths.
 /// `scratch_dir` is used to load `schema.json` for record-scoped validators.
-/// `master_dir` is used to load the master-branch version of each record.
+/// `bare_repo` is used to pre-load the `refs/heads/main` tree so read-only
+/// validators can compare current vs. published values.
 ///
 /// Records are validated in parallel using rayon; DB writes are serialised
 /// on the calling thread afterwards (rusqlite `Connection` is not `Send`).
@@ -523,12 +529,20 @@ fn validate_records(
     worktree_dir: &Path,
     workspace_dir: &Path,
     scratch_dir: &Path,
-    master_dir: &Path,
+    bare_repo: &Path,
     configs: &HashMap<String, Vec<ValidatorEntry>>,
     conn: &Connection,
     selected_paths: Option<&std::collections::HashSet<String>>,
 ) -> anyhow::Result<()> {
     use rayon::prelude::*;
+
+    // Pre-load `refs/heads/main` into a FileMap once. Per-record lookups in
+    // the parallel phase below hit the in-memory map; no fs I/O against a
+    // master worktree (the worktree no longer exists post-slice-F). On a
+    // path that isn't a valid bare repo, the helper errs and we fall through
+    // to an empty map — readonly checks then skip silently.
+    let main_files =
+        crate::shared::git_local::read_tree_files(bare_repo, "refs/heads/main").unwrap_or_default();
 
     // Phase 1 (serial): enumerate work items, loading schema once per folder.
     let mut work_items: Vec<WorkItem> = Vec::new();
@@ -587,7 +601,8 @@ fn validate_records(
             let record: serde_json::Value = serde_json::from_slice(&bytes)
                 .with_context(|| format!("failed to parse JSON in {}", record_path.display()))?;
 
-            let master_record = load_master_record(master_dir, &item.folder_path, &item.file_name);
+            let master_record =
+                lookup_master_record(&main_files, &item.folder_path, &item.file_name);
 
             let entries = configs
                 .get(&item.folder_path)
@@ -656,34 +671,29 @@ fn load_schema_for_folder(scratch_dir: &Path, folder_path: &str) -> Option<serde
     }
 }
 
-/// Load the master-branch version of a record file.
-/// Returns `None` if the file doesn't exist (new record) or can't be parsed (warns to stderr).
-fn load_master_record(
-    master_dir: &Path,
+/// Look up the master-branch version of a record file in a pre-loaded
+/// `refs/heads/main` tree map. Returns `None` if the path isn't in main (new
+/// record) or the blob can't be parsed (warns to stderr).
+///
+/// Pre-slice-F read from a separate sparse `master` worktree on disk; that
+/// worktree no longer exists. The bare repo's `refs/heads/main` blob is now
+/// the canonical published state.
+fn lookup_master_record(
+    main_files: &crate::shared::git_local::FileMap,
     folder_path: &str,
     file_name: &str,
 ) -> Option<serde_json::Value> {
-    let path = if folder_path.is_empty() {
-        master_dir.join(file_name)
+    let key = if folder_path.is_empty() {
+        file_name.to_string()
     } else {
-        master_dir.join(folder_path).join(file_name)
+        format!("{folder_path}/{file_name}")
     };
-    match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                eprintln!(
-                    "[validation] failed to parse master record {}: {e} — readonly checks skipped",
-                    path.display()
-                );
-                None
-            }
-        },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+    let bytes = main_files.get(&key)?;
+    match serde_json::from_slice(bytes) {
+        Ok(v) => Some(v),
         Err(e) => {
             eprintln!(
-                "[validation] failed to read master record {}: {e} — readonly checks skipped",
-                path.display()
+                "[validation] failed to parse master record refs/heads/main:{key}: {e} — readonly checks skipped"
             );
             None
         }
@@ -1167,5 +1177,138 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    /// Slice F.3 regression test: the readonly-field validator reads the
+    /// published version of each record from `refs/heads/main:<rel>` in the
+    /// per-connection bare repo. Pre-F.3 this read from a sparse `master`
+    /// worktree on disk; F.2.b retired that worktree, leaving the path empty.
+    /// F.3 repoints `run_validations` to the bare repo via gix.
+    ///
+    /// The test sets up a real bare repo with one commit on `main`, then
+    /// writes a *changed* version of that record to the worktree along with
+    /// a `validation.json` + a `schema.json` marking the field as readonly.
+    /// `run_validations` must detect the violation.
+    #[test]
+    fn readonly_validator_reads_master_from_bare_repo_refs_heads_main() {
+        // Skip the test if git isn't on PATH (mirrors other git-dependent
+        // tests in the crate).
+        if std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping git-dependent test: git executable not available");
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let scratch_dir = tmp.path().join("scratch");
+        let worktree_dir = tmp.path().join("worktree");
+        let workspace_dir = tmp.path().join("workspace");
+        let bare_repo = tmp.path().join("repo.git");
+        let db_path = tmp.path().join("index.db");
+
+        // Build a source repo with a single record on main.
+        let source = tmp.path().join("source");
+        let run_git = |cwd: &Path, args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .current_dir(cwd)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run_git(tmp.path(), &["init", "source"]);
+        run_git(&source, &["checkout", "-b", "main"]);
+        write_file(
+            &source,
+            "posts/rec1.json",
+            r#"{"id":"original","title":"Hello"}"#,
+        );
+        run_git(&source, &["add", "-A"]);
+        run_git(
+            &source,
+            &[
+                "-c",
+                "user.name=Scratch",
+                "-c",
+                "user.email=s@x.com",
+                "commit",
+                "-m",
+                "init",
+            ],
+        );
+        run_git(tmp.path(), &["init", "--bare", "repo.git"]);
+        run_git(
+            &source,
+            &["remote", "add", "origin", bare_repo.to_str().unwrap()],
+        );
+        run_git(&source, &["push", "origin", "main:main"]);
+
+        // User edited `id` (which is readonly) in the worktree.
+        write_file(
+            &worktree_dir,
+            "posts/rec1.json",
+            r#"{"id":"CHANGED","title":"Hello"}"#,
+        );
+
+        // schema.json: `enforce_schema` reads `.schema.properties.<field>.x-scratch-readonly`.
+        // validation.json: record-scoped entry (no `field` → `enforce_schema` fires).
+        write_file(
+            &scratch_dir,
+            "posts/schema.json",
+            r#"{"schema":{"type":"object","properties":{"id":{"type":"string","x-scratch-readonly":true},"title":{"type":"string"}}}}"#,
+        );
+        write_file(
+            &scratch_dir,
+            "posts/validation.json",
+            r#"[{"validator":"enforce_schema","params":{}}]"#,
+        );
+
+        // `is_full_rebuild = false` to skip `cleanup_stale_results` — that
+        // helper deletes rows whose paths aren't in the folder_index table
+        // (which we don't populate here). Production full-rebuild paths
+        // always have the folder_index up to date first.
+        run_validations(
+            &scratch_dir,
+            &worktree_dir,
+            &workspace_dir,
+            &bare_repo,
+            &db_path,
+            false,
+            None,
+        )
+        .unwrap();
+
+        let conn = Connection::open(&db_path).unwrap();
+        let rows: Vec<(String, String, String)> = conn
+            .prepare(&format!(
+                "SELECT field_path, level, COALESCE(message, '') FROM {VALIDATION_RESULTS_TABLE} \
+                 WHERE folder_path = 'posts' AND file_name = 'rec1.json' AND validator_kind = 'enforce_schema'"
+            ))
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let id_violation = rows.iter().find(|(field, _, _)| field == "id");
+        assert!(
+            id_violation.is_some(),
+            "expected a readonly violation on `id` after changing it in the worktree; got rows: {rows:?}",
+        );
+        let (_, level, message) = id_violation.unwrap();
+        assert_eq!(level, "warning", "readonly violations are warnings");
+        assert!(
+            message.to_lowercase().contains("readonly")
+                || message.to_lowercase().contains("read-only"),
+            "expected readonly mention in message, got: {message}"
+        );
     }
 }

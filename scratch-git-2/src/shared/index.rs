@@ -24,10 +24,6 @@ pub fn conn_scratch_dir_for_layout(layout: &WorkspaceLayout, conn_dir_name: &str
     layout.connection_scratch_path(conn_dir_name)
 }
 
-pub fn master_dir_for_layout(layout: &WorkspaceLayout, conn_dir_name: &str) -> PathBuf {
-    layout.master_worktree_path(conn_dir_name)
-}
-
 pub fn db_path_for_layout(layout: &WorkspaceLayout, repo_id: &str) -> PathBuf {
     layout.index_db_path(repo_id)
 }
@@ -38,10 +34,6 @@ pub fn scratch_dir(workspace_dir: &Path) -> PathBuf {
 
 pub fn conn_scratch_dir(workspace_dir: &Path, conn_dir_name: &str) -> PathBuf {
     conn_scratch_dir_for_layout(&WorkspaceLayout::for_cli(workspace_dir), conn_dir_name)
-}
-
-pub fn master_dir(workspace_dir: &Path, conn_dir_name: &str) -> PathBuf {
-    master_dir_for_layout(&WorkspaceLayout::for_cli(workspace_dir), conn_dir_name)
 }
 
 pub fn db_path(workspace_dir: &Path, conn_dir_name: &str) -> PathBuf {
@@ -837,7 +829,7 @@ pub fn read_references(db_path: &Path) -> anyhow::Result<Vec<ReferenceRow>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{conn_scratch_dir, db_path, master_dir, scratch_dir};
+    use super::{conn_scratch_dir, db_path, scratch_dir};
     use tempfile::TempDir;
 
     #[test]
@@ -872,13 +864,6 @@ connections:
             root.join(".scratch")
                 .join("connections")
                 .join("scratch")
-                .join("AIRTABLE - My Conn")
-        );
-        assert_eq!(
-            master_dir(root, "AIRTABLE - My Conn"),
-            root.join(".scratch")
-                .join("connections")
-                .join("master")
                 .join("AIRTABLE - My Conn")
         );
         assert_eq!(

@@ -40,7 +40,6 @@ fn make_connection_context(root: &Path, bare_repo: &Path) -> ConnectionContext {
         worktree_dir: root.join("Conn"),
         scratch_dir: root.join(".scratch/connections/scratch/Conn"),
         workspace_dir: root.to_path_buf(),
-        master_dir: root.join(".scratch/connections/master/Conn"),
         bare_repo: bare_repo.to_path_buf(),
         db_path: root.join(".repos/conn.db"),
     }
@@ -131,7 +130,6 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
         worktree_dir: tmp.path().join("Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         workspace_dir: tmp.path().to_path_buf(),
-        master_dir: tmp.path().join(".scratch/connections/master/Conn"),
         bare_repo: tmp.path().join(".repos/conn.git"),
         db_path: tmp.path().join(".repos/conn.db"),
     };
@@ -179,7 +177,6 @@ fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
         worktree_dir: tmp.path().join("Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         workspace_dir: tmp.path().to_path_buf(),
-        master_dir: tmp.path().join(".scratch/connections/master/Conn"),
         bare_repo: tmp.path().join(".repos/conn.git"),
         db_path: tmp.path().join(".repos/conn.db"),
     };
@@ -246,7 +243,6 @@ fn sync_schema_files_from_worktree_restores_missing_schema() {
         worktree_dir: tmp.path().join("Conn"),
         scratch_dir: tmp.path().join(".scratch/connections/scratch/Conn"),
         workspace_dir: tmp.path().to_path_buf(),
-        master_dir: tmp.path().join(".scratch/connections/master/Conn"),
         bare_repo: tmp.path().join(".repos/conn.git"),
         db_path: tmp.path().join(".repos/conn.db"),
     };
@@ -745,7 +741,6 @@ fn empty_conn_ctx() -> ConnectionContext {
         worktree_dir: PathBuf::new(),
         scratch_dir: PathBuf::new(),
         workspace_dir: PathBuf::new(),
-        master_dir: PathBuf::new(),
         bare_repo: PathBuf::new(),
         db_path: PathBuf::new(),
     }
@@ -2285,7 +2280,6 @@ mod discard_field_helper {
             worktree_dir: tmp.path().to_path_buf(),
             scratch_dir: tmp.path().to_path_buf(),
             workspace_dir: tmp.path().to_path_buf(),
-            master_dir: tmp.path().to_path_buf(),
             bare_repo: tmp.path().to_path_buf(),
             db_path: PathBuf::new(),
         }
@@ -2846,11 +2840,20 @@ mod workspace_layout_check {
         check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ false).unwrap();
     }
 
+    /// Helper: build the legacy pre-slice-F master worktree path inline since
+    /// `WorkspaceLayout::master_worktree_path` is gone post-F.3.
+    fn legacy_master_worktree(workspace: &std::path::Path, conn: &str) -> std::path::PathBuf {
+        workspace
+            .join(".scratch")
+            .join("connections")
+            .join("master")
+            .join(conn)
+    }
+
     #[test]
     fn bails_when_master_worktree_present() {
         let tmp = TempDir::new().unwrap();
-        let layout = WorkspaceLayout::for_cli(tmp.path());
-        std::fs::create_dir_all(layout.master_worktree_path("HubSpot")).unwrap();
+        std::fs::create_dir_all(legacy_master_worktree(tmp.path(), "HubSpot")).unwrap();
         let marker = marker_with_one_conn();
 
         let err = check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ true)
@@ -2881,8 +2884,7 @@ mod workspace_layout_check {
         // master directory for a connection not in the marker should NOT
         // trigger the refusal (the user may have manually wiped that conn).
         let tmp = TempDir::new().unwrap();
-        let layout = WorkspaceLayout::for_cli(tmp.path());
-        std::fs::create_dir_all(layout.master_worktree_path("OldUnrelatedConn")).unwrap();
+        std::fs::create_dir_all(legacy_master_worktree(tmp.path(), "OldUnrelatedConn")).unwrap();
         let marker = marker_with_one_conn();
 
         check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ false).unwrap();

@@ -84,20 +84,6 @@ impl WorkspaceLayout {
         self.scratch_root().join("connections").join(connector_name)
     }
 
-    pub fn master_worktree_path(&self, connector_name: &str) -> PathBuf {
-        self.scratch_root()
-            .join("connections")
-            .join("master")
-            .join(connector_name)
-    }
-
-    pub fn reviewed_worktree_path(&self, connector_name: &str) -> PathBuf {
-        self.scratch_root()
-            .join("connections")
-            .join("dirty")
-            .join(connector_name)
-    }
-
     pub fn workbook_materialization_path(&self) -> PathBuf {
         self.scratch_root().join("workspace")
     }
@@ -115,13 +101,18 @@ impl WorkspaceLayout {
     ///
     /// `connection_dir_names` is the list of connection directory names from
     /// the workspace marker. The detection is cheap (≤ 2 stat calls per
-    /// connection) so callers can run it on every CLI op.
+    /// connection) so callers can run it on every CLI op. The legacy paths
+    /// are inlined here — this is the only post-F.3 reference to either
+    /// layout artifact's location.
     pub fn detect_old_layout(&self, connection_dir_names: &[&str]) -> OldLayoutDetection {
         let mut connections_with_master_worktree = Vec::new();
         let mut connections_with_sparse_checkout = Vec::new();
 
+        let connections_root = self.scratch_root().join("connections");
+
         for dir_name in connection_dir_names {
-            if self.master_worktree_path(dir_name).exists() {
+            let legacy_master = connections_root.join("master").join(dir_name);
+            if legacy_master.exists() {
                 connections_with_master_worktree.push((*dir_name).to_string());
             }
             let sparse = self
@@ -218,14 +209,6 @@ mod tests {
             PathBuf::from("/tmp/workspace/.scratch/connections/Airtable - My Base")
         );
         assert_eq!(
-            layout.master_worktree_path("Airtable - My Base"),
-            PathBuf::from("/tmp/workspace/.scratch/connections/master/Airtable - My Base")
-        );
-        assert_eq!(
-            layout.reviewed_worktree_path("Airtable - My Base"),
-            PathBuf::from("/tmp/workspace/.scratch/connections/dirty/Airtable - My Base")
-        );
-        assert_eq!(
             layout.workbook_materialization_path(),
             PathBuf::from("/tmp/workspace/.scratch/workspace")
         );
@@ -267,14 +250,6 @@ mod tests {
             PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/connections/ca789")
         );
         assert_eq!(
-            layout.master_worktree_path("ca789"),
-            PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/connections/master/ca789")
-        );
-        assert_eq!(
-            layout.reviewed_worktree_path("ca789"),
-            PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/connections/dirty/ca789")
-        );
-        assert_eq!(
             layout.workbook_materialization_path(),
             PathBuf::from("/tmp/repos/org123/wkb456/.temp/.scratch/workspace")
         );
@@ -296,12 +271,23 @@ mod tests {
         assert!(detection.connections_with_sparse_checkout.is_empty());
     }
 
+    /// Inline reproduction of the pre-slice-F master worktree path. The
+    /// `WorkspaceLayout::master_worktree_path` helper is gone post-F.3;
+    /// `detect_old_layout` is the only remaining reader of the legacy layout.
+    fn legacy_master_worktree(workspace: &std::path::Path, conn: &str) -> PathBuf {
+        workspace
+            .join(".scratch")
+            .join("connections")
+            .join("master")
+            .join(conn)
+    }
+
     #[test]
     fn detect_old_layout_flags_connections_with_master_worktree() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let layout = WorkspaceLayout::for_cli(tmp.path());
         // Old layout: master worktree present.
-        std::fs::create_dir_all(layout.master_worktree_path("HubSpot")).unwrap();
+        std::fs::create_dir_all(legacy_master_worktree(tmp.path(), "HubSpot")).unwrap();
 
         let detection = layout.detect_old_layout(&["HubSpot", "Stripe"]);
         assert!(detection.is_old_layout());
@@ -329,7 +315,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let layout = WorkspaceLayout::for_cli(tmp.path());
         // Same connection has both stale artifacts.
-        std::fs::create_dir_all(layout.master_worktree_path("HubSpot")).unwrap();
+        std::fs::create_dir_all(legacy_master_worktree(tmp.path(), "HubSpot")).unwrap();
         let info_dir = layout.worktree_path("HubSpot").join(".git").join("info");
         std::fs::create_dir_all(&info_dir).unwrap();
         std::fs::write(info_dir.join("sparse-checkout"), "/*\n").unwrap();
