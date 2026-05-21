@@ -625,17 +625,28 @@ fn file_mtime_size(path: &Path) -> Option<(i64, i64)> {
 
 /// Collect all `.json` filenames in `dir`. Returns an empty set if the directory
 /// does not exist or cannot be read.
+///
+/// Uses a literal `.ends_with(".json")` check rather than `Path::extension()`
+/// because `Path::extension()` returns `None` for filenames whose first char
+/// is `.` (e.g. the literal `.json` produced by the server slug bug for
+/// non-ASCII records — DEV-10144 follow-up D1). Without this we'd miss such
+/// files on the working-tree scan, producing a spurious "orphan stored row"
+/// → forced reindex on every warm refresh of folders that contain one.
 fn scan_json_files(dir: &Path) -> HashSet<String> {
     let mut result = HashSet::new();
     let Ok(entries) = fs::read_dir(dir) else {
         return result;
     };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                result.insert(name.to_string());
-            }
+        let Ok(ft) = entry.file_type() else { continue };
+        if !ft.is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if name.ends_with(".json") {
+            result.insert(name);
         }
     }
     result
@@ -754,6 +765,30 @@ fn read_main_blobs_for_folder(
     workspace: &Path,
     folder: &str,
 ) -> anyhow::Result<HashMap<String, Vec<u8>>> {
+    read_main_blobs_for_folder_inner(workspace, folder, None)
+}
+
+/// Like [`read_main_blobs_for_folder`] but only reads blobs whose filename
+/// is in `filenames`. Pushes the filter through to `git ls-tree → cat-file`
+/// so we don't pull the whole folder's content when only a few files need
+/// reindexing. For `reindex_files` with one stale file this is the
+/// difference between 1s and a few ms on a 9k-file folder.
+fn read_main_blobs_for_folder_filtered(
+    workspace: &Path,
+    folder: &str,
+    filenames: &std::collections::HashSet<String>,
+) -> anyhow::Result<HashMap<String, Vec<u8>>> {
+    if filenames.is_empty() {
+        return Ok(HashMap::new());
+    }
+    read_main_blobs_for_folder_inner(workspace, folder, Some(filenames))
+}
+
+fn read_main_blobs_for_folder_inner(
+    workspace: &Path,
+    folder: &str,
+    filter: Option<&std::collections::HashSet<String>>,
+) -> anyhow::Result<HashMap<String, Vec<u8>>> {
     let normalized = folder.trim_matches('/');
     let (conn_name, sub_path) = match normalized.find('/') {
         Some(idx) => (&normalized[..idx], &normalized[idx + 1..]),
@@ -781,6 +816,11 @@ fn read_main_blobs_for_folder(
                     if !name.ends_with(".json") {
                         continue;
                     }
+                    if let Some(f) = filter {
+                        if !f.contains(&name) {
+                            continue;
+                        }
+                    }
                     out.insert(name, std::fs::read(entry.path())?);
                 }
             }
@@ -801,7 +841,6 @@ fn read_main_blobs_for_folder(
         Some(h) => h,
         None => return Ok(HashMap::new()),
     };
-    let tree = crate::shared::git_local::read_tree_files(&bare_repo, &head_hash)?;
 
     let folder_prefix = if sub_path.is_empty() {
         String::new()
@@ -809,18 +848,33 @@ fn read_main_blobs_for_folder(
         format!("{sub_path}/")
     };
 
+    // Path predicate matches the filtering we'd otherwise do after reading
+    // every blob — pushing it down to `cat-file --batch` means we never
+    // even ask for blobs we'd discard.
+    let folder_prefix_for_keep = folder_prefix.clone();
+    let keep_path = |path: &str| -> bool {
+        let Some(rest) = path.strip_prefix(folder_prefix_for_keep.as_str()) else {
+            return false;
+        };
+        if rest.contains('/') {
+            return false;
+        }
+        if !rest.ends_with(".json") {
+            return false;
+        }
+        match filter {
+            None => true,
+            Some(f) => f.contains(rest),
+        }
+    };
+    let tree =
+        crate::shared::git_local::read_tree_files_filtered(&bare_repo, &head_hash, keep_path)?;
+
     let mut out = HashMap::new();
     for (path, blob) in tree {
         let Some(rest) = path.strip_prefix(folder_prefix.as_str()) else {
             continue;
         };
-        // Non-recursive: skip files in subfolders.
-        if rest.contains('/') {
-            continue;
-        }
-        if !rest.ends_with(".json") {
-            continue;
-        }
         out.insert(rest.to_string(), blob);
     }
     Ok(out)
@@ -916,12 +970,55 @@ fn refresh_index(
 ) -> anyhow::Result<()> {
     let patch_index = load_patch_index(workspace, folder);
 
-    // Master content is sourced from `refs/heads/main` in the bare repo (post-
-    // Slice F: the on-disk master worktree is gone). `master_blobs` is keyed
-    // by filename (no path prefix) for direct lookup.
-    let master_blobs = read_main_blobs_for_folder(workspace, folder)?;
-
     let working_files = scan_json_files(&paths.working);
+    let stored = load_stored_rows(conn, table)?;
+
+    // ─── Fast pre-check (no main read) ───────────────────────────────────────
+    //
+    // Building `read_main_blobs_for_folder` walks 22–38k blobs through
+    // `git ls-tree | cat-file --batch` and costs ~1–2s on the Monorepo's
+    // big folders. Skip it when nothing has changed: working-file stats
+    // match, patch file mtime matches, and no stored row's working file
+    // has vanished. This is the hot path the desktop hits on every page
+    // navigation. Cuts warm refresh from ~3s to ~500ms on Stripe/Charges
+    // (38k records, release build).
+    let working_set: std::collections::HashSet<&str> =
+        working_files.iter().map(String::as_str).collect();
+    let mut any_working_stale = false;
+    let mut any_patch_invalidated = false;
+    for filename in &working_files {
+        let working_stat = file_mtime_size(&paths.working.join(filename));
+        match stored.get(filename) {
+            None => {
+                any_working_stale = true;
+                break;
+            }
+            Some(row) => {
+                if version_changed(working_stat, row.working_mtime, row.working_size) {
+                    any_working_stale = true;
+                    break;
+                }
+                if row.accepted_patches_mtime != patch_index.patch_mtime {
+                    any_patch_invalidated = true;
+                }
+            }
+        }
+    }
+    let has_orphan_stored_rows = stored
+        .keys()
+        .any(|filename| !working_set.contains(filename.as_str()));
+
+    if !any_working_stale && !any_patch_invalidated && !has_orphan_stored_rows {
+        return Ok(());
+    }
+
+    // ─── Slow path — need master content ────────────────────────────────────
+    //
+    // Either some working file is stale, the patch file advanced, or there
+    // are stored rows whose working file has vanished (possible delete OR
+    // main-only row). All three cases need master content to decide
+    // outcomes per file.
+    let master_blobs = read_main_blobs_for_folder(workspace, folder)?;
     let master_files: HashSet<String> = master_blobs.keys().cloned().collect();
 
     let all_known: HashSet<String> = working_files
@@ -929,8 +1026,6 @@ fn refresh_index(
         .chain(master_files.iter())
         .cloned()
         .collect();
-
-    let stored = load_stored_rows(conn, table)?;
 
     let mut to_upsert: Vec<String> = Vec::new();
     let mut to_delete: Vec<String> = Vec::new();
@@ -2239,19 +2334,24 @@ pub fn find_stale_files(
     let table = table_name_from_folder(folder);
     let tq = quote_ident(&table);
 
-    // Master filenames come from refs/heads/main post-Slice-F. Dirty tree is
-    // dead. Read this once and reuse it across the cold-start branches and the
-    // working/main-only set below.
-    let main_filenames: HashSet<String> = read_main_blobs_for_folder(workspace, folder)
-        .unwrap_or_default()
-        .into_keys()
-        .collect();
+    // Lazy: only read main blobs in the cold-start branches that actually use
+    // the filename set. The hot path (warm DB, paginate-records on each
+    // navigation) doesn't need them — working stats + patch mtime are enough
+    // to decide staleness, and reading 22-38k blobs via git ls-tree + cat-file
+    // would cost ~1-2s per call otherwise.
+    let read_main_filenames = || -> HashSet<String> {
+        read_main_blobs_for_folder(workspace, folder)
+            .unwrap_or_default()
+            .into_keys()
+            .collect()
+    };
 
     if !db_path.exists() {
         // No DB file yet — seed from working tree + main.
+        let main_filenames = read_main_filenames();
         let all: HashSet<String> = scan_json_files(&paths.working)
             .into_iter()
-            .chain(main_filenames.iter().cloned())
+            .chain(main_filenames.into_iter())
             .collect();
         return Ok(all.into_iter().collect());
     }
@@ -2263,9 +2363,10 @@ pub fn find_stale_files(
     // Seed from working tree + main so main-only records are included.
     let row_count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |r| r.get(0))?;
     if row_count == 0 {
+        let main_filenames = read_main_filenames();
         let all: HashSet<String> = scan_json_files(&paths.working)
             .into_iter()
-            .chain(main_filenames.iter().cloned())
+            .chain(main_filenames.into_iter())
             .collect();
         return Ok(all.into_iter().collect());
     }
@@ -2471,9 +2572,13 @@ pub fn reindex_files(
     let paths = resolve_folder_paths(workspace, folder);
     let table = table_name_from_folder(folder);
     let patch_index = load_patch_index(workspace, folder);
-    // Master content is sourced from `refs/heads/main` post-Slice-F. Read the
-    // folder's blobs once; per-file lookups happen against this in-memory map.
-    let master_blobs = read_main_blobs_for_folder(workspace, folder)?;
+    // Master content is sourced from `refs/heads/main` post-Slice-F. Read
+    // only the blobs we're about to reindex — reading the whole folder
+    // costs ~1s on 9k records but contributes nothing when only 1 file is
+    // stale (the desktop's hot path).
+    let filename_filter: std::collections::HashSet<String> =
+        filenames.iter().cloned().collect();
+    let master_blobs = read_main_blobs_for_folder_filtered(workspace, folder, &filename_filter)?;
 
     let mut conn = open_conn(&db_path)?;
     ensure_schema(&conn, &table)?;
@@ -2483,52 +2588,98 @@ pub fn reindex_files(
     let total = filenames.len();
     let mut done = 0usize;
 
+    // Per-file work that doesn't touch SQLite — file read, JSON parse, bit
+    // compute, column-value extraction — is the hot loop on cold builds. Fan
+    // it out across cores with rayon so a 36k-record cold build doesn't pin
+    // a single CPU. The SQLite upsert stays serial within each chunk's
+    // transaction (rusqlite Connections aren't Sync).
+    use rayon::prelude::*;
+
+    struct ParsedRow {
+        filename: String,
+        working_stat: Option<(i64, i64)>,
+        master_present: bool,
+        parse_error: Option<String>,
+        approved: i32,
+        unapproved: i32,
+        column_values: Vec<Option<String>>, // parallel to `active_cols`
+        // If true, the row should be DELETEd rather than upserted.
+        should_delete: bool,
+    }
+
     for chunk in filenames.chunks(INDEX_FIELD_BATCH_SIZE) {
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        for filename in chunk {
-            let working_path = paths.working.join(filename);
+        // Phase 1: parse + compute, in parallel.
+        let parsed: Vec<ParsedRow> = chunk
+            .par_iter()
+            .map(|filename| {
+                let working_path = paths.working.join(filename);
+                let working_stat = file_mtime_size(&working_path);
+                let master_present = master_blobs.contains_key(filename);
 
-            let working_stat = file_mtime_size(&working_path);
-            // master_stat is None post-Slice-F (no on-disk master tree); whether
-            // the file exists in main is now derived from `master_blobs` presence.
-            let master_stat: Option<(i64, i64)> = None;
-            let master_present = master_blobs.contains_key(filename);
-
-            let mut parse_error: Option<String> = None;
-            let (_working_bytes, working_json, working_err) = read_bytes_and_json(&working_path);
-            if let Some(e) = working_err {
-                parse_error = Some(format!("working: {e}"));
-            }
-            let (_master_bytes, master_json, master_err) =
-                parse_blob_to_json(master_blobs.get(filename));
-            if let Some(e) = master_err {
-                if parse_error.is_none() {
-                    parse_error = Some(format!("master: {e}"));
+                let mut parse_error: Option<String> = None;
+                let (_working_bytes, working_json, working_err) =
+                    read_bytes_and_json(&working_path);
+                if let Some(e) = working_err {
+                    parse_error = Some(format!("working: {e}"));
                 }
-            }
+                let (_master_bytes, master_json, master_err) =
+                    parse_blob_to_json(master_blobs.get(filename));
+                if let Some(e) = master_err {
+                    if parse_error.is_none() {
+                        parse_error = Some(format!("master: {e}"));
+                    }
+                }
 
-            let rel_path = repo_relative_path_for_filename(folder, filename);
-            let patch_entry = patch_index.entries.get(&rel_path);
+                let rel_path = repo_relative_path_for_filename(folder, filename);
+                let patch_entry = patch_index.entries.get(&rel_path);
 
-            // If the file is gone from both trees AND has no pending patch
-            // entry, drop the row entirely. A surviving entry (e.g. a
-            // `Create` whose working file was deleted out-of-band) keeps the
-            // row alive so the pending edit stays visible to the desktop.
-            if working_stat.is_none() && !master_present && patch_entry.is_none() {
+                let should_delete =
+                    working_stat.is_none() && !master_present && patch_entry.is_none();
+                let (approved, unapproved) = if should_delete {
+                    (0, 0)
+                } else {
+                    compute_review_bits(
+                        patch_entry,
+                        working_stat,
+                        working_json.as_ref(),
+                        master_json.as_ref(),
+                    )
+                };
+
+                let column_values: Vec<Option<String>> = match working_json.as_ref() {
+                    Some(json) if !should_delete => active_cols
+                        .iter()
+                        .map(|col| extract_json_field(json, col))
+                        .collect(),
+                    _ => vec![None; active_cols.len()],
+                };
+
+                ParsedRow {
+                    filename: filename.clone(),
+                    working_stat,
+                    master_present,
+                    parse_error,
+                    approved,
+                    unapproved,
+                    column_values,
+                    should_delete,
+                }
+            })
+            .collect();
+
+        // Phase 2: serial SQLite writes inside one transaction.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // master_stat is None post-Slice-F (no on-disk master tree); whether
+        // the file exists in main is derived from `master_blobs` presence.
+        let master_stat: Option<(i64, i64)> = None;
+        for row in &parsed {
+            if row.should_delete {
                 tx.execute(
                     &format!("DELETE FROM {tq} WHERE filename = ?1"),
-                    params![filename],
+                    params![row.filename],
                 )?;
                 continue;
             }
-
-            let (approved, unapproved) = compute_review_bits(
-                patch_entry,
-                working_stat,
-                working_json.as_ref(),
-                master_json.as_ref(),
-            );
-
             tx.execute(
                 &format!(
                     "INSERT INTO {tq} (filename,
@@ -2546,36 +2697,33 @@ pub fn reindex_files(
                         parse_error=excluded.parse_error"
                 ),
                 params![
-                    filename,
-                    working_stat.map(|(m, _)| m),
-                    working_stat.map(|(_, s)| s),
+                    row.filename,
+                    row.working_stat.map(|(m, _)| m),
+                    row.working_stat.map(|(_, s)| s),
                     master_stat.map(|(m, _)| m),
                     master_stat.map(|(_, s)| s),
-                    approved,
-                    unapproved,
+                    row.approved,
+                    row.unapproved,
                     patch_index.patch_mtime,
-                    parse_error,
+                    row.parse_error,
                 ],
             )?;
 
-            if let Some(ref json) = working_json {
-                for col in &active_cols {
-                    let value = extract_json_field(json, col);
-                    let col_q = quote_ident(col);
-                    let mt_q = quote_ident(&format!("{col}:mt"));
-                    let sz_q = quote_ident(&format!("{col}:sz"));
-                    tx.execute(
-                        &format!(
-                            "UPDATE {tq} SET {col_q}=?1, {mt_q}=?2, {sz_q}=?3 WHERE filename=?4"
-                        ),
-                        params![
-                            value,
-                            working_stat.map(|(m, _)| m),
-                            working_stat.map(|(_, s)| s),
-                            filename
-                        ],
-                    )?;
-                }
+            for (col, value) in active_cols.iter().zip(row.column_values.iter()) {
+                let col_q = quote_ident(col);
+                let mt_q = quote_ident(&format!("{col}:mt"));
+                let sz_q = quote_ident(&format!("{col}:sz"));
+                tx.execute(
+                    &format!(
+                        "UPDATE {tq} SET {col_q}=?1, {mt_q}=?2, {sz_q}=?3 WHERE filename=?4"
+                    ),
+                    params![
+                        value,
+                        row.working_stat.map(|(m, _)| m),
+                        row.working_stat.map(|(_, s)| s),
+                        row.filename
+                    ],
+                )?;
             }
         }
         tx.commit()?;

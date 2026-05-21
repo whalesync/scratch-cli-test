@@ -86,3 +86,20 @@ export function readFolderBlobs(
   connectionDirName: string,
   folderRelPath: string,
 ): Promise<FolderBlob[]>;
+
+/**
+ * Filtered variant of {@link readFolderBlobs} — returns only entries whose
+ * `filename` is in `filenames`. Filenames the folder doesn't have are
+ * silently dropped. Empty `filenames` short-circuits to `[]` before opening
+ * the bare repo.
+ *
+ * Use from paginated grid renderers and single-record diff views to bound
+ * Electron main-process memory at the page size instead of loading the
+ * entire folder's content. Same error contract as `readFolderBlobs`.
+ */
+export function readFolderBlobsFiltered(
+  workspaceDir: string,
+  connectionDirName: string,
+  folderRelPath: string,
+  filenames: string[],
+): Promise<FolderBlob[]>;

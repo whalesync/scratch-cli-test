@@ -45,6 +45,22 @@ pub fn rev_parse_optional_to_string(bare_repo: &Path, rev: &str) -> anyhow::Resu
 /// `git cat-file --batch`. This is dramatically faster than per-blob lookups
 /// via gix for large repos (e.g. 0.5s vs 39s for 23k files).
 pub fn read_tree_files(bare_repo: &Path, treeish: &str) -> anyhow::Result<FileMap> {
+    read_tree_files_filtered(bare_repo, treeish, |_| true)
+}
+
+/// Like [`read_tree_files`] but only reads blobs whose path matches `keep`.
+/// `ls-tree` still enumerates the whole tree (cheap — it's just metadata),
+/// but `cat-file --batch` only processes the matching subset. For "load 100
+/// records out of a 38k-record folder" this is the difference between
+/// reading 200 MB and reading 500 KB.
+pub fn read_tree_files_filtered<F>(
+    bare_repo: &Path,
+    treeish: &str,
+    keep: F,
+) -> anyhow::Result<FileMap>
+where
+    F: Fn(&str) -> bool,
+{
     let git_dir = bare_repo.to_str().unwrap_or_default();
 
     // Step 1: enumerate (mode, hash, path) entries via ls-tree.
@@ -75,6 +91,9 @@ pub fn read_tree_files(bare_repo: &Path, treeish: &str) -> anyhow::Result<FileMa
         }
         let obj_type = parts[1];
         if obj_type != "blob" {
+            continue;
+        }
+        if !keep(path) {
             continue;
         }
         let hash = parts[2];

@@ -59,6 +59,12 @@ interface NativeModule {
     field: string,
   ): Promise<ReviewOpResult>;
   readFolderBlobs(workspaceDir: string, connectionDirName: string, folderRelPath: string): Promise<FolderBlob[]>;
+  readFolderBlobsFiltered(
+    workspaceDir: string,
+    connectionDirName: string,
+    folderRelPath: string,
+    filenames: string[],
+  ): Promise<FolderBlob[]>;
 }
 
 function loadNative(): NativeModule {
@@ -239,6 +245,27 @@ export async function readFolderBlobs(
   folderRelPath: string,
 ): Promise<FolderBlob[]> {
   return loadNative().readFolderBlobs(workspaceDir, connectionDirName, folderRelPath);
+}
+
+/**
+ * Filtered variant of {@link readFolderBlobs} — returns only entries whose
+ * `filename` is in `filenames`. Use from paginated grid renderers (pass the
+ * page's filenames) and single-record diff views (pass `[filename]`) so the
+ * Electron main process doesn't load hundreds of MB of `(published,
+ * approved)` content for folders with thousands of records.
+ *
+ * Empty `filenames` short-circuits to `[]` before opening the bare repo.
+ * Filenames the folder doesn't have are silently dropped (no error).
+ *
+ * Slice F.5 + mr29 follow-up D5.
+ */
+export async function readFolderBlobsFiltered(
+  workspaceDir: string,
+  connectionDirName: string,
+  folderRelPath: string,
+  filenames: string[],
+): Promise<FolderBlob[]> {
+  return loadNative().readFolderBlobsFiltered(workspaceDir, connectionDirName, folderRelPath, filenames);
 }
 
 export type { FolderBlob, ReviewOpResult };

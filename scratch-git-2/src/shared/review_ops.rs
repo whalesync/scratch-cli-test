@@ -1095,10 +1095,24 @@ fn acquire_lock(
 }
 
 fn read_main_tree_for_entry_point(bare_repo: &Path) -> Result<FileMap, ReviewOpError> {
+    read_main_tree_for_entry_point_filtered(bare_repo, |_| true)
+}
+
+/// Read `refs/heads/main` with a path-level filter applied at the
+/// `git ls-tree` stage so `cat-file --batch` only processes matching blobs.
+/// Lets paginated callers (e.g. [`read_folder_blobs_filtered`]) read only
+/// the records they need rather than the whole tree.
+fn read_main_tree_for_entry_point_filtered<F>(
+    bare_repo: &Path,
+    keep: F,
+) -> Result<FileMap, ReviewOpError>
+where
+    F: Fn(&str) -> bool,
+{
     match crate::shared::git_local::rev_parse_optional_to_string(bare_repo, "refs/heads/main")
         .map_err(ReviewOpError::Internal)?
     {
-        Some(hash) => crate::shared::git_local::read_tree_files(bare_repo, &hash)
+        Some(hash) => crate::shared::git_local::read_tree_files_filtered(bare_repo, &hash, keep)
             .map_err(ReviewOpError::Internal),
         None => Ok(FileMap::new()),
     }
@@ -1518,9 +1532,49 @@ pub fn read_folder_blobs(
     connection_dir_name: &str,
     folder_rel_path: &str,
 ) -> Result<Vec<FolderBlob>, ReviewOpError> {
-    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+    read_folder_blobs_inner(workspace_dir, connection_dir_name, folder_rel_path, None)
+}
 
-    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+/// Like [`read_folder_blobs`] but restricted to the requested filename set —
+/// the returned `Vec<FolderBlob>` contains only entries whose `filename`
+/// appears in `filenames`. Lets paginated grid renderers and single-record
+/// diff views avoid loading hundreds of MB of `(published, approved)` content
+/// for folders they only need a small page of (e.g. HubSpot/Contacts with
+/// 22k+ records).
+///
+/// Empty `filenames` returns an empty `Vec` — this is the explicit "page is
+/// empty" signal, distinct from "give me everything" which uses
+/// [`read_folder_blobs`]. Filenames the folder doesn't have are silently
+/// dropped (no error).
+pub fn read_folder_blobs_filtered(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    folder_rel_path: &str,
+    filenames: &std::collections::HashSet<String>,
+) -> Result<Vec<FolderBlob>, ReviewOpError> {
+    read_folder_blobs_inner(
+        workspace_dir,
+        connection_dir_name,
+        folder_rel_path,
+        Some(filenames),
+    )
+}
+
+fn read_folder_blobs_inner(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    folder_rel_path: &str,
+    filter: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<FolderBlob>, ReviewOpError> {
+    // Empty filter set short-circuits before touching the bare repo — saves a
+    // tree walk on the common "page is empty" case.
+    if let Some(f) = filter {
+        if f.is_empty() {
+            return Ok(Vec::new());
+        }
+    }
+
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
     let accepted_file =
         accepted_patches::load(&accepted_patches_dir(&paths)).map_err(ReviewOpError::Internal)?;
 
@@ -1543,28 +1597,64 @@ pub fn read_folder_blobs(
         !rest.contains('/')
     };
 
+    // Push the filter down to the git ls-tree → cat-file step so we don't
+    // pull the whole folder's blobs when we only want a page's worth.
+    let main_map = {
+        let folder_prefix_for_keep = folder_prefix.clone();
+        let folder_normalized_for_keep = folder_normalized.clone();
+        let keep = |path: &str| -> bool {
+            // Same filter as `in_folder` but inline-friendly (closure-stable).
+            if !is_data_path_in_folder(path, &folder_normalized_for_keep) {
+                return false;
+            }
+            let rest = path
+                .strip_prefix(folder_prefix_for_keep.as_str())
+                .unwrap_or(path);
+            if rest.contains('/') {
+                return false;
+            }
+            match filter {
+                None => true,
+                Some(f) => f.contains(rest),
+            }
+        };
+        read_main_tree_for_entry_point_filtered(&paths.bare_repo, keep)?
+    };
+
     // Union filenames from main + accepted-patches (each may have entries
     // the other doesn't — e.g. a Create that isn't on main yet, or a main
-    // file with no patch).
+    // file with no patch). When a filter is supplied, only keep filenames
+    // the caller asked about.
     let mut filenames: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let keep = |rest: &str| -> bool {
+        match filter {
+            None => true,
+            Some(f) => f.contains(rest),
+        }
+    };
     for path in main_map.keys() {
-        if in_folder(path) {
-            filenames.insert(
-                path.strip_prefix(folder_prefix.as_str())
-                    .unwrap_or(path)
-                    .to_string(),
-            );
+        if !in_folder(path) {
+            continue;
+        }
+        let rest = path
+            .strip_prefix(folder_prefix.as_str())
+            .unwrap_or(path)
+            .to_string();
+        if keep(&rest) {
+            filenames.insert(rest);
         }
     }
     for entry in &accepted_file.patches {
-        if in_folder(&entry.path) {
-            filenames.insert(
-                entry
-                    .path
-                    .strip_prefix(folder_prefix.as_str())
-                    .unwrap_or(entry.path.as_str())
-                    .to_string(),
-            );
+        if !in_folder(&entry.path) {
+            continue;
+        }
+        let rest = entry
+            .path
+            .strip_prefix(folder_prefix.as_str())
+            .unwrap_or(entry.path.as_str())
+            .to_string();
+        if keep(&rest) {
+            filenames.insert(rest);
         }
     }
 

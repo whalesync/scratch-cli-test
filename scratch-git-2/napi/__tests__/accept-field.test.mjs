@@ -240,3 +240,45 @@ test('readFolderBlobs is non-recursive — subfolder files are excluded', async 
   assert.equal(nested.length, 1);
   assert.equal(nested[0].filename, 'rec_deep.json');
 });
+
+test('readFolderBlobsFiltered returns only the requested filenames', async () => {
+  const native = loadNative();
+  const { workspaceDir } = makeFixture();
+
+  // Seed a Create entry alongside the existing main record so the folder has
+  // two records to filter against.
+  writeWorking(
+    workspaceDir,
+    'Companies/rec_new.json',
+    JSON.stringify({ name: 'New' }, null, 2),
+  );
+  await native.acceptField(workspaceDir, CONN, 'Companies/rec_new.json', 'name');
+
+  // Whole-folder read = 2 entries.
+  const all = await native.readFolderBlobs(workspaceDir, CONN, 'Companies');
+  assert.equal(all.length, 2);
+
+  // Filter to just the main-tree record.
+  const onlyAcme = await native.readFolderBlobsFiltered(workspaceDir, CONN, 'Companies', [
+    'rec_acme.json',
+  ]);
+  assert.equal(onlyAcme.length, 1);
+  assert.equal(onlyAcme[0].filename, 'rec_acme.json');
+
+  // Filter to a name that doesn't exist → empty (no error).
+  const missing = await native.readFolderBlobsFiltered(workspaceDir, CONN, 'Companies', [
+    'nonexistent.json',
+  ]);
+  assert.equal(missing.length, 0);
+
+  // Empty filter → empty (the "page is empty" short-circuit).
+  const empty = await native.readFolderBlobsFiltered(workspaceDir, CONN, 'Companies', []);
+  assert.equal(empty.length, 0);
+
+  // Multi-filename filter → both present.
+  const both = await native.readFolderBlobsFiltered(workspaceDir, CONN, 'Companies', [
+    'rec_acme.json',
+    'rec_new.json',
+  ]);
+  assert.equal(both.length, 2);
+});

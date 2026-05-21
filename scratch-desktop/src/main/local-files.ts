@@ -15,7 +15,7 @@ import type { TableView } from '@spinner/shared-types';
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { buildColumnDefinitions, createFallbackTableView } from '../shared/schema-columns';
-import { acceptCellField, discardCellField, readFolderBlobs } from './native/scratchmd-native';
+import { acceptCellField, discardCellField, readFolderBlobs, readFolderBlobsFiltered } from './native/scratchmd-native';
 import {
   getFilenamesWithErrors,
   listUnpublishedChanges,
@@ -898,16 +898,24 @@ function snapshotFromContent(content: string | null | undefined, leafPaths?: Set
 }
 
 /**
- * Pull the `(published, approved)` content for every record in the folder
- * via the napi binding and convert each into the same `JsonFileSnapshot` shape
- * the comparison code already expects. Returns empty maps when the workspace
- * marker can't be resolved (treats every record as new — matches the desktop's
- * pre-F.5 fallback when the deleted worktrees were empty).
+ * Pull the `(published, approved)` content for records in the folder via the
+ * napi binding and convert each into the `JsonFileSnapshot` shape the
+ * comparison code expects.
+ *
+ * `filenames` bounds the read to a specific page. Pass `undefined` for "all
+ * records in the folder" (V1 grid path, `findRecordOffset` enumeration);
+ * pass a string array (which may be empty) for "just this page" / "just this
+ * one record" — D5 perf fix.
+ *
+ * Returns empty maps when the workspace marker can't be resolved (treats
+ * every record as new — matches the desktop's pre-F.5 fallback when the
+ * deleted worktrees were empty).
  */
 async function readFolderApprovedAndPublishedSnapshots(
   workspacePath: string,
   folderPath: string,
   leafPaths?: Set<string>,
+  filenames?: string[],
 ): Promise<{ approved: Map<string, JsonFileSnapshot>; published: Map<string, JsonFileSnapshot> }> {
   const approved = new Map<string, JsonFileSnapshot>();
   const published = new Map<string, JsonFileSnapshot>();
@@ -923,7 +931,9 @@ async function readFolderApprovedAndPublishedSnapshots(
   }
   let blobs;
   try {
-    blobs = await readFolderBlobs(workspacePath, connectionDirName, folderRelPath);
+    blobs = filenames
+      ? await readFolderBlobsFiltered(workspacePath, connectionDirName, folderRelPath, filenames)
+      : await readFolderBlobs(workspacePath, connectionDirName, folderRelPath);
   } catch (err) {
     // Workspace marker missing, unknown connection, or other native error.
     // Log and degrade to empty — the grid still renders working files (as
@@ -1401,12 +1411,14 @@ export async function readDiffGridDataPageV2(
 
   const workingPath = folderPath;
 
-  // Working = TS-side fs reads (page filenames only); approved + published =
-  // napi binding against the whole folder, then filter to the page filenames.
-  // Slice F retired the on-disk mirrors at `.scratch/connections/{dirty,master}/`.
+  // Working = TS-side fs reads (page filenames only). Approved + published =
+  // napi binding restricted to the same page filenames so we don't pull
+  // hundreds of MB into the Electron main process for 20k+ row folders
+  // (mr29 D5). Slice F retired the on-disk mirrors at
+  // `.scratch/connections/{dirty,master}/`.
   const [workingFiles, approvedAndPublished] = await Promise.all([
     readNamedSnapshots(workingPath, cliResult.filenames, leafPaths),
-    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths),
+    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths, cliResult.filenames),
   ]);
   const { approved: approvedFiles, published: publishedFiles } = approvedAndPublished;
 
@@ -1683,12 +1695,13 @@ export async function readDiffRecordData(
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
   const leafPaths = new Set(schemaColumns.map((c) => c.id));
 
-  // Working = fs read. Approved + published = napi folder read, then look up
-  // by filename. Slice F retired the per-version on-disk mirrors that this
-  // used to read directly.
+  // Working = fs read. Approved + published = napi read restricted to this
+  // one filename (mr29 D5 — before this only the path key changed; the napi
+  // call still loaded the entire folder's blobs into memory). Slice F retired
+  // the per-version on-disk mirrors that this used to read directly.
   const [w, approvedAndPublished] = await Promise.all([
     readJsonFileSnapshot(workingFile, leafPaths),
-    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths),
+    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths, [filename]),
   ]);
   const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
   const d = approvedAndPublished.approved.get(filename) ?? missingSnapshot;

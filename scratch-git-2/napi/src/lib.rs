@@ -190,6 +190,10 @@ impl FolderBlob {
 /// version itself from disk (TS fs); this binding supplies the other two
 /// sides of the three-way comparison.
 ///
+/// **For paginated grid views, prefer [`readFolderBlobsFiltered`]** — this
+/// binding loads ALL records in the folder into memory (hundreds of MB on
+/// 20k+ row folders) before returning.
+///
 /// Same error-prefix convention as `acceptField` (codes: `WORKSPACE_NOT_FOUND`,
 /// `UNKNOWN_CONNECTION`, `INVALID_JSON`, `INTERNAL`). No `LOCK_BUSY` — reads
 /// don't acquire the workspace lock.
@@ -205,6 +209,42 @@ pub async fn read_folder_blobs(
                 &PathBuf::from(&workspace_dir),
                 &connection_dir_name,
                 &folder_rel_path,
+            )?;
+            blobs.into_iter().map(FolderBlob::try_from_rust).collect()
+        },
+    )
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
+    .map_err(map_err)
+}
+
+/// Like [`readFolderBlobs`] but restricted to the supplied filename list —
+/// the returned array contains only entries whose `filename` is in
+/// `filenames`. Filenames the folder doesn't have are silently dropped.
+/// Empty `filenames` short-circuits to `[]` before touching the bare repo.
+///
+/// Use this from paginated grid renderers (pass the page's filenames) and
+/// single-record diff views (pass `[filename]`) to bound memory at the page
+/// size instead of loading the entire folder's `(published, approved)`
+/// content. See `docs/plans/2026-05-17-simplify-local-workspace-architecture.md`
+/// follow-up D5.
+///
+/// Same error-prefix convention as `readFolderBlobs`.
+#[napi]
+pub async fn read_folder_blobs_filtered(
+    workspace_dir: String,
+    connection_dir_name: String,
+    folder_rel_path: String,
+    filenames: Vec<String>,
+) -> Result<Vec<FolderBlob>> {
+    napi::tokio::task::spawn_blocking(
+        move || -> std::result::Result<Vec<FolderBlob>, ReviewOpError> {
+            let filename_set: std::collections::HashSet<String> = filenames.into_iter().collect();
+            let blobs = review_ops::read_folder_blobs_filtered(
+                &PathBuf::from(&workspace_dir),
+                &connection_dir_name,
+                &folder_rel_path,
+                &filename_set,
             )?;
             blobs.into_iter().map(FolderBlob::try_from_rust).collect()
         },
