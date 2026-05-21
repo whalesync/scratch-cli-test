@@ -43,6 +43,12 @@ export const X_SCRATCH_ASSET_TABLE = 'x-scratch-asset-table';
 // `DataFolderOptions.modifiedAtField`. The annotation value is `true`.
 export const X_SCRATCH_LAST_MODIFIED_FIELD = 'x-scratch-last-modified-field';
 
+// A plain-text hint targeted at AI agents (Claude, Gemini, etc.) that read
+// schema.json before editing records. Use sparingly — only when a non-obvious
+// structural or semantic detail would change how an agent interprets a field
+// or object. Not surfaced in any human-facing UI.
+export const X_SCRATCH_AGENT_INSTRUCTIONS = 'x-scratch-agent-instructions';
+
 /**
  * Options for an asset field annotation.
  */

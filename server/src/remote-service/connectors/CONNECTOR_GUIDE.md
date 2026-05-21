@@ -838,6 +838,28 @@ tableSpec[ASSET_TABLE] = {
 } satisfies AssetTableOptions;
 ```
 
+### `x-scratch-agent-instructions`
+
+A plain-text hint an LLM agent (Claude, Gemini, etc.) will read when working with this field or object in the workspace. The string is propagated unchanged into the on-disk `schema.json` that agents consult before editing records; no UI surface consumes it.
+
+Reach for this annotation **sparingly** — only when a connector quirk would otherwise mislead an agent. Good fits include an enum where only a subset of values matter, a soft relationship between two fields that JSON Schema can't express, or a parent/child convention that isn't obvious from the structure. Do not duplicate `description` (which is for everyone, including humans in the UI); do not use it for end-user docs or validation rules. If you're not sure whether to add one, don't — absence is the common case.
+
+```typescript
+import { X_SCRATCH_AGENT_INSTRUCTIONS } from '@spinner/shared-types';
+
+const authorSchema = Type.Object(
+  { /* ...fields... */ },
+  {
+    [X_SCRATCH_AGENT_INSTRUCTIONS]:
+      'Author `type` is one of "user", "admin", or "bot". "user" and "admin" represent ' +
+      'human participants and are almost always what matters; "bot" entries come from ' +
+      'automated flows and are usually safe to skip when summarizing a conversation.',
+  },
+);
+```
+
+Place the annotation at the *object* level when the hint spans multiple fields, and at the *field* level when scoped to a single value.
+
 ### Reading annotations back: escape JSON Pointer segments
 
 Connectors typically look up these annotations at publish time by building a JSON Pointer and calling `ValuePointer.Get` / `ValuePointer.Has` from `@sinclair/typebox/value` — e.g. `isReadonlyField`, `isForeignKey`, `getForeignKeyOptions`.

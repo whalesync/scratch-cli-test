@@ -160,6 +160,10 @@ and will be overwritten on the next pull.
 The schema is written using JSON Schema notation, with some important extensions:
 - x-scratch-readonly: indicates the field's data MUST NOT be modified.
 - x-scratch-connector-data-type: the service-specific type for the field, use only for context
+- x-scratch-agent-instructions: a plain-text hint written for you (the agent). When present,
+  read it carefully — it explains a non-obvious structural detail, a soft relationship between
+  fields, or which sub-values are user-relevant vs. noise. Treat it as authoritative guidance
+  from the connector author about how to interpret this field or object.
 
 Records may contain additional fields that not documented in the schema file. Those should be
 treated as read-only unless explicitly instructed otherwise by the user.

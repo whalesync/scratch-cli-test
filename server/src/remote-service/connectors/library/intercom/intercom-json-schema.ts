@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { buildIntercomDefaultView } from './intercom-default-view';
 
@@ -153,12 +153,19 @@ export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTab
 
 const authorSchema = Type.Object(
   {
-    type: Type.String({ description: 'Author type', [X_SCRATCH_READONLY]: true }),
+    type: Type.String({
+      description: 'Author type',
+      [X_SCRATCH_READONLY]: true,
+      [X_SCRATCH_AGENT_INSTRUCTIONS]:
+        'Author `type` is one of "user", "admin", or "bot". "user" and "admin" represent human participants and are almost always what matters; "bot" entries come from automated flows and are usually safe to skip when summarizing a conversation or picking a representative message.',
+    }),
     id: Type.String({ description: 'Author ID', [X_SCRATCH_READONLY]: true }),
     name: Type.Union([Type.String(), Type.Null()], { description: 'Author name', [X_SCRATCH_READONLY]: true }),
     email: Type.Union([Type.String(), Type.Null()], { description: 'Author email', [X_SCRATCH_READONLY]: true }),
   },
-  { [X_SCRATCH_READONLY]: true },
+  {
+    [X_SCRATCH_READONLY]: true,
+  },
 );
 
 const conversationPartSchema = Type.Object(
@@ -166,12 +173,20 @@ const conversationPartSchema = Type.Object(
     type: Type.String({ [X_SCRATCH_READONLY]: true }),
     id: Type.String({ [X_SCRATCH_READONLY]: true }),
     part_type: Type.String({ description: 'Part type (comment, note, etc.)', [X_SCRATCH_READONLY]: true }),
-    body: Type.Union([Type.String(), Type.Null()], { description: 'Part body (HTML)', [X_SCRATCH_READONLY]: true }),
+    body: Type.Union([Type.String(), Type.Null()], {
+      description: 'Part body (HTML)',
+      [X_SCRATCH_READONLY]: true,
+      [X_SCRATCH_AGENT_INSTRUCTIONS]: 'HTML does not have a consistent root element',
+    }),
     created_at: Type.Number({ description: 'Part creation timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
     updated_at: Type.Number({ description: 'Part update timestamp (Unix)', [X_SCRATCH_READONLY]: true }),
     author: authorSchema,
   },
-  { [X_SCRATCH_READONLY]: true },
+  {
+    [X_SCRATCH_READONLY]: true,
+    [X_SCRATCH_AGENT_INSTRUCTIONS]:
+      'Conversation parts represent many event types that may not be user-facing (assignment changes, tag updates, notes, replies, etc.). Use the `part_type` to determine if the part is user-facing and relevant to the task',
+  },
 );
 
 /**
