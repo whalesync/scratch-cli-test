@@ -1,7 +1,7 @@
 # Slice F — Init collapse to one non-sparse `main` worktree
 
 **Date**: 2026-05-20
-**Status**: **F.1 + F.2.a + F.2.b + F.3 + F.5 shipped 2026-05-20.** F.4 (perf measurement) not started.
+**Status**: **F.1 + F.2.a + F.2.b + F.3 + F.4 + F.5 shipped 2026-05-20.** Slice F complete. F.4 measured 30.4s total init for the Monorepo (135k files, 5 connectors) — down from the ~110s baseline in the parent plan's [Problem](2026-05-17-simplify-local-workspace-architecture.md#problem). Per-connection: Stripe 81.5s → 23.6s (3.5×), HubSpot 26.9s → 5.8s (4.6×).
 **Parent plan**: [`2026-05-17-simplify-local-workspace-architecture.md`](2026-05-17-simplify-local-workspace-architecture.md) — see [Phase 5](2026-05-17-simplify-local-workspace-architecture.md#phase-5--collapse-to-one-worktree-per-connection) for the design spec.
 **Author**: Curtis Fonger
 
@@ -375,13 +375,45 @@ Pure deletion plus the validator fix.
 
 ### F.4 — Init perf measurement + parent-plan status update
 
-Not code-shaped; a measurement + a doc update.
+> **Shipped 2026-05-20.** Not code-shaped; a measurement + a doc update.
 
-- Run `SCRATCHMD_PROFILE=1 scratchmd workspaces init wkb_3qH9SlxsNq` against the Monorepo workspace (5 connectors, 135k files).
-- Update the parent plan's [Problem](2026-05-17-simplify-local-workspace-architecture.md#problem) table with the post-F numbers. Today's table shows `materialize_dirty_checkout (sparse: dirty)` at 15.7s + `setup_sparse_worktree (reviewed-dirty)` at 11.8s (Phase 3'd) + `git_checkout_branch_from_bare (main)` at 12.8s for Stripe = ~40s of avoidable work. Expected post-F: a single non-sparse worktree add at ~15s for Stripe.
-- Update the parent plan's [Status table](2026-05-17-simplify-local-workspace-architecture.md#status), [Phase 4+5 status block](2026-05-17-simplify-local-workspace-architecture.md#phase-4--5--retire-dirty-branch-switch-to-accepted-patchesjson-merged-2026-05-19) slice F row, and the spec's "Done when" checklist.
+**Measurement.** `SCRATCHMD_PROFILE=1 scratchmd workspaces init wkb_3qH9SlxsNq -o /tmp/scratchmd-profile-f4 --force` against the user's local dev server (post-F debug build at `scratch-git-2/target/debug/scratchmd`):
 
-**Done when:** the parent plan reflects what F shipped.
+```
+[profile]    755 ms      [HubSpot] git_clone_bare
+[profile]   4947 ms      [HubSpot] materialize_main_worktree (non-sparse: main)
+[profile]   5753 ms    connection: HubSpot
+[profile]   6210 ms      [Stripe] git_clone_bare
+[profile]  17198 ms      [Stripe] materialize_main_worktree (non-sparse: main)
+[profile]  23597 ms    connection: Stripe
+[profile]    533 ms    connection: Affinity
+[profile]    213 ms    connection: Airtable
+[profile]    186 ms    connection: Shopify
+[profile]  30283 ms  all connections (5 total, sequential)
+[profile]  30429 ms  init_v2 (total)
+
+Initialized workspace 'Monorepo' (135447 files, 30.4s)
+```
+
+| Per-connection | Pre-F      | Post-F    | Speedup | Saved |
+| -------------- | ---------- | --------- | ------- | ----- |
+| Stripe         | 81.5s      | 23.6s     | 3.5×    | 58s   |
+| HubSpot        | 26.9s      | 5.8s      | 4.6×    | 21s   |
+| Affinity       | (small)    | 0.5s      | —       | —     |
+| Airtable       | (small)    | 0.2s      | —       | —     |
+| Shopify        | (small)    | 0.2s      | —       | —     |
+| **Total**      | **~110s**  | **30.4s** | **3.6×** | **~80s** |
+
+What's gone: `materialize_dirty_checkout` (sparse: dirty), `setup_sparse_worktree` (reviewed-dirty), and `index::build` (SQLite). What remains: one `git_clone_bare` + one `materialize_main_worktree` per connection. Stripe's 17.2s worktree-add is the new floor — comparable to the old `git_checkout_branch_from_bare (main)` at 12.8s, slightly more because non-sparse covers more files. Disk usage **1.2 GB** vs 3.2 GB pre-F (~62% smaller).
+
+Whole-workbook config repo clone failed (`Repository not found: org_R9pJp9hXrG/wkb_3qH9SlxsNq/wkb_3qH9SlxsNq`) — expected for this local dev fixture; the cost was 144ms and is excluded from the comparison.
+
+**Doc updates landed:**
+
+- Parent plan's [Problem](2026-05-17-simplify-local-workspace-architecture.md#problem) section gained a "Post-F measurement" sub-table next to the original breakdown.
+- Parent plan's [Status table](2026-05-17-simplify-local-workspace-architecture.md#status), top-of-file status preamble, [Phase 4+5 status block](2026-05-17-simplify-local-workspace-architecture.md#phase-4--5--retire-dirty-branch-switch-to-accepted-patchesjson-merged-2026-05-19) slice F row, and this spec's status header all reflect F.4 as shipped.
+
+**Done when:** the parent plan reflects what F shipped. ✅ Verified.
 
 ## Test strategy
 
