@@ -9,9 +9,12 @@ import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 export interface InvalidJsonFileListEntry {
   filename: string;
   error: string;
+  /**
+   * Path to the file in the user worktree on disk. Slice F retired the
+   * sparse `dirty`/`master` mirrors, so the "approved" and "published"
+   * versions only exist as git blobs — not openable as files.
+   */
   workingFilePath: string;
-  reviewedFilePath: string;
-  publishedFilePath: string;
 }
 
 interface InvalidJsonFilesModalProps {
@@ -22,14 +25,6 @@ interface InvalidJsonFilesModalProps {
   onFileSaved?: () => void;
 }
 
-type BranchKey = 'working' | 'reviewed' | 'published';
-
-const BRANCH_META: Record<BranchKey, { shortLabel: string; getPath: (e: InvalidJsonFileListEntry) => string }> = {
-  working: { shortLabel: 'Working', getPath: (e) => e.workingFilePath },
-  reviewed: { shortLabel: 'Reviewed', getPath: (e) => e.reviewedFilePath },
-  published: { shortLabel: 'Published', getPath: (e) => e.publishedFilePath },
-};
-
 /** Strips `working:` / `reviewed:` / `published:` prefixes from each `; `-separated segment. */
 function formatErrorForDisplay(error: string): string {
   return error
@@ -37,15 +32,6 @@ function formatErrorForDisplay(error: string): string {
     .map((segment) => segment.replace(/^(working|reviewed|published):\s*/i, '').trim())
     .filter(Boolean)
     .join('; ');
-}
-
-/** Matches `compareRecordSnapshots` error segments (`working: …`, `reviewed: …`, `published: …`). */
-function branchKeysWithErrors(error: string): BranchKey[] {
-  const keys: BranchKey[] = [];
-  if (error.includes('working:')) keys.push('working');
-  if (error.includes('reviewed:')) keys.push('reviewed');
-  if (error.includes('published:')) keys.push('published');
-  return keys.length > 0 ? keys : ['working'];
 }
 
 const isMac = window.electron?.process?.platform === 'darwin';
@@ -105,48 +91,42 @@ export const InvalidJsonFilesModal = memo(function InvalidJsonFilesModal({
                         {formatErrorForDisplay(entry.error)}
                       </Text12Regular>
                       <Stack gap={6} style={{ marginTop: 10 }}>
-                        {branchKeysWithErrors(entry.error).map((key) => {
-                          const branch = BRANCH_META[key];
-                          const path = branch.getPath(entry);
-                          return (
-                            <Group key={key} gap={8} align="center" wrap="wrap">
-                              <UnstyledButton
-                                type="button"
-                                onClick={() => handleReveal(path)}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  padding: '2px 6px',
-                                  borderRadius: 4,
-                                  border: '0.5px solid var(--fg-divider)',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                <StyledLucideIcon Icon={FolderOpen} size={12} c="var(--fg-muted)" />
-                                <Text12Regular c="var(--fg-primary)">
-                                  {isMac ? 'Show in Finder' : 'Show in Explorer'}
-                                </Text12Regular>
-                              </UnstyledButton>
-                              <UnstyledButton
-                                type="button"
-                                onClick={() => handleOpenEdit(path, entry.filename)}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  padding: '2px 6px',
-                                  borderRadius: 4,
-                                  border: '0.5px solid var(--fg-divider)',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                <StyledLucideIcon Icon={FileText} size={12} c="var(--fg-muted)" />
-                                <Text12Regular c="var(--fg-primary)">View file</Text12Regular>
-                              </UnstyledButton>
-                            </Group>
-                          );
-                        })}
+                        <Group gap={8} align="center" wrap="wrap">
+                          <UnstyledButton
+                            type="button"
+                            onClick={() => handleReveal(entry.workingFilePath)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              border: '0.5px solid var(--fg-divider)',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <StyledLucideIcon Icon={FolderOpen} size={12} c="var(--fg-muted)" />
+                            <Text12Regular c="var(--fg-primary)">
+                              {isMac ? 'Show in Finder' : 'Show in Explorer'}
+                            </Text12Regular>
+                          </UnstyledButton>
+                          <UnstyledButton
+                            type="button"
+                            onClick={() => handleOpenEdit(entry.workingFilePath, entry.filename)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              border: '0.5px solid var(--fg-divider)',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <StyledLucideIcon Icon={FileText} size={12} c="var(--fg-muted)" />
+                            <Text12Regular c="var(--fg-primary)">View file</Text12Regular>
+                          </UnstyledButton>
+                        </Group>
                       </Stack>
                     </Box>
                   ))}

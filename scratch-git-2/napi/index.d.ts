@@ -56,3 +56,33 @@ export function discardField(
   recordRelPath: string,
   field: string,
 ): Promise<ReviewOpResult>;
+
+/**
+ * One record file in a folder, returned by {@link readFolderBlobs}. `published`
+ * is `null` when the file isn't on `refs/heads/main` yet (= new record);
+ * `approved` is `null` when the accepted-patches.json entry is a `Delete`.
+ */
+export interface FolderBlob {
+  filename: string;
+  published: string | null;
+  approved: string | null;
+}
+
+/**
+ * Read `(published, approved)` content for every record file directly inside
+ * `<workspaceDir>/<connectionDirName>/<folderRelPath>/`. Non-recursive —
+ * subfolders are excluded. Empty `folderRelPath` is the connection root.
+ *
+ * Drives the desktop's grid-view diff status. The desktop reads the working
+ * version itself from disk; this binding supplies the other two sides of the
+ * three-way comparison.
+ *
+ * No lock acquired (reads only). Errors come through with the same prefixed-
+ * message convention as `acceptField`. Codes: `WORKSPACE_NOT_FOUND`,
+ * `UNKNOWN_CONNECTION`, `INVALID_JSON`, `INTERNAL`.
+ */
+export function readFolderBlobs(
+  workspaceDir: string,
+  connectionDirName: string,
+  folderRelPath: string,
+): Promise<FolderBlob[]>;

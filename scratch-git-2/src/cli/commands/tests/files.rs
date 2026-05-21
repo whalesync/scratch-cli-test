@@ -264,32 +264,11 @@ fn sync_schema_files_from_worktree_restores_missing_schema() {
     );
 }
 
-#[test]
-fn commit_file_map_to_dirty_ref_does_not_commit_temp_index_files() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let tmp = TempDir::new().unwrap();
-    let bare_repo = tmp.path().join("repo.git");
-    run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
-
-    let files = HashMap::from([("posts/rec.json".to_string(), b"{}".to_vec())]);
-    commit_file_map_to_dirty_ref(&bare_repo, None, &files, "test commit").unwrap();
-
-    let output = Command::new("git")
-        .arg(format!("--git-dir={}", bare_repo.display()))
-        .args(["ls-tree", "-r", "--name-only", "dirty"])
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let paths = String::from_utf8_lossy(&output.stdout);
-    assert!(paths.lines().any(|line| line == "posts/rec.json"));
-    assert!(!paths.lines().any(|line| line == ".git-index"));
-    assert!(!paths.lines().any(|line| line == ".git-index.lock"));
-}
+// Slice F.5 removed `commit_file_map_to_dirty_ref` + `force_push_origin_dirty`
+// + `run_force_upload`. The tests that exercised them (a
+// `commit_file_map_to_dirty_ref` smoke + `git_push_force_overwrites_…`) went
+// with the code. The local dirty branch is no longer something the CLI ever
+// commits to or pushes.
 
 #[test]
 fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
@@ -533,41 +512,6 @@ fn git_fetch_updates_remote_tracking_dirty_ref() {
     let local_tracking = git_rev_parse(&fixture.local_bare, "refs/remotes/origin/dirty").unwrap();
     let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
     assert_eq!(local_tracking, remote_dirty);
-}
-
-#[test]
-fn git_push_force_overwrites_diverged_remote_dirty_branch() {
-    if !git_available() {
-        eprintln!("skipping git-dependent test: git executable not available");
-        return;
-    }
-
-    let fixture = create_bare_fixture();
-
-    write_file(
-        &fixture.source_dir.join("posts/server-only.json"),
-        "{\"id\":\"server-only\"}",
-    );
-    commit_all(&fixture.source_dir, "remote only update");
-    run_git(&fixture.source_dir, &["push", "origin", "dirty:dirty"]);
-
-    let stale_parent = git_rev_parse(&fixture.local_bare, "dirty").unwrap();
-    let files = HashMap::from([(
-        "posts/local-only.json".to_string(),
-        b"{\"id\":\"local-only\"}".to_vec(),
-    )]);
-    let local_commit = commit_file_map_to_dirty_ref(
-        &fixture.local_bare,
-        Some(stale_parent.as_str()),
-        &files,
-        "diverged local update",
-    )
-    .unwrap();
-
-    crate::git_ops::force_push_origin_dirty(&fixture.local_bare, "test-token").unwrap();
-
-    let remote_dirty = git_rev_parse(&fixture.remote_bare, "dirty").unwrap();
-    assert_eq!(remote_dirty, local_commit);
 }
 
 #[test]
@@ -1504,8 +1448,9 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
         "articles/rec1.json".to_string(),
         b"{\"v\":\"main-a1\"}".to_vec(),
     );
-    let commit_hash = commit_file_map_to_dirty_ref(
+    let commit_hash = crate::git_ops::commit_file_map_to_ref(
         &ctx.bare_repo,
+        "refs/heads/dirty",
         Some(dirty_hash.as_str()),
         &new_main,
         "align posts on main",
@@ -1617,8 +1562,9 @@ fn discard_paths_single_repo_reverts_path_with_only_unapproved_change() {
         "posts/rec1.json".to_string(),
         b"{\"v\":\"main-p1\"}".to_vec(),
     );
-    let new_dirty = commit_file_map_to_dirty_ref(
+    let new_dirty = crate::git_ops::commit_file_map_to_ref(
         &ctx.bare_repo,
+        "refs/heads/dirty",
         Some(dirty_hash.as_str()),
         &realigned,
         "realign posts to main",
@@ -1693,8 +1639,9 @@ fn discard_paths_single_repo_errors_when_path_has_no_changes() {
         "articles/rec1.json".to_string(),
         b"{\"v\":\"main-a1\"}".to_vec(),
     );
-    let commit_hash = commit_file_map_to_dirty_ref(
+    let commit_hash = crate::git_ops::commit_file_map_to_ref(
         &ctx.bare_repo,
+        "refs/heads/dirty",
         Some(dirty_hash.as_str()),
         &new_main,
         "align posts on main",

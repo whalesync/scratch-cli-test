@@ -11,7 +11,8 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use scratch_git_2::shared::review_ops::{
-    self, LockMode, ReviewOpEffect, ReviewOpError, ReviewOpResult as RustReviewOpResult,
+    self, FolderBlob as RustFolderBlob, LockMode, ReviewOpEffect, ReviewOpError,
+    ReviewOpResult as RustReviewOpResult,
 };
 use std::path::PathBuf;
 
@@ -137,5 +138,78 @@ pub async fn discard_field(
     .await
     .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
     .map(Into::into)
+    .map_err(map_err)
+}
+
+/// One record file in a folder, returned by [`readFolderBlobs`]. `published`
+/// is the file's content at `refs/heads/main:<folder>/<filename>` (null when
+/// the file isn't published yet). `approved` is `apply(published,
+/// accepted-patches.json entry)` — null when the entry is a `Delete` (file
+/// is approved-deleted).
+#[napi(object)]
+pub struct FolderBlob {
+    pub filename: String,
+    /// JSON content of the published version, or null if the file isn't on
+    /// `refs/heads/main` yet (= new record).
+    pub published: Option<String>,
+    /// JSON content of the approved version (`published` + any accepted
+    /// patch), or null if approved-deleted.
+    pub approved: Option<String>,
+}
+
+impl FolderBlob {
+    fn try_from_rust(rb: RustFolderBlob) -> std::result::Result<Self, ReviewOpError> {
+        let to_string = |bytes: Vec<u8>, label: &str, filename: &str| {
+            String::from_utf8(bytes).map_err(|err| {
+                ReviewOpError::Internal(anyhow::anyhow!(
+                    "non-UTF-8 bytes in {label} blob for {filename}: {err}"
+                ))
+            })
+        };
+        let published = rb
+            .published
+            .map(|b| to_string(b, "published", &rb.filename))
+            .transpose()?;
+        let approved = rb
+            .approved
+            .map(|b| to_string(b, "approved", &rb.filename))
+            .transpose()?;
+        Ok(FolderBlob {
+            filename: rb.filename,
+            published,
+            approved,
+        })
+    }
+}
+
+/// Read `(published, approved)` content for every record file directly inside
+/// `<workspaceDir>/<connectionDirName>/<folderRelPath>/`. Non-recursive —
+/// subfolders are excluded. Empty `folderRelPath` is the connection root.
+///
+/// Drives the desktop's grid-view diff status. The desktop reads the working
+/// version itself from disk (TS fs); this binding supplies the other two
+/// sides of the three-way comparison.
+///
+/// Same error-prefix convention as `acceptField` (codes: `WORKSPACE_NOT_FOUND`,
+/// `UNKNOWN_CONNECTION`, `INVALID_JSON`, `INTERNAL`). No `LOCK_BUSY` — reads
+/// don't acquire the workspace lock.
+#[napi]
+pub async fn read_folder_blobs(
+    workspace_dir: String,
+    connection_dir_name: String,
+    folder_rel_path: String,
+) -> Result<Vec<FolderBlob>> {
+    napi::tokio::task::spawn_blocking(
+        move || -> std::result::Result<Vec<FolderBlob>, ReviewOpError> {
+            let blobs = review_ops::read_folder_blobs(
+                &PathBuf::from(&workspace_dir),
+                &connection_dir_name,
+                &folder_rel_path,
+            )?;
+            blobs.into_iter().map(FolderBlob::try_from_rust).collect()
+        },
+    )
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
     .map_err(map_err)
 }

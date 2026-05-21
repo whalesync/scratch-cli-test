@@ -324,8 +324,6 @@ interface ScratchFilesAPI {
       filename: string;
       error: string;
       workingFilePath: string;
-      reviewedFilePath: string;
-      publishedFilePath: string;
     }>;
     staleCount: number;
     totalErrorCount: number;

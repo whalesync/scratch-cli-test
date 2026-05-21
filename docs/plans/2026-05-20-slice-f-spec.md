@@ -1,7 +1,7 @@
 # Slice F — Init collapse to one non-sparse `main` worktree
 
 **Date**: 2026-05-20
-**Status**: **F.1 + F.2.a + F.2.b + F.3 shipped 2026-05-20.** F.4 (perf measurement) not started.
+**Status**: **F.1 + F.2.a + F.2.b + F.3 + F.5 shipped 2026-05-20.** F.4 (perf measurement) not started.
 **Parent plan**: [`2026-05-17-simplify-local-workspace-architecture.md`](2026-05-17-simplify-local-workspace-architecture.md) — see [Phase 5](2026-05-17-simplify-local-workspace-architecture.md#phase-5--collapse-to-one-worktree-per-connection) for the design spec.
 **Author**: Curtis Fonger
 
@@ -426,6 +426,76 @@ Not code-shaped; a measurement + a doc update.
 - **Old-layout workspaces that the F.1 refusal doesn't catch.** If a workspace has *both* the old master worktree deleted *and* the sparse-checkout config removed (e.g. user manually deleted dirs), F.1's detection misses it. The new code paths still try to operate against the worktree; behavior depends on the connector. Mitigation: if either detection condition fires, refuse — but document that manually-tampered workspaces are unsupported.
 - **Schema cache staleness on rapid pull → accept.** Today, `sync_schema_files_from_master` runs at every accept/reject/discard call to keep the cache fresh from `master`. Post-F, the same call refreshes from the new worktree's `.scratch/`. After a `pull`, the worktree's `.scratch/` updates atomically with the rest of the working tree (single `git checkout` step), so the cache stays correct. No new staleness window.
 - **`refs/heads/dirty` left dangling in `<workspace>/.repos/<id>.git/`.** Post-F.2, the local bare repo still has a `dirty` ref (cloned from the server). It's never used locally and never advanced. Cosmetic; deleting it would require an extra `git update-ref -d` at init time. Out of scope for F; could be cleaned in a tiny follow-up.
+
+### F.5 — Kill every dirty-branch read
+
+> **Status: SHIPPED 2026-05-20.** Surfaced during dogfood right after F.3
+> pushed: the desktop's grid view still flagged every record as "added /
+> unreviewed" because the read-side code in `scratch-desktop/src/main/local-files.ts`
+> was still reading from `<workspace>/.scratch/connections/{dirty,master}/<conn>/`
+> — directories that slice F deleted. The write side (slice H.3) had been
+> migrated to napi → `accepted-patches.json`, but the read side stayed on
+> the three-worktree model. F.5 kills the dirty branch as a thing anything
+> reads or writes locally.
+>
+> **What shipped:**
+>
+> - **New napi binding `readFolderBlobs(workspaceDir, connectionDirName, folderRelPath)`**
+>   in `scratch-git-2/napi/` plus a backing `shared::review_ops::read_folder_blobs`
+>   helper. Returns `[{filename, published, approved}]` for every record file
+>   directly inside the folder (non-recursive); `published` is the file at
+>   `refs/heads/main:<rel>`, `approved` is `apply(published, accepted-patches.json entry)`.
+>   No lock acquired (reads only). +2 napi smoke tests covering round-trip
+>   + subfolder filtering.
+> - **Desktop read-side rewrite** in `scratch-desktop/src/main/local-files.ts`:
+>   - Deleted `getVersionFolderPath` and the `GridVersion = 'working' | 'dirty' | 'main'`
+>     type — there are no on-disk per-version mirrors anymore.
+>   - New `readFolderApprovedAndPublishedSnapshots` helper wraps the napi
+>     binding and returns `{approved, published}` maps in the same
+>     `JsonFileSnapshot` shape the existing comparison logic expects.
+>   - `readDiffGridDataPage`, `readDiffGridDataPageV2`, `findRecordOffset`,
+>     `readDiffRecordData` all repointed to the new source. The
+>     `compareFlattenedRecordVersions` / `compareRecordSnapshots` comparison
+>     code is unchanged (it operates on flattened records; the inputs got
+>     swapped, not the logic).
+>   - `buildInvalidJsonFileEntries` lost its `reviewedFilePath` /
+>     `publishedFilePath` outputs — those paths don't exist post-F.
+>     `InvalidJsonFileEntry`, the preload exposure, and the
+>     `InvalidJsonFilesModal.tsx` rendering all simplified to just the
+>     working file path.
+> - **CLI dead-code purge.** Deleted `FilesCommands::ForceUpload` +
+>   `FilesCommands::FindMergeBase` + their `run_*` handlers; `force_upload_single_repo`,
+>   `commit_file_map_to_dirty_ref`, `MergeBaseResult`, `maps_equal`, and the
+>   `force_push_origin_dirty` remote helper. `commit_file_map_to_ref` and the
+>   tree-building helpers in `cli/git_ops/local.rs` survived under `#[cfg(test)]`
+>   because three discard/download fixture tests still seed known trees into
+>   the bare repo's `dirty` ref to set up state — those fixtures repointed to
+>   `git_ops::commit_file_map_to_ref(_, "refs/heads/dirty", _, _, _)` directly
+>   (two force-upload-specific tests were deleted with their target code).
+>   `merge_base_to_string` deleted along with `run_find_merge_base`.
+> - **Workbook config repo no longer falls back to `dirty`.**
+>   `materialize_workbook_checkout` was the last production reference to
+>   `DIRTY_BRANCH`; it tried `main` first and silently fell back to `dirty`
+>   on error. F.5 deletes the fallback (surfacing the original error
+>   instead) and the `DIRTY_BRANCH` constant.
+> - **Local bare repo cleanup.** `setup_connection` now runs
+>   `git --git-dir=<bare> update-ref -d refs/heads/dirty` after `git clone --bare`
+>   so the local clone stops carrying the ref. Idempotent (silent error if
+>   the ref already doesn't exist). The server's own `dirty` branch (publish
+>   working area) is untouched.
+> - **Docs refreshed.** `cli/commands/generate_docs.rs` no longer references
+>   `.scratch/connections/master/` in the generated user-facing docs; the
+>   "Dirty vs master" section retitled to "Working copy vs published state"
+>   and now points at `accepted-patches.json`.
+> - **End state**: `cargo build --workspace` zero warnings; **736 cargo
+>   tests pass** (-2 from F.3's 738; deleted force-upload tests);
+>   `cargo fmt --check` clean; `yarn lint` from repo root clean; **140
+>   desktop vitest tests pass**; **5 napi smoke tests pass** (+2 for
+>   `readFolderBlobs` round-trip + subfolder filtering).
+> - **What remains using "dirty" anywhere in the CLI**: only the few
+>   `#[cfg(test)]` fixture builders described above. `grep -r 'dirty' src/cli/`
+>   returns variable names + comments only — nothing in the production
+>   binary touches a local `dirty` ref.
 
 ## Post-F follow-ups
 

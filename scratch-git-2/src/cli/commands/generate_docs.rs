@@ -131,17 +131,20 @@ connection folders.
   {workbookId}.git            <- bare workbook config repo
 ```
 
-## Dirty vs master
+## Working copy vs published state
 
 | Location | Branch | Purpose |
 |----------|--------|---------|
-| `{SERVICE - Connection}/` | dirty | Your working copy — edit these |
-| `.scratch/connections/master/{SERVICE - Connection}/` | main | Last published state — read-only reference |
-| `.scratch/connections/scratch/{SERVICE - Connection}/` | dirty metadata | Schema + publish-plan files |
+| `{SERVICE - Connection}/` | main | Your working copy — edit these record files |
+| `{SERVICE - Connection}/.scratch/` | main | Tracked schemas + view definitions |
+| `.scratch/connections/{SERVICE - Connection}/accepted-patches.json` | (not a branch) | Per-field edits you've accepted but haven't published yet (RFC 7396 merge patches) |
+| `.scratch/connections/scratch/{SERVICE - Connection}/` | (local cache) | Schema cache populated from the worktree's `.scratch/` |
 
-To see what your local agent has changed relative to the published state, compare
-the dirty folder contents against the master folder for the same connection. You
-can also open the Scratch desktop app to review changes visually.
+The published state lives as git blobs in `.repos/{connectorId}.git/` on
+`refs/heads/main`. Use `scratchmd files unreviewed` or the desktop app to see
+what your edits look like relative to the published state — the on-disk
+mirrors that earlier versions surfaced under `.scratch/connections/master/`
+and `.scratch/connections/dirty/` were retired in DEV-10144 slice F.
 "#;
 
 // ---------------------------------------------------------------------------
@@ -388,9 +391,9 @@ Edits are **not live** until they are published:
 3. A person reviews and approves the changes, then publishes them back to the
    remote service.
 
-You can compare your edits against the published snapshot in
-`.scratch/connections/master/` to see what has changed (see
-[structure docs](structure.md)).
+Use `scratchmd files unreviewed` to list records with unaccepted edits and
+`scratchmd files unpublished` for records whose accepted edits haven't been
+published yet (see [structure docs](structure.md)).
 
 ## Tips
 

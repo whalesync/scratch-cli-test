@@ -12,13 +12,14 @@
 mod local;
 mod remote;
 
-pub(crate) use crate::shared::git_local::{open_bare_repo, read_tree_files, FileMap};
-
 pub(crate) use crate::shared::git_local::rev_parse_optional_to_string;
+pub(crate) use crate::shared::git_local::{open_bare_repo, read_tree_files};
+#[cfg(test)]
+pub(crate) use local::commit_file_map_to_ref;
 #[cfg(test)]
 pub(crate) use local::rev_parse_to_string;
 pub(crate) use local::{
-    commit_file_map_to_ref, diff_name_status, ensure_full_worktree, merge_base_to_string,
-    setup_sparse_worktree, update_ref, worktree_checkout_path, worktree_reset_mixed,
+    diff_name_status, ensure_full_worktree, setup_sparse_worktree, update_ref,
+    worktree_checkout_path, worktree_reset_mixed,
 };
-pub(crate) use remote::{clone_bare, fetch_origin, force_push_origin_dirty};
+pub(crate) use remote::{clone_bare, fetch_origin};

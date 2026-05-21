@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, relative, resolve } from 'node:path';
 
-import type { ReviewOpResult } from '../../../../scratch-git-2/napi/index.d.ts';
+import type { FolderBlob, ReviewOpResult } from '../../../../scratch-git-2/napi/index.d.ts';
 
 const requireNative = createRequire(__filename);
 
@@ -58,6 +58,7 @@ interface NativeModule {
     recordRelPath: string,
     field: string,
   ): Promise<ReviewOpResult>;
+  readFolderBlobs(workspaceDir: string, connectionDirName: string, folderRelPath: string): Promise<FolderBlob[]>;
 }
 
 function loadNative(): NativeModule {
@@ -221,4 +222,23 @@ export async function discardCellField(args: {
   return discardField(args.workspacePath, connectionDirName, recordRelPath, args.fieldName);
 }
 
-export type { ReviewOpResult };
+/**
+ * Read `(published, approved)` for every record file directly inside
+ * `<workspacePath>/<connectionDirName>/<folderRelPath>/`. Drives the
+ * desktop's grid-view three-way diff status. The desktop reads the working
+ * version itself; this provides the other two sides.
+ *
+ * Slice F.5: post-collapse the dirty + master worktrees no longer exist;
+ * this binding is the only way to get the published + approved snapshots.
+ * The pre-F.5 `getVersionFolderPath()` helper that returned `.scratch/
+ * connections/{dirty,master}/<conn>/` paths is gone.
+ */
+export async function readFolderBlobs(
+  workspaceDir: string,
+  connectionDirName: string,
+  folderRelPath: string,
+): Promise<FolderBlob[]> {
+  return loadNative().readFolderBlobs(workspaceDir, connectionDirName, folderRelPath);
+}
+
+export type { FolderBlob, ReviewOpResult };

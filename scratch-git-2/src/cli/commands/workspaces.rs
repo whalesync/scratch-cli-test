@@ -7,7 +7,6 @@ use crate::api::{ApiClient, ConnectorAccount, Workbook, WorkbookListResponse};
 use crate::config::markers;
 use crate::shared::layout::WorkspaceLayout;
 
-const DIRTY_BRANCH: &str = "dirty";
 const MAIN_BRANCH: &str = "main";
 
 /// RAII timer that prints elapsed time on drop when `SCRATCHMD_PROFILE=1`.
@@ -483,16 +482,11 @@ fn materialize_workbook_checkout(
     bare_repo: &Path,
     work_tree: &Path,
 ) -> anyhow::Result<&'static str> {
-    match git_checkout_branch_from_bare(bare_repo, MAIN_BRANCH, work_tree) {
-        Ok(()) => Ok(MAIN_BRANCH),
-        Err(main_err) => {
-            eprintln!(
-                "  Note: main branch checkout failed for workbook config repo ({main_err}); trying dirty"
-            );
-            git_checkout_branch_from_bare(bare_repo, DIRTY_BRANCH, work_tree)?;
-            Ok(DIRTY_BRANCH)
-        }
-    }
+    // Slice F.5 retired the `dirty` fallback — the workbook config repo
+    // lives on `main`. If `main` can't be checked out, surface the error
+    // rather than silently checking out a stale (or non-existent) branch.
+    git_checkout_branch_from_bare(bare_repo, MAIN_BRANCH, work_tree)?;
+    Ok(MAIN_BRANCH)
 }
 
 fn git_clone_bare(url: &str, target_dir: &Path, token: &str) -> anyhow::Result<()> {
@@ -647,6 +641,17 @@ pub fn setup_connection(
         if !bare_repo.exists() {
             git_clone_bare(&ca.git_url, &bare_repo, token)?;
         }
+    }
+    {
+        // Slice F.5: delete the local `refs/heads/dirty` ref the server-side
+        // clone carried in. Nothing local reads it after slices F+F.5; the
+        // server's own `dirty` branch (publish working area) is untouched.
+        // Idempotent: error means the ref already doesn't exist, which is fine.
+        let _t = PhaseTimer::new(format!("    [{}] prune local refs/heads/dirty", dir_name));
+        let _ = std::process::Command::new("git")
+            .arg(format!("--git-dir={}", bare_repo.display()))
+            .args(["update-ref", "-d", "refs/heads/dirty"])
+            .output();
     }
     {
         let _t = PhaseTimer::new(format!(

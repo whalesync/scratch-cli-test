@@ -15,7 +15,7 @@ import type { TableView } from '@spinner/shared-types';
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { buildColumnDefinitions, createFallbackTableView } from '../shared/schema-columns';
-import { acceptCellField, discardCellField } from './native/scratchmd-native';
+import { acceptCellField, discardCellField, readFolderBlobs } from './native/scratchmd-native';
 import {
   getFilenamesWithErrors,
   listUnpublishedChanges,
@@ -351,7 +351,6 @@ export async function readBatch(filePaths: string[], opts?: { maxSize?: number }
 // ── Grid data ──
 
 export type FilterStatus = 'unreviewed' | 'unpublished' | 'published';
-export type GridVersion = 'working' | 'dirty' | 'main';
 export type RowStatus =
   | 'added'
   | 'addedUnpublished'
@@ -370,27 +369,30 @@ export type DiffGridFilter =
 
 export interface DiffRow extends Record<string, unknown> {
   __rowStatus: RowStatus;
-  /** Fields where working != dirty (unreviewed changes). */
+  /** Fields where working differs from the approved version (unreviewed changes). */
   __changedFields: string[];
-  /** Dirty-branch values for unreviewed fields (the "from" side when w != d). */
+  /** Approved values for unreviewed fields (the "from" side when working != approved). */
   __fromFields: Record<string, unknown>;
-  /** Fields where working == dirty but dirty != master (reviewed but not yet published). */
+  /** Fields where working == approved but approved != published (reviewed but not yet published). */
   __unpublishedFields: string[];
-  /** Master-branch values for unpublished fields (the "from" side when d != m). */
+  /** Published (refs/heads/main) values for unpublished fields. */
   __masterFields: Record<string, unknown>;
   __filename: string;
-  /** Set when __rowStatus is invalidJson (which branch failed is encoded in the string). */
+  /** Set when __rowStatus is invalidJson (which side failed is encoded in the string). */
   __parseError?: string;
-  /** The full nested (non-flattened) record from the working branch, used by the renderer. */
+  /** The full nested (non-flattened) record from the working tree, used by the renderer. */
   __raw: Record<string, unknown>;
 }
 
 export interface InvalidJsonFileEntry {
   filename: string;
   error: string;
+  /**
+   * Path to the file on disk in the user worktree. The "approved" and
+   * "published" versions live as git blobs in the bare repo and can't be
+   * opened as files — slice F retired the per-worktree on-disk mirrors.
+   */
   workingFilePath: string;
-  reviewedFilePath: string;
-  publishedFilePath: string;
 }
 
 export interface DiffGridResult {
@@ -855,17 +857,85 @@ async function resolveFilterStatus(
   return published;
 }
 
-// ── Versioned / diff grid data ──
+// ── Diff grid data ──
+//
+// Slice F.5 retired the multi-worktree layout: the desktop no longer reads
+// from `.scratch/connections/{dirty,master}/<conn>/` (those directories don't
+// exist anymore). The "approved" and "published" snapshots come from a napi
+// binding that reads `refs/heads/main` + `accepted-patches.json` directly
+// from the bare repo. "Working" stays a TS-side fs read.
 
-function getVersionFolderPath(folderPath: string, workspacePath: string, version: GridVersion): string {
-  if (version === 'working') return folderPath;
+/**
+ * Split `<workspace>/<conn>/<sub-path>` into the connection dir name + the
+ * connection-relative folder path that the napi binding accepts. Throws if
+ * `folderPath` isn't inside `workspacePath`.
+ */
+function splitWorkspaceFolderPath(
+  workspacePath: string,
+  folderPath: string,
+): { connectionDirName: string; folderRelPath: string } {
   const rel = relative(workspacePath, folderPath);
+  if (rel === '' || rel.startsWith('..')) {
+    throw new Error(
+      `folderPath ${JSON.stringify(folderPath)} is not inside workspace ${JSON.stringify(workspacePath)}`,
+    );
+  }
   const parts = rel.split(sep);
-  const connName = parts[0];
-  const subPath = parts.slice(1).join(sep);
-  const prefix =
-    version === 'dirty' ? join('.scratch', 'connections', 'dirty') : join('.scratch', 'connections', 'master');
-  return subPath ? join(workspacePath, prefix, connName, subPath) : join(workspacePath, prefix, connName);
+  const [connectionDirName, ...rest] = parts;
+  // Use POSIX separators inside the workspace — accepted-patches.json and
+  // the napi binding both speak `/`-joined repo-relative paths.
+  const folderRelPath = rest.join('/');
+  return { connectionDirName, folderRelPath };
+}
+
+function snapshotFromContent(content: string | null | undefined, leafPaths?: Set<string>): JsonFileSnapshot {
+  if (content == null) return { kind: 'missing' };
+  const parsed = parseTopLevelJsonObject(content);
+  if (!parsed.ok) {
+    return { kind: 'invalid', error: parsed.error };
+  }
+  return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths), raw: parsed.raw };
+}
+
+/**
+ * Pull the `(published, approved)` content for every record in the folder
+ * via the napi binding and convert each into the same `JsonFileSnapshot` shape
+ * the comparison code already expects. Returns empty maps when the workspace
+ * marker can't be resolved (treats every record as new — matches the desktop's
+ * pre-F.5 fallback when the deleted worktrees were empty).
+ */
+async function readFolderApprovedAndPublishedSnapshots(
+  workspacePath: string,
+  folderPath: string,
+  leafPaths?: Set<string>,
+): Promise<{ approved: Map<string, JsonFileSnapshot>; published: Map<string, JsonFileSnapshot> }> {
+  const approved = new Map<string, JsonFileSnapshot>();
+  const published = new Map<string, JsonFileSnapshot>();
+  let connectionDirName: string;
+  let folderRelPath: string;
+  try {
+    ({ connectionDirName, folderRelPath } = splitWorkspaceFolderPath(workspacePath, folderPath));
+  } catch {
+    // Folder outside workspace — return empty maps so the diff code treats
+    // working files as "added" (the pre-F.5 behavior when the deleted
+    // worktrees were empty).
+    return { approved, published };
+  }
+  let blobs;
+  try {
+    blobs = await readFolderBlobs(workspacePath, connectionDirName, folderRelPath);
+  } catch (err) {
+    // Workspace marker missing, unknown connection, or other native error.
+    // Log and degrade to empty — the grid still renders working files (as
+    // "added"); the user can recover via `workspaces unsync` + re-init.
+    console.debug('readFolderBlobs failed:', err);
+    return { approved, published };
+  }
+  for (const blob of blobs) {
+    approved.set(blob.filename, snapshotFromContent(blob.approved, leafPaths));
+    published.set(blob.filename, snapshotFromContent(blob.published, leafPaths));
+  }
+  return { approved, published };
 }
 
 async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): Promise<JsonFileSnapshot> {
@@ -1099,21 +1169,17 @@ function pickDisplayRecordData(
  * For unpublished rows, __unpublishedFields lists fields where d != m (and w == d), and
  * __masterFields holds the master-branch values (the "from" side for the unpublished diff display).
  */
-function buildInvalidJsonFileEntries(
-  folderPath: string,
-  workspacePath: string,
-  rows: DiffRow[],
-): InvalidJsonFileEntry[] {
-  const reviewedDir = getVersionFolderPath(folderPath, workspacePath, 'dirty');
-  const publishedDir = getVersionFolderPath(folderPath, workspacePath, 'main');
+function buildInvalidJsonFileEntries(folderPath: string, rows: DiffRow[]): InvalidJsonFileEntry[] {
+  // Pre-F.5 this returned `reviewedFilePath` + `publishedFilePath` pointing at
+  // `.scratch/connections/{dirty,master}/<conn>/<filename>`. Those directories
+  // no longer exist post-slice-F — the approved/published versions live as
+  // git blobs in the bare repo. Only the working file is openable on disk.
   return rows
     .filter((r) => r.__rowStatus === 'invalidJson')
     .map((r) => ({
       filename: r.__filename,
       error: typeof r.__parseError === 'string' ? r.__parseError : 'Invalid JSON',
       workingFilePath: join(folderPath, r.__filename),
-      reviewedFilePath: join(reviewedDir, r.__filename),
-      publishedFilePath: join(publishedDir, r.__filename),
     }));
 }
 
@@ -1137,8 +1203,6 @@ export async function readDiffGridDataPage(
   opts: ReadDiffGridDataOptions,
 ): Promise<DiffGridResult> {
   const workingPath = folderPath;
-  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
-  const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
 
   // Load schema first so we can derive leaf column IDs for schema-aware flattening.
   // This prevents object-type leaf columns (e.g. anyOf-wrapped objects) from being
@@ -1148,20 +1212,28 @@ export async function readDiffGridDataPage(
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
   const leafPaths = new Set(schemaColumns.map((c) => c.id));
 
-  const [workingFiles, dirtyFiles, masterFiles, { filenames: errorFilenameList, field_paths: errorFieldPaths }] =
+  // Working = TS-side fs read of the user worktree.
+  // Approved + published = napi binding against (refs/heads/main,
+  //   accepted-patches.json) in the bare repo. Pre-F.5 this used to read two
+  //   sparse on-disk mirrors at `.scratch/connections/{dirty,master}/<conn>/`;
+  //   those were retired with slice F.
+  const [workingFiles, approvedAndPublished, { filenames: errorFilenameList, field_paths: errorFieldPaths }] =
     await Promise.all([
       readFolderSnapshots(workingPath, leafPaths),
-      readFolderSnapshots(dirtyPath, leafPaths),
-      readFolderSnapshots(masterPath, leafPaths),
+      readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths),
       getFilenamesWithErrors(workspacePath, folderPath),
     ]);
+  const { approved: approvedFiles, published: publishedFiles } = approvedAndPublished;
 
   const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
 
-  // Include master-only files so approved deletions (dirty removed, master still has it) remain visible.
+  // Include published-only files so approved deletions (approved removed,
+  // published still has it) remain visible as "deleted" rows.
   const allNamesArr: string[] = Array.from(
     new Set<string>(
-      Array.from(workingFiles.keys()).concat(Array.from(dirtyFiles.keys())).concat(Array.from(masterFiles.keys())),
+      Array.from(workingFiles.keys())
+        .concat(Array.from(approvedFiles.keys()))
+        .concat(Array.from(publishedFiles.keys())),
     ),
   );
   const columnSet = new Set<string>();
@@ -1170,8 +1242,8 @@ export async function readDiffGridDataPage(
   for (const name of allNamesArr) {
     const compared = compareRecordSnapshots(
       workingFiles.get(name) ?? missingSnapshot,
-      dirtyFiles.get(name) ?? missingSnapshot,
-      masterFiles.get(name) ?? missingSnapshot,
+      approvedFiles.get(name) ?? missingSnapshot,
+      publishedFiles.get(name) ?? missingSnapshot,
       name,
     );
     if (!compared) {
@@ -1199,7 +1271,7 @@ export async function readDiffGridDataPage(
     unpublished: rows.filter((row) => rowHasUnpublishedChanges(row)).length,
     errors: errorFilenames.size,
   };
-  const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, workspacePath, rows);
+  const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, rows);
   const filteredRows = applyDiffGridFilters(rows, opts.filters ?? [], errorFilenames);
   const sortedRows = sortDiffRows(filteredRows, opts.sortBy, opts.sortOrder);
   const offset = Math.max(0, opts.offset ?? 0);
@@ -1328,15 +1400,15 @@ export async function readDiffGridDataPageV2(
   const leafPaths = new Set(schemaColumns.map((c) => c.id));
 
   const workingPath = folderPath;
-  const dirtyPath = getVersionFolderPath(folderPath, workspacePath, 'dirty');
-  const masterPath = getVersionFolderPath(folderPath, workspacePath, 'main');
 
-  // Load 3 versions for page filenames only
-  const [workingFiles, dirtyFiles, masterFiles] = await Promise.all([
+  // Working = TS-side fs reads (page filenames only); approved + published =
+  // napi binding against the whole folder, then filter to the page filenames.
+  // Slice F retired the on-disk mirrors at `.scratch/connections/{dirty,master}/`.
+  const [workingFiles, approvedAndPublished] = await Promise.all([
     readNamedSnapshots(workingPath, cliResult.filenames, leafPaths),
-    readNamedSnapshots(dirtyPath, cliResult.filenames, leafPaths),
-    readNamedSnapshots(masterPath, cliResult.filenames, leafPaths),
+    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths),
   ]);
+  const { approved: approvedFiles, published: publishedFiles } = approvedAndPublished;
 
   const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
   const columnSet = new Set<string>();
@@ -1345,8 +1417,8 @@ export async function readDiffGridDataPageV2(
   for (const name of cliResult.filenames) {
     const compared = compareRecordSnapshots(
       workingFiles.get(name) ?? missingSnapshot,
-      dirtyFiles.get(name) ?? missingSnapshot,
-      masterFiles.get(name) ?? missingSnapshot,
+      approvedFiles.get(name) ?? missingSnapshot,
+      publishedFiles.get(name) ?? missingSnapshot,
       name,
     );
     if (!compared) continue;
@@ -1404,7 +1476,7 @@ export async function readDiffGridDataPageV2(
   const focusRows = applyDiffGridFilters(filteredRows, focusFilters, errorFilenames);
   const focusColumnIds = collectFocusColumnIds(focusRows, columns, errorFieldPaths);
 
-  const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, workspacePath, rows);
+  const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, rows);
 
   return {
     rows: filteredRows,
@@ -1566,24 +1638,30 @@ export async function findRecordOffset(
   workspacePath: string,
   filename: string,
 ): Promise<number | null> {
-  const versionFolders = [
-    folderPath,
-    getVersionFolderPath(folderPath, workspacePath, 'dirty'),
-    getVersionFolderPath(folderPath, workspacePath, 'main'),
-  ];
+  // Union of: filenames on disk (working tree) + filenames the napi binding
+  // returns from main + accepted-patches. Together this covers every record
+  // the grid would render — including approved-deleted files (only on main)
+  // and pending-create files (only in the patch file).
+  //
+  // Slice F retired the on-disk mirrors at `.scratch/connections/{dirty,master}/`
+  // that this used to enumerate as separate version folders.
   const names = new Set<string>();
-
-  for (const versionFolder of versionFolders) {
-    try {
-      const versionNames = await getCachedFileNames(versionFolder);
-      for (const name of versionNames) {
-        if (extname(name).toLowerCase() === '.json') {
-          names.add(name);
-        }
+  try {
+    for (const name of await getCachedFileNames(folderPath)) {
+      if (extname(name).toLowerCase() === '.json') {
+        names.add(name);
       }
-    } catch {
-      // Version folders may not exist for brand-new or partially initialized workspaces.
     }
+  } catch {
+    // Working folder may not exist on a partially-initialized workspace.
+  }
+  try {
+    const { connectionDirName, folderRelPath } = splitWorkspaceFolderPath(workspacePath, folderPath);
+    const blobs = await readFolderBlobs(workspacePath, connectionDirName, folderRelPath);
+    for (const blob of blobs) names.add(blob.filename);
+  } catch {
+    // Workspace marker missing / unknown connection — fall through with just
+    // the working-tree filenames.
   }
 
   const sortedNames = Array.from(names).sort((a, b) =>
@@ -1599,19 +1677,22 @@ export async function readDiffRecordData(
   filename: string,
 ): Promise<DiffRecordResult | null> {
   const workingFile = join(folderPath, filename);
-  const dirtyFile = join(getVersionFolderPath(folderPath, workspacePath, 'dirty'), filename);
-  const masterFile = join(getVersionFolderPath(folderPath, workspacePath, 'main'), filename);
 
   const relPath = relative(workspacePath, folderPath);
   const schema = await readConnectionSchema(workspacePath, relPath);
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
   const leafPaths = new Set(schemaColumns.map((c) => c.id));
 
-  const [w, d, m] = await Promise.all([
+  // Working = fs read. Approved + published = napi folder read, then look up
+  // by filename. Slice F retired the per-version on-disk mirrors that this
+  // used to read directly.
+  const [w, approvedAndPublished] = await Promise.all([
     readJsonFileSnapshot(workingFile, leafPaths),
-    readJsonFileSnapshot(dirtyFile, leafPaths),
-    readJsonFileSnapshot(masterFile, leafPaths),
+    readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths),
   ]);
+  const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
+  const d = approvedAndPublished.approved.get(filename) ?? missingSnapshot;
+  const m = approvedAndPublished.published.get(filename) ?? missingSnapshot;
 
   const compared = compareRecordSnapshots(w, d, m, filename);
   if (!compared) {

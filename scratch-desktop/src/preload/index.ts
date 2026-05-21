@@ -409,8 +409,6 @@ const scratchFiles = {
       filename: string;
       error: string;
       workingFilePath: string;
-      reviewedFilePath: string;
-      publishedFilePath: string;
     }>;
   }> => invoke('files:read-diff-grid-data', folderPath, workspacePath, opts ?? {}),
   readDiffRecordData: (

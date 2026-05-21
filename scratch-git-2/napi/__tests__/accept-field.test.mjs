@@ -171,3 +171,72 @@ test('acceptField throws LOCK_BUSY when the workspace lock is held by a live PID
     (err) => err.message.startsWith('LOCK_BUSY:'),
   );
 });
+
+test('readFolderBlobs returns published + approved for every record in the folder', async () => {
+  const native = loadNative();
+  const { workspaceDir } = makeFixture();
+
+  // Seed:
+  //   - Companies/rec_acme.json exists on main (industry=Other).
+  //   - User accepted industry=SaaS for it (Update entry).
+  //   - User created Companies/rec_new.json (Create entry).
+  writeWorking(
+    workspaceDir,
+    'Companies/rec_acme.json',
+    JSON.stringify({ name: 'Acme', industry: 'SaaS' }, null, 2),
+  );
+  await native.acceptField(workspaceDir, CONN, 'Companies/rec_acme.json', 'industry');
+
+  writeWorking(
+    workspaceDir,
+    'Companies/rec_new.json',
+    JSON.stringify({ name: 'Brand New' }, null, 2),
+  );
+  await native.acceptField(workspaceDir, CONN, 'Companies/rec_new.json', 'name');
+
+  const blobs = await native.readFolderBlobs(workspaceDir, CONN, 'Companies');
+
+  // Sorted by filename. acme first, new second.
+  assert.equal(blobs.length, 2);
+  assert.equal(blobs[0].filename, 'rec_acme.json');
+  assert.equal(blobs[1].filename, 'rec_new.json');
+
+  // rec_acme.json: published has industry=Other; approved has industry=SaaS.
+  const acmePublished = JSON.parse(blobs[0].published);
+  const acmeApproved = JSON.parse(blobs[0].approved);
+  assert.equal(acmePublished.industry, 'Other');
+  assert.equal(acmeApproved.industry, 'SaaS');
+  assert.equal(acmeApproved.name, 'Acme');
+
+  // rec_new.json: not on main → published is nullish; approved has the
+  // Create body. napi-rs encodes `Option::None` as JS `undefined`, not
+  // `null` — accept both via `== null`.
+  assert.ok(blobs[1].published == null, `expected published nullish, got ${blobs[1].published}`);
+  const newApproved = JSON.parse(blobs[1].approved);
+  assert.equal(newApproved.name, 'Brand New');
+});
+
+test('readFolderBlobs is non-recursive — subfolder files are excluded', async () => {
+  const native = loadNative();
+  const { workspaceDir } = makeFixture();
+
+  // The fixture only seeds Companies/rec_acme.json directly under Companies/.
+  // Add a Create entry for a path one level deeper to confirm it's filtered.
+  writeWorking(
+    workspaceDir,
+    'Companies/nested/rec_deep.json',
+    JSON.stringify({ x: 1 }, null, 2),
+  );
+  await native.acceptField(workspaceDir, CONN, 'Companies/nested/rec_deep.json', 'x');
+
+  const blobs = await native.readFolderBlobs(workspaceDir, CONN, 'Companies');
+  const names = blobs.map((b) => b.filename);
+  assert.ok(names.includes('rec_acme.json'));
+  assert.ok(!names.includes('rec_deep.json'));
+  assert.ok(!names.some((n) => n.includes('nested')));
+
+  // Asking for the nested folder explicitly returns the deep record.
+  const nested = await native.readFolderBlobs(workspaceDir, CONN, 'Companies/nested');
+  assert.equal(nested.length, 1);
+  assert.equal(nested[0].filename, 'rec_deep.json');
+});

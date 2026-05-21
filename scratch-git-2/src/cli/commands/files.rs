@@ -170,12 +170,6 @@ pub enum FilesCommands {
     /// changes — run `scratchmd files upload` first if you have unpublished
     /// local accepted edits.
     Publish,
-    /// Force-push local state to the server, skipping merge (fast)
-    #[command(name = "force-upload")]
-    ForceUpload,
-    /// Find the actual git merge base of local dirty and origin/dirty for each connection
-    #[command(name = "find-merge-base", alias = "merge-base")]
-    FindMergeBase,
 }
 
 #[derive(Clone)]
@@ -355,22 +349,6 @@ struct UploadResult {
     staleness_warning: Option<crate::api::StalenessWarning>,
 }
 
-#[derive(serde::Serialize)]
-struct MergeBaseResult {
-    #[serde(rename = "connectionName")]
-    connection_name: String,
-    #[serde(rename = "masterHash")]
-    master_hash: Option<String>,
-    #[serde(rename = "dirtyHash")]
-    dirty_hash: Option<String>,
-    #[serde(rename = "originDirtyHash")]
-    origin_dirty_hash: Option<String>,
-    #[serde(rename = "mergeBaseHash")]
-    merge_base_hash: Option<String>,
-    #[serde(rename = "equalsLocalMaster")]
-    equals_local_master: bool,
-}
-
 #[derive(Default)]
 struct AcceptAllResult {
     files_accepted: i32,
@@ -473,8 +451,6 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             run_upload(&cwd, server_url, json, skip_folder_index).await
         }
         FilesCommands::Publish => run_publish(&cwd, server_url, json).await,
-        FilesCommands::ForceUpload => run_force_upload(&cwd, server_url, json),
-        FilesCommands::FindMergeBase => run_find_merge_base(&cwd, server_url, json),
     }
 }
 
@@ -949,85 +925,6 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
             );
         }
     }
-    Ok(())
-}
-
-fn run_find_merge_base(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let (_, _, contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url, json)?;
-    let token = get_token(&workspace_server_url)?;
-
-    if contexts.is_empty() {
-        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
-    }
-
-    let mut results = Vec::new();
-    for ctx in &contexts {
-        crate::git_ops::fetch_origin(&ctx.bare_repo, &token)?;
-
-        let master_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
-        let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-        let origin_dirty_hash =
-            git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/dirty")?;
-
-        let merge_base_hash = if dirty_hash.is_some() && origin_dirty_hash.is_some() {
-            crate::git_ops::merge_base_to_string(
-                &ctx.bare_repo,
-                "refs/heads/dirty",
-                "refs/remotes/origin/dirty",
-            )?
-        } else {
-            None
-        };
-
-        let equals_local_master = match (&merge_base_hash, &master_hash) {
-            (Some(merge_base), Some(master)) => merge_base == master,
-            _ => false,
-        };
-
-        results.push(MergeBaseResult {
-            connection_name: ctx.conn_dir_name.clone(),
-            master_hash,
-            dirty_hash,
-            origin_dirty_hash,
-            merge_base_hash,
-            equals_local_master,
-        });
-    }
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(&results)?);
-        return Ok(());
-    }
-
-    for result in results {
-        println!("{}", result.connection_name);
-        println!(
-            "  dirty:        {}",
-            result.dirty_hash.as_deref().unwrap_or("(missing)")
-        );
-        println!(
-            "  origin/dirty: {}",
-            result.origin_dirty_hash.as_deref().unwrap_or("(missing)")
-        );
-        println!(
-            "  merge-base:   {}",
-            result.merge_base_hash.as_deref().unwrap_or("(none)")
-        );
-        println!(
-            "  master:       {}",
-            result.master_hash.as_deref().unwrap_or("(missing)")
-        );
-        println!(
-            "  merge-base == local master: {}",
-            if result.equals_local_master {
-                "yes"
-            } else {
-                "no"
-            }
-        );
-    }
-
     Ok(())
 }
 
@@ -2128,40 +2025,6 @@ fn run_unpushed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
 /// remote main). Once the desktop migrates over, drop one of them.
 fn unpushed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
     unpublished_entries(ctx)
-}
-
-fn run_force_upload(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
-    let started = std::time::Instant::now();
-    let (_, _, contexts, workspace_server_url) =
-        resolve_workspace_and_connections(cwd, server_url, json)?;
-    let token = get_token(&workspace_server_url)?;
-
-    if contexts.is_empty() {
-        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
-    }
-
-    let mut any_pushed = false;
-    for ctx in &contexts {
-        if contexts.len() > 1 && !json {
-            println!("Force-uploading {}...", ctx.conn_dir_name);
-        }
-        if force_upload_single_repo(ctx, &token)? {
-            any_pushed = true;
-        }
-    }
-
-    let elapsed = started.elapsed().as_millis();
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({ "pushed": any_pushed, "elapsedMs": elapsed })
-        );
-    } else if any_pushed {
-        println!("Force-pushed. ({})", format_elapsed(elapsed));
-    } else {
-        println!("Nothing to push. ({})", format_elapsed(elapsed));
-    }
-    Ok(())
 }
 
 pub async fn download_workbook(
@@ -3404,29 +3267,6 @@ fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<Unreviewed
         .collect())
 }
 
-fn force_upload_single_repo(ctx: &ConnectionContext, token: &str) -> anyhow::Result<bool> {
-    let base_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")?;
-    let base_map = match base_hash.as_deref() {
-        Some(hash) => read_git_tree(&ctx.bare_repo, hash)?,
-        None => HashMap::new(),
-    };
-    sync_schema_files_from_worktree(ctx)?;
-    let local_map = read_materialized_repo(ctx)?;
-
-    if maps_equal(&base_map, &local_map) {
-        return Ok(false);
-    }
-
-    commit_file_map_to_dirty_ref(
-        &ctx.bare_repo,
-        base_hash.as_deref(),
-        &local_map,
-        "Force-upload from Scratch CLI",
-    )?;
-    crate::git_ops::force_push_origin_dirty(&ctx.bare_repo, token)?;
-    Ok(true)
-}
-
 #[cfg(test)]
 fn git_rev_parse(bare_repo: &Path, rev: &str) -> anyhow::Result<String> {
     crate::git_ops::rev_parse_to_string(bare_repo, rev)
@@ -3438,21 +3278,6 @@ fn git_rev_parse_optional(bare_repo: &Path, rev: &str) -> anyhow::Result<Option<
 
 fn git_update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyhow::Result<()> {
     crate::git_ops::update_ref(bare_repo, refname, object)
-}
-
-fn commit_file_map_to_dirty_ref(
-    bare_repo: &Path,
-    parent_hash: Option<&str>,
-    files: &FileMap,
-    message: &str,
-) -> anyhow::Result<String> {
-    crate::git_ops::commit_file_map_to_ref(
-        bare_repo,
-        "refs/heads/dirty",
-        parent_hash,
-        files,
-        message,
-    )
 }
 
 fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
@@ -3719,14 +3544,6 @@ fn file_map_changed_data_paths(old: &FileMap, new: &FileMap) -> Vec<String> {
     }
 
     changed
-}
-
-fn maps_equal(left: &FileMap, right: &FileMap) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .all(|(key, value)| right.get(key).map(|other| other == value).unwrap_or(false))
 }
 
 fn aggregate_download(results: &[DownloadResult]) -> DownloadResult {

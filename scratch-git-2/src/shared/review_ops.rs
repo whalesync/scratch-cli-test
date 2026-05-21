@@ -1478,6 +1478,116 @@ pub fn discard_created_record(
 }
 
 // ---------------------------------------------------------------------------
+// Folder read entry point (slice F.5) — the desktop's grid view reads
+// `(published, approved)` for every record in a folder so it can render the
+// per-row diff status (added / modified / unpublished / unchanged / deleted)
+// without consulting the deleted `dirty`/`master` worktrees. "Working" stays
+// a TS-side filesystem read.
+// ---------------------------------------------------------------------------
+
+/// One record file in a folder, returned by [`read_folder_blobs`].
+///
+/// - `published` = the file's bytes at `refs/heads/main:<folder>/<filename>`,
+///   or `None` if the file doesn't exist on `main` (= new record).
+/// - `approved` = `apply(published, accepted-patches.json entry)`. `None`
+///   when the entry is a `Delete` (the file is approved-deleted) OR when the
+///   file is absent from both main and the patch file (shouldn't happen for
+///   filenames this returns).
+///
+/// Empty patch entries and missing-from-main + Update entries are handled
+/// per [`apply_patch_entry_to_blob`].
+#[derive(Debug)]
+pub struct FolderBlob {
+    pub filename: String,
+    pub published: Option<Vec<u8>>,
+    pub approved: Option<Vec<u8>>,
+}
+
+/// Read the `published` + `approved` content for every record file directly
+/// inside `<workspace>/<connection_dir_name>/<folder_rel_path>/`.
+///
+/// "Directly inside" means non-recursive — subfolders are excluded. Empty
+/// `folder_rel_path` means the connection's root.
+///
+/// Reads `refs/heads/main` from the bare repo and `accepted-patches.json`
+/// from the connection's state dir. No filesystem walk of the working tree
+/// happens here — callers source the working version via TS-side fs reads.
+/// No lock is acquired (reads only).
+pub fn read_folder_blobs(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    folder_rel_path: &str,
+) -> Result<Vec<FolderBlob>, ReviewOpError> {
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+
+    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let accepted_file =
+        accepted_patches::load(&accepted_patches_dir(&paths)).map_err(ReviewOpError::Internal)?;
+
+    let folder_normalized = folder_rel_path.trim_matches('/').to_string();
+    let folder_prefix = if folder_normalized.is_empty() {
+        String::new()
+    } else {
+        format!("{folder_normalized}/")
+    };
+
+    // A record path is "directly inside" the folder iff:
+    //   - it passes `is_data_path_in_folder` (json + not under .scratch + under
+    //     folder prefix when folder is non-empty), AND
+    //   - the part AFTER the folder prefix has no `/` (no nested subfolder).
+    let in_folder = |path: &str| -> bool {
+        if !is_data_path_in_folder(path, &folder_normalized) {
+            return false;
+        }
+        let rest = path.strip_prefix(folder_prefix.as_str()).unwrap_or(path);
+        !rest.contains('/')
+    };
+
+    // Union filenames from main + accepted-patches (each may have entries
+    // the other doesn't — e.g. a Create that isn't on main yet, or a main
+    // file with no patch).
+    let mut filenames: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for path in main_map.keys() {
+        if in_folder(path) {
+            filenames.insert(
+                path.strip_prefix(folder_prefix.as_str())
+                    .unwrap_or(path)
+                    .to_string(),
+            );
+        }
+    }
+    for entry in &accepted_file.patches {
+        if in_folder(&entry.path) {
+            filenames.insert(
+                entry
+                    .path
+                    .strip_prefix(folder_prefix.as_str())
+                    .unwrap_or(entry.path.as_str())
+                    .to_string(),
+            );
+        }
+    }
+
+    let mut out = Vec::with_capacity(filenames.len());
+    for filename in filenames {
+        let full_path = format!("{folder_prefix}{filename}");
+        let published = main_map.get(&full_path).cloned();
+        let approved = match accepted_patches::get_entry(&accepted_file, &full_path) {
+            Some(entry) => apply_patch_entry_to_blob(published.as_deref(), entry)
+                .map_err(ReviewOpError::Internal)?,
+            None => published.clone(),
+        };
+        out.push(FolderBlob {
+            filename,
+            published,
+            approved,
+        });
+    }
+
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // Tests — moved alongside the code in slice H.1 from
 // `cli/commands/tests/files.rs::accepted_state_helpers`. Other field-level
 // tests (accept_field_*, reject_field_*, discard_field_*) still live next to

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -9,7 +8,11 @@ use anyhow::Context;
 // Pure read helpers (open_bare_repo, read_tree_files, rev_parse_optional_to_string,
 // FileMap) moved to `shared::git_local` in slice H.1.5 so shared::review_ops
 // can use them without depending on cli/.
-use super::{open_bare_repo, FileMap};
+use super::open_bare_repo;
+#[cfg(test)]
+use crate::shared::git_local::FileMap;
+#[cfg(test)]
+use std::collections::BTreeMap;
 
 #[cfg(test)]
 pub(crate) fn rev_parse_to_string(bare_repo: &Path, rev: &str) -> anyhow::Result<String> {
@@ -21,34 +24,6 @@ pub(crate) fn rev_parse_to_string(bare_repo: &Path, rev: &str) -> anyhow::Result
         )
     })?;
     Ok(id.detach().to_string())
-}
-
-pub(crate) fn merge_base_to_string(
-    bare_repo: &Path,
-    rev_a: &str,
-    rev_b: &str,
-) -> anyhow::Result<Option<String>> {
-    let git_dir = bare_repo.to_str().unwrap_or_default();
-    let output = Command::new("git")
-        .args(["--git-dir", git_dir, "merge-base", rev_a, rev_b])
-        .output()
-        .context("failed to run git merge-base")?;
-
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if stdout.is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(stdout));
-    }
-
-    // `git merge-base` exits 1 when there is no merge base.
-    if output.status.code() == Some(1) {
-        return Ok(None);
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    anyhow::bail!("git merge-base failed: {}", stderr.trim());
 }
 
 pub(crate) fn update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyhow::Result<()> {
@@ -65,6 +40,17 @@ pub(crate) fn update_ref(bare_repo: &Path, refname: &str, object: &str) -> anyho
     Ok(())
 }
 
+// ── Test-only fixture builder ───────────────────────────────────────────────
+//
+// Slice F.5 deleted the production `commit_file_map_to_ref` along with the
+// `force_upload_single_repo` + `commit_file_map_to_dirty_ref` chain that
+// called it. Several download/discard tests in `cli/commands/tests/files.rs`
+// still need to seed known trees into the bare repo's `dirty` ref to set up
+// state for testing other paths (those tests don't exercise the production
+// commit-to-dirty path; they use the helper as a fixture builder). Restored
+// here under `#[cfg(test)]` so it never appears in the production binary.
+
+#[cfg(test)]
 pub(crate) fn commit_file_map_to_ref(
     bare_repo: &Path,
     refname: &str,
@@ -113,12 +99,14 @@ pub(crate) fn commit_file_map_to_ref(
     Ok(commit_id.detach().to_string())
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 enum TreeNode {
     Blob(gix::ObjectId),
     Dir(BTreeMap<String, TreeNode>),
 }
 
+#[cfg(test)]
 fn write_tree_from_file_map(
     repo: &gix::Repository,
     files: &FileMap,
@@ -134,6 +122,7 @@ fn write_tree_from_file_map(
     write_tree_entries(repo, &root)
 }
 
+#[cfg(test)]
 fn insert_path(
     entries: &mut BTreeMap<String, TreeNode>,
     path: &str,
@@ -145,6 +134,7 @@ fn insert_path(
     insert_path_parts(entries, &parts, path, blob_id)
 }
 
+#[cfg(test)]
 fn insert_path_parts(
     entries: &mut BTreeMap<String, TreeNode>,
     parts: &[&str],
@@ -155,7 +145,6 @@ fn insert_path_parts(
     if matches!(part, "." | "..") {
         anyhow::bail!("invalid git path component {part} in {original_path}");
     }
-
     if parts.len() == 1 {
         match entries.insert(part.to_string(), TreeNode::Blob(blob_id)) {
             Some(TreeNode::Dir(_)) => {
@@ -176,6 +165,7 @@ fn insert_path_parts(
     }
 }
 
+#[cfg(test)]
 fn write_tree_entries(
     repo: &gix::Repository,
     entries: &BTreeMap<String, TreeNode>,
@@ -192,7 +182,6 @@ fn write_tree_entries(
             }
         }
     }
-
     git_entries.sort_by(|a, b| {
         let a_name = if a.1 == gix::objs::tree::EntryKind::Tree {
             format!("{}/", a.0)
@@ -206,7 +195,6 @@ fn write_tree_entries(
         };
         a_name.cmp(&b_name)
     });
-
     let mut tree = gix::objs::Tree::empty();
     for (name, kind, oid) in git_entries {
         tree.entries.push(gix::objs::tree::Entry {
@@ -215,7 +203,6 @@ fn write_tree_entries(
             oid,
         });
     }
-
     repo.write_object(&tree)
         .map(|id| id.detach())
         .with_context(|| "failed to write tree object")
