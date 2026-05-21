@@ -8,7 +8,11 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     let docs_dir = workspace.join(".scratch/docs");
     std::fs::create_dir_all(&docs_dir)?;
 
-    std::fs::write(workspace.join("AGENTS.md"), claude_md(workbook_name))?;
+    let relay_base_url = relay_base_url_for_workspace(workspace);
+    std::fs::write(
+        workspace.join("AGENTS.md"),
+        claude_md(workbook_name, &relay_base_url),
+    )?;
     let symlink_path = workspace.join("CLAUDE.md");
     // Remove any existing file/symlink so we can recreate it
     let _ = std::fs::remove_file(&symlink_path);
@@ -36,7 +40,27 @@ pub fn resolve_workspace_for_docs(path: &Path) -> anyhow::Result<std::path::Path
 // AGENTS.md
 // ---------------------------------------------------------------------------
 
-fn claude_md(workbook_name: &str) -> String {
+fn relay_base_url_for_workspace(workspace: &Path) -> String {
+    let server_url = crate::config::markers::read(&crate::config::markers::marker_path(workspace))
+        .ok()
+        .and_then(|marker| marker.server_url().map(str::to_string))
+        .unwrap_or_else(|| crate::api::DEFAULT_SERVER_URL.to_string());
+
+    relay_base_url_from_server_url(&server_url)
+}
+
+fn relay_base_url_from_server_url(server_url: &str) -> String {
+    let trimmed = server_url.trim().trim_end_matches('/');
+    match trimmed {
+        "https://api.scratch.md" => "https://app.scratch.md".to_string(),
+        "https://test-api.scratch.md" => "https://test.scratch.md".to_string(),
+        "http://localhost:3010" => "http://localhost:3000".to_string(),
+        "http://127.0.0.1:3010" => "http://127.0.0.1:3000".to_string(),
+        _ => "https://app.scratch.md".to_string(),
+    }
+}
+
+fn claude_md(workbook_name: &str, relay_base_url: &str) -> String {
     format!(
         r#"# {workbook_name}
 
@@ -55,10 +79,16 @@ Once your local agent has made changes, open the Scratch desktop app to review t
 When pointing the user back to the Scratch desktop app, create a deep link from the absolute local path and URL-encode the full path:
 
 ```
-scratch://open?path=<url-encoded-absolute-path>?source=claude-code
+scratch://open?path=<url-encoded-absolute-path>&source=claude-code
 ```
 
 The source should be the name of the tool that generated the deep link, e.g. `claude-code` or `claude-cowork`.
+
+When creating Markdown links for tools that only open `http` or `https` URLs, pass the full `scratch://` URL through the Scratch web relay page:
+
+```
+[Open in Scratch Desktop]({relay_base_url}/open-desktop?url=<url-encoded-scratch-url>)
+```
 
 - Workspace: encode this workspace root path.
 - Folder: encode the folder path, e.g. `{{workspace}}/My Website/Blog Posts`.
@@ -78,7 +108,38 @@ Each time the user opens the workspace in the desktop app, a `SESSION Starting s
 Look for `fail exit=...` (CLI), non-2xx status codes (API), or `PUBLISH complete failed ...` lines within that window.
 "#,
         workbook_name = workbook_name,
+        relay_base_url = relay_base_url,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_base_url_tracks_server_environment() {
+        assert_eq!(
+            relay_base_url_from_server_url("https://api.scratch.md"),
+            "https://app.scratch.md",
+        );
+        assert_eq!(
+            relay_base_url_from_server_url("https://test-api.scratch.md"),
+            "https://test.scratch.md",
+        );
+        assert_eq!(
+            relay_base_url_from_server_url("http://localhost:3010"),
+            "http://localhost:3000",
+        );
+    }
+
+    #[test]
+    fn claude_md_uses_environment_specific_relay_host() {
+        let docs = claude_md("Test Workbook", "https://test.scratch.md");
+
+        assert!(docs.contains(
+            "[Open in Scratch Desktop](https://test.scratch.md/open-desktop?url=<url-encoded-scratch-url>)"
+        ));
+    }
 }
 
 // ---------------------------------------------------------------------------

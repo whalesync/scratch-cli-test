@@ -107,6 +107,13 @@ export class RouteUrls {
     return `/open/${trimmed}`;
   }
 
+  /**
+   * HTTP relay URL for environments that will not open custom protocol links directly.
+   */
+  static openDesktopDeepLinkRelayUrl(deepLink: string): string {
+    return `/open-desktop?url=${encodeURIComponent(deepLink)}`;
+  }
+
   // Dev Tools routes (under settings)
   static devToolsPageUrl = '/settings/dev/user-info';
   static devToolsWaitlistPageUrl = '/settings/dev/waitlist';
@@ -123,6 +130,8 @@ export class RouteUrls {
   static publicRoutePatterns = [
     this.healthEndpoint,
     this.pricingPageUrl,
+    '/open(.*)',
+    '/open-desktop',
     this.signInPageUrl,
     this.signUpPageUrl,
     this.signOutPageUrl,
