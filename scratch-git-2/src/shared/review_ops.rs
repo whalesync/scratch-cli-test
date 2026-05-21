@@ -857,7 +857,7 @@ pub fn read_dirty_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Re
                 _ => read_dirty_disk(root, &entry.path(), map)?,
             }
         } else if ft.is_file() {
-            if name_str.starts_with('.') {
+            if name_str.starts_with('.') && !name_str.ends_with(".json") {
                 continue;
             }
             let rel = entry.path().strip_prefix(root)?.to_slash_lossy();

@@ -356,48 +356,26 @@ fn detect_conflict(
         });
     }
 
-    // Update / Create where the file exists on the new head: per-top-level-key
-    // outcome check. A key is "conflicting" iff (a) user touched it, (b) the
-    // server changed it, AND (c) the user's intended value differs from the
-    // server's new value.
+    // Update / Create where the file exists on the new head: walk the patch
+    // recursively. A key path (e.g. "properties.city") is "conflicting" iff
+    // (a) user touched it, (b) the server changed it, AND (c) the user's
+    // intended value differs from the server's new value. Recursing into
+    // nested objects is what makes the audit log specific enough to act on —
+    // top-level-only reporting (the old behavior) flagged ["properties"]
+    // when the user actually only collided on properties.city.
     let new_obj = new.unwrap();
     let intended_obj = user_intended.as_ref().unwrap();
-    let user_keys = match patch_top_keys(patch) {
-        Some(k) => k,
-        None => {
-            // Whole-file scalar/array replacement (or null) — treat as a
-            // single conflicting scope.
-            return Some(PatchConflict {
-                path: path.to_string(),
-                conflicting_keys: vec![WHOLE_FILE_KEY.to_string()],
-            });
-        }
-    };
-    let new_map = new_obj.as_object();
-    let intended_map = intended_obj.as_object();
-    let old_map = old.and_then(|v| v.as_object());
+    if patch_top_keys(patch).is_none() {
+        // Whole-file scalar/array replacement (or null) — treat as a single
+        // conflicting scope. Recursion only makes sense for object patches.
+        return Some(PatchConflict {
+            path: path.to_string(),
+            conflicting_keys: vec![WHOLE_FILE_KEY.to_string()],
+        });
+    }
 
     let mut conflicting: Vec<String> = Vec::new();
-    for k in user_keys {
-        let intended_v = intended_map
-            .and_then(|o| o.get(&k))
-            .cloned()
-            .unwrap_or(JsonValue::Null);
-        let new_v = new_map
-            .and_then(|o| o.get(&k))
-            .cloned()
-            .unwrap_or(JsonValue::Null);
-        if intended_v == new_v {
-            continue; // user got what they wanted at this key
-        }
-        let old_v = old_map
-            .and_then(|o| o.get(&k))
-            .cloned()
-            .unwrap_or(JsonValue::Null);
-        if old_v != new_v {
-            conflicting.push(k);
-        }
-    }
+    collect_nested_conflicts(patch, intended_obj, new_obj, old, "", &mut conflicting);
 
     if conflicting.is_empty() {
         None
@@ -406,6 +384,74 @@ fn detect_conflict(
             path: path.to_string(),
             conflicting_keys: conflicting,
         })
+    }
+}
+
+/// Recursively walk the user's patch and accumulate dot-separated key paths
+/// where the user's intended value diverges from the server's new value AND
+/// the server actually changed that scope. `prefix` is the dot-prefix for the
+/// current recursion depth (empty at the top level). Mirrors RFC 7396's merge
+/// semantics: an object value in the patch means "recurse into this key";
+/// any non-object (scalar, array, null) is a leaf-level replacement.
+fn collect_nested_conflicts(
+    patch: &JsonValue,
+    intended: &JsonValue,
+    new: &JsonValue,
+    old: Option<&JsonValue>,
+    prefix: &str,
+    out: &mut Vec<String>,
+) {
+    let JsonValue::Object(patch_obj) = patch else {
+        return;
+    };
+    let intended_map = intended.as_object();
+    let new_map = new.as_object();
+    let old_map = old.and_then(|v| v.as_object());
+
+    for (k, patch_v) in patch_obj {
+        let key_path = if prefix.is_empty() {
+            k.clone()
+        } else {
+            format!("{prefix}.{k}")
+        };
+        let intended_v = intended_map
+            .and_then(|o| o.get(k))
+            .cloned()
+            .unwrap_or(JsonValue::Null);
+        let new_v = new_map
+            .and_then(|o| o.get(k))
+            .cloned()
+            .unwrap_or(JsonValue::Null);
+        let old_v = old_map
+            .and_then(|o| o.get(k))
+            .cloned()
+            .unwrap_or(JsonValue::Null);
+
+        // Recurse into the sub-object only when all four sides are objects;
+        // otherwise the comparison happens at this level (the values are
+        // wholly replaced rather than recursively merged per RFC 7396).
+        if patch_v.is_object()
+            && intended_v.is_object()
+            && new_v.is_object()
+            && old_v.is_object()
+        {
+            collect_nested_conflicts(
+                patch_v,
+                &intended_v,
+                &new_v,
+                Some(&old_v),
+                &key_path,
+                out,
+            );
+            continue;
+        }
+
+        if intended_v == new_v {
+            continue; // user got what they wanted at this key
+        }
+        if old_v != new_v {
+            out.push(key_path);
+        }
     }
 }
 

@@ -5,7 +5,7 @@ import {
 } from '../../../remote-service/connectors/types';
 import { formatJsonWithPrettier } from '../../../utils/json-formatter';
 import type { JsonSafeObject } from '../../../utils/objects';
-import { deduplicateFileName, normalizeFileName } from '../../../workbook/util';
+import { deduplicateFileName, isUsableFileNameSlug, normalizeFileName } from '../../../workbook/util';
 
 /** Joins a data-folder path with a file name without producing `//` (collapse slashes, trim trailing). */
 export function fullPathFromFolderAndFileName(parentPath: string, fileName: string): string {
@@ -53,7 +53,16 @@ export function buildGitFilesFromConnectorFiles(
 
     if (!fileName) {
       const suggested = suggestedFileNames[i];
-      const baseName = suggested && suggested.trim() ? normalizeFileName(suggested) : recordId;
+      let baseName = recordId;
+      if (suggested && suggested.trim()) {
+        const normalized = normalizeFileName(suggested);
+        // Reject results that would produce hidden-file (`.json`) or flag-like
+        // (`-foo.json`) filenames once the extension is appended. Falls back
+        // to the record ID, which is guaranteed ASCII + non-empty.
+        if (isUsableFileNameSlug(normalized)) {
+          baseName = normalized;
+        }
+      }
       fileName = deduplicateFileName(baseName, '.json', usedFileNames, recordId);
     } else {
       // If we reuse an existing filename, we should still mark it as used

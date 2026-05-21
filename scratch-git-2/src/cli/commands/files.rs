@@ -1278,6 +1278,12 @@ fn run_accept(
         all_accepted.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
 
+    // Refresh folder_index for the paths we just mutated so the desktop grid's
+    // approvedChanges / unapprovedChanges bits stay current without a manual
+    // `index refresh-folder`. `accept-all` already does this on line 1154; the
+    // single-file path missed it before mr29.
+    reindex_folder_index_for_changes(&workspace_dir, &all_accepted)?;
+
     let total = all_accepted.len();
     let elapsed_ms = started.elapsed().as_millis();
 
@@ -1376,6 +1382,10 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         all_rejected.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
 
+    // Refresh folder_index — reject restored the working file to its approved
+    // bytes, which flips unapprovedChanges from 1 → 0 for the affected rows.
+    reindex_folder_index_for_changes(&workspace_dir, &all_rejected)?;
+
     let total = all_rejected.len();
     let elapsed_ms = started.elapsed().as_millis();
 
@@ -1459,6 +1469,12 @@ fn run_discard(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result
             }
         }
     }
+
+    // Refresh folder_index for the paths we just mutated so the desktop grid's
+    // approvedChanges / unapprovedChanges bits stay current without a manual
+    // `index refresh-folder`. `discard-all` already does this; the single-file
+    // path missed it before mr29.
+    reindex_folder_index_for_changes(&workspace_dir, &all_discarded)?;
 
     let total = all_discarded.len();
     let elapsed_ms = started.elapsed().as_millis();
@@ -1554,6 +1570,14 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
         crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     }
     refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    // Folder_index reindex for the affected rows. changed_paths is repo-
+    // relative; reindex_folder_index_for_changes wants workspace-relative.
+    let workspace_relative_paths: Vec<String> = result
+        .changed_paths
+        .iter()
+        .map(|rel| format!("{}/{}", ctx.conn_dir_name, rel))
+        .collect();
+    reindex_folder_index_for_changes(&workspace_dir, &workspace_relative_paths)?;
 
     if json {
         println!(
@@ -1636,6 +1660,12 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
 
     apply_changed_working_files(&ctx, &local_map, &next_local_map, &repo_folder)?;
     refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    let workspace_relative_paths: Vec<String> = result
+        .changed_paths
+        .iter()
+        .map(|rel| format!("{}/{}", ctx.conn_dir_name, rel))
+        .collect();
+    reindex_folder_index_for_changes(&workspace_dir, &workspace_relative_paths)?;
 
     if json {
         println!(
@@ -1721,6 +1751,12 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
         crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     }
     refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    let workspace_relative_paths: Vec<String> = result
+        .changed_paths
+        .iter()
+        .map(|rel| format!("{}/{}", ctx.conn_dir_name, rel))
+        .collect();
+    reindex_folder_index_for_changes(&workspace_dir, &workspace_relative_paths)?;
 
     if json {
         println!(
@@ -1783,6 +1819,8 @@ fn run_restore_deleted_record(
         all_restored.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
 
+    reindex_folder_index_for_changes(&workspace_dir, &all_restored)?;
+
     let total = all_restored.len();
     let elapsed_ms = started.elapsed().as_millis();
 
@@ -1820,7 +1858,7 @@ async fn run_discard_created_record(
     json: bool,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
-    let (workspace_marker, _workspace_dir, contexts, workspace_server_url) =
+    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url, json)?;
 
     if contexts.is_empty() {
@@ -1853,6 +1891,8 @@ async fn run_discard_created_record(
                 .push(format!("{}/{}", ctx.conn_dir_name, rel_path));
         }
     }
+
+    reindex_folder_index_for_changes(&workspace_dir, &result.changed_paths)?;
 
     let total = result.changed_paths.len();
     let remote_total = result.remote_discarded_paths.len();

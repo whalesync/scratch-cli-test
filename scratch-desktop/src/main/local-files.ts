@@ -1443,8 +1443,8 @@ export async function readDiffGridDataPageV2(
   };
 
   const filterCounts = {
-    unreviewed: cliResult.summary.approved_changes,
-    unpublished: cliResult.summary.unapproved_changes,
+    unreviewed: cliResult.summary.unapproved_changes,
+    unpublished: cliResult.summary.approved_changes,
     errors: cliResult.total_error_count,
   };
 

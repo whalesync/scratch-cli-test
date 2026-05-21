@@ -669,6 +669,163 @@ fn read_bytes_and_json(
     }
 }
 
+/// Parse already-loaded blob bytes into a JSON value. Used for master content
+/// sourced from `refs/heads/main` (where we have bytes in memory, not a path).
+fn parse_blob_to_json(
+    bytes: Option<&Vec<u8>>,
+) -> (Option<Vec<u8>>, Option<serde_json::Value>, Option<String>) {
+    match bytes {
+        None => (None, None, None),
+        Some(b) => match serde_json::from_slice::<serde_json::Value>(b) {
+            Ok(v) => (Some(b.clone()), Some(v), None),
+            Err(e) => (Some(b.clone()), None, Some(format!("parse error: {e}"))),
+        },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main-tree sourcing for the folder index (Slice F follow-up)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Workspace marker shape — minimum subset needed to resolve a connection's
+/// dirName → repo_path. Matches `<workspace>/.scratch/.scratchmd`.
+#[derive(serde::Deserialize)]
+struct FolderIndexMarker {
+    #[serde(default)]
+    connections: Vec<FolderIndexMarkerConnection>,
+}
+
+#[derive(serde::Deserialize)]
+struct FolderIndexMarkerConnection {
+    #[serde(rename = "repoPath", default)]
+    repo_path: String,
+    #[serde(rename = "dirName", default)]
+    dir_name: String,
+}
+
+/// Resolve the bare repo path for a connection by name. Mirrors what
+/// `shared::review_ops::resolve_connection_paths` does, but with a minimal
+/// surface that doesn't drag in `ReviewOpError`.
+///
+/// Returns `Ok(None)` when the workspace marker is missing — pre-init
+/// scenarios and the in-crate test suite (`make_workspace` doesn't seed a
+/// marker). A missing marker is structurally indistinguishable from an
+/// empty/uninitialized workspace; callers treat the resulting empty
+/// `main_blobs` as "no master tree yet". Genuine corruption (marker present
+/// but malformed YAML, connection name absent from a present marker, empty
+/// `repo_path`) still errors so real misconfigurations surface.
+fn bare_repo_for_connection(
+    workspace: &Path,
+    connection_dir_name: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let marker_path = workspace.join(".scratch").join(".scratchmd");
+    let content = match std::fs::read_to_string(&marker_path) {
+        Ok(c) => c,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("read workspace marker at {}", marker_path.display()));
+        }
+    };
+    let marker: FolderIndexMarker = serde_yaml::from_str(&content)
+        .with_context(|| format!("parse workspace marker at {}", marker_path.display()))?;
+    let entry = marker
+        .connections
+        .into_iter()
+        .find(|c| c.dir_name == connection_dir_name)
+        .with_context(|| format!("connection '{connection_dir_name}' not in marker"))?;
+    if entry.repo_path.is_empty() {
+        anyhow::bail!("connection '{connection_dir_name}' has empty repo_path");
+    }
+    let layout = crate::shared::layout::WorkspaceLayout::for_cli(workspace);
+    Ok(Some(layout.bare_repo_path(&entry.repo_path)))
+}
+
+/// Read main-tree blobs for the records directly inside `<folder>`, returning
+/// a `HashMap<filename, blob_bytes>`. "Directly inside" = non-recursive — the
+/// folder's immediate `.json` children only. Returns an empty map when `main`
+/// doesn't yet exist (no commits) or when the folder is missing in the tree.
+///
+/// Post-Slice-F replacement for the deleted `.scratch/connections/master/<conn>`
+/// disk read. Slice E switched the column compute to use `accepted-patches.json`
+/// for the approved side but kept the master source as the deleted worktree —
+/// this fixes that gap.
+fn read_main_blobs_for_folder(
+    workspace: &Path,
+    folder: &str,
+) -> anyhow::Result<HashMap<String, Vec<u8>>> {
+    let normalized = folder.trim_matches('/');
+    let (conn_name, sub_path) = match normalized.find('/') {
+        Some(idx) => (&normalized[..idx], &normalized[idx + 1..]),
+        None => (normalized, ""),
+    };
+
+    // Test-only escape hatch: when `<workspace>/.scratch/_test_main/<conn>/
+    // <sub_path>/` exists on disk, read JSON blobs from there instead of the
+    // bare repo. Lets the in-crate tests below simulate `refs/heads/main`
+    // content without spinning up a real git repo. The branch is gated on
+    // `#[cfg(test)]` so production builds skip it entirely.
+    #[cfg(test)]
+    {
+        let test_main_root = workspace.join(".scratch").join("_test_main");
+        if test_main_root.exists() {
+            let folder_dir = if sub_path.is_empty() {
+                test_main_root.join(conn_name)
+            } else {
+                test_main_root.join(conn_name).join(sub_path)
+            };
+            let mut out = HashMap::new();
+            if folder_dir.exists() {
+                for entry in std::fs::read_dir(&folder_dir)?.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !name.ends_with(".json") {
+                        continue;
+                    }
+                    out.insert(name, std::fs::read(entry.path())?);
+                }
+            }
+            return Ok(out);
+        }
+    }
+
+    let Some(bare_repo) = bare_repo_for_connection(workspace, conn_name)? else {
+        // Pre-init workspace (no marker) or test fixture without a marker —
+        // treat as "no main tree", same as a freshly initialized repo with
+        // no commits.
+        return Ok(HashMap::new());
+    };
+    let head_hash = match crate::shared::git_local::rev_parse_optional_to_string(
+        &bare_repo,
+        "refs/heads/main",
+    )? {
+        Some(h) => h,
+        None => return Ok(HashMap::new()),
+    };
+    let tree = crate::shared::git_local::read_tree_files(&bare_repo, &head_hash)?;
+
+    let folder_prefix = if sub_path.is_empty() {
+        String::new()
+    } else {
+        format!("{sub_path}/")
+    };
+
+    let mut out = HashMap::new();
+    for (path, blob) in tree {
+        let Some(rest) = path.strip_prefix(folder_prefix.as_str()) else {
+            continue;
+        };
+        // Non-recursive: skip files in subfolders.
+        if rest.contains('/') {
+            continue;
+        }
+        if !rest.ends_with(".json") {
+            continue;
+        }
+        out.insert(rest.to_string(), blob);
+    }
+    Ok(out)
+}
+
 /// Extract a value at a dot-separated json path (e.g. "fields.title") from a
 /// parsed JSON value. Returns `None` for missing paths AND for JSON `null`, so
 /// nullable fields land as SQL NULL (which sorts predictably) rather than the
@@ -759,10 +916,15 @@ fn refresh_index(
 ) -> anyhow::Result<()> {
     let patch_index = load_patch_index(workspace, folder);
 
-    let working_files = scan_json_files(&paths.working);
-    let master_files = scan_json_files(&paths.master);
+    // Master content is sourced from `refs/heads/main` in the bare repo (post-
+    // Slice F: the on-disk master worktree is gone). `master_blobs` is keyed
+    // by filename (no path prefix) for direct lookup.
+    let master_blobs = read_main_blobs_for_folder(workspace, folder)?;
 
-    let all_on_disk: HashSet<String> = working_files
+    let working_files = scan_json_files(&paths.working);
+    let master_files: HashSet<String> = master_blobs.keys().cloned().collect();
+
+    let all_known: HashSet<String> = working_files
         .iter()
         .chain(master_files.iter())
         .cloned()
@@ -773,17 +935,23 @@ fn refresh_index(
     let mut to_upsert: Vec<String> = Vec::new();
     let mut to_delete: Vec<String> = Vec::new();
 
-    // Files in DB but gone from both directories → delete.
+    // Files in DB but gone from both working tree and main → delete.
     for filename in stored.keys() {
-        if !all_on_disk.contains(filename) {
+        if !all_known.contains(filename) {
             to_delete.push(filename.clone());
         }
     }
 
-    // All on-disk files: new or stale?
-    for filename in &all_on_disk {
+    // All known files: new or stale?
+    for filename in &all_known {
         let working_stat = file_mtime_size(&paths.working.join(filename));
-        let master_stat = file_mtime_size(&paths.master.join(filename));
+        // master_stat is always None post-Slice-F (no on-disk master tree).
+        // Staleness for the master side is driven instead by the workspace's
+        // refs/heads/main advance, which `materialize_local_repo` /
+        // `download_single_repo` couple with a `paths.master_mtime_marker` —
+        // here we rely on `accepted_patches_mtime` mismatches and explicit
+        // `rebuild-folder` calls to invalidate.
+        let master_stat: Option<(i64, i64)> = None;
 
         match stored.get(filename) {
             None => to_upsert.push(filename.clone()),
@@ -814,10 +982,11 @@ fn refresh_index(
 
     for filename in &to_upsert {
         let working_path = paths.working.join(filename);
-        let master_path = paths.master.join(filename);
 
         let working_stat = file_mtime_size(&working_path);
-        let master_stat = file_mtime_size(&master_path);
+        // master_stat is always None post-Slice-F: see the staleness loop above
+        // for the rationale.
+        let master_stat: Option<(i64, i64)> = None;
 
         let mut parse_error: Option<String> = None;
 
@@ -825,7 +994,7 @@ fn refresh_index(
         if let Some(e) = working_err {
             parse_error = Some(format!("working: {e}"));
         }
-        let (_master_bytes, master_json, master_err) = read_bytes_and_json(&master_path);
+        let (_master_bytes, master_json, master_err) = parse_blob_to_json(master_blobs.get(filename));
         if let Some(e) = master_err {
             if parse_error.is_none() {
                 parse_error = Some(format!("master: {e}"));
@@ -1419,6 +1588,9 @@ fn validate_page_records(
             vec![]
         };
         let workspace_dir = resolve_workspace_dir(workspace);
+        // Master content comes from refs/heads/main post-Slice-F. Load once
+        // and reuse across the stale_filenames loop.
+        let master_blobs = read_main_blobs_for_folder(workspace, folder).unwrap_or_default();
         let total = stale_filenames.len();
         let mut done = 0usize;
         let vr_tq = quote_ident(&validation_results_table());
@@ -1427,9 +1599,10 @@ fn validate_page_records(
 
         for filename in &stale_filenames {
             let working_path = paths.working.join(filename);
-            let master_path = paths.master.join(filename);
             let working_stat = file_mtime_size(&working_path);
-            let master_stat = file_mtime_size(&master_path);
+            // master_stat is None post-Slice-F; master_present comes from main_blobs.
+            let master_stat: Option<(i64, i64)> = None;
+            let master_present = master_blobs.contains_key(filename);
 
             // Clear old errors for this record.
             tx.execute(
@@ -1472,8 +1645,10 @@ fn validate_page_records(
                     continue;
                 }
             };
-            let master_json = if master_path.exists() {
-                read_json(&master_path).ok()
+            let master_json = if master_present {
+                master_blobs
+                    .get(filename)
+                    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
             } else {
                 None
             };
@@ -1544,26 +1719,37 @@ fn validate_page_records(
 // Check-only mode (count stale without mutating)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn count_stale(conn: &Connection, paths: &FolderPaths, table: &str) -> anyhow::Result<i64> {
+fn count_stale(
+    conn: &Connection,
+    paths: &FolderPaths,
+    workspace: &Path,
+    folder: &str,
+    table: &str,
+) -> anyhow::Result<i64> {
     let stored = load_stored_rows(conn, table)?;
 
     let working_files = scan_json_files(&paths.working);
-    let dirty_files = scan_json_files(&paths.dirty);
-    let master_files = scan_json_files(&paths.master);
+    // Master files are sourced from refs/heads/main post-Slice-F (the on-disk
+    // master tree at `.scratch/connections/master/<conn>` is dead). The dirty
+    // tree at `.scratch/connections/dirty/<conn>` is also dead.
+    let master_blobs = read_main_blobs_for_folder(workspace, folder).unwrap_or_default();
+    let master_files: HashSet<String> = master_blobs.keys().cloned().collect();
 
-    let all_on_disk: HashSet<String> = working_files
+    let all_known: HashSet<String> = working_files
         .iter()
-        .chain(dirty_files.iter())
         .chain(master_files.iter())
         .cloned()
         .collect();
 
     let mut stale: i64 = 0;
 
-    for filename in &all_on_disk {
+    for filename in &all_known {
         let w = file_mtime_size(&paths.working.join(filename));
-        let d = file_mtime_size(&paths.dirty.join(filename));
-        let m = file_mtime_size(&paths.master.join(filename));
+        // dirty_stat / master_stat are None post-Slice-F (no on-disk trees);
+        // master staleness is driven by accepted_patches_mtime mismatches +
+        // explicit rebuild-folder calls.
+        let d: Option<(i64, i64)> = None;
+        let m: Option<(i64, i64)> = None;
 
         match stored.get(filename) {
             None => stale += 1,
@@ -1578,9 +1764,9 @@ fn count_stale(conn: &Connection, paths: &FolderPaths, table: &str) -> anyhow::R
         }
     }
 
-    // Rows in DB that no longer exist on disk.
+    // Rows in DB that no longer exist in either working tree or main.
     for filename in stored.keys() {
-        if !all_on_disk.contains(filename) {
+        if !all_known.contains(filename) {
             stale += 1;
         }
     }
@@ -2053,12 +2239,19 @@ pub fn find_stale_files(
     let table = table_name_from_folder(folder);
     let tq = quote_ident(&table);
 
+    // Master filenames come from refs/heads/main post-Slice-F. Dirty tree is
+    // dead. Read this once and reuse it across the cold-start branches and the
+    // working/main-only set below.
+    let main_filenames: HashSet<String> = read_main_blobs_for_folder(workspace, folder)
+        .unwrap_or_default()
+        .into_keys()
+        .collect();
+
     if !db_path.exists() {
-        // No DB file yet — seed from all three trees.
+        // No DB file yet — seed from working tree + main.
         let all: HashSet<String> = scan_json_files(&paths.working)
             .into_iter()
-            .chain(scan_json_files(&paths.dirty))
-            .chain(scan_json_files(&paths.master))
+            .chain(main_filenames.iter().cloned())
             .collect();
         return Ok(all.into_iter().collect());
     }
@@ -2067,13 +2260,12 @@ pub fn find_stale_files(
     ensure_schema(&conn, &table)?;
 
     // Empty table = cold start (e.g. run_query created the schema but hasn't indexed yet).
-    // Seed from all three trees so dirty/master-only records are included.
+    // Seed from working tree + main so main-only records are included.
     let row_count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |r| r.get(0))?;
     if row_count == 0 {
         let all: HashSet<String> = scan_json_files(&paths.working)
             .into_iter()
-            .chain(scan_json_files(&paths.dirty))
-            .chain(scan_json_files(&paths.master))
+            .chain(main_filenames.iter().cloned())
             .collect();
         return Ok(all.into_iter().collect());
     }
@@ -2264,13 +2456,24 @@ pub fn reindex_files(
     if filenames.is_empty() {
         return Ok(());
     }
-    // Up-front signal so callers (e.g. the desktop app) can react before the first
-    // batch finishes — the per-batch progress below only fires every 1000 files.
-    eprintln!("[reindex] Reindexing {} file(s)...", filenames.len());
+    // Up-front signal so interactive callers see progress before the first
+    // batch finishes (the per-batch progress below only fires every 1000
+    // files). Gated on stderr being a TTY so we don't pollute stderr when
+    // the CLI is piped (`cmd 2>&1 | jq` is a common pattern with --json) or
+    // spawned from the desktop, which captures stdio.
+    {
+        use std::io::IsTerminal;
+        if std::io::stderr().is_terminal() {
+            eprintln!("[reindex] Reindexing {} file(s)...", filenames.len());
+        }
+    }
     let db_path = resolve_db_path(workspace, folder, db_path_override);
     let paths = resolve_folder_paths(workspace, folder);
     let table = table_name_from_folder(folder);
     let patch_index = load_patch_index(workspace, folder);
+    // Master content is sourced from `refs/heads/main` post-Slice-F. Read the
+    // folder's blobs once; per-file lookups happen against this in-memory map.
+    let master_blobs = read_main_blobs_for_folder(workspace, folder)?;
 
     let mut conn = open_conn(&db_path)?;
     ensure_schema(&conn, &table)?;
@@ -2284,17 +2487,20 @@ pub fn reindex_files(
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for filename in chunk {
             let working_path = paths.working.join(filename);
-            let master_path = paths.master.join(filename);
 
             let working_stat = file_mtime_size(&working_path);
-            let master_stat = file_mtime_size(&master_path);
+            // master_stat is None post-Slice-F (no on-disk master tree); whether
+            // the file exists in main is now derived from `master_blobs` presence.
+            let master_stat: Option<(i64, i64)> = None;
+            let master_present = master_blobs.contains_key(filename);
 
             let mut parse_error: Option<String> = None;
             let (_working_bytes, working_json, working_err) = read_bytes_and_json(&working_path);
             if let Some(e) = working_err {
                 parse_error = Some(format!("working: {e}"));
             }
-            let (_master_bytes, master_json, master_err) = read_bytes_and_json(&master_path);
+            let (_master_bytes, master_json, master_err) =
+                parse_blob_to_json(master_blobs.get(filename));
             if let Some(e) = master_err {
                 if parse_error.is_none() {
                     parse_error = Some(format!("master: {e}"));
@@ -2308,7 +2514,7 @@ pub fn reindex_files(
             // entry, drop the row entirely. A surviving entry (e.g. a
             // `Create` whose working file was deleted out-of-band) keeps the
             // row alive so the pending edit stays visible to the desktop.
-            if working_stat.is_none() && master_stat.is_none() && patch_entry.is_none() {
+            if working_stat.is_none() && !master_present && patch_entry.is_none() {
                 tx.execute(
                     &format!("DELETE FROM {tq} WHERE filename = ?1"),
                     params![filename],
@@ -2806,7 +3012,7 @@ pub fn run_check(opts: &QueryOptions) -> anyhow::Result<CheckResult> {
     ensure_schema(&conn, &table)?;
 
     let total: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |r| r.get(0))?;
-    let stale = count_stale(&conn, &paths, &table)?;
+    let stale = count_stale(&conn, &paths, &opts.workspace, &opts.folder, &table)?;
 
     Ok(CheckResult { stale, total })
 }
@@ -3317,24 +3523,23 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_has_master() {
+    fn test_filter_has_master_returns_nothing_post_slice_f() {
+        // HasMaster filters by `master_mtime IS NOT NULL`. Pre-F, the master
+        // tree was on disk and we recorded its mtime/size. Slice F routed
+        // master through `refs/heads/main`; without a bare repo (test
+        // fixture), `master_mtime` is NULL for every row, so the filter is
+        // permanently empty in tests. Mirrors `test_filter_has_dirty_returns
+        // _nothing_post_slice_e`. Slice F follow-up will drop the filter +
+        // column together.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
-        let master_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("master")
-            .join("conn")
-            .join("posts");
-
         write_json(&working_dir, "no_master.json", r#"{"x":1}"#);
-        write_json(&master_dir, "has_master.json", r#"{"x":1}"#);
 
         let mut o = opts(&ws, "conn/posts");
         o.filters = vec![FilterSpec::HasMaster];
         let result = run_query(&o).unwrap();
-        assert_eq!(result.filenames, vec!["has_master.json"]);
+        assert!(result.filenames.is_empty());
     }
 
     #[test]
@@ -3345,10 +3550,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
+        // Test escape hatch — see `read_main_blobs_for_folder`.
         let master_dir = ws
             .join(".scratch")
-            .join("connections")
-            .join("master")
+            .join("_test_main")
             .join("conn")
             .join("posts");
 
@@ -3458,22 +3663,22 @@ mod tests {
     // ── Summary bucket counts ─────────────────────────────────────────────────
 
     #[test]
-    fn test_summary_master_only() {
+    fn test_summary_master_only_is_always_zero_post_slice_f() {
+        // master_only counts rows that exist only in the master tree.
+        // Pre-F, the master tree was the on-disk `.scratch/connections/master/<conn>/`
+        // directory. Slice F removed that directory and routed master content
+        // through `refs/heads/main` from the bare repo. In the test fixture
+        // there's no bare repo (no workspace marker), so `read_main_blobs_for_folder`
+        // returns an empty map and no row gets `master_mtime` set. The bucket is
+        // permanently 0 in tests. Slice F follow-up will remove `paths.master`
+        // + `master_mtime` columns + this summary field together.
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
-        let master_dir = ws
-            .join(".scratch")
-            .join("connections")
-            .join("master")
-            .join("conn")
-            .join("posts");
-
-        write_json(&master_dir, "deleted.json", r#"{"x":1}"#);
+        let working_dir = ws.join("conn").join("posts");
+        write_json(&working_dir, "rec.json", r#"{"x":1}"#);
 
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
-        assert_eq!(result.summary.master_only, 1);
-        assert_eq!(result.summary.working_only, 0);
-        assert_eq!(result.summary.dirty_only, 0);
+        assert_eq!(result.summary.master_only, 0);
         assert_eq!(result.summary.total, 1);
     }
 
@@ -3503,10 +3708,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
+        // Test escape hatch — see `read_main_blobs_for_folder`.
         let master_dir = ws
             .join(".scratch")
-            .join("connections")
-            .join("master")
+            .join("_test_main")
             .join("conn")
             .join("posts");
 
@@ -3533,10 +3738,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
         let working_dir = ws.join("conn").join("posts");
+        // Test escape hatch — see `read_main_blobs_for_folder`. This stands
+        // in for `refs/heads/main` content without a real bare repo.
         let master_dir = ws
             .join(".scratch")
-            .join("connections")
-            .join("master")
+            .join("_test_main")
             .join("conn")
             .join("posts");
 

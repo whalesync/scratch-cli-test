@@ -42,9 +42,29 @@ export function extractFilenameFromPath(path: string): string {
 }
 
 /**
+ * A normalized slug is "usable" iff it starts with an alphanumeric. This
+ * rejects empty results (`normalizeFileName` returns `""` when the input is
+ * all-punctuation or all non-ASCII), pure-punctuation results (e.g. `"-"`
+ * from a CJK-then-ASCII slug source), and leading-dot/leading-hyphen results
+ * that would produce POSIX hidden-file or shell-flag-like filenames once the
+ * extension is appended (`.json`, `-alex.json`).
+ *
+ * Callers use this to decide whether to fall back to the record ID instead of
+ * trusting the slug. Without it, a Stripe customer named `鄭菲菲` produces a
+ * filename of `.json`, which the working-tree walker can't see and which
+ * tools generally treat as hidden.
+ */
+export function isUsableFileNameSlug(slug: string): boolean {
+  return /^[a-z0-9]/.test(slug);
+}
+
+/**
  * Resolves the preferred base filename (without extension) for a record.
  * Priority: slug value > title value > ID value.
- * Slug and title values are run through normalizeFileName for safety.
+ * Slug and title values are run through normalizeFileName for safety, then
+ * checked by [`isUsableFileNameSlug`] — falls through to the next option (or
+ * the record ID) when normalization produces an empty / leading-`.` / leading-
+ * `-` result.
  */
 export function resolveBaseFileName(options: {
   slugValue?: string | null;
@@ -52,10 +72,12 @@ export function resolveBaseFileName(options: {
   idValue: string;
 }): string {
   if (options.slugValue && typeof options.slugValue === 'string' && options.slugValue.trim()) {
-    return normalizeFileName(options.slugValue);
+    const normalized = normalizeFileName(options.slugValue);
+    if (isUsableFileNameSlug(normalized)) return normalized;
   }
   if (options.titleValue && typeof options.titleValue === 'string' && options.titleValue.trim()) {
-    return normalizeFileName(options.titleValue);
+    const normalized = normalizeFileName(options.titleValue);
+    if (isUsableFileNameSlug(normalized)) return normalized;
   }
   return options.idValue;
 }

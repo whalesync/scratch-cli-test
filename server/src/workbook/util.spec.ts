@@ -1,4 +1,32 @@
-import { deduplicateFileName, normalizeFileName, resolveBaseFileName } from './util';
+import { deduplicateFileName, isUsableFileNameSlug, normalizeFileName, resolveBaseFileName } from './util';
+
+describe('isUsableFileNameSlug', () => {
+  it('accepts slugs starting with a letter', () => {
+    expect(isUsableFileNameSlug('hi')).toBe(true);
+    expect(isUsableFileNameSlug('my-product')).toBe(true);
+  });
+
+  it('accepts slugs starting with a digit', () => {
+    expect(isUsableFileNameSlug('123abc')).toBe(true);
+  });
+
+  it('rejects empty strings (all-stripped slugs)', () => {
+    expect(isUsableFileNameSlug('')).toBe(false);
+  });
+
+  it('rejects pure-hyphen slugs (CJK-then-ASCII source)', () => {
+    expect(isUsableFileNameSlug('-')).toBe(false);
+    expect(isUsableFileNameSlug('--')).toBe(false);
+  });
+
+  it('rejects leading-hyphen slugs (would produce flag-like filenames)', () => {
+    expect(isUsableFileNameSlug('-alex')).toBe(false);
+  });
+
+  it('rejects leading-dot slugs (would produce hidden filenames)', () => {
+    expect(isUsableFileNameSlug('.foo')).toBe(false);
+  });
+});
 
 describe('resolveBaseFileName', () => {
   it('should return normalized slug when slug is present', () => {
@@ -19,6 +47,35 @@ describe('resolveBaseFileName', () => {
 
   it('should return ID when slug is whitespace only', () => {
     expect(resolveBaseFileName({ slugValue: '   ', idValue: 'abc123' })).toBe('abc123');
+  });
+
+  it('should return ID when slug is non-ASCII (would normalize to empty)', () => {
+    // Stripe customer name "鄭菲菲" — normalizes to "" because all chars are
+    // outside [a-z0-9 -]. Without the usable-slug check, this produced a
+    // bare ".json" filename.
+    expect(resolveBaseFileName({ slugValue: '鄭菲菲', idValue: 'cus_UIwiCVpf1KLsLA' })).toBe('cus_UIwiCVpf1KLsLA');
+  });
+
+  it('should return ID when slug normalizes to a pure-hyphen sequence', () => {
+    // Armenian "ԴեմԱռԴեմ Թիմ" normalizes to "-" (space → hyphen + all chars
+    // stripped). Without the check, this produced "-.json".
+    expect(resolveBaseFileName({ slugValue: 'ԴեմԱռԴեմ Թիմ', idValue: 'cus_UFxltZEOb1MOPj' })).toBe(
+      'cus_UFxltZEOb1MOPj',
+    );
+  });
+
+  it('should fall through to title when slug normalization is unusable', () => {
+    expect(resolveBaseFileName({ slugValue: '鄭菲菲', titleValue: 'Fallback Title', idValue: 'abc' })).toBe(
+      'fallback-title',
+    );
+  });
+
+  it('should return ID when slug normalizes to a leading-hyphen result', () => {
+    // Korean "안현수 (Alex)" normalizes to "-alex" (the leading Korean strips,
+    // the space becomes a hyphen). POSIX-valid but flag-like.
+    expect(resolveBaseFileName({ slugValue: '안현수 (Alex)', idValue: 'cus_Nqm5lajp4rDwl6' })).toBe(
+      'cus_Nqm5lajp4rDwl6',
+    );
   });
 
   it('should fall through to title when slug is null', () => {
