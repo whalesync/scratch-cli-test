@@ -193,7 +193,12 @@ describeIfPostgres("Files", () => {
   });
 
   describe("round-trip", () => {
-    it("should handle download → local edit → upload → download cycle", () => {
+    it("should handle local edit → accept → upload → download cycle", () => {
+      // Post-slice-F flow (see docs/plans/2026-05-17-simplify-local-workspace-architecture.md):
+      // working-tree edits are "unreviewed" and must be `accept`ed into
+      // accepted-patches.json before `files upload` will ship them. `files
+      // download` refuses while any unreviewed edits exist, so the accept
+      // step is also a prerequisite for the post-upload re-sync.
       const jsonFiles = findJsonFiles(workspaceDir);
       expect(jsonFiles.length).toBeGreaterThan(0);
 
@@ -211,16 +216,26 @@ describeIfPostgres("Files", () => {
       const modified = { ...draft.data, publish_status: "published" };
       fs.writeFileSync(draft.path, JSON.stringify(modified, null, 2));
 
-      // Upload the edit
+      // Accept the edit — moves it from "unreviewed" into accepted-patches.json.
+      const relPath = path.relative(workspaceDir, draft.path);
+      const acceptResult = cli.run(["files", "accept", relPath], {
+        cwd: workspaceDir,
+      });
+      expect(acceptResult.exitCode).toBe(0);
+
+      // Upload — reads accepted-patches.json and posts to /upload-patch/.
       const uploadResult = cli.run(["files", "upload"], { cwd: workspaceDir });
       expect(uploadResult.exitCode).toBe(0);
 
-      // Download again (no local changes) — should reflect the uploaded edit
+      // Download — would have been blocked if any unreviewed edits remained;
+      // after accept they are approved, so the pre-flight passes.
       const downloadResult = cli.run(["files", "download"], {
         cwd: workspaceDir,
       });
       expect(downloadResult.exitCode).toBe(0);
 
+      // The working file should still reflect the accepted edit (download
+      // re-anchors accepted-patches against new main and replays them).
       const afterDownload = JSON.parse(fs.readFileSync(draft.path, "utf-8"));
       expect(afterDownload.publish_status).toBe("published");
     });

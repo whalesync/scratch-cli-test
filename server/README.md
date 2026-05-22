@@ -77,6 +77,38 @@ The agent server uses OpenRouter for LLM access:
 3. Set `OPENROUTER_PROVISIONING_KEY` in `.env`
 4. Create API key from [API keys](https://openrouter.ai/settings/keys)
 
+### Google Cloud ADC (for `/upload-patch` signing)
+
+The `/upload-patch/init` endpoint signs a V4 presigned GCS URL using user ADC + impersonated service-account signing (`GCS_LOCAL_SIGNING_SA` in `.env`). The ADC refresh token expires periodically; once it does, the endpoint returns HTTP 500 with an `invalid_grant: reauth related error (invalid_rapt)` from `Impersonated.sign()` — visible in the server console, and the cause of upload/publish failures from `scratchmd` and the CLI integration tests.
+
+Refresh with:
+
+```bash
+gcloud auth application-default login
+```
+
+Then restart the server — the `Storage` auth client is constructed once at boot and caches the credential.
+
+#### One-time IAM grant for new engineers
+
+Signing impersonates `GCS_LOCAL_SIGNING_SA`, so your gcloud user needs `roles/iam.serviceAccountTokenCreator` on that service account. Without it the server returns HTTP 500 with `Permission 'iam.serviceAccounts.signBlob' denied on resource` from `Impersonated.sign()`.
+
+This must be run by someone in the **Operator** group (project IAM admins):
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  cloudrun-service-account@spv1eu-test.iam.gserviceaccount.com \
+  --member="user:YOUR_EMAIL@whalesync.com" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project=spv1eu-test
+```
+
+You can list the currently configured accounts using this command:
+
+```bash
+gcloud iam service-accounts get-iam-policy cloudrun-service-account@spv1eu-test.iam.gserviceaccount.com --project spv1eu-test --format=json 2>&1 | python3 -c "import sys,json; p=json.load(sys.stdin); [print(b['role'],'->',m) for b in p['bindings'] for m in b['members']]"
+```
+
 ### Start the Server
 
 ```bash

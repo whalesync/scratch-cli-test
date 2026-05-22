@@ -10,6 +10,7 @@ Black-box integration tests for the `scratchmd` Rust CLI binary (`scratch-git-2/
 | **Connections**    | Add, list, show, and remove Postgres connections (requires `DATABASE_URL`)               |
 | **Linked Folders** | Discover available tables, link/unlink folders, pull data from Postgres                  |
 | **Files**          | Download files to disk, upload local edits, and verify a full round-trip cycle           |
+| **Publish**        | End-to-end accept → upload → publish → download cycle: verifies `accepted-patches.json` generation, `/upload-patch` round-trip, `/publish-v2/{plan,run}-job` completion, Postgres-side application, and post-publish reconciliation |
 | **Driver Publish** | Driver-based end-to-end publish flows over related `authors`/`posts` tables: edit, create, delete, publish, and post-publish reconciliation |
 | **Workspace Sync** | Detect added/removed connections on download, test `--on-delete=remove` and `keep` modes |
 
@@ -93,6 +94,7 @@ npx jest --runInBand --forceExit connections
 npx jest --runInBand --forceExit linked-folders
 npx jest --runInBand --forceExit files
 npx jest --runInBand --forceExit driver-publish
+npx jest --runInBand --forceExit publish
 npx jest --runInBand --forceExit workspace-sync
 ```
 
