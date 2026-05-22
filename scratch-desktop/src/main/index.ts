@@ -43,7 +43,6 @@ import {
   listUnpushedChanges,
   listUnreviewedChanges,
   reindexFiles,
-  reindexFolderIndex,
   rejectFieldChanges,
   restoreDeletedRecord as restoreDeletedRecordViaCli,
   runScratchmd,
@@ -459,15 +458,6 @@ async function withFilePathInternalMutation<T>(filePath: string, action: () => P
   return withWorkspaceInternalMutation(workspacePath, action);
 }
 
-/** Reindex the folder-index for every leaf folder in the workspace. */
-async function reindexAllFolderIndexes(workspacePath: string): Promise<void> {
-  const folders = await listFolders(workspacePath);
-  for (const folder of folders) {
-    const relFolder = relative(workspacePath, folder.path);
-    await reindexFolderIndex(workspacePath, relFolder);
-  }
-}
-
 /** Derive the workspace-relative folder from a workspace-relative record path. */
 function folderFromRecordPath(recordPath: string): string {
   const parts = recordPath.split('/');
@@ -560,19 +550,73 @@ ipcMain.handle('scratch:init-workspace', async (_, workbookId: string, cwd: stri
   runScratchmd(['workspaces', 'init', workbookId, ...(opts?.force ? ['--force'] : [])], cwd),
 );
 ipcMain.handle('scratch:remove-workspace', async (_, workbookId: string) => {
-  const result = await runScratchmd(['workspaces', 'unsync', workbookId, '--yes']);
+  const ipcStart = performance.now();
+  console.log('[remove-workspace] start', workbookId);
+
+  // Look up the registered path so we can move it to Trash directly. Avoids
+  // scratchmd's slow `remove_dir_all` on large workspaces (~15s on Monorepo).
+  const lookupStart = performance.now();
+  const entries = await readWorkspaceRegistry();
+  const entry = entries.find((e) => e.id === workbookId);
+  console.log(`[remove-workspace] registry lookup: ${(performance.now() - lookupStart).toFixed(0)}ms`);
+
+  let trashed = false;
+  if (entry) {
+    const trashStart = performance.now();
+    try {
+      await shell.trashItem(entry.path);
+      trashed = true;
+      console.log(`[remove-workspace] trashItem: ${(performance.now() - trashStart).toFixed(0)}ms (${entry.path})`);
+    } catch (err) {
+      console.log(
+        `[remove-workspace] trashItem failed after ${(performance.now() - trashStart).toFixed(0)}ms, falling back to delete:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  } else {
+    console.log('[remove-workspace] no registry entry — letting scratchmd surface the error');
+  }
+
+  if (trashed) {
+    // Fire-and-forget the registry tidy. scratchmd sees the path is already
+    // gone, skips remove_dir_all, just updates workspaces.yaml.
+    void (async () => {
+      const cliStart = performance.now();
+      try {
+        const result = await runScratchmd(['workspaces', 'unsync', workbookId, '--yes']);
+        console.log(`[remove-workspace] background scratchmd unsync: ${(performance.now() - cliStart).toFixed(0)}ms`);
+        if (result.stderr.trim()) {
+          console.log('[remove-workspace] background scratchmd stderr:\n' + result.stderr.trimEnd());
+        }
+      } catch (err) {
+        console.log(
+          '[remove-workspace] background scratchmd unsync failed:',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    })();
+  } else {
+    // Fallback: synchronous slow path (scratchmd does the delete).
+    const cliStart = performance.now();
+    const result = await runScratchmd(['workspaces', 'unsync', workbookId, '--yes']);
+    console.log(
+      `[remove-workspace] scratchmd unsync (fallback, awaited): ${(performance.now() - cliStart).toFixed(0)}ms`,
+    );
+    if (result.stderr.trim()) {
+      console.log('[remove-workspace] scratchmd stderr:\n' + result.stderr.trimEnd());
+    }
+  }
+
+  const watchStart = performance.now();
   workspaceFileWatchService.clearWorkspaceFileWatch();
-  return result;
+  console.log(`[remove-workspace] clearWorkspaceFileWatch: ${(performance.now() - watchStart).toFixed(0)}ms`);
+
+  console.log(`[remove-workspace] total IPC: ${(performance.now() - ipcStart).toFixed(0)}ms`);
 });
 ipcMain.handle('scratch:prepare-workspace-index', async () => {
   // No-op: the folder-index seeds itself lazily on first run_query call.
 });
-ipcMain.handle('scratch:reindex-workspace', async (_, workbookId: string) => {
-  const entries = await readWorkspaceRegistry();
-  const entry = entries.find((e) => e.id === workbookId);
-  if (!entry) return;
-  await reindexAllFolderIndexes(entry.path);
-});
+
 ipcMain.handle(
   'scratch:clear-folder-index',
   async (_, workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> => {

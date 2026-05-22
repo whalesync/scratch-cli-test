@@ -31,6 +31,10 @@ function getLocalSectionLabel(): string {
   return platform === 'darwin' ? 'On my Mac' : 'On this PC';
 }
 
+function getTrashName(): string {
+  return window.electron?.process?.platform === 'win32' ? 'Recycle Bin' : 'Trash';
+}
+
 function getEnvironmentLabel(): string | null {
   const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || '';
   if (webUrl.includes('localhost')) return 'Dev';
@@ -145,11 +149,8 @@ export function HomePage() {
 
   // Track in-flight downloads keyed by workspace id so the card can transform in place.
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
-  const [indexingIds, setIndexingIds] = useState<Set<string>>(new Set());
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
   const { confirm, confirmModal } = useConfirmModal();
-  // A pending workspace promoted into the local list locally, before the next refetch resolves.
-  const [optimisticLocal, setOptimisticLocal] = useState<Workspace[]>([]);
 
   const startDownload = useCallback(
     async (workspace: Workspace) => {
@@ -163,20 +164,6 @@ export function HomePage() {
         void trackDownloadWorkspace(workspace.id);
         setDownloadingIds((prev) => new Set(prev).add(workspace.id));
         await window.scratchDesktop.initWorkspace(workspace.id, parentFolder);
-        // Pre-populate the folder index for all tables so the grid can paginate
-        // immediately without doing a lazy full reindex per folder on first open.
-        setIndexingIds((prev) => new Set(prev).add(workspace.id));
-        try {
-          await window.scratchDesktop.reindexWorkspace(workspace.id);
-        } finally {
-          setIndexingIds((prev) => {
-            const next = new Set(prev);
-            next.delete(workspace.id);
-            return next;
-          });
-        }
-        setOptimisticLocal((prev) => [...prev.filter((w) => w.id !== workspace.id), workspace]);
-        void fetchWorkspaces();
         void navigate(`/workspace/${workspace.id}`);
       } catch (err) {
         notifications.show({
@@ -192,7 +179,7 @@ export function HomePage() {
         });
       }
     },
-    [fetchWorkspaces, navigate],
+    [navigate],
   );
 
   const handleOpen = useCallback(
@@ -205,15 +192,16 @@ export function HomePage() {
 
   const handleRemove = useCallback(
     async (workspace: Workspace) => {
+      const trashName = getTrashName();
       const confirmed = await confirm(
-        'Remove the local copy? The remote workspace will stay — you can re-download it later.',
+        `The local copy will be moved to the ${trashName}. The remote workspace will stay — you can re-download it later.`,
+        { title: 'Remove local copy', confirmLabel: `Move to ${trashName}` },
       );
       if (!confirmed) return;
       void trackRemoveLocalWorkspace(workspace.id);
       setRemovingIds((prev) => new Set(prev).add(workspace.id));
       try {
         await window.scratchDesktop.removeWorkspace(workspace.id);
-        setOptimisticLocal((prev) => prev.filter((w) => w.id !== workspace.id));
         notifications.show({
           title: 'Local copy removed',
           message: `${workspace.name || 'Workspace'} moved back to the cloud.`,
@@ -268,16 +256,7 @@ export function HomePage() {
     }
   }, [newWorkspaceName, navigate]);
 
-  // Merge optimistic local promotions, dedupe, and remove anything currently downloading from cloud list.
-  const visibleLocal = useMemo(() => {
-    const byId = new Map<string, Workspace>();
-    for (const w of localWorkspaces) byId.set(w.id, w);
-    for (const w of optimisticLocal) byId.set(w.id, w);
-    return Array.from(byId.values()).sort((a, b) =>
-      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }),
-    );
-  }, [localWorkspaces, optimisticLocal]);
-
+  const visibleLocal = localWorkspaces;
   const visibleCloud = useMemo(
     () => remoteWorkspaces.filter((w) => !visibleLocal.some((l) => l.id === w.id)),
     [remoteWorkspaces, visibleLocal],
@@ -336,11 +315,7 @@ export function HomePage() {
                 removingIds.has(ws.id) ? (
                   <PendingWorkspaceCard key={ws.id} workspace={ws} label="Removing…" color="gray" />
                 ) : downloadingIds.has(ws.id) ? (
-                  <DownloadingWorkspaceCard
-                    key={ws.id}
-                    workspace={ws}
-                    label={indexingIds.has(ws.id) ? 'Preparing…' : 'Downloading…'}
-                  />
+                  <DownloadingWorkspaceCard key={ws.id} workspace={ws} label="Downloading…" />
                 ) : (
                   <DownloadedWorkspaceCard
                     key={ws.id}
@@ -366,12 +341,7 @@ export function HomePage() {
               >
                 {visibleCloud.map((ws, i) =>
                   downloadingIds.has(ws.id) ? (
-                    <DownloadingWorkspaceCard
-                      key={ws.id}
-                      workspace={ws}
-                      inGroup
-                      label={indexingIds.has(ws.id) ? 'Preparing…' : 'Downloading…'}
-                    />
+                    <DownloadingWorkspaceCard key={ws.id} workspace={ws} inGroup label="Downloading…" />
                   ) : (
                     <CloudWorkspaceCard
                       key={ws.id}

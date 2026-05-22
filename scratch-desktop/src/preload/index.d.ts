@@ -58,7 +58,6 @@ interface ScratchDesktopAPI {
   ) => Promise<{ stdout: string; stderr: string }>;
   removeWorkspace: (workbookId: string) => Promise<void>;
   prepareWorkspaceIndex: (workspacePath: string) => Promise<void>;
-  reindexWorkspace: (workbookId: string) => Promise<void>;
   clearFolderIndex: (workspacePath: string, folderPath: string) => Promise<{ rows_cleared: number }>;
   refreshPaths: (workspacePath: string, paths: string[], singleFile?: string) => Promise<void>;
   acceptAllChanges: (

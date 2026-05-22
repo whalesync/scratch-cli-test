@@ -246,6 +246,9 @@ async fn delete(server_url: &str, id: &str) -> anyhow::Result<()> {
 }
 
 fn unsync(id: Option<&str>, yes: bool, json: bool) -> anyhow::Result<()> {
+    let started_total = std::time::Instant::now();
+
+    let started_lookup = std::time::Instant::now();
     let workbook_id = crate::config::resolve_workspace_id(id)?;
     let Some(workspace_path) = crate::config::workspaces::get(&workbook_id) else {
         anyhow::bail!(
@@ -253,6 +256,10 @@ fn unsync(id: Option<&str>, yes: bool, json: bool) -> anyhow::Result<()> {
             workbook_id
         );
     };
+    eprintln!(
+        "[unsync] registry lookup: {:.0}ms",
+        started_lookup.elapsed().as_secs_f64() * 1000.0
+    );
 
     if !yes && !json {
         println!("This will remove the local workspace files only.");
@@ -270,9 +277,31 @@ fn unsync(id: Option<&str>, yes: bool, json: bool) -> anyhow::Result<()> {
     }
 
     if workspace_path.exists() {
+        let started_remove = std::time::Instant::now();
         std::fs::remove_dir_all(&workspace_path)?;
+        eprintln!(
+            "[unsync] remove_dir_all: {:.0}ms ({})",
+            started_remove.elapsed().as_secs_f64() * 1000.0,
+            workspace_path.display()
+        );
+    } else {
+        eprintln!(
+            "[unsync] remove_dir_all: skipped (path missing: {})",
+            workspace_path.display()
+        );
     }
+
+    let started_registry = std::time::Instant::now();
     crate::config::workspaces::remove(&workbook_id)?;
+    eprintln!(
+        "[unsync] registry write: {:.0}ms",
+        started_registry.elapsed().as_secs_f64() * 1000.0
+    );
+
+    eprintln!(
+        "[unsync] total: {:.0}ms",
+        started_total.elapsed().as_secs_f64() * 1000.0
+    );
 
     if json {
         println!(
