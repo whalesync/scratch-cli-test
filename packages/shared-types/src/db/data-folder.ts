@@ -24,6 +24,8 @@ export interface DataFolder {
   isAssetTable: boolean;
   options: Record<string, unknown> | null;
   schedules: Schedule[];
+  lastFullPullAt: string | null;
+  lastIncrementalPullAt: string | null;
 }
 
 ///

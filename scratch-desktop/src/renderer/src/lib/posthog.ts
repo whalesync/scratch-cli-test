@@ -18,6 +18,7 @@ export enum PostHogEvents {
   PUBLISH_COMPLETED = 'publish_completed',
   PUBLISH_REVIEW_ON_WEB = 'publish_review_on_web',
   REFRESH_FOLDER_DATA_GRID = 'refresh_folder_data_grid',
+  SHOW_FOLDER_INFO = 'show_folder_info',
   APP_STARTED = 'app_started',
   APP_EXITED = 'app_exited',
   CHECK_FOR_UPDATES = 'check_for_updates',
@@ -154,6 +155,10 @@ export async function trackPublishReviewOnWeb(workspaceId: string): Promise<void
 
 export async function trackRefreshFolderDataGrid(workspaceId: string, folderPath: string | null): Promise<void> {
   await captureEvent(PostHogEvents.REFRESH_FOLDER_DATA_GRID, { workspaceId, folderPath });
+}
+
+export async function trackShowFolderInfo(workspaceId: string, dataFolderId: string): Promise<void> {
+  await captureEvent(PostHogEvents.SHOW_FOLDER_INFO, { workspaceId, dataFolderId });
 }
 
 export async function trackAppStarted(props: { isPackaged: boolean }): Promise<void> {

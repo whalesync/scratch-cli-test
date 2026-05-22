@@ -1,7 +1,7 @@
 import { API_CONFIG } from './api';
 
 /** Subset of server `ConnectorMetadata` used by the desktop UI. */
-export type ConnectorsMetadataMap = Record<string, { logo: string }>;
+export type ConnectorsMetadataMap = Record<string, { logo: string; incrementalPull?: boolean }>;
 
 export const connectorsMetadataApi = {
   getAll: async (): Promise<ConnectorsMetadataMap> => {

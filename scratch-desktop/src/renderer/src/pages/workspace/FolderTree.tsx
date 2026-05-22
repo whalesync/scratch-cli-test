@@ -5,10 +5,11 @@ import { notifications } from '@mantine/notifications';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder, FolderLock } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { useConfirmModal } from '../../components/ConfirmModal';
-import { trackPullTable } from '../../lib/posthog';
+import { trackPullTable, trackShowFolderInfo } from '../../lib/posthog';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { DataFolder } from '../../types/workspace';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
+import { DataFolderInfoModal } from './DataFolderInfoModal';
 import classes from './FolderTree.module.css';
 import { PullFoldersModal } from './PullFoldersModal';
 import { LocalFolder } from './WorkspaceContent';
@@ -101,6 +102,12 @@ const INDENT_PX = 16;
 
 const isMac = window.electron?.process?.platform === 'darwin';
 
+interface FolderInfoRequest {
+  folder: DataFolder;
+  localFolder: LocalFolder;
+  workingCopyPath: string;
+}
+
 interface FolderTreeNodeProps {
   node: TreeNode;
   depth: number;
@@ -113,6 +120,7 @@ interface FolderTreeNodeProps {
   dataFolderByLocalPath: Map<string, DataFolder>;
   dataFoldersByConnection: Map<string, DataFolder[]>;
   onRequestPull: (request: PullRequest) => void;
+  onShowFolderInfo: (request: FolderInfoRequest) => void;
 }
 
 function FolderTreeNodeRow({
@@ -127,6 +135,7 @@ function FolderTreeNodeRow({
   dataFolderByLocalPath,
   dataFoldersByConnection,
   onRequestPull,
+  onShowFolderInfo,
 }: FolderTreeNodeProps) {
   const hasChildren = node.children.size > 0;
   const [expanded, setExpanded] = useState(true);
@@ -161,6 +170,11 @@ function FolderTreeNodeRow({
         { id: 'reveal', label: isMac ? 'Open in Finder' : 'Open in Explorer' },
         { id: 'terminal', label: isMac ? 'Open in Terminal' : 'Open in PowerShell' },
       );
+
+      if (mappedFolder && node.folder) {
+        items.push({ id: 'info-sep', label: '', type: 'separator' });
+        items.push({ id: 'show-info', label: 'Get Info' });
+      }
 
       if (isDevToolsEnabled && node.folder) {
         items.push({ id: 'sep', label: '', type: 'separator' });
@@ -203,6 +217,9 @@ function FolderTreeNodeRow({
         }
         if (id === 'column-defs') onShowColumnDefs?.(path);
         if (id === 'clear-index') onClearFolderIndex?.(path);
+        if (id === 'show-info' && mappedFolder && node.folder) {
+          onShowFolderInfo({ folder: mappedFolder, localFolder: node.folder, workingCopyPath: path });
+        }
       });
     },
     [
@@ -215,6 +232,7 @@ function FolderTreeNodeRow({
       onClearFolderIndex,
       onRequestPull,
       onShowColumnDefs,
+      onShowFolderInfo,
       workspacePath,
     ],
   );
@@ -330,6 +348,7 @@ function FolderTreeNodeRow({
               dataFolderByLocalPath={dataFolderByLocalPath}
               dataFoldersByConnection={dataFoldersByConnection}
               onRequestPull={onRequestPull}
+              onShowFolderInfo={onShowFolderInfo}
             />
           ))}
         </>
@@ -367,6 +386,7 @@ export function FolderTree({
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
   const [columnDefsFolder, setColumnDefsFolder] = useState<string | null>(null);
   const [pullRequest, setPullRequest] = useState<PullRequest | null>(null);
+  const [folderInfoRequest, setFolderInfoRequest] = useState<FolderInfoRequest | null>(null);
   const connectionDirNameById = useMemo(
     () => new Map(workspaceConnections.map((connection) => [connection.id, connection.dirName])),
     [workspaceConnections],
@@ -398,6 +418,14 @@ export function FolderTree({
   const handleShowColumnDefs = useCallback((folderPath: string) => {
     setColumnDefsFolder(folderPath);
   }, []);
+
+  const handleShowFolderInfo = useCallback(
+    (request: FolderInfoRequest) => {
+      void trackShowFolderInfo(workspaceId, request.folder.id);
+      setFolderInfoRequest(request);
+    },
+    [workspaceId],
+  );
 
   const handlePullRequest = useCallback(
     (request: PullRequest) => {
@@ -460,6 +488,7 @@ export function FolderTree({
           dataFolderByLocalPath={dataFolderByLocalPath}
           dataFoldersByConnection={dataFoldersByConnection}
           onRequestPull={handlePullRequest}
+          onShowFolderInfo={handleShowFolderInfo}
         />
       ))}
 
@@ -481,6 +510,16 @@ export function FolderTree({
           dataFolderIds={pullRequest.dataFolderIds}
           emptyStateMessage={pullRequest.emptyStateMessage}
           onDataRefresh={onDataRefresh}
+        />
+      )}
+
+      {folderInfoRequest && (
+        <DataFolderInfoModal
+          opened={true}
+          onClose={() => setFolderInfoRequest(null)}
+          folder={folderInfoRequest.folder}
+          workingCopyPath={folderInfoRequest.workingCopyPath}
+          fileCount={folderInfoRequest.localFolder.fileCount}
         />
       )}
 

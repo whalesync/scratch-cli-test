@@ -19,4 +19,9 @@ export interface DataFolder {
   connectorDisplayName: string | null;
   lock: string | null;
   options: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  isAssetTable: boolean;
+  lastFullPullAt: string | null;
+  lastIncrementalPullAt: string | null;
 }

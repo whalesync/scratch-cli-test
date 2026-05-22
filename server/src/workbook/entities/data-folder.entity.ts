@@ -25,6 +25,8 @@ export class DataFolderEntity implements DataFolder {
   isAssetTable: boolean;
   options: Record<string, unknown> | null;
   schedules: Schedule[];
+  lastFullPullAt: string | null;
+  lastIncrementalPullAt: string | null;
 
   constructor(dataFolder: DataFolderCluster.DataFolder, schedules: PrismaSchedule[] = []) {
     this.id = dataFolder.id as DataFolderId;
@@ -44,6 +46,10 @@ export class DataFolderEntity implements DataFolder {
       ? normalizeJsonObject(dataFolder.options as Prisma.JsonValue | null | undefined)
       : {};
     this.schedules = schedules.map((s) => new ScheduleEntity(s));
+    this.lastFullPullAt = dataFolder.lastFullPullAt ? dataFolder.lastFullPullAt.toISOString() : null;
+    this.lastIncrementalPullAt = dataFolder.lastIncrementalPullAt
+      ? dataFolder.lastIncrementalPullAt.toISOString()
+      : null;
   }
 }
 

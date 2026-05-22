@@ -211,6 +211,8 @@ export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
     isAssetTable: false,
     options: null,
     schedules: [],
+    lastFullPullAt: null,
+    lastIncrementalPullAt: null,
     ...overrides,
   };
 }

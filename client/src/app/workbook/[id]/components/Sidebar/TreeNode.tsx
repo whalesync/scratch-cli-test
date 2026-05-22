@@ -45,6 +45,7 @@ import {
   FolderIcon,
   FolderLockIcon,
   ImageIcon,
+  InfoIcon,
   MoreHorizontalIcon,
   RefreshCwIcon,
   RouteIcon,
@@ -65,6 +66,7 @@ import { AdvancedFolderSettingsModal } from '../shared/AdvancedFolderSettingsMod
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { ConnectionContextMenu } from '../shared/ConnectionContextMenu';
 import { ContextMenu } from '../shared/ContextMenu';
+import { DataFolderInfoModal } from '../shared/DataFolderInfoModal';
 import { DataFolderSchemaModal } from '../shared/DataFolderSchemaModal';
 import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
 import { NewFileModal } from '../shared/NewFileModal';
@@ -605,6 +607,7 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
   const [pullScheduleOpened, { open: openPullSchedule, close: closePullSchedule }] = useDisclosure(false);
   const [assetIndexOpened, { open: openAssetIndex, close: closeAssetIndex }] = useDisclosure(false);
+  const [infoModalOpened, { open: openInfoModal, close: closeInfoModal }] = useDisclosure(false);
 
   // Pull handler for this table
   const handlePullTable = async () => {
@@ -863,6 +866,7 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
                 setContextMenu(null);
               },
             },
+            { label: 'Get Info', icon: InfoIcon, onClick: openInfoModal },
             { label: 'View Schema', icon: FileJsonIcon, onClick: openSchemaModal },
             { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
@@ -923,6 +927,9 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
         onConfirm={handlePullAssetsConfirm}
         title={`Pull Assets — ${folder.name}`}
       />
+
+      {/* Folder Info Modal */}
+      <DataFolderInfoModal opened={infoModalOpened} onClose={closeInfoModal} folder={folder} />
     </>
   );
 }
