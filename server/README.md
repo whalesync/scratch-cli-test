@@ -89,25 +89,9 @@ gcloud auth application-default login
 
 Then restart the server — the `Storage` auth client is constructed once at boot and caches the credential.
 
-#### One-time IAM grant for new engineers
+#### Role permisions
 
-Signing impersonates `GCS_LOCAL_SIGNING_SA`, so your gcloud user needs `roles/iam.serviceAccountTokenCreator` on that service account. Without it the server returns HTTP 500 with `Permission 'iam.serviceAccounts.signBlob' denied on resource` from `Impersonated.sign()`.
-
-This must be run by someone in the **Operator** group (project IAM admins):
-
-```bash
-gcloud iam service-accounts add-iam-policy-binding \
-  cloudrun-service-account@spv1eu-test.iam.gserviceaccount.com \
-  --member="user:YOUR_EMAIL@whalesync.com" \
-  --role="roles/iam.serviceAccountTokenCreator" \
-  --project=spv1eu-test
-```
-
-You can list the currently configured accounts using this command:
-
-```bash
-gcloud iam service-accounts get-iam-policy cloudrun-service-account@spv1eu-test.iam.gserviceaccount.com --project spv1eu-test --format=json 2>&1 | python3 -c "import sys,json; p=json.load(sys.stdin); [print(b['role'],'->',m) for b in p['bindings'] for m in b['members']]"
-```
+Signing impersonates `GCS_LOCAL_SIGNING_SA`, so your gcloud user needs `roles/iam.serviceAccountTokenCreator` on that service account. Without it the server returns HTTP 500 with `Permission 'iam.serviceAccounts.signBlob' denied on resource` from `Impersonated.sign()`. You authenticated account must be part of the `role_developers@whalesync.com` group.
 
 ### Start the Server
 
