@@ -1,16 +1,4 @@
-import {
-  ActionIcon,
-  Box,
-  Group,
-  Menu,
-  Portal,
-  ScrollArea,
-  Select,
-  Stack,
-  Table,
-  Textarea,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Box, Group, Menu, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
 import type { TableViewCol } from '@spinner/shared-types';
 import { Check, RotateCcw, Settings2, TriangleAlertIcon } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -35,7 +23,6 @@ import {
 import { FieldCellValue } from './field-cell-renderer';
 import type { FieldValueDiffKind, FieldValueDisplayMode } from './field-value-types';
 import { DIFF_REMOVED_BG, DIFF_REMOVED_FG, DIFF_TEXT_STYLE, getAddedBg } from './field-value-types';
-import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { useDiffViewMode } from './use-diff-view-mode';
 
 function isMediumOrLargeChange(row: RecordFieldRow): boolean {
@@ -83,7 +70,6 @@ interface RecordFieldsGridProps {
   onFocusedFieldChange?: (fieldName: string | null) => void;
 }
 
-const FLOATING_PANEL_GAP = 5;
 const LABEL_COLUMN_WIDTH = 280;
 const CONTROLS_COLUMN_WIDTH = 60;
 
@@ -224,7 +210,13 @@ function ValidationTooltip({ violations, children }: { violations: ValidationEnt
   );
 }
 
-const FieldEditor = memo(function FieldEditor({ row }: { row: RecordFieldRow }) {
+const FieldEditor = memo(function FieldEditor({
+  row,
+  onChange,
+}: {
+  row: RecordFieldRow;
+  onChange?: (value: string) => void;
+}) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const committedRef = useRef(false);
 
@@ -241,7 +233,7 @@ const FieldEditor = memo(function FieldEditor({ row }: { row: RecordFieldRow }) 
       autosize
       minRows={1}
       defaultValue={row.value}
-      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => onChange?.(e.currentTarget.value)}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -260,17 +252,49 @@ const FieldEditor = memo(function FieldEditor({ row }: { row: RecordFieldRow }) 
         input: {
           backgroundColor: 'var(--bg-base)',
           borderRadius: 0,
-          border: 'none',
-          outline: '2px solid var(--highlight-border)',
+          border: '1.5px solid var(--highlight-border)',
           padding: '8px 12px',
-          fontFamily: 'monospace',
-          fontSize: 13,
-          lineHeight: 1.5,
+          ...DIFF_TEXT_STYLE,
         },
       }}
     />
   );
 });
+
+/**
+ * Side-by-side editing: left column shows a live diff (current vs typed value),
+ * right column shows the textarea editor.
+ */
+function SideBySideEditingCells({ row, layout }: { row: RecordFieldRow; layout: 'grid' | 'focused' }) {
+  const [editValue, setEditValue] = useState(row.value);
+
+  if (layout === 'focused') {
+    // Focused field view: 1fr divider 1fr layout
+    return (
+      <Box style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr', flex: 1, minHeight: 0 }}>
+        <Box style={{ minWidth: 0, overflowY: 'auto' }}>
+          <SideBySideCurrentDiff fromValue={row.fromValue ?? ''} value={editValue} />
+        </Box>
+        <Box style={{ backgroundColor: 'var(--fg-divider)' }} />
+        <Box style={{ minWidth: 0 }}>
+          <FieldEditor row={row} onChange={setEditValue} />
+        </Box>
+      </Box>
+    );
+  }
+
+  // Grid table layout: occupies two grid columns (Current + New)
+  return (
+    <>
+      <Box style={{ minWidth: 0 }}>
+        <SideBySideCurrentDiff fromValue={row.fromValue ?? ''} value={editValue} />
+      </Box>
+      <Box style={{ minWidth: 0 }}>
+        <FieldEditor row={row} onChange={setEditValue} />
+      </Box>
+    </>
+  );
+}
 
 function diffBorderColor(diffKind: FieldValueDiffKind): string {
   if (diffKind === 'unreviewed') return 'var(--modified-needs-review-stroke)';
@@ -409,12 +433,13 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   initialFocusedFieldName,
   onFocusedFieldChange,
 }: RecordFieldsGridProps) {
-  const [editingAnchorEl, setEditingAnchorEl] = useState<HTMLDivElement | null>(null);
-  const [editingAnchorRect, setEditingAnchorRect] = useState<DOMRect | null>(null);
   const [focusedFieldName, setFocusedFieldNameInternal] = useState<string | null>(initialFocusedFieldName ?? null);
   const [diffViewMode, setDiffViewMode] = useDiffViewMode();
   const hasDiffs = useMemo(() => rows.some((row) => row.diffKind != null), [rows]);
-  const isSideBySide = diffViewMode === 'side-by-side';
+  // Side-by-side only makes sense when there are two-sided diffs (modified records).
+  // Created/deleted records have only one meaningful value — force inline for them.
+  const hasTwoSidedDiff = useMemo(() => rows.some((row) => row.diffKind != null && row.fromValue != null), [rows]);
+  const isSideBySide = diffViewMode === 'side-by-side' && hasTwoSidedDiff;
 
   const setFocusedFieldName = (next: string | null) => {
     setFocusedFieldNameInternal(next);
@@ -426,7 +451,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     setFocusedFieldNameInternal(initialFocusedFieldName ?? null);
   }, [initialFocusedFieldName]);
 
-  const editingRow = useMemo(() => rows.find((row) => row.editing) ?? null, [rows]);
   const focusedRow = useMemo(
     () => (focusedFieldName ? (rows.find((row) => row.fieldName === focusedFieldName) ?? null) : null),
     [rows, focusedFieldName],
@@ -442,25 +466,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     }
   }, [focusedFieldName, focusedRow, rows.length, onFocusedFieldChange]);
 
-  useEffect(() => {
-    if (!editingAnchorEl || editingRow?.referenceValue == null || !editingRow.onUndo) {
-      setEditingAnchorRect(null);
-      return;
-    }
-
-    const updateRect = () => {
-      setEditingAnchorRect(editingAnchorEl.getBoundingClientRect());
-    };
-
-    updateRect();
-    window.addEventListener('resize', updateRect);
-    window.addEventListener('scroll', updateRect, true);
-    return () => {
-      window.removeEventListener('resize', updateRect);
-      window.removeEventListener('scroll', updateRect, true);
-    };
-  }, [editingAnchorEl, editingRow]);
-
   if (rows.length === 0) {
     return (
       <Box style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -468,30 +473,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
       </Box>
     );
   }
-
-  const editingAnchorOverlay =
-    editingRow?.referenceValue != null && editingRow.onUndo && editingAnchorRect ? (
-      <Portal target="#portal">
-        <Box
-          className="click-outside-ignore"
-          style={{
-            position: 'fixed',
-            left: Math.max(12, Math.min(editingAnchorRect.left, window.innerWidth - editingAnchorRect.width - 12)),
-            top: Math.max(FLOATING_PANEL_GAP, editingAnchorRect.top - FLOATING_PANEL_GAP),
-            transform: 'translateY(-100%)',
-            zIndex: 10010,
-            width: Math.max(280, Math.floor(editingAnchorRect.width)),
-            maxWidth: Math.max(280, window.innerWidth - 24),
-          }}
-        >
-          <FieldReferenceStrip
-            value={editingRow.referenceValue}
-            label={editingRow.diffKind === 'unpublished' ? 'Last published' : 'Last approved'}
-            onUndo={editingRow.onUndo}
-          />
-        </Box>
-      </Portal>
-    ) : null;
 
   // --- Focused field view ---
   if (focusedRow) {
@@ -601,9 +582,11 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
           }}
         >
           {focusedRow.editing ? (
-            <Box ref={setEditingAnchorEl} style={{ display: 'grid', gap: 6 }}>
+            isSideBySide && focusedRow.fromValue != null ? (
+              <SideBySideEditingCells row={focusedRow} layout="focused" />
+            ) : (
               <FieldEditor row={focusedRow} />
-            </Box>
+            )
           ) : focusedIsDiff ? (
             <Box
               style={{
@@ -670,8 +653,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
             </Box>
           )}
         </Box>
-
-        {editingAnchorOverlay}
       </Box>
     );
   }
@@ -823,19 +804,9 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
 
                   {/* Value column(s) */}
                   {isSideBySide ? (
-                    <SideBySideValueCells row={row} setEditingAnchorEl={setEditingAnchorEl} />
+                    <SideBySideValueCells row={row} />
                   ) : (
-                    <Box>
-                      {row.editing ? (
-                        <Box style={{ display: 'grid', gap: 6 }}>
-                          <Box ref={setEditingAnchorEl}>
-                            <FieldEditor row={row} />
-                          </Box>
-                        </Box>
-                      ) : (
-                        <InlineValueCell row={row} />
-                      )}
-                    </Box>
+                    <Box>{row.editing ? <FieldEditor row={row} /> : <InlineValueCell row={row} />}</Box>
                   )}
 
                   {/* Controls column */}
@@ -849,20 +820,12 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
         );
       })}
       {footer}
-
-      {editingAnchorOverlay}
     </ScrollArea>
   );
 });
 
 /** Renders the Current and New value cells for side-by-side mode. */
-function SideBySideValueCells({
-  row,
-  setEditingAnchorEl,
-}: {
-  row: RecordFieldRow;
-  setEditingAnchorEl: (el: HTMLDivElement | null) => void;
-}) {
+function SideBySideValueCells({ row }: { row: RecordFieldRow }) {
   const clickProps = row.onClick
     ? {
         onClick: row.onClick,
@@ -879,14 +842,7 @@ function SideBySideValueCells({
     : { style: { cursor: 'default' as const } };
 
   if (row.editing) {
-    // Editing spans both value columns
-    return (
-      <Box style={{ gridColumn: 'span 2', display: 'grid', gap: 6 }}>
-        <Box ref={setEditingAnchorEl}>
-          <FieldEditor row={row} />
-        </Box>
-      </Box>
-    );
+    return <SideBySideEditingCells row={row} layout="grid" />;
   }
 
   const isDiff = row.diffKind != null;

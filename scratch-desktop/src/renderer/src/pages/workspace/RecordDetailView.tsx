@@ -993,7 +993,7 @@ export const RecordDetailView = memo(function RecordDetailView({
               </TextTitle2>
 
               <Group gap={6} align="center" wrap="nowrap">
-                {hasUnreviewedChanges && !isDeleted && !isCreated && (
+                {!focusedFieldName && hasUnreviewedChanges && !isDeleted && !isCreated && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="green.8"
@@ -1004,7 +1004,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     Approve changes
                   </ButtonSecondaryGhost>
                 )}
-                {hasUnreviewedChanges && !isDeleted && !isCreated && (
+                {!focusedFieldName && hasUnreviewedChanges && !isDeleted && !isCreated && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="red.8"
@@ -1015,7 +1015,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     Reject changes
                   </ButtonSecondaryGhost>
                 )}
-                {(hasUnreviewedChanges || hasPublishableChanges) && !isDeleted && !isCreated && (
+                {!focusedFieldName && (hasUnreviewedChanges || hasPublishableChanges) && !isDeleted && !isCreated && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="red.8"
@@ -1026,7 +1026,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     Discard changes
                   </ButtonSecondaryGhost>
                 )}
-                {onPublishFile && hasPublishableChanges && (
+                {!focusedFieldName && onPublishFile && hasPublishableChanges && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     leftSection={<CloudUpload size={12} />}
@@ -1036,20 +1036,22 @@ export const RecordDetailView = memo(function RecordDetailView({
                     Publish
                   </ButtonSecondaryGhost>
                 )}
-                <IconButtonGhost
-                  size="compact-xs"
-                  onClick={() => setViewRaw((v) => !v)}
-                  style={
-                    viewRaw
-                      ? {
-                          backgroundColor: 'var(--highlight-fill)',
-                          outline: '1px solid var(--highlight-border)',
-                        }
-                      : undefined
-                  }
-                >
-                  <StyledLucideIcon Icon={Braces} size="sm" c={viewRaw ? 'var(--highlight-text)' : undefined} />
-                </IconButtonGhost>
+                {!focusedFieldName && (
+                  <IconButtonGhost
+                    size="compact-xs"
+                    onClick={() => setViewRaw((v) => !v)}
+                    style={
+                      viewRaw
+                        ? {
+                            backgroundColor: 'var(--highlight-fill)',
+                            outline: '1px solid var(--highlight-border)',
+                          }
+                        : undefined
+                    }
+                  >
+                    <StyledLucideIcon Icon={Braces} size="sm" c={viewRaw ? 'var(--highlight-text)' : undefined} />
+                  </IconButtonGhost>
+                )}
                 <IconButtonGhost onClick={onClose}>
                   <StyledLucideIcon Icon={X} size="md" />
                 </IconButtonGhost>
@@ -1082,7 +1084,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     ? 'Record removed'
                     : 'This record will be deleted on next publish'}
                 </Text12Regular>
-                {recordData.row.__rowStatus === 'deleted' && (
+                {!focusedFieldName && recordData.row.__rowStatus === 'deleted' && (
                   <>
                     <ButtonSecondaryGhost
                       size="compact-xs"
@@ -1104,7 +1106,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     </ButtonSecondaryGhost>
                   </>
                 )}
-                {recordData.row.__rowStatus === 'deletedUnpublished' && (
+                {!focusedFieldName && recordData.row.__rowStatus === 'deletedUnpublished' && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="currentColor"
@@ -1144,7 +1146,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     ? 'Record added'
                     : 'This record will be created on next publish'}
                 </Text12Regular>
-                {recordData.row.__rowStatus === 'added' && (
+                {!focusedFieldName && recordData.row.__rowStatus === 'added' && (
                   <>
                     <ButtonSecondaryGhost
                       size="compact-xs"
@@ -1166,7 +1168,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     </ButtonSecondaryGhost>
                   </>
                 )}
-                {recordData.row.__rowStatus === 'addedUnpublished' && (
+                {!focusedFieldName && recordData.row.__rowStatus === 'addedUnpublished' && (
                   <ButtonSecondaryGhost
                     size="compact-xs"
                     c="currentColor"
