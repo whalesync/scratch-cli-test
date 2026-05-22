@@ -193,6 +193,28 @@ function deriveRowStatusAfterEdit(row: DiffRow): DiffRow['__rowStatus'] {
  * that optimistic updates to displayData match what readDiffRecordData would
  * see on disk. Top-level fields and nested dot paths are both supported.
  */
+/**
+ * Walks a folder schema (which may be wrapped as `{ schema: { properties: ... } }`)
+ * by `.`-delimited field path and returns the `contentMediaType` declared on the leaf
+ * property, if any. Returns undefined when the schema is missing, the path doesn't
+ * resolve to a property, or the property has no `contentMediaType`.
+ */
+function getFieldContentMediaType(folderSchema: Record<string, unknown> | null, fieldPath: string): string | undefined {
+  if (!folderSchema) return undefined;
+  const inner = folderSchema.schema;
+  let current: Record<string, unknown> | undefined =
+    inner && typeof inner === 'object' && !Array.isArray(inner) ? (inner as Record<string, unknown>) : folderSchema;
+  for (const part of fieldPath.split('.')) {
+    const props = current?.properties;
+    if (!props || typeof props !== 'object') return undefined;
+    const next = (props as Record<string, unknown>)[part];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) return undefined;
+    current = next as Record<string, unknown>;
+  }
+  const cmt = current?.contentMediaType;
+  return typeof cmt === 'string' ? cmt : undefined;
+}
+
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split('.');
   let cursor: Record<string, unknown> = obj;
@@ -279,6 +301,10 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
   const [focusedFieldName, setFocusedFieldName] = useState<string | null>(initialFocusedFieldName ?? null);
+  // Held here (not in RecordFieldsGrid) so the prettify toggle survives the
+  // grid's transient unmounts during loading on record navigation.
+  const [prettifyActive, setPrettifyActive] = useState(false);
+  const togglePrettify = useCallback(() => setPrettifyActive((v) => !v), []);
 
   useEffect(() => {
     if (initialFocusedFieldName) setFocusedFieldName(initialFocusedFieldName);
@@ -717,6 +743,7 @@ export const RecordDetailView = memo(function RecordDetailView({
           : '';
 
       const fieldType = columnTypes?.get(fieldName);
+      const contentMediaType = getFieldContentMediaType(schema, effectivePath);
 
       return {
         fieldName,
@@ -730,6 +757,7 @@ export const RecordDetailView = memo(function RecordDetailView({
         editing: isEditable && editingFieldName === fieldName,
         referenceValue: diffKind !== null ? fromValue : undefined,
         column: { readonly: isReadOnly, type: fieldType },
+        contentMediaType,
         onClick: isEditable
           ? fieldType === 'checkbox'
             ? () => {
@@ -771,6 +799,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     handleAcceptCellChange,
     handleDiscardUnreviewedCellChange,
     handleUndoApprovedCellChange,
+    schema,
   ]);
 
   return (
@@ -1212,6 +1241,8 @@ export const RecordDetailView = memo(function RecordDetailView({
                     validationWarnings={validationWarnings}
                     initialFocusedFieldName={focusedFieldName ?? undefined}
                     onFocusedFieldChange={setFocusedFieldName}
+                    prettifyActive={prettifyActive}
+                    onPrettifyToggle={togglePrettify}
                     footer={
                       hiddenCount > 0 ? (
                         <Box style={{ padding: '8px 12px' }}>

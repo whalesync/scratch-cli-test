@@ -1,6 +1,6 @@
 import { ActionIcon, Box, Group, Menu, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
 import type { TableViewCol } from '@spinner/shared-types';
-import { Check, RotateCcw, Settings2, TriangleAlertIcon } from 'lucide-react';
+import { Check, RemoveFormatting, RotateCcw, Settings2, Sparkles, TriangleAlertIcon } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
@@ -21,6 +21,7 @@ import {
   SideBySideNewDiff,
 } from './diff-renderers';
 import { FieldCellValue } from './field-cell-renderer';
+import { isPrettifiableMediaType, prettifyValue } from './field-prettifiers';
 import type { FieldValueDiffKind, FieldValueDisplayMode } from './field-value-types';
 import { DIFF_REMOVED_BG, DIFF_REMOVED_FG, DIFF_TEXT_STYLE, getAddedBg } from './field-value-types';
 import { useDiffViewMode } from './use-diff-view-mode';
@@ -52,6 +53,8 @@ export interface RecordFieldRow {
   onUndo?: () => void;
   /** Column view metadata (readonly state, property type) from the view definition. */
   column?: Pick<TableViewCol, 'readonly' | 'type'>;
+  /** JSON Schema `contentMediaType` for this field, used to enable the "Prettify" toggle. */
+  contentMediaType?: string;
 }
 
 export type { ValidationEntry } from '../../../../shared/validation-types';
@@ -68,6 +71,13 @@ interface RecordFieldsGridProps {
   initialFocusedFieldName?: string;
   /** Notifies parent when the focused field changes. Lets the parent persist focus across remounts. */
   onFocusedFieldChange?: (fieldName: string | null) => void;
+  /**
+   * Controlled state for the "Prettify" toggle in the focused field view.
+   * Lifted to the parent so it survives transient remounts of the grid
+   * (e.g. while the next record is loading).
+   */
+  prettifyActive?: boolean;
+  onPrettifyToggle?: () => void;
 }
 
 const LABEL_COLUMN_WIDTH = 280;
@@ -392,6 +402,17 @@ function InlineValueCell({ row }: { row: RecordFieldRow }) {
   );
 }
 
+/** Toggles the "Prettify" view, which reformats the value according to its contentMediaType. */
+function PrettifyToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <Tooltip label={active ? 'Show original' : 'Prettify'} position="bottom" withArrow zIndex={10020}>
+      <ActionIcon variant="subtle" size={20} radius={3} aria-label="Prettify" aria-pressed={active} onClick={onToggle}>
+        <StyledLucideIcon Icon={active ? RemoveFormatting : Sparkles} size={14} strokeWidth={2} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
+
 /** The diff settings menu (side-by-side vs inline toggle). */
 function DiffViewModeMenu({
   diffViewMode,
@@ -432,9 +453,14 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   validationWarnings,
   initialFocusedFieldName,
   onFocusedFieldChange,
+  prettifyActive: prettifyActiveProp,
+  onPrettifyToggle,
 }: RecordFieldsGridProps) {
   const [focusedFieldName, setFocusedFieldNameInternal] = useState<string | null>(initialFocusedFieldName ?? null);
   const [diffViewMode, setDiffViewMode] = useDiffViewMode();
+  const [prettifyActiveLocal, setPrettifyActiveLocal] = useState(false);
+  const prettifyActive = prettifyActiveProp ?? prettifyActiveLocal;
+  const togglePrettify = onPrettifyToggle ?? (() => setPrettifyActiveLocal((v) => !v));
   const hasDiffs = useMemo(() => rows.some((row) => row.diffKind != null), [rows]);
   // Side-by-side only makes sense when there are two-sided diffs (modified records).
   // Created/deleted records have only one meaningful value — force inline for them.
@@ -455,6 +481,20 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     () => (focusedFieldName ? (rows.find((row) => row.fieldName === focusedFieldName) ?? null) : null),
     [rows, focusedFieldName],
   );
+
+  const focusedPrettifiable = isPrettifiableMediaType(focusedRow?.contentMediaType);
+  const focusedDisplayRow = useMemo<RecordFieldRow | null>(() => {
+    if (!focusedRow) return null;
+    if (!prettifyActive || !focusedPrettifiable || !focusedRow.contentMediaType) return focusedRow;
+    return {
+      ...focusedRow,
+      value: prettifyValue(focusedRow.value, focusedRow.contentMediaType),
+      fromValue:
+        focusedRow.fromValue != null
+          ? prettifyValue(focusedRow.fromValue, focusedRow.contentMediaType)
+          : focusedRow.fromValue,
+    };
+  }, [focusedRow, focusedPrettifiable, prettifyActive]);
 
   // If the focused field is missing from a populated record (e.g. switched to a record
   // that doesn't have this field), exit focus mode. Skip while rows is empty — that
@@ -541,12 +581,11 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
               {focusedIsDiff && focusedRow.onUndo && (
                 <IconActionButton label="Reject" onClick={focusedRow.onUndo} tone="undo" icon={RotateCcw} />
               )}
-              {hasDiffs && (
-                <>
-                  <Box style={{ flex: 1 }} />
-                  <DiffViewModeMenu diffViewMode={diffViewMode} setDiffViewMode={setDiffViewMode} />
-                </>
+              <Box style={{ flex: 1 }} />
+              {focusedPrettifiable && !focusedRow.editing && (
+                <PrettifyToggle active={prettifyActive} onToggle={togglePrettify} />
               )}
+              {hasDiffs && <DiffViewModeMenu diffViewMode={diffViewMode} setDiffViewMode={setDiffViewMode} />}
             </Group>
             {(focusedRow.displayLabel !== focusedRow.fieldName ||
               (focusedRow.description &&
@@ -611,14 +650,14 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
             >
               {isSideBySide ? (
                 <SideBySideDiff
-                  fromValue={focusedRow.fromValue ?? ''}
-                  value={focusedRow.value}
+                  fromValue={focusedDisplayRow?.fromValue ?? ''}
+                  value={focusedDisplayRow?.value ?? ''}
                   diffKind={focusedRow.diffKind}
                 />
               ) : (
                 <InlineWordsDiff
-                  fromValue={focusedRow.fromValue ?? ''}
-                  value={focusedRow.value}
+                  fromValue={focusedDisplayRow?.fromValue ?? ''}
+                  value={focusedDisplayRow?.value ?? ''}
                   diffKind={focusedRow.diffKind}
                 />
               )}
@@ -646,7 +685,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
               }
             >
               <FieldCellValue
-                value={focusedRow.value}
+                value={focusedDisplayRow?.value ?? ''}
                 column={focusedRow.column}
                 muted={focusedRow.column?.readonly ?? false}
               />
