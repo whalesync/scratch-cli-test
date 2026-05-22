@@ -1,5 +1,6 @@
 import { Box } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { Workspace } from '../../types/workspace';
 import { FolderDataGrid } from './FolderDataGrid';
@@ -17,8 +18,6 @@ export interface LocalFolder {
 interface WorkspaceContentProps {
   workspace: Workspace;
   localPath: string | null;
-  selectedFolderPath: string | null;
-  onSelectFolder: (folderPath: string | null) => void;
   targetRecord?: { filename: string; trigger: string } | null;
   dataRefreshKey: number;
   onDataRefresh: () => void;
@@ -36,8 +35,6 @@ const DEFAULT_SIDEBAR_WIDTH = 280;
 export function WorkspaceContent({
   workspace,
   localPath,
-  selectedFolderPath,
-  onSelectFolder,
   targetRecord,
   dataRefreshKey,
   onDataRefresh,
@@ -47,6 +44,9 @@ export function WorkspaceContent({
   validateEnabled = false,
   onIndexingProgress,
 }: WorkspaceContentProps) {
+  const selectedFolderPath = useWorkspaceUiStore((s) => s.selectedFolderPath);
+  const setSelectedFolderPath = useWorkspaceUiStore((s) => s.setSelectedFolderPath);
+
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const [localFolders, setLocalFolders] = useState<LocalFolder[]>([]);
@@ -69,9 +69,9 @@ export function WorkspaceContent({
 
   const handleSelectFolder = useCallback(
     (folderPath: string) => {
-      onSelectFolder(selectedFolderPath === folderPath ? null : folderPath);
+      setSelectedFolderPath(selectedFolderPath === folderPath ? null : folderPath);
     },
-    [selectedFolderPath, onSelectFolder],
+    [selectedFolderPath, setSelectedFolderPath],
   );
 
   // Load local folders when workspace is downloaded

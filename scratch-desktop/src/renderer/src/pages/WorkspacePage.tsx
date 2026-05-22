@@ -12,6 +12,7 @@ import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
 import { trackDeepLinkProcessed, trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
+import { useWorkspaceUiStore } from '../stores/workspace-ui-store';
 import { Workspace } from '../types/workspace';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { PullAllModal } from './workspace/PullAllModal';
@@ -85,7 +86,8 @@ export function WorkspacePage() {
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
-  const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
+  const selectedFolderPath = useWorkspaceUiStore((s) => s.selectedFolderPath);
+  const setSelectedFolderPath = useWorkspaceUiStore((s) => s.setSelectedFolderPath);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
@@ -392,7 +394,7 @@ export function WorkspacePage() {
         });
       }
     }
-  }, [localPath, searchParams, workspace?.id]);
+  }, [localPath, searchParams, setSelectedFolderPath, workspace?.id]);
 
   useEffect(() => {
     if (!localPath || !watchingEnabled) {
@@ -556,8 +558,6 @@ export function WorkspacePage() {
       <WorkspaceContent
         workspace={workspace}
         localPath={localPath}
-        selectedFolderPath={selectedFolderPath}
-        onSelectFolder={setSelectedFolderPath}
         targetRecord={
           deepLinkedPath?.recordFilename && deepLinkedPath.folderPath === selectedFolderPath
             ? { filename: deepLinkedPath.recordFilename, trigger: deepLinkedPath.trigger }

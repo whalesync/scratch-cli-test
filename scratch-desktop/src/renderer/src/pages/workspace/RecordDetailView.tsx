@@ -23,6 +23,7 @@ import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../componen
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
 import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
 
 interface DiffRecordColumn {
@@ -91,8 +92,6 @@ interface RecordDetailViewProps {
   onRecordChanged?: () => void;
   onRecordFieldChanged?: (filename: string, fieldName: string, nextValue: unknown) => void;
   onPublishFile?: (relativePath: string) => void;
-  /** When set, the field grid mounts focused on this field. */
-  initialFocusedFieldName?: string;
   /** Incremented by the parent when external file changes are detected, triggering a reload. */
   dataRefreshKey?: number;
   /** When set, hovering JSON keys in raw view shows column add/toggle tooltips. */
@@ -282,7 +281,6 @@ export const RecordDetailView = memo(function RecordDetailView({
   onRecordChanged,
   onRecordFieldChanged,
   onPublishFile,
-  initialFocusedFieldName,
   dataRefreshKey,
   onAddColumn,
   onToggleColumnVisible,
@@ -300,15 +298,13 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [validationResults, setValidationResults] = useState<ValidationResultRow[]>([]);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
-  const [focusedFieldName, setFocusedFieldName] = useState<string | null>(initialFocusedFieldName ?? null);
+  const focusedFieldName = useWorkspaceUiStore((s) => s.focusedFieldName);
+  const handleFocusedFieldChange = useWorkspaceUiStore((s) => s.setFocusedFieldName);
   // Held here (not in RecordFieldsGrid) so the prettify toggle survives the
   // grid's transient unmounts during loading on record navigation.
   const [prettifyActive, setPrettifyActive] = useState(false);
   const togglePrettify = useCallback(() => setPrettifyActive((v) => !v), []);
 
-  useEffect(() => {
-    if (initialFocusedFieldName) setFocusedFieldName(initialFocusedFieldName);
-  }, [initialFocusedFieldName]);
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
   const editingFieldRef = useRef<string | null>(null);
   const loadedRecordKeyRef = useRef<string | null>(null);
@@ -421,7 +417,7 @@ export const RecordDetailView = memo(function RecordDetailView({
         console.log('Escape key pressed');
         e.stopPropagation();
         if (focusedFieldName) {
-          setFocusedFieldName(null);
+          handleFocusedFieldChange(null);
           console.log('Focused field minimized');
         } else {
           onClose();
@@ -430,7 +426,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [onClose, focusedFieldName]);
+  }, [onClose, focusedFieldName, handleFocusedFieldChange]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -1240,7 +1236,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     rows={fieldRows}
                     validationWarnings={validationWarnings}
                     initialFocusedFieldName={focusedFieldName ?? undefined}
-                    onFocusedFieldChange={setFocusedFieldName}
+                    onFocusedFieldChange={handleFocusedFieldChange}
                     prettifyActive={prettifyActive}
                     onPrettifyToggle={togglePrettify}
                     footer={

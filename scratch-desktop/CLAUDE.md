@@ -62,6 +62,10 @@ Before implementing or modifying any React UI in the renderer, read [`UI_SYSTEM.
 - Do not use `as any` — use proper type assertions (`as string`, etc.)
 - Use `console.debug` for development logging, not `console.log`
 
+## State Management
+
+Workspace UI state (folder selection, record selection, grid sort/filter/page, column visibility) lives in a **Zustand store** at `src/renderer/src/stores/workspace-ui-store.ts`. Read the `stores/CLAUDE.md` before modifying workspace state or adding new shared UI state.
+
 ## Key Differences from the Web Client (`/client`)
 
 - Uses device-code OAuth flow (not Clerk) — auth happens in the system browser

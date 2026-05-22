@@ -41,6 +41,7 @@ import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { trackRefreshFolderDataGrid } from '../../lib/posthog';
+import { useWorkspaceUiStore, type FilterKind, type GridFilter } from '../../stores/workspace-ui-store';
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { EditPropertyDialog } from './EditPropertyDialog';
@@ -107,13 +108,7 @@ interface DiffGridResult {
   totalProblemsStaleCount: number;
 }
 
-type FilterKind = 'unreviewed' | 'unpublished' | 'has-problems';
 type EditorOverlayDiffKind = FieldValueDiffKind | 'none';
-
-type GridFilter =
-  | { scope: 'global'; kind: FilterKind }
-  | { scope: 'column'; kind: FilterKind; columnId: string; columnTitle: string }
-  | { scope: 'text'; columnId: string; columnTitle: string; value: string };
 
 const EMPTY_FILTERS: GridFilter[] = [];
 
@@ -770,23 +765,31 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const [error, setError] = useState<string | null>(null);
   const [errorQueryKey, setErrorQueryKey] = useState<string | null>(null);
   const [resolvedQueryKey, setResolvedQueryKey] = useState<string | null>(null);
-  const [sort, setSort] = useState<{ column: string | null; direction: 'asc' | 'desc' | null }>({
-    column: null,
-    direction: null,
-  });
-  const [activeFilters, setActiveFilters] = useState<GridFilter[]>([]);
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
-  const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
-  const [detailFocusFieldName, setDetailFocusFieldName] = useState<string | null>(null);
+  const sort = useWorkspaceUiStore((s) => s.sort);
+  const setSort = useWorkspaceUiStore((s) => s.setSort);
+  const activeFilters = useWorkspaceUiStore((s) => s.activeFilters);
+  const setActiveFilters = useWorkspaceUiStore((s) => s.setActiveFilters);
+  const columnWidths = useWorkspaceUiStore((s) => s.columnWidths);
+  const setColumnWidths = useWorkspaceUiStore((s) => s.setColumnWidths);
+  const selectedRecordFilename = useWorkspaceUiStore((s) => s.selectedRecordFilename);
+  const setSelectedRecordFilename = useWorkspaceUiStore((s) => s.setSelectedRecordFilename);
+  const setDetailFocusFieldName = useWorkspaceUiStore((s) => s.setFocusedFieldName);
+
+  const showGrid = useWorkspaceUiStore((s) => s.showGrid);
+  const showRecord = useWorkspaceUiStore((s) => s.showRecord);
+  const showField = useWorkspaceUiStore((s) => s.showField);
+
   const [schema, setSchema] = useState<Record<string, unknown> | null>(null);
-  const [page, setPage] = useState(1);
+  const page = useWorkspaceUiStore((s) => s.page);
+  const setPage = useWorkspaceUiStore((s) => s.setPage);
   const [gridSelection, setGridSelection] = useState<GridSelection | undefined>(undefined);
   const [activeEditorDiffKind, setActiveEditorDiffKind] = useState<EditorOverlayDiffKind | null>(null);
   const [editingCell, setEditingCell] = useState<Item | null>(null);
   const [cellPopover, setCellPopover] = useState<CellPopoverState | null>(null);
   const [validationHover, setValidationHover] = useState<ValidationHoverState | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [visibleColumnIds, setVisibleColumnIds] = useState<string[] | null>(null);
+  const visibleColumnIds = useWorkspaceUiStore((s) => s.visibleColumnIds);
+  const setVisibleColumnIds = useWorkspaceUiStore((s) => s.setVisibleColumnIds);
   const [tableView, setTableView] = useState<TableView | null>(null);
   const [viewSource, setViewSource] = useState<string>('Generated');
   const [availableViewNames, setAvailableViewNames] = useState<string[]>([]);
@@ -1021,7 +1024,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     if (!validate) {
       setActiveFilters((prev) => prev.filter((f) => !(f.scope === 'global' && f.kind === 'has-problems')));
     }
-  }, [validate]);
+  }, [validate, setActiveFilters]);
 
   // Load data for query changes and explicit user-triggered reloads.
   useEffect(() => {
@@ -1085,13 +1088,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (additions.length === 0) return prev;
       return [...prev, ...additions];
     });
-  }, [resolvedQueryKey]);
+  }, [resolvedQueryKey, setVisibleColumnIds]);
 
-  // Reset state when folder changes. If activateGlobalFilter is pending, apply it here and
-  // set pendingColumnNarrowRef so column focusing happens once the new data resolves.
+  // Reset local-only state when folder changes. Store-managed state (sort, filters, page,
+  // columnWidths, visibleColumnIds, selectedRecordFilename, focusedFieldName) is already reset
+  // by the store's setSelectedFolderPath action. We still need to:
+  // 1. Sync lastResetFolderRef for the folderPending/queryKey mechanism
+  // 2. Apply activateGlobalFilter if pending
+  // 3. Reset grid-local state (selection, schema, popover, etc.)
   useEffect(() => {
-    // Mark reset as applied before state updates so the next render's queryKey matches the
-    // initial render's queryKey (both use defaults), preventing a second blocking load.
     lastResetFolderRef.current = selectedFolderPath ?? null;
     const pending = activateGlobalFilterRef.current;
     const shouldApply =
@@ -1101,12 +1106,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (pending.kind === 'has-problems') {
         pendingColumnNarrowRef.current = pending.kind;
       }
+      // Override the store's default empty filters with the activated filter
+      setActiveFilters([{ scope: 'global', kind: pending.kind }]);
     }
-    setSort({ column: null, direction: null });
-    setActiveFilters(shouldApply && pending ? [{ scope: 'global', kind: pending.kind }] : []);
-    setColumnWidths({});
-    setDetailRowIndex(null);
-    setDetailFocusFieldName(null);
     setHoveredRowIdx(null);
     setInspectButtonRect(null);
     setGridSelection(undefined);
@@ -1114,9 +1116,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     setEditingCell(null);
     setSchema(null);
     setCellPopover(null);
-    setPage(1);
     setReloadKey(0);
-    setVisibleColumnIds(null);
     if (shouldApply) {
       onActivateGlobalFilterConsumed?.();
     }
@@ -1139,12 +1139,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
     setSort({ column: null, direction: null });
     setActiveFilters([]);
-    setDetailRowIndex(null);
+    setSelectedRecordFilename(null);
     setDetailFocusFieldName(null);
     setGridSelection(undefined);
     setCellPopover(null);
     setPage(1);
-  }, [selectedFolderPath, targetRecord, workspacePath]);
+  }, [
+    selectedFolderPath,
+    targetRecord,
+    workspacePath,
+    setSort,
+    setActiveFilters,
+    setSelectedRecordFilename,
+    setDetailFocusFieldName,
+    setPage,
+  ]);
 
   // Same-folder case: activate filter when prop changes but folder is already current
   useEffect(() => {
@@ -1165,7 +1174,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
     }
     onActivateGlobalFilterConsumed?.();
-  }, [activateGlobalFilter, onActivateGlobalFilterConsumed]);
+  }, [activateGlobalFilter, onActivateGlobalFilterConsumed, setActiveFilters, setVisibleColumnIds]);
 
   useEffect(() => {
     const { body } = document;
@@ -1182,7 +1191,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   // Reset to page 1 when filter or sort changes
   useEffect(() => {
     setPage(1);
-  }, [activeFilters, sort]);
+  }, [activeFilters, sort, setPage]);
 
   // Load schema and view when folder changes
   useEffect(() => {
@@ -1261,7 +1270,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     });
 
     return unsubscribe;
-  }, [viewSource, selectedFolderPath, workspacePath]);
+  }, [viewSource, selectedFolderPath, workspacePath, setVisibleColumnIds]);
 
   useEffect(() => {
     if (!cellPopover) {
@@ -1336,6 +1345,26 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     return sorted;
   }, [diffData?.rows, sort.column, sort.direction]);
 
+  // Derive detailRowIndex from store's selectedRecordFilename
+  const detailRowIndex = useMemo(() => {
+    if (!selectedRecordFilename) return null;
+    const idx = pagedRows.findIndex((r) => r.__filename === selectedRecordFilename);
+    return idx >= 0 ? idx : null;
+  }, [selectedRecordFilename, pagedRows]);
+
+  // Helper to set the selected record by row index
+  const setDetailRowIndex = useCallback(
+    (index: number | null) => {
+      if (index === null) {
+        setSelectedRecordFilename(null);
+        return;
+      }
+      const row = pagedRows[index] as DiffRow | undefined;
+      setSelectedRecordFilename(row?.__filename ?? null);
+    },
+    [pagedRows, setSelectedRecordFilename],
+  );
+
   useEffect(() => {
     const pending = pendingRecordTargetRef.current;
     if (!pending || !selectedFolderPath || !workspacePath || !hasCurrentQueryData) {
@@ -1348,8 +1377,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     const rowIndex = pagedRows.findIndex((row) => row.__filename === pending.filename);
     if (rowIndex >= 0) {
       pendingRecordTargetRef.current = null;
-      setDetailFocusFieldName(null);
-      setDetailRowIndex(rowIndex);
+      showRecord(pending.filename);
       setGridSelection(undefined);
       setCellPopover(null);
       return;
@@ -1384,6 +1412,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     hasCurrentQueryData,
     pagedRows,
     selectedFolderPath,
+    showRecord,
+    setPage,
     sort.column,
     sort.direction,
     workspacePath,
@@ -1395,7 +1425,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     if (page > totalPages) {
       setPage(totalPages);
     }
-  }, [page, totalPages]);
+  }, [page, totalPages, setPage]);
 
   /** Flatten view cols (handle banner groups) into a single ordered list. */
   const flatViewCols: TableViewCol[] = useMemo(() => {
@@ -1469,7 +1499,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         })
         .catch((err: unknown) => console.debug('Failed to load view:', err));
     },
-    [schema, selectedFolderPath, workspacePath],
+    [schema, selectedFolderPath, workspacePath, setVisibleColumnIds],
   );
 
   const effectiveVisibleColumns = useMemo(
@@ -1486,7 +1516,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       setTableView({ ...tableView, cols: [...tableView.cols, newCol] });
       setVisibleColumnIds((prev) => (prev ? [...prev, path] : [...effectiveVisibleColumns, path]));
     },
-    [tableView, flatViewCols, effectiveVisibleColumns],
+    [tableView, flatViewCols, effectiveVisibleColumns, setVisibleColumnIds],
   );
 
   /** Save handler for the Edit Property dialog. */
@@ -1508,7 +1538,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
       setEditPropertyCol(null);
     },
-    [tableView],
+    [tableView, setVisibleColumnIds],
   );
 
   /** Open the Edit Property dialog from the column picker. */
@@ -1530,7 +1560,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         setVisibleColumnIds([...effectiveVisibleColumns, path]);
       }
     },
-    [effectiveVisibleColumns],
+    [effectiveVisibleColumns, setVisibleColumnIds],
   );
 
   const allColumnPathsSet = useMemo(() => new Set(flatViewCols.map((c) => c.path)), [flatViewCols]);
@@ -2128,7 +2158,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return { column: colId, direction: 'asc' };
       });
     },
-    [columns],
+    [columns, setSort],
   );
 
   const openHeaderMenu = useCallback(
@@ -2268,6 +2298,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       columns,
       effectiveVisibleColumns,
       rejectGridFieldChanges,
+      setActiveFilters,
+      setSort,
+      setVisibleColumnIds,
       tableView,
       titleColumnId,
       viewColMap,
@@ -2572,7 +2605,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       if (columnId === undefined) return;
       setColumnWidths((current) => ({ ...current, [String(columnId)]: newSize }));
     },
-    [columns],
+    [columns, setColumnWidths],
   );
 
   const handleGlobalFilterToggle = useCallback(
@@ -2595,12 +2628,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         pendingColumnNarrowRef.current = kind;
       }
     },
-    [activeFilters],
+    [activeFilters, setActiveFilters, setVisibleColumnIds],
   );
 
-  const handleRemoveFilter = useCallback((filterToRemove: GridFilter) => {
-    setActiveFilters((current) => current.filter((filter) => filterKey(filter) !== filterKey(filterToRemove)));
-  }, []);
+  const handleRemoveFilter = useCallback(
+    (filterToRemove: GridFilter) => {
+      setActiveFilters((current) => current.filter((filter) => filterKey(filter) !== filterKey(filterToRemove)));
+    },
+    [setActiveFilters],
+  );
 
   // ── Render ──
 
@@ -2866,8 +2902,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 onClick={(e) => {
                   e.currentTarget.blur();
                   if (hoveredRowIdx !== null) {
-                    setDetailFocusFieldName(null);
-                    setDetailRowIndex(hoveredRowIdx);
+                    const filename = pagedRows[hoveredRowIdx]?.__filename;
+                    if (filename) showRecord(filename);
                   }
                 }}
                 tabIndex={-1}
@@ -2905,14 +2941,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 columnDescriptions={columnDescriptionsMap}
                 readonlyFields={readonlyFields}
                 columnTypes={columnTypesMap}
-                initialFocusedFieldName={detailFocusFieldName ?? undefined}
                 onSelectIndex={(nextIndex) => {
                   if (nextIndex !== detailRowIndex) setDetailFocusFieldName(null);
                   setDetailRowIndex(nextIndex);
                 }}
                 onClose={() => {
-                  setDetailRowIndex(null);
-                  setDetailFocusFieldName(null);
+                  showGrid();
                   // Drop the cell selection so the rebuild effect can't restore the popover
                   // when returning to the grid — require a fresh click.
                   setGridSelection(undefined);
@@ -3334,8 +3368,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       <UnstyledButton
                         onClick={() => {
                           setCellPopover(null);
-                          setDetailFocusFieldName(null);
-                          setDetailRowIndex(cellPopover.row);
+                          const filename = pagedRows[cellPopover.row]?.__filename;
+                          if (filename) showRecord(filename);
                         }}
                       >
                         <Text12Medium
@@ -3450,8 +3484,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                       shouldTruncate
                         ? () => {
                             setCellPopover(null);
-                            setDetailFocusFieldName(fieldName);
-                            setDetailRowIndex(cellPopover.row);
+                            const fn = pagedRows[cellPopover.row]?.__filename;
+                            if (fn) showField(fn, fieldName);
                           }
                         : undefined
                     }
