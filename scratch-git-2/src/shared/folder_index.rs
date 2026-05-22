@@ -20,7 +20,7 @@ use crate::shared::validators::{run_validators_dry, ValidatorEntry};
 /// sweep in `open_conn` drops everything that doesn't match, and the next
 /// pagination request rebuilds cold from the JSON files on disk. The index is
 /// derivative — JSON is authoritative — so cold rebuild is always safe.
-const INDEX_SCHEMA_VERSION: u32 = 3;
+const INDEX_SCHEMA_VERSION: u32 = 4;
 
 fn version_suffix() -> String {
     format!("__v{INDEX_SCHEMA_VERSION}")
@@ -113,14 +113,37 @@ pub struct ReadRecordsResult {
 #[derive(Debug, Serialize)]
 pub struct FolderSummary {
     pub total: i64,
+    /// Path has a patch entry in `accepted-patches.json` (approved ≠ published).
     pub approved_changes: i64,
+    /// Working file differs from `apply(refs/heads/main blob, patch_entry_or_empty)`.
     pub unapproved_changes: i64,
-    /// In working tree only — not in dirty or master.
-    pub working_only: i64,
-    /// In dirty branch only — not in working tree or master.
-    pub dirty_only: i64,
-    /// In master branch only — not in working tree or dirty.
-    pub master_only: i64,
+    /// Row-status bucket counts, computed from `(working_mtime, master_present,
+    /// accepted_kind, unapprovedChanges, parse_error)` — see `query_summary` for
+    /// the CASE discriminator. Mirrors the desktop's `DiffGridSummary` shape so
+    /// V2 can adopt full-folder counts without per-row work.
+    ///
+    /// `added` includes both "working differs from approved on a new record"
+    /// AND "approved-deleted but the working file still exists" (matches the
+    /// TS `compareRecordSnapshots` 'added' branch where approved is null).
+    pub added: i64,
+    /// Subset of "new records" where working == approved (= a `Create` patch
+    /// whose content matches the working file). Counts the row as still under
+    /// `added` so totals don't double-count.
+    pub added_approved: i64,
+    pub modified: i64,
+    pub unpublished: i64,
+    /// Working file missing while approved is non-null (working-tree deletion
+    /// the user hasn't accepted yet) — counts include `deleted_approved` rows.
+    pub deleted: i64,
+    /// Subset of `deleted` rows where a `Delete` patch entry already exists
+    /// (= approved-deleted, pending publish).
+    pub deleted_approved: i64,
+    /// Working JSON failed to parse. The TS-side V1 path also flagged invalid
+    /// approved/published; SQL only tracks `parse_error` for the working file,
+    /// so this is a slight undercount for the rare case where main carries
+    /// invalid JSON. Practical workloads only hit invalid JSON on the working
+    /// side (user editing).
+    pub invalid_json: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -289,6 +312,19 @@ fn approved_json_for_entry(
                 Some(crate::shared::merge_patch::apply(&base, &e.patch))
             }
         },
+    }
+}
+
+/// SQL-side string for an `AcceptedKind`, matching the wire format the patch
+/// file uses (`"create"` | `"update"` | `"delete"`). Stored in the per-folder
+/// table's `accepted_kind` column so `query_summary` can discriminate the
+/// `addedUnpublished` / `unpublished` / `deletedUnpublished` row buckets via
+/// SQL alone (no patch-file re-read at summary time).
+fn accepted_kind_sql(kind: AcceptedKind) -> &'static str {
+    match kind {
+        AcceptedKind::Create => "create",
+        AcceptedKind::Update => "update",
+        AcceptedKind::Delete => "delete",
     }
 }
 
@@ -578,6 +614,8 @@ fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
             dirty_size                INTEGER,
             master_mtime              INTEGER,
             master_size               INTEGER,
+            master_present            INTEGER NOT NULL DEFAULT 0,
+            accepted_kind             TEXT,
             approvedChanges           INTEGER NOT NULL DEFAULT 0,
             unapprovedChanges         INTEGER NOT NULL DEFAULT 0,
             accepted_patches_mtime    INTEGER,
@@ -929,6 +967,12 @@ fn load_stored_rows(conn: &Connection, table: &str) -> anyhow::Result<HashMap<St
             },
         ))
     })?;
+    // Note: master_present + accepted_kind are derived during refresh, not
+    // tracked for staleness — they're invalidated transitively via
+    // accepted_patches_mtime (kind changes flip with the patch file) and via
+    // working/master mtime checks (master_present changes only when the
+    // refs/heads/main advance fires the patch_mtime check or working file
+    // staleness).
     let mut map = HashMap::new();
     for item in rows {
         let (name, row) = item?;
@@ -1105,6 +1149,9 @@ fn refresh_index(
             working_json.as_ref(),
             master_json.as_ref(),
         );
+        let master_present_bit: i32 = i32::from(master_blobs.contains_key(filename));
+        let accepted_kind_str: Option<&'static str> =
+            patch_entry.map(|e| accepted_kind_sql(e.kind));
 
         tx.execute(
             &format!(
@@ -1113,9 +1160,10 @@ fn refresh_index(
                     working_mtime, working_size,
                     dirty_mtime,   dirty_size,
                     master_mtime,  master_size,
+                    master_present, accepted_kind,
                     approvedChanges, unapprovedChanges,
                     accepted_patches_mtime, parse_error
-                 ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(filename) DO UPDATE SET
                     working_mtime          = excluded.working_mtime,
                     working_size           = excluded.working_size,
@@ -1123,6 +1171,8 @@ fn refresh_index(
                     dirty_size             = NULL,
                     master_mtime           = excluded.master_mtime,
                     master_size            = excluded.master_size,
+                    master_present         = excluded.master_present,
+                    accepted_kind          = excluded.accepted_kind,
                     approvedChanges        = excluded.approvedChanges,
                     unapprovedChanges      = excluded.unapprovedChanges,
                     accepted_patches_mtime = excluded.accepted_patches_mtime,
@@ -1134,6 +1184,8 @@ fn refresh_index(
                 working_stat.map(|(_, s)| s),
                 master_stat.map(|(m, _)| m),
                 master_stat.map(|(_, s)| s),
+                master_present_bit,
+                accepted_kind_str,
                 approved_changes,
                 unapproved_changes,
                 patch_index.patch_mtime,
@@ -1430,6 +1482,11 @@ fn query_count(conn: &Connection, sql: &str, where_params: &[DynParam]) -> anyho
     Ok(count)
 }
 
+/// Single-scan summary: groups every row into a row-status bucket and counts
+/// each in one query, then folds the result into a `FolderSummary`. The bucket
+/// discriminator mirrors the TS `compareRecordSnapshots` branches so the
+/// desktop's `DiffGridSummary` numbers match a V1-style full-folder diff
+/// without loading any blobs.
 fn query_summary(conn: &Connection, table: &str) -> anyhow::Result<FolderSummary> {
     let tq = quote_ident(table);
     let total: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |r| r.get(0))?;
@@ -1443,38 +1500,74 @@ fn query_summary(conn: &Connection, table: &str) -> anyhow::Result<FolderSummary
         [],
         |r| r.get(0),
     )?;
-    let working_only: i64 = conn.query_row(
-        &format!(
-            "SELECT COUNT(*) FROM {tq}
-             WHERE working_mtime IS NOT NULL AND dirty_mtime IS NULL AND master_mtime IS NULL"
-        ),
-        [],
-        |r| r.get(0),
-    )?;
-    let dirty_only: i64 = conn.query_row(
-        &format!(
-            "SELECT COUNT(*) FROM {tq}
-             WHERE dirty_mtime IS NOT NULL AND working_mtime IS NULL AND master_mtime IS NULL"
-        ),
-        [],
-        |r| r.get(0),
-    )?;
-    let master_only: i64 = conn.query_row(
-        &format!(
-            "SELECT COUNT(*) FROM {tq}
-             WHERE master_mtime IS NOT NULL AND working_mtime IS NULL AND dirty_mtime IS NULL"
-        ),
-        [],
-        |r| r.get(0),
-    )?;
+
+    // Bucket discriminator. Order matters: every row matches exactly one CASE
+    // branch. Keep in sync with `compareRecordSnapshots` in
+    // scratch-desktop/src/main/local-files.ts.
+    let bucket_sql = format!(
+        "SELECT
+            CASE
+                WHEN parse_error IS NOT NULL THEN 'invalidJson'
+                -- working missing
+                WHEN working_mtime IS NULL AND accepted_kind = 'delete' THEN 'deletedUnpublished'
+                WHEN working_mtime IS NULL THEN 'deleted'
+                -- working exists, approved missing (= Delete patch but working still on disk)
+                WHEN accepted_kind = 'delete' THEN 'added'
+                -- working exists, master absent (new record)
+                WHEN master_present = 0 AND unapprovedChanges = 1 THEN 'added'
+                WHEN master_present = 0 THEN 'addedApproved'
+                -- working exists, master present
+                WHEN unapprovedChanges = 1 THEN 'modified'
+                WHEN accepted_kind IS NOT NULL THEN 'unpublished'
+                ELSE 'unchanged'
+            END AS bucket,
+            COUNT(*)
+         FROM {tq}
+         GROUP BY bucket"
+    );
+    let mut stmt = conn.prepare(&bucket_sql)?;
+    let mut added: i64 = 0;
+    let mut added_approved: i64 = 0;
+    let mut modified: i64 = 0;
+    let mut unpublished: i64 = 0;
+    let mut deleted: i64 = 0;
+    let mut deleted_approved: i64 = 0;
+    let mut invalid_json: i64 = 0;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    for entry in rows {
+        let (bucket, count) = entry?;
+        match bucket.as_str() {
+            "added" => added += count,
+            "addedApproved" => {
+                added += count;
+                added_approved += count;
+            }
+            "modified" => modified += count,
+            "unpublished" => unpublished += count,
+            "deleted" => deleted += count,
+            "deletedUnpublished" => {
+                deleted += count;
+                deleted_approved += count;
+            }
+            "invalidJson" => invalid_json += count,
+            "unchanged" => {} // not surfaced in the summary
+            _ => {}           // forward-compat: ignore unknown buckets
+        }
+    }
 
     Ok(FolderSummary {
         total,
         approved_changes,
         unapproved_changes,
-        working_only,
-        dirty_only,
-        master_only,
+        added,
+        added_approved,
+        modified,
+        unpublished,
+        deleted,
+        deleted_approved,
+        invalid_json,
     })
 }
 
@@ -1929,6 +2022,8 @@ pub fn clear_folder_index(
              dirty_size           INTEGER,
              master_mtime         INTEGER,
              master_size          INTEGER,
+             master_present       INTEGER NOT NULL DEFAULT 0,
+             accepted_kind        TEXT,
              approvedChanges      INTEGER NOT NULL DEFAULT 0,
              unapprovedChanges    INTEGER NOT NULL DEFAULT 0,
              parse_error          TEXT,
@@ -2290,6 +2385,8 @@ const CORE_COLUMNS: &[&str] = &[
     "dirty_size",
     "master_mtime",
     "master_size",
+    "master_present",
+    "accepted_kind",
     "approvedChanges",
     "unapprovedChanges",
     "accepted_patches_mtime",
@@ -2602,6 +2699,7 @@ pub fn reindex_files(
         parse_error: Option<String>,
         approved: i32,
         unapproved: i32,
+        accepted_kind: Option<&'static str>,
         column_values: Vec<Option<String>>, // parallel to `active_cols`
         // If true, the row should be DELETEd rather than upserted.
         should_delete: bool,
@@ -2645,6 +2743,11 @@ pub fn reindex_files(
                         master_json.as_ref(),
                     )
                 };
+                let accepted_kind: Option<&'static str> = if should_delete {
+                    None
+                } else {
+                    patch_entry.map(|e| accepted_kind_sql(e.kind))
+                };
 
                 let column_values: Vec<Option<String>> = match working_json.as_ref() {
                     Some(json) if !should_delete => active_cols
@@ -2661,6 +2764,7 @@ pub fn reindex_files(
                     parse_error,
                     approved,
                     unapproved,
+                    accepted_kind,
                     column_values,
                     should_delete,
                 }
@@ -2684,13 +2788,16 @@ pub fn reindex_files(
                 &format!(
                     "INSERT INTO {tq} (filename,
                         working_mtime, working_size, dirty_mtime, dirty_size,
-                        master_mtime, master_size, approvedChanges, unapprovedChanges,
+                        master_mtime, master_size, master_present, accepted_kind,
+                        approvedChanges, unapprovedChanges,
                         accepted_patches_mtime, parse_error)
-                     VALUES (?1,?2,?3,NULL,NULL,?4,?5,?6,?7,?8,?9)
+                     VALUES (?1,?2,?3,NULL,NULL,?4,?5,?6,?7,?8,?9,?10,?11)
                      ON CONFLICT(filename) DO UPDATE SET
                         working_mtime=excluded.working_mtime, working_size=excluded.working_size,
                         dirty_mtime=NULL, dirty_size=NULL,
                         master_mtime=excluded.master_mtime, master_size=excluded.master_size,
+                        master_present=excluded.master_present,
+                        accepted_kind=excluded.accepted_kind,
                         approvedChanges=excluded.approvedChanges,
                         unapprovedChanges=excluded.unapprovedChanges,
                         accepted_patches_mtime=excluded.accepted_patches_mtime,
@@ -2702,6 +2809,8 @@ pub fn reindex_files(
                     row.working_stat.map(|(_, s)| s),
                     master_stat.map(|(m, _)| m),
                     master_stat.map(|(_, s)| s),
+                    i32::from(row.master_present),
+                    row.accepted_kind,
                     row.approved,
                     row.unapproved,
                     patch_index.patch_mtime,
@@ -3236,7 +3345,11 @@ mod tests {
         let result = run_query(&opts(&ws, "conn/posts")).unwrap();
         assert_eq!(result.filenames, vec!["rec1.json"]);
         assert_eq!(result.summary.total, 1);
-        assert_eq!(result.summary.working_only, 1);
+        // No accepted-patches entry, master_present = 0, working differs from
+        // approved (= null) → the working file is an orphan-on-disk → 'added'
+        // bucket in compareRecordSnapshots; SQL summary mirrors.
+        assert_eq!(result.summary.added, 1);
+        assert_eq!(result.summary.added_approved, 0);
         // No accepted-patches entry → not approved-pending-publish.
         assert_eq!(result.summary.approved_changes, 0);
         // Working file exists but approved value is None (no patch entry, no
@@ -3806,42 +3919,191 @@ mod tests {
         assert_eq!(result.filenames, vec!["pub_changed.json"]);
     }
 
-    // ── Summary bucket counts ─────────────────────────────────────────────────
+    // ── Summary bucket counts (V2 full-folder, no blob reads) ─────────────────
+    //
+    // Each test exercises exactly one row-status bucket of the
+    // `query_summary` CASE discriminator. Tests use the `_test_main` escape
+    // hatch to seed master content without a real bare repo.
 
-    #[test]
-    fn test_summary_master_only_is_always_zero_post_slice_f() {
-        // master_only counts rows that exist only in the master tree.
-        // Pre-F, the master tree was the on-disk `.scratch/connections/master/<conn>/`
-        // directory. Slice F removed that directory and routed master content
-        // through `refs/heads/main` from the bare repo. In the test fixture
-        // there's no bare repo (no workspace marker), so `read_main_blobs_for_folder`
-        // returns an empty map and no row gets `master_mtime` set. The bucket is
-        // permanently 0 in tests. Slice F follow-up will remove `paths.master`
-        // + `master_mtime` columns + this summary field together.
-        let tmp = TempDir::new().unwrap();
-        let ws = make_workspace(&tmp);
-        let working_dir = ws.join("conn").join("posts");
-        write_json(&working_dir, "rec.json", r#"{"x":1}"#);
-
-        let result = run_query(&opts(&ws, "conn/posts")).unwrap();
-        assert_eq!(result.summary.master_only, 0);
-        assert_eq!(result.summary.total, 1);
+    fn test_main_dir<'a>(ws: &Path, conn: &'a str, sub: &'a str) -> PathBuf {
+        let mut p = ws.join(".scratch").join("_test_main").join(conn);
+        if !sub.is_empty() {
+            p = p.join(sub);
+        }
+        p
     }
 
     #[test]
-    fn test_summary_dirty_only_is_always_zero_post_slice_e() {
-        // dirty_only counts rows that exist only in the (now-dead) dirty
-        // worktree. After Slice E nothing populates dirty_mtime, so the
-        // bucket is permanently 0. Slice F removes the summary field
-        // entirely along with the column.
+    fn test_summary_bucket_added_when_orphan_working_file() {
         let tmp = TempDir::new().unwrap();
         let ws = make_workspace(&tmp);
-        let working_dir = ws.join("conn").join("posts");
-        write_json(&working_dir, "rec.json", r#"{"x":1}"#);
+        write_json(&ws.join("conn").join("posts"), "rec.json", r#"{"v":1}"#);
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r.summary.added, 1);
+        assert_eq!(r.summary.added_approved, 0);
+        assert_eq!(r.summary.modified, 0);
+        assert_eq!(r.summary.total, 1);
+    }
 
-        let result = run_query(&opts(&ws, "conn/posts")).unwrap();
-        assert_eq!(result.summary.dirty_only, 0);
-        assert_eq!(result.summary.total, 1);
+    #[test]
+    fn test_summary_bucket_added_approved_when_working_matches_create_patch() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working = ws.join("conn").join("posts");
+        write_json(&working, "new.json", r#"{"title":"hi"}"#);
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([
+                { "path": "posts/new.json", "kind": "create", "patch": { "title": "hi" } },
+            ]),
+        );
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        // addedApproved counts as a subset of added — total `added` is also 1.
+        assert_eq!(r.summary.added, 1);
+        assert_eq!(r.summary.added_approved, 1);
+        assert_eq!(r.summary.unapproved_changes, 0);
+        assert_eq!(r.summary.approved_changes, 1);
+    }
+
+    #[test]
+    fn test_summary_bucket_modified_when_working_differs_from_main() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working = ws.join("conn").join("posts");
+        let main = test_main_dir(&ws, "conn", "posts");
+        write_json(&working, "rec.json", r#"{"v":2}"#);
+        write_json(&main, "rec.json", r#"{"v":1}"#);
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r.summary.modified, 1);
+        assert_eq!(r.summary.added, 0);
+        assert_eq!(r.summary.unapproved_changes, 1);
+    }
+
+    #[test]
+    fn test_summary_bucket_unpublished_when_working_matches_update_patch() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working = ws.join("conn").join("posts");
+        let main = test_main_dir(&ws, "conn", "posts");
+        write_json(&working, "rec.json", r#"{"v":2}"#);
+        write_json(&main, "rec.json", r#"{"v":1}"#);
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([
+                { "path": "posts/rec.json", "kind": "update", "patch": { "v": 2 } },
+            ]),
+        );
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r.summary.unpublished, 1);
+        assert_eq!(r.summary.modified, 0);
+        assert_eq!(r.summary.unapproved_changes, 0);
+        assert_eq!(r.summary.approved_changes, 1);
+    }
+
+    #[test]
+    fn test_summary_bucket_unchanged_when_working_matches_main_no_patch() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working = ws.join("conn").join("posts");
+        let main = test_main_dir(&ws, "conn", "posts");
+        write_json(&working, "rec.json", r#"{"v":1}"#);
+        write_json(&main, "rec.json", r#"{"v":1}"#);
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        // 'unchanged' isn't surfaced in FolderSummary — every other bucket is 0.
+        assert_eq!(r.summary.total, 1);
+        assert_eq!(r.summary.added, 0);
+        assert_eq!(r.summary.added_approved, 0);
+        assert_eq!(r.summary.modified, 0);
+        assert_eq!(r.summary.unpublished, 0);
+        assert_eq!(r.summary.deleted, 0);
+        assert_eq!(r.summary.invalid_json, 0);
+        assert_eq!(r.summary.unapproved_changes, 0);
+        assert_eq!(r.summary.approved_changes, 0);
+    }
+
+    #[test]
+    fn test_summary_bucket_deleted_when_working_missing_no_patch() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let main = test_main_dir(&ws, "conn", "posts");
+        write_json(&main, "rec.json", r#"{"v":1}"#);
+        // Working tree dir exists but doesn't contain rec.json.
+        std::fs::create_dir_all(ws.join("conn").join("posts")).unwrap();
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r.summary.deleted, 1);
+        assert_eq!(r.summary.deleted_approved, 0);
+        assert_eq!(r.summary.unapproved_changes, 1);
+    }
+
+    #[test]
+    fn test_summary_bucket_deleted_approved_when_delete_patch_and_no_working() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let main = test_main_dir(&ws, "conn", "posts");
+        write_json(&main, "rec.json", r#"{"v":1}"#);
+        std::fs::create_dir_all(ws.join("conn").join("posts")).unwrap();
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([
+                { "path": "posts/rec.json", "kind": "delete", "patch": null },
+            ]),
+        );
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r.summary.deleted, 1);
+        assert_eq!(r.summary.deleted_approved, 1);
+        assert_eq!(r.summary.unapproved_changes, 0);
+        assert_eq!(r.summary.approved_changes, 1);
+    }
+
+    #[test]
+    fn test_summary_bucket_invalid_json_on_working_parse_error() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        write_json(&ws.join("conn").join("posts"), "bad.json", "{not json");
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r.summary.invalid_json, 1);
+        // invalidJson trumps every other bucket — the row isn't double-counted.
+        assert_eq!(r.summary.added, 0);
+        assert_eq!(r.summary.modified, 0);
+    }
+
+    #[test]
+    fn test_summary_buckets_mixed_folder() {
+        // Three rows across three distinct buckets in the same folder; verify
+        // counts don't cross-pollinate.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working = ws.join("conn").join("posts");
+        let main = test_main_dir(&ws, "conn", "posts");
+
+        // Bucket: modified
+        write_json(&working, "edited.json", r#"{"v":2}"#);
+        write_json(&main, "edited.json", r#"{"v":1}"#);
+        // Bucket: unpublished
+        write_json(&working, "ready.json", r#"{"v":9}"#);
+        write_json(&main, "ready.json", r#"{"v":8}"#);
+        // Bucket: added (orphan working file, no patch, no main)
+        write_json(&working, "fresh.json", r#"{"v":0}"#);
+
+        seed_patch_file(
+            &ws,
+            "conn",
+            serde_json::json!([
+                { "path": "posts/ready.json", "kind": "update", "patch": { "v": 9 } },
+            ]),
+        );
+
+        let r = run_query(&opts(&ws, "conn/posts")).unwrap();
+        assert_eq!(r.summary.total, 3);
+        assert_eq!(r.summary.modified, 1);
+        assert_eq!(r.summary.unpublished, 1);
+        assert_eq!(r.summary.added, 1);
+        assert_eq!(r.summary.added_approved, 0);
+        assert_eq!(r.summary.deleted, 0);
+        assert_eq!(r.summary.invalid_json, 0);
     }
 
     // ── Incremental updates ───────────────────────────────────────────────────

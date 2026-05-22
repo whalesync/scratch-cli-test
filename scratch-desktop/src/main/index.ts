@@ -20,7 +20,6 @@ import {
   readBatch,
   readConnectionViewByName,
   readDiffGridDataPage,
-  readDiffGridDataPageV2,
   readDiffRecordData,
   readFileContent,
   readFileTextRaw,
@@ -889,13 +888,12 @@ ipcMain.handle(
     },
   ) => {
     return withFolderIndexQueue(workspacePath, folderPath, async () => {
-      const fn = process.env.SCRATCH_USE_SQLITE_GRID === '0' ? readDiffGridDataPage : readDiffGridDataPageV2;
       const onProgress = (line: string): void => {
         if (!event.sender.isDestroyed()) {
           event.sender.send('scratch:grid-progress', line);
         }
       };
-      return fn(folderPath, workspacePath, opts ?? {}, onProgress);
+      return readDiffGridDataPage(folderPath, workspacePath, opts ?? {}, onProgress);
     });
   },
 );

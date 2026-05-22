@@ -214,9 +214,16 @@ export interface ReadRecordsFolderSummary {
   total: number;
   approved_changes: number;
   unapproved_changes: number;
-  working_only: number;
-  dirty_only: number;
-  master_only: number;
+  /// Row-status counts mirroring the desktop's DiffGridSummary buckets;
+  /// computed full-folder by `query_summary` in folder_index without loading
+  /// any blobs. See `shared/folder_index.rs::query_summary`.
+  added: number;
+  added_approved: number;
+  modified: number;
+  unpublished: number;
+  deleted: number;
+  deleted_approved: number;
+  invalid_json: number;
 }
 
 export interface ReadRecordsParseError {

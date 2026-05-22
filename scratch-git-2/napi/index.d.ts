@@ -103,3 +103,18 @@ export function readFolderBlobsFiltered(
   folderRelPath: string,
   filenames: string[],
 ): Promise<FolderBlob[]>;
+
+/**
+ * List record filenames directly inside the folder (the union of `refs/heads/main`
+ * paths and `accepted-patches.json` entries), sorted lexicographically. Returns
+ * just the names — no blob content is read, so this is sub-second on 22k+
+ * record folders where `readFolderBlobs` would be tens of seconds.
+ *
+ * Use from filename-only consumers (`findRecordOffset`, scroll-to-record).
+ * Same error contract as `readFolderBlobs`. No lock is acquired (reads only).
+ */
+export function listFolderFilenames(
+  workspaceDir: string,
+  connectionDirName: string,
+  folderRelPath: string,
+): Promise<string[]>;

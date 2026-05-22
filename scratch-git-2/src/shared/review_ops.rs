@@ -1118,6 +1118,21 @@ where
     }
 }
 
+/// Path-only walk of `refs/heads/main`. Same scope predicate plumbing as
+/// [`read_main_tree_for_entry_point_filtered`] but skips `cat-file` entirely.
+fn list_main_tree_paths_filtered<F>(bare_repo: &Path, keep: F) -> Result<Vec<String>, ReviewOpError>
+where
+    F: Fn(&str) -> bool,
+{
+    match crate::shared::git_local::rev_parse_optional_to_string(bare_repo, "refs/heads/main")
+        .map_err(ReviewOpError::Internal)?
+    {
+        Some(hash) => crate::shared::git_local::list_tree_paths_filtered(bare_repo, &hash, keep)
+            .map_err(ReviewOpError::Internal),
+        None => Ok(Vec::new()),
+    }
+}
+
 fn workspace_path_for(paths: &ConnectionPaths, rel: &str) -> String {
     format!("{}/{}", paths.conn_dir_name, rel)
 }
@@ -1558,6 +1573,78 @@ pub fn read_folder_blobs_filtered(
         folder_rel_path,
         Some(filenames),
     )
+}
+
+/// List record filenames directly inside
+/// `<workspace>/<connection_dir_name>/<folder_rel_path>/`. The result is the
+/// union of (a) JSON blobs reachable from `refs/heads/main` and (b) entries
+/// in `accepted-patches.json` (a `Create` may not be on `main` yet) — sorted
+/// lexicographically.
+///
+/// Does NOT read blob content. Use this when the caller only needs filenames
+/// (`findRecordOffset`, scroll-to-record affordances). For diff content,
+/// call [`read_folder_blobs_filtered`] with the page filenames.
+pub fn list_folder_filenames(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    folder_rel_path: &str,
+) -> Result<Vec<String>, ReviewOpError> {
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+    let accepted_file =
+        accepted_patches::load(&accepted_patches_dir(&paths)).map_err(ReviewOpError::Internal)?;
+
+    let folder_normalized = folder_rel_path.trim_matches('/').to_string();
+    let folder_prefix = if folder_normalized.is_empty() {
+        String::new()
+    } else {
+        format!("{folder_normalized}/")
+    };
+
+    let in_folder = |path: &str| -> bool {
+        if !is_data_path_in_folder(path, &folder_normalized) {
+            return false;
+        }
+        let rest = path.strip_prefix(folder_prefix.as_str()).unwrap_or(path);
+        !rest.contains('/')
+    };
+
+    // Path-only walk: cheap variant of read_folder_blobs that lists matching
+    // entries from `refs/heads/main` without `cat-file`-ing any blob content.
+    // Reuses the same path predicate as the blob reader so the two stay in sync.
+    let folder_prefix_for_keep = folder_prefix.clone();
+    let folder_normalized_for_keep = folder_normalized.clone();
+    let keep = move |path: &str| -> bool {
+        if !is_data_path_in_folder(path, &folder_normalized_for_keep) {
+            return false;
+        }
+        let rest = path
+            .strip_prefix(folder_prefix_for_keep.as_str())
+            .unwrap_or(path);
+        !rest.contains('/')
+    };
+    let main_paths = list_main_tree_paths_filtered(&paths.bare_repo, keep)?;
+
+    let mut filenames: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for path in &main_paths {
+        let rest = path
+            .strip_prefix(folder_prefix.as_str())
+            .unwrap_or(path)
+            .to_string();
+        filenames.insert(rest);
+    }
+    for entry in &accepted_file.patches {
+        if !in_folder(&entry.path) {
+            continue;
+        }
+        let rest = entry
+            .path
+            .strip_prefix(folder_prefix.as_str())
+            .unwrap_or(entry.path.as_str())
+            .to_string();
+        filenames.insert(rest);
+    }
+
+    Ok(filenames.into_iter().collect())
 }
 
 fn read_folder_blobs_inner(

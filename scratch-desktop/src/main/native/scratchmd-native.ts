@@ -65,6 +65,7 @@ interface NativeModule {
     folderRelPath: string,
     filenames: string[],
   ): Promise<FolderBlob[]>;
+  listFolderFilenames(workspaceDir: string, connectionDirName: string, folderRelPath: string): Promise<string[]>;
 }
 
 function loadNative(): NativeModule {
@@ -266,6 +267,23 @@ export async function readFolderBlobsFiltered(
   filenames: string[],
 ): Promise<FolderBlob[]> {
   return loadNative().readFolderBlobsFiltered(workspaceDir, connectionDirName, folderRelPath, filenames);
+}
+
+/**
+ * List record filenames directly inside the folder. Returns the union of
+ * `refs/heads/main` paths and `accepted-patches.json` entries (so an approved
+ * `Create` whose blob isn't on main yet still shows up), sorted
+ * lexicographically. Filename-only — no blob content is read.
+ *
+ * Use from filename-only consumers (`findRecordOffset`, scroll-to-record).
+ * For diff content, call {@link readFolderBlobsFiltered} with the page filenames.
+ */
+export async function listFolderFilenames(
+  workspaceDir: string,
+  connectionDirName: string,
+  folderRelPath: string,
+): Promise<string[]> {
+  return loadNative().listFolderFilenames(workspaceDir, connectionDirName, folderRelPath);
 }
 
 export type { FolderBlob, ReviewOpResult };

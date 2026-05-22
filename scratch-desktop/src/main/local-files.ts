@@ -15,9 +15,13 @@ import type { TableView } from '@spinner/shared-types';
 import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { buildColumnDefinitions, createFallbackTableView } from '../shared/schema-columns';
-import { acceptCellField, discardCellField, readFolderBlobs, readFolderBlobsFiltered } from './native/scratchmd-native';
 import {
-  getFilenamesWithErrors,
+  acceptCellField,
+  discardCellField,
+  listFolderFilenames,
+  readFolderBlobsFiltered,
+} from './native/scratchmd-native';
+import {
   listUnpublishedChanges,
   listUnreviewedChanges,
   readRecords,
@@ -898,14 +902,10 @@ function snapshotFromContent(content: string | null | undefined, leafPaths?: Set
 }
 
 /**
- * Pull the `(published, approved)` content for records in the folder via the
+ * Pull the `(published, approved)` content for the supplied filenames via the
  * napi binding and convert each into the `JsonFileSnapshot` shape the
- * comparison code expects.
- *
- * `filenames` bounds the read to a specific page. Pass `undefined` for "all
- * records in the folder" (V1 grid path, `findRecordOffset` enumeration);
- * pass a string array (which may be empty) for "just this page" / "just this
- * one record" — D5 perf fix.
+ * comparison code expects. `filenames` bounds the read to the caller's page —
+ * grid views pass the page's filename list; single-record views pass `[name]`.
  *
  * Returns empty maps when the workspace marker can't be resolved (treats
  * every record as new — matches the desktop's pre-F.5 fallback when the
@@ -914,8 +914,8 @@ function snapshotFromContent(content: string | null | undefined, leafPaths?: Set
 async function readFolderApprovedAndPublishedSnapshots(
   workspacePath: string,
   folderPath: string,
-  leafPaths?: Set<string>,
-  filenames?: string[],
+  leafPaths: Set<string> | undefined,
+  filenames: string[],
 ): Promise<{ approved: Map<string, JsonFileSnapshot>; published: Map<string, JsonFileSnapshot> }> {
   const approved = new Map<string, JsonFileSnapshot>();
   const published = new Map<string, JsonFileSnapshot>();
@@ -931,14 +931,12 @@ async function readFolderApprovedAndPublishedSnapshots(
   }
   let blobs;
   try {
-    blobs = filenames
-      ? await readFolderBlobsFiltered(workspacePath, connectionDirName, folderRelPath, filenames)
-      : await readFolderBlobs(workspacePath, connectionDirName, folderRelPath);
+    blobs = await readFolderBlobsFiltered(workspacePath, connectionDirName, folderRelPath, filenames);
   } catch (err) {
     // Workspace marker missing, unknown connection, or other native error.
     // Log and degrade to empty — the grid still renders working files (as
     // "added"); the user can recover via `workspaces unsync` + re-init.
-    console.debug('readFolderBlobs failed:', err);
+    console.debug('readFolderBlobsFiltered failed:', err);
     return { approved, published };
   }
   for (const blob of blobs) {
@@ -961,29 +959,6 @@ async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): 
     return { kind: 'invalid', error: parsed.error };
   }
   return { kind: 'ok', flat: flattenObject(parsed.raw, '', leafPaths), raw: parsed.raw };
-}
-
-async function readFolderSnapshots(
-  folderPath: string,
-  leafPaths?: Set<string>,
-): Promise<Map<string, JsonFileSnapshot>> {
-  const result = new Map<string, JsonFileSnapshot>();
-  let names: string[];
-  try {
-    names = (await getCachedFileNames(folderPath)).filter((n) => extname(n).toLowerCase() === '.json');
-  } catch {
-    return result;
-  }
-  for (let i = 0; i < names.length; i += BATCH_CONCURRENCY) {
-    const batch = names.slice(i, i + BATCH_CONCURRENCY);
-    await Promise.all(
-      batch.map(async (name) => {
-        const snap = await readJsonFileSnapshot(join(folderPath, name), leafPaths);
-        result.set(name, snap);
-      }),
-    );
-  }
-  return result;
 }
 
 export async function readFolderStatuses(folderPath: string, workspacePath: string): Promise<FolderStatuses> {
@@ -1193,159 +1168,22 @@ function buildInvalidJsonFileEntries(folderPath: string, rows: DiffRow[]): Inval
     }));
 }
 
-export async function readDiffGridData(folderPath: string, workspacePath: string): Promise<DiffGridResult> {
-  return readDiffGridDataPage(folderPath, workspacePath, {});
-}
-
 /**
- * Reads all three versions of every record in the folder (working copy, dirty branch, master
- * branch), computes per-row diff status, applies filters, sorts, and paginates.
+ * Reads a paginated diff grid page backed by the SQLite folder index in the
+ * CLI (`shared/folder_index.rs`). Pagination + global-scope filters + sorts
+ * happen SQL-side via `scratchmd read-records`; only the page filenames are
+ * read off disk for the diff comparison, so memory stays bounded at the page
+ * size (D5: see docs/plans/2026-05-17-simplify-local-workspace-architecture.md).
  *
- * This is the interface we expect to eventually get from the index database: records joined with
- * their validation errors, filtered and paginated entirely in SQLite. Right now we read raw JSON
- * files from three on-disk worktrees and call the CLI for validation data separately. Once the
- * record index stores field values and validation results together, this function should collapse
- * into a single parameterised database query.
+ * Summary counts (`total`, `added`, `modified`, `unpublished`, `deleted`,
+ * `invalidJson`, etc.) come full-folder from the CLI's `FolderSummary`
+ * (`folder_index.rs::query_summary`'s row-status discriminator), not from
+ * the page rows.
+ *
+ * Replaced the earlier in-memory V1 path that walked every record's three
+ * versions on each page load.
  */
 export async function readDiffGridDataPage(
-  folderPath: string,
-  workspacePath: string,
-  opts: ReadDiffGridDataOptions,
-): Promise<DiffGridResult> {
-  const workingPath = folderPath;
-
-  // Load schema first so we can derive leaf column IDs for schema-aware flattening.
-  // This prevents object-type leaf columns (e.g. anyOf-wrapped objects) from being
-  // recursively flattened into sub-keys that don't match any column definition.
-  const relPath = relative(workspacePath, folderPath);
-  const schema = await readConnectionSchema(workspacePath, relPath);
-  const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
-  const leafPaths = new Set(schemaColumns.map((c) => c.id));
-
-  // Working = TS-side fs read of the user worktree.
-  // Approved + published = napi binding against (refs/heads/main,
-  //   accepted-patches.json) in the bare repo. Pre-F.5 this used to read two
-  //   sparse on-disk mirrors at `.scratch/connections/{dirty,master}/<conn>/`;
-  //   those were retired with slice F.
-  const [workingFiles, approvedAndPublished, { filenames: errorFilenameList, field_paths: errorFieldPaths }] =
-    await Promise.all([
-      readFolderSnapshots(workingPath, leafPaths),
-      readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths),
-      getFilenamesWithErrors(workspacePath, folderPath),
-    ]);
-  const { approved: approvedFiles, published: publishedFiles } = approvedAndPublished;
-
-  const missingSnapshot: JsonFileSnapshot = { kind: 'missing' };
-
-  // Include published-only files so approved deletions (approved removed,
-  // published still has it) remain visible as "deleted" rows.
-  const allNamesArr: string[] = Array.from(
-    new Set<string>(
-      Array.from(workingFiles.keys())
-        .concat(Array.from(approvedFiles.keys()))
-        .concat(Array.from(publishedFiles.keys())),
-    ),
-  );
-  const columnSet = new Set<string>();
-  const rows: DiffRow[] = [];
-
-  for (const name of allNamesArr) {
-    const compared = compareRecordSnapshots(
-      workingFiles.get(name) ?? missingSnapshot,
-      approvedFiles.get(name) ?? missingSnapshot,
-      publishedFiles.get(name) ?? missingSnapshot,
-      name,
-    );
-    if (!compared) {
-      continue;
-    }
-    for (const column of compared.columns) columnSet.add(column);
-    rows.push(compared.row);
-  }
-
-  const summary: DiffGridSummary = {
-    total: rows.length,
-    added: rows.filter((r) => r.__rowStatus === 'added' || r.__rowStatus === 'addedUnpublished').length,
-    addedApproved: rows.filter((r) => r.__rowStatus === 'addedUnpublished').length,
-    modified: rows.filter((r) => r.__rowStatus === 'modified').length,
-    unpublished: rows.filter((r) => r.__rowStatus === 'unpublished').length,
-    deleted: rows.filter((r) => r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished').length,
-    deletedApproved: rows.filter((r) => r.__rowStatus === 'deletedUnpublished').length,
-    invalidJson: rows.filter((r) => r.__rowStatus === 'invalidJson').length,
-  };
-
-  const errorFilenames = new Set(errorFilenameList);
-
-  const filterCounts = {
-    unreviewed: rows.filter((row) => rowHasUnreviewedChanges(row)).length,
-    unpublished: rows.filter((row) => rowHasUnpublishedChanges(row)).length,
-    errors: errorFilenames.size,
-  };
-  const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, rows);
-  const filteredRows = applyDiffGridFilters(rows, opts.filters ?? [], errorFilenames);
-  const sortedRows = sortDiffRows(filteredRows, opts.sortBy, opts.sortOrder);
-  const offset = Math.max(0, opts.offset ?? 0);
-  const limit = Math.max(1, opts.limit ?? GRID_DATA_MAX_PAGINATION);
-  const pagedRows = sortedRows.slice(offset, offset + limit);
-
-  // Derive column definitions from schema; fall back to data-union columns as ColumnDefinition shells
-  let columns: ColumnDefinition[];
-  if (schema) {
-    const schemaCols = buildColumnDefinitions(schema);
-    // Include any data-union columns not in the schema (e.g. unmapped fields)
-    const schemaIdSet = new Set(schemaCols.map((c) => c.id));
-    const extraIds = Array.from(columnSet)
-      .filter((id) => !schemaIdSet.has(id))
-      .sort((a, b) => a.localeCompare(b));
-    const extraCols: ColumnDefinition[] = extraIds.map((id) => ({
-      id,
-      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
-      dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
-    }));
-    columns = [...schemaCols, ...extraCols];
-  } else {
-    const sortedIds = Array.from(columnSet).sort((a, b) => a.localeCompare(b));
-    columns = sortedIds.map((id) => ({
-      id,
-      displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
-      dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
-    }));
-  }
-
-  const focusFilters = (opts.filters ?? []).filter((filter) => filter.scope !== 'global');
-  const focusRows = applyDiffGridFilters(rows, focusFilters, errorFilenames);
-  const focusColumnIds = collectFocusColumnIds(focusRows, columns, errorFieldPaths);
-
-  return {
-    rows: pagedRows,
-    columns,
-    total: filteredRows.length,
-    summary,
-    filterCounts,
-    focusColumnIds,
-    invalidJsonFiles,
-    staleCount: 0,
-    validationByCell: {},
-    totalErrorCount: 0,
-    totalProblemsStaleCount: 0,
-  };
-}
-
-/**
- * Experimental V2 of readDiffGridDataPage backed by the SQLite folder index.
- *
- * Key difference from V1: pagination happens in the CLI (SQLite) instead of in-memory,
- * so only the page filenames are loaded from disk rather than the entire folder.
- *
- * Limitations in this initial version:
- * - DiffGridSummary counts (added/modified/deleted) are computed from page rows only, not the full folder.
- * - Column/text filters are not forwarded to the CLI; they are applied in-memory on the page.
- *
- * Gated by the SCRATCH_USE_SQLITE_GRID env variable — set to "1" to enable.
- */
-export async function readDiffGridDataPageV2(
   folderPath: string,
   workspacePath: string,
   opts: ReadDiffGridDataOptions,
@@ -1443,15 +1281,19 @@ export async function readDiffGridDataPageV2(
   // Apply desktop-side filters on page rows
   const filteredRows = desktopFilters.length > 0 ? applyDiffGridFilters(rows, desktopFilters, errorFilenames) : rows;
 
+  // Full-folder counts come from the CLI's SQL query (folder_index v4's
+  // `query_summary` discriminator), so the modal badges show "1234 modified
+  // / 12 unpublished" for the entire folder rather than only the visible
+  // page. See D5 in docs/plans/2026-05-17-simplify-local-workspace-architecture.md.
   const summary: DiffGridSummary = {
     total: cliResult.summary.total,
-    added: rows.filter((r) => r.__rowStatus === 'added' || r.__rowStatus === 'addedUnpublished').length,
-    addedApproved: rows.filter((r) => r.__rowStatus === 'addedUnpublished').length,
-    modified: rows.filter((r) => r.__rowStatus === 'modified').length,
-    unpublished: rows.filter((r) => r.__rowStatus === 'unpublished').length,
-    deleted: rows.filter((r) => r.__rowStatus === 'deleted' || r.__rowStatus === 'deletedUnpublished').length,
-    deletedApproved: rows.filter((r) => r.__rowStatus === 'deletedUnpublished').length,
-    invalidJson: rows.filter((r) => r.__rowStatus === 'invalidJson').length,
+    added: cliResult.summary.added,
+    addedApproved: cliResult.summary.added_approved,
+    modified: cliResult.summary.modified,
+    unpublished: cliResult.summary.unpublished,
+    deleted: cliResult.summary.deleted,
+    deletedApproved: cliResult.summary.deleted_approved,
+    invalidJson: cliResult.summary.invalid_json,
   };
 
   const filterCounts = {
@@ -1613,38 +1455,6 @@ function collectFocusColumnIds(
   };
 }
 
-function compareSortableValues(aVal: unknown, bVal: unknown, sortOrder: 'asc' | 'desc'): number {
-  const direction = sortOrder === 'asc' ? 1 : -1;
-
-  if (aVal == null && bVal == null) return 0;
-  if (aVal == null) return direction;
-  if (bVal == null) return -direction;
-  if (typeof aVal === 'number' && typeof bVal === 'number') return (aVal - bVal) * direction;
-
-  const aText = typeof aVal === 'string' ? aVal : JSON.stringify(aVal);
-  const bText = typeof bVal === 'string' ? bVal : JSON.stringify(bVal);
-  return aText.localeCompare(bText, undefined, { sensitivity: 'base', numeric: true }) * direction;
-}
-
-function compareFilename(a: DiffRow, b: DiffRow): number {
-  return a.__filename.localeCompare(b.__filename, undefined, { sensitivity: 'base', numeric: true });
-}
-
-function sortDiffRows(rows: DiffRow[], sortBy?: string, sortOrder?: 'asc' | 'desc'): DiffRow[] {
-  return [...rows].sort((a, b) => {
-    let primary = 0;
-    if (sortBy && sortOrder) {
-      primary = compareSortableValues(a[sortBy], b[sortBy], sortOrder);
-    }
-
-    if (primary !== 0) {
-      return primary;
-    }
-
-    return compareFilename(a, b);
-  });
-}
-
 export async function findRecordOffset(
   folderPath: string,
   workspacePath: string,
@@ -1669,8 +1479,13 @@ export async function findRecordOffset(
   }
   try {
     const { connectionDirName, folderRelPath } = splitWorkspaceFolderPath(workspacePath, folderPath);
-    const blobs = await readFolderBlobs(workspacePath, connectionDirName, folderRelPath);
-    for (const blob of blobs) names.add(blob.filename);
+    // Filename-only union of main + accepted-patches; no blob content read.
+    // mr29 D5 follow-up: previously called `readFolderBlobs`, which loaded
+    // every record's `(published, approved)` content (~200-500 MB on
+    // HubSpot/Contacts) just to enumerate filenames. The `listFolderFilenames`
+    // binding skips `cat-file` entirely — sub-second on 22k+ folders.
+    const remoteNames = await listFolderFilenames(workspacePath, connectionDirName, folderRelPath);
+    for (const name of remoteNames) names.add(name);
   } catch {
     // Workspace marker missing / unknown connection — fall through with just
     // the working-tree filenames.

@@ -253,3 +253,33 @@ pub async fn read_folder_blobs_filtered(
     .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
     .map_err(map_err)
 }
+
+/// List record filenames in `<workspaceDir>/<connectionDirName>/<folderRelPath>/`
+/// without reading blob content. Returns the union of `refs/heads/main` paths
+/// and `accepted-patches.json` entries (so approved-creates and approved-deletes
+/// both show up). Sorted lexicographically.
+///
+/// Use this for filename-only consumers (`findRecordOffset`, scroll-to-record).
+/// For diff content, call `readFolderBlobsFiltered` with the desired page's
+/// filenames.
+///
+/// Same error-prefix convention as `readFolderBlobs` (`WORKSPACE_NOT_FOUND`,
+/// `UNKNOWN_CONNECTION`, `INVALID_JSON`, `INTERNAL`). No `LOCK_BUSY` — reads
+/// don't acquire the workspace lock.
+#[napi]
+pub async fn list_folder_filenames(
+    workspace_dir: String,
+    connection_dir_name: String,
+    folder_rel_path: String,
+) -> Result<Vec<String>> {
+    napi::tokio::task::spawn_blocking(move || -> std::result::Result<Vec<String>, ReviewOpError> {
+        review_ops::list_folder_filenames(
+            &PathBuf::from(&workspace_dir),
+            &connection_dir_name,
+            &folder_rel_path,
+        )
+    })
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
+    .map_err(map_err)
+}

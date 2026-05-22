@@ -2760,6 +2760,110 @@ mod entry_points {
         .unwrap_err();
         assert!(matches!(err, ReviewOpError::CreateClashesWithMain(_)));
     }
+
+    // ── list_folder_filenames (D5: filename-only enumerator) ──────────────────
+
+    fn write_patch_file(fx: &EpFixture, patches: serde_json::Value) {
+        let body = serde_json::json!({ "patches": patches });
+        std::fs::write(
+            fx.connection_dir.join("accepted-patches.json"),
+            serde_json::to_string_pretty(&body).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_folder_filenames_returns_main_union_with_accepted_patches() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(&fx, "Companies/rec_acme.json", "{\"name\":\"Acme\"}\n");
+        seed_main(&fx, "Companies/rec_widget.json", "{\"name\":\"Widget\"}\n");
+        write_patch_file(
+            &fx,
+            serde_json::json!([
+                { "path": "Companies/rec_new.json",    "kind": "create", "patch": { "name": "New Co" } },
+                { "path": "Companies/rec_acme.json",   "kind": "update", "patch": { "industry": "SaaS" } },
+                { "path": "Companies/rec_widget.json", "kind": "delete", "patch": null },
+            ]),
+        );
+
+        let names =
+            crate::shared::review_ops::list_folder_filenames(&fx.workspace_dir, CONN, "Companies")
+                .unwrap();
+        // Sorted, union of main + Create entries (Update/Delete on existing
+        // main paths don't add new filenames; Create adds rec_new.json).
+        assert_eq!(
+            names,
+            vec![
+                "rec_acme.json".to_string(),
+                "rec_new.json".to_string(),
+                "rec_widget.json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_folder_filenames_is_non_recursive() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        seed_main(&fx, "Companies/rec_top.json", "{}\n");
+        seed_main(&fx, "Companies/nested/rec_deep.json", "{}\n");
+        write_patch_file(
+            &fx,
+            serde_json::json!([
+                { "path": "Companies/nested/rec_patch.json", "kind": "create", "patch": { "x": 1 } },
+            ]),
+        );
+
+        let top =
+            crate::shared::review_ops::list_folder_filenames(&fx.workspace_dir, CONN, "Companies")
+                .unwrap();
+        assert_eq!(top, vec!["rec_top.json".to_string()]);
+
+        let nested = crate::shared::review_ops::list_folder_filenames(
+            &fx.workspace_dir,
+            CONN,
+            "Companies/nested",
+        )
+        .unwrap();
+        assert_eq!(
+            nested,
+            vec!["rec_deep.json".to_string(), "rec_patch.json".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_folder_filenames_empty_folder_returns_empty_vec() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+        // No seeded files. The fixture's bare repo only has the `.scratch/seed`
+        // marker which is excluded by `is_data_path_in_folder`.
+        let names =
+            crate::shared::review_ops::list_folder_filenames(&fx.workspace_dir, CONN, "Companies")
+                .unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn list_folder_filenames_errors_on_unknown_connection() {
+        let fx = make_fixture();
+        let err = crate::shared::review_ops::list_folder_filenames(
+            &fx.workspace_dir,
+            "NonExistentConn",
+            "Companies",
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReviewOpError::UnknownConnection(_)));
+    }
 }
 
 // ---------------------------------------------------------------------------
