@@ -3404,7 +3404,6 @@ fn reject_all_full_scan(
     })
 }
 
-
 /// Files with an entry in `accepted-patches.json` — i.e. approved but not
 /// yet published. One UnreviewedEntry per patch entry; status comes from the
 /// patch kind.

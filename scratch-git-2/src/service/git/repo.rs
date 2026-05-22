@@ -130,7 +130,39 @@ impl GitRepo {
         Ok(())
     }
 
-    /// Resolves the merge_base tag, falling back to main for repos that predate the tag.
+    /// Resolves the `merge_base` tag.
+    ///
+    /// `merge_base` is a stored ref (`refs/tags/merge_base`) that snapshots
+    /// where `dirty` was last brought in sync with `main`. It is NOT the
+    /// standard `git merge-base` computation — we never walk the commit
+    /// graph to find a common ancestor. Instead, every writer that brings
+    /// `dirty` in line with `main` (init, rebase, reset, discard,
+    /// strip-prefix) is responsible for advancing this tag.
+    ///
+    /// Why store rather than compute:
+    ///
+    /// 1. Diffing `main ↔ dirty` produces phantom changes whenever `main`
+    ///    moves out from under `dirty`: a record added to `main` via pull
+    ///    looks like a delete on `dirty`. Rebasing dirty after every batch
+    ///    would fix that but is too expensive. The stored snapshot lets us
+    ///    defer rebases to once per pull/publish. See commit 0906d955 by
+    ///    Ivan ("use the merge_base instead of master on the client").
+    ///
+    /// 2. The graph relationship between `main` and `dirty` is not always
+    ///    well-defined. Rebase force-pushes `dirty` to `main`, and orphan
+    ///    commits arise during operations like `strip_top_level_prefix`
+    ///    (see cases A/B/C there). A computed merge-base would fail or be
+    ///    misleading in those cases.
+    ///
+    /// Diff/review surfaces use `compare_commits(merge_base, dirty)` to
+    /// answer "what has the user changed since their last sync?" — which
+    /// is the right question for a review screen. If `merge_base` falls
+    /// behind `main` (e.g. a writer forgot to update it), the review list
+    /// will show ghost files that have no visible diff and can't be
+    /// discarded. Every writer that aligns `dirty` with `main` MUST call
+    /// `write_tag("merge_base", main_oid)`.
+    ///
+    /// Falls back to `main` for repos that predate the tag.
     pub fn resolve_merge_base_or_main(&self) -> Result<ObjectId, AppError> {
         match self.resolve_ref("merge_base") {
             Ok(oid) => Ok(oid),

@@ -104,63 +104,71 @@ pub async fn reset(
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
 
+            let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
+
             if let Some(path) = body.path {
                 // Discard specific changes
-                let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
                 let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
-                if main_oid == dirty_oid {
-                    return Ok(json!({ "success": true }));
-                }
-                let changes = git_repo.compare_commits(main_oid, dirty_oid)?;
+                if main_oid != dirty_oid {
+                    let changes = git_repo.compare_commits(main_oid, dirty_oid)?;
 
-                let normalized_target = path.strip_prefix('/').unwrap_or(&path);
-                let changes_to_discard: Vec<_> = changes
-                    .iter()
-                    .filter(|c| {
-                        c.path == normalized_target
-                            || c.path.starts_with(&format!("{}/", normalized_target))
-                    })
-                    .collect();
+                    let normalized_target = path.strip_prefix('/').unwrap_or(&path);
+                    let changes_to_discard: Vec<_> = changes
+                        .iter()
+                        .filter(|c| {
+                            c.path == normalized_target
+                                || c.path.starts_with(&format!("{}/", normalized_target))
+                        })
+                        .collect();
 
-                if changes_to_discard.is_empty() {
-                    return Ok(json!({ "success": true }));
-                }
-
-                let mut revert_changes = Vec::new();
-                for change in changes_to_discard {
-                    if change.status == "added" {
-                        revert_changes.push(FileChange {
-                            path: change.path.clone(),
-                            content: None,
-                            oid: None,
-                            change_type: ChangeType::Delete,
-                        });
-                    } else {
-                        let main_content = git_repo.get_file_content(MAIN_BRANCH, &change.path)?;
-                        if let Some(content) = main_content {
+                    let mut revert_changes = Vec::new();
+                    for change in changes_to_discard {
+                        if change.status == "added" {
                             revert_changes.push(FileChange {
                                 path: change.path.clone(),
-                                content: Some(content),
+                                content: None,
                                 oid: None,
-                                change_type: ChangeType::Modify,
+                                change_type: ChangeType::Delete,
                             });
+                        } else {
+                            let main_content =
+                                git_repo.get_file_content(MAIN_BRANCH, &change.path)?;
+                            if let Some(content) = main_content {
+                                revert_changes.push(FileChange {
+                                    path: change.path.clone(),
+                                    content: Some(content),
+                                    oid: None,
+                                    change_type: ChangeType::Modify,
+                                });
+                            }
                         }
                     }
-                }
 
-                if !revert_changes.is_empty() {
-                    git_repo
-                        .commit_changes_to_ref(
-                            DIRTY_BRANCH,
-                            &revert_changes,
-                            &format!("Discard changes to {}", normalized_target),
-                        )?
-                        .0;
+                    if !revert_changes.is_empty() {
+                        git_repo
+                            .commit_changes_to_ref(
+                                DIRTY_BRANCH,
+                                &revert_changes,
+                                &format!("Discard changes to {}", normalized_target),
+                            )?
+                            .0;
+                    }
                 }
             } else {
                 // Reset dirty to main
-                let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
                 git_repo.force_ref(DIRTY_BRANCH, main_oid)?;
+            }
+
+            // If dirty now visibly matches main, advance merge_base so the
+            // review list (compare merge_base ↔ dirty) reflects reality.
+            // Without this, ghost files persist whenever main has drifted
+            // ahead of merge_base — see `resolve_merge_base_or_main`.
+            let new_dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
+            if git_repo
+                .compare_commits(main_oid, new_dirty_oid)?
+                .is_empty()
+            {
+                git_repo.write_tag("merge_base", main_oid)?;
             }
 
             Ok::<_, AppError>(json!({ "success": true }))
