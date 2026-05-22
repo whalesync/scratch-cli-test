@@ -6,6 +6,7 @@ import {
   Divider,
   Kbd,
   Menu,
+  Modal,
   Notification,
   Popover,
   Table,
@@ -164,6 +165,16 @@ export const SCRATCH_MANTINE_THEME = createTheme({
         divider: classes.menuDivider,
         itemSection: classes.menuItemSection,
         label: classes.menuLabel,
+      },
+    }),
+
+    // Vertically center every modal by default. Mantine's stock placement is
+    // top-aligned, which on Electron's large window sizes pushes the dialog
+    // up into a corner — vertical centering reads as more deliberate and
+    // matches what the user expects from native dialogs.
+    Modal: Modal.extend({
+      defaultProps: {
+        centered: true,
       },
     }),
 

@@ -4,7 +4,6 @@ import {
   Badge,
   Box,
   Button,
-  Center,
   Code,
   Group,
   Loader,
@@ -15,6 +14,7 @@ import {
   Table,
   Text,
 } from '@mantine/core';
+import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ValidationStat } from '../../../../shared/validation-types';
 import { jobApi, type JobStatus } from '../../lib/job-api';
@@ -72,6 +72,40 @@ interface PublishChangesModalProps {
 
 function isTerminalState(state: JobStatus['state']): boolean {
   return state === 'completed' || state === 'failed' || state === 'canceled' || state === 'unknown';
+}
+
+/**
+ * Step-by-step progress shown during long-running modal phases (loadInitialState,
+ * accept-all/discard-all + upload, publish-now re-check). Replaces the bare
+ * spinner with "what is the modal actually doing right now" granularity, since
+ * each step can run 1–3s on a workspace the size of the Monorepo and silent
+ * spinners feel slower than they are.
+ */
+type ProgressStepStatus = 'pending' | 'active' | 'done' | 'error';
+interface ProgressStep {
+  /** Stable key for the React list. Also doubles as the status-update target. */
+  id: string;
+  /** Initial label. Updated via `markStepDone(id, finalLabel)` once it completes. */
+  label: string;
+  status: ProgressStepStatus;
+}
+
+function ProgressStepList({ steps }: { steps: ProgressStep[] }) {
+  return (
+    <Stack gap="xs" py="sm">
+      {steps.map((step) => (
+        <Group gap="xs" key={step.id} wrap="nowrap">
+          {step.status === 'active' && <Loader size={14} />}
+          {step.status === 'done' && <CheckCircle2 size={16} color="var(--mantine-color-green-6)" />}
+          {step.status === 'error' && <XCircle size={16} color="var(--mantine-color-red-6)" />}
+          {step.status === 'pending' && <Circle size={16} color="var(--mantine-color-gray-5)" />}
+          <Text size="sm" c={step.status === 'pending' ? 'dimmed' : undefined}>
+            {step.label}
+          </Text>
+        </Group>
+      ))}
+    </Stack>
+  );
 }
 
 function formatDiffSummary(created: number, updated: number, deleted: number): string {
@@ -365,6 +399,7 @@ export function PublishChangesModal({
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [publishErrorDetails, setPublishErrorDetails] = useState<string[]>([]);
   const [closing, setClosing] = useState(false);
+  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
   const [validationCounts, setValidationCounts] = useState<{
     errors: number;
     warnings: number;
@@ -384,6 +419,10 @@ export function PublishChangesModal({
       setMode('uploading');
       setUploadResult(null);
       setStalenessBannerDismissed(false);
+      setProgressSteps((prev) => [
+        ...prev,
+        { id: 'upload', label: 'Uploading accepted edits to the server…', status: 'active' },
+      ]);
       await trackPublishUploadStarted(workspaceId);
 
       const result = await window.scratchDesktop.uploadWorkspaceChanges(localPath);
@@ -397,6 +436,19 @@ export function PublishChangesModal({
         connectionCount: connectionsWithDiff.length,
       });
 
+      setProgressSteps((prev) =>
+        prev.map((step) => {
+          if (step.id !== 'upload') return step;
+          if (result.status === 'no_changes' || result.status === 'up_to_date') {
+            return { ...step, status: 'done', label: 'No changes to upload' };
+          }
+          const totalFiles = result.filesCreated + result.filesUpdated + result.filesDeleted;
+          const connLabel = `${connectionsWithDiff.length} connection${connectionsWithDiff.length === 1 ? '' : 's'}`;
+          const fileLabel = `${totalFiles.toLocaleString()} record${totalFiles === 1 ? '' : 's'}`;
+          return { ...step, status: 'done', label: `Uploaded ${fileLabel} to ${connLabel}` };
+        }),
+      );
+
       if (result.status === 'no_changes' || result.status === 'up_to_date') {
         setMode('complete');
         return;
@@ -404,6 +456,7 @@ export function PublishChangesModal({
 
       setMode('uploaded');
     } catch (err) {
+      setProgressSteps((prev) => prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)));
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to upload workspace changes');
     }
@@ -425,18 +478,59 @@ export function PublishChangesModal({
     setPublishErrorDetails([]);
     setValidationCounts(null);
     setValidationStats([]);
+    // Run the two pre-flight checks sequentially (instead of Promise.all) so
+    // the user sees one finish before the next starts. Total slowdown vs. the
+    // prior parallel path is ~100ms (validation count is SQLite-fast); the
+    // perception win is worth it.
+    setProgressSteps([
+      { id: 'unreviewed', label: 'Checking for unreviewed local edits…', status: 'active' },
+      { id: 'validation', label: 'Loading validation status…', status: 'pending' },
+    ]);
 
     try {
-      const [nextUnreviewed, counts] = await Promise.all([
-        window.scratchDesktop.listUnreviewedChanges(localPath),
-        loadValidationCounts(localPath),
-      ]);
-
+      const nextUnreviewed = await window.scratchDesktop.listUnreviewedChanges(localPath);
       setUnreviewedEntries(nextUnreviewed);
+      setProgressSteps((prev) =>
+        prev.map((step) => {
+          if (step.id === 'unreviewed') {
+            const found = nextUnreviewed.length;
+            return {
+              ...step,
+              status: 'done',
+              label:
+                found === 0
+                  ? 'No unreviewed local edits'
+                  : `Found ${found.toLocaleString()} unreviewed record${found === 1 ? '' : 's'}`,
+            };
+          }
+          if (step.id === 'validation') {
+            return { ...step, status: 'active' };
+          }
+          return step;
+        }),
+      );
+
+      const counts = await loadValidationCounts(localPath);
       setValidationCounts(
         counts ? { errors: counts.errors, warnings: counts.warnings, records: counts.records } : null,
       );
       setValidationStats(counts?.stats ?? []);
+      setProgressSteps((prev) =>
+        prev.map((step) => {
+          if (step.id === 'validation') {
+            const records = counts?.records ?? 0;
+            return {
+              ...step,
+              status: 'done',
+              label:
+                records === 0
+                  ? 'No validation issues'
+                  : `Found ${records.toLocaleString()} record${records === 1 ? '' : 's'} with validation issues`,
+            };
+          }
+          return step;
+        }),
+      );
 
       if (autoStartUploadOnOpen) {
         await startUpload();
@@ -453,6 +547,7 @@ export function PublishChangesModal({
 
       await startUpload();
     } catch (err) {
+      setProgressSteps((prev) => prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)));
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to load publish state');
     } finally {
@@ -478,13 +573,20 @@ export function PublishChangesModal({
     try {
       setError(null);
       setInitializing(true);
+      setProgressSteps([{ id: 'accept', label: 'Accepting all unreviewed local edits…', status: 'active' }]);
       const result = await window.scratchDesktop.acceptAllChanges(localPath);
       if (result.exitCode !== 0) {
         throw new Error(result.stderr.trim() || 'scratchmd files accept-all failed');
       }
+      setProgressSteps((prev) =>
+        prev.map((step) =>
+          step.id === 'accept' ? { ...step, status: 'done', label: 'Accepted unreviewed edits' } : step,
+        ),
+      );
       setUnreviewedEntries([]);
       await startUpload();
     } catch (err) {
+      setProgressSteps((prev) => prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)));
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to accept unreviewed changes');
     } finally {
@@ -497,13 +599,20 @@ export function PublishChangesModal({
     try {
       setError(null);
       setInitializing(true);
+      setProgressSteps([{ id: 'discard', label: 'Discarding all unreviewed local edits…', status: 'active' }]);
       const result = await window.scratchDesktop.discardAllChanges(localPath);
       if (result.exitCode !== 0) {
         throw new Error(result.stderr.trim() || 'scratchmd files discard-all failed');
       }
+      setProgressSteps((prev) =>
+        prev.map((step) =>
+          step.id === 'discard' ? { ...step, status: 'done', label: 'Discarded unreviewed edits' } : step,
+        ),
+      );
       setUnreviewedEntries([]);
       await startUpload();
     } catch (err) {
+      setProgressSteps((prev) => prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)));
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to discard unreviewed changes');
     } finally {
@@ -621,6 +730,29 @@ export function PublishChangesModal({
     try {
       setError(null);
       setPublishErrorDetails([]);
+      setProgressSteps([{ id: 'recheck', label: 'Re-checking for unreviewed local edits…', status: 'active' }]);
+
+      // Re-check for unreviewed edits in the window between upload and this
+      // click — a file watcher or another window could have introduced new
+      // local edits that aren't in the server's dirty branch. The renderer
+      // publishes directly via HTTP (`publishApi.startPlanJob` / `startRunJob`),
+      // bypassing the CLI's `run_publish` pre-flight, so this gate is the only
+      // backstop for that race. Flip back to approval mode so the user can
+      // accept/discard, which will trigger a fresh upload before they retry.
+      const freshUnreviewed = await window.scratchDesktop.listUnreviewedChanges(localPath);
+      if (freshUnreviewed.length > 0) {
+        setUnreviewedEntries(freshUnreviewed);
+        setUploadResult(null);
+        setProgressSteps([]);
+        setMode('approval');
+        return;
+      }
+      setProgressSteps((prev) =>
+        prev.map((step) =>
+          step.id === 'recheck' ? { ...step, status: 'done', label: 'No new unreviewed edits' } : step,
+        ),
+      );
+
       setMode('publishing');
 
       const connectionsWithDiff = uploadResult.connections.filter((c) => c.status === 'uploaded');
@@ -824,9 +956,7 @@ export function PublishChangesModal({
         )}
 
         {initializing ? (
-          <Center py="md">
-            <Loader size="sm" />
-          </Center>
+          <ProgressStepList steps={progressSteps} />
         ) : (
           <>
             {mode === 'approval' && (
@@ -880,19 +1010,7 @@ export function PublishChangesModal({
               </>
             )}
 
-            {mode === 'uploading' && (
-              <Stack gap="lg" align="center" py="xl">
-                <Loader size="md" />
-                <Stack gap={4} align="center">
-                  <Text size="md" fw={500}>
-                    Uploading changes to the server
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    This usually takes a few seconds.
-                  </Text>
-                </Stack>
-              </Stack>
-            )}
+            {mode === 'uploading' && <ProgressStepList steps={progressSteps} />}
 
             {mode === 'uploaded' && uploadResult && (
               <>
@@ -923,11 +1041,20 @@ export function PublishChangesModal({
                               {formatDiffSummary(c.filesCreated, c.filesUpdated, c.filesDeleted)}
                             </Text>
                           </Group>
-                          {(c.createdPaths.length > 0 || c.updatedPaths.length > 0 || c.deletedPaths.length > 0) && (
-                            <Code block mt="xs">
-                              {[...c.createdPaths, ...c.updatedPaths, ...c.deletedPaths].join('\n')}
-                            </Code>
-                          )}
+                          {(c.createdPaths.length > 0 || c.updatedPaths.length > 0 || c.deletedPaths.length > 0) &&
+                            (() => {
+                              const allPaths = [...c.createdPaths, ...c.updatedPaths, ...c.deletedPaths];
+                              const PREVIEW_LIMIT = 5;
+                              const preview = allPaths.slice(0, PREVIEW_LIMIT);
+                              const overflow = allPaths.length - preview.length;
+                              const lines =
+                                overflow > 0 ? [...preview, `... and ${overflow.toLocaleString()} more`] : preview;
+                              return (
+                                <Code block mt="xs">
+                                  {lines.join('\n')}
+                                </Code>
+                              );
+                            })()}
                         </Box>
                       ))}
                   </Stack>
