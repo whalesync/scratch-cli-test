@@ -555,3 +555,211 @@ fn run_git(cwd: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// Helper: build a bare remote with a single record on `main`. Returns the
+/// bare repo path the workbook should point to.
+fn make_remote_with_record(tmp_root: &Path, slug: &str, record_path: &str) -> PathBuf {
+    let source = tmp_root.join(format!("source-{slug}"));
+    let bare = tmp_root.join(format!("remote-{slug}.git"));
+    run_git(
+        tmp_root,
+        &["init", &source.file_name().unwrap().to_string_lossy()],
+    );
+    run_git(&source, &["checkout", "-b", "main"]);
+    write_file(&source.join(record_path), &format!(r#"{{"id":"{slug}"}}"#));
+    commit_all(&source, "init");
+    run_git(
+        tmp_root,
+        &[
+            "init",
+            "--bare",
+            &bare.file_name().unwrap().to_string_lossy(),
+        ],
+    );
+    run_git(
+        &source,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    );
+    run_git(&source, &["push", "origin", "main:main"]);
+    bare
+}
+
+/// Phase 6: `init_v2` fans connections out via rayon; ensure 3 connections
+/// each get their own bare repo + worktree with the right data, even though
+/// they're set up in parallel.
+#[test]
+fn init_v2_sets_up_multiple_connections_in_parallel() {
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().join("workspace");
+
+    let conns = [
+        ("a", "Posts/rec_a.json"),
+        ("b", "Posts/rec_b.json"),
+        ("c", "Posts/rec_c.json"),
+    ];
+    let bare_paths: Vec<PathBuf> = conns
+        .iter()
+        .map(|(slug, rec)| make_remote_with_record(tmp.path(), slug, rec))
+        .collect();
+
+    let wb = Workbook {
+        id: "wkb_multi".to_string(),
+        name: "Multi".to_string(),
+        org_id: "org_test".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        table_count: 0,
+        version: 2,
+        connector_accounts: conns
+            .iter()
+            .zip(bare_paths.iter())
+            .enumerate()
+            .map(|(i, ((slug, _), bare))| ConnectorAccount {
+                id: format!("ca_{slug}"),
+                display_name: format!("Conn {i}"),
+                service: "WORDPRESS".to_string(),
+                repo_path: format!("org_test/wkb_multi/ca_{slug}"),
+                git_url: bare.to_str().unwrap().to_string(),
+                data_folders: vec![],
+            })
+            .collect(),
+        git_url: String::new(),
+    };
+
+    init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token").unwrap();
+
+    for (i, (_slug, rec)) in conns.iter().enumerate() {
+        let worktree = workspace_dir.join(format!("Conn {i}"));
+        assert!(
+            worktree.join(rec).exists(),
+            "connection {i} should have {rec} in its worktree",
+        );
+    }
+    for (i, _) in conns.iter().enumerate() {
+        let bare = workspace_dir.join(format!(".repos/ca_{}.git", conns[i].0));
+        assert!(bare.exists(), "bare repo for connection {i} should exist");
+    }
+}
+
+/// Phase 6: when 1/N connections fails (bad git URL), init logs a warning
+/// and continues with the remaining N-1 — the workspace is left in a
+/// partial-but-usable state.
+#[test]
+fn init_v2_continues_when_one_connection_fails() {
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().join("workspace");
+    let good_bare = make_remote_with_record(tmp.path(), "good", "Posts/rec_good.json");
+
+    let wb = Workbook {
+        id: "wkb_partial".to_string(),
+        name: "Partial".to_string(),
+        org_id: "org_test".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        table_count: 0,
+        version: 2,
+        connector_accounts: vec![
+            ConnectorAccount {
+                id: "ca_good".to_string(),
+                display_name: "Good".to_string(),
+                service: "WORDPRESS".to_string(),
+                repo_path: "org_test/wkb_partial/ca_good".to_string(),
+                git_url: good_bare.to_str().unwrap().to_string(),
+                data_folders: vec![],
+            },
+            ConnectorAccount {
+                id: "ca_bad".to_string(),
+                display_name: "Bad".to_string(),
+                service: "WORDPRESS".to_string(),
+                repo_path: "org_test/wkb_partial/ca_bad".to_string(),
+                git_url: tmp
+                    .path()
+                    .join("does-not-exist.git")
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+                data_folders: vec![],
+            },
+        ],
+        git_url: String::new(),
+    };
+
+    init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token")
+        .expect("init should succeed when at least one connection succeeds");
+
+    assert!(
+        workspace_dir.join("Good/Posts/rec_good.json").exists(),
+        "the good connection's worktree should be populated",
+    );
+}
+
+/// Phase 6: when 0/N connections succeed, init exits non-zero so the user
+/// knows nothing got set up (vs the prior behaviour of silently producing
+/// an empty workspace).
+#[test]
+fn init_v2_bails_when_all_connections_fail() {
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().join("workspace");
+
+    let wb = Workbook {
+        id: "wkb_all_fail".to_string(),
+        name: "AllFail".to_string(),
+        org_id: "org_test".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        table_count: 0,
+        version: 2,
+        connector_accounts: vec![
+            ConnectorAccount {
+                id: "ca_a".to_string(),
+                display_name: "A".to_string(),
+                service: "WORDPRESS".to_string(),
+                repo_path: "org_test/wkb_all_fail/ca_a".to_string(),
+                git_url: tmp.path().join("nope-a.git").to_str().unwrap().to_string(),
+                data_folders: vec![],
+            },
+            ConnectorAccount {
+                id: "ca_b".to_string(),
+                display_name: "B".to_string(),
+                service: "WORDPRESS".to_string(),
+                repo_path: "org_test/wkb_all_fail/ca_b".to_string(),
+                git_url: tmp.path().join("nope-b.git").to_str().unwrap().to_string(),
+                data_folders: vec![],
+            },
+        ],
+        git_url: String::new(),
+    };
+
+    let err = init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token")
+        .expect_err("init should fail when every connection fails");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("all 2 connection(s) failed"),
+        "error should name the count, got: {msg}"
+    );
+}
+
+/// Phase 6: a workbook with no connectors is a degenerate but legitimate
+/// case (e.g. a freshly created workbook). Init should succeed with an
+/// empty workspace, not be tripped up by the 0/N guard.
+#[test]
+fn init_v2_succeeds_with_zero_connections() {
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().join("workspace");
+
+    let wb = Workbook {
+        id: "wkb_empty".to_string(),
+        name: "Empty".to_string(),
+        org_id: "org_test".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        table_count: 0,
+        version: 2,
+        connector_accounts: vec![],
+        git_url: String::new(),
+    };
+
+    init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token")
+        .expect("init should succeed when the workbook has no connectors");
+    assert!(workspace_dir.join(".scratch/workspace").exists());
+}

@@ -413,18 +413,44 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
 
     {
         let _t = PhaseTimer::new(format!(
-            "all connections ({} total, sequential)",
+            "all connections ({} total, parallel)",
             wb.connector_accounts.len()
         ));
-        for (ca, entry) in wb.connector_accounts.iter().zip(connections.iter()) {
-            let _t = PhaseTimer::new(format!("  connection: {}", ca.display_name));
-            match setup_connection(ca, &entry.dir_name, &layout, token) {
-                Ok(file_count) => total += file_count,
-                Err(e) => eprintln!(
-                    "  Warning: failed to set up connection {}: {e}",
-                    ca.display_name
-                ),
+
+        use rayon::prelude::*;
+
+        // Each connection writes to its own bare repo + worktree + scratch
+        // cache (disjoint paths per connection), so parallel setup has no
+        // shared mutable state. Rayon's default thread pool fans out the
+        // network-bound `git clone --bare` calls; wall time is dominated by
+        // the slowest connection instead of the sum.
+        let results: Vec<(String, anyhow::Result<i64>)> = wb
+            .connector_accounts
+            .par_iter()
+            .zip(connections.par_iter())
+            .map(|(ca, entry)| {
+                let _t = PhaseTimer::new(format!("  connection: {}", ca.display_name));
+                let result = setup_connection(ca, &entry.dir_name, &layout, token);
+                (ca.display_name.clone(), result)
+            })
+            .collect();
+
+        let connection_count = results.len();
+        let mut success_count = 0usize;
+        for (name, result) in results {
+            match result {
+                Ok(file_count) => {
+                    total += file_count;
+                    success_count += 1;
+                }
+                Err(e) => eprintln!("  Warning: failed to set up connection {name}: {e}"),
             }
+        }
+
+        // 1/N failure: warn + continue (user gets a partial-but-usable
+        // workspace). 0/N: bail so the user knows nothing got set up.
+        if connection_count > 0 && success_count == 0 {
+            anyhow::bail!("all {connection_count} connection(s) failed to initialize");
         }
     }
 
