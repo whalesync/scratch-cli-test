@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::Json;
 use serde::Deserialize;
@@ -84,6 +84,44 @@ pub async fn exists(State(state): State<AppState>, Path(id): Path<String>) -> Re
             "hasHead": has_head,
         }),
     )
+}
+
+#[derive(Deserialize, Default)]
+pub struct BranchHeadQuery {
+    pub branch: Option<String>,
+}
+
+/// `GET /api/repo/manage/{id}/branch-head?branch=main` — returns
+/// `{ sha: <40-char-hex> | null }` for the named branch (defaults to `main`).
+/// Returns `sha: null` when the branch doesn't exist (fresh repo, never
+/// published) rather than 404, so callers can treat "unknown" and "missing"
+/// identically. Used by the server's `/upload-patch/commit` to detect
+/// staleness against the client's `baseHead`.
+pub async fn branch_head(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<BranchHeadQuery>,
+) -> Response {
+    let branch = query.branch.unwrap_or_else(|| "main".to_string());
+    let result = tokio::task::spawn_blocking({
+        let repos_dir = state.repos_dir.clone();
+        let id = id.clone();
+        let branch = branch.clone();
+        move || {
+            let git_repo = GitRepo::open(&repos_dir, &id)?;
+            let sha = match git_repo.resolve_ref(&branch) {
+                Ok(oid) => Some(oid.to_string()),
+                Err(_) => None,
+            };
+            Ok::<_, AppError>(json!({ "sha": sha, "branch": branch }))
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, &id, inner),
+        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
 }
 
 #[derive(Deserialize)]

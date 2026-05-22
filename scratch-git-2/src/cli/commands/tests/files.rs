@@ -612,6 +612,18 @@ fn update_main_worktree_after_pull_returns_diff_when_main_advances() {
     commit_all(&fixture.source_dir, "advance main");
     run_git(&fixture.source_dir, &["push", "origin", "main"]);
 
+    // `update_main_worktree_after_pull` no longer fetches (mr35 perf fix —
+    // the production caller, `download_single_repo`, already fetched right
+    // before). The unit test now does the fetch explicitly to reproduce
+    // that contract. Uses the same `+refs/heads/*:refs/remotes/origin/*`
+    // refspec `git_ops::fetch_origin` does — a bare clone's default refspec
+    // is `refs/heads/*:refs/heads/*`, which would overwrite local main
+    // directly and short-circuit the moved check.
+    run_git(
+        &ctx.bare_repo,
+        &["fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"],
+    );
+
     let result = update_main_worktree_after_pull(&ctx, "test-token").unwrap();
     assert!(result.moved, "master moved ⇒ moved=true");
     let mut paths = result.changed_paths.clone();
@@ -3008,6 +3020,27 @@ fn refresh_advance_remote(fixture: &RefreshFixture, rel_path: &str, content: &st
     let _ = &fixture.remote_bare;
 }
 
+/// Materialize a non-sparse worktree of `main` at `ctx.worktree_dir`,
+/// mirroring what F.2.b's `setup_connection` does in production. Tests for
+/// the gix::status-backed pre-flight (post-mr35) need a real `.git` link
+/// file; the prior slow tree-walk pre-flight worked off the bare repo only.
+fn add_test_worktree(ctx: &ConnectionContext) {
+    if let Some(parent) = ctx.worktree_dir.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    run_git(
+        &ctx.bare_repo,
+        &[
+            "worktree",
+            "add",
+            "--no-checkout",
+            ctx.worktree_dir.to_str().unwrap(),
+            "main",
+        ],
+    );
+    run_git(&ctx.worktree_dir, &["checkout", "main", "--", "."]);
+}
+
 #[test]
 fn refresh_workbook_skips_when_any_field_is_unreviewed() {
     if !git_available() {
@@ -3019,13 +3052,10 @@ fn refresh_workbook_skips_when_any_field_is_unreviewed() {
     let tmp = TempDir::new().unwrap();
     let workspace_dir = tmp.path().to_path_buf();
     let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+    add_test_worktree(&ctx);
 
-    // Worktree starts in sync with main, then the user types an unreviewed
-    // edit (local != approved == published).
-    write_file(
-        &ctx.worktree_dir.join("posts/seed.json"),
-        "{\n  \"name\": \"Seed\"\n}\n",
-    );
+    // Worktree starts in sync with main (added by `add_test_worktree`),
+    // then the user types an unreviewed edit (local != approved == published).
     let unreviewed_content = "{\n  \"name\": \"User-typing\"\n}\n";
     write_file(
         &ctx.worktree_dir.join("posts/seed.json"),
@@ -3074,12 +3104,10 @@ fn refresh_workbook_advances_main_when_clean() {
     let tmp = TempDir::new().unwrap();
     let workspace_dir = tmp.path().to_path_buf();
     let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+    add_test_worktree(&ctx);
 
-    // Worktree starts in sync with main: local == approved == published.
-    write_file(
-        &ctx.worktree_dir.join("posts/seed.json"),
-        "{\n  \"name\": \"Seed\"\n}\n",
-    );
+    // Worktree starts in sync with main (added by `add_test_worktree`):
+    // local == approved == published.
 
     // Server advances main.
     refresh_advance_remote(

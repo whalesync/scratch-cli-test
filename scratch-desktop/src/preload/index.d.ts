@@ -91,29 +91,42 @@ interface ScratchDesktopAPI {
   listUnpushedChanges: (
     workspacePath: string,
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
-  uploadWorkspaceChanges: (workspacePath: string) => Promise<{
-    status: 'uploaded' | 'no_changes' | 'up_to_date';
-    filesCreated: number;
-    filesUpdated: number;
-    filesDeleted: number;
-    createdPaths: string[];
-    updatedPaths: string[];
-    deletedPaths: string[];
-    messages: string[];
-    stalenessWarning: { newHead: string } | null;
-    connections: Array<{
-      connectionName: string;
-      status: 'uploaded' | 'no_changes' | 'up_to_date';
-      filesCreated: number;
-      filesUpdated: number;
-      filesDeleted: number;
-      createdPaths: string[];
-      updatedPaths: string[];
-      deletedPaths: string[];
-      messages: string[];
-    }>;
-    elapsedMs: number;
-  }>;
+  uploadWorkspaceChanges: (workspacePath: string) => Promise<
+    | {
+        status: 'uploaded' | 'no_changes' | 'up_to_date';
+        filesCreated: number;
+        filesUpdated: number;
+        filesDeleted: number;
+        createdPaths: string[];
+        updatedPaths: string[];
+        deletedPaths: string[];
+        messages: string[];
+        stalenessWarning: { newHead: string } | null;
+        connections: Array<{
+          connectionName: string;
+          status: 'uploaded' | 'no_changes' | 'up_to_date';
+          filesCreated: number;
+          filesUpdated: number;
+          filesDeleted: number;
+          createdPaths: string[];
+          updatedPaths: string[];
+          deletedPaths: string[];
+          messages: string[];
+        }>;
+        elapsedMs: number;
+      }
+    | {
+        status: 'blocked_stale';
+        blockedCount: number;
+        connections: Array<{
+          connectionName: string;
+          baseHead?: string;
+          currentRemoteHead: string;
+          message?: string;
+        }>;
+        elapsedMs: number;
+      }
+  >;
   pullWorkspaceChanges: (
     workspacePath: string,
     opts?: { onDelete?: string },

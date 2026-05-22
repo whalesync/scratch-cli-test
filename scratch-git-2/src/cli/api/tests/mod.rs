@@ -1,4 +1,7 @@
-use super::{job_progress_path, ApiClient, JobProgress, Workbook};
+use super::{
+    job_progress_path, ApiClient, BlockedStaleResponse, JobProgress, UploadPatchCommitResponse,
+    Workbook,
+};
 use reqwest::{Client, Method};
 
 #[test]
@@ -103,4 +106,52 @@ fn build_unauthed_request_does_not_set_zero_content_length_when_body_present() {
             .map(|v| v.to_str().unwrap()),
         Some("0")
     );
+}
+
+// D8: locks down the wire-shape contract for the staleness gate. The server
+// throws a NestJS `ConflictException(payload)` which serializes as
+// `{ statusCode: 409, ...payload }`; the CLI must parse `status` strictly to
+// distinguish blocked_stale from arbitrary 409s.
+#[test]
+fn blocked_stale_response_deserializes_from_nest_conflict_body() {
+    let body = serde_json::json!({
+        "statusCode": 409,
+        "status": "blocked_stale",
+        "baseHead": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currentRemoteHead": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "message": "Server `main` has advanced past your local `main`."
+    });
+    let parsed: BlockedStaleResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(parsed.status, "blocked_stale");
+    assert_eq!(
+        parsed.base_head.as_deref(),
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    );
+    assert_eq!(
+        parsed.current_remote_head,
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert!(parsed.message.unwrap().contains("main"));
+}
+
+#[test]
+fn blocked_stale_response_tolerates_missing_base_head() {
+    // The client may not have a local main yet (fresh workspace, never
+    // pulled). Server still echoes back `baseHead: undefined` rather than
+    // erroring; we deserialize it as `None`.
+    let body = serde_json::json!({
+        "status": "blocked_stale",
+        "currentRemoteHead": "cccccccccccccccccccccccccccccccccccccccc"
+    });
+    let parsed: BlockedStaleResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(parsed.base_head, None);
+    assert_eq!(parsed.message, None);
+}
+
+#[test]
+fn upload_patch_commit_response_omits_staleness_warning_on_match() {
+    let body = serde_json::json!({ "jobId": "job_1" });
+    let parsed: UploadPatchCommitResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(parsed.job_id.as_deref(), Some("job_1"));
+    assert!(parsed.staleness_warning.is_none());
 }

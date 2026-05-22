@@ -345,8 +345,17 @@ struct UploadResult {
     merged_paths: Vec<String>,
     /// Soft signal from `/upload-patch/commit` that the server has more
     /// recent changes than what's on the client. Patches were still applied;
-    /// the desktop surfaces this as a non-blocking banner.
+    /// the desktop surfaces this as a non-blocking banner. Only populated
+    /// when the connection used the legacy soft-warning path
+    /// (`refuse_if_stale: false`); the new D8 strict-mode path returns
+    /// `blocked_stale` instead.
     staleness_warning: Option<crate::api::StalenessWarning>,
+    /// D8 strict-mode refusal payload: the server's `refs/heads/main` had
+    /// advanced past the client's `baseHead` and the call was sent with
+    /// `refuseIfStale: true`. When `Some`, `status == "blocked_stale"` and
+    /// no patches were applied. `run_upload` collects these across the loop
+    /// and bails with a structured `blocked_stale` workspace-level payload.
+    blocked_stale: Option<crate::api::BlockedStaleResponse>,
 }
 
 #[derive(Default)]
@@ -519,9 +528,15 @@ async fn run_download(
     // in a confusing mixed state. No fetch happens; the user must
     // `accept-all` or `discard-all` before retrying. See [Slice D in
     // docs/plans/2026-05-17-simplify-local-workspace-architecture.md].
+    //
+    // Uses the gix::status-backed fast path (~210ms warm per connection vs.
+    // multi-second tree walks; mr31's helper) so the courtesy check doesn't
+    // dominate the pull time when nothing is actually unreviewed — which is
+    // the common case, especially when the desktop's "Download and publish"
+    // flow chained us straight out of an already-cleared publish modal.
     let mut blocked: Vec<UnreviewedEntry> = Vec::new();
     for ctx in &contexts {
-        blocked.extend(detect_unreviewed_for_pull(ctx)?);
+        blocked.extend(detect_unreviewed_fast(ctx, false)?);
     }
     if !blocked.is_empty() {
         print_blocked_unreviewed_result(&blocked, started.elapsed().as_millis(), json)?;
@@ -774,12 +789,26 @@ async fn run_upload(
     let verbose = !json;
     let mut results = Vec::new();
     let mut all_changed_workspace_paths: Vec<String> = Vec::new();
+    let mut blocked_connections: Vec<BlockedStaleConnection> = Vec::new();
     for ctx in &contexts {
         if contexts.len() > 1 && verbose {
             println!("Uploading {}...", ctx.conn_dir_name);
         }
         let upload_result =
             upload_single_repo_via_patches(ctx, &client, workbook_id, verbose).await?;
+        if let Some(ref stale) = upload_result.blocked_stale {
+            // D8: fail-fast on first stale connection. Earlier connections
+            // in the same upload loop may have already applied their patches
+            // server-side, but that's safe — re-running `files upload` after
+            // a `files download` is idempotent (the prior connection's patch
+            // file still matches what's on dirty, so the re-apply is a no-op
+            // git commit). Capture for the structured payload + bail.
+            blocked_connections.push(BlockedStaleConnection {
+                connection_name: ctx.conn_dir_name.clone(),
+                stale: stale.clone(),
+            });
+            break;
+        }
         for path in &upload_result.changed_paths {
             all_changed_workspace_paths.push(format!("{}/{}", ctx.conn_dir_name, path));
         }
@@ -793,8 +822,22 @@ async fn run_upload(
         reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
     }
 
+    if !blocked_connections.is_empty() {
+        print_blocked_stale_result(&blocked_connections, started.elapsed().as_millis(), json)?;
+        anyhow::bail!(
+            "{} connection(s) refused — run `scratchmd files download`, then retry.",
+            blocked_connections.len()
+        );
+    }
+
     let aggregate = aggregate_upload(&results);
     print_upload_result(&aggregate, &results, started.elapsed().as_millis(), json)
+}
+
+/// One entry in the structured `blocked_stale` workspace-level payload.
+struct BlockedStaleConnection {
+    connection_name: String,
+    stale: crate::api::BlockedStaleResponse,
 }
 
 /// Publish accepted edits to external connectors. Two explicit server calls
@@ -2128,9 +2171,13 @@ fn refresh_workbook_for_contexts(
 ) -> anyhow::Result<()> {
     let _lock = crate::config::workspace_lock::acquire(workspace_dir)?;
 
+    // Same fast pre-flight as `run_download`: gix::status-backed (~210ms per
+    // connection warm) instead of the multi-second per-connection tree walks
+    // the slow variant does. The linked-CLI refresh is invoked after every
+    // server-side mutation, so the per-call cost is felt repeatedly.
     let mut blocked: Vec<UnreviewedEntry> = Vec::new();
     for ctx in contexts {
-        blocked.extend(detect_unreviewed_for_pull(ctx)?);
+        blocked.extend(detect_unreviewed_fast(ctx, false)?);
     }
     if !blocked.is_empty() {
         let paths: Vec<String> = blocked
@@ -2572,27 +2619,9 @@ fn detect_selected_connection(
         .map(|connection| connection.dir_name.clone())
 }
 
-/// Compute the unreviewed working-tree edits for a single connection. The
-/// "approved" snapshot is `apply(refs/heads/main, accepted-patches.json)`.
-/// Any file whose working content differs from approved counts as
-/// unreviewed and blocks the pull at the workspace level.
-fn detect_unreviewed_for_pull(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
-    let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let main_map = read_main_tree(&ctx.bare_repo)?;
-    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-    let local_map = read_materialized_repo(ctx)?;
-    Ok(compute_unreviewed_entries(
-        &ctx.conn_dir_name,
-        &approved_map,
-        &local_map,
-    ))
-}
-
-/// Fast variant of [`detect_unreviewed_for_pull`] that uses `gix::status`
-/// (index-backed, parallel) instead of walking both `refs/heads/main` and the
-/// worktree fully. ~210ms warm on a 110k-file connection vs. multi-second
-/// tree-walks; the gating cost of "should Publish be enabled?".
+/// Gix::status-backed unreviewed detector. Index-backed, parallel.
+/// ~210ms warm on a 110k-file connection vs. multi-second tree-walks the
+/// previous `detect_unreviewed_for_pull` (now deleted) was paying.
 ///
 /// `gix::status` answers "working tree differs from index"; the index reflects
 /// `refs/heads/main` after [`worktree_reset_mixed`] (run on init + pull). For
@@ -2732,6 +2761,60 @@ fn print_blocked_unreviewed_result(
     Ok(())
 }
 
+/// Print the structured `blocked_stale` result for `files upload` (D8).
+/// JSON mode emits a machine-readable payload the desktop pattern-matches
+/// on; human mode prints a per-connection summary and a suggestion to run
+/// `scratchmd files download`. Caller bails with non-zero exit immediately
+/// after.
+fn print_blocked_stale_result(
+    blocked: &[BlockedStaleConnection],
+    elapsed_ms: u128,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        let connections: Vec<serde_json::Value> = blocked
+            .iter()
+            .map(|b| {
+                serde_json::json!({
+                    "connectionName": b.connection_name,
+                    "baseHead": b.stale.base_head,
+                    "currentRemoteHead": b.stale.current_remote_head,
+                    "message": b.stale.message,
+                })
+            })
+            .collect();
+        let output = serde_json::json!({
+            "status": "blocked_stale",
+            "blockedCount": blocked.len(),
+            "connections": connections,
+            "elapsedMs": elapsed_ms,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    let elapsed = format_elapsed(elapsed_ms);
+    println!(
+        "Cannot upload — server `main` has advanced for {} connection(s) ({}):",
+        blocked.len(),
+        elapsed
+    );
+    for b in blocked {
+        println!(
+            "  {}: local {} → server {}",
+            b.connection_name,
+            b.stale
+                .base_head
+                .as_deref()
+                .map(short_sha)
+                .unwrap_or("<unset>"),
+            short_sha(&b.stale.current_remote_head),
+        );
+    }
+    println!();
+    println!("Run `scratchmd files download` to refresh local main, then retry.");
+    Ok(())
+}
+
 /// Load the `refs/heads/main` tree as a `FileMap`. Empty map if the ref
 /// doesn't exist yet (fresh workspace, never published).
 fn read_main_tree(bare_repo: &Path) -> anyhow::Result<FileMap> {
@@ -2862,11 +2945,12 @@ fn download_single_repo(
     token: &str,
     data_folders: &[DataFolder],
 ) -> anyhow::Result<DownloadResult> {
-    let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let main_map_old = read_main_tree(&ctx.bare_repo)?;
-    let local_map = read_materialized_repo(ctx)?;
-
+    // Fetch first, then short-circuit if `main` didn't move. Connections that
+    // haven't advanced server-side pay only the (incremental, ~50ms) fetch —
+    // not the multi-second `read_main_tree` + `read_materialized_repo` tree
+    // walks that the re-anchor path needs. In the common "1 of N connections
+    // moved" case this is the difference between O(N × worktree) and
+    // O(N × fetch + 1 × worktree).
     crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
 
     let Some(new_main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
@@ -2884,6 +2968,13 @@ fn download_single_repo(
             ..Default::default()
         });
     }
+
+    // Past the short-circuit: this connection's `main` actually moved. Load
+    // the accepted patches + read both trees + the materialized worktree.
+    let connection_dir = accepted_patches_dir(ctx);
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+    let main_map_old = read_main_tree(&ctx.bare_repo)?;
+    let local_map = read_materialized_repo(ctx)?;
 
     let main_map_new = read_git_tree(&ctx.bare_repo, &new_main_hash)?;
 
@@ -3054,15 +3145,36 @@ async fn upload_single_repo_via_patches(
         .upload_patch_put(&init.presigned_url, &payload)
         .await
         .map_err(|e| anyhow::anyhow!("upload-patch PUT failed: {e}"))?;
+    // Pass `refuse_if_stale: true` (D8): the server compares `baseHead`
+    // against its current `refs/heads/main` and aborts with HTTP 409 +
+    // structured `blocked_stale` body if they diverge. The CLI surfaces
+    // the refusal as a `blocked_stale` UploadResult that `run_upload`
+    // bails on. Symmetric with pull's `blocked_unreviewed` gate.
     let commit = client
         .upload_patch_commit(
             workbook_id,
             &ctx.connection_id,
             &init.upload_id,
             main_hash.as_deref(),
+            true,
         )
         .await
         .map_err(|e| anyhow::anyhow!("upload-patch commit failed: {e}"))?;
+
+    let applied = match commit {
+        crate::api::UploadPatchCommitResult::Applied(applied) => applied,
+        crate::api::UploadPatchCommitResult::BlockedStale(stale) => {
+            if verbose {
+                eprintln!(" stale");
+            }
+            return Ok(UploadResult {
+                connection_name: ctx.conn_dir_name.clone(),
+                status: "blocked_stale".to_string(),
+                blocked_stale: Some(stale),
+                ..Default::default()
+            });
+        }
+    };
     if verbose {
         eprintln!(" done");
     }
@@ -3079,7 +3191,11 @@ async fn upload_single_repo_via_patches(
             local_unreviewed.len()
         ));
     }
-    if let Some(staleness) = &commit.staleness_warning {
+    // `applied.staleness_warning` only arrives when `refuse_if_stale: false`,
+    // so on the strict-mode path (D8) it stays None and we leave the message
+    // list alone. Kept for forward-compat if a future caller flips the flag
+    // back off.
+    if let Some(staleness) = &applied.staleness_warning {
         messages.push(format!(
             "The server has more recent changes ({}) than what's on your computer. Patches were still applied; run `scratchmd files download` to refresh.",
             short_sha(&staleness.new_head),
@@ -3090,7 +3206,7 @@ async fn upload_single_repo_via_patches(
     // the server's `dirty` branch has the new commit; the publish pipeline is
     // NOT triggered by this endpoint anymore — the caller must run
     // `scratchmd files publish` afterwards.
-    if let Some(job_id) = commit.job_id.as_deref() {
+    if let Some(job_id) = applied.job_id.as_deref() {
         if verbose {
             eprint!("  Applying...");
         }
@@ -3113,7 +3229,7 @@ async fn upload_single_repo_via_patches(
         deleted_paths,
         changed_paths,
         messages,
-        staleness_warning: commit.staleness_warning,
+        staleness_warning: applied.staleness_warning,
         ..Default::default()
     })
 }
@@ -3998,9 +4114,13 @@ struct MasterUpdateResult {
 ///    overwriting user record edits.
 fn update_main_worktree_after_pull(
     ctx: &ConnectionContext,
-    token: &str,
+    _token: &str,
 ) -> anyhow::Result<MasterUpdateResult> {
-    let _ = crate::git_ops::fetch_origin(&ctx.bare_repo, token);
+    // No fetch here: the caller (`download_single_repo` /
+    // `refresh_workbook_for_contexts`) just fetched origin for this same
+    // bare repo. `refs/remotes/origin/main` is fresh. Removing this redundant
+    // network round-trip eliminates a per-connection cost paid even when
+    // `main` didn't move.
     let Some(new_main_hash) = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?
     else {
         return Ok(MasterUpdateResult::default());

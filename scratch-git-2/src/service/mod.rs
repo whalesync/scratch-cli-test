@@ -71,6 +71,10 @@ pub async fn run() {
         )
         .route("/api/repo/manage/{id}", delete(routes::manage::delete_repo))
         .route("/api/repo/manage/{id}/exists", get(routes::manage::exists))
+        .route(
+            "/api/repo/manage/{id}/branch-head",
+            get(routes::manage::branch_head),
+        )
         .route("/api/repo/manage/{id}/reset", post(routes::manage::reset))
         .route(
             "/api/repo/manage/{id}/count-objects",

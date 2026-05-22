@@ -170,6 +170,19 @@ export class ScratchGitClient {
     ) as Promise<GitObjectCountsResponse>;
   }
 
+  /**
+   * Returns the SHA at the tip of `branch` (defaults to `main`), or `null`
+   * when the branch doesn't exist (fresh repo, never published). Used by
+   * `/upload-patch/commit` to compare against the client's `baseHead`.
+   */
+  async getBranchHead(repoId: string, branch: string = 'main'): Promise<string | null> {
+    const result = (await this.callGitApi(
+      `/api/repo/manage/${this.encodeRepoId(repoId)}/branch-head?branch=${encodeURIComponent(branch)}`,
+      'GET',
+    )) as { sha: string | null; branch: string };
+    return result.sha ?? null;
+  }
+
   async commitFiles(
     repoId: string,
     branch: string,

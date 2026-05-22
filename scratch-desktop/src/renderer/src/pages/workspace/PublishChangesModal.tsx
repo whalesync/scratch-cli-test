@@ -33,10 +33,12 @@ interface UnreviewedChangeEntry {
   status: string;
 }
 
-type PublishMode = 'approval' | 'uploading' | 'uploaded' | 'publishing' | 'complete' | 'error';
+type PublishMode = 'approval' | 'uploading' | 'uploaded' | 'publishing' | 'complete' | 'error' | 'stale';
 
 type UploadResult = Awaited<ReturnType<typeof window.scratchDesktop.uploadWorkspaceChanges>>;
-type UploadConnection = UploadResult['connections'][number];
+type UploadSuccess = Extract<UploadResult, { status: 'uploaded' | 'no_changes' | 'up_to_date' }>;
+type UploadBlockedStale = Extract<UploadResult, { status: 'blocked_stale' }>;
+type UploadConnection = UploadSuccess['connections'][number];
 
 interface ConnectionPublishState {
   connectionId: string;
@@ -130,6 +132,8 @@ function modeTitle(mode: PublishMode): string {
       return 'Published';
     case 'error':
       return 'Publish failed';
+    case 'stale':
+      return 'Server has newer changes';
   }
 }
 
@@ -393,7 +397,8 @@ export function PublishChangesModal({
   const [initializing, setInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unreviewedEntries, setUnreviewedEntries] = useState<UnreviewedChangeEntry[]>([]);
-  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [uploadResult, setUploadResult] = useState<UploadSuccess | null>(null);
+  const [blockedStale, setBlockedStale] = useState<UploadBlockedStale | null>(null);
   const [stalenessBannerDismissed, setStalenessBannerDismissed] = useState(false);
   const [publishConnections, setPublishConnections] = useState<ConnectionPublishState[]>([]);
   const [jobs, setJobs] = useState<JobStatus[]>([]);
@@ -418,6 +423,7 @@ export function PublishChangesModal({
       setError(null);
       setMode('uploading');
       setUploadResult(null);
+      setBlockedStale(null);
       setStalenessBannerDismissed(false);
       setProgressSteps((prev) => [
         ...prev,
@@ -426,6 +432,27 @@ export function PublishChangesModal({
       await trackPublishUploadStarted(workspaceId);
 
       const result = await window.scratchDesktop.uploadWorkspaceChanges(localPath);
+
+      // D8: server `refs/heads/main` advanced past local — `files upload`
+      // bailed before applying anything. Switch to the stale modal mode so
+      // the user can `Download and publish` (= shell out to `files
+      // download`, then retry upload) or Cancel.
+      if (result.status === 'blocked_stale') {
+        setBlockedStale(result);
+        setProgressSteps((prev) =>
+          prev.map((step) => {
+            if (step.id !== 'upload') return step;
+            const conn = result.connections[0];
+            const label = conn
+              ? `Server changes detected on ${conn.connectionName} — refresh required`
+              : 'Server changes detected — refresh required';
+            return { ...step, status: 'error', label };
+          }),
+        );
+        setMode('stale');
+        return;
+      }
+
       setUploadResult(result);
 
       const connectionsWithDiff = result.connections.filter((c) => c.status === 'uploaded');
@@ -472,6 +499,7 @@ export function PublishChangesModal({
     setClosing(false);
     setUnreviewedEntries([]);
     setUploadResult(null);
+    setBlockedStale(null);
     setStalenessBannerDismissed(false);
     setPublishConnections([]);
     setJobs([]);
@@ -615,6 +643,47 @@ export function PublishChangesModal({
       setProgressSteps((prev) => prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)));
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to discard unreviewed changes');
+    } finally {
+      setInitializing(false);
+    }
+  }, [localPath, startUpload]);
+
+  /**
+   * D8 stale-modal action. When `files upload` refuses with `blocked_stale`,
+   * the only way forward is to advance local `main` first (via `files
+   * download`) and retry. This handler chains the two CLI calls behind a
+   * single button click so the user doesn't have to reach for a terminal.
+   * `files download` itself refuses if there are unreviewed local edits
+   * (slice D), but the publish modal already gates on that earlier, so the
+   * download step should be clean by this point.
+   */
+  const handleDownloadAndPublish = useCallback(async () => {
+    if (!localPath) return;
+    try {
+      setError(null);
+      setInitializing(true);
+      setProgressSteps([{ id: 'download', label: 'Downloading latest from server…', status: 'active' }]);
+      const result = await window.scratchDesktop.pullWorkspaceChanges(localPath);
+      // `files download` exits non-zero through the IPC's throw path, so a
+      // resolved result here means it succeeded. Trust it.
+      const stderrHint = result.stderr.trim();
+      setProgressSteps((prev) =>
+        prev.map((step) =>
+          step.id === 'download'
+            ? {
+                ...step,
+                status: 'done',
+                label: stderrHint.split('\n').pop() || 'Downloaded latest from server',
+              }
+            : step,
+        ),
+      );
+      setBlockedStale(null);
+      await startUpload();
+    } catch (err) {
+      setProgressSteps((prev) => prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)));
+      setMode('error');
+      setError(err instanceof Error ? err.message : 'Failed to download latest from server');
     } finally {
       setInitializing(false);
     }
@@ -1107,6 +1176,40 @@ export function PublishChangesModal({
                   })
                 )}
               </Stack>
+            )}
+
+            {mode === 'stale' && blockedStale && (
+              <>
+                {initializing ? (
+                  <ProgressStepList steps={progressSteps} />
+                ) : (
+                  <>
+                    <Alert color="yellow" title="Server has newer changes">
+                      The server has published changes since you last refreshed
+                      {blockedStale.connections.length === 1
+                        ? ` ${blockedStale.connections[0].connectionName}`
+                        : ` ${blockedStale.connections.length.toLocaleString()} connection${blockedStale.connections.length === 1 ? '' : 's'}`}
+                      . Your accepted edits weren't uploaded — refresh first, then publish.
+                    </Alert>
+                    <Stack gap="xs">
+                      {blockedStale.connections.map((c) => (
+                        <Text key={c.connectionName} size="sm" c="dimmed">
+                          {c.connectionName}: local {c.baseHead?.slice(0, 7) ?? '<unset>'} → server{' '}
+                          {c.currentRemoteHead.slice(0, 7)}
+                        </Text>
+                      ))}
+                    </Stack>
+                    <Group justify="space-between">
+                      <Button variant="default" onClick={() => handleClose()} loading={closing}>
+                        Cancel
+                      </Button>
+                      <Button onClick={() => void handleDownloadAndPublish()} disabled={closing}>
+                        Download and publish
+                      </Button>
+                    </Group>
+                  </>
+                )}
+              </>
             )}
 
             {mode === 'complete' && (

@@ -56,7 +56,7 @@ export interface UploadConnectionResult {
   messages: string[];
 }
 
-export interface UploadWorkspaceResult {
+export interface UploadWorkspaceSuccess {
   status: 'uploaded' | 'no_changes' | 'up_to_date';
   filesCreated: number;
   filesUpdated: number;
@@ -69,6 +69,35 @@ export interface UploadWorkspaceResult {
   connections: UploadConnectionResult[];
   elapsedMs: number;
 }
+
+/**
+ * Per-connection entry in a `blocked_stale` refusal — the CLI's structured
+ * payload when the server's `refs/heads/main` advanced past the user's
+ * `baseHead` (D8). One entry per connection that refused. Currently the CLI
+ * fails fast on the first stale connection, so this is typically length 1,
+ * but the array shape future-proofs the contract for batch refusals.
+ */
+export interface BlockedStaleConnection {
+  connectionName: string;
+  baseHead?: string;
+  currentRemoteHead: string;
+  message?: string;
+}
+
+export interface UploadWorkspaceBlockedStale {
+  status: 'blocked_stale';
+  blockedCount: number;
+  connections: BlockedStaleConnection[];
+  elapsedMs: number;
+}
+
+/**
+ * Discriminated union returned by `uploadWorkspaceChanges`. Both branches
+ * survive the IPC boundary as plain JSON — error objects don't, so a
+ * structured refusal is modeled as a successful return rather than a thrown
+ * Error. PublishChangesModal pattern-matches on `status`.
+ */
+export type UploadWorkspaceResult = UploadWorkspaceSuccess | UploadWorkspaceBlockedStale;
 
 interface ScratchmdLiveCommandOptions {
   onExit?: () => void;
@@ -529,9 +558,45 @@ export async function listUnpublishedChanges(workspacePath: string): Promise<Unr
  * endpoint, and polls the apply-patches job to completion. Publishing
  * (plan-job + run-job) is a separate step driven by the renderer — see
  * `publishApi` in the renderer.
+ *
+ * D8: when the server's `refs/heads/main` has advanced past the user's local
+ * `main` for any connection, the CLI exits non-zero with a structured
+ * `blocked_stale` payload on stdout. This wrapper recognizes that payload
+ * and returns it as a `UploadWorkspaceBlockedStale` branch of the discriminated
+ * union — both branches survive the IPC boundary as plain JSON, so the
+ * renderer's `PublishChangesModal` can pattern-match on `result.status`.
  */
 export async function uploadWorkspaceChanges(workspacePath: string): Promise<UploadWorkspaceResult> {
-  return runScratchmdJson<UploadWorkspaceResult>(['--json', 'files', 'upload'], workspacePath);
+  const result = await runScratchmdCapture(['--json', 'files', 'upload'], workspacePath);
+  if (result.exitCode !== 0) {
+    const stale = parseBlockedStalePayload(result.stdout);
+    if (stale) return stale;
+    const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
+    throw new Error(message);
+  }
+  try {
+    return JSON.parse(result.stdout) as UploadWorkspaceSuccess;
+  } catch (error) {
+    throw new Error(`Failed to parse scratchmd JSON output: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/** @internal — exported for vitest. */
+export function parseBlockedStalePayload(stdout: string): UploadWorkspaceBlockedStale | null {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      (parsed as { status?: unknown }).status === 'blocked_stale' &&
+      Array.isArray((parsed as { connections?: unknown }).connections)
+    ) {
+      return parsed as UploadWorkspaceBlockedStale;
+    }
+  } catch {
+    // stdout wasn't JSON — fall through to the generic error path.
+  }
+  return null;
 }
 
 export async function acceptFieldChanges(

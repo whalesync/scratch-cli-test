@@ -731,15 +731,24 @@ impl ApiClient {
 
     /// Step 3 of the upload-patch flow: tell the server the GCS upload is
     /// complete so it can enqueue the ApplyPatches worker. `base_head` is the
-    /// local `main` SHA at diff time — if it doesn't match server `main`, the
-    /// response carries a soft `stalenessWarning` (patches are still applied).
+    /// local `main` SHA at diff time.
+    ///
+    /// Two staleness modes, gated on `refuse_if_stale`:
+    ///   - `refuse_if_stale = true`: if server `main` ≠ `base_head`, the
+    ///     server responds with HTTP 409 + a `blocked_stale` JSON body. The
+    ///     job is NOT enqueued and the audit log is NOT written. Returns
+    ///     `UploadPatchCommitResult::BlockedStale(_)`.
+    ///   - `refuse_if_stale = false`: legacy soft-warning behavior — patches
+    ///     apply anyway, and a divergence shows up in `stalenessWarning`.
+    ///     Returns `UploadPatchCommitResult::Applied(_)`.
     pub async fn upload_patch_commit(
         &self,
         workbook_id: &str,
         connector_account_id: &str,
         upload_id: &str,
         base_head: Option<&str>,
-    ) -> ApiResult<UploadPatchCommitResponse> {
+        refuse_if_stale: bool,
+    ) -> ApiResult<UploadPatchCommitResult> {
         let mut body = serde_json::json!({
             "uploadId": upload_id,
             "connectorAccountId": connector_account_id,
@@ -747,11 +756,31 @@ impl ApiClient {
         if let Some(head) = base_head {
             body["baseHead"] = serde_json::Value::String(head.to_string());
         }
-        self.post(
-            &format!("workbooks/{}/upload-patch/commit", workbook_id),
-            &body,
-        )
-        .await
+        if refuse_if_stale {
+            body["refuseIfStale"] = serde_json::Value::Bool(true);
+        }
+        match self
+            .post::<_, UploadPatchCommitResponse>(
+                &format!("workbooks/{}/upload-patch/commit", workbook_id),
+                &body,
+            )
+            .await
+        {
+            Ok(applied) => Ok(UploadPatchCommitResult::Applied(applied)),
+            Err(ApiError::ServerError { status: 409, body }) => {
+                // NestJS's `ConflictException(payload)` serializes as
+                // `{ statusCode: 409, ...payload }`. Parse strictly: the
+                // `status: "blocked_stale"` tag confirms this is the
+                // refuseIfStale response and not some unrelated 409.
+                if let Ok(stale) = serde_json::from_str::<BlockedStaleResponse>(&body) {
+                    if stale.status == "blocked_stale" {
+                        return Ok(UploadPatchCommitResult::BlockedStale(stale));
+                    }
+                }
+                Err(ApiError::ServerError { status: 409, body })
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// PUT the patch payload to a presigned GCS URL. The server pins
@@ -824,6 +853,34 @@ pub struct UploadPatchCommitResponse {
 pub struct StalenessWarning {
     #[serde(rename = "newHead")]
     pub new_head: String,
+}
+
+/// Body shape of the HTTP 409 response from `/upload-patch/commit` when
+/// `refuseIfStale: true` and the client's `baseHead` doesn't match the
+/// server's current `refs/heads/main`. Mirrors
+/// `UploadPatchBlockedStaleResponseDto` in `@spinner/shared-types`.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct BlockedStaleResponse {
+    /// Always `"blocked_stale"` for this response shape.
+    pub status: String,
+    /// The client-supplied `baseHead`. Echoed back for debug clarity.
+    #[serde(rename = "baseHead", default)]
+    pub base_head: Option<String>,
+    /// The server's current `refs/heads/main` SHA for the connection's repo.
+    #[serde(rename = "currentRemoteHead")]
+    pub current_remote_head: String,
+    /// Human-readable message from `ConflictException`.
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// Outcome of [`ApiClient::upload_patch_commit`]. Either the patches were
+/// applied (legacy or fresh-state path) or the server refused with a
+/// structured `blocked_stale` payload (refuseIfStale strict-mode path).
+#[derive(Debug)]
+pub enum UploadPatchCommitResult {
+    Applied(UploadPatchCommitResponse),
+    BlockedStale(BlockedStaleResponse),
 }
 
 /// Wire format for the body uploaded to the presigned GCS PUT URL. Mirrors

@@ -77,6 +77,16 @@ export class ScratchGitService {
     return this.scratchGitClient.getObjectCounts(repoId);
   }
 
+  /**
+   * Returns the SHA at the tip of `branch` (defaults to `main`), or `null`
+   * when the branch doesn't exist. Thin wrapper around the client; the
+   * `/upload-patch/commit` controller uses it to compare against the
+   * client's `baseHead` for the staleness gate.
+   */
+  async getBranchHead(repoId: string, branch: string = MAIN_BRANCH): Promise<string | null> {
+    return this.scratchGitClient.getBranchHead(repoId, branch);
+  }
+
   async buildIndex(repoId: string): Promise<{ count: number }> {
     return this.scratchGitClient.buildIndex(repoId);
   }
