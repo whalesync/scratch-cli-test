@@ -10,6 +10,7 @@ import { performance } from 'perf_hooks';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
+import { detectCloudSync, type CloudSyncDetection } from './cloud-sync';
 import {
   acceptCellChange,
   acceptCellInputText,
@@ -528,20 +529,54 @@ ipcMain.handle('scratch:get-workspaces-registry', async () => {
   const start = performance.now();
   const rawEntries = await readWorkspaceRegistry();
   const entries = await pruneStaleWorkspaceRegistryEntries(rawEntries);
-  const result = entries.map((entry) => ({ ...entry, fileCount: 0 }));
+  const result = await Promise.all(
+    entries.map(async (entry) => ({
+      ...entry,
+      fileCount: 0,
+      cloudSyncWarning: toCloudSyncWarning(await detectCloudSync(entry.path)),
+    })),
+  );
   logPerf('main ipc getWorkspacesRegistry', performance.now() - start);
   return result;
 });
+
+function toCloudSyncWarning(detection: CloudSyncDetection | null) {
+  if (!detection) return null;
+  return {
+    provider: detection.provider,
+    providerLabel: detection.providerLabel,
+    evidencePath: detection.evidencePath,
+  };
+}
 ipcMain.handle('scratch:pick-parent-folder', async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ['openDirectory', 'createDirectory'],
-  });
-
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
+  while (true) {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    const picked = result.filePaths[0];
+    if (!picked) return null;
+    const detection = await detectCloudSync(picked);
+    if (!detection) {
+      return picked;
+    }
+    const refusal = await dialog.showMessageBox({
+      type: 'warning',
+      title: "Can't use this location",
+      message: `Scratch can't store a workspace inside ${detection.providerLabel}.`,
+      detail:
+        `${detection.providerLabel} re-syncs files in the background, which can cause Scratch to lose edits or end up ` +
+        `in a broken state. Pick a folder that isn't inside ${detection.evidencePath} — for example, ~/Scratch.`,
+      buttons: ['Pick a different folder', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (refusal.response !== 0) {
+      return null;
+    }
   }
-
-  return result.filePaths[0] ?? null;
 });
 ipcMain.handle('scratch:create-workspace', async (_, name: string) =>
   runScratchmdJson<{ id: string; name: string }>(['--json', 'workspaces', 'create', name]),

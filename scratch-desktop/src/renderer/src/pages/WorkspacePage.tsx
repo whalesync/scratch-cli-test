@@ -8,12 +8,13 @@ import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { API_CONFIG } from '../lib/api';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { jobApi } from '../lib/job-api';
-import { listLocalWorkspaces } from '../lib/local-workspaces';
+import { CloudSyncWarning, listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
 import { trackDeepLinkProcessed, trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
 import { useWorkspaceUiStore } from '../stores/workspace-ui-store';
 import { Workspace } from '../types/workspace';
+import { CloudSyncWarningBanner } from './workspace/CloudSyncWarningBanner';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { PullAllModal } from './workspace/PullAllModal';
 import { PullInProgressModal } from './workspace/PullInProgressModal';
@@ -75,6 +76,7 @@ export function WorkspacePage() {
   const [searchParams] = useSearchParams();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [localPath, setLocalPath] = useState<string | null>(null);
+  const [cloudSyncWarning, setCloudSyncWarning] = useState<CloudSyncWarning | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [reDownloading, setReDownloading] = useState(false);
@@ -144,6 +146,7 @@ export function WorkspacePage() {
 
         setWorkspace(data);
         setLocalPath(nextLocalPath);
+        setCloudSyncWarning(localWorkspace?.cloudSyncWarning ?? null);
         const uniqueConnections = new Set((data.dataFolders ?? []).map((f) => f.connectorAccountId).filter(Boolean));
         return {
           localPath: nextLocalPath,
@@ -555,6 +558,18 @@ export function WorkspacePage() {
         validateEnabled={validateEnabled}
         onToggleValidate={() => setValidateEnabled((v) => !v)}
       />
+      {localPath && cloudSyncWarning && (
+        <CloudSyncWarningBanner
+          workspaceId={workspace.id}
+          workspaceName={workspace.name ?? ''}
+          localPath={localPath}
+          warning={cloudSyncWarning}
+          onMoved={() => {
+            void fetchWorkspace();
+            handleDataRefresh();
+          }}
+        />
+      )}
       <WorkspaceContent
         workspace={workspace}
         localPath={localPath}

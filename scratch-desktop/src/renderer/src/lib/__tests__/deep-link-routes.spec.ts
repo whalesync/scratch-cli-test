@@ -6,7 +6,9 @@ const workspacePath = '/Users/chrishoefgen/Documents/ScratchWorkspaces/Improve B
 beforeEach(() => {
   vi.stubGlobal('window', {
     scratchDesktop: {
-      getWorkspacesRegistry: vi.fn().mockResolvedValue([{ id: 'workspace-1', path: workspacePath, fileCount: 10 }]),
+      getWorkspacesRegistry: vi
+        .fn()
+        .mockResolvedValue([{ id: 'workspace-1', path: workspacePath, fileCount: 10, cloudSyncWarning: null }]),
     },
   });
 });

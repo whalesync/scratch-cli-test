@@ -24,7 +24,10 @@ export enum PostHogEvents {
   CHECK_FOR_UPDATES = 'check_for_updates',
   INSTALL_UPDATE = 'install_update',
   DEEP_LINK_PROCESSED = 'deep_link_processed',
+  WORKSPACE_CLOUD_SYNC_DETECTED = 'workspace_cloud_sync_detected',
 }
+
+export type CloudSyncSurface = 'open' | 'create';
 
 export type PickParentFolderFlow = 'download' | 'create';
 
@@ -113,6 +116,14 @@ export async function trackCancelPickParentFolder(workspaceId: string, flow: Pic
 
 export async function trackRedownloadWorkspace(workspaceId: string): Promise<void> {
   await captureEvent(PostHogEvents.REDOWNLOAD_WORKSPACE, { workspaceId });
+}
+
+export async function trackWorkspaceCloudSyncDetected(
+  workspaceId: string,
+  provider: string,
+  surface: CloudSyncSurface,
+): Promise<void> {
+  await captureEvent(PostHogEvents.WORKSPACE_CLOUD_SYNC_DETECTED, { workspaceId, provider, surface });
 }
 
 export async function trackPullAll(workspaceId: string): Promise<void> {

@@ -66,9 +66,18 @@ const scratchAuth = {
   openExternal: (url: string): Promise<void> => invoke('auth:open-external', url),
 };
 
+export type CloudSyncProvider = 'icloud' | 'dropbox' | 'onedrive' | 'googledrive' | 'box' | 'cloudstorage-other';
+
+export interface CloudSyncWarning {
+  provider: CloudSyncProvider;
+  providerLabel: string;
+  evidencePath: string;
+}
+
 const scratchDesktop = {
-  getWorkspacesRegistry: (): Promise<Array<{ id: string; path: string; fileCount: number }>> =>
-    invoke('scratch:get-workspaces-registry'),
+  getWorkspacesRegistry: (): Promise<
+    Array<{ id: string; path: string; fileCount: number; cloudSyncWarning: CloudSyncWarning | null }>
+  > => invoke('scratch:get-workspaces-registry'),
   createWorkspace: (name: string): Promise<{ id: string; name: string }> => invoke('scratch:create-workspace', name),
   pickParentFolder: (): Promise<string | null> => invoke('scratch:pick-parent-folder'),
   initWorkspace: (
