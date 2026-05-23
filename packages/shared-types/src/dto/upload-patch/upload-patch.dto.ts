@@ -1,10 +1,11 @@
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 
 // ── /cli/v1/workbooks/:id/upload-patch/init ───────────────────────────────
 
 export class UploadPatchInitDto {
   @IsString()
   @IsOptional()
+  @MaxLength(64)
   connectorAccountId?: string;
 }
 
@@ -22,10 +23,12 @@ export interface UploadPatchInitResponseDto {
 export class UploadPatchCommitDto {
   @IsString()
   @IsOptional()
+  @MaxLength(128)
   uploadId?: string;
 
   @IsString()
   @IsOptional()
+  @MaxLength(64)
   connectorAccountId?: string;
 
   /**
@@ -40,6 +43,7 @@ export class UploadPatchCommitDto {
    */
   @IsString()
   @IsOptional()
+  @MaxLength(64)
   baseHead?: string;
 
   /**

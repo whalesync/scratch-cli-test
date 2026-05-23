@@ -9,8 +9,9 @@
 //! the collision is appended as one JSON object per line here so the user
 //! has an audit trail of what was silently overridden.
 //!
-//! Append-only; never truncated by the CLI. Rotation is a deferred follow-up
-//! (see F10 in the plan's CEO follow-ups).
+//! Size-bounded with a single-file rotation: when the active log reaches
+//! `MAX_LOG_BYTES`, it's renamed to `conflicts.log.1` (overwriting any prior
+//! rotated file) and the next append starts fresh.
 
 use std::fs;
 use std::io::Write;
@@ -21,6 +22,12 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 const FILENAME: &str = "conflicts.log";
+const ROTATED_FILENAME: &str = "conflicts.log.1";
+
+/// Rotate when the active log reaches 2 MB. With each entry around 200–400
+/// bytes that's tens of thousands of conflicts before rotation — plenty of
+/// audit history without the file growing unbounded across years of pulls.
+const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Single-line record in `.scratch/conflicts.log`. Field names serialize to
 /// camelCase to match the plan spec and stay consistent with the on-wire
@@ -52,12 +59,19 @@ pub fn path(workspace_dir: &Path) -> PathBuf {
 /// guarantees writes ≤ PIPE_BUF (4096 bytes) to an `O_APPEND` file are atomic
 /// against concurrent writers, so the log is safe under the workspace lock
 /// and robust if multiple connections log in parallel later.
+///
+/// Before each append, rotates the file when it has grown to `MAX_LOG_BYTES`.
+/// Old contents move to `conflicts.log.1` (overwriting any prior rotated
+/// file), and the new append starts a fresh `conflicts.log`. The rename is
+/// atomic on POSIX, so a crash mid-rotation can leave behind either layout
+/// but never a partial line.
 #[allow(dead_code)]
 pub fn append(workspace_dir: &Path, entry: &ConflictEntry) -> anyhow::Result<()> {
     let scratch_dir = workspace_dir.join(".scratch");
     fs::create_dir_all(&scratch_dir)
         .with_context(|| format!("failed to create {}", scratch_dir.display()))?;
     let log_path = scratch_dir.join(FILENAME);
+    rotate_if_needed(&log_path)?;
     let mut line = serde_json::to_vec(entry).context("failed to serialize conflict entry")?;
     line.push(b'\n');
     let mut file = fs::OpenOptions::new()
@@ -67,6 +81,27 @@ pub fn append(workspace_dir: &Path, entry: &ConflictEntry) -> anyhow::Result<()>
         .with_context(|| format!("failed to open {}", log_path.display()))?;
     file.write_all(&line)?;
     Ok(())
+}
+
+fn rotate_if_needed(log_path: &Path) -> anyhow::Result<()> {
+    let size = match fs::metadata(log_path) {
+        Ok(meta) => meta.len(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to stat {}", log_path.display()));
+        }
+    };
+    if size < MAX_LOG_BYTES {
+        return Ok(());
+    }
+    let rotated = log_path.with_file_name(ROTATED_FILENAME);
+    fs::rename(log_path, &rotated).with_context(|| {
+        format!(
+            "failed to rotate {} → {}",
+            log_path.display(),
+            rotated.display()
+        )
+    })
 }
 
 /// Current UTC time formatted as RFC 3339 with seconds precision and the `Z`
@@ -168,5 +203,59 @@ mod tests {
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
         assert_eq!(parsed, entries);
+    }
+
+    fn rotated_path(dir: &Path) -> PathBuf {
+        dir.join(".scratch").join(ROTATED_FILENAME)
+    }
+
+    #[test]
+    fn append_below_threshold_does_not_rotate() {
+        let dir = tempdir().unwrap();
+        append(dir.path(), &sample_entry()).unwrap();
+        append(dir.path(), &sample_entry()).unwrap();
+        assert!(path(dir.path()).exists());
+        assert!(!rotated_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn append_rotates_when_threshold_reached() {
+        let dir = tempdir().unwrap();
+        let scratch_dir = dir.path().join(".scratch");
+        fs::create_dir_all(&scratch_dir).unwrap();
+        // Seed an existing log at the rotation threshold so the next append
+        // triggers rotation without writing megabytes of fixture data.
+        let existing = "x".repeat(MAX_LOG_BYTES as usize);
+        fs::write(scratch_dir.join(FILENAME), &existing).unwrap();
+
+        append(dir.path(), &sample_entry()).unwrap();
+
+        let rotated = rotated_path(dir.path());
+        assert!(
+            rotated.exists(),
+            "expected rotated file at {}",
+            rotated.display()
+        );
+        assert_eq!(fs::read_to_string(&rotated).unwrap(), existing);
+        let fresh = fs::read_to_string(path(dir.path())).unwrap();
+        let parsed: ConflictEntry = serde_json::from_str(fresh.trim_end()).unwrap();
+        assert_eq!(parsed, sample_entry());
+    }
+
+    #[test]
+    fn rotation_overwrites_prior_rotated_file() {
+        let dir = tempdir().unwrap();
+        let scratch_dir = dir.path().join(".scratch");
+        fs::create_dir_all(&scratch_dir).unwrap();
+        fs::write(scratch_dir.join(ROTATED_FILENAME), "older").unwrap();
+        let existing = "y".repeat(MAX_LOG_BYTES as usize);
+        fs::write(scratch_dir.join(FILENAME), &existing).unwrap();
+
+        append(dir.path(), &sample_entry()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(rotated_path(dir.path())).unwrap(),
+            existing
+        );
     }
 }
