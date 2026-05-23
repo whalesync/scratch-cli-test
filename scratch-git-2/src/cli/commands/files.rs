@@ -1027,6 +1027,8 @@ fn run_discard_all(
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     let mut discarded_files: Vec<String> = Vec::new();
     let mut total_discarded: i32 = 0;
     let mut skipped_any = false;
@@ -1109,6 +1111,8 @@ fn run_reject_all(
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     let mut rejected_files: Vec<String> = Vec::new();
     let mut total_rejected: i32 = 0;
     match folder {
@@ -1183,6 +1187,8 @@ fn run_accept_all(
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
+
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
     let mut accepted_files: Vec<String> = Vec::new();
     let mut total_accepted: i32 = 0;
@@ -1262,6 +1268,8 @@ fn run_accept(
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
+
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
@@ -1383,6 +1391,8 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
 
     let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new();
@@ -1485,6 +1495,8 @@ fn run_discard(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     // Group input paths by connection (same pattern as run_accept / run_reject).
     let mut by_conn: HashMap<usize, Vec<(String, String)>> = HashMap::new();
     for input_path in input_paths {
@@ -1584,6 +1596,8 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let (ctx, repo_folder, display_folder) =
         resolve_folder_context(&workspace_dir, &contexts, folder)?;
 
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
@@ -1676,6 +1690,8 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let (ctx, repo_folder, display_folder) =
         resolve_folder_context(&workspace_dir, &contexts, folder)?;
 
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
@@ -1763,6 +1779,8 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
     let (ctx, repo_folder, display_folder) =
         resolve_folder_context(&workspace_dir, &contexts, folder)?;
+
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
@@ -1865,6 +1883,8 @@ fn run_restore_deleted_record(
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
 
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
     let by_conn = group_input_paths_by_connection(&contexts, input_paths)?;
     let mut all_restored: Vec<String> = Vec::new();
 
@@ -1924,6 +1944,8 @@ async fn run_discard_created_record(
     if contexts.is_empty() {
         anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
     }
+
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
     let client = crate::api::ApiClient::from_credentials(&workspace_server_url)
         .ok_or_else(|| anyhow::anyhow!("Not authenticated. Run `scratchmd auth login` first."))?;

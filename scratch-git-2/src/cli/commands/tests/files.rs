@@ -2876,6 +2876,45 @@ mod entry_points {
         .unwrap_err();
         assert!(matches!(err, ReviewOpError::UnknownConnection(_)));
     }
+
+    // C1 — verify the CLI dispatchers (accept/reject/discard/restore/…) hold
+    // the workspace lock for the duration of their work. The lock library is
+    // well-covered by its own tests; this asserts the dispatcher actually
+    // calls into it (rather than skipping locking entirely).
+    //
+    // Mechanism: pre-write a garbage lockfile. `workspace_lock::acquire` treats
+    // an unreadable owner PID as a stale lock and reclaims it; if the
+    // dispatcher reaches the acquire call, the garbage lockfile gets replaced
+    // by one owned by this PID, then dropped on return — leaving no lockfile.
+    // If the dispatcher never acquires, the garbage file remains.
+    #[test]
+    fn run_restore_deleted_record_acquires_and_releases_workspace_lock() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let fx = make_fixture();
+
+        let lock_path = fx.workspace_dir.join(".scratch/lock");
+        std::fs::write(&lock_path, b"not-a-pid\n").unwrap();
+        assert!(lock_path.exists());
+
+        // Empty input_paths is a no-op past the lock acquire — by_conn empty,
+        // for-loop runs zero times, reindex short-circuits. The lock is what
+        // we're testing, not the work.
+        super::super::run_restore_deleted_record(
+            &fx.workspace_dir,
+            "http://localhost",
+            &[],
+            /*json=*/ true,
+        )
+        .expect("dispatcher should succeed with empty input");
+
+        assert!(
+            !lock_path.exists(),
+            "lock guard's Drop should have removed the lockfile",
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
