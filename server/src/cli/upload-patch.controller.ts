@@ -67,7 +67,7 @@ export class UploadPatchController {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
     // Init is a mutation prerequisite — block on pending workbooks.
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     if (!body.connectorAccountId) {
       throw new BadRequestException('connectorAccountId is required');
@@ -88,6 +88,20 @@ export class UploadPatchController {
       workbookId,
       userId: actor.userId,
       data: { uploadId, connectorAccountId: body.connectorAccountId },
+    });
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Issued patch-upload URL for ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'upload_patch.init',
+        workbookId,
+        connectorAccountId: body.connectorAccountId,
+        uploadId,
+      },
     });
 
     return { uploadId, presignedUrl, expiresInSeconds: PRESIGNED_PUT_TTL_SECONDS };

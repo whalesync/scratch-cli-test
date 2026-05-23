@@ -18,6 +18,7 @@ import {
 } from '@nestjs/common';
 import { DeleteWorkbookResponseDto, WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -63,6 +64,7 @@ export class CliWorkbookController {
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly publishPlanBuildService: PublishPlanBuildService,
+    private readonly auditLogService: AuditLogService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
   }
@@ -234,10 +236,24 @@ export class CliWorkbookController {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
     // Mutation: discarding dirty changes blocked once the workbook is pending deletion.
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
     await this.scratchGitService.discardChanges(repoId, body.path);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'delete',
+      message: `Discarded remote dirty changes at ${body.path} for ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.discard_remote_dirty_changes',
+        workbookId,
+        connectorAccountId,
+        path: body.path,
+      },
+    });
   }
 
   /**
@@ -422,7 +438,7 @@ export class CliWorkbookController {
     @Body() body: PublishFromGitDto,
   ): Promise<{ jobId: string | number | undefined }> {
     const actor = userToActor(req.user);
-    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
 
     const job = await this.bullEnqueuerService.enqueuePublishFromGitJob(
       id as WorkbookId,
@@ -430,6 +446,23 @@ export class CliWorkbookController {
       body.connectorAccountId,
       body.planPath,
     );
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'publish',
+      message: `Queued legacy publish-from-git job for ${workbook.name ?? id}`,
+      entityId: id as WorkbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.publish_v2.run_from_git',
+        workbookId: id,
+        connectorAccountId: body.connectorAccountId,
+        planPath: body.planPath,
+        jobId: job.id ? String(job.id) : null,
+        deprecated: true,
+      },
+    });
+
     return { jobId: job.id };
   }
 
@@ -448,7 +481,7 @@ export class CliWorkbookController {
   ): Promise<{ jobId: string | number | null; pipelineId: string | null }> {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     if (!body.connectorAccountId) {
       throw new BadRequestException('connectorAccountId is required');
@@ -482,6 +515,25 @@ export class CliWorkbookController {
       createRunContext('cli'),
     );
     await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'publish',
+      message: `Queued publish-plan job for ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.publish_v2.plan_job',
+        workbookId,
+        connectorAccountId: body.connectorAccountId,
+        pipelineId,
+        jobId: job.id ? String(job.id) : null,
+        runAfterPlan: body.runAfterPlan ?? false,
+        folderPath: body.folderPath ?? null,
+        filePath: body.filePath ?? null,
+      },
+    });
+
     return { jobId: job.id ?? null, pipelineId };
   }
 
@@ -497,7 +549,7 @@ export class CliWorkbookController {
   ): Promise<{ jobId: string | number | null }> {
     const actor = userToActor(req.user);
     const workbookId = id as WorkbookId;
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
     const job = await this.bullEnqueuerService.enqueueRunPipelineJob(
       workbookId,
@@ -508,6 +560,22 @@ export class CliWorkbookController {
       createRunContext('cli'),
     );
     await this.publishPlanBuildService.setActiveJob(body.pipelineId, job.id!.toString());
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'publish',
+      message: `Queued publish-run job for ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.publish_v2.run_job',
+        workbookId,
+        pipelineId: body.pipelineId,
+        jobId: job.id ? String(job.id) : null,
+        executeSinglePhase: body.executeSinglePhase ?? null,
+      },
+    });
+
     return { jobId: job.id ?? null };
   }
 
@@ -534,6 +602,20 @@ export class CliWorkbookController {
       userId: actor.userId,
     });
     await this.workbookRepoService.initWorkbookRepo(workbook.organizationId, id as WorkbookId);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Initialized workbook config repo for ${workbook.name ?? id}`,
+      entityId: id as WorkbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.config.init',
+        workbookId: id,
+        deprecated: true,
+      },
+    });
+
     return { success: true };
   }
 
@@ -557,7 +639,23 @@ export class CliWorkbookController {
       workbookId: id,
       userId: actor.userId,
     });
-    return this.workbookRepoService.pushSyncs(workbook.organizationId, id as WorkbookId, actor);
+    const result = await this.workbookRepoService.pushSyncs(workbook.organizationId, id as WorkbookId, actor);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Pushed ${result.count} sync definition(s) to config repo for ${workbook.name ?? id}`,
+      entityId: id as WorkbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.config.push_syncs',
+        workbookId: id,
+        count: result.count,
+        deprecated: true,
+      },
+    });
+
+    return result;
   }
 
   /**

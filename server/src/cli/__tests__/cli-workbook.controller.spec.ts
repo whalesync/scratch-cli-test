@@ -3,11 +3,13 @@
 import { NotFoundException } from '@nestjs/common';
 import type { WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { RepoId } from 'src/scratch-git/scratch-git.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
@@ -82,6 +84,8 @@ describe('CliWorkbookController', () => {
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let workbookRepoService: jest.Mocked<WorkbookRepoService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
+  let publishPlanBuildService: jest.Mocked<PublishPlanBuildService>;
+  let auditLogService: jest.Mocked<AuditLogService>;
 
   beforeEach(() => {
     workbookService = {
@@ -134,8 +138,20 @@ describe('CliWorkbookController', () => {
     } as unknown as jest.Mocked<WorkbookRepoService>;
 
     bullEnqueuerService = {
-      enqueuePublishFromGitJob: jest.fn(),
+      enqueuePublishFromGitJob: jest.fn().mockResolvedValue({ id: 'job_legacy' }),
+      enqueuePlanPipelineJob: jest.fn().mockResolvedValue({ id: 'job_plan' }),
+      enqueueRunPipelineJob: jest.fn().mockResolvedValue({ id: 'job_run' }),
     } as unknown as jest.Mocked<BullEnqueuerService>;
+
+    publishPlanBuildService = {
+      hasDiffs: jest.fn(),
+      createPipeline: jest.fn(),
+      setActiveJob: jest.fn(),
+    } as unknown as jest.Mocked<PublishPlanBuildService>;
+
+    auditLogService = {
+      logEvent: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<AuditLogService>;
 
     controller = new CliWorkbookController(
       workbookService,
@@ -145,6 +161,8 @@ describe('CliWorkbookController', () => {
       scratchGitService,
       workbookRepoService,
       bullEnqueuerService,
+      publishPlanBuildService,
+      auditLogService,
     );
   });
 

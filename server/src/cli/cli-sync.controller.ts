@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { ExportSyncConfig, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
@@ -39,6 +40,7 @@ export class CliSyncController {
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly db: DbService,
     private readonly posthogService: PostHogService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   @Get('syncs')
@@ -57,8 +59,27 @@ export class CliSyncController {
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     const actor = userToActor(req.user);
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
-    return await this.syncService.createSync(workbookId, body, actor);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const sync = (await this.syncService.createSync(workbookId, body, actor)) as { id: string } & Record<
+      string,
+      unknown
+    >;
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'create',
+      message: `Created sync ${body.displayName} in ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.sync.create',
+        workbookId,
+        syncId: sync.id,
+        displayName: body.displayName,
+      },
+    });
+
+    return sync;
   }
 
   @Get('syncs/export')
@@ -99,8 +120,24 @@ export class CliSyncController {
     @Req() req: RequestWithUser,
   ): Promise<unknown> {
     const actor = userToActor(req.user);
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
-    return await this.syncService.updateSync(workbookId, syncId as SyncId, body, actor);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const result = await this.syncService.updateSync(workbookId, syncId as SyncId, body, actor);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Updated sync ${body.displayName} in ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.sync.update',
+        workbookId,
+        syncId,
+        displayName: body.displayName,
+      },
+    });
+
+    return result;
   }
 
   @Delete('syncs/:syncId')
@@ -110,8 +147,22 @@ export class CliSyncController {
     @Req() req: RequestWithUser,
   ): Promise<{ success: boolean }> {
     const actor = userToActor(req.user);
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
     await this.syncService.deleteSync(workbookId, syncId as SyncId, actor);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'delete',
+      message: `Deleted sync ${syncId} from ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.sync.delete',
+        workbookId,
+        syncId,
+      },
+    });
+
     return { success: true };
   }
 
@@ -151,6 +202,20 @@ export class CliSyncController {
     );
 
     this.posthogService.trackStartSyncRun(userToActor(req.user), sync);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Queued sync run ${syncId} for ${workbook.name ?? workbookId}`,
+      entityId: workbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.sync.run',
+        workbookId,
+        syncId,
+        jobId: job.id ?? null,
+      },
+    });
 
     return {
       success: true,

@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { DataFolderId, PullFilesResponseDto, WorkbookId } from '@spinner/shared-types';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { DbService } from 'src/db/db.service';
@@ -51,6 +52,7 @@ export class CliLinkedController {
     private readonly jobService: JobService,
     private readonly connectorAccountService: ConnectorAccountService,
     private readonly publishPlanBuildService: PublishPlanBuildService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   /**
@@ -189,15 +191,30 @@ export class CliLinkedController {
     @Body() body: CliPullDto,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
-    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
 
-    return await this.workbookService.pullFiles(
+    const result = await this.workbookService.pullFiles(
       workbookId as WorkbookId,
       actor,
       undefined,
       createRunContext('cli'),
       body.mode,
     );
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Queued pull-all for ${workbook.name ?? workbookId}`,
+      entityId: workbookId as WorkbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.linked.pull_all',
+        workbookId,
+        mode: body.mode ?? null,
+      },
+    });
+
+    return result;
   }
 
   /**
@@ -211,15 +228,31 @@ export class CliLinkedController {
     @Body() body: CliPullDto,
   ): Promise<PullFilesResponseDto> {
     const actor = userToActor(req.user);
-    await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId as WorkbookId);
 
-    return await this.workbookService.pullFiles(
+    const result = await this.workbookService.pullFiles(
       workbookId as WorkbookId,
       actor,
       [folderId],
       createRunContext('cli'),
       body.mode,
     );
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Queued pull of linked folder ${folderId} for ${workbook.name ?? workbookId}`,
+      entityId: workbookId as WorkbookId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.linked.pull',
+        workbookId,
+        folderId,
+        mode: body.mode ?? null,
+      },
+    });
+
+    return result;
   }
 
   /**
@@ -234,7 +267,7 @@ export class CliLinkedController {
   ): Promise<{ jobId: string }> {
     const actor = userToActor(req.user);
     const wbId = workbookId as WorkbookId;
-    await this.workbookService.assertWritableWorkbook(actor, wbId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, wbId);
     const dfId = folderId as DataFolderId;
 
     // Verify the data folder exists and belongs to this workbook
@@ -276,6 +309,21 @@ export class CliLinkedController {
     );
 
     this.posthogService.trackPullFiles(actor, wbId, dfId);
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Queued pull of ${body.filePaths.length} file(s) in linked folder ${dataFolder.name}`,
+      entityId: wbId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.linked.pull_files',
+        workbookId,
+        folderId,
+        fileCount: body.filePaths.length,
+        jobId: job.id ?? null,
+      },
+    });
 
     return { jobId: job.id ?? '' };
   }
@@ -347,6 +395,22 @@ export class CliLinkedController {
     await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
 
     this.posthogService.trackPublishDataFromWorkbook(actor, workbook, { dataFolderCount: 1 });
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'publish',
+      message: `Queued publish of linked folder ${dataFolder.name} for ${workbook.name ?? wbId}`,
+      entityId: wbId,
+      organizationId: workbook.organizationId,
+      context: {
+        action: 'workbook.linked.publish',
+        workbookId,
+        folderId,
+        connectorAccountId: dataFolder.connectorAccountId,
+        pipelineId,
+        jobId: job.id ?? null,
+      },
+    });
 
     return { jobId: job.id ?? '' };
   }

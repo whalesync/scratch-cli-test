@@ -102,15 +102,31 @@ describe('UploadPatchController', () => {
       expect(result.expiresInSeconds).toBeGreaterThan(0);
     });
 
+    it('writes an audit-log row when issuing a presigned URL', async () => {
+      const body: UploadPatchInitDto = { connectorAccountId: CONNECTOR_ID };
+      await controller.init(makeReq(), WORKBOOK_ID, body);
+      expect(auditLogService.logEvent).toHaveBeenCalledTimes(1);
+      const entry = auditLogService.logEvent.mock.calls[0][0];
+      expect(entry.eventType).toBe('update');
+      expect(entry.entityId).toBe(WORKBOOK_ID);
+      expect(entry.organizationId).toBe(ORG_ID);
+      expect(entry.context).toMatchObject({
+        action: 'upload_patch.init',
+        connectorAccountId: CONNECTOR_ID,
+      });
+    });
+
     it('throws ServiceUnavailable when bucket unconfigured', async () => {
       objectStorageService.isPatchUploadConfigured.mockReturnValue(false);
       const body: UploadPatchInitDto = { connectorAccountId: CONNECTOR_ID };
       await expect(controller.init(makeReq(), WORKBOOK_ID, body)).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
     });
 
     it('throws BadRequest when connectorAccountId missing', async () => {
       const body: UploadPatchInitDto = {};
       await expect(controller.init(makeReq(), WORKBOOK_ID, body)).rejects.toBeInstanceOf(BadRequestException);
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
     });
   });
 
