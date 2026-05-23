@@ -359,7 +359,7 @@ pub fn build_publish_plan_with_scratch_dir(
         };
         std::fs::write(
             phase_dir.join(&filename),
-            serde_json::to_string_pretty(&file_value)?,
+            format!("{}\n", serde_json::to_string_pretty(&file_value)?),
         )?;
     }
 
@@ -376,7 +376,7 @@ pub fn build_publish_plan_with_scratch_dir(
     };
     std::fs::write(
         plan_root.join("plan.json"),
-        serde_json::to_string_pretty(&meta)?,
+        format!("{}\n", serde_json::to_string_pretty(&meta)?),
     )?;
 
     Ok(Some(PlanResult {

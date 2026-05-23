@@ -25,6 +25,7 @@ import { DecryptedCredentials } from 'src/remote-service/connector-account/types
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { Actor } from 'src/users/types';
+import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RunContext } from 'src/worker/jobs/base-types';
@@ -562,12 +563,12 @@ export class DataFolderService {
     dto: { name: string; useTemplate?: boolean },
     actor: Actor,
   ) {
-    let content = '{}';
+    let content = formatJsonWithPrettier({});
 
     if (dto.useTemplate) {
       try {
         const template = await this.getNewFileTemplate(id, actor);
-        content = JSON.stringify(template, null, 2);
+        content = formatJsonWithPrettier(template);
       } catch (e) {
         WSLogger.warn({
           source: 'DataFolderService.createFile',

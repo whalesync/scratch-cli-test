@@ -2937,6 +2937,13 @@ fn reconcile_accepted_after_publish(
 
     if let Some(hash) = new_main_hash.as_deref() {
         git_update_ref(&ctx.bare_repo, "refs/heads/main", hash)?;
+        // Mirror update_main_worktree_after_pull: advancing the ref leaves the
+        // gix index pointing at the old main, so detect_unreviewed_fast would
+        // report just-published files as Modified. Reset the index to match
+        // HEAD without touching the working tree.
+        if ctx.worktree_dir.join(".git").exists() {
+            crate::git_ops::worktree_reset_mixed(&ctx.worktree_dir, hash)?;
+        }
     }
 
     Ok(())

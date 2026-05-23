@@ -10,6 +10,7 @@ import {
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
+import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { GitIndexDump, RepoFileRef, ScratchGitClient } from './scratch-git.client';
 
 export type { RepoFileRef };
@@ -353,7 +354,7 @@ export class ScratchGitService {
       // Strip defaultView from the serialized schema — it belongs in views/default.json
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { defaultView, ...schemaWithoutView } = schema;
-      const file = { path: newGitPath, content: JSON.stringify(schemaWithoutView, null, 2) };
+      const file = { path: newGitPath, content: formatJsonWithPrettier(schemaWithoutView as Record<string, unknown>) };
       const message = `Update schema for ${folderPath}`;
 
       const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
@@ -392,7 +393,7 @@ export class ScratchGitService {
     try {
       const normalizedFolder = folderPath.replace(/^\//, '');
       const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/views/${viewName}.json`;
-      const file = { path: gitPath, content: JSON.stringify(view, null, 2) };
+      const file = { path: gitPath, content: formatJsonWithPrettier(view as unknown as Record<string, unknown>) };
       const message = `Update ${viewName} view for ${folderPath}`;
 
       for (const branch of [MAIN_BRANCH, DIRTY_BRANCH]) {

@@ -273,9 +273,9 @@ pub fn parse_json_object_bytes(
 }
 
 pub fn json_object_to_bytes(object: &JsonMap<String, JsonValue>) -> anyhow::Result<Vec<u8>> {
-    Ok(serde_json::to_vec_pretty(&JsonValue::Object(
-        object.clone(),
-    ))?)
+    let mut bytes = serde_json::to_vec_pretty(&JsonValue::Object(object.clone()))?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 /// Pull a value from a `FileMap` and parse it as JSON, attaching the source
@@ -386,14 +386,16 @@ pub fn apply_patch_entry_to_blob(
 ) -> anyhow::Result<Option<Vec<u8>>> {
     match entry.kind {
         PatchKind::Delete => Ok(None),
-        PatchKind::Create => Ok(Some(serde_json::to_vec_pretty(&entry.patch).with_context(
-            || {
+        PatchKind::Create => {
+            let mut bytes = serde_json::to_vec_pretty(&entry.patch).with_context(|| {
                 format!(
                     "failed to serialize accepted Create patch for {}",
                     entry.path
                 )
-            },
-        )?)),
+            })?;
+            bytes.push(b'\n');
+            Ok(Some(bytes))
+        }
         PatchKind::Update => {
             let base: JsonValue = match main_blob {
                 Some(bytes) => serde_json::from_slice(bytes).with_context(|| {
@@ -405,9 +407,11 @@ pub fn apply_patch_entry_to_blob(
                 None => JsonValue::Null,
             };
             let merged = crate::shared::merge_patch::apply(&base, &entry.patch);
-            Ok(Some(serde_json::to_vec_pretty(&merged).with_context(
-                || format!("failed to serialize accepted Update for {}", entry.path),
-            )?))
+            let mut bytes = serde_json::to_vec_pretty(&merged).with_context(|| {
+                format!("failed to serialize accepted Update for {}", entry.path)
+            })?;
+            bytes.push(b'\n');
+            Ok(Some(bytes))
         }
     }
 }
@@ -1796,7 +1800,9 @@ mod tests {
     }
 
     fn json_bytes(v: &JsonValue) -> Vec<u8> {
-        serde_json::to_vec_pretty(v).unwrap()
+        let mut bytes = serde_json::to_vec_pretty(v).unwrap();
+        bytes.push(b'\n');
+        bytes
     }
 
     #[test]
