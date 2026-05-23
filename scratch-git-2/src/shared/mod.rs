@@ -7,7 +7,6 @@ pub mod json_path;
 pub mod layout;
 pub mod merge;
 pub mod merge_patch;
-pub mod plan_publish;
 pub mod re_anchor;
 pub mod review_ops;
 pub mod validators;

@@ -75,7 +75,7 @@ fn sync_schema_files_from_worktree_copies_schema_and_view_into_cache() {
     // schemas + views live natively at `<worktree>/.scratch/<folder>/`.
     // `sync_schema_files_from_worktree_paths` copies them into the per-
     // connection cache `<workspace>/.scratch/connections/scratch/<conn>/`
-    // for the broader codebase's readers (validators, plan_publish, index).
+    // for the broader codebase's readers (validators, index).
     let tmp = TempDir::new().unwrap();
     let worktree_dir = tmp.path().join("HubSpot");
     let scratch_dir = tmp.path().join("scratch");

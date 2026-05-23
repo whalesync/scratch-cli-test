@@ -23,11 +23,10 @@ It is intentionally a manual tool and is not wired into GitLab CI. The goal is t
 8. Pulls and downloads the records locally.
 9. Edits every local record file.
 10. Runs `files accept-all`.
-11. Runs `plan-publish`.
-12. Runs `files upload`.
-13. Runs `publish-from-git`.
-14. Polls the queued publish job until completion.
-15. Verifies the target Postgres rows were updated.
+11. Runs `files upload`.
+12. Runs `files publish`.
+13. Polls the queued publish job until completion.
+14. Verifies the target Postgres rows were updated.
 
 ## Important Behavior
 
@@ -135,10 +134,10 @@ yarn smoke:publish -- \
   - `/Users/ijd/repos/spinner/server/src/job/job.controller.ts`
   - `/Users/ijd/repos/spinner/server/src/job/job.service.ts`
 - If publish jobs appear generic in the web Runs tab, inspect:
-  - `/Users/ijd/repos/spinner/server/src/worker/jobs/job-definitions/publish-from-git.job.ts`
-  - `/Users/ijd/repos/spinner/server/src/publish-plan/publish-from-git.service.ts`
-  - `/Users/ijd/repos/spinner/client/src/utils/job-helpers.ts`
-  - `/Users/ijd/repos/spinner/client/src/app/workbook/[id]/components/MainPane/RunsView.tsx`
+  - `server/src/worker/jobs/job-definitions/publish.job.ts`
+  - `server/src/publish-plan/publish-plan.service.ts`
+  - `client/src/utils/job-helpers.ts`
+  - `client/src/app/workbook/[id]/components/MainPane/RunsView.tsx`
 - `smoke-cleanup` fetches remote workspaces first, then deletes matching:
   - remote workspaces
   - matching Postgres databases

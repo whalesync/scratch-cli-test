@@ -101,30 +101,20 @@ scratchmd2 syncs run-local
 # Writes modified records into the destination connection folder at the workspace root
 ```
 
-### 8. Build a publish plan
-
-```bash
-scratchmd2 plan-publish
-# Diffs dirty vs master for each connection
-# Strips FK refs to deleted records, pseudo-refs, and asset refs
-# Writes plan to {conn}/.scratch/publish-plans/{timestamp}/
-# Only one plan is kept per connection — old plan is deleted automatically
-```
-
-### 9. Push changes (including the publish plan)
+### 8. Push accepted changes to the server
 
 ```bash
 scratchmd2 files upload
-# Commits local dirty changes (including .scratch/publish-plans/) and pushes to server
+# Reads accepted-patches.json verbatim and PUTs it to the server via /upload-patch
+# Server applies the RFC 7396 patches to the dirty branch as one commit
 ```
 
-### 10. Trigger publish from the plan
+### 9. Trigger publish
 
 ```bash
-scratchmd2 publish-from-git
-# For each connection with a publish plan, calls the server to execute it
-# Server reads the plan from git (dirty branch) and applies it to the remote CMS
-# Prints the queued job ID for each connection
+scratchmd2 files publish
+# For each connection, calls /publish-v2/plan-job then /publish-v2/run-job
+# Polls to completion and advances local refs/heads/main on success
 ```
 
 ---
@@ -144,5 +134,4 @@ scratchmd2 publish-from-git
 | `scratchmd2 syncs run <id>`       | Trigger server-side sync job (waits)       |
 | `scratchmd2 syncs validate-local` | Validate local sync JSON configs           |
 | `scratchmd2 syncs run-local`      | Apply sync locally to dirty worktree       |
-| `scratchmd2 plan-publish`         | Build publish plan (diff dirty vs master)  |
-| `scratchmd2 publish-from-git`     | Trigger server publish from local plan     |
+| `scratchmd2 files publish`        | Run plan-job + run-job per connection      |

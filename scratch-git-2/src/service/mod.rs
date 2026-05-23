@@ -7,7 +7,6 @@ pub mod routes;
 pub mod slack;
 pub mod state;
 pub mod types;
-pub mod worktree;
 
 use axum::extract::Request;
 use axum::middleware::{self, Next};
@@ -169,11 +168,6 @@ pub async fn run() {
         .route(
             "/api/repo/index/{id}/delete-entries",
             post(routes::index::delete_index_entries),
-        )
-        // Publish Plan
-        .route(
-            "/api/repo/publish-plan/{id}/build",
-            post(routes::plan_publish::build_plan),
         )
         // Staging
         .route(

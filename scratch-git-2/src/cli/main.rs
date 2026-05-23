@@ -11,8 +11,7 @@ use clap::{Parser, Subcommand};
 
 use api::{ApiClient, DEFAULT_SERVER_URL};
 use commands::{
-    auth, connections, files, index, linked, plan_publish, read_records, syncs, validation,
-    workspaces,
+    auth, connections, files, index, linked, read_records, syncs, validation, workspaces,
 };
 use config::project_config;
 
@@ -82,23 +81,6 @@ enum Commands {
         workspace: Option<String>,
         #[command(subcommand)]
         command: syncs::SyncsCommands,
-    },
-    /// Build a local publish plan by diffing dirty vs master
-    #[command(name = "plan-publish")]
-    PlanPublish {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
-        /// Only include files matching this relative path (e.g. "connection/folder/file.json")
-        #[arg(long)]
-        filter: Option<String>,
-    },
-    /// Trigger server-side publish from the local publish plan
-    #[command(name = "publish-from-git")]
-    PublishFromGit {
-        /// Workspace directory (default: auto-detected from CWD)
-        #[arg(long, default_value = ".")]
-        workspace: std::path::PathBuf,
     },
     /// Regenerate AGENTS.md (+ CLAUDE.md symlink) and .scratch/docs/ in the current workspace
     #[command(name = "generate-docs")]
@@ -486,15 +468,6 @@ async fn main() {
                 }
             }
         }
-
-        Commands::PlanPublish { workspace, filter } => {
-            plan_publish::run(&workspace, filter.as_deref())
-        }
-
-        Commands::PublishFromGit { workspace } => match build_client(&server_url) {
-            Ok(client) => plan_publish::run_publish_from_git(&workspace, &client).await,
-            Err(e) => Err(e),
-        },
 
         Commands::PaginateRecords {
             workspace,

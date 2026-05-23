@@ -6,25 +6,21 @@ The desktop app treats the CLI (`scratchmd`) as a backend API, invoked via Elect
 
 Each call spawns a new `scratchmd` subprocess.
 
-| IPC                                | CLI command                                                     | Notes                                                               |
-| ---------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `scratch:create-workspace`         | `workspaces create <name>`                                      | One-shot                                                            |
-| `scratch:init-workspace`           | `workspaces init <id>` (`opts.force` → `--force`)               | One-shot; `--force` deletes and reclones the local workspace dir    |
-| `scratch:remove-workspace`         | `workspaces unsync <id> --yes`                                  | One-shot                                                            |
-| `scratch:accept-all-changes`       | `files accept-all`                                              | One-shot                                                            |
-| `files:restore-deleted-record`     | `files restore-deleted-record <path>`                           | Legacy `files:*` IPC name, but now CLI-backed                       |
-| `files:discard-created-record`     | `files discard-created-record <path>`                           | Legacy `files:*` IPC name, CLI-backed; also discards remote dirty   |
-| `scratch:list-unreviewed-changes`  | `files unreviewed --json`                                       | Called per-render of status filter                                  |
-| `scratch:list-unpushed-changes`    | `files unpushed --json`                                         | Same                                                                |
-| `scratch:push-workspace-changes`   | `files upload`                                                  | One-shot                                                            |
-| `scratch:pull-workspace-changes`   | `files download`                                                | Syncs local connection layout with the server, then pulls each repo |
-| `scratch:validate-local-sync`      | `syncs validate-local`                                          | One-shot                                                            |
-| `scratch:start-run-local-sync`     | `syncs run-local` (streaming)                                   | Long-running stream                                                 |
-| `scratch:start-plan-publish`       | `plan-publish` (streaming)                                      | Long-running stream                                                 |
-| `scratch:start-publish-from-git`   | `publish-from-git` (streaming)                                  | Long-running stream                                                 |
-| `scratch:trigger-publish-from-git` | `publish-from-git`                                              | Fire-and-get-job-IDs                                                |
-| `scratch:start-publish-all`        | `plan-publish` → `files upload` → `publish-from-git` (sequence) | 3-step stream                                                       |
-| `scratch:pull-all-linked-tables`   | `linked pull-all --json`                                        | Returns job IDs                                                     |
+| IPC                               | CLI command                                       | Notes                                                               |
+| --------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
+| `scratch:create-workspace`        | `workspaces create <name>`                        | One-shot                                                            |
+| `scratch:init-workspace`          | `workspaces init <id>` (`opts.force` → `--force`) | One-shot; `--force` deletes and reclones the local workspace dir    |
+| `scratch:remove-workspace`        | `workspaces unsync <id> --yes`                    | One-shot                                                            |
+| `scratch:accept-all-changes`      | `files accept-all`                                | One-shot                                                            |
+| `files:restore-deleted-record`    | `files restore-deleted-record <path>`             | Legacy `files:*` IPC name, but now CLI-backed                       |
+| `files:discard-created-record`    | `files discard-created-record <path>`             | Legacy `files:*` IPC name, CLI-backed; also discards remote dirty   |
+| `scratch:list-unreviewed-changes` | `files unreviewed --json`                         | Called per-render of status filter                                  |
+| `scratch:list-unpushed-changes`   | `files unpushed --json`                           | Same                                                                |
+| `scratch:push-workspace-changes`  | `files upload`                                    | One-shot                                                            |
+| `scratch:pull-workspace-changes`  | `files download`                                  | Syncs local connection layout with the server, then pulls each repo |
+| `scratch:validate-local-sync`     | `syncs validate-local`                            | One-shot                                                            |
+| `scratch:start-run-local-sync`    | `syncs run-local` (streaming)                     | Long-running stream                                                 |
+| `scratch:pull-all-linked-tables`  | `linked pull-all --json`                          | Returns job IDs                                                     |
 
 ## Local filesystem endpoints
 

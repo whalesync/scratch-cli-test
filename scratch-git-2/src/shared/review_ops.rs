@@ -916,10 +916,9 @@ pub fn read_scratch_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::
 /// schemas + views natively, so the source is the user worktree itself.
 ///
 /// The destination cache exists because the broader codebase
-/// (`shared/validators`, `shared/plan_publish`, `shared/index`,
-/// `cli/commands/validation`) reads schemas from `connection_scratch_path`,
-/// not from the worktree. Repointing those readers is tracked as a post-F
-/// follow-up (see slice F spec PF1).
+/// (`shared/validators`, `shared/index`, `cli/commands/validation`) reads
+/// schemas from `connection_scratch_path`, not from the worktree. Repointing
+/// those readers is tracked as a post-F follow-up (see slice F spec PF1).
 pub fn sync_schema_files_from_worktree(paths: &ConnectionPaths) -> anyhow::Result<()> {
     sync_schema_files_from_worktree_paths(&paths.worktree_dir, &paths.scratch_dir)
 }

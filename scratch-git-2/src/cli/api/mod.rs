@@ -663,22 +663,6 @@ impl ApiClient {
         .await
     }
 
-    pub async fn publish_from_git(
-        &self,
-        workbook_id: &str,
-        connector_account_id: &str,
-        plan_path: &str,
-    ) -> ApiResult<serde_json::Value> {
-        self.post(
-            &format!("workbooks/{}/publish-v2/run-from-git", workbook_id),
-            &serde_json::json!({
-                "connectorAccountId": connector_account_id,
-                "planPath": plan_path,
-            }),
-        )
-        .await
-    }
-
     /// Step 1 of publish: build a publish plan from the server's current
     /// dirty-vs-main diff for one connector. Returns `{ jobId: null,
     /// pipelineId: null }` when there's nothing to publish. Otherwise the

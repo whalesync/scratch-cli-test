@@ -1,6 +1,6 @@
 # Repository Structures
 
-How data is laid out on disk for the CLI (local checkout) and the Git service (bare repos). Understanding both is required to share business logic between them via the **materialize → perform → commit → cleanup** pattern.
+How data is laid out on disk for the CLI (local checkout) and the Git service (bare repos). The CLI uses a single real `git worktree add` of `main` per connection; the service operates purely on the bare repos via gix/git-cli and does not materialize worktrees today.
 
 ## Repo Identity
 
@@ -20,9 +20,9 @@ The workbook config repo reuses the same pattern with workbookId in place of con
 
 ## Branches
 
-| Branch  | Owner  | Purpose                                                                                              |
-| ------- | ------ | ---------------------------------------------------------------------------------------------------- |
-| `main`  | Server | Published/pulled truth — server writes here.                                                         |
+| Branch  | Owner  | Purpose                                                                                                                                                                           |
+| ------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main`  | Server | Published/pulled truth — server writes here.                                                                                                                                      |
 | `dirty` | Server | Approved-but-not-yet-published staging area on the server. CLI ships RFC 7396 patches via `/upload-patch` and the server applies them here; the publish pipeline reads from here. |
 
 The local CLI no longer pushes to `dirty`. The user's accepted-but-not-published edits live in `<workspace>/.scratch/connections/<conn>/accepted-patches.json` — see [REVIEW_MODEL.md](REVIEW_MODEL.md).
@@ -33,22 +33,13 @@ The local CLI no longer pushes to `dirty`. The user's accepted-but-not-published
 {folder}/
   record-1.json
   record-2.json
-  scratch_pending_abc.json        # New records not yet published (legacy run-from-git flow only)
+  scratch_pending_{hash}.json     # Records produced by a local sync that don't yet have a remote ID
 .scratch/
   {folder}/
     schema.json                   # Table schema + FK annotations
-    publish-plan-{ts}/            # Phase files for legacy run-from-git plan; absent in the /upload-patch flow
-      edit/
-      create/
-      delete/
-      backfill/
-      rename/
-  .publish-plans/
-    {ts}/
-      plan.json                   # Plan manifest (summary, tablePaths) — legacy flow only
 ```
 
-The `publish-plan-{ts}/` and `.publish-plans/` directories exist only inside the **server-side** bare repo when the legacy `publish-from-git` job runs. The newer `/upload-patch` → `publish-v2/plan-job` flow does not write phase files into the repo. Phase 7 of the workspace-simplification plan removes the legacy paths entirely.
+The newer `/upload-patch` → `publish-v2/plan-job` → `publish-v2/run-job` flow does not write phase files into the repo. The legacy `publish-from-git` job did write `.scratch/{folder}/publish-plan-{ts}/` and `.scratch/.publish-plans/` directories inside the server-side bare repo; that job is dead-coded as of Phase 7a (no in-tree caller) and the server-side endpoint + worker will be removed in Phase 7 once older desktop installs roll forward.
 
 ## Workbook Config Repo (inside git)
 
@@ -75,75 +66,54 @@ transformers/
 
 ---
 
-## CLI Local Disk — current layout (being replaced)
-
-The old layout scattered `.scratchmd` marker files into every connector directory and stored each connector as a self-contained git clone with a full `.git/` directory:
-
-```
-{workspace}/
-  .scratchmd                      # Workspace marker only
-  .scratch/
-    workbook/
-      syncs/*.json
-      transformers/*.rhai
-      docs.md
-    connections/
-      {CONNECTOR-NAME}/
-        master/                   # Git worktree of main branch
-        index.db
-  {CONNECTOR-NAME}/               # Full git clone (dirty branch)
-    .scratchmd                    # ← connector marker, one per connector
-    .git/                         # ← full git directory, one per connector
-    .scratch/                     # .scratch content mixed into user's working dir
-    {folder}/
-      *.json
-```
-
-Problems with this layout:
-
-- `.scratchmd` files spread across every connector directory (hard to manage, easy to accidentally commit)
-- `.git/` directories give connector folders a "repo" identity that confuses tools and users
-- `.scratch/` mixed into the area the user edits
-- Bare repos are only on the service; the CLI uses a completely different structure, making the `reposdir`/`loculdir` abstraction impossible
-
----
-
-## CLI Local Disk — new layout
+## CLI Local Disk layout
 
 ```
 {workspace}/
   .scratch/
     .scratchmd                         # Single file — all metadata (workbook + all connections)
     lock                               # Workspace-wide file lock for mutating CLI ops
+    conflicts.log                      # JSONL audit log of same-field collisions from pull / publish reconcile
     connections/
       {CONNECTOR-NAME}/
         accepted-patches.json          # User's approved-but-not-published edits — see REVIEW_MODEL.md
       scratch/
-        {CONNECTOR-NAME}/              # Per-connection schema files + validator config
-      master/
-        {CONNECTOR-NAME}/              # Worktree of refs/heads/main (snapshot source for diff detection)
+        {CONNECTOR-NAME}/              # Per-connection schema files + validator config (cache)
     workspace/                         # Materialization of workbook config repo
       syncs/*.json
       transformers/*.rhai
       docs.md
     docs/
-  .repos/                              # Bare repos, mirroring service disk layout exactly
+  .repos/                              # Bare repos, mirroring service disk layout
     {connectorAccountId}.git
     {connectorAccountId}.db
     {workbookId}.git                   # Workbook config repo
-  {CONNECTOR-NAME}/                    # Worktree where the user edits records
+  {CONNECTOR-NAME}/                    # Real git worktree of refs/heads/main (the user's editing area)
+    .git                               # Gitlink file → ../.repos/{connectorAccountId}.git/worktrees/{name}
+    .scratch/                          # Schemas + views, carried natively by the main tree
+      {folder}/
+        schema.json
+        view.json
     {folder}/
-      *.json                           # Record files only — no .scratchmd, no .git, no .scratch
+      *.json                           # Record files
 ```
-
-The Phase 3 cleanup removed the `connections/dirty/{CONNECTOR-NAME}/` "reviewed-dirty" worktree (no longer materialized at init). Phase 5 will collapse the user-facing worktree (`{CONNECTOR-NAME}/`) to a plain non-sparse worktree of `refs/heads/main` and retire `connections/master/` — for now the master worktree still hosts the schema-file sync source.
 
 Key properties:
 
-- **No `.git` file or directory in `{CONNECTOR-NAME}/`** — see note below
-- **No `.scratchmd` in connector directories** — all metadata in the single workspace `.scratch/.scratchmd`
-- **`.scratch/` content is at `.scratch/connections/scratch/{CONNECTOR-NAME}/`** — outside the user's editing area
-- **`.repos/` is flat per workbook** — the composite `repoPath` remains the logical repo ID, but local bare repos and DBs use only the final repo basename inside the workbook root
+- **One non-sparse `git worktree add` per connection on `refs/heads/main`** (slice F.2.b). The `.git` gitlink file is the only git artifact in the user's editing area; the bare repo + objects live at `.repos/{connectorAccountId}.git/`.
+- **`accepted-patches.json` is the authoritative "approved-but-not-yet-published" store** — see [REVIEW_MODEL.md](REVIEW_MODEL.md). The CLI no longer maintains a local `refs/heads/dirty` branch; `setup_connection` prunes that ref post-clone (slice F.5).
+- **`.scratch/connections/scratch/{CONNECTOR-NAME}/` is a cache.** Schemas + views live in the worktree's `.scratch/` tree natively; the cache directory exists because some readers (`shared/validators`, `shared/index`, `cli/commands/validation`) still resolve schemas from there rather than from the worktree.
+- **`.repos/` is flat per workbook** — the composite `repoPath` (`{orgId}/{workbookId}/{connectorAccountId}`) remains the logical repo ID, but local bare repos and DBs use only the final basename inside the workbook root.
+
+### Pre-Phase-5 layout (historical)
+
+Before slice F (2026-05-20), the CLI maintained three worktrees per connection:
+
+- `{CONNECTOR-NAME}/` was a **sparse** worktree of the local `dirty` branch (the "user's accepted edits" snapshot), with manual `--git-dir`/`--work-tree` invocations instead of a `.git` link.
+- `.scratch/connections/master/{CONNECTOR-NAME}/` held the published-state worktree (sparse on `main`), used as the snapshot source for diff detection.
+- `.scratch/connections/dirty/{CONNECTOR-NAME}/` held the "reviewed-dirty" worktree (an identical sparse copy of `dirty`), used by the local publish-plan generator.
+
+Slice F retired all three by collapsing to one real `git worktree add` of `main` and moving the approved-state record into `accepted-patches.json`. See the [workspace-simplification plan](../../docs/plans/2026-05-17-simplify-local-workspace-architecture.md) for the migration history.
 
 ### Global local-workspace registry
 
@@ -185,40 +155,45 @@ connections:
     dirName: AIRTABLE - My Airtable
 ```
 
-### No `.git` file in connector directories
+### Worktree mechanics
 
-Git normally places a `.git` file (a pointer back to the bare repo) in every linked worktree. We deliberately do not use `git worktree add` for connector directories. Instead, **every git command is invoked with explicit `--git-dir` and `--work-tree` parameters**:
+The user-facing connector directory is a real `git worktree add` of `refs/heads/main` (slice F.2.b). The only git artifact in the user's editing area is the `.git` gitlink file (a single file pointing at `../.repos/{connectorAccountId}.git/worktrees/{name}/`). Tools that walk the filesystem (`ls`, VS Code, `find`) see only that one-line gitlink alongside the record files.
 
 ```bash
-# Checkout dirty branch into a plain directory
-git --git-dir=.repos/{repo_basename}.git --work-tree={CONNECTOR-NAME} checkout dirty -- .
+# Initial creation — once per connection at workspaces init (parallelized via rayon)
+git --git-dir=.repos/{connectorAccountId}.git worktree add --no-detach {CONNECTOR-NAME} main
 
-# Stage and status
-git --git-dir=.repos/{repo_basename}.git --work-tree={CONNECTOR-NAME} add -A
-git --git-dir=.repos/{repo_basename}.git --work-tree={CONNECTOR-NAME} status --porcelain
+# Read / status / stage from inside the worktree (no --git-dir needed; the gitlink resolves)
+cd {CONNECTOR-NAME}
+git status --porcelain
+git fetch origin main
 
-# Commit (low-level, no HEAD required)
-tree=$(git --git-dir=.repos/{repo_basename}.git write-tree)
-parent=$(git --git-dir=.repos/{repo_basename}.git rev-parse refs/heads/dirty)
-commit=$(git --git-dir=.repos/{repo_basename}.git commit-tree $tree -p $parent -m "message")
-git --git-dir=.repos/{repo_basename}.git update-ref refs/heads/dirty $commit
+# Advance the main ref after a successful pull / publish reconcile
+git update-ref refs/heads/main refs/remotes/origin/main
 ```
 
-The result is that `{CONNECTOR-NAME}/` is a completely plain directory — no git footprint, no marker files. Any tool (`ls`, `find`, VS Code) sees only the JSON record files. Cleanup is a simple `rm -rf`.
+Cleanup uses `git worktree remove` so the bare repo's `worktrees/` administrative directory is cleaned in lockstep:
 
-This is also why we do **not** want the user-facing data folders to be real Git worktrees. Real linked worktrees come with `.git` pointers, branch checkout ownership, and Git lifecycle rules (`git worktree add/remove`) that are easy to leak or misuse. We already saw the downside of that on the service side: a leaked linked worktree can keep `dirty` checked out and block pushes. The manually managed approach avoids that entire class of problems. We materialize plain directories on demand, operate against them with explicit `--git-dir/--work-tree`, and delete or refresh them whenever needed.
+```bash
+git --git-dir=.repos/{connectorAccountId}.git worktree remove {CONNECTOR-NAME}
+git --git-dir=.repos/{connectorAccountId}.git worktree prune
+```
 
-The same approach applies to the master checkout at `.scratch/connections/master/{CONNECTOR-NAME}/` and to the service's temporary materializations under `.temp/`.
+This was a deliberate flip from the pre-F approach (manual `--git-dir`/`--work-tree` against plain directories, with the bare repo as the only "real" git surface). Once the local `dirty` branch went away and accepted state moved into `accepted-patches.json`, the original reasons for avoiding a linked worktree (branch checkout ownership, leaked `dirty` lock) no longer applied. The real worktree gets us cheap `git status` via index-backed stat checks and avoids hand-rolled materialization.
+
+### Cleaning up the gitlink
+
+`git worktree add` writes its administrative state in two places: the gitlink file inside the worktree, and a `worktrees/{name}/` directory inside the bare repo. `git worktree remove` cleans both. Avoid manual `rm -rf {CONNECTOR-NAME}/` without a follow-up `git worktree prune` — the bare repo's record of the linked worktree will leak and block future `worktree add` calls with the same name.
 
 ---
 
 ## `reposdir` / `loculdir` parameters
 
-The path abstraction that unifies CLI and service is two parameters:
+The path abstraction that unifies CLI and service is two parameters, exposed via `WorkspaceLayout` in `src/shared/layout.rs`:
 
-| Parameter  | CLI value            | Service value                     |
+| Parameter  | CLI value            | Service value (currently unused)  |
 | ---------- | -------------------- | --------------------------------- |
-| `reposdir` | `.repos/`            | `.` (workbook dir, same as today) |
+| `reposdir` | `.repos/`            | `.` (workbook dir)                |
 | `loculdir` | `.` (workspace root) | `.temp/`                          |
 
 Derived paths (same formula on both sides):
@@ -230,70 +205,27 @@ Derived paths (same formula on both sides):
 | User-facing worktree     | `{loculdir}/{connector_name}/`                              |
 | Connection root          | `{loculdir}/.scratch/connections/{connector_name}/`         |
 | └─ Accepted patches      | `{connection_root}/accepted-patches.json`                   |
-| Connection scratch       | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
-| Master worktree          | `{loculdir}/.scratch/connections/master/{connector_name}/`  |
+| Connection scratch cache | `{loculdir}/.scratch/connections/scratch/{connector_name}/` |
 | Workbook materialization | `{loculdir}/.scratch/workspace/`                            |
 
-The "user-facing worktree" row is still labelled `dirty_checkout_path` in the Rust source (`WorkspaceLayout::dirty_checkout_path`) for historical reasons; Phase 5's rename will line up with the post-B model where the worktree lives on `main`, not `dirty`.
+`WorkspaceLayout::worktree_path(connector_name)` returns the "user-facing worktree" row.
 
-This is implemented as `WorkspaceLayout` in `src/shared/layout.rs`.
-
----
-
-## Service temporary materialization (`.temp/`)
-
-When the service needs to run shared business logic (build a publish plan, build an index) against a bare repo, it materializes working directories under `.temp/` relative to the workbook's directory in `REPOS_DIR`:
-
-```
-{REPOS_DIR}/{orgId}/{workbookId}/
-  {connectorAccountId}.git         # Bare repo
-  .temp/                           # Created on demand, removed after operation
-    .scratch/
-      connections/
-        scratch/{connectorAccountId}/
-        master/{connectorAccountId}/
-    {connectorAccountId}/          # Dirty checkout (no .git file — see above)
-```
-
-The service uses `WorkspaceLayout::for_service(workbook_dir)` which sets `reposdir = "."` and `loculdir = ".temp"`. After the operation completes, `.temp/` is removed entirely.
-
-This replaces the old `TempWorktree` pattern which placed worktrees at random UUID paths with no consistent structure.
+`WorkspaceLayout::for_service(workbook_dir)` exists for symmetry but currently has no live caller — the service binary stopped needing in-process worktrees once `service/routes/plan_publish.rs` was deleted in Phase 7a. The infrastructure is preserved in case future shared-logic-on-the-service work needs it; if it ever comes back, the layout already accommodates the `.temp/` materialization pattern below.
 
 ---
 
-## Materialize-Perform-Commit-Cleanup Pattern
+## Materialize-Perform-Commit-Cleanup pattern (not currently used)
 
-When the service (or CLI) needs to run business logic against a bare repo:
+When shared business logic needs to run against a bare repo without a persistent worktree (e.g. the service building a publish plan), the layout supports a four-step pattern:
 
-1. **Materialize** — checkout dirty branch into `{loculdir}/{connector_name}/` using `git --git-dir ... --work-tree ... checkout dirty -- .`
-2. **Perform** — run the shared logic (plan building, indexing, etc.) against the materialized directory
-3. **Commit** — stage changes with `git add -A`, commit via `update-ref` (no HEAD needed)
-4. **Cleanup** — `rm -rf {loculdir}/{connector_name}/` (no `git worktree remove` needed)
+1. **Materialize** — `git worktree add {loculdir}/{connector_name}/ main` to put files on disk under the temporary path.
+2. **Perform** — run the shared logic against the materialized directory.
+3. **Commit** — stage with `git add -A`, commit, write the ref via `update-ref`.
+4. **Cleanup** — `git worktree remove {loculdir}/{connector_name}/`, then `git worktree prune` on the bare repo.
 
-The worktree path differs between CLI (persistent) and service (temporary under `.temp/`) but the directory structure inside is identical — this is what enables code sharing.
+The CLI uses step 1 once at `workspaces init` (the worktree stays persistent for the user's editing area, not removed after each operation). The service binary currently does nothing on this pattern; the historical caller (`service/routes/plan_publish.rs`) was removed in Phase 7a along with the `TempWorktree` helper that used random UUID paths.
 
-**Future optimization — tree-native reads**: Materializing a full worktree is wasteful for large repos (e.g. 100k files, 1 change). The better path is to skip materialization entirely: use `gix` to tree-diff `main` vs `dirty` (O(changed files)), read only the needed blobs directly from the bare repo, build the plan in memory, and commit via the existing `commit_changes_to_ref` tree builder. The shared `build_publish_plan` logic stays the same — only the I/O layer changes (swap `collect_files(dir)` for `collect_files_from_tree(repo, branch)`).
-
-## plan.json Manifest Format
-
-```json
-{
-  "planId": "20260324-120000",
-  "createdAt": "2026-03-24T12:00:00Z",
-  "connectionName": "Airtable - MyBase",
-  "connectionId": "cac_xyz789",
-  "summary": {
-    "edit": 5,
-    "create": 3,
-    "delete": 1,
-    "backfill": 2,
-    "rename": 3
-  },
-  "tablePaths": ["Posts", "Authors"]
-}
-```
-
-`tablePaths` tells the consumer which `.scratch/{folder}/publish-plan-{ts}/` directories to scan for phase files.
+If a new service-side use case lands, prefer tree-native reads over materialization: `gix` can tree-diff and read individual blobs without ever putting files on disk (O(changed files) instead of O(workspace size)).
 
 ---
 
@@ -301,9 +233,9 @@ The worktree path differs between CLI (persistent) and service (temporary under 
 
 Use this as a refactor acceptance test for layout-affecting changes:
 
-1. `scratchmd workspaces init` a workbook locally — verify the `{workspace}/` tree matches the [CLI Local Disk new layout](#cli-local-disk--new-layout).
+1. `scratchmd workspaces init` a workbook locally — verify the `{workspace}/` tree matches the [CLI Local Disk layout](#cli-local-disk-layout).
 2. Edit a record file in the user-facing worktree.
 3. `scratchmd files accept <path>` — verify `<workspace>/.scratch/connections/<conn>/accepted-patches.json` is created with the expected `Update`/`Create`/`Delete` entry. See [REVIEW_MODEL.md](REVIEW_MODEL.md) for the accept/reject/discard semantics that get exercised here.
 4. `scratchmd files upload` — verify the patch file ships to the server (server's `dirty` branch advances).
-5. `scratchmd files publish` — verify the publish plan executes, local `refs/heads/main` advances, and `accepted-patches.json` is cleared.
-6. Verify the git backend service still works with all server-side flows — UI/DB-based syncs and the legacy `publish-from-git` path (until Phase 7 removes it).
+5. `scratchmd files publish` — verify the publish plan executes, local `refs/heads/main` advances, and patches that landed in `main` drop from `accepted-patches.json` (failed-connector patches survive). See [PULL_AFTER_PUBLISH.md](PULL_AFTER_PUBLISH.md) for the reconcile flow.
+6. Verify the git backend service still works with all server-side flows — UI/DB-based syncs and the legacy `publish-from-git` server path (no live CLI caller, but the endpoint stays alive for older desktop installs until Phase 7 removes it).

@@ -328,12 +328,6 @@ Run `scratchmd <command> --help` for full flag details.
 | `linked show <folder-id>` | Show linked table details and pending changes |
 | `linked pull [<id>] [--mode full\|incremental]` | Pull changes from the external service into the workspace (incremental pulls only records changed since the last pull) |
 
-## publish
-
-| Command | Description |
-|---|---|
-| `plan-publish` | Build a publish plan locally (diffs dirty vs master, writes plan.json) |
-
 ## paginate
 
 | Command | Description |
@@ -458,8 +452,8 @@ is published, the corresponding record will be removed from the remote service.
 Edits are **not live** until they are published:
 
 1. Make your changes in the working copy folders.
-2. Open the Scratch desktop app or run `scratchmd plan-publish` to review the
-   diff between your working copy and the last published state.
+2. Open the Scratch desktop app to review the diff between your working copy
+   and the last published state.
 3. A person reviews and approves the changes, then publishes them back to the
    remote service.
 
