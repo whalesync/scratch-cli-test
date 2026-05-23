@@ -1,6 +1,6 @@
-import { ActionIcon, Box, Group, Menu, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Group, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
 import type { TableViewCol } from '@spinner/shared-types';
-import { Check, RemoveFormatting, RotateCcw, Settings2, Sparkles, TriangleAlertIcon } from 'lucide-react';
+import { AlignJustify, Columns2, RemoveFormatting, Sparkles, TriangleAlertIcon } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
@@ -12,9 +12,10 @@ import {
   TextMono9Regular,
 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import { CollapsibleRow } from './collapsible-row';
 import {
-  IconActionButton,
+  FieldReviewActions,
   InlineWordsDiff,
   SideBySideCurrentDiff,
   SideBySideDiff,
@@ -24,7 +25,6 @@ import { FieldCellValue } from './field-cell-renderer';
 import { isPrettifiableMediaType, prettifyValue } from './field-prettifiers';
 import type { FieldValueDiffKind, FieldValueDisplayMode } from './field-value-types';
 import { DIFF_REMOVED_BG, DIFF_REMOVED_FG, DIFF_TEXT_STYLE, getAddedBg } from './field-value-types';
-import { useDiffViewMode } from './use-diff-view-mode';
 
 function isMediumOrLargeChange(row: RecordFieldRow): boolean {
   if (row.diffKind == null) return false;
@@ -81,7 +81,7 @@ interface RecordFieldsGridProps {
 }
 
 const LABEL_COLUMN_WIDTH = 280;
-const CONTROLS_COLUMN_WIDTH = 60;
+const CONTROLS_COLUMN_WIDTH = 48;
 
 function validationLevelColor(level: ValidationEntry['level']): string {
   return level === 'error' ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-orange-6)';
@@ -312,15 +312,12 @@ function diffBorderColor(diffKind: FieldValueDiffKind): string {
   return 'transparent';
 }
 
-/** Renders approve/reject action buttons in the Controls column. */
+/** Renders approve/reject/discard action buttons in the Controls column. */
 function ControlsCell({ row }: { row: RecordFieldRow }) {
-  const showApprove = row.displayMode === 'diff' && row.onApprove;
-  const showUndo = row.displayMode === 'diff' && row.onUndo;
-  if (!showApprove && !showUndo) return null;
+  if (row.diffKind == null || (!row.onApprove && !row.onUndo)) return null;
   return (
-    <Stack gap={6} align="center" justify="center" style={{ padding: '2px 0' }}>
-      {showApprove && <IconActionButton label="Approve" onClick={row.onApprove!} tone="approve" icon={Check} />}
-      {showUndo && <IconActionButton label="Reject" onClick={row.onUndo!} tone="undo" icon={RotateCcw} />}
+    <Stack gap={6} align="flex-end" justify="center" style={{ padding: '2px 4px 2px 0' }}>
+      <FieldReviewActions diffKind={row.diffKind} onApprove={row.onApprove} onUndo={row.onUndo} />
     </Stack>
   );
 }
@@ -413,37 +410,59 @@ function PrettifyToggle({ active, onToggle }: { active: boolean; onToggle: () =>
   );
 }
 
-/** The diff settings menu (side-by-side vs inline toggle). */
-function DiffViewModeMenu({
+/** Grouped icon toggle for side-by-side vs inline diff view. */
+function DiffViewModeToggle({
   diffViewMode,
   setDiffViewMode,
 }: {
-  diffViewMode: string;
+  diffViewMode: 'side-by-side' | 'inline-words';
   setDiffViewMode: (mode: 'side-by-side' | 'inline-words') => void;
 }) {
+  const selectedStyle: React.CSSProperties = {
+    backgroundColor: 'var(--highlight-fill)',
+    outline: '1px solid var(--highlight-border)',
+  };
+  const groupStyle: React.CSSProperties = {
+    border: '1px solid var(--fg-divider)',
+    borderRadius: 4,
+  };
   return (
-    <Menu position="bottom-end" withinPortal zIndex={10020}>
-      <Menu.Target>
-        <ActionIcon variant="subtle" size={20} radius={3} aria-label="Compare changes">
-          <StyledLucideIcon Icon={Settings2} size={14} strokeWidth={2} />
-        </ActionIcon>
-      </Menu.Target>
-      <Menu.Dropdown>
-        <Menu.Label>Compare changes</Menu.Label>
-        <Menu.Item
+    <ActionIcon.Group style={groupStyle}>
+      <Tooltip label="Side-by-side diff" withArrow zIndex={10020}>
+        <ActionIcon
+          variant="subtle"
+          size={20}
+          radius={3}
+          aria-label="Side-by-side diff"
           onClick={() => setDiffViewMode('side-by-side')}
-          rightSection={diffViewMode === 'side-by-side' ? <StyledLucideIcon Icon={Check} size={14} /> : undefined}
+          style={diffViewMode === 'side-by-side' ? selectedStyle : undefined}
         >
-          Side-by-side
-        </Menu.Item>
-        <Menu.Item
+          <StyledLucideIcon
+            Icon={Columns2}
+            size={14}
+            strokeWidth={2}
+            c={diffViewMode === 'side-by-side' ? 'var(--highlight-text)' : undefined}
+          />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Inline diff" withArrow zIndex={10020}>
+        <ActionIcon
+          variant="subtle"
+          size={20}
+          radius={3}
+          aria-label="Inline diff"
           onClick={() => setDiffViewMode('inline-words')}
-          rightSection={diffViewMode === 'inline-words' ? <StyledLucideIcon Icon={Check} size={14} /> : undefined}
+          style={diffViewMode === 'inline-words' ? selectedStyle : undefined}
         >
-          Inline
-        </Menu.Item>
-      </Menu.Dropdown>
-    </Menu>
+          <StyledLucideIcon
+            Icon={AlignJustify}
+            size={14}
+            strokeWidth={2}
+            c={diffViewMode === 'inline-words' ? 'var(--highlight-text)' : undefined}
+          />
+        </ActionIcon>
+      </Tooltip>
+    </ActionIcon.Group>
   );
 }
 
@@ -457,7 +476,8 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   onPrettifyToggle,
 }: RecordFieldsGridProps) {
   const [focusedFieldName, setFocusedFieldNameInternal] = useState<string | null>(initialFocusedFieldName ?? null);
-  const [diffViewMode, setDiffViewMode] = useDiffViewMode();
+  const storedDiffViewMode = useWorkspaceUiStore((s) => s.diffViewMode);
+  const setStoredDiffViewMode = useWorkspaceUiStore((s) => s.setDiffViewMode);
   const [prettifyActiveLocal, setPrettifyActiveLocal] = useState(false);
   const prettifyActive = prettifyActiveProp ?? prettifyActiveLocal;
   const togglePrettify = onPrettifyToggle ?? (() => setPrettifyActiveLocal((v) => !v));
@@ -465,6 +485,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   // Side-by-side only makes sense when there are two-sided diffs (modified records).
   // Created/deleted records have only one meaningful value — force inline for them.
   const hasTwoSidedDiff = useMemo(() => rows.some((row) => row.diffKind != null && row.fromValue != null), [rows]);
+  const diffViewMode = storedDiffViewMode ?? (hasDiffs ? 'side-by-side' : 'inline-words');
   const isSideBySide = diffViewMode === 'side-by-side' && hasTwoSidedDiff;
 
   const setFocusedFieldName = (next: string | null) => {
@@ -575,17 +596,11 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                   </Box>
                 </ValidationTooltip>
               )}
-              {focusedIsDiff && focusedRow.onApprove && (
-                <IconActionButton label="Approve" onClick={focusedRow.onApprove} tone="approve" icon={Check} />
-              )}
-              {focusedIsDiff && focusedRow.onUndo && (
-                <IconActionButton label="Reject" onClick={focusedRow.onUndo} tone="undo" icon={RotateCcw} />
-              )}
               <Box style={{ flex: 1 }} />
               {focusedPrettifiable && !focusedRow.editing && (
                 <PrettifyToggle active={prettifyActive} onToggle={togglePrettify} />
               )}
-              {hasDiffs && <DiffViewModeMenu diffViewMode={diffViewMode} setDiffViewMode={setDiffViewMode} />}
+              <DiffViewModeToggle diffViewMode={diffViewMode} setDiffViewMode={setStoredDiffViewMode} />
             </Group>
             {(focusedRow.displayLabel !== focusedRow.fieldName ||
               (focusedRow.description &&
@@ -610,84 +625,95 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
           </Box>
         </Box>
 
-        <Box
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            minHeight: 0,
-            padding: '4px 16px',
-            borderLeft: `4px solid ${diffBorderColor(focusedRow.diffKind)}`,
-          }}
-        >
-          {focusedRow.editing ? (
-            isSideBySide && focusedRow.fromValue != null ? (
-              <SideBySideEditingCells row={focusedRow} layout="focused" />
-            ) : (
-              <FieldEditor row={focusedRow} />
-            )
-          ) : focusedIsDiff ? (
-            <Box
-              style={{
-                flex: 1,
-                minHeight: 0,
-                overflowY: 'auto',
-                cursor: focusedRow.onClick ? 'text' : 'default',
-              }}
-              onClick={focusedRow.onClick}
-              role={focusedRow.onClick ? 'button' : undefined}
-              tabIndex={focusedRow.onClick ? 0 : undefined}
-              onKeyDown={
-                focusedRow.onClick
-                  ? (e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        focusedRow.onClick!();
-                      }
-                    }
-                  : undefined
-              }
-            >
-              {isSideBySide ? (
-                <SideBySideDiff
-                  fromValue={focusedDisplayRow?.fromValue ?? ''}
-                  value={focusedDisplayRow?.value ?? ''}
-                  diffKind={focusedRow.diffKind}
-                />
+        <Box style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+          <Box
+            style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              padding: '4px 16px',
+              borderLeft: `4px solid ${diffBorderColor(focusedRow.diffKind)}`,
+            }}
+          >
+            {focusedRow.editing ? (
+              isSideBySide && focusedRow.fromValue != null ? (
+                <SideBySideEditingCells row={focusedRow} layout="focused" />
               ) : (
-                <InlineWordsDiff
-                  fromValue={focusedDisplayRow?.fromValue ?? ''}
-                  value={focusedDisplayRow?.value ?? ''}
-                  diffKind={focusedRow.diffKind}
-                />
-              )}
-            </Box>
-          ) : (
-            <Box
-              style={{
-                flex: 1,
-                minHeight: 0,
-                overflowY: 'auto',
-                cursor: focusedRow.onClick ? 'text' : 'default',
-              }}
-              onClick={focusedRow.onClick}
-              role={focusedRow.onClick ? 'button' : undefined}
-              tabIndex={focusedRow.onClick ? 0 : undefined}
-              onKeyDown={
-                focusedRow.onClick
-                  ? (e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        focusedRow.onClick!();
+                <FieldEditor row={focusedRow} />
+              )
+            ) : focusedIsDiff ? (
+              <Box
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  cursor: focusedRow.onClick ? 'text' : 'default',
+                }}
+                onClick={focusedRow.onClick}
+                role={focusedRow.onClick ? 'button' : undefined}
+                tabIndex={focusedRow.onClick ? 0 : undefined}
+                onKeyDown={
+                  focusedRow.onClick
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          focusedRow.onClick!();
+                        }
                       }
-                    }
-                  : undefined
-              }
-            >
-              <FieldCellValue
-                value={focusedDisplayRow?.value ?? ''}
-                column={focusedRow.column}
-                muted={focusedRow.column?.readonly ?? false}
+                    : undefined
+                }
+              >
+                {isSideBySide ? (
+                  <SideBySideDiff
+                    fromValue={focusedDisplayRow?.fromValue ?? ''}
+                    value={focusedDisplayRow?.value ?? ''}
+                    diffKind={focusedRow.diffKind}
+                  />
+                ) : (
+                  <InlineWordsDiff
+                    fromValue={focusedDisplayRow?.fromValue ?? ''}
+                    value={focusedDisplayRow?.value ?? ''}
+                    diffKind={focusedRow.diffKind}
+                  />
+                )}
+              </Box>
+            ) : (
+              <Box
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  cursor: focusedRow.onClick ? 'text' : 'default',
+                }}
+                onClick={focusedRow.onClick}
+                role={focusedRow.onClick ? 'button' : undefined}
+                tabIndex={focusedRow.onClick ? 0 : undefined}
+                onKeyDown={
+                  focusedRow.onClick
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          focusedRow.onClick!();
+                        }
+                      }
+                    : undefined
+                }
+              >
+                <FieldCellValue
+                  value={focusedDisplayRow?.value ?? ''}
+                  column={focusedRow.column}
+                  muted={focusedRow.column?.readonly ?? false}
+                />
+              </Box>
+            )}
+          </Box>
+          {focusedIsDiff && (focusedRow.onApprove || focusedRow.onUndo) && (
+            <Box style={{ padding: '8px 8px 0 0' }}>
+              <FieldReviewActions
+                diffKind={focusedRow.diffKind}
+                onApprove={focusedRow.onApprove}
+                onUndo={focusedRow.onUndo}
               />
             </Box>
           )}
@@ -712,7 +738,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     zIndex: 1,
     backgroundColor: 'var(--bg-panel)',
     borderBottom: '1px solid var(--mantine-color-default-border)',
-    padding: '12px 16px',
+    padding: '12px 8px 12px 16px',
     gap: 0,
     alignItems: 'center',
   };
@@ -720,7 +746,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   const rowGridStyle: React.CSSProperties = {
     display: 'grid',
     gridTemplateColumns: gridColumns,
-    padding: '4px 16px',
+    padding: '4px 8px 4px 16px',
     gap: 0,
     alignItems: 'start',
   };
@@ -747,7 +773,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
           </TextMono12Regular>
         )}
         <Box style={{ display: 'flex', justifyContent: 'center' }}>
-          {hasDiffs && <DiffViewModeMenu diffViewMode={diffViewMode} setDiffViewMode={setDiffViewMode} />}
+          <DiffViewModeToggle diffViewMode={diffViewMode} setDiffViewMode={setStoredDiffViewMode} />
         </Box>
       </Box>
 

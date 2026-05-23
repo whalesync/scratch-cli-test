@@ -21,6 +21,7 @@ import {
   Divider,
   Group,
   Loader,
+  Menu,
   Modal,
   Popover,
   Portal,
@@ -31,7 +32,20 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { TablePropertyType, TableView, TableViewBannerGroup, TableViewCol } from '@spinner/shared-types';
-import { Check, Columns3, Maximize2, Minus, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import {
+  Check,
+  Columns3,
+  EllipsisVertical,
+  GitCompare,
+  Grid3X3Icon,
+  Maximize2,
+  Minus,
+  Plus,
+  RectangleHorizontalIcon,
+  RotateCcw,
+  Rows3Icon,
+  Trash2,
+} from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
@@ -41,7 +55,7 @@ import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { trackRefreshFolderDataGrid } from '../../lib/posthog';
-import { useWorkspaceUiStore, type FilterKind, type GridFilter } from '../../stores/workspace-ui-store';
+import { useViewMode, useWorkspaceUiStore, type FilterKind, type GridFilter } from '../../stores/workspace-ui-store';
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { EditPropertyDialog } from './EditPropertyDialog';
@@ -51,7 +65,6 @@ import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
 import { InvalidJsonFilesModal, type InvalidJsonFileListEntry } from './InvalidJsonFilesModal';
 import { RecordDetailView } from './RecordDetailView';
 import { drawUnifiedDiffCell, UNIFIED_DIFF_ROW_HEIGHT } from './unified-diff-cell';
-import { UnifiedDiffToggleButton } from './UnifiedDiffMode';
 
 // ── Types ──
 
@@ -773,8 +786,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const setColumnWidths = useWorkspaceUiStore((s) => s.setColumnWidths);
   const selectedRecordFilename = useWorkspaceUiStore((s) => s.selectedRecordFilename);
   const setSelectedRecordFilename = useWorkspaceUiStore((s) => s.setSelectedRecordFilename);
+  const detailFocusFieldName = useWorkspaceUiStore((s) => s.focusedFieldName);
   const setDetailFocusFieldName = useWorkspaceUiStore((s) => s.setFocusedFieldName);
 
+  const viewMode = useViewMode();
   const showGrid = useWorkspaceUiStore((s) => s.showGrid);
   const showRecord = useWorkspaceUiStore((s) => s.showRecord);
   const showField = useWorkspaceUiStore((s) => s.showField);
@@ -2667,16 +2682,91 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }}
     >
       {showFilterBar && (
-        <Box
+        <Group
           style={{
-            padding: '6px 12px',
             borderBottom: '0.5px solid var(--fg-divider)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
           }}
+          p={6}
+          align="center"
+          justify="space-between"
         >
-          <Group gap={6} align="center">
+          <ActionIcon.Group style={{ border: '1px solid var(--fg-divider)', borderRadius: 4 }}>
+            <Tooltip label="Grid view" withArrow zIndex={10020}>
+              <ActionIcon
+                variant="subtle"
+                size="md"
+                radius={3}
+                aria-label="Grid view"
+                onClick={() => showGrid()}
+                style={
+                  viewMode === 'grid'
+                    ? { backgroundColor: 'var(--highlight-fill)', outline: '1px solid var(--highlight-border)' }
+                    : undefined
+                }
+              >
+                <StyledLucideIcon
+                  Icon={Grid3X3Icon}
+                  size={16}
+                  strokeWidth={1}
+                  c={viewMode === 'grid' ? 'var(--highlight-text)' : undefined}
+                />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Record view" withArrow zIndex={10020}>
+              <ActionIcon
+                variant="subtle"
+                size="md"
+                radius={3}
+                aria-label="Record view"
+                onClick={() => {
+                  const target = selectedRecordFilename ?? pagedRows[0]?.__filename;
+                  if (target) showRecord(target);
+                }}
+                disabled={pagedRows.length === 0}
+                style={
+                  viewMode === 'record'
+                    ? { backgroundColor: 'var(--highlight-fill)', outline: '1px solid var(--highlight-border)' }
+                    : undefined
+                }
+              >
+                <StyledLucideIcon
+                  Icon={Rows3Icon}
+                  size={16}
+                  strokeWidth={1}
+                  c={viewMode === 'record' ? 'var(--highlight-text)' : undefined}
+                />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Field view" withArrow zIndex={10020}>
+              <ActionIcon
+                variant="subtle"
+                size="md"
+                radius={3}
+                aria-label="Field view"
+                onClick={() => {
+                  const target = selectedRecordFilename ?? pagedRows[0]?.__filename;
+                  if (target) showField(target, detailFocusFieldName ?? effectiveVisibleColumns[0] ?? '');
+                }}
+                disabled={pagedRows.length === 0}
+                style={
+                  viewMode === 'field'
+                    ? { backgroundColor: 'var(--highlight-fill)', outline: '1px solid var(--highlight-border)' }
+                    : undefined
+                }
+              >
+                <StyledLucideIcon
+                  Icon={RectangleHorizontalIcon}
+                  size={16}
+                  strokeWidth={1}
+                  c={viewMode === 'field' ? 'var(--highlight-text)' : undefined}
+                />
+              </ActionIcon>
+            </Tooltip>
+          </ActionIcon.Group>
+
+          <Divider orientation="vertical" />
+
+          <Group gap="xs">
             <Text12Medium c="var(--fg-muted)" style={{ marginRight: 4 }}>
               Filter
             </Text12Medium>
@@ -2706,106 +2796,105 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 onClick={() => handleGlobalFilterToggle('has-problems')}
               />
             )}
-            {validate && (diffData?.totalProblemsStaleCount ?? 0) > 0 && (
-              <Text12Regular c="var(--fg-muted)">
-                {diffData!.totalProblemsStaleCount} record{diffData!.totalProblemsStaleCount === 1 ? '' : 's'} need
-                validation
-              </Text12Regular>
-            )}
-            {activeColumnFilters.map((filter) => (
-              <ActiveFilterChip
-                key={filterKey(filter)}
-                label={filterLabel(filter)}
-                onRemove={() => handleRemoveFilter(filter)}
-              />
-            ))}
           </Group>
-          <Group gap={6} align="center">
-            {(filterCounts?.unreviewed ?? 0) > 0 && detailRowIndex === null && (
-              <>
-                <Divider orientation="vertical" />
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  c="green.8"
-                  leftSection={<Check size={12} />}
-                  onClick={() => setBulkActionConfirm('approve')}
-                >
-                  Approve all
+          {validate && (diffData?.totalProblemsStaleCount ?? 0) > 0 && (
+            <Text12Regular c="var(--fg-muted)">
+              {diffData!.totalProblemsStaleCount} record{diffData!.totalProblemsStaleCount === 1 ? '' : 's'} need
+              validation
+            </Text12Regular>
+          )}
+          {activeColumnFilters.map((filter) => (
+            <ActiveFilterChip
+              key={filterKey(filter)}
+              label={filterLabel(filter)}
+              onRemove={() => handleRemoveFilter(filter)}
+            />
+          ))}
+
+          <Box flex={1} />
+
+          {(filterCounts?.unreviewed ?? 0) > 0 && detailRowIndex === null && (
+            <>
+              <Divider orientation="vertical" />
+              <Group gap="xs">
+                <UnstyledButton onClick={() => handleGlobalFilterToggle('unreviewed')} style={{ whiteSpace: 'nowrap' }}>
+                  <Text12Regular c="var(--fg-link)" style={{ textDecoration: 'underline' }}>
+                    {filterCounts!.unreviewed} record{filterCounts!.unreviewed === 1 ? '' : 's'} need
+                    {filterCounts!.unreviewed === 1 ? 's' : ''} review
+                  </Text12Regular>
+                </UnstyledButton>
+                <ButtonSecondaryGhost size="compact-xs" c="green.8" onClick={() => setBulkActionConfirm('approve')}>
+                  {filterCounts!.unreviewed === 1 ? 'Approve' : 'Approve all'}
                 </ButtonSecondaryGhost>
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  c="red.8"
-                  leftSection={<RotateCcw size={12} />}
-                  onClick={() => setBulkActionConfirm('reject')}
-                >
-                  Reject all
+                <ButtonSecondaryGhost size="compact-xs" c="red.8" onClick={() => setBulkActionConfirm('reject')}>
+                  {filterCounts!.unreviewed === 1 ? 'Reject' : 'Reject all'}
                 </ButtonSecondaryGhost>
-              </>
-            )}
-            {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0) > 0 && detailRowIndex === null && (
-              <>
-                {(filterCounts?.unreviewed ?? 0) === 0 && <Divider orientation="vertical" />}
-                <ButtonSecondaryGhost
-                  size="compact-xs"
-                  c="red.8"
-                  leftSection={<Trash2 size={12} />}
-                  onClick={() => setBulkActionConfirm('discard')}
-                >
-                  Discard all
-                </ButtonSecondaryGhost>
-              </>
-            )}
-            {detailRowIndex === null && (
-              <UnifiedDiffToggleButton
-                active={unifiedDiffMode}
-                disabled={(filterCounts?.unreviewed ?? 0) === 0}
-                onToggle={() => setUnifiedDiffMode((v) => !v)}
+              </Group>
+            </>
+          )}
+          <Divider orientation="vertical" />
+          <Popover>
+            <Popover.Target>
+              <ButtonSecondaryGhost size="compact-xs" leftSection={<Columns3 size={16} />}>
+                Columns
+                {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
+                  ? ` (${visibleColumnIds.length.toLocaleString()})`
+                  : ''}
+              </ButtonSecondaryGhost>
+            </Popover.Target>
+            <Popover.Dropdown w={420}>
+              <ColumnPickerMenu
+                allColumns={allColumnIds}
+                visibleColumns={effectiveVisibleColumns}
+                titleColumnId={titleColumnId}
+                unreviewedColumnIds={unreviewedColumnIds}
+                approvedColumnIds={approvedColumnIds}
+                columnLabels={columnLabelsMap}
+                columnGroups={columnGroups}
+                onChangeVisible={setVisibleColumnIds}
+                activeViewName={viewSource}
+                availableViewNames={availableViewNames}
+                onSwitchView={handleSwitchView}
+                onEditProperty={handleEditPropertyFromPicker}
               />
-            )}
-            <Divider orientation="vertical" />
-            <Popover>
-              <Popover.Target>
-                <ButtonSecondaryGhost size="compact-xs" leftSection={<Columns3 size={16} />}>
-                  Columns
-                  {visibleColumnIds && visibleColumnIds.length < allColumnIds.length
-                    ? ` (${visibleColumnIds.length.toLocaleString()})`
-                    : ''}
-                </ButtonSecondaryGhost>
-              </Popover.Target>
-              <Popover.Dropdown w={420}>
-                <ColumnPickerMenu
-                  allColumns={allColumnIds}
-                  visibleColumns={effectiveVisibleColumns}
-                  titleColumnId={titleColumnId}
-                  unreviewedColumnIds={unreviewedColumnIds}
-                  approvedColumnIds={approvedColumnIds}
-                  columnLabels={columnLabelsMap}
-                  columnGroups={columnGroups}
-                  onChangeVisible={setVisibleColumnIds}
-                  activeViewName={viewSource}
-                  availableViewNames={availableViewNames}
-                  onSwitchView={handleSwitchView}
-                  onEditProperty={handleEditPropertyFromPicker}
-                />
-              </Popover.Dropdown>
-            </Popover>
-            <Divider orientation="vertical" />
-            <Tooltip label="Refresh data">
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                color="gray"
+            </Popover.Dropdown>
+          </Popover>
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon size="sm" variant="subtle" color="gray">
+                <EllipsisVertical size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                leftSection={<GitCompare size={14} />}
+                onClick={() => setUnifiedDiffMode((v) => !v)}
+                disabled={(filterCounts?.unreviewed ?? 0) === 0}
+                rightSection={unifiedDiffMode ? <Check size={14} /> : undefined}
+              >
+                Unified diffs
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<RotateCcw size={14} />}
                 onClick={() => {
                   void trackRefreshFolderDataGrid(workspaceId, selectedFolderPath);
                   onDataRefresh();
                 }}
                 disabled={loadingMode === 'blocking'}
               >
-                <RotateCcw size={14} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
-        </Box>
+                Refresh
+              </Menu.Item>
+              {(filterCounts?.unreviewed ?? 0) + (filterCounts?.unpublished ?? 0) > 0 && detailRowIndex === null && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Item c="red" leftSection={<Trash2 size={14} />} onClick={() => setBulkActionConfirm('discard')}>
+                    Discard all unpublished changes
+                  </Menu.Item>
+                </>
+              )}
+            </Menu.Dropdown>
+          </Menu>
+        </Group>
       )}
 
       {!selectedFolderPath && (

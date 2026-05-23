@@ -1,8 +1,8 @@
 import { Box, Group, Stack } from '@mantine/core';
 import type { TableViewCol } from '@spinner/shared-types';
-import { Check, Eye, RotateCcw } from 'lucide-react';
+import { Eye } from 'lucide-react';
 import { memo } from 'react';
-import { IconActionButton } from './diff-renderers';
+import { FieldReviewActions, ReviewActionIcon } from './diff-renderers';
 import { FieldCellValue } from './field-cell-renderer';
 import {
   DIFF_REMOVED_BG,
@@ -33,7 +33,6 @@ interface FieldValuePanelProps {
 
 const TRUNCATED_MAX_CHARS = 50;
 const MAX_CONTENT_HEIGHT = 'calc(1.5em * 5 + 12px)';
-const ACTION_BUTTON_SIZE = 24;
 
 /** Collapse whitespace and cap length so the value fits on one line of the popover. */
 function truncateOneLine(text: string): string {
@@ -144,13 +143,12 @@ export const FieldValuePanel = memo(function FieldValuePanel({
       {hasActions && (
         <Stack
           gap={6}
-          align="center"
+          align="flex-end"
           justify={actionCount > 1 ? 'flex-start' : 'center'}
-          style={{ flexShrink: 0, width: ACTION_BUTTON_SIZE + 4, padding: '2px 0' }}
+          style={{ flexShrink: 0, padding: '2px 4px 2px 0' }}
         >
-          {onApprove && <IconActionButton label="Approve" onClick={onApprove} tone="approve" icon={Check} />}
-          {onUndo && <IconActionButton label="Reject" onClick={onUndo} tone="undo" icon={RotateCcw} />}
-          {onView && <IconActionButton label="View change" onClick={onView} tone="secondary" icon={Eye} />}
+          <FieldReviewActions diffKind={diffKind} onApprove={onApprove} onUndo={onUndo} />
+          {onView && <ReviewActionIcon label="View change" onClick={onView} tone="secondary" icon={Eye} />}
         </Stack>
       )}
     </Group>

@@ -21,6 +21,10 @@ type Updater<T> = T | ((prev: T) => T);
 
 export type SortState = { column: string | null; direction: 'asc' | 'desc' | null };
 
+// ── Diff view mode ──
+
+export type DiffViewMode = 'side-by-side' | 'inline-words';
+
 // ── Store state ──
 
 export interface WorkspaceUiState {
@@ -35,6 +39,10 @@ export interface WorkspaceUiState {
   visibleColumnIds: string[] | null;
   columnWidths: Record<string, number>;
   page: number;
+
+  // --- Diff View ---
+  /** User-chosen diff view mode. `null` means "use the default" (side-by-side when diffs exist, inline otherwise). */
+  diffViewMode: DiffViewMode | null;
 
   // --- Actions ---
   setSelectedFolderPath: (path: string | null) => void;
@@ -59,6 +67,7 @@ export interface WorkspaceUiState {
   setVisibleColumnIds: (ids: Updater<string[] | null>) => void;
   setColumnWidths: (widths: Updater<Record<string, number>>) => void;
   setPage: (page: Updater<number>) => void;
+  setDiffViewMode: (mode: DiffViewMode | null) => void;
   resetFolderState: () => void;
 }
 
@@ -88,6 +97,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   visibleColumnIds: null,
   columnWidths: {},
   page: 1,
+  diffViewMode: null,
 
   // --- Actions ---
   setSelectedFolderPath: (path) =>
@@ -102,21 +112,44 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
         visibleColumnIds: null,
         columnWidths: {},
         page: 1,
+        diffViewMode: null,
       };
     }),
 
-  setSelectedRecordFilename: (filename) =>
-    set({ selectedRecordFilename: filename, focusedFieldName: filename ? get().focusedFieldName : null }),
+  setSelectedRecordFilename: (filename) => {
+    const prev = get().selectedRecordFilename;
+    const resetDiff = prev !== filename;
+    set({
+      selectedRecordFilename: filename,
+      focusedFieldName: filename ? get().focusedFieldName : null,
+      ...(resetDiff ? { diffViewMode: null } : {}),
+    });
+  },
   setFocusedFieldName: (name) => set({ focusedFieldName: name }),
 
-  showGrid: () => set({ selectedRecordFilename: null, focusedFieldName: null }),
-  showRecord: (filename) => set({ selectedRecordFilename: filename, focusedFieldName: null }),
-  showField: (filename, fieldName) => set({ selectedRecordFilename: filename, focusedFieldName: fieldName }),
+  showGrid: () => set({ selectedRecordFilename: null, focusedFieldName: null, diffViewMode: null }),
+  showRecord: (filename) => {
+    const resetDiff = get().selectedRecordFilename !== filename;
+    set({
+      selectedRecordFilename: filename,
+      focusedFieldName: null,
+      ...(resetDiff ? { diffViewMode: null } : {}),
+    });
+  },
+  showField: (filename, fieldName) => {
+    const resetDiff = get().selectedRecordFilename !== filename;
+    set({
+      selectedRecordFilename: filename,
+      focusedFieldName: fieldName,
+      ...(resetDiff ? { diffViewMode: null } : {}),
+    });
+  },
   setSort: (v) => set({ sort: typeof v === 'function' ? v(get().sort) : v }),
   setActiveFilters: (v) => set({ activeFilters: typeof v === 'function' ? v(get().activeFilters) : v }),
   setVisibleColumnIds: (v) => set({ visibleColumnIds: typeof v === 'function' ? v(get().visibleColumnIds) : v }),
   setColumnWidths: (v) => set({ columnWidths: typeof v === 'function' ? v(get().columnWidths) : v }),
   setPage: (v) => set({ page: typeof v === 'function' ? v(get().page) : v }),
+  setDiffViewMode: (mode) => set({ diffViewMode: mode }),
 
   resetFolderState: () =>
     set({
@@ -127,6 +160,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
       visibleColumnIds: null,
       columnWidths: {},
       page: 1,
+      diffViewMode: null,
     }),
 }));
 

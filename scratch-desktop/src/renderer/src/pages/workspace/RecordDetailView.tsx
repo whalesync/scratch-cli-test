@@ -1,11 +1,11 @@
-import { Box, Divider, Group, Loader, ScrollArea, Stack, UnstyledButton } from '@mantine/core';
+import { Box, Divider, Group, Loader, Menu, ScrollArea, Stack, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
   Braces,
   Check,
   ChevronDown,
   ChevronUp,
-  CloudUpload,
+  EllipsisVertical,
   FilePlus,
   Minus,
   Plus,
@@ -18,11 +18,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { getByPath } from '../../../../shared/schema-columns';
 import type { ValidationEntry, ValidationResultRow } from '../../../../shared/validation-types';
-import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
-import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
 import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
+import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
+import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
 
@@ -300,6 +300,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [showAllFields, setShowAllFields] = useState(false);
   const focusedFieldName = useWorkspaceUiStore((s) => s.focusedFieldName);
   const handleFocusedFieldChange = useWorkspaceUiStore((s) => s.setFocusedFieldName);
+  const setActiveFilters = useWorkspaceUiStore((s) => s.setActiveFilters);
   // Held here (not in RecordFieldsGrid) so the prettify toggle survives the
   // grid's transient unmounts during loading on record navigation.
   const [prettifyActive, setPrettifyActive] = useState(false);
@@ -312,6 +313,8 @@ export const RecordDetailView = memo(function RecordDetailView({
   const currentRow = rows[selectedIndex];
   const recordName = currentRow ? getRecordName(currentRow, titleColumnId) : '';
   const hasUnreviewedChanges = rowHasUnreviewedChanges(recordData?.row ?? currentRow);
+  const unreviewedFieldCount = recordData?.row.__changedFields.length ?? 0;
+  const publishableFieldCount = recordData?.row.__unpublishedFields?.length ?? 0;
   const hasPublishableChanges =
     (recordData?.row.__unpublishedFields?.length ?? 0) > 0 ||
     recordData?.row.__rowStatus === 'addedUnpublished' ||
@@ -1019,63 +1022,98 @@ export const RecordDetailView = memo(function RecordDetailView({
 
               <Group gap={6} align="center" wrap="nowrap">
                 {!focusedFieldName && hasUnreviewedChanges && !isDeleted && !isCreated && (
-                  <ButtonSecondaryGhost
-                    size="compact-xs"
-                    c="green.8"
-                    leftSection={<Check size={12} />}
-                    onClick={handleAccept}
-                    disabled={!currentRecordCliPath || !hasUnreviewedChanges}
-                  >
-                    Approve changes
-                  </ButtonSecondaryGhost>
+                  <>
+                    <UnstyledButton
+                      onClick={() => {
+                        setActiveFilters([{ scope: 'global', kind: 'unreviewed' }]);
+                      }}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      <Text12Regular c="var(--fg-link)" style={{ textDecoration: 'underline' }}>
+                        {unreviewedFieldCount} {unreviewedFieldCount === 1 ? 'field needs' : 'fields need'} review
+                      </Text12Regular>
+                    </UnstyledButton>
+                    <ButtonSecondaryGhost
+                      size="compact-xs"
+                      c="green.8"
+                      onClick={handleAccept}
+                      disabled={!currentRecordCliPath}
+                    >
+                      {unreviewedFieldCount === 1 ? 'Approve' : 'Approve all'}
+                    </ButtonSecondaryGhost>
+                    <ButtonSecondaryGhost
+                      size="compact-xs"
+                      c="red.8"
+                      onClick={handleReject}
+                      disabled={!currentRecordCliPath}
+                    >
+                      {unreviewedFieldCount === 1 ? 'Reject' : 'Reject all'}
+                    </ButtonSecondaryGhost>
+                  </>
                 )}
-                {!focusedFieldName && hasUnreviewedChanges && !isDeleted && !isCreated && (
-                  <ButtonSecondaryGhost
-                    size="compact-xs"
-                    c="red.8"
-                    leftSection={<RotateCcw size={12} />}
-                    onClick={handleReject}
-                    disabled={!currentRecordCliPath || !hasUnreviewedChanges}
-                  >
-                    Reject changes
-                  </ButtonSecondaryGhost>
+                {!focusedFieldName &&
+                  onPublishFile &&
+                  hasPublishableChanges &&
+                  !hasUnreviewedChanges &&
+                  !isDeleted &&
+                  !isCreated && (
+                    <>
+                      <UnstyledButton
+                        onClick={() => {
+                          setActiveFilters([{ scope: 'global', kind: 'unpublished' }]);
+                        }}
+                        style={{ whiteSpace: 'nowrap' }}
+                      >
+                        <Text12Regular c="var(--fg-link)" style={{ textDecoration: 'underline' }}>
+                          {publishableFieldCount} field{publishableFieldCount === 1 ? '' : 's'} approved
+                        </Text12Regular>
+                      </UnstyledButton>
+                      <ButtonSecondaryGhost
+                        size="compact-xs"
+                        onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
+                        disabled={!currentRecordCliPath}
+                      >
+                        Publish
+                      </ButtonSecondaryGhost>
+                    </>
+                  )}
+                {!focusedFieldName && (
+                  <>
+                    <Divider orientation="vertical" />
+                    <IconButtonGhost
+                      size="compact-xs"
+                      onClick={() => setViewRaw((v) => !v)}
+                      style={
+                        viewRaw
+                          ? {
+                              backgroundColor: 'var(--highlight-fill)',
+                              outline: '1px solid var(--highlight-border)',
+                            }
+                          : undefined
+                      }
+                    >
+                      <StyledLucideIcon Icon={Braces} size="sm" c={viewRaw ? 'var(--highlight-text)' : undefined} />
+                    </IconButtonGhost>
+                  </>
                 )}
                 {!focusedFieldName && (hasUnreviewedChanges || hasPublishableChanges) && !isDeleted && !isCreated && (
-                  <ButtonSecondaryGhost
-                    size="compact-xs"
-                    c="red.8"
-                    leftSection={<Trash2 size={12} />}
-                    onClick={handleDiscard}
-                    disabled={!currentRecordCliPath || !(hasUnreviewedChanges || hasPublishableChanges)}
-                  >
-                    Discard changes
-                  </ButtonSecondaryGhost>
-                )}
-                {!focusedFieldName && onPublishFile && hasPublishableChanges && (
-                  <ButtonSecondaryGhost
-                    size="compact-xs"
-                    leftSection={<CloudUpload size={12} />}
-                    onClick={() => currentRecordCliPath && onPublishFile(currentRecordCliPath)}
-                    disabled={!currentRecordCliPath || !hasPublishableChanges}
-                  >
-                    Publish
-                  </ButtonSecondaryGhost>
-                )}
-                {!focusedFieldName && (
-                  <IconButtonGhost
-                    size="compact-xs"
-                    onClick={() => setViewRaw((v) => !v)}
-                    style={
-                      viewRaw
-                        ? {
-                            backgroundColor: 'var(--highlight-fill)',
-                            outline: '1px solid var(--highlight-border)',
-                          }
-                        : undefined
-                    }
-                  >
-                    <StyledLucideIcon Icon={Braces} size="sm" c={viewRaw ? 'var(--highlight-text)' : undefined} />
-                  </IconButtonGhost>
+                  <Menu position="bottom-end" withinPortal zIndex={10020}>
+                    <Menu.Target>
+                      <IconButtonGhost size="compact-xs" aria-label="More actions">
+                        <StyledLucideIcon Icon={EllipsisVertical} size="sm" />
+                      </IconButtonGhost>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item
+                        c="red"
+                        leftSection={<StyledLucideIcon Icon={Trash2} size={14} />}
+                        onClick={handleDiscard}
+                        disabled={!currentRecordCliPath}
+                      >
+                        Discard all unpublished changes
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
                 )}
                 <IconButtonGhost onClick={onClose}>
                   <StyledLucideIcon Icon={X} size="md" />

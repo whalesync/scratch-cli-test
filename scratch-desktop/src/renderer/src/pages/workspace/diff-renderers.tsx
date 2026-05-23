@@ -1,6 +1,8 @@
-import { ActionIcon, Box, Tooltip } from '@mantine/core';
+import { ButtonSecondaryGhost } from '@/components/base/buttons';
+import { ActionIcon, Box, Stack, Tooltip } from '@mantine/core';
 import { diffWordsWithSpace } from 'diff';
-import { Check } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Undo2 } from 'lucide-react';
 import { memo, useMemo } from 'react';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import {
@@ -155,7 +157,7 @@ export const InlineWordsDiff = memo(function InlineWordsDiff({
   );
 });
 
-export function IconActionButton({
+export function ReviewActionIcon({
   label,
   onClick,
   tone,
@@ -163,8 +165,8 @@ export function IconActionButton({
 }: {
   label: string;
   onClick: () => void;
-  tone: 'approve' | 'undo' | 'secondary';
-  icon: typeof Check;
+  tone: 'approve' | 'reject' | 'discard' | 'secondary';
+  icon: LucideIcon;
 }) {
   const styles =
     tone === 'approve'
@@ -173,17 +175,23 @@ export function IconActionButton({
           color: 'var(--mantine-color-green-8)',
           border: '1px solid var(--mantine-color-green-3)',
         }
-      : tone === 'undo'
+      : tone === 'reject'
         ? {
             backgroundColor: 'var(--mantine-color-red-1)',
             color: 'var(--mantine-color-red-8)',
             border: '1px solid var(--mantine-color-red-3)',
           }
-        : {
-            backgroundColor: 'var(--bg-selected)',
-            color: 'var(--fg-primary)',
-            border: '1px solid var(--fg-divider)',
-          };
+        : tone === 'discard'
+          ? {
+              backgroundColor: 'var(--mantine-color-red-1)',
+              color: 'var(--mantine-color-red-5)',
+              border: '1px solid var(--mantine-color-red-2)',
+            }
+          : {
+              backgroundColor: 'var(--bg-selected)',
+              color: 'var(--fg-primary)',
+              border: '1px solid var(--fg-divider)',
+            };
 
   return (
     <Tooltip label={label} position="left" withArrow zIndex={10020}>
@@ -213,4 +221,51 @@ export function IconActionButton({
       </ActionIcon>
     </Tooltip>
   );
+}
+
+/**
+ * Field-level review action links, rendered as vertically stacked text buttons.
+ *
+ * - **unreviewed** fields: "Approve" (green) + "Reject" (red)
+ * - **unpublished** (approved) fields: "Discard" (desaturated red)
+ */
+export function FieldReviewActions({
+  diffKind,
+  onApprove,
+  onUndo,
+}: {
+  diffKind: FieldValueDiffKind;
+  onApprove?: () => void;
+  onUndo?: () => void;
+}) {
+  if (!onApprove && !onUndo) return null;
+
+  if (diffKind === 'unreviewed') {
+    return (
+      <Stack gap={2} align="flex-end">
+        {onApprove && (
+          <ButtonSecondaryGhost size="compact-xs" c="green.8" onClick={onApprove}>
+            Approve
+          </ButtonSecondaryGhost>
+        )}
+        {onUndo && (
+          <ButtonSecondaryGhost size="compact-xs" c="red.8" onClick={onUndo}>
+            Reject
+          </ButtonSecondaryGhost>
+        )}
+      </Stack>
+    );
+  }
+
+  if (diffKind === 'unpublished' && onUndo) {
+    return (
+      <Tooltip label="Discard unpublished change" withArrow zIndex={10020}>
+        <ActionIcon variant="subtle" size="sm" c="red.5" aria-label="Discard unpublished change" onClick={onUndo}>
+          <Undo2 size={14} />
+        </ActionIcon>
+      </Tooltip>
+    );
+  }
+
+  return null;
 }
