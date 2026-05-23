@@ -979,6 +979,7 @@ export function PublishChangesModal({
       });
     }
 
+    // Fire-and-forget; failure is silent by policy. See docs/post-publish-refresh.md.
     const refreshLocal = async () => {
       if (!localPath) return;
       try {

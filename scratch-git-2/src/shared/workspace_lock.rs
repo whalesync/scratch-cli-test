@@ -15,6 +15,23 @@
 //!   a structured [`LockError::Busy`] on timeout. Right for napi callers on the
 //!   Electron main thread where any longer wait would feel like UI jank. See
 //!   the slice H spec (DEV-10144) for the 100ms budget rationale.
+//!
+//! ## Observability
+//!
+//! Three events emit a single-line `[workspace_lock] event=<name> ...` record
+//! on stderr (greppable for the desktop's captured CLI logs):
+//! - `event=acquired wait_ms=N path=…` — only when `wait_ms` ≥
+//!   [`CONTENDED_LOG_THRESHOLD`] (100ms). Uncontended acquires are silent so
+//!   the steady-state CLI noise floor stays at zero lock lines.
+//! - `event=stale_reclaimed stale_pid=N path=…` — every time we yank a lock
+//!   from a dead PID. Worth investigating if it fires repeatedly: it means a
+//!   prior `scratchmd` exited without releasing (panic, SIGKILL, crash).
+//! - `event=busy wait_ms=N pid=N path=…` — every time an acquire times out.
+//!   Fires from both entry points; the napi binding additionally surfaces
+//!   `Busy` via `LOCK_BUSY` JS exceptions so the desktop can show a UI prompt.
+//!
+//! See DEV-10144 follow-up F11 ("worktree lock metrics") for the rationale
+//! and downstream-consumer notes.
 
 // Service binary doesn't acquire this lock — only the CLI and the future napi
 // binding do. Suppress dead_code warnings on the service-side build the same
@@ -35,6 +52,10 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default poll interval while waiting on a contended lock. Per-call we clamp
 /// this to `timeout / 4` so short-wait callers still get a few retry chances.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// Floor for the "lock was contended" telemetry line. Acquires that resolved
+/// faster than this are silent — they're the uncontended common case and would
+/// flood stderr without surfacing any observability signal.
+const CONTENDED_LOG_THRESHOLD: Duration = Duration::from_millis(100);
 
 /// RAII guard that releases the workspace lock when dropped.
 pub struct WorkspaceLockGuard {
@@ -138,12 +159,27 @@ pub fn try_acquire_with_short_wait(
     let start = std::time::Instant::now();
     loop {
         match try_create(&lock_path) {
-            Ok(()) => return Ok(WorkspaceLockGuard { lock_path }),
+            Ok(()) => {
+                let waited = start.elapsed();
+                if waited >= CONTENDED_LOG_THRESHOLD {
+                    eprintln!(
+                        "[workspace_lock] event=acquired wait_ms={} path={}",
+                        waited.as_millis(),
+                        lock_path.display()
+                    );
+                }
+                return Ok(WorkspaceLockGuard { lock_path });
+            }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                 // The lock file exists. Decide whether the holder is still alive.
                 match read_owning_pid(&lock_path) {
                     Some(pid) if pid_is_alive(pid) => {
                         if start.elapsed() >= timeout {
+                            eprintln!(
+                                "[workspace_lock] event=busy wait_ms={} pid={pid} path={}",
+                                start.elapsed().as_millis(),
+                                lock_path.display()
+                            );
                             return Err(LockError::Busy { pid, lock_path });
                         }
                         std::thread::sleep(poll_interval);
@@ -151,13 +187,13 @@ pub fn try_acquire_with_short_wait(
                     }
                     Some(stale_pid) => {
                         eprintln!(
-                            "Reclaiming stale workspace lock from dead pid {stale_pid} at {}",
+                            "[workspace_lock] event=stale_reclaimed stale_pid={stale_pid} path={}",
                             lock_path.display()
                         );
                     }
                     None => {
                         eprintln!(
-                            "Reclaiming workspace lock with unreadable owner pid at {}",
+                            "[workspace_lock] event=stale_reclaimed stale_pid=unreadable path={}",
                             lock_path.display()
                         );
                     }
