@@ -27,6 +27,7 @@ import { userToActor } from '../../users/types';
 import { ConnectorAccountService } from './connector-account.service';
 import { ApiQuotaResponse } from './entities/api-quota.entity';
 import { ConnectorAccount } from './entities/connector-account.entity';
+import { RevealCredentialsResponse } from './entities/reveal-credentials.entity';
 import { TableList, TableSearchResult } from './entities/table-list.entity';
 import { TableSchemaPreview } from './entities/table-schema-preview.entity';
 import { TestConnectionResponse } from './entities/test-connection.entity';
@@ -163,5 +164,16 @@ export class ConnectorAccountController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
     return this.service.resetConnection(workbookId as WorkbookId, id, actor);
+  }
+
+  @Get(':id/credentials/reveal')
+  async revealCredentials(
+    @Param('workbookId') workbookId: string,
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+  ): Promise<RevealCredentialsResponse> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.revealCredentials(workbookId as WorkbookId, id, actor);
   }
 }

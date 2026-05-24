@@ -380,6 +380,52 @@ export class ConnectorAccountService {
     return this.getDecryptedAccount(account);
   }
 
+  /**
+   * Admin-only "break glass" reveal of a connection's decrypted credentials.
+   *
+   * Why: operators occasionally need to read a live customer's API key to debug
+   * a broken connection. The endpoint is intentionally narrow (admin role required)
+   * and every call writes an audit log entry so reveals are reviewable after the fact.
+   */
+  async revealCredentials(
+    workbookId: WorkbookId,
+    id: string,
+    actor: Actor,
+  ): Promise<{ credentials: DecryptedCredentials; extras: Record<string, unknown> | null }> {
+    if (!actor.isAdmin) {
+      throw new ForbiddenException('Only admins may reveal connection credentials');
+    }
+
+    const workbook = await this.loadWorkbook(workbookId);
+    const account = await this.db.client.connectorAccount.findUnique({
+      where: { id, workbookId },
+    });
+    if (!account) {
+      throw new NotFoundException('ConnectorAccount not found');
+    }
+
+    const credentials = await this.credentialEncryptionService.decryptCredentials(
+      account.encryptedCredentials as unknown as EncryptedData,
+    );
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'reveal',
+      message: `Revealed credentials for connection ${account.displayName}`,
+      entityId: account.id as ConnectorAccountId,
+      organizationId: workbook.organizationId,
+      context: {
+        service: account.service,
+        authType: account.authType,
+      },
+    });
+
+    return {
+      credentials,
+      extras: account.extras as Record<string, unknown> | null,
+    };
+  }
+
   async remove(workbookId: WorkbookId, id: string, actor: Actor): Promise<void> {
     const account = await this.findOne(workbookId, id, actor);
     if (!account) {

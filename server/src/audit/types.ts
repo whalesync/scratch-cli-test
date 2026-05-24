@@ -1,1 +1,1 @@
-export type AuditLogEventType = 'create' | 'update' | 'delete' | 'publish';
+export type AuditLogEventType = 'create' | 'update' | 'delete' | 'publish' | 'reveal';

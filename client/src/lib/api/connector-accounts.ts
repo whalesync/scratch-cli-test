@@ -1,4 +1,8 @@
-import { ApiQuotaResponse, TestConnectionResponse } from '@/types/server-entities/connector-accounts';
+import {
+  ApiQuotaResponse,
+  RevealCredentialsResponse,
+  TestConnectionResponse,
+} from '@/types/server-entities/connector-accounts';
 import { ConnectorAccount, CreateConnectorAccountDto, UpdateConnectorAccountDto } from '@spinner/shared-types';
 import { TableList, TableSchemaPreview, TableSearchResult } from '../../types/server-entities/table-list';
 import { API_CONFIG } from './config';
@@ -135,6 +139,19 @@ export const connectorAccountsApi = {
     } catch (error) {
       handleAxiosError(error, 'Failed to reset connection');
       throw error;
+    }
+  },
+
+  // GET decrypted credentials (admin-only break glass — audit logged server side)
+  revealCredentials: async (workbookId: string, id: string): Promise<RevealCredentialsResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<RevealCredentialsResponse>(
+        `/workbooks/${workbookId}/connections/${id}/credentials/reveal`,
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to reveal connection credentials');
     }
   },
 };

@@ -2,6 +2,7 @@
 
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { ApiQuotaDialog } from '@/app/workbook/[id]/components/Sidebar/ApiQuotaDialog';
+import { BreakGlassCredentialsModal } from '@/app/workbook/[id]/components/modals/BreakGlassCredentialsModal';
 import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
 import { GitGcModal } from '@/app/workbook/[id]/components/modals/GitGcModal';
 import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
@@ -26,6 +27,7 @@ import {
   GitGraphIcon,
   GitMergeIcon,
   InfoIcon,
+  KeyRoundIcon,
   MoveIcon,
   ScissorsIcon,
   SettingsIcon,
@@ -85,6 +87,7 @@ export function useConnectionMenu(
   const [updateConnectionModalOpened, { open: openUpdateConnectionModal, close: closeUpdateConnectionModal }] =
     useDisclosure(false);
   const [apiQuotaOpened, { open: openApiQuota, close: closeApiQuota }] = useDisclosure(false);
+  const [breakGlassOpened, { open: openBreakGlass, close: closeBreakGlass }] = useDisclosure(false);
   const { open: openResetConnectionDialog, dialogProps: resetConnectionDialogProps } = useConfirmDialog();
 
   // --- Handlers ---
@@ -244,7 +247,10 @@ export function useConnectionMenu(
     ...gitSubmenu,
     ...(fullConnectorAccount ? [{ label: 'Remove', icon: Trash2Icon, onClick: openRemoveModal, delete: true }] : []),
     ...(isDevToolsEnabled
-      ? [{ label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection }]
+      ? [
+          { label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection },
+          { label: 'Break glass', icon: KeyRoundIcon, devtool: true, onClick: openBreakGlass },
+        ]
       : []),
   ];
 
@@ -286,6 +292,13 @@ export function useConnectionMenu(
       <ApiQuotaDialog
         opened={apiQuotaOpened}
         onClose={closeApiQuota}
+        workbookId={workbookId}
+        connectionId={cId}
+        connectionName={cName}
+      />
+      <BreakGlassCredentialsModal
+        opened={breakGlassOpened}
+        onClose={closeBreakGlass}
         workbookId={workbookId}
         connectionId={cId}
         connectionName={cName}
