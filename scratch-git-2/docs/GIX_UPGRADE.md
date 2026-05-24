@@ -2,6 +2,8 @@
 
 Last reviewed: 2026-04-03
 
+> For day-to-day usage patterns (gix-vs-shell-out conventions, where the helpers live, common pitfalls) see [GIX_PATTERNS.md](GIX_PATTERNS.md). This doc focuses on version-bump decisions.
+
 ## Current state
 
 `scratch-git-2` currently uses:

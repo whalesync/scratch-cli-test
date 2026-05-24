@@ -16,22 +16,25 @@
 //!   Electron main thread where any longer wait would feel like UI jank. See
 //!   the slice H spec (DEV-10144) for the 100ms budget rationale.
 //!
-//! ## Observability
+//! ## Observability (F11)
 //!
 //! Three events emit a single-line `[workspace_lock] event=<name> ...` record
 //! on stderr (greppable for the desktop's captured CLI logs):
-//! - `event=acquired wait_ms=N path=…` — only when `wait_ms` ≥
+//! - `event=acquired wait_ms=N attempts=N path=…` — only when `wait_ms` ≥
 //!   [`CONTENDED_LOG_THRESHOLD`] (100ms). Uncontended acquires are silent so
-//!   the steady-state CLI noise floor stays at zero lock lines.
+//!   the steady-state CLI noise floor stays at zero lock lines. `held_by=N`
+//!   is appended when we observed the contending PID during the poll loop.
 //! - `event=stale_reclaimed stale_pid=N path=…` — every time we yank a lock
 //!   from a dead PID. Worth investigating if it fires repeatedly: it means a
 //!   prior `scratchmd` exited without releasing (panic, SIGKILL, crash).
-//! - `event=busy wait_ms=N pid=N path=…` — every time an acquire times out.
-//!   Fires from both entry points; the napi binding additionally surfaces
-//!   `Busy` via `LOCK_BUSY` JS exceptions so the desktop can show a UI prompt.
+//! - `event=busy wait_ms=N attempts=N pid=N path=…` — every time an acquire
+//!   times out. Fires from both entry points; the napi binding additionally
+//!   surfaces `Busy` via `LOCK_BUSY` JS exceptions so the desktop can show a
+//!   UI prompt.
 //!
-//! See DEV-10144 follow-up F11 ("worktree lock metrics") for the rationale
-//! and downstream-consumer notes.
+//! The structured [`LockError::Busy`] also carries `waited: Duration` and
+//! `attempts: u32` so a future telemetry forwarder can surface them
+//! programmatically without re-parsing the stderr line.
 
 // Service binary doesn't acquire this lock — only the CLI and the future napi
 // binding do. Suppress dead_code warnings on the service-side build the same
@@ -54,7 +57,8 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Floor for the "lock was contended" telemetry line. Acquires that resolved
 /// faster than this are silent — they're the uncontended common case and would
-/// flood stderr without surfacing any observability signal.
+/// flood stderr without surfacing any observability signal. Set to 100ms so
+/// napi short-wait callers (100ms budget) stay silent on the success path.
 const CONTENDED_LOG_THRESHOLD: Duration = Duration::from_millis(100);
 
 /// RAII guard that releases the workspace lock when dropped.
@@ -75,8 +79,16 @@ impl Drop for WorkspaceLockGuard {
 /// them directly so they can map `Busy` to a `LOCK_BUSY` JS exception code.
 #[derive(Debug)]
 pub enum LockError {
-    /// Lock held by another live process; gave up waiting.
-    Busy { pid: u32, lock_path: PathBuf },
+    /// Lock held by another live process; gave up waiting. `waited` and
+    /// `attempts` (F11) are the observability surface — a future telemetry
+    /// forwarder can read them without re-parsing the stderr
+    /// `[workspace_lock] event=busy …` line.
+    Busy {
+        pid: u32,
+        lock_path: PathBuf,
+        waited: Duration,
+        attempts: u32,
+    },
     /// Filesystem error opening, creating, or removing the lock file.
     Io(std::io::Error),
 }
@@ -84,9 +96,16 @@ pub enum LockError {
 impl std::fmt::Display for LockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LockError::Busy { pid, lock_path } => write!(
+            LockError::Busy {
+                pid,
+                lock_path,
+                waited,
+                attempts,
+            } => write!(
                 f,
-                "workspace is locked by another scratchmd process (pid {pid}); lock at {}",
+                "workspace is locked by another scratchmd process (pid {pid}); \
+                 gave up after {}ms across {attempts} attempt(s); lock at {}",
+                waited.as_millis(),
                 lock_path.display()
             ),
             LockError::Io(err) => write!(f, "lock io error: {err}"),
@@ -118,10 +137,15 @@ impl From<std::io::Error> for LockError {
 pub fn acquire(workspace_dir: &Path) -> anyhow::Result<WorkspaceLockGuard> {
     try_acquire_with_short_wait(workspace_dir, WAIT_TIMEOUT)
         .map_err(|err| match err {
-            LockError::Busy { pid, lock_path } => anyhow::anyhow!(
+            LockError::Busy {
+                pid,
+                lock_path,
+                waited,
+                attempts,
+            } => anyhow::anyhow!(
                 "workspace is locked by another scratchmd process (pid {pid}); \
-             timed out after {}s waiting at {}",
-                WAIT_TIMEOUT.as_secs(),
+                 timed out after {}s ({attempts} attempts) waiting at {}",
+                waited.as_secs(),
                 lock_path.display()
             ),
             LockError::Io(io_err) => {
@@ -157,16 +181,30 @@ pub fn try_acquire_with_short_wait(
     let poll_interval = std::cmp::min(POLL_INTERVAL, timeout / 4).max(Duration::from_millis(1));
 
     let start = std::time::Instant::now();
+    let mut attempts: u32 = 0;
+    let mut last_seen_pid: Option<u32> = None;
     loop {
+        attempts = attempts.saturating_add(1);
         match try_create(&lock_path) {
             Ok(()) => {
                 let waited = start.elapsed();
+                // F11: emit a `[workspace_lock] event=acquired …` line only
+                // when the acquire actually blocked beyond the contention
+                // threshold. Keeps the fast path (uncontended) and napi
+                // short-wait callers silent on stderr.
                 if waited >= CONTENDED_LOG_THRESHOLD {
-                    eprintln!(
-                        "[workspace_lock] event=acquired wait_ms={} path={}",
-                        waited.as_millis(),
-                        lock_path.display()
-                    );
+                    match last_seen_pid {
+                        Some(held_by) => eprintln!(
+                            "[workspace_lock] event=acquired wait_ms={} attempts={attempts} held_by={held_by} path={}",
+                            waited.as_millis(),
+                            lock_path.display()
+                        ),
+                        None => eprintln!(
+                            "[workspace_lock] event=acquired wait_ms={} attempts={attempts} path={}",
+                            waited.as_millis(),
+                            lock_path.display()
+                        ),
+                    }
                 }
                 return Ok(WorkspaceLockGuard { lock_path });
             }
@@ -174,13 +212,20 @@ pub fn try_acquire_with_short_wait(
                 // The lock file exists. Decide whether the holder is still alive.
                 match read_owning_pid(&lock_path) {
                     Some(pid) if pid_is_alive(pid) => {
+                        last_seen_pid = Some(pid);
                         if start.elapsed() >= timeout {
+                            let waited = start.elapsed();
                             eprintln!(
-                                "[workspace_lock] event=busy wait_ms={} pid={pid} path={}",
-                                start.elapsed().as_millis(),
+                                "[workspace_lock] event=busy wait_ms={} attempts={attempts} pid={pid} path={}",
+                                waited.as_millis(),
                                 lock_path.display()
                             );
-                            return Err(LockError::Busy { pid, lock_path });
+                            return Err(LockError::Busy {
+                                pid,
+                                lock_path,
+                                waited,
+                                attempts,
+                            });
                         }
                         std::thread::sleep(poll_interval);
                         continue;
@@ -321,8 +366,31 @@ mod tests {
         let elapsed = started.elapsed();
 
         match result {
-            Err(LockError::Busy { pid, .. }) => {
+            Err(LockError::Busy {
+                pid,
+                waited,
+                attempts,
+                ..
+            }) => {
                 assert_eq!(pid, std::process::id());
+                // F11: Busy now carries the elapsed wait + attempt count for
+                // telemetry forwarders that don't want to grep the stderr
+                // `[workspace_lock] event=busy …` line. waited should be >=
+                // the configured timeout (we returned only once
+                // start.elapsed() >= timeout) and strictly less than 1s (it
+                // was 100ms-bounded).
+                assert!(
+                    waited >= Duration::from_millis(100),
+                    "waited should be >= configured timeout, got {waited:?}",
+                );
+                assert!(
+                    waited < Duration::from_secs(1),
+                    "waited should be bounded by timeout, got {waited:?}",
+                );
+                assert!(
+                    attempts >= 1,
+                    "attempts should be >= 1 after at least one poll loop, got {attempts}",
+                );
             }
             Err(LockError::Io(err)) => panic!("expected Busy, got Io({err})"),
             Ok(_) => panic!("expected Busy, got Ok"),
@@ -343,5 +411,65 @@ mod tests {
         assert!(lock_path(dir.path()).exists());
         drop(guard);
         assert!(!lock_path(dir.path()).exists());
+    }
+
+    /// F11: the structured error includes the elapsed wait and attempt count
+    /// so a future telemetry forwarder can read them without scraping logs.
+    /// The human-readable form also surfaces them for terminal users.
+    #[test]
+    fn busy_display_includes_waited_ms_and_attempts() {
+        let err = LockError::Busy {
+            pid: 4321,
+            lock_path: PathBuf::from("/tmp/x/.scratch/lock"),
+            waited: Duration::from_millis(312),
+            attempts: 4,
+        };
+        let text = err.to_string();
+        assert!(text.contains("pid 4321"), "missing pid: {text}");
+        assert!(text.contains("312ms"), "missing waited ms: {text}");
+        assert!(text.contains("4 attempt"), "missing attempts: {text}");
+        assert!(
+            text.contains("/tmp/x/.scratch/lock"),
+            "missing lock path: {text}"
+        );
+    }
+
+    /// F11: a contended acquire that does eventually succeed populates
+    /// `last_seen_pid` (used in the `[workspace_lock] event=acquired … held_by=N`
+    /// line) and reports more than one attempt. We can't capture stderr from
+    /// a unit test cleanly, so this just exercises the timing path: wait long
+    /// enough to cross at least one poll cycle, then verify both threads
+    /// finished.
+    #[test]
+    fn contended_acquire_eventually_succeeds_after_release() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let dir = TempDir::new().unwrap();
+        let workspace = dir.path().to_path_buf();
+        let barrier = Arc::new(Barrier::new(2));
+
+        let holder_barrier = barrier.clone();
+        let holder_dir = workspace.clone();
+        let holder = thread::spawn(move || {
+            let guard = acquire(&holder_dir).unwrap();
+            // Signal we're holding the lock, then release it after long enough
+            // for the waiter to enter its poll loop at least once.
+            holder_barrier.wait();
+            thread::sleep(Duration::from_millis(400));
+            drop(guard);
+        });
+
+        let waiter_dir = workspace.clone();
+        let waiter = thread::spawn(move || {
+            barrier.wait();
+            // 2s budget — more than enough for the 400ms holder sleep.
+            try_acquire_with_short_wait(&waiter_dir, Duration::from_secs(2))
+                .expect("waiter should acquire after holder releases")
+        });
+
+        holder.join().unwrap();
+        let _waiter_guard = waiter.join().unwrap();
+        // Lock file is held by the waiter now; will be cleaned up on drop.
     }
 }

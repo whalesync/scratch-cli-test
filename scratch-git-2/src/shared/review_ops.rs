@@ -179,7 +179,7 @@ pub enum ReviewOpError {
 impl From<crate::shared::workspace_lock::LockError> for ReviewOpError {
     fn from(err: crate::shared::workspace_lock::LockError) -> Self {
         match err {
-            crate::shared::workspace_lock::LockError::Busy { pid, lock_path } => {
+            crate::shared::workspace_lock::LockError::Busy { pid, lock_path, .. } => {
                 ReviewOpError::LockBusy { pid, lock_path }
             }
             crate::shared::workspace_lock::LockError::Io(io_err) => ReviewOpError::Io(io_err),

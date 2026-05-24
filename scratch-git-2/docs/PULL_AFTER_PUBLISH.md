@@ -57,12 +57,48 @@ Earlier designs (see decision log entries under "Pull stash mechanism" in the wo
 
 This is symmetric with git's "commit or stash before pull" UX. The desktop pattern-matches on `blocked_unreviewed` and surfaces a three-button modal: Accept all & refresh / Discard all & refresh / Cancel.
 
+## Failure handling & retry policy
+
+The post-publish fetch is best-effort across both code paths. There is no automatic retry, no exponential backoff, and no surfaced user error when it fails. The rationale is symmetry: if the fetch fails this minute, the next publish or pull will retry it for free, and nothing on disk diverges in the meantime — the local `accepted-patches.json` keeps the user's edits queued and the local `refs/heads/main` stays at its previous (now slightly stale) value.
+
+### CLI: `scratchmd files publish`
+
+`reconcile_accepted_after_publish` calls `git_ops::fetch_origin` (one shell-out to `git fetch origin +refs/heads/*:refs/remotes/origin/*`, no retry). If the fetch fails:
+
+- The function returns an error up through the per-connection loop.
+- `run_publish` does not retry — it logs the failure and continues with the next connection.
+- The user sees a non-zero exit and the connection-level error message; the patch file stays anchored against the pre-publish `old_main` and the next `files publish` or `files download` will re-attempt the same reconcile.
+- No state on disk is left half-written: `reconcile_accepted_after_publish` does the atomic `save_atomic` of the re-anchored patch file before advancing `refs/heads/main`, so a fetch failure (which happens before any of that) leaves the workspace in its pre-publish state.
+
+### Desktop: post-publish refresh
+
+`PublishChangesModal` (`scratch-desktop/src/renderer/src/pages/workspace/PublishChangesModal.tsx`) drives publish via direct HTTP and calls `window.scratchDesktop.pullWorkspaceChanges(localPath)` once when all per-connection publishes reach a terminal state. The main-process handler at `scratch-desktop/src/main/index.ts` shells out to `scratchmd files download`.
+
+- Single attempt: the call is wrapped in `try/catch` and on failure logs to `console.debug('Post-publish pull failed:', err)`. The modal does not surface a user-facing error and does not retry.
+- The modal then transitions to its `complete` (or `error` for failed publishes) mode regardless of whether the refresh succeeded.
+- Side effects on failure: the desktop's "unpublished" badges, the `accepted-patches.json` file, and `refs/heads/main` all stay at their pre-publish view. The user can recover by clicking Refresh (which calls the same `pullWorkspaceChanges` IPC) or by running `scratchmd files download` from the terminal.
+
+### Why no retry
+
+- The `fetch_origin` shell-out is already idempotent and cheap — retrying inside `reconcile_accepted_after_publish` would add latency to the success path with no correctness win.
+- Both the next `files publish` and the next `files download` perform a fresh `git fetch origin main` as their first step, so a transient network blip resolves on the next user action without a background retry loop.
+- The publish itself succeeded server-side (`publish-v2/run-job` reached `completed`); the fetch failure only delays the local view-of-state catching up. Surfacing it as a modal error would over-state the impact.
+
+If sustained fetch failures become a real problem (e.g. a corporate proxy that intermittently blocks port 443 to the git origin), the right place to add retry is `git_ops::fetch_origin` itself, with an exponential backoff bounded to a few seconds — both callers would benefit.
+
 ## Same-field conflicts
 
 When the user accepted a patch on key `K` and the server also changed `K` to a different value between `old_main` and `new_main`, the user wins: the patch entry is preserved, the meaning shifts from "change A→B" to "set to B." A line goes to `.scratch/conflicts.log`:
 
 ```jsonl
-{"ts":"2026-05-22T18:08:51Z","connectorAccountId":"ca_...","path":"Companies/rec123.json","conflictingKeys":["properties.industry"]}
+{
+  "ts": "2026-05-22T18:08:51Z",
+  "connectorAccountId": "ca_...",
+  "path": "Companies/rec123.json",
+  "conflictingKeys": [
+    "properties.industry"
+  ]
+}
 ```
 
 The log uses POSIX `O_APPEND` for single-write atomicity (entries are well under `PIPE_BUF`). At 2 MB the file rotates to `conflicts.log.1` (overwriting any prior rotated file). There's no UI for surfacing these yet — they're an audit trail.

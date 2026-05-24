@@ -39,3 +39,6 @@ Always run commands from inside `scratch-git-2/` (or the repo root using Turbore
 - [TEST_LOOP.md](docs/TEST_LOOP.md) — end-to-end test guide ⚠️ partially outdated (uses old binary name `scratchmd2` and old workspace paths — treat as conceptual reference)
 - [REPO_STRUCTURES.md](docs/REPO_STRUCTURES.md) — CLI and service directory layouts, repo identity, branch conventions, materialize-perform-commit-cleanup pattern
 - [REVIEW_MODEL.md](docs/REVIEW_MODEL.md) — accept / reject / discard semantics, the published/approved/local state model, and the `accepted-patches.json` shape
+- [PULL_AFTER_PUBLISH.md](docs/PULL_AFTER_PUBLISH.md) — how the local workspace re-syncs after a publish lands, including the post-publish `git fetch` retry policy
+- [GIX_PATTERNS.md](docs/GIX_PATTERNS.md) — gix-vs-shell-out conventions, where the git helpers live, common pitfalls
+- [GIX_UPGRADE.md](docs/GIX_UPGRADE.md) — version pinning rationale and push migration options
