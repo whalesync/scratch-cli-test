@@ -54,4 +54,5 @@ docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
 echo ""
 echo "Running smoke tests..."
 cd "$SCRIPT_DIR"
+
 yarn test:smoke "$@"

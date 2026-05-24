@@ -96,6 +96,66 @@ services:
       timeout: 5s
       retries: 10
 
+  # Fake GCS for the /upload-patch flow. fake-gcs validates that V4-signed
+  # URLs carry a host matching `-public-host`, otherwise returns 404. We set
+  # it to `fake-gcs:4443` (the in-docker-network hostname) so the URLs the
+  # server generates pass validation. The CI test-runner is inside the docker
+  # network and reaches `fake-gcs:4443` natively; local-dev host runs use a
+  # custom DNS lookup in the test (resolving `fake-gcs` to `127.0.0.1`) so
+  # the URL doesn't need rewriting at all — same hostname both sides.
+  # fake-gcs does NOT validate the V4 signature itself, just the host header.
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.49.3
+    command:
+      [
+        "-scheme",
+        "http",
+        "-port",
+        "4443",
+        "-public-host",
+        "fake-gcs:4443",
+        "-backend",
+        "memory",
+      ]
+    ports:
+      - "4443:4443"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget -qO- http://localhost:4443/storage/v1/b || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  # Create the patch-upload bucket once fake-gcs is up. Runs once to completion.
+  # Retries on transient errors and treats HTTP 409 (bucket exists) as success
+  # so rerunning the stack is idempotent. Exits non-zero if the bucket can't be
+  # confirmed after 5 attempts — without --fail-style verification, `curl -sS`
+  # exits 0 on HTTP errors, which would let downstream containers start with
+  # no bucket and trigger 404s on PUT (the failure mode seen on CI mr45).
+  fake-gcs-bucket-init:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      fake-gcs:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        for attempt in 1 2 3 4 5; do
+          code=$$(curl -sS -o /tmp/resp -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"name":"upload-patches-smoke"}' \
+            http://fake-gcs:4443/storage/v1/b || true)
+          if [ "$$code" = "200" ] || [ "$$code" = "409" ]; then
+            echo "bucket ready (HTTP $$code on attempt $$attempt)"
+            exit 0
+          fi
+          echo "attempt $$attempt: HTTP $$code, body: $$(cat /tmp/resp 2>/dev/null | head -c 200), retrying..."
+          sleep 1
+        done
+        echo "failed to create bucket after 5 attempts"
+        exit 1
+
   # Run migrations before starting the server
   migrate:
     build:
@@ -129,6 +189,16 @@ services:
       API_URL_OVERRIDES: "https://api.airtable.com=http://fake-airtable:4646,https://admin.memberstack.com=http://fake-memberstack:4652,https://api.hubapi.com=http://fake-hubspot:4653,https://api.affinity.co=http://fake-affinity:4654"
       ENCRYPTION_MASTER_KEY: "12345678901234567890123456789012"
       USE_JOBS: "true"
+      # /upload-patch GCS wiring (smoke-only fake — see fake-gcs service above).
+      # GCS_API_ENDPOINT (NOT STORAGE_EMULATOR_HOST): the SDK's emulator mode
+      # strips `/storage/v1` from the read baseUrl, hitting a route fake-gcs
+      # doesn't serve. apiEndpoint via the constructor keeps both unsigned
+      # reads (/storage/v1/b/...) and V4-signed PUTs (/<bucket>/<obj>) pointed
+      # at routes fake-gcs natively serves.
+      GCS_API_ENDPOINT: http://fake-gcs:4443
+      GCS_PROJECT_ID: smoke-test-project
+      GCS_PATCH_UPLOAD_BUCKET: upload-patches-smoke
+      GOOGLE_APPLICATION_CREDENTIALS: /app/fake-gcs-sa.json
       # Clerk auth — override these via .env or environment
       CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-pk_test_ZmFjdHVhbC1ndXBweS01NS5jbGVyay5hY2NvdW50cy5kZXYk}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?Set CLERK_SECRET_KEY for smoke tests}
@@ -169,6 +239,10 @@ services:
         condition: service_healthy
       fake-affinity:
         condition: service_healthy
+      fake-gcs:
+        condition: service_healthy
+      fake-gcs-bucket-init:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
     healthcheck:
@@ -192,6 +266,9 @@ services:
       FAKE_MEMBERSTACK_URL: http://fake-memberstack:4652
       FAKE_HUBSPOT_URL: http://fake-hubspot:4653
       FAKE_AFFINITY_URL: http://fake-affinity:4654
+      # CI test-runner is INSIDE the docker network, so `fake-gcs:4443` resolves
+      # natively — no URL rewrite needed (run.sh sets the rewrite var for the
+      # local-dev host-side runner).
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?Set CLERK_SECRET_KEY for smoke tests}
       CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:?Set CLERK_PUBLISHABLE_KEY for smoke tests}
       INTEGRATION_TEST_USER_ID: ${INTEGRATION_TEST_USER_ID:?Set INTEGRATION_TEST_USER_ID for smoke tests}

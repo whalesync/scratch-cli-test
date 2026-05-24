@@ -1,0 +1,12 @@
+{
+  "type": "service_account",
+  "project_id": "smoke-test-project",
+  "private_key_id": "0000000000000000000000000000000000000000",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCor69JKhvDPZOs\nZxXCHtjk7VN0jZ6yZJrSeaWKvQ0IV21xmqOsBsUJfR85UQHAg1ix3ymI2HbL3Ufk\n2bZL4qLfpcb5hsTPz6QmsFxsEOIt8Y/ViKsl3j//jpotN28nRTAOFccdwVrVwogB\nnt1R7REWtkYYioSUuk5hxX+2jqzMFw6kc1q76hcPLO5npELPBKFB1NsN/qFlicZb\nqDPRjydFvzi+b0E/I6XL6bT8pODTVuVJC6QNxwczVB1DlS8hNvK+3cPAMuJgoQIh\nw2v33LyT29jZi+87s+MvOvl8ij5Wq+prYoes9REnPezU0B857Qno9a5DeEAu2vmm\nSvZBoDlhAgMBAAECggEAQ+/hxjM91C+oGn637iMTUnvcqSviVtGa4xrYF5zVM19W\ntjLEKWPellg8q45bCMg9gAGzTih0C94Wdu5R85UW6MDw9o0XFeT4JRbRWjqghUVt\nGuB8oXc1yjyKDpztWOEOHhYaR/sYFNBQi2qKk1TJlZ6ac4bSJ74zFECBE6q5oEYe\n/bMrh4jVJKSIb3F3b1ofQiBs9uiaw4lH+SbaeCFh2HzOP0LZSybCNYmRXvZdSsvL\nUcEffdiKPthCQp1LTN+kIeCcIKou79aNlWzEpSXGyz2pp0pZSzPwIfH4k61y4vCu\njHGp4LMxH/py8ItNK0qGZ4/ZvEr0nT/GVzQWcnncUwKBgQDikKzyFkFZEvygAhnf\nhjDgVNrjbrlPyf5+WV57D3dMGJMQluvEMsXfHH48Mc2L6mS0hdL/WEcA+mwoGIct\nBiyNVXqPeocADFz9YNVvJUmoIuS9pqUVC9J/yqG1r08ldv0724PiJDXos1o3V3Ic\nLnSDuSEU92Vau4udPxpzAWOxqwKBgQC+mgRnCjl2wYcJ6E7j+229EqGH716FGl9a\nvkGPD/fDLrLYLkDlCTksaQRaYr6Tz6owXA76n3kvhY6iQfGdgY398pAWElneUsHy\nOBVKxPGABbWa6mRgNQm81pNLfxN9n4NfA7Zfj+dlXtKTk8d9vu8mjw18QIyv+lhj\nzHyILCvNIwKBgGpc/0Q7nHwjxMOdmOXuCp4WWBhzj73cl4RbklZ1gU0RMGGWaKLY\nLzq6Fq1NuDCaXqK9PLwxhkv4RLRiJ3vErT/AxGP9YslsBG/TeP/P4o9zqi06wb9q\nqGzkBRzVa3OsM+BZAsY0t7ZCFPVsMR731C1OyTAdoNCCwV2WFWWuXk43AoGAErQM\nYIwZTXT6Kle4fhirERWl8i/kB42p876dsksv1eBcPmhzh8Ya7Se0/KWZ6+lB2xL9\niUxi2O3zLCrqablP1K6bwv60AOQAEiO8uySOSjDFPFlp1iL+PKCVvZ/PqtEfVBCK\nMeBuJX1jjoW+2rEEyLTa7ulqpM4dJFXplnc3KR8CgYBuwnq78mZfYw6CRsrCEt1X\nKEbZwqOYqX7FPQHvTIk+coXjHJLnDodCcox6gvpopIiURNBuCHCE8uemrQwmZRnf\nGLPe7RpG7FdgzcQ/0YGAvIQQmgChG2lfDLknQF4pJ8vPk8rsQP/nED4LLnJWSRGG\n3HcgGEI+AioqpJT1ypU9fQ==\n-----END PRIVATE KEY-----\n",
+  "client_email": "fake-signer@smoke-test-project.iam.gserviceaccount.com",
+  "client_id": "000000000000000000000",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/fake-signer%40smoke-test-project.iam.gserviceaccount.com"
+}

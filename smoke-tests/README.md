@@ -41,15 +41,35 @@ docker compose -f smoke-tests/docker-compose.smoke-test.yml down -v
 
 ## Services
 
-| Service       | Host Port | Description                         |
-| ------------- | --------- | ----------------------------------- |
-| postgres      | 5442      | Test database                       |
-| redis         | 6389      | BullMQ job queue                    |
-| scratch-git-2 | 3110/3111 | Git storage (API + HTTP backend)    |
-| fake-airtable | 4656      | Fake Airtable API (in-memory store) |
-| server        | 3020      | NestJS API server (monolith mode)   |
+| Service       | Host Port | Description                                                 |
+| ------------- | --------- | ----------------------------------------------------------- |
+| postgres      | 5442      | Test database                                               |
+| redis         | 6389      | BullMQ job queue                                            |
+| scratch-git-2 | 3110/3111 | Git storage (API + HTTP backend)                            |
+| fake-airtable | 4656      | Fake Airtable API (in-memory store)                         |
+| fake-gcs      | 4443      | Fake GCS for the `/upload-patch` flow (in-memory, signatures NOT validated) |
+| server        | 3020      | NestJS API server (monolith mode)                           |
 
 Ports are offset from the defaults so they don't conflict with local dev services.
+
+### /upload-patch smoke test setup
+
+The `/upload-patch` flow used by `scratchmd files upload` and the desktop
+`PublishChangesModal` requires `GCS_PATCH_UPLOAD_BUCKET` configured on the
+server. The smoke stack wires this against `fsouza/fake-gcs-server`:
+
+- `fake-gcs` service serves an in-memory bucket on port 4443.
+- `fake-gcs-bucket-init` is a one-shot curl container that creates the
+  `upload-patches-smoke` bucket once fake-gcs is healthy.
+- `fake-gcs-sa.json` (checked-in fake service-account credentials) is
+  mounted into the server at `/app/fake-gcs-sa.json` so the
+  `@google-cloud/storage` URL signer has a real RSA key to sign with. The
+  signature is never verified — `fake-gcs-server` accepts any V4 URL.
+- The server returns presigned URLs whose host is `fake-gcs:4443` (the
+  in-network DNS name). Local host-side test runs can't resolve that, so
+  `run.sh` exports `FAKE_GCS_HOST_OVERRIDE=localhost:4443` and the test
+  rewrites the URL host before PUT. CI runs leave the override unset
+  because the test-runner container is inside the docker network.
 
 ## Environment Variables
 

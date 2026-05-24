@@ -223,6 +223,20 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('GCS_LOCAL_SIGNING_SA');
   }
 
+  /**
+   * Override the @google-cloud/storage SDK's `apiEndpoint`. Used by the smoke
+   * stack to point the server at a `fake-gcs-server` running on a sibling
+   * container. Unlike `STORAGE_EMULATOR_HOST` (which the SDK reads natively
+   * but strips `/storage/v1` from in the baseUrl), passing the value as a
+   * constructor option keeps the JSON API at `/storage/v1/b/<bucket>/o/<obj>`
+   * for reads while V4-signed URLs still point at the bare `<host>/<bucket>/<obj>`
+   * — both shapes fake-gcs-server natively serves. Unset in prod; ADC + real
+   * GCS take the default `https://storage.googleapis.com`.
+   */
+  getGcsApiEndpoint(): string | undefined {
+    return this.getOptionalEnvVariable('GCS_API_ENDPOINT');
+  }
+
   getUseOpenTelemetryMetrics(): boolean {
     return this.getOptionalFlagVariable('USE_OPENTELEMETRY_METRICS', false);
   }

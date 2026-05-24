@@ -84,6 +84,15 @@ ENV APP_ENV=test
 
 EXPOSE 8080
 
+# Smoke-test artifact: a fake service-account JSON the smoke stack uses to
+# sign V4 URLs against fake-gcs. We bake it into the image (instead of bind-
+# mounting from docker-compose) because GitLab Runner's docker-socket setup
+# can't see paths from the runner's filesystem; bind mounts fail with
+# "mounts denied". In prod, GOOGLE_APPLICATION_CREDENTIALS isn't pointed at
+# this file, so it sits unused — a 2KB taint we accept to keep the smoke
+# stack self-contained and the build context simple.
+COPY ./smoke-tests/fake-gcs-sa.json /app/fake-gcs-sa.json
+
 # Run from server directory so node module resolution works correctly
 WORKDIR /app/server
 CMD [ "dumb-init", "node", "dist/main" ]

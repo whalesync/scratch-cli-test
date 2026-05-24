@@ -43,6 +43,7 @@ export class ObjectStorageService {
     this.patchUploadBucket = patchUploadBucket ?? '';
 
     const projectId = config.getGcsProjectId();
+    const apiEndpoint = config.getGcsApiEndpoint();
     const localSigningSa = config.getGcsLocalSigningServiceAccount();
     if (localSigningSa) {
       // User-ADC dev fallback: `@google-cloud/storage`'s V4 URL signer calls
@@ -65,10 +66,14 @@ export class ObjectStorageService {
       // into an async fn, which Nest doesn't support for providers.
       this.storage = new Storage({
         ...(projectId ? { projectId } : {}),
+        ...(apiEndpoint ? { apiEndpoint } : {}),
         authClient: makeImpersonatedGoogleAuth(localSigningSa, projectId),
       });
     } else {
-      this.storage = new Storage(projectId ? { projectId } : undefined);
+      this.storage = new Storage({
+        ...(projectId ? { projectId } : {}),
+        ...(apiEndpoint ? { apiEndpoint } : {}),
+      });
     }
   }
 

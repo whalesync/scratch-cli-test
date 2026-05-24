@@ -6,6 +6,7 @@
     "test:smoke": "jest --config jest.config.json"
   },
   "dependencies": {
+    "@spinner/shared-types": "1.0.0",
     "@spinner/test-utils": "1.0.0",
     "axios": "*",
     "dotenv": "*"
