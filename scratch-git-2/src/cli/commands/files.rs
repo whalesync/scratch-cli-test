@@ -847,6 +847,30 @@ struct BlockedStaleConnection {
 /// connection or the next phase. Decoupled from `files upload` so the two
 /// concerns — "stage my changes server-side" and "actually publish them" —
 /// can be driven independently (scripting, CI, deferred publishing).
+/// Per-connection outcome of a publish attempt. The publish loop continues
+/// past failures (F8) and post-publish reconcile is non-fatal (F9), so a
+/// multi-connection publish can land any combination of these.
+#[derive(Debug, Clone)]
+enum PublishConnectionOutcome {
+    /// Plan + run succeeded and the post-publish reconcile applied cleanly.
+    Published { name: String },
+    /// Plan + run succeeded server-side, but the post-publish `fetch_origin`
+    /// + local-main advance failed (F9). The publish itself landed; the local
+    /// `refs/heads/main` simply lags until the next pull or publish. We
+    /// surface this as a warning, not a failure — the user's edits made it to
+    /// the server, and `scratchmd files download` recovers the local state.
+    PublishedWithReconcileWarning { name: String, warning: String },
+    /// Plan-job returned no work (server-side diff was empty).
+    NoDiff { name: String },
+    /// Plan-job / run-job / poll failed before the publish landed. `phase`
+    /// identifies which step so callers can show actionable detail.
+    Failed {
+        name: String,
+        phase: &'static str,
+        message: String,
+    },
+}
+
 async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
@@ -880,80 +904,201 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
     let workbook_id = workspace_marker.workbook.id.as_str();
 
     let verbose = !json;
-    let mut published_connections: Vec<String> = Vec::new();
-    let mut skipped_no_diff: Vec<String> = Vec::new();
+    let mut outcomes: Vec<PublishConnectionOutcome> = Vec::with_capacity(contexts.len());
 
     for ctx in &contexts {
         if contexts.len() > 1 && verbose {
             println!("Publishing {}...", ctx.conn_dir_name);
         }
-
-        if verbose {
-            eprint!("  Planning...");
-        }
-        let plan = client
-            .publish_plan_build(workbook_id, &ctx.connection_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("plan-job failed for {}: {e}", ctx.conn_dir_name))?;
-
-        let (plan_job_id, pipeline_id) = match (plan.job_id, plan.pipeline_id) {
-            (Some(job), Some(pipe)) => (job, pipe),
-            _ => {
-                if verbose {
-                    eprintln!(" no changes");
-                }
-                skipped_no_diff.push(ctx.conn_dir_name.clone());
-                continue;
-            }
-        };
-
-        crate::api::poll_job(&client, &plan_job_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("plan-job poll failed for {}: {e}", ctx.conn_dir_name))?;
-        if verbose {
-            eprintln!(" done");
-        }
-
-        if verbose {
-            eprint!("  Running...");
-        }
-        let run = client
-            .publish_plan_run(workbook_id, &pipeline_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("run-job failed for {}: {e}", ctx.conn_dir_name))?;
-        if let Some(run_job_id) = run.job_id.as_deref() {
-            crate::api::poll_job(&client, run_job_id)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("run-job poll failed for {}: {e}", ctx.conn_dir_name)
-                })?;
-        }
-        if verbose {
-            eprintln!(" done");
-        }
-
-        // After a successful run-job, fetch origin and reconcile the local
-        // patch file against the server's view of `main`. Patches whose
-        // outcome actually landed in `main` get dropped by re-anchor's
-        // no-op detection; patches whose connector batch failed silently
-        // (DEV-10175) survive. Replaces a prior unconditional `clear` that
-        // erased the user's accepted edits regardless of connector-level
-        // success.
-        reconcile_accepted_after_publish(ctx, &workspace_dir, &token)?;
-
-        published_connections.push(ctx.conn_dir_name.clone());
+        outcomes.push(
+            publish_single_connection(ctx, &client, workbook_id, &workspace_dir, &token, verbose)
+                .await,
+        );
     }
 
     let elapsed_ms = started.elapsed().as_millis();
+    print_publish_results(&outcomes, elapsed_ms, json)?;
+
+    let failed_count = outcomes
+        .iter()
+        .filter(|o| matches!(o, PublishConnectionOutcome::Failed { .. }))
+        .count();
+    if failed_count > 0 {
+        anyhow::bail!(
+            "{} of {} connection(s) failed to publish.",
+            failed_count,
+            outcomes.len()
+        );
+    }
+    Ok(())
+}
+
+/// Run the plan + run + reconcile sequence for one connection. Translates each
+/// failure into a [`PublishConnectionOutcome`] variant so the caller can
+/// continue with the remaining connections (F8) — never returns an error.
+/// Post-publish reconcile failure becomes a non-fatal warning (F9), since the
+/// publish itself has already landed server-side at that point.
+async fn publish_single_connection(
+    ctx: &ConnectionContext,
+    client: &crate::api::ApiClient,
+    workbook_id: &str,
+    workspace_dir: &Path,
+    token: &str,
+    verbose: bool,
+) -> PublishConnectionOutcome {
+    let name = ctx.conn_dir_name.clone();
+
+    if verbose {
+        eprint!("  Planning...");
+    }
+    let plan = match client
+        .publish_plan_build(workbook_id, &ctx.connection_id)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            if verbose {
+                eprintln!(" failed");
+            }
+            return PublishConnectionOutcome::Failed {
+                name,
+                phase: "plan-job",
+                message: e.to_string(),
+            };
+        }
+    };
+
+    let (plan_job_id, pipeline_id) = match (plan.job_id, plan.pipeline_id) {
+        (Some(job), Some(pipe)) => (job, pipe),
+        _ => {
+            if verbose {
+                eprintln!(" no changes");
+            }
+            return PublishConnectionOutcome::NoDiff { name };
+        }
+    };
+
+    if let Err(e) = crate::api::poll_job(client, &plan_job_id).await {
+        if verbose {
+            eprintln!(" failed");
+        }
+        return PublishConnectionOutcome::Failed {
+            name,
+            phase: "plan-job",
+            message: e.to_string(),
+        };
+    }
+    if verbose {
+        eprintln!(" done");
+        eprint!("  Running...");
+    }
+
+    let run = match client.publish_plan_run(workbook_id, &pipeline_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            if verbose {
+                eprintln!(" failed");
+            }
+            return PublishConnectionOutcome::Failed {
+                name,
+                phase: "run-job",
+                message: e.to_string(),
+            };
+        }
+    };
+    if let Some(run_job_id) = run.job_id.as_deref() {
+        if let Err(e) = crate::api::poll_job(client, run_job_id).await {
+            if verbose {
+                eprintln!(" failed");
+            }
+            return PublishConnectionOutcome::Failed {
+                name,
+                phase: "run-job",
+                message: e.to_string(),
+            };
+        }
+    }
+    if verbose {
+        eprintln!(" done");
+    }
+
+    // After a successful run-job, fetch origin and reconcile the local patch
+    // file against the server's view of `main`. Patches whose outcome
+    // actually landed in `main` get dropped by re-anchor's no-op detection;
+    // patches whose connector batch failed silently (DEV-10175) survive.
+    //
+    // Reconcile failure here does NOT fail the publish (F9): the user's
+    // edits already landed server-side, and the next `scratchmd files
+    // download` (or the next publish, which re-attempts the fetch) recovers
+    // the local state. Surfacing this as a per-connection warning matches
+    // the desktop's fire-and-forget `refreshLocal` policy documented in
+    // `scratch-git-2/docs/PULL_AFTER_PUBLISH.md`.
+    if let Err(e) = reconcile_accepted_after_publish(ctx, workspace_dir, token) {
+        return PublishConnectionOutcome::PublishedWithReconcileWarning {
+            name,
+            warning: format!("post-publish refresh failed: {e}. Run `scratchmd files download` to sync local state."),
+        };
+    }
+
+    PublishConnectionOutcome::Published { name }
+}
+
+/// Render the per-connection publish outcomes to stdout. JSON mode emits the
+/// new structured shape (with `connections`, `failedConnections`, `warnings`)
+/// plus the legacy `publishedConnections` + `skippedNoDiff` keys for
+/// back-compat with `scratch-cli-tests/tests/publish.spec.ts`.
+fn print_publish_results(
+    outcomes: &[PublishConnectionOutcome],
+    elapsed_ms: u128,
+    json: bool,
+) -> anyhow::Result<()> {
+    let mut published: Vec<&str> = Vec::new();
+    let mut skipped_no_diff: Vec<&str> = Vec::new();
+    let mut failed: Vec<&PublishConnectionOutcome> = Vec::new();
+    let mut warnings: Vec<&PublishConnectionOutcome> = Vec::new();
+
+    for outcome in outcomes {
+        match outcome {
+            PublishConnectionOutcome::Published { name } => published.push(name.as_str()),
+            PublishConnectionOutcome::PublishedWithReconcileWarning { name, .. } => {
+                published.push(name.as_str());
+                warnings.push(outcome);
+            }
+            PublishConnectionOutcome::NoDiff { name } => skipped_no_diff.push(name.as_str()),
+            PublishConnectionOutcome::Failed { .. } => failed.push(outcome),
+        }
+    }
+
+    let status = if !failed.is_empty() && published.is_empty() {
+        "failed"
+    } else if !failed.is_empty() {
+        "partial"
+    } else if !published.is_empty() {
+        "published"
+    } else if !skipped_no_diff.is_empty() {
+        "no_diff"
+    } else {
+        "no_changes"
+    };
+
     if json {
+        let connections: Vec<serde_json::Value> =
+            outcomes.iter().map(publish_outcome_to_json).collect();
+        let failed_payload: Vec<serde_json::Value> =
+            failed.iter().map(|o| publish_outcome_to_json(o)).collect();
+        let warning_payload: Vec<serde_json::Value> = warnings
+            .iter()
+            .map(|o| publish_outcome_to_json(o))
+            .collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "status": if published_connections.is_empty() && skipped_no_diff.is_empty() { "no_changes" }
-                          else if published_connections.is_empty() { "no_diff" }
-                          else { "published" },
-                "publishedConnections": published_connections,
+                "status": status,
+                "connections": connections,
+                "publishedConnections": published,
                 "skippedNoDiff": skipped_no_diff,
+                "failedConnections": failed_payload,
+                "warnings": warning_payload,
                 "elapsedMs": elapsed_ms,
             }))?
         );
@@ -961,21 +1106,20 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
     }
 
     let elapsed = format_elapsed(elapsed_ms);
-    if published_connections.is_empty() && skipped_no_diff.is_empty() {
+    if outcomes.is_empty() {
         println!("No connections to publish. ({})", elapsed);
-    } else if published_connections.is_empty() {
+        return Ok(());
+    }
+
+    if published.is_empty() && failed.is_empty() {
         println!(
             "No changes to publish across {} connection(s). ({})",
             skipped_no_diff.len(),
             elapsed
         );
-    } else {
-        println!(
-            "Published {} connection(s). ({})",
-            published_connections.len(),
-            elapsed
-        );
-        for name in &published_connections {
+    } else if failed.is_empty() {
+        println!("Published {} connection(s). ({})", published.len(), elapsed);
+        for name in &published {
             println!("  {}", name);
         }
         if !skipped_no_diff.is_empty() {
@@ -984,8 +1128,76 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
                 skipped_no_diff.len()
             );
         }
+    } else {
+        println!(
+            "Published {} of {} connection(s) with {} failure(s). ({})",
+            published.len(),
+            outcomes.len(),
+            failed.len(),
+            elapsed
+        );
+        if !published.is_empty() {
+            println!("Succeeded:");
+            for name in &published {
+                println!("  {}", name);
+            }
+        }
+        if !skipped_no_diff.is_empty() {
+            println!("No changes:");
+            for name in &skipped_no_diff {
+                println!("  {}", name);
+            }
+        }
+        println!("Failed:");
+        for outcome in &failed {
+            if let PublishConnectionOutcome::Failed {
+                name,
+                phase,
+                message,
+            } = outcome
+            {
+                println!("  {} ({}): {}", name, phase, message);
+            }
+        }
     }
+
+    for outcome in &warnings {
+        if let PublishConnectionOutcome::PublishedWithReconcileWarning { name, warning } = outcome {
+            eprintln!("Warning ({}): {}", name, warning);
+        }
+    }
+
     Ok(())
+}
+
+fn publish_outcome_to_json(outcome: &PublishConnectionOutcome) -> serde_json::Value {
+    match outcome {
+        PublishConnectionOutcome::Published { name } => serde_json::json!({
+            "name": name,
+            "status": "published",
+        }),
+        PublishConnectionOutcome::PublishedWithReconcileWarning { name, warning } => {
+            serde_json::json!({
+                "name": name,
+                "status": "published",
+                "warning": { "phase": "reconcile", "message": warning },
+            })
+        }
+        PublishConnectionOutcome::NoDiff { name } => serde_json::json!({
+            "name": name,
+            "status": "no_diff",
+        }),
+        PublishConnectionOutcome::Failed {
+            name,
+            phase,
+            message,
+        } => serde_json::json!({
+            "name": name,
+            "status": "failed",
+            "phase": phase,
+            "message": message,
+        }),
+    }
 }
 
 /// Group workspace-relative paths by their parent folder and run

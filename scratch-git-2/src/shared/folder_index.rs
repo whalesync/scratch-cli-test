@@ -367,8 +367,6 @@ fn compute_review_bits(
 
 struct FolderPaths {
     working: PathBuf,
-    dirty: PathBuf,
-    master: PathBuf,
 }
 
 fn resolve_folder_paths(workspace: &Path, folder: &str) -> FolderPaths {
@@ -384,33 +382,7 @@ fn resolve_folder_paths(workspace: &Path, folder: &str) -> FolderPaths {
         workspace.join(conn_name).join(sub_path)
     };
 
-    let dirty_base = workspace
-        .join(".scratch")
-        .join("connections")
-        .join("dirty")
-        .join(conn_name);
-    let dirty = if sub_path.is_empty() {
-        dirty_base
-    } else {
-        dirty_base.join(sub_path)
-    };
-
-    let master_base = workspace
-        .join(".scratch")
-        .join("connections")
-        .join("master")
-        .join(conn_name);
-    let master = if sub_path.is_empty() {
-        master_base
-    } else {
-        master_base.join(sub_path)
-    };
-
-    FolderPaths {
-        working,
-        dirty,
-        master,
-    }
+    FolderPaths { working }
 }
 
 /// Returns the path to the `schema.json` file for the given folder.

@@ -65,10 +65,9 @@ The post-publish fetch is best-effort across both code paths. There is no automa
 
 `reconcile_accepted_after_publish` calls `git_ops::fetch_origin` (one shell-out to `git fetch origin +refs/heads/*:refs/remotes/origin/*`, no retry). If the fetch fails:
 
-- The function returns an error up through the per-connection loop.
-- `run_publish` does not retry — it logs the failure and continues with the next connection.
-- The user sees a non-zero exit and the connection-level error message; the patch file stays anchored against the pre-publish `old_main` and the next `files publish` or `files download` will re-attempt the same reconcile.
-- No state on disk is left half-written: `reconcile_accepted_after_publish` does the atomic `save_atomic` of the re-anchored patch file before advancing `refs/heads/main`, so a fetch failure (which happens before any of that) leaves the workspace in its pre-publish state.
+- The function returns an error to `publish_single_connection`, which converts it into a `PublishConnectionOutcome::PublishedWithReconcileWarning`. The publish itself is reported as **succeeded** for that connection — only the local refresh is marked as a non-fatal warning (F9).
+- `run_publish` continues with the remaining connections (F8) and exits non-zero only if a true plan/run failure occurred. A workspace where every connection published but one or more reconciles failed exits **0** with `Warning (<conn>): post-publish refresh failed: …` on stderr; the JSON output carries the same data under `warnings[]` and each connection's `warning.phase = "reconcile"`.
+- No state on disk is left half-written: `reconcile_accepted_after_publish` does the atomic `save_atomic` of the re-anchored patch file before advancing `refs/heads/main`, so a fetch failure (which happens before any of that) leaves the workspace in its pre-publish state — `accepted-patches.json` is still anchored against `old_main` and the next `files publish` or `files download` re-attempts the same reconcile.
 
 ### Desktop: post-publish refresh
 
