@@ -1,5 +1,5 @@
 // scratchmd's three-way merge path was removed in Slice D
-// (docs/plans/2026-05-17-simplify-local-workspace-architecture.md). The
+// (docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md). The
 // service binary still uses `merge_file_contents` for its rebase machinery,
 // so the module stays — but the scratchmd build sees the whole chain as
 // dead. `#![allow(dead_code)]` keeps the warnings off without per-fn noise.

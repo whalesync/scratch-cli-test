@@ -2,7 +2,7 @@
 //! process. Shipped under the local module name `scratchmd-native` (D6) at
 //! `scratch-desktop/Resources/bin/scratchmd-native.<platform>-<arch>[-<abi>].node`
 //! in packaged builds; in dev, the loader resolves the `.node` next to this
-//! crate's `Cargo.toml`. See `docs/plans/2026-05-20-slice-h-spec.md`.
+//! crate's `Cargo.toml`. See `docs/plans/resolved/2026-05-20-slice-h-spec.md`.
 //!
 //! Slice H.2 ships only `acceptField`. The remaining three entry points
 //! (`discardField`, `restoreDeletedRecord`, `discardCreatedRecord`) land in
@@ -48,7 +48,7 @@ impl From<RustReviewOpResult> for ReviewOpResult {
 /// is `"<CODE>: <human description>"`. The desktop's TS shim parses the
 /// `<CODE>` prefix to pattern-match on (in particular, `LOCK_BUSY` must
 /// surface as "another operation in progress" — see
-/// [Lock semantics](../../../docs/plans/2026-05-20-slice-h-spec.md#lock-semantics)).
+/// [Lock semantics](../../../docs/plans/resolved/2026-05-20-slice-h-spec.md#lock-semantics)).
 ///
 /// Why message-prefix and not `err.code`: napi-rs 2.x sets `err.code` to the
 /// `Status` enum name (`GenericFailure` / `InvalidArg`) and offers no way to
@@ -226,7 +226,7 @@ pub async fn read_folder_blobs(
 /// Use this from paginated grid renderers (pass the page's filenames) and
 /// single-record diff views (pass `[filename]`) to bound memory at the page
 /// size instead of loading the entire folder's `(published, approved)`
-/// content. See `docs/plans/2026-05-17-simplify-local-workspace-architecture.md`
+/// content. See `docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`
 /// follow-up D5.
 ///
 /// Same error-prefix convention as `readFolderBlobs`.

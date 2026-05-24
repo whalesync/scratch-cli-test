@@ -147,4 +147,4 @@ It's safe to `cat` and inspect; it's a normal JSON file. Mutating callers acquir
 ## See also
 
 - [REPO_STRUCTURES.md](REPO_STRUCTURES.md) — on-disk layout for CLI workspaces and service-side bare repos.
-- The architecture-change plan at [`docs/plans/2026-05-17-simplify-local-workspace-architecture.md`](../../docs/plans/2026-05-17-simplify-local-workspace-architecture.md) — context for _why_ this model exists (history of the move from a three-worktree model; not a learning resource).
+- The architecture-change plan at [`docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md) — context for _why_ this model exists (history of the move from a three-worktree model; not a learning resource).

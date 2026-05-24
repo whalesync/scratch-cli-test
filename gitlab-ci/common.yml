@@ -18,7 +18,7 @@ image:
 
 .docker_builder_image:
   image:
-    name: unawareguitar/aws-dind:08dd8de0
+    name: unawareguitar/gcp-dind:0cae23fe
     #pull_policy: if-not-present
   variables:
     DOCKER_TLS_CERTDIR: ""

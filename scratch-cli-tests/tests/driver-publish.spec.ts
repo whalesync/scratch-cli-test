@@ -21,7 +21,7 @@ const describeIfPostgres = postgresUrl ? describe : describe.skip;
 // three on-disk locations — `.scratch/connections/master/<conn>/`,
 // `.scratch/connections/dirty/<conn>/`, and the working tree — but the first
 // two no longer exist after the simplification described in
-// docs/plans/2026-05-17-simplify-local-workspace-architecture.md. Review state
+// docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md. Review state
 // is now held in `.scratch/connections/<conn>/accepted-patches.json` and the
 // "published" view comes from `refs/heads/main` in the bare repo, neither of
 // which the driver currently knows how to inspect.

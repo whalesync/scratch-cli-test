@@ -527,7 +527,7 @@ async fn run_download(
     // working-tree edits. All-or-nothing — partial pulls leave the workspace
     // in a confusing mixed state. No fetch happens; the user must
     // `accept-all` or `discard-all` before retrying. See [Slice D in
-    // docs/plans/2026-05-17-simplify-local-workspace-architecture.md].
+    // docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md].
     //
     // Uses the gix::status-backed fast path (~210ms warm per connection vs.
     // multi-second tree walks; mr31's helper) so the courtesy check doesn't

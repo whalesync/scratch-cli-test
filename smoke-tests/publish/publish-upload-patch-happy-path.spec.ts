@@ -12,7 +12,7 @@ import { waitForJob } from "../helpers/wait-for-job";
 /**
  * End-to-end smoke test for the `/upload-patch` publish flow — the CLI/desktop
  * path that replaced `publish-from-git` (see
- * docs/plans/2026-05-17-simplify-local-workspace-architecture.md, Phase 1).
+ * docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md, Phase 1).
  *
  * Mirrors `publish-from-git-happy-path.spec.ts` but drives the new wire shape:
  * `/upload-patch/init` → PUT to the presigned URL → `/upload-patch/commit` →

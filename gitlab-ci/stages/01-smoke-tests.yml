@@ -40,7 +40,7 @@ include:
   # scratch-git-2/Dockerfile COPYs target/release/scratch-git-2 from the repo;
   # build it here so docker compose has a binary in the build context.
   #
-  # This runs in the *job container* (e.g. aws-dind), not on the host — a Rust
+  # This runs in the *job container* (e.g. gcp-dind), not on the host — a Rust
   # install on your laptop is invisible here. The job image may be Alpine (apk)
   # or Debian (apt-get); rustup is installed via curl when cargo is missing.
   before_script:

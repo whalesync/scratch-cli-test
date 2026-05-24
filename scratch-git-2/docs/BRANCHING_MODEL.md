@@ -29,7 +29,7 @@ A file is **unpublished** when it has an entry in `accepted-patches.json`.
 
 ## Pre-Phase-5 model (historical)
 
-Before slice F (2026-05-20), the CLI carried a local `refs/heads/dirty` branch as the "approved" snapshot, with the user's working tree on a sparse worktree of `dirty`. Accept committed working-tree edits onto `dirty`. That branch was retired in favor of `accepted-patches.json` — see the [architecture-change plan](../../docs/plans/2026-05-17-simplify-local-workspace-architecture.md). The server-side `dirty` branch (the publish staging area) is unchanged.
+Before slice F (2026-05-20), the CLI carried a local `refs/heads/dirty` branch as the "approved" snapshot, with the user's working tree on a sparse worktree of `dirty`. Accept committed working-tree edits onto `dirty`. That branch was retired in favor of `accepted-patches.json` — see the [architecture-change plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md). The server-side `dirty` branch (the publish staging area) is unchanged.
 
 ## See also
 

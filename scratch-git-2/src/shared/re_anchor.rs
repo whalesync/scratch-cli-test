@@ -1,7 +1,7 @@
 //! Re-anchor user patches when local `main` advances during pull.
 //!
 //! Phase 4 of the simplify-local-workspace plan (see
-//! `docs/plans/2026-05-17-simplify-local-workspace-architecture.md`).
+//! `docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md`).
 //!
 //! A patch in `working-patches.json` or `accepted-patches.json` describes the
 //! delta from `old_head[path]` (the snapshot the user was editing against) to
