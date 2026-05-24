@@ -14,10 +14,11 @@
 
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { app } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { join, relative, resolve } from 'path';
 import { performance } from 'perf_hooks';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
+import { WORKSPACE_NEEDS_REINIT_CHANNEL, type WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
 import { logCliCommand } from './workspace-logger';
 
 // ── Types ──
@@ -98,6 +99,65 @@ export interface UploadWorkspaceBlockedStale {
  * Error. PublishChangesModal pattern-matches on `status`.
  */
 export type UploadWorkspaceResult = UploadWorkspaceSuccess | UploadWorkspaceBlockedStale;
+
+/**
+ * Shape of the CLI's `workspace_needs_reinit` JSON payload (slice F.1, see
+ * `scratch-git-2/src/cli/commands/files.rs::print_workspace_needs_reinit_result`).
+ * Detected centrally in `runScratchmdCapture` and broadcast over IPC; per-call
+ * surfaces don't need to handle it themselves.
+ */
+interface WorkspaceNeedsReinitPayload {
+  status: 'workspace_needs_reinit';
+  reason: string;
+  affectedConnections: string[];
+  connectionsWithMasterWorktree: string[];
+  connectionsWithSparseCheckout: string[];
+  recommendation?: string;
+}
+
+/**
+ * Human-mode bail text shared by both JSON and non-JSON modes — present on
+ * stderr regardless. Used as a fallback when stdout isn't the JSON payload
+ * (e.g. `runScratchmd` invocations without `--json`).
+ */
+const WORKSPACE_NEEDS_REINIT_MARKER = 'older version of Scratch and needs to be reinitialized';
+
+/** @internal — exported for vitest. */
+export function parseWorkspaceNeedsReinitPayload(stdout: string, stderr = ''): WorkspaceNeedsReinitPayload | null {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      (parsed as { status?: unknown }).status === 'workspace_needs_reinit' &&
+      Array.isArray((parsed as { affectedConnections?: unknown }).affectedConnections)
+    ) {
+      return parsed as WorkspaceNeedsReinitPayload;
+    }
+  } catch {
+    // stdout wasn't JSON — fall through to marker-based detection below.
+  }
+  if (stderr.includes(WORKSPACE_NEEDS_REINIT_MARKER) || stdout.includes(WORKSPACE_NEEDS_REINIT_MARKER)) {
+    return {
+      status: 'workspace_needs_reinit',
+      reason: 'old_layout_pre_slice_f',
+      affectedConnections: [],
+      connectionsWithMasterWorktree: [],
+      connectionsWithSparseCheckout: [],
+    };
+  }
+  return null;
+}
+
+function broadcastWorkspaceNeedsReinit(payload: WorkspaceNeedsReinitPayload, cwd: string | undefined): void {
+  const event: WorkspaceNeedsReinitEvent = {
+    workspacePath: cwd ?? '',
+    affectedConnections: payload.affectedConnections,
+  };
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(WORKSPACE_NEEDS_REINIT_CHANNEL, event);
+  }
+}
 
 interface ScratchmdLiveCommandOptions {
   onExit?: () => void;
@@ -181,6 +241,12 @@ export function runScratchmdCapture(
         durationMs: performance.now() - startedAt,
         errorSummary: exitCode === 0 ? undefined : stderr.trim() || stdout.trim() || undefined,
       });
+      if (exitCode !== 0) {
+        const reinit = parseWorkspaceNeedsReinitPayload(stdout, stderr);
+        if (reinit) {
+          broadcastWorkspaceNeedsReinit(reinit, cwd);
+        }
+      }
       resolve({ stdout, stderr, exitCode });
     });
   });

@@ -10,6 +10,7 @@ import {
   type ConnectionFileChangedEvent,
   type WorkspaceFilesChangedEvent,
 } from '../shared/workspace-file-watch';
+import { WORKSPACE_NEEDS_REINIT_CHANNEL, type WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function invoke(channel: string, ...args: unknown[]): Promise<any> {
@@ -265,6 +266,15 @@ const scratchDesktop = {
     ipcRenderer.on('scratch:grid-progress', listener);
     return () => {
       ipcRenderer.removeListener('scratch:grid-progress', listener);
+    };
+  },
+  onWorkspaceNeedsReinit: (callback: (event: WorkspaceNeedsReinitEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: WorkspaceNeedsReinitEvent): void => {
+      callback(payload);
+    };
+    ipcRenderer.on(WORKSPACE_NEEDS_REINIT_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(WORKSPACE_NEEDS_REINIT_CHANNEL, listener);
     };
   },
 };

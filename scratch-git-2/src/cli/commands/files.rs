@@ -2508,7 +2508,7 @@ fn check_workspace_layout_or_bail(
     }
     print_workspace_needs_reinit_result(&detection, json)?;
     anyhow::bail!(
-        "Workspace was initialized on a pre-slice-F layout — run `scratchmd files publish` to drain any pending edits, then `workspaces unsync` + `workspaces init` to re-initialize."
+        "This workspace was created on an older version of Scratch and needs to be reinitialized."
     );
 }
 
@@ -2528,22 +2528,22 @@ fn print_workspace_needs_reinit_result(
             "affectedConnections": affected,
             "connectionsWithMasterWorktree": detection.connections_with_master_worktree,
             "connectionsWithSparseCheckout": detection.connections_with_sparse_checkout,
-            "recommendation": "Run `scratchmd files publish` to drain any pending edits, then `workspaces unsync` + `workspaces init` to re-initialize.",
+            "recommendation": "Run `scratchmd workspaces init <workbook-id> --force` to reinitialize. Any unpublished edits will be discarded.",
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
-    println!("This workspace was initialized on an older layout that's no longer supported.");
+    println!(
+        "This workspace was created on an older version of Scratch and needs to be reinitialized."
+    );
     println!();
     println!("Affected connection(s):");
     for name in &affected {
         println!("  {name}");
     }
     println!();
-    println!("To recover:");
-    println!("  1. `scratchmd files publish` — drain any pending edits to the server.");
-    println!("  2. `scratchmd workspaces unsync` — remove the local workspace.");
-    println!("  3. `scratchmd workspaces init <workbook-id>` — re-initialize on the new layout.");
+    println!("Run `scratchmd workspaces init <workbook-id> --force` to reinitialize.");
+    println!("Any unpublished edits will be discarded.");
     Ok(())
 }
 

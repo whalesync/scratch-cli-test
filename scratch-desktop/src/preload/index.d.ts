@@ -5,6 +5,7 @@ import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-col
 import type { UpdaterEvent } from '../shared/updater-events';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
 import type { ConnectionFileChangedEvent, WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
+import type { WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
 
 type ScratchCommandEvent =
   | {
@@ -184,6 +185,7 @@ interface ScratchDesktopAPI {
   onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void) => () => void;
   onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void) => () => void;
   onGridProgress: (callback: (line: string) => void) => () => void;
+  onWorkspaceNeedsReinit: (callback: (event: WorkspaceNeedsReinitEvent) => void) => () => void;
   updater: {
     checkNow: () => Promise<void>;
     quitAndInstall: () => Promise<void>;

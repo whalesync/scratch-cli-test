@@ -18,6 +18,7 @@ import { CloudSyncWarningBanner } from './workspace/CloudSyncWarningBanner';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { PullAllModal } from './workspace/PullAllModal';
 import { PullInProgressModal } from './workspace/PullInProgressModal';
+import { ReinitWorkspaceModal } from './workspace/ReinitWorkspaceModal';
 import { WorkspaceContent } from './workspace/WorkspaceContent';
 import { WorkspaceHeader } from './workspace/WorkspaceHeader';
 
@@ -88,6 +89,7 @@ export function WorkspacePage() {
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
+  const [reinitModalOpen, setReinitModalOpen] = useState(false);
   const selectedFolderPath = useWorkspaceUiStore((s) => s.selectedFolderPath);
   const setSelectedFolderPath = useWorkspaceUiStore((s) => s.setSelectedFolderPath);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
@@ -430,6 +432,18 @@ export function WorkspacePage() {
     });
   }, [dataRefreshKey, localPath, watchingEnabled]);
 
+  useEffect(() => {
+    if (!workspaceId) return;
+    const unsubscribe = window.scratchDesktop.onWorkspaceNeedsReinit((event) => {
+      if (localPath && event.workspacePath && event.workspacePath !== localPath) {
+        // Refusal came from a different workspace's CLI call — ignore on this page.
+        return;
+      }
+      setReinitModalOpen(true);
+    });
+    return unsubscribe;
+  }, [workspaceId, localPath]);
+
   // TODO: re-enable problem index preparation
   // useEffect(() => {
   //   if (!localPath || preparedIndexPathRef.current === localPath) return;
@@ -533,6 +547,24 @@ export function WorkspacePage() {
           workbookId={workspace.id}
           localPath={localPath}
           onDataRefresh={handleDataRefresh}
+        />
+      )}
+      {localPath && (
+        <ReinitWorkspaceModal
+          opened={reinitModalOpen}
+          workbookId={workspace.id}
+          localPath={localPath}
+          onClose={() => setReinitModalOpen(false)}
+          onReinitialized={() => {
+            setReinitModalOpen(false);
+            void fetchWorkspace();
+            handleDataRefresh();
+            notifications.show({
+              title: 'Workspace reinitialized',
+              message: 'Your workspace is ready to use again.',
+              color: 'green',
+            });
+          }}
         />
       )}
       <WorkspaceHeader

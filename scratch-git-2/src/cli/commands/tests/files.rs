@@ -2961,8 +2961,8 @@ mod workspace_layout_check {
         let err = check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ true)
             .expect_err("expected check to bail on pre-F layout");
         assert!(
-            err.to_string().contains("pre-slice-F"),
-            "error message should mention pre-slice-F, got: {err}"
+            err.to_string().contains("reinitialized"),
+            "error message should mention reinitialized, got: {err}"
         );
     }
 
@@ -2977,7 +2977,7 @@ mod workspace_layout_check {
 
         let err = check_workspace_layout_or_bail(tmp.path(), &marker, /*json=*/ false)
             .expect_err("expected check to bail on pre-F sparse-checkout");
-        assert!(err.to_string().contains("pre-slice-F"));
+        assert!(err.to_string().contains("reinitialized"));
     }
 
     #[test]
