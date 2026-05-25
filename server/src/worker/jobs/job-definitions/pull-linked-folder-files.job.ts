@@ -835,7 +835,23 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const folderId = dataFolder.id;
 
     const pulledPaths = new Set<string>();
-    const usedFileNames = new Set<string>();
+    // Seed the dedup conflict set with every filename already indexed for this
+    // folder. Without this, a new record whose suggested filename matches an
+    // existing record's prior filename can silently clobber it: the new record
+    // claims the bare name (its existing twin isn't in the per-batch
+    // existingFileNames lookup unless it happens to be in the same batch), and
+    // both end up staging to the same path — last write wins, one record vanishes.
+    //
+    // The conceptually cleaner fix is to defer all naming to Phase 2. Phase 1
+    // would stage by recordId (collision-free by construction); Phase 2, which
+    // already re-parses every staged file, would assign human-friendly names
+    // with full visibility into every recordId in the pull and rename before
+    // commit. That's a larger refactor — this seed patches the symptom while
+    // keeping Phase 1's naming responsibility intact.
+    const folderPathForIndex = dataFolder.path?.replace(/^\//, '') ?? '';
+    const usedFileNames = new Set<string>(
+      await this.fileIndexService.listFilenamesForFolder(dataFolder.workbookId, folderPathForIndex),
+    );
     let fileCount = 0;
 
     const resumeProgress = params.resumeProgress;

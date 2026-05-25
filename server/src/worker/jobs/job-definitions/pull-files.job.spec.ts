@@ -93,6 +93,7 @@ describe('PullFilesJobHandler', () => {
     mockFileIndexService = {
       getRecordIds: jest.fn(),
       getFilenamesByRecordIds: jest.fn(),
+      listFilenamesForFolder: jest.fn().mockResolvedValue([]),
       upsertBatch: jest.fn(),
     } as unknown as jest.Mocked<FileIndexService>;
 

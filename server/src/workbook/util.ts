@@ -85,19 +85,19 @@ export function resolveBaseFileName(options: {
 /**
  * Ensures a filename is unique within a set of existing names.
  * If the candidate collides, appends the record's ID as a deterministic suffix.
- * Adds the final name to the existingNames set.
+ * Adds the final name to the usedFileNames set.
  */
 export function deduplicateFileName(
   baseName: string,
   extension: string,
-  existingNames: Set<string>,
+  usedFileNames: Set<string>,
   recordId: string,
 ): string {
   let candidate = baseName + extension;
-  if (existingNames.has(candidate)) {
+  if (usedFileNames.has(candidate)) {
     candidate = `${baseName}-${recordId}${extension}`;
   }
-  existingNames.add(candidate);
+  usedFileNames.add(candidate);
   return candidate;
 }
 

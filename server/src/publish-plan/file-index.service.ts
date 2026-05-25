@@ -169,6 +169,20 @@ export class FileIndexService {
     return map;
   }
 
+  /**
+   * Return every filename currently indexed for the folder. Used by pull jobs
+   * to seed the dedup conflict set at the start of a pull so a new record's
+   * suggested filename can't silently clobber another record's prior filename.
+   * Backed by the @@index([workbookId, folderPath, filename]) on FileIndex.
+   */
+  async listFilenamesForFolder(workbookId: string, folderPath: string): Promise<string[]> {
+    const entries = await this.db.client.fileIndex.findMany({
+      where: { workbookId, folderPath },
+      select: { filename: true },
+    });
+    return entries.map((e) => e.filename);
+  }
+
   async removeAll(workbookId: string, folderPath: string): Promise<void> {
     await this.db.client.fileIndex.deleteMany({
       where: { workbookId, folderPath },

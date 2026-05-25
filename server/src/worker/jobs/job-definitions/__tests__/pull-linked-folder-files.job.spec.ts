@@ -158,6 +158,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
     mockFileIndexService = {
       getFilenamesByRecordIds: jest.fn().mockResolvedValue(new Map()),
+      listFilenamesForFolder: jest.fn().mockResolvedValue([]),
       upsertBatch: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<FileIndexService>;
 
@@ -370,6 +371,54 @@ describe('PullLinkedFolderFilesJobHandler', () => {
           expect.arrayContaining([
             expect.objectContaining({
               path: 'test-product.json', // NOT "Products/test-product.json"
+            }),
+          ]),
+        );
+      });
+    });
+
+    describe('Phase 1 filename dedup seeding', () => {
+      it('seeds usedFileNames from listFilenamesForFolder so a new record can’t clobber an existing one’s prior filename', async () => {
+        // Regression for the data-loss bug: a new record whose suggested
+        // filename matched another (not-in-this-batch) record's prior filename
+        // would claim the bare name and clobber that record at stage time.
+        // The fix seeds usedFileNames from FileIndexService.listFilenamesForFolder
+        // before any batch runs. This test pins the wiring end-to-end.
+        const { mockConnector, params } = setupStandardMocks();
+
+        // Simulate a previously-pulled record already occupying "john-smith.json"
+        // that does NOT appear in this pull's batch (the bug condition).
+        (mockFileIndexService.listFilenamesForFolder as jest.Mock).mockResolvedValue(['john-smith.json']);
+
+        // The new record has the same suggested slug. Without the seed, it
+        // would stage to "john-smith.json" and silently overwrite the existing
+        // record's file. With the seed, dedup pushes it to the suffixed form.
+        mockConnector.pullRecordFiles.mockImplementation(async (_spec: BaseJsonTableSpec, callback: PullCallback) => {
+          await callback({
+            files: [{ id: 'recNew', slug: 'john-smith', title: 'John Smith' }],
+            connectorProgress: {},
+          });
+        });
+
+        (mockScratchGitService.readStagedFiles as jest.Mock).mockResolvedValue({ files: [], remaining: 0 });
+        (mockScratchGitService.commitStagedFiles as jest.Mock).mockResolvedValue({
+          committed: 0,
+          remaining: 0,
+          created: [],
+          updated: [],
+          unchanged: [],
+        });
+
+        await handler.run(params);
+
+        expect(mockFileIndexService.listFilenamesForFolder).toHaveBeenCalledWith('wkb_123', 'Products');
+
+        expect(mockScratchGitService.stageFiles).toHaveBeenCalledWith(
+          'test-job-id',
+          'Products',
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: 'john-smith-recNew.json', // NOT "john-smith.json"
             }),
           ]),
         );
