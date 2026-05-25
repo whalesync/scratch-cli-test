@@ -145,4 +145,81 @@ describe('buildColumnDefinitions — edge cases', () => {
     expect(byId(columns, 'name').attributes.required).toBe(true);
     expect(byId(columns, 'active').attributes.required).toBe(false);
   });
+
+  it('recurses into anyOf-wrapped objects (nullable containers) when no x-scratch metadata', () => {
+    const columns = buildColumnDefinitions({
+      schema: {
+        type: 'object',
+        properties: {
+          seo: {
+            anyOf: [
+              {
+                type: 'object',
+                properties: {
+                  title: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+                  description: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+                },
+              },
+              { type: 'null' },
+            ],
+          },
+        },
+      },
+    });
+    expect(columns.map((c) => c.id)).toEqual(['seo.title', 'seo.description']);
+    expect(columns[0].attributes.nested).toBe(true);
+    expect(columns[0].dataType).toBe('string');
+    expect(columns[1].attributes.nested).toBe(true);
+    expect(columns[1].dataType).toBe('string');
+  });
+
+  it('does NOT recurse into anyOf-wrapped objects when x-scratch metadata is present', () => {
+    const columns = buildColumnDefinitions({
+      schema: {
+        type: 'object',
+        properties: {
+          category: {
+            anyOf: [
+              {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  name: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+                },
+              },
+              { type: 'null' },
+            ],
+            'x-scratch-readonly': true,
+          },
+        },
+      },
+    });
+    expect(columns.map((c) => c.id)).toEqual(['category']);
+    expect(columns[0].dataType).toBe('object');
+    expect(columns[0].attributes.readOnly).toBe(true);
+    expect(columns[0].attributes.nested).toBe(false);
+  });
+
+  it('recurses into oneOf-wrapped objects the same as anyOf', () => {
+    const columns = buildColumnDefinitions({
+      schema: {
+        type: 'object',
+        properties: {
+          meta: {
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  value: { type: 'string' },
+                },
+              },
+              { type: 'null' },
+            ],
+          },
+        },
+      },
+    });
+    expect(columns.map((c) => c.id)).toEqual(['meta.key', 'meta.value']);
+  });
 });

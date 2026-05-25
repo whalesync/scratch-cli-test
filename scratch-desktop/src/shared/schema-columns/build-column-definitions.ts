@@ -122,6 +122,27 @@ export function buildColumnDefinitions(wrapper: unknown): ColumnDefinition[] {
   return walkProperties(inner, '');
 }
 
+/**
+ * When a property is `anyOf: [{ type: 'object', properties: {...} }, { type: 'null' }]`
+ * (the nullable-object pattern used by Shopify, etc.), the inner `properties` live on the
+ * non-null union member, not on the outer property. This helper resolves that member so
+ * `walkProperties` can recurse into it.
+ */
+function resolveObjectMember(prop: Record<string, unknown>): Record<string, unknown> | undefined {
+  for (const unionKey of ['anyOf', 'oneOf'] as const) {
+    const union = prop[unionKey];
+    if (!Array.isArray(union)) continue;
+    for (const member of union) {
+      if (!isPlainObject(member)) continue;
+      if (member.type === 'null') continue;
+      if (member.type === 'object' && isPlainObject(member.properties)) {
+        return member;
+      }
+    }
+  }
+  return undefined;
+}
+
 function walkProperties(schema: Record<string, unknown>, prefix: string): ColumnDefinition[] {
   const properties = schema.properties;
   if (!isPlainObject(properties)) return [];
@@ -136,11 +157,22 @@ function walkProperties(schema: Record<string, unknown>, prefix: string): Column
     if (!isPlainObject(rawProp)) continue;
     const id = prefix ? `${prefix}.${key}` : key;
     const effective = resolveEffectiveType(rawProp);
-    const isContainer =
-      effective.dataType === 'object' && isPlainObject(rawProp.properties) && !hasXScratchExtension(rawProp);
 
-    if (isContainer) {
+    // Check for a container object — either direct properties on the prop, or
+    // properties inside an anyOf/oneOf member (nullable-object pattern).
+    const directContainer =
+      effective.dataType === 'object' && isPlainObject(rawProp.properties) && !hasXScratchExtension(rawProp);
+    const unionMember =
+      !directContainer && effective.dataType === 'object' && !hasXScratchExtension(rawProp)
+        ? resolveObjectMember(rawProp)
+        : undefined;
+
+    if (directContainer) {
       results.push(...walkProperties(rawProp, id));
+      continue;
+    }
+    if (unionMember) {
+      results.push(...walkProperties(unionMember, id));
       continue;
     }
 

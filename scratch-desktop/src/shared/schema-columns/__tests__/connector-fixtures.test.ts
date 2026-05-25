@@ -176,18 +176,36 @@ describe('buildColumnDefinitions — moco contacts', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shopify — covers object-inside-anyOf (nullable object), many flat leaves.
+// Shopify — covers object-inside-anyOf (nullable object), many flat leaves,
+// and recursion into anyOf-wrapped objects without x-scratch metadata (seo).
 // ─────────────────────────────────────────────────────────────────────────────
 describe('buildColumnDefinitions — shopify products', () => {
   const columns = buildColumnDefinitions(loadFixture('shopify-products.schema.json'));
 
-  it('emits a flat list of leaf columns — no recursion into anyOf-wrapped objects', () => {
-    expect(columns).toHaveLength(48);
+  it('emits leaf columns, recursing into anyOf-wrapped objects without x-scratch metadata', () => {
+    // 48 original leaves − 1 (seo removed) + 2 (seo.description, seo.title added) = 49
+    expect(columns).toHaveLength(49);
   });
 
-  it('never generates dot-paths for nullable-object fields', () => {
-    const dottedIds = columns.map((c) => c.id).filter((id) => id.includes('.'));
-    expect(dottedIds).toEqual([]);
+  it('recurses into anyOf-wrapped objects without x-scratch metadata (seo)', () => {
+    const ids = columns.map((c) => c.id);
+    expect(ids).toContain('seo.description');
+    expect(ids).toContain('seo.title');
+    expect(ids).not.toContain('seo');
+  });
+
+  it('marks recursed anyOf-wrapped sub-fields as nested', () => {
+    expect(byId(columns, 'seo.description').attributes.nested).toBe(true);
+    expect(byId(columns, 'seo.title').attributes.nested).toBe(true);
+  });
+
+  it('does not recurse into anyOf-wrapped objects with x-scratch-readonly', () => {
+    const ids = columns.map((c) => c.id);
+    // category, featuredImage, etc. carry x-scratch-readonly and must stay as leaves
+    expect(ids).toContain('category');
+    expect(ids).not.toContain('category.id');
+    expect(ids).toContain('featuredImage');
+    expect(ids).not.toContain('featuredImage.id');
   });
 
   it('preserves schema declaration order for the first and last few columns', () => {
@@ -202,10 +220,11 @@ describe('buildColumnDefinitions — shopify products', () => {
     expect(ids.slice(-5)).toEqual(['totalVariants', 'tracksInventory', 'updatedAt', 'variantsCount', 'vendor']);
   });
 
-  it('resolves a nullable object (anyOf [object, null]) to dataType object', () => {
+  it('resolves a readonly nullable object (anyOf [object, null]) to dataType object', () => {
     const category = byId(columns, 'category');
     expect(category.dataType).toBe('object');
     expect(category.attributes.nested).toBe(false);
+    expect(category.attributes.readOnly).toBe(true);
     expect(category.format).toBeUndefined();
   });
 
@@ -226,7 +245,7 @@ describe('buildColumnDefinitions — shopify products', () => {
 
   it('leaves attributes.readOnly false when no x-scratch-readonly flag is present', () => {
     expect(byId(columns, 'id').attributes.readOnly).toBe(false);
-    expect(byId(columns, 'category').attributes.readOnly).toBe(false);
+    expect(byId(columns, 'seo.title').attributes.readOnly).toBe(false);
   });
 });
 
