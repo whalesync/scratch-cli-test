@@ -1,0 +1,1019 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures the v3 fetchJsonTableSpec shape as the upgrade contract 1`] = `
+{
+  "basePath": [],
+  "defaultView": {
+    "cols": [
+      {
+        "kind": "col",
+        "name": "Name",
+        "path": "properties.Name",
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Estimate",
+        "path": "properties.Estimate",
+      },
+      {
+        "kind": "col",
+        "name": "Link",
+        "path": "properties.Link",
+      },
+      {
+        "kind": "col",
+        "name": "Status",
+        "path": "properties.Status",
+      },
+      {
+        "kind": "col",
+        "name": "Linked Count",
+        "path": "properties.Linked Count",
+        "readonly": true,
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Due Date",
+        "path": "properties.Due Date",
+      },
+      {
+        "kind": "col",
+        "name": "Owner Email",
+        "path": "properties.Owner Email",
+      },
+      {
+        "kind": "col",
+        "name": "Done",
+        "path": "properties.Done",
+        "type": "checkbox",
+      },
+      {
+        "kind": "col",
+        "name": "Tags",
+        "path": "properties.Tags",
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Attachments",
+        "path": "properties.Attachments",
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Score",
+        "path": "properties.Score",
+      },
+      {
+        "kind": "col",
+        "name": "Priority",
+        "path": "properties.Priority",
+      },
+      {
+        "kind": "col",
+        "name": "Linked Items",
+        "path": "properties.Linked Items",
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Description",
+        "path": "properties.Description",
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Id",
+        "path": "id",
+      },
+      {
+        "kind": "col",
+        "name": "Url",
+        "path": "url",
+        "type": "url",
+      },
+      {
+        "kind": "col",
+        "name": "Created Time",
+        "path": "created_time",
+        "type": "date",
+      },
+      {
+        "kind": "col",
+        "name": "Last Edited Time",
+        "path": "last_edited_time",
+        "type": "date",
+      },
+      {
+        "kind": "col",
+        "name": "Created By",
+        "path": "created_by",
+        "selectedSubfield": 0,
+        "subfields": [
+          {
+            "name": "Id",
+            "relativePath": "id",
+            "type": "string",
+          },
+        ],
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Last Edited By",
+        "path": "last_edited_by",
+        "selectedSubfield": 0,
+        "subfields": [
+          {
+            "name": "Id",
+            "relativePath": "id",
+            "type": "string",
+          },
+        ],
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Archived",
+        "path": "archived",
+        "type": "checkbox",
+      },
+      {
+        "kind": "col",
+        "name": "Cover",
+        "path": "cover",
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Icon",
+        "path": "icon",
+        "type": "object",
+      },
+      {
+        "kind": "col",
+        "name": "Page Content",
+        "path": "page_content",
+        "type": "object",
+      },
+      {
+        "hidden": true,
+        "kind": "col",
+        "name": "Object",
+        "path": "object",
+      },
+      {
+        "hidden": true,
+        "kind": "col",
+        "name": "Parent",
+        "path": "parent",
+        "selectedSubfield": 0,
+        "subfields": [
+          {
+            "name": "Database Id",
+            "relativePath": "database_id",
+            "type": "string",
+          },
+        ],
+        "type": "object",
+      },
+      {
+        "hidden": true,
+        "kind": "col",
+        "name": "In Trash",
+        "path": "in_trash",
+        "type": "checkbox",
+      },
+      {
+        "hidden": true,
+        "kind": "col",
+        "name": "Public Url",
+        "path": "public_url",
+        "type": "object",
+      },
+    ],
+    "name": "Default",
+  },
+  "id": {
+    "remoteId": [
+      "36b81e58-1794-80d8-89a4-d65d5dd08119",
+    ],
+    "wsId": "scratch_integration_test",
+  },
+  "idColumnRemoteId": "id",
+  "name": "scratch_integration_test",
+  "schema": {
+    "$id": "notion/36b81e58-1794-80d8-89a4-d65d5dd08119",
+    "properties": {
+      "archived": {
+        "description": "Is page archived",
+        "type": "boolean",
+      },
+      "cover": {
+        "anyOf": [
+          {
+            "properties": {
+              "external": {
+                "properties": {
+                  "url": {
+                    "format": "uri",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "url",
+                ],
+                "type": "object",
+              },
+              "type": {
+                "const": "external",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "external",
+            ],
+            "type": "object",
+          },
+          {
+            "properties": {
+              "file": {
+                "properties": {
+                  "expiry_time": {
+                    "type": "string",
+                  },
+                  "url": {
+                    "format": "uri",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "url",
+                  "expiry_time",
+                ],
+                "type": "object",
+              },
+              "type": {
+                "const": "file",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "file",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+        "x-scratch-asset-field": {
+          "idPath": null,
+          "urlExpires": true,
+        },
+      },
+      "created_by": {
+        "description": "User who created the page",
+        "properties": {
+          "id": {
+            "type": "string",
+          },
+          "object": {
+            "const": "user",
+            "type": "string",
+          },
+        },
+        "required": [
+          "object",
+          "id",
+        ],
+        "type": "object",
+      },
+      "created_time": {
+        "description": "Page creation time",
+        "format": "date-time",
+        "type": "string",
+      },
+      "icon": {
+        "anyOf": [
+          {
+            "properties": {
+              "emoji": {
+                "type": "string",
+              },
+              "type": {
+                "const": "emoji",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "emoji",
+            ],
+            "type": "object",
+          },
+          {
+            "properties": {
+              "external": {
+                "properties": {
+                  "url": {
+                    "format": "uri",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "url",
+                ],
+                "type": "object",
+              },
+              "type": {
+                "const": "external",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "external",
+            ],
+            "type": "object",
+          },
+          {
+            "properties": {
+              "file": {
+                "properties": {
+                  "expiry_time": {
+                    "type": "string",
+                  },
+                  "url": {
+                    "format": "uri",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "url",
+                  "expiry_time",
+                ],
+                "type": "object",
+              },
+              "type": {
+                "const": "file",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "file",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+        "x-scratch-asset-field": {
+          "idPath": null,
+          "urlExpires": true,
+        },
+      },
+      "id": {
+        "description": "Unique page identifier",
+        "type": "string",
+      },
+      "in_trash": {
+        "description": "Is page in trash",
+        "type": "boolean",
+      },
+      "last_edited_by": {
+        "description": "User who last edited the page",
+        "properties": {
+          "id": {
+            "type": "string",
+          },
+          "object": {
+            "const": "user",
+            "type": "string",
+          },
+        },
+        "required": [
+          "object",
+          "id",
+        ],
+        "type": "object",
+      },
+      "last_edited_time": {
+        "description": "Last edit time",
+        "format": "date-time",
+        "type": "string",
+        "x-scratch-last-modified-field": true,
+      },
+      "object": {
+        "const": "page",
+        "description": "Object type",
+        "type": "string",
+      },
+      "page_content": {
+        "description": "Page body content (Notion blocks)",
+        "items": {},
+        "type": "array",
+        "x-scratch-readonly": true,
+        "x-scratch-suggested-transformer": {
+          "type": "notion_to_html",
+        },
+      },
+      "parent": {
+        "description": "Parent database reference",
+        "properties": {
+          "database_id": {
+            "type": "string",
+          },
+          "type": {
+            "const": "database_id",
+            "type": "string",
+          },
+        },
+        "required": [
+          "type",
+          "database_id",
+        ],
+        "type": "object",
+      },
+      "properties": {
+        "description": "Page properties",
+        "properties": {
+          "Attachments": {
+            "description": "Attachments",
+            "items": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "external": {
+                      "properties": {
+                        "url": {
+                          "format": "uri",
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "url",
+                      ],
+                      "type": "object",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "type": {
+                      "const": "external",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "external",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "properties": {
+                    "file": {
+                      "properties": {
+                        "expiry_time": {
+                          "type": "string",
+                        },
+                        "url": {
+                          "format": "uri",
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "url",
+                        "expiry_time",
+                      ],
+                      "type": "object",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                    "type": {
+                      "const": "file",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "file",
+                  ],
+                  "type": "object",
+                },
+              ],
+            },
+            "type": "array",
+            "x-scratch-asset-field": {
+              "idPath": null,
+              "urlExpires": true,
+            },
+            "x-scratch-connector-data-type": "files",
+            "x-scratch-remote-field-id": "%60GG%5C",
+            "x-scratch-virtual-fields": [
+              {
+                "displayLabel": "Attachments",
+                "suggestedTransformer": {
+                  "options": {
+                    "arrayHandling": "array",
+                  },
+                  "type": "notion_file_url",
+                },
+                "type": "string",
+              },
+            ],
+          },
+          "Description": {
+            "description": "Description",
+            "items": {
+              "properties": {
+                "href": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "plain_text": {
+                  "type": "string",
+                },
+                "text": {
+                  "properties": {
+                    "content": {
+                      "type": "string",
+                    },
+                    "link": {},
+                  },
+                  "required": [
+                    "content",
+                  ],
+                  "type": "object",
+                },
+                "type": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "type",
+                "plain_text",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+            "x-scratch-connector-data-type": "rich_text",
+            "x-scratch-remote-field-id": "~Uxu",
+          },
+          "Done": {
+            "description": "Done",
+            "type": "boolean",
+            "x-scratch-connector-data-type": "checkbox",
+            "x-scratch-remote-field-id": "%5BK%7BH",
+          },
+          "Due Date": {
+            "anyOf": [
+              {
+                "properties": {
+                  "end": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "start": {
+                    "format": "date-time",
+                    "type": "string",
+                  },
+                  "time_zone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                },
+                "required": [
+                  "start",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+            "description": "Due Date",
+            "x-scratch-connector-data-type": "date",
+            "x-scratch-remote-field-id": "QHsk",
+          },
+          "Estimate": {
+            "anyOf": [
+              {
+                "type": "number",
+              },
+              {
+                "type": "null",
+              },
+            ],
+            "description": "Estimate",
+            "x-scratch-connector-data-type": "number",
+            "x-scratch-remote-field-id": "D%3A%3EQ",
+          },
+          "Link": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+            "description": "Link",
+            "x-scratch-connector-data-type": "url",
+            "x-scratch-remote-field-id": "IlY%60",
+          },
+          "Linked Count": {
+            "description": "Linked Count",
+            "properties": {
+              "array": {
+                "items": {},
+                "type": "array",
+              },
+              "date": {},
+              "function": {
+                "type": "string",
+              },
+              "number": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "type": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "function",
+            ],
+            "type": "object",
+            "x-scratch-connector-data-type": "rollup",
+            "x-scratch-readonly": true,
+            "x-scratch-remote-field-id": "J%40iC",
+          },
+          "Linked Items": {
+            "description": "Linked Items",
+            "properties": {
+              "id": {
+                "type": "string",
+              },
+              "relation": {
+                "items": {
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+                "x-scratch-foreign-key": {
+                  "linkedTableId": "36b81e58-1794-808e-ad29-d981a07c2ab3",
+                  "map": "id",
+                },
+              },
+            },
+            "required": [
+              "id",
+              "relation",
+            ],
+            "type": "object",
+            "x-scratch-connector-data-type": "relation",
+            "x-scratch-remote-field-id": "%7DeDv",
+          },
+          "Name": {
+            "description": "Name",
+            "items": {
+              "properties": {
+                "href": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "plain_text": {
+                  "type": "string",
+                },
+                "text": {
+                  "properties": {
+                    "content": {
+                      "type": "string",
+                    },
+                    "link": {},
+                  },
+                  "required": [
+                    "content",
+                  ],
+                  "type": "object",
+                },
+                "type": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "type",
+                "plain_text",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+            "x-scratch-connector-data-type": "title",
+            "x-scratch-remote-field-id": "title",
+            "x-scratch-virtual-fields": [
+              {
+                "displayLabel": "Name",
+                "suggestedTransformer": {
+                  "options": {
+                    "arrayHandling": "concat",
+                    "expression": "$.title[*].plain_text",
+                  },
+                  "type": "jsonpath",
+                },
+                "type": "string",
+              },
+            ],
+          },
+          "Owner Email": {
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string",
+              },
+              {
+                "type": "null",
+              },
+            ],
+            "description": "Owner Email",
+            "x-scratch-connector-data-type": "email",
+            "x-scratch-remote-field-id": "RD%5D%3E",
+          },
+          "Priority": {
+            "anyOf": [
+              {
+                "properties": {
+                  "color": {
+                    "type": "string",
+                  },
+                  "id": {
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "color",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+            "description": "Priority",
+            "x-scratch-connector-data-type": "select",
+            "x-scratch-remote-field-id": "uHj%7B",
+          },
+          "Score": {
+            "anyOf": [
+              {
+                "properties": {
+                  "string": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "type": {
+                    "const": "string",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "type",
+                  "string",
+                ],
+                "type": "object",
+              },
+              {
+                "properties": {
+                  "number": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "type": {
+                    "const": "number",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "type",
+                  "number",
+                ],
+                "type": "object",
+              },
+              {
+                "properties": {
+                  "boolean": {
+                    "type": "boolean",
+                  },
+                  "type": {
+                    "const": "boolean",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "type",
+                  "boolean",
+                ],
+                "type": "object",
+              },
+              {
+                "properties": {
+                  "date": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "end": {
+                            "type": "string",
+                          },
+                          "start": {
+                            "type": "string",
+                          },
+                        },
+                        "required": [
+                          "start",
+                        ],
+                        "type": "object",
+                      },
+                      {
+                        "type": "null",
+                      },
+                    ],
+                  },
+                  "type": {
+                    "const": "date",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "type",
+                  "date",
+                ],
+                "type": "object",
+              },
+            ],
+            "description": "Score",
+            "x-scratch-connector-data-type": "formula",
+            "x-scratch-readonly": true,
+            "x-scratch-remote-field-id": "ii%3Eo",
+          },
+          "Status": {
+            "anyOf": [
+              {
+                "properties": {
+                  "color": {
+                    "type": "string",
+                  },
+                  "id": {
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "color",
+                ],
+                "type": "object",
+              },
+              {
+                "type": "null",
+              },
+            ],
+            "description": "Status",
+            "x-scratch-connector-data-type": "status",
+            "x-scratch-remote-field-id": "InW%7B",
+          },
+          "Tags": {
+            "description": "Tags",
+            "items": {
+              "properties": {
+                "color": {
+                  "type": "string",
+                },
+                "id": {
+                  "type": "string",
+                },
+                "name": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "name",
+                "color",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+            "x-scratch-connector-data-type": "multi_select",
+            "x-scratch-remote-field-id": "_Ru_",
+          },
+        },
+        "type": "object",
+      },
+      "public_url": {
+        "anyOf": [
+          {
+            "format": "uri",
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "url": {
+        "description": "Page URL",
+        "format": "uri",
+        "type": "string",
+      },
+    },
+    "required": [
+      "object",
+      "id",
+      "created_time",
+      "last_edited_time",
+      "created_by",
+      "last_edited_by",
+      "parent",
+      "archived",
+      "properties",
+      "url",
+    ],
+    "title": "Scratch Integration Test",
+    "type": "object",
+  },
+  "slug": "scratch_integration_test",
+  "titleColumnRemoteId": [
+    "properties",
+    "Name",
+  ],
+}
+`;

@@ -15,6 +15,8 @@ environment tests for test env post-deploy:
     INTEGRATION_TEST_CLIENT_DOMAIN: "test.scratch.md"
     INTEGRATION_TEST_API_DOMAIN: "test-api.scratch.md"
     INTEGRATION_TEST_USER_ID: user_35RRk1ww8PJ4g0TfVfxbeU5iFJz
+    # Turns on Notion integration tests.
+    NOTION_API_KEY: "${INTEGRATION_TEST_NOTION_API_KEY}"
   script:
     - cd server
     - !reference [.use_nvm, script]
@@ -27,8 +29,7 @@ environment tests for test env post-deploy:
       junit: "server/junit.xml"
     expire_in: 1 week
   rules:
-    # - !reference [.rules, on_merge_to_master]
-    - when: never
+    - !reference [.rules, on_merge_to_master]
 
 environment tests for test env pre-deploy:
   stage: pre-deploy environment tests
@@ -52,20 +53,19 @@ environment tests for test env pre-deploy:
   rules:
     # - !reference [.rules, on_merge_to_prod]
     - when: never
-# notify slack on environment test failure test env post-deploy:
-#   stage: post-deploy environment tests
-#   needs:
-#     - environment tests for test env post-deploy
-#   dependencies: []
-#   script:
-#     - |
-#       curl -X POST -H 'Content-type: application/json' \
-#       --data "{\"text\":\"❌ Integration tests for Scratch failed - Test\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
-#       ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
-#   rules:
-#     - !reference [.rules, on_merge_to_master]
-#   when: on_failure
-
+notify slack on environment test failure test env post-deploy:
+  stage: post-deploy environment tests
+  needs:
+    - environment tests for test env post-deploy
+  dependencies: []
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"❌ Integration tests for Scratch failed - Test\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
+      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
+  rules:
+    - !reference [.rules, on_merge_to_master]
+  when: on_failure
 # notify slack on environment test failure test env pre-deploy:
 #   stage: pre-deploy environment tests
 #   needs:
