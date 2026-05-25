@@ -10,7 +10,14 @@ environment tests for test env post-deploy:
   stage: post-deploy environment tests
   interruptible: false
   resource_group: test
+  services:
+    - name: postgres:16
+      alias: postgres
   variables:
+    POSTGRES_DB: scratchpaper
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/scratchpaper"
     CLERK_SECRET_KEY: "${CLERK_SECRET_KEY_DEVELOPMENT}"
     INTEGRATION_TEST_CLIENT_DOMAIN: "test.scratch.md"
     INTEGRATION_TEST_API_DOMAIN: "test-api.scratch.md"
@@ -21,6 +28,7 @@ environment tests for test env post-deploy:
     - !reference [.build_shared_types, script]
     - cd server
     - !reference [.use_nvm, script]
+    - yarn run migrate
     - yarn run test:integration --verbose --reporters=default --reporters=jest-junit
   cache: !reference [.caches, server]
   dependencies: []
