@@ -18,6 +18,7 @@ environment tests for test env post-deploy:
     # Turns on Notion integration tests.
     NOTION_API_KEY: "${INTEGRATION_TEST_NOTION_API_KEY}"
   script:
+    - !reference [.build_shared_types, script]
     - cd server
     - !reference [.use_nvm, script]
     - yarn run test:integration --verbose --reporters=default --reporters=jest-junit
