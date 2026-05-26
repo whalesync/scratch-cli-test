@@ -173,15 +173,21 @@ This phase is also where we **add a snapshot/baseline** of the v3 `fetchJsonTabl
 
 Goal: get every existing Notion DataFolder to carry its `data_source_id` as `remoteId[1]`, while the connector still uses `remoteId[0]` (the database id) for all queries. Reversible: no behavior changes yet.
 
-1. Add a script (or one-off migration command) that:
-   - Enumerates Notion DataFolders (`connector_service = 'notion'`)
-   - Calls `client.databases.retrieve({ database_id: remoteId[0] })` using the v3 SDK with `Notion-Version` set to `2025-09-03` via `Client({ auth, notionVersion: '2025-09-03' })` (v3 supports `notionVersion`; the legacy endpoint still responds under this version and additionally returns `data_sources`).
-   - For each folder, writes `[databaseId, data_sources[0].id]` back to `remoteId`. Skip folders that already have `remoteId.length === 2`.
-   - Logs and skips folders where `data_sources.length > 1` (rare today; we'll handle multi-source explicitly in a follow-up — see Open Questions). The connector continues to work for those via the legacy `database_id` path until Phase 3.
-2. Run the backfill once per environment (dev → test → prod), audited via the script's logs.
-3. Update [notion-schema-parser.ts](server/src/remote-service/connectors/library/notion/notion-schema-parser.ts)'s `parseDatabaseTablePreview` to populate `remoteId` with **both** IDs going forward (for any newly-discovered tables in `listTables` / `searchTables`), so new folders never need backfill.
+**Delivery**: shipped as a `CodeMigration` (admin-only) rather than a standalone script, so it inherits each environment's runtime config (DATABASE_URL, ENCRYPTION_MASTER_KEY) and DI graph (OAuth refresh, audit logging) without SSH tunneling or local secret copying. Triggered manually per environment via the existing `POST /code-migrations/run` endpoint with `migration: 'notion-data-source-backfill'`.
 
-**Risk**: the backfill is a network-bound batch over every Notion folder. Rate-limited (3 req/sec per integration today, configurable). For an org with 200 Notion folders this is ~70s. Run it inside a job with progress logging; idempotent so re-runs are cheap.
+1. Per-folder decision logic lives in [server/src/code-migrations/notion-data-source-backfill.ts](server/src/code-migrations/notion-data-source-backfill.ts):
+   - **Single-source case (`data_sources.length === 1`)**: rewrite `remoteId` to `[databaseId, data_sources[0].id]`. Transparent.
+   - **Multi-source case (`data_sources.length > 1`)**: rewrite the existing folder to `data_sources[0]` AND create one new DataFolder per remaining source. New rows ship empty and populate on the user's next pull. Tagged with audit-log marker `notion_multisource_backfill` for traceability and rollback.
+   - Skips folders already at `remoteId.length === 2` (idempotent).
+   - On `ObjectNotFound` / `Unauthorized` from Notion, logs and continues to the next folder.
+2. Orchestration lives in `CodeMigrationsController.runNotionDataSourceBackfill`:
+   - Reads each environment's encrypted credentials via `CredentialEncryptionService` + auto-refreshes OAuth tokens via `OAuthService.getValidAccessToken`.
+   - Constructs a script-local Notion `Client` with `notionVersion: '2025-09-03'` so `databases.retrieve` returns the `data_sources` array. The production connector's Client is unchanged this phase — Phase 3 bumps it in lockstep with `fetchJsonTableSpec`'s switch to `dataSources.retrieve` (the response shape under 2025-09-03 no longer carries `db.properties`, so the two changes must land together).
+   - Returns the standard `MigrationResult` envelope (`migratedIds`, `remainingCount`, `migrationName`). `remainingCount` is computed against post-run state and filters to folders with `tableId.length < 2`, so the operator knows when to stop iterating.
+3. Trigger the migration manually in dev → test → prod via `POST /code-migrations/run` (admin token required). Run with `qty: 1` first as a canary, then `qty: 50`, then bulk runs until `remainingCount === 0`. Per-folder errors are logged; rerun with the same parameters to retry transient failures (rate-limit hiccups, momentarily-expired tokens).
+4. Update [notion-schema-parser.ts](server/src/remote-service/connectors/library/notion/notion-schema-parser.ts)'s `parseDatabaseTablePreview` to populate `remoteId` with **both** IDs going forward — **deferred to Phase 3** because reading `db.data_sources` requires bumping the production `Client`'s `notionVersion`, and that bump breaks `fetchJsonTableSpec`'s read of `db.properties`. Both must land together. Until Phase 3, new folders discovered via `listTables` get a 1-element `remoteId` and need a follow-up backfill run; idempotent re-runs handle this cheaply.
+
+**Risk**: the backfill is a network-bound batch over every Notion folder. Rate-limited (3 req/sec per integration today, configurable). For an org with 200 Notion folders this is ~70s. The CodeMigration endpoint runs synchronously inside the API request, so wall-time per call is `qty × ~350ms`. Use `qty: 100` or smaller per call to stay inside any HTTP timeout limits on the deployed environments.
 
 ### Phase 3 — Migrate runtime code to data sources (still on SDK v3)
 

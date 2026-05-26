@@ -4,11 +4,12 @@ import MainContent from '@/app/components/layouts/MainContent';
 import { codeMigrationsApi } from '@/lib/api/code-migrations';
 import { Alert, Button, Card, Group, NumberInput, Select, Stack, Text, Textarea, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { AlertCircle, CheckCircle2, Database, DatabaseIcon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import type { MigrationDescriptor } from '@spinner/shared-types';
+import { AlertCircle, CheckCircle2, Database, DatabaseIcon, Info } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 export default function MigrationsDevPage() {
-  const [availableMigrations, setAvailableMigrations] = useState<string[]>([]);
+  const [availableMigrations, setAvailableMigrations] = useState<MigrationDescriptor[]>([]);
   const [isLoadingMigrations, setIsLoadingMigrations] = useState(true);
   const [selectedMigration, setSelectedMigration] = useState<string | null>(null);
   const [qty, setQty] = useState<number | string>(5);
@@ -23,6 +24,11 @@ export default function MigrationsDevPage() {
   useEffect(() => {
     loadAvailableMigrations();
   }, []);
+
+  const selectedDescription = useMemo(
+    () => availableMigrations.find((m) => m.name === selectedMigration)?.description,
+    [availableMigrations, selectedMigration],
+  );
 
   const loadAvailableMigrations = async () => {
     try {
@@ -109,11 +115,15 @@ export default function MigrationsDevPage() {
 
   return (
     <MainContent>
-      <MainContent.BasicHeader title="Database Migrations" Icon={DatabaseIcon} />
+      <MainContent.BasicHeader title="Code Migrations" Icon={DatabaseIcon} />
       <MainContent.Body>
         <Stack gap="lg" maw={900}>
           <Alert icon={<AlertCircle size={16} />} color="blue">
-            <Text size="sm">Run manual (code-based) database migrations to update existing data to new schemas.</Text>
+            <Text size="sm">
+              Run manual, code-based, data migrations to update existing user data to new formats and schemas. These
+              updates are more complicated than a simple Prisma migration and often require JSON restructuring or other
+              services.
+            </Text>
           </Alert>
 
           <Card shadow="sm" padding="lg" radius="md" withBorder>
@@ -126,11 +136,17 @@ export default function MigrationsDevPage() {
               <Select
                 label="Migration"
                 placeholder="Select a migration to run"
-                data={availableMigrations.map((m) => ({ value: m, label: m }))}
+                data={availableMigrations.map((m) => ({ value: m.name, label: m.name }))}
                 value={selectedMigration}
                 onChange={setSelectedMigration}
                 disabled={isLoadingMigrations}
               />
+
+              {selectedDescription && (
+                <Alert icon={<Info size={16} />} color="gray" variant="light">
+                  <Text size="sm">{selectedDescription}</Text>
+                </Alert>
+              )}
 
               <NumberInput
                 label="Quantity"
@@ -146,7 +162,7 @@ export default function MigrationsDevPage() {
               <Textarea
                 label="IDs"
                 description="Comma or space-separated list of IDs to migrate (leave empty if using quantity)"
-                placeholder="snt_abc123, snt_def456"
+                placeholder="wkb_abc123, wkb_def456"
                 value={ids}
                 onChange={(e) => setIds(e.currentTarget.value)}
                 disabled={isRunning}
