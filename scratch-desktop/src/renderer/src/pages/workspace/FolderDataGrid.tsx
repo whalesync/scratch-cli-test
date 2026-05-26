@@ -806,6 +806,10 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   const visibleColumnIds = useWorkspaceUiStore((s) => s.visibleColumnIds);
   const setVisibleColumnIds = useWorkspaceUiStore((s) => s.setVisibleColumnIds);
   const [tableView, setTableView] = useState<TableView | null>(null);
+  const tableViewJsonRef = useRef<string | null>(null);
+  useEffect(() => {
+    tableViewJsonRef.current = tableView ? JSON.stringify(tableView) : null;
+  }, [tableView]);
   const [viewSource, setViewSource] = useState<string>('Generated');
   const [availableViewNames, setAvailableViewNames] = useState<string[]>([]);
 
@@ -1274,8 +1278,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               .readConnectionView(selectedFolderPath, workspacePath, viewSource)
               .then((view) => {
                 if (view) {
+                  // Only reset visible columns when the view definition actually changed.
+                  // Many CLI commands (accept, reject, etc.) call sync_schema_files_from_worktree
+                  // which re-copies the identical view file, triggering this handler even though
+                  // the view content hasn't changed. Resetting visibleColumnIds in that case would
+                  // blow away the user's active filter-narrowed column set.
+                  const changed = JSON.stringify(view) !== tableViewJsonRef.current;
                   setTableView(view);
-                  setVisibleColumnIds(null);
+                  if (changed) {
+                    setVisibleColumnIds(null);
+                  }
                 }
               })
               .catch((err: unknown) => console.debug('Failed to reload view on file change:', err));
@@ -1936,7 +1948,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       void window.scratchFiles
         .acceptFieldChanges(selectedFolderPath, workspacePath, columnId)
         .then((result) => {
-          refreshGridData();
+          refreshGridDataInBackground();
           if (result.status === 'no_changes') {
             notifications.show({
               color: 'gray',
@@ -1962,7 +1974,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const rejectGridFieldChanges = useCallback(
@@ -1976,7 +1988,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       void window.scratchFiles
         .rejectFieldChanges(selectedFolderPath, workspacePath, columnId)
         .then((result) => {
-          refreshGridData();
+          refreshGridDataInBackground();
           if (result.status === 'no_changes') {
             notifications.show({
               color: 'gray',
@@ -2002,7 +2014,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [closeGridEditorChrome, refreshGridData, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const handleBulkAction = useCallback(
@@ -3031,7 +3043,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 readonlyFields={readonlyFields}
                 columnTypes={columnTypesMap}
                 onSelectIndex={(nextIndex) => {
-                  if (nextIndex !== detailRowIndex) setDetailFocusFieldName(null);
                   setDetailRowIndex(nextIndex);
                 }}
                 onClose={() => {
