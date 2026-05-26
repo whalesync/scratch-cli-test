@@ -9,9 +9,14 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     std::fs::create_dir_all(&docs_dir)?;
 
     let relay_base_url = relay_base_url_for_workspace(workspace);
+    let cli_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.canonicalize().ok())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "scratchmd".to_string());
     std::fs::write(
         workspace.join("AGENTS.md"),
-        claude_md(workbook_name, &relay_base_url),
+        claude_md(workbook_name, &relay_base_url, &cli_path),
     )?;
     let symlink_path = workspace.join("CLAUDE.md");
     // Remove any existing file/symlink so we can recreate it
@@ -61,7 +66,7 @@ fn relay_base_url_from_server_url(server_url: &str) -> String {
     }
 }
 
-fn claude_md(workbook_name: &str, relay_base_url: &str) -> String {
+fn claude_md(workbook_name: &str, relay_base_url: &str, cli_path: &str) -> String {
     format!(
         r#"# {workbook_name}
 
@@ -108,6 +113,10 @@ Each time the user opens the workspace in the desktop app, a `SESSION Starting s
 
 Look for `fail exit=...` (CLI), non-2xx status codes (API), or `PUBLISH complete failed ...` lines within that window.
 
+## CLI location
+
+If the `scratchmd` CLI tool is not on the executable path, you can run it directly from `{cli_path}`.
+
 ## Before running `scratchmd` (sandbox check)
 
 Run `uname -s` once at the start of any task that needs `scratchmd` — including running the CLI directly, dry-running validators, reading records, accepting / rejecting / publishing changes, pulling data, generating docs, or any other `scratchmd <subcommand>` invocation.
@@ -129,6 +138,7 @@ The `-l` flag is required — without it AppleScript's default PATH excludes `/u
 "#,
         workbook_name = workbook_name,
         relay_base_url = relay_base_url,
+        cli_path = cli_path,
     )
 }
 
@@ -154,7 +164,7 @@ mod tests {
 
     #[test]
     fn claude_md_uses_environment_specific_relay_host() {
-        let docs = claude_md("Test Workbook", "https://test.scratch.md");
+        let docs = claude_md("Test Workbook", "https://test.scratch.md", "/usr/local/bin/scratchmd");
 
         assert!(docs.contains(
             "[Open in Scratch Desktop](https://test.scratch.md/open-desktop?url=<url-encoded-scratch-url>)"
@@ -163,7 +173,7 @@ mod tests {
 
     #[test]
     fn claude_md_inlines_sandbox_check_recipe() {
-        let docs = claude_md("Test Workbook", "https://app.scratch.md");
+        let docs = claude_md("Test Workbook", "https://app.scratch.md", "/usr/local/bin/scratchmd");
         // Procedure trigger — fires on any scratchmd use, not on agent self-identification.
         assert!(docs.contains("Run `uname -s` once at the start"));
         // Inlined recipe — agent shouldn't need to read another file to act.
