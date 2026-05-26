@@ -116,6 +116,7 @@ export function wordpressFieldToJsonSchema(
         rendered: Type.String({
           title: `${fieldId}.rendered`,
           description: 'Display-ready HTML. Edit "raw" to modify this.',
+          contentMediaType: 'text/html',
           [X_SCRATCH_READONLY]: true,
         }),
         protected: Type.Optional(

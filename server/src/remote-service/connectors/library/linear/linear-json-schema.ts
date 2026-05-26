@@ -51,6 +51,19 @@ for (const schema of Object.values(SCHEMA_MAP)) {
 }
 
 /**
+ * Annotate body-of-text fields as Markdown. Linear renders these via its own
+ * Markdown editor; the desktop preview's rich-text toggle keys off
+ * `contentMediaType` to pick a renderer. Like the `updatedAt` annotation
+ * above, this is additive metadata kept out of the generated (do-not-edit)
+ * schema files.
+ */
+const issueProps = (IssuesSchema as { properties: Record<string, Record<string, unknown>> }).properties;
+const projectProps = (ProjectsSchema as { properties: Record<string, Record<string, unknown>> }).properties;
+issueProps.description.contentMediaType = 'text/markdown';
+projectProps.description.contentMediaType = 'text/markdown';
+projectProps.content.contentMediaType = 'text/markdown';
+
+/**
  * Build a BaseJsonTableSpec for a Linear entity type.
  */
 export function buildLinearJsonTableSpec(id: EntityId): BaseJsonTableSpec {

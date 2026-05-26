@@ -127,7 +127,10 @@ function buildTemplatesSchema(): TSchema {
       id: Type.Number({ description: 'Brevo template ID', [X_SCRATCH_READONLY]: true }),
       name: Type.String({ description: 'Template name' }),
       subject: Type.Union([Type.String(), Type.Null()], { description: 'Email subject line' }),
-      htmlContent: Type.Union([Type.String(), Type.Null()], { description: 'HTML body content' }),
+      htmlContent: Type.Union([Type.String(), Type.Null()], {
+        description: 'HTML body content',
+        contentMediaType: 'text/html',
+      }),
       isActive: Type.Boolean({ description: 'Whether the template is active' }),
       testSent: Type.Boolean({ description: 'Whether a test email has been sent', [X_SCRATCH_READONLY]: true }),
       sender: Type.Object(

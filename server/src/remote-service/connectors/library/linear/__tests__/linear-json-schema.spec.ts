@@ -25,3 +25,20 @@ describe('buildLinearJsonTableSpec last-modified annotation', () => {
     expect(findLastModifiedFieldName(spec)).toBe('updatedAt');
   });
 });
+
+describe('buildLinearJsonTableSpec markdown annotation', () => {
+  function topLevelProps(entityType: string): Record<string, Record<string, unknown>> {
+    const spec = buildLinearJsonTableSpec({ wsId: entityType, remoteId: [entityType] });
+    return (spec.schema as unknown as { properties: Record<string, Record<string, unknown>> }).properties;
+  }
+
+  it('tags Issues.description with contentMediaType: text/markdown', () => {
+    expect(topLevelProps('issues').description.contentMediaType).toBe('text/markdown');
+  });
+
+  it('tags Projects.description and Projects.content with contentMediaType: text/markdown', () => {
+    const props = topLevelProps('projects');
+    expect(props.description.contentMediaType).toBe('text/markdown');
+    expect(props.content.contentMediaType).toBe('text/markdown');
+  });
+});

@@ -203,7 +203,9 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
       rebaseDirty: jest.fn().mockImplementation(async () => vfs.rebaseDirty()),
       listRepoFiles: jest
         .fn()
-        .mockImplementation(async (_r: string, branch: string, folderPath: string) => vfs.listFiles(branch, folderPath)),
+        .mockImplementation(async (_r: string, branch: string, folderPath: string) =>
+          vfs.listFiles(branch, folderPath),
+        ),
       deleteFilesFromBranch: jest
         .fn()
         .mockImplementation(async (_r: string, branch: string, paths: string[]) => vfs.deleteFiles(branch, paths)),
@@ -302,8 +304,12 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
     } as unknown as ConnectorAccountService;
 
     const mockWorkbookEventService = { sendWorkbookEvent: jest.fn() } as unknown as WorkbookEventService;
-    const mockAssetExtractorService = { extractAssets: jest.fn().mockReturnValue([]) } as unknown as AssetExtractorService;
-    const mockAssetIndexService = { upsertBatch: jest.fn().mockResolvedValue(undefined) } as unknown as AssetIndexService;
+    const mockAssetExtractorService = {
+      extractAssets: jest.fn().mockReturnValue([]),
+    } as unknown as AssetExtractorService;
+    const mockAssetIndexService = {
+      upsertBatch: jest.fn().mockResolvedValue(undefined),
+    } as unknown as AssetIndexService;
     const mockPostHogService = { trackPullCompleted: jest.fn() } as unknown as PostHogService;
 
     // The kill switch: force INCREMENTAL_POLLING_ENABLED on so an
@@ -346,10 +352,7 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
    * publicProgress (the handler mutates one object across the run; the
    * capturing checkpoint records the latest reference).
    */
-  async function pull(
-    jobId: string,
-    pullMode: 'full' | 'incremental',
-  ): Promise<PullLinkedFolderFilesPublicProgress> {
+  async function pull(jobId: string, pullMode: 'full' | 'incremental'): Promise<PullLinkedFolderFilesPublicProgress> {
     let latest: PullLinkedFolderFilesPublicProgress | undefined;
     await pullHandler.run({
       jobId,

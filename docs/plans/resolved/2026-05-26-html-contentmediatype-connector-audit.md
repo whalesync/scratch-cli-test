@@ -3,6 +3,16 @@
 - **Date:** 2026-05-26
 - **Author:** Chris Hoefgen
 - **Related:** Linear [DEV-10192](https://linear.app/whalesync/issue/DEV-10192) — Render HTML in preview (toggle rich text vs raw)
+- **Status:** Resolved 2026-05-26
+
+## Implementation summary
+
+- Intercom — added `contentMediaType: 'text/html'` to Articles `body`, Conversations `source.body`, and `conversation_parts[*].body`.
+- Brevo — added `contentMediaType: 'text/html'` to Templates `htmlContent`.
+- WordPress — added `contentMediaType: 'text/html'` to the shared `*.rendered` subfield (covers `title.rendered`, `content.rendered`, `excerpt.rendered`, etc).
+- Linear — added `contentMediaType: 'text/markdown'` to Issues `description` and Projects `description` / `content` (annotated at the connector level, mirroring the existing `updatedAt` last-modified annotation pattern, since the underlying schemas are codegen output).
+- Affinity — **not applicable after investigation** (see section 5 below).
+- Shopify — **deferred**: requires a codegen-config + emitter change. Not in this pass.
 
 ## Problem statement
 

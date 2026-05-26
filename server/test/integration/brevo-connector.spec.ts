@@ -194,7 +194,9 @@ describeIfKey(
           } as unknown as ConnectorFile,
         ];
 
-        await expect(connector.updateRecords(contactsSpec, files, [{ attributes: { FIRSTNAME: 'Updated' } }])).resolves.toBeUndefined();
+        await expect(
+          connector.updateRecords(contactsSpec, files, [{ attributes: { FIRSTNAME: 'Updated' } }]),
+        ).resolves.toBeUndefined();
 
         // Verify the update by fetching
         const fetched: ConnectorFile[] = [];

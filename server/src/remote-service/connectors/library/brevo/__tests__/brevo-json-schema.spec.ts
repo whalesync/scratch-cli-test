@@ -206,6 +206,13 @@ describe('buildBrevoTemplatesJsonTableSpec', () => {
     expect(props.htmlContent[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
+  it('tags htmlContent with contentMediaType: text/html', () => {
+    const spec = buildBrevoTemplatesJsonTableSpec(entityId);
+    const props = spec.schema.properties;
+
+    expect(props.htmlContent.contentMediaType).toBe('text/html');
+  });
+
   it('includes sender as an object with name, email, id subfields', () => {
     const spec = buildBrevoTemplatesJsonTableSpec(entityId);
     const sender = spec.schema.properties.sender;

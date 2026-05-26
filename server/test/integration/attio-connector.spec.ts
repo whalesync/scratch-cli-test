@@ -411,18 +411,20 @@ describeIfKey('AttioConnector — CRUD round-trips', () => {
       // bootstrap guarantees at least three.
       const dealsSpec = tableSpecsByObject.get('deals')!;
       const dealFiles: ConnectorFile[] = [];
-      await connector.pullRecordFiles(
-        dealsSpec,
-        async ({ files }) => {
-          dealFiles.push(...files);
-          if (dealFiles.length > 0) throw new EarlyExit();
-          return Promise.resolve();
-        },
-        {},
-        { forceFull: false },
-      ).catch((e) => {
-        if (!(e instanceof EarlyExit)) throw e;
-      });
+      await connector
+        .pullRecordFiles(
+          dealsSpec,
+          async ({ files }) => {
+            dealFiles.push(...files);
+            if (dealFiles.length > 0) throw new EarlyExit();
+            return Promise.resolve();
+          },
+          {},
+          { forceFull: false },
+        )
+        .catch((e) => {
+          if (!(e instanceof EarlyExit)) throw e;
+        });
       parentRecordId = (dealFiles[0] as { id: { record_id: string } }).id.record_id;
     });
 
@@ -445,7 +447,11 @@ describeIfKey('AttioConnector — CRUD round-trips', () => {
 
     it('update — sparse change to a list-scoped attribute is reflected after re-read', async () => {
       const [created] = await connector.createRecords(listTableSpec, [
-        { parent_record_id: parentRecordId, parent_object: 'deals', entry_values: { spinner_test_stage: [{ option: 'Lead' }] } },
+        {
+          parent_record_id: parentRecordId,
+          parent_object: 'deals',
+          entry_values: { spinner_test_stage: [{ option: 'Lead' }] },
+        },
       ]);
       queueCleanup(created);
 
@@ -465,7 +471,11 @@ describeIfKey('AttioConnector — CRUD round-trips', () => {
 
     it('delete — entry is gone after delete; subsequent fetch returns null', async () => {
       const [created] = await connector.createRecords(listTableSpec, [
-        { parent_record_id: parentRecordId, parent_object: 'deals', entry_values: { spinner_test_stage: [{ option: 'Lead' }] } },
+        {
+          parent_record_id: parentRecordId,
+          parent_object: 'deals',
+          entry_values: { spinner_test_stage: [{ option: 'Lead' }] },
+        },
       ]);
       const entryId = (created as { id: { entry_id: string } }).id.entry_id;
 

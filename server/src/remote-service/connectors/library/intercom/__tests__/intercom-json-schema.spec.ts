@@ -74,6 +74,13 @@ describe('buildIntercomArticlesJsonTableSpec', () => {
     expect(props.state[X_SCRATCH_READONLY]).toBeUndefined();
   });
 
+  it('tags body with contentMediaType: text/html', () => {
+    const spec = buildIntercomArticlesJsonTableSpec(entityId);
+    const props = spec.schema.properties;
+
+    expect(props.body.contentMediaType).toBe('text/html');
+  });
+
   it('includes generatedAt timestamp', () => {
     const spec = buildIntercomArticlesJsonTableSpec(entityId);
     expect(spec.generatedAt).toBeDefined();
@@ -223,6 +230,15 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
 
     expect(parts.properties).toHaveProperty('conversation_parts');
     expect(parts.properties).toHaveProperty('total_count');
+  });
+
+  it('tags source.body and conversation part body with contentMediaType: text/html', () => {
+    const spec = buildIntercomConversationsJsonTableSpec(entityId);
+    const sourceBody = spec.schema.properties.source.properties.body;
+    const partBody = spec.schema.properties.conversation_parts.properties.conversation_parts.items.properties.body;
+
+    expect(sourceBody.contentMediaType).toBe('text/html');
+    expect(partBody.contentMediaType).toBe('text/html');
   });
 
   it('includes generatedAt timestamp', () => {

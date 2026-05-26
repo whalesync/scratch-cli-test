@@ -52,4 +52,14 @@ describe('buildWordPressJsonTableSpec last-modified annotation', () => {
     expect(props(spec).modified).toBeUndefined();
     expect(findLastModifiedFieldName(spec)).toBeUndefined();
   });
+
+  it('tags rendered subfields on rendered-object columns with contentMediaType: text/html', () => {
+    const spec = buildWordPressJsonTableSpec(
+      { wsId: 'posts', remoteId: ['posts'] },
+      postsSchemaResponse as unknown as WordPressEndpointOptionsResponse,
+      [],
+    );
+    const content = props(spec).content as unknown as { properties: { rendered: { contentMediaType?: string } } };
+    expect(content.properties.rendered.contentMediaType).toBe('text/html');
+  });
 });

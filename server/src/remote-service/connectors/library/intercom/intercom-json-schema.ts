@@ -17,7 +17,10 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
       workspace_id: Type.String({ description: 'Workspace ID', [X_SCRATCH_READONLY]: true }),
       title: Type.String({ description: 'Article title' }),
       description: Type.Union([Type.String(), Type.Null()], { description: 'Article description' }),
-      body: Type.Union([Type.String(), Type.Null()], { description: 'Article body (HTML)' }),
+      body: Type.Union([Type.String(), Type.Null()], {
+        description: 'Article body (HTML)',
+        contentMediaType: 'text/html',
+      }),
       author_id: Type.Number({ description: 'Author admin ID (must be a valid teammate)' }),
       state: Type.Union([Type.Literal('published'), Type.Literal('draft')], {
         description: 'Article state',
@@ -175,6 +178,7 @@ const conversationPartSchema = Type.Object(
     part_type: Type.String({ description: 'Part type (comment, note, etc.)', [X_SCRATCH_READONLY]: true }),
     body: Type.Union([Type.String(), Type.Null()], {
       description: 'Part body (HTML)',
+      contentMediaType: 'text/html',
       [X_SCRATCH_READONLY]: true,
       [X_SCRATCH_AGENT_INSTRUCTIONS]: 'HTML does not have a consistent root element',
     }),
@@ -227,7 +231,11 @@ export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonT
           id: Type.String({ [X_SCRATCH_READONLY]: true }),
           delivered_as: Type.String({ description: 'Delivery method', [X_SCRATCH_READONLY]: true }),
           subject: Type.String({ description: 'Subject line', [X_SCRATCH_READONLY]: true }),
-          body: Type.String({ description: 'Source message body (HTML)', [X_SCRATCH_READONLY]: true }),
+          body: Type.String({
+            description: 'Source message body (HTML)',
+            contentMediaType: 'text/html',
+            [X_SCRATCH_READONLY]: true,
+          }),
           author: authorSchema,
           url: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
           redacted: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
