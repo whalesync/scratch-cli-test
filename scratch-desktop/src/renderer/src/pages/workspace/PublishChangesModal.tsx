@@ -622,15 +622,19 @@ export function PublishChangesModal({
     }
   }, [localPath, startUpload]);
 
+  // "Discard and publish" only needs to undo the unreviewed working-tree edits —
+  // the already-accepted patches are what we're about to publish. That maps to
+  // `files reject-all`, not `discard-all` (which would also drop every entry in
+  // `accepted-patches.json`, leaving nothing to upload). See REVIEW_MODEL.md.
   const handleDiscardAllAndUpload = useCallback(async () => {
     if (!localPath) return;
     try {
       setError(null);
       setInitializing(true);
       setProgressSteps([{ id: 'discard', label: 'Discarding all unreviewed local edits…', status: 'active' }]);
-      const result = await window.scratchDesktop.discardAllChanges(localPath);
+      const result = await window.scratchDesktop.rejectAllChanges(localPath);
       if (result.exitCode !== 0) {
-        throw new Error(result.stderr.trim() || 'scratchmd files discard-all failed');
+        throw new Error(result.stderr.trim() || 'scratchmd files reject-all failed');
       }
       setProgressSteps((prev) =>
         prev.map((step) =>
