@@ -1,5 +1,6 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
+import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
@@ -186,6 +187,9 @@ interface ScratchDesktopAPI {
   onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void) => () => void;
   onGridProgress: (callback: (line: string) => void) => () => void;
   onWorkspaceNeedsReinit: (callback: (event: WorkspaceNeedsReinitEvent) => void) => () => void;
+  cliInstall: {
+    subscribe: (callback: (event: CliInstallEvent) => void) => () => void;
+  };
   updater: {
     checkNow: () => Promise<void>;
     quitAndInstall: () => Promise<void>;

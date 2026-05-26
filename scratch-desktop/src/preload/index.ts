@@ -1,5 +1,6 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
+import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
@@ -205,6 +206,17 @@ const scratchDesktop = {
   watchWorkspaceFiles: (workspacePath: string): Promise<string[]> =>
     invoke('scratch:watch-workspace-files', workspacePath),
   clearWorkspaceFileWatch: (): Promise<void> => invoke('scratch:clear-workspace-file-watch'),
+  cliInstall: {
+    subscribe: (callback: (event: CliInstallEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: CliInstallEvent): void => {
+        callback(payload);
+      };
+      ipcRenderer.on(CLI_INSTALL_EVENT_CHANNEL, listener);
+      return () => {
+        ipcRenderer.removeListener(CLI_INSTALL_EVENT_CHANNEL, listener);
+      };
+    },
+  },
   updater: {
     checkNow: (): Promise<void> => invoke('updater:check-now'),
     quitAndInstall: (): Promise<void> => invoke('updater:quit-and-install'),

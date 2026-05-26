@@ -686,6 +686,7 @@ fn git_available() -> bool {
     Command::new("git").arg("--version").output().is_ok()
 }
 
+#[allow(dead_code)]
 fn json_bytes(value: &str) -> Vec<u8> {
     value.as_bytes().to_vec()
 }

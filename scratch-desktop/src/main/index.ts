@@ -7,10 +7,12 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, 
 import { mkdir, readdir, readFile, stat, writeFile } from 'fs/promises';
 import { dirname, join, relative, resolve, sep } from 'path';
 import { performance } from 'perf_hooks';
+import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
 import { detectCloudSync, type CloudSyncDetection } from './cloud-sync';
+import { installScratchmdToPath, isCliSymlinkInstalled, uninstallScratchmdFromPath } from './install-cli';
 import {
   acceptCellChange,
   acceptCellInputText,
@@ -789,7 +791,7 @@ ipcMain.on(
           enabled: item.enabled,
           submenu: item.submenu.map((sub) => ({
             label: sub.label,
-            type: sub.checked !== undefined ? 'checkbox' : undefined,
+            type: sub.checked !== undefined ? ('checkbox' as const) : undefined,
             checked: sub.checked,
             click: () => event.sender.send('scratch:native-context-menu-click', sub.id),
           })),
@@ -820,6 +822,7 @@ ipcMain.handle('updater:check-now', async () => {
     sendUpdaterEvent({
       type: 'error',
       manual: true,
+      phase: 'check',
       message: 'Auto-update is unavailable in this build.',
     });
     return;
@@ -837,6 +840,42 @@ function sendUpdaterEvent(event: UpdaterEvent): void {
   mainWindow.webContents.send(UPDATER_EVENT_CHANNEL, event);
 }
 
+function sendCliInstallEvent(event: CliInstallEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send(CLI_INSTALL_EVENT_CHANNEL, event);
+}
+
+// Tracks whether our /usr/local/bin/scratchmd symlink exists. Seeded on app
+// ready (see whenReady handler) and toggled by install/uninstall handlers,
+// which then rebuild the app menu so the item label flips Install ↔ Uninstall.
+let cliInstalled = false;
+
+async function handleInstallCliMenuClick(): Promise<void> {
+  const result = await installScratchmdToPath();
+  if (result.status === 'installed') {
+    cliInstalled = true;
+    Menu.setApplicationMenu(buildApplicationMenu());
+    sendCliInstallEvent({ type: 'installed' });
+  } else if (result.status === 'failed') {
+    sendCliInstallEvent({ type: 'failed', message: result.message });
+  }
+  // 'cancelled' is silent — user dismissed the admin prompt.
+}
+
+async function handleUninstallCliMenuClick(): Promise<void> {
+  const result = await uninstallScratchmdFromPath();
+  if (result.status === 'uninstalled') {
+    cliInstalled = false;
+    Menu.setApplicationMenu(buildApplicationMenu());
+    sendCliInstallEvent({ type: 'uninstalled' });
+  } else if (result.status === 'failed') {
+    sendCliInstallEvent({ type: 'failed', message: result.message });
+  }
+  // 'cancelled' is silent.
+}
+
 function buildApplicationMenu(): Menu {
   const isMac = process.platform === 'darwin';
   const checkForUpdatesItem: MenuItemConstructorOptions = {
@@ -846,6 +885,7 @@ function buildApplicationMenu(): Menu {
         sendUpdaterEvent({
           type: 'error',
           manual: true,
+          phase: 'check',
           message: 'Auto-update is unavailable in this build.',
         });
         return;
@@ -853,6 +893,16 @@ function buildApplicationMenu(): Menu {
       void updaterController.checkForUpdates();
     },
   };
+
+  const installCliItem: MenuItemConstructorOptions = cliInstalled
+    ? {
+        label: 'Uninstall Command Line Tools…',
+        click: () => void handleUninstallCliMenuClick(),
+      }
+    : {
+        label: 'Install Command Line Tools…',
+        click: () => void handleInstallCliMenuClick(),
+      };
 
   const template: MenuItemConstructorOptions[] = [
     ...(isMac
@@ -863,6 +913,7 @@ function buildApplicationMenu(): Menu {
               { role: 'about' as const },
               { type: 'separator' as const },
               checkForUpdatesItem,
+              installCliItem,
               { type: 'separator' as const },
               { role: 'services' as const },
               { type: 'separator' as const },
@@ -1088,6 +1139,7 @@ void app.whenReady().then(() => {
 
   createWindow();
 
+  cliInstalled = isCliSymlinkInstalled();
   Menu.setApplicationMenu(buildApplicationMenu());
 
   updaterController = initAutoUpdater({ getMainWindow: () => mainWindow });

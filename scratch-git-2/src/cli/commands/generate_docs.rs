@@ -25,6 +25,7 @@ pub fn write_docs(workspace: &Path, workbook_name: &str) -> anyhow::Result<()> {
     std::fs::write(docs_dir.join("commands.md"), COMMANDS_DOC)?;
     std::fs::write(docs_dir.join("editing-data.md"), EDITING_DATA_DOC)?;
     std::fs::write(docs_dir.join("validations.md"), VALIDATIONS_DOC)?;
+    std::fs::write(docs_dir.join("sandbox-recovery.md"), SANDBOX_RECOVERY_DOC)?;
 
     Ok(())
 }
@@ -106,6 +107,25 @@ Log messages are written in the following format:
 Each time the user opens the workspace in the desktop app, a `SESSION Starting session` line is written; closing the workspace writes `SESSION Ending session`. When investigating an error, find the **most recent** `Starting session` line and focus on the entries between it and the next `Ending session` (or the end of the file) — that's the session the user was in when the problem occurred. Older sessions are usually unrelated.
 
 Look for `fail exit=...` (CLI), non-2xx status codes (API), or `PUBLISH complete failed ...` lines within that window.
+
+## Before running `scratchmd` (sandbox check)
+
+Run `uname -s` once at the start of any task that needs `scratchmd` — including running the CLI directly, dry-running validators, reading records, accepting / rejecting / publishing changes, pulling data, generating docs, or any other `scratchmd <subcommand>` invocation.
+
+- `Darwin` → host Mac. Use `scratchmd` normally.
+- `Linux` → you're in a VM sandbox (Claude Desktop Cowork, Claude Desktop Chat, a container, a CI runner). `scratchmd` is **not** installed inside the sandbox and cannot be installed there. Do not try `brew install`, `apt install`, `cargo install`, or downloading a Linux binary — none work. Do not fabricate output.
+
+In a Linux sandbox, route every `scratchmd` invocation through the **Control your Mac** MCP extension's `osascript` tool. If that tool is not available yet, stop and reply to the user with exactly this — install instructions, then one sentence of context, nothing else:
+
+> Install the "Control your Mac" extension: Claude Desktop → Settings → Extensions → search "Control your Mac" by Kenneth Lien → Install → restart Claude Desktop. This is needed because `scratchmd` runs on your Mac, not in the sandbox I'm running in.
+
+Once the tool is available, invoke `scratchmd` via a login shell so PATH picks up `/usr/local/bin`:
+
+```
+osascript({{ script: "do shell script \"/bin/zsh -lc 'cd <workspace-path> && scratchmd <args> 2>&1'\"" }})
+```
+
+The `-l` flag is required — without it AppleScript's default PATH excludes `/usr/local/bin` and you get a misleading "command not found". Longer write-up: [.scratch/docs/sandbox-recovery.md](.scratch/docs/sandbox-recovery.md).
 "#,
         workbook_name = workbook_name,
         relay_base_url = relay_base_url,
@@ -139,6 +159,38 @@ mod tests {
         assert!(docs.contains(
             "[Open in Scratch Desktop](https://test.scratch.md/open-desktop?url=<url-encoded-scratch-url>)"
         ));
+    }
+
+    #[test]
+    fn claude_md_inlines_sandbox_check_recipe() {
+        let docs = claude_md("Test Workbook", "https://app.scratch.md");
+        // Procedure trigger — fires on any scratchmd use, not on agent self-identification.
+        assert!(docs.contains("Run `uname -s` once at the start"));
+        // Inlined recipe — agent shouldn't need to read another file to act.
+        assert!(docs.contains("/bin/zsh -lc"));
+        assert!(docs.contains("Control your Mac"));
+        // Sandbox section is the last H2 in the doc — after Troubleshooting.
+        let sandbox_idx = docs
+            .find("## Before running `scratchmd`")
+            .expect("sandbox H2 present");
+        let troubleshooting_idx = docs
+            .find("## Troubleshooting with")
+            .expect("troubleshooting H2 present");
+        assert!(
+            sandbox_idx > troubleshooting_idx,
+            "sandbox section must be the last H2 (after Troubleshooting)"
+        );
+        // Longer write-up still linked.
+        assert!(
+            docs.contains("[.scratch/docs/sandbox-recovery.md](.scratch/docs/sandbox-recovery.md)")
+        );
+    }
+
+    #[test]
+    fn sandbox_recovery_doc_covers_osascript_login_shell_recipe() {
+        assert!(SANDBOX_RECOVERY_DOC.contains("/bin/zsh -lc"));
+        assert!(SANDBOX_RECOVERY_DOC.contains("Control your Mac"));
+        assert!(SANDBOX_RECOVERY_DOC.contains("uname -s -m"));
     }
 }
 
@@ -836,4 +888,34 @@ scratchmd validation get-stats
 # Print the active validation config (no DB needed).
 scratchmd validation dump-config
 ```
+"#;
+
+// ---------------------------------------------------------------------------
+// .scratch/docs/sandbox-recovery.md
+// ---------------------------------------------------------------------------
+
+const SANDBOX_RECOVERY_DOC: &str = r#"# When `scratchmd` is not on PATH (sandbox / VM agents)
+
+If `scratchmd` returns `command not found` / exit 127, you are almost certainly running inside an isolated sandbox or VM (Cowork's Linux bash sandbox, a container, a CI runner). The Scratch desktop app installs `scratchmd` on the **host Mac**, not inside the sandbox, and there is currently no supported way to install it inside the sandbox.
+
+Confirm the environment:
+
+```sh
+uname -s -m
+```
+
+- `Darwin ...` — you're on the Mac. `scratchmd` lives at `/usr/local/bin/scratchmd`. If `which scratchmd` still fails, it's just a PATH issue — re-run via a login shell, e.g. `/bin/zsh -lc 'scratchmd ...'`.
+- `Linux ...` — you're in a sandbox. Stop and ask the user to install the **Control your Mac** extension (Claude Desktop → Settings → Extensions → search "Control your Mac" by Kenneth Lien → Install, then restart Claude Desktop). Once installed, route every `scratchmd` invocation through its `osascript` tool using a login shell so PATH is populated:
+
+```
+osascript({ script: "do shell script \"/bin/zsh -lc 'cd <workspace-path> && scratchmd <args> 2>&1'\"" })
+```
+
+The `-l` flag is required — without it, AppleScript's default PATH is `/usr/bin:/bin:/usr/sbin:/sbin` and `scratchmd` (in `/usr/local/bin`) won't be found, giving you a misleading "command not found".
+
+## Do not
+
+- Don't try `brew install`, `apt install`, `cargo install`, or downloading a Linux binary from GitHub releases — none of those work inside the sandbox today.
+- Don't fabricate `scratchmd` output if you can't run it. Tell the user the sandbox can't reach the CLI and ask them to install the Control your Mac extension.
+- Don't call `osascript` with a bare `do shell script "scratchmd ..."` (no `-lc`) — same PATH problem; it will fail.
 "#;

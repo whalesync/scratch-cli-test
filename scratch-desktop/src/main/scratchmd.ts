@@ -165,7 +165,7 @@ interface ScratchmdLiveCommandOptions {
 
 // ── Binary path resolution ──
 
-function getScratchmdBinaryPath(): string {
+export function getScratchmdBinaryPath(): string {
   if (!app.isPackaged) {
     // Dev mode: resolve from the repo root (app.getAppPath() points to src/main in dev)
     const repoRoot = resolve(app.getAppPath(), '..');

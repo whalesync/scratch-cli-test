@@ -10,6 +10,7 @@ import { useCurrentUser } from './hooks/use-current-user';
 import { isServerConnectionError } from './lib/is-server-connection-error';
 import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
+import { CliInstallProvider } from './providers/CliInstallProvider';
 import { AppMantineProvider } from './providers/MantineProvider';
 import { PostHogProvider } from './providers/PostHogProvider';
 import { UpdaterProvider } from './providers/UpdaterProvider';
@@ -103,14 +104,16 @@ function App() {
     <SWRConfig value={{ revalidateOnFocus: false }}>
       <AppMantineProvider>
         <UpdaterProvider>
-          <AuthProvider>
-            <HashRouter>
-              <DeepLinkBridge />
-              <AuthGate>
-                <AppRoutes />
-              </AuthGate>
-            </HashRouter>
-          </AuthProvider>
+          <CliInstallProvider>
+            <AuthProvider>
+              <HashRouter>
+                <DeepLinkBridge />
+                <AuthGate>
+                  <AppRoutes />
+                </AuthGate>
+              </HashRouter>
+            </AuthProvider>
+          </CliInstallProvider>
         </UpdaterProvider>
       </AppMantineProvider>
     </SWRConfig>
