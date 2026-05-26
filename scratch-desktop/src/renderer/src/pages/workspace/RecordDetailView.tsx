@@ -24,7 +24,7 @@ import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
 import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
-import { RecordFieldsGrid, type RecordFieldRow } from './RecordFieldsGrid';
+import { RecordFieldsGrid, type FieldValueViewMode, type RecordFieldRow } from './RecordFieldsGrid';
 
 interface DiffRecordColumn {
   id: string;
@@ -301,10 +301,9 @@ export const RecordDetailView = memo(function RecordDetailView({
   const focusedFieldName = useWorkspaceUiStore((s) => s.focusedFieldName);
   const handleFocusedFieldChange = useWorkspaceUiStore((s) => s.setFocusedFieldName);
   const setActiveFilters = useWorkspaceUiStore((s) => s.setActiveFilters);
-  // Held here (not in RecordFieldsGrid) so the prettify toggle survives the
+  // Held here (not in RecordFieldsGrid) so the value-view mode toggle survives the
   // grid's transient unmounts during loading on record navigation.
-  const [prettifyActive, setPrettifyActive] = useState(false);
-  const togglePrettify = useCallback(() => setPrettifyActive((v) => !v), []);
+  const [valueViewMode, setValueViewMode] = useState<FieldValueViewMode>('source');
 
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
   const editingFieldRef = useRef<string | null>(null);
@@ -1275,8 +1274,8 @@ export const RecordDetailView = memo(function RecordDetailView({
                     validationWarnings={validationWarnings}
                     initialFocusedFieldName={focusedFieldName ?? undefined}
                     onFocusedFieldChange={handleFocusedFieldChange}
-                    prettifyActive={prettifyActive}
-                    onPrettifyToggle={togglePrettify}
+                    valueViewMode={valueViewMode}
+                    onValueViewModeChange={setValueViewMode}
                     footer={
                       hiddenCount > 0 ? (
                         <Box style={{ padding: '8px 12px' }}>

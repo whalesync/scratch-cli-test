@@ -1,6 +1,6 @@
 import { ActionIcon, Box, Group, ScrollArea, Select, Stack, Table, Textarea, Tooltip } from '@mantine/core';
 import type { TableViewCol } from '@spinner/shared-types';
-import { AlignJustify, Columns2, RemoveFormatting, Sparkles, TriangleAlertIcon } from 'lucide-react';
+import { AlignJustify, BookOpen, Code, Columns2, Sparkles, TriangleAlertIcon } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { classifyFieldChange } from '../../../../shared/field-change-classification';
 import type { ValidationEntry } from '../../../../shared/validation-types';
@@ -25,6 +25,7 @@ import { FieldCellValue } from './field-cell-renderer';
 import { isPrettifiableMediaType, prettifyValue } from './field-prettifiers';
 import type { FieldValueDiffKind, FieldValueDisplayMode } from './field-value-types';
 import { DIFF_REMOVED_BG, DIFF_REMOVED_FG, DIFF_TEXT_STYLE, getAddedBg } from './field-value-types';
+import { RichTextHtml } from './RichTextHtml';
 
 function isMediumOrLargeChange(row: RecordFieldRow): boolean {
   if (row.diffKind == null) return false;
@@ -72,12 +73,39 @@ interface RecordFieldsGridProps {
   /** Notifies parent when the focused field changes. Lets the parent persist focus across remounts. */
   onFocusedFieldChange?: (fieldName: string | null) => void;
   /**
-   * Controlled state for the "Prettify" toggle in the focused field view.
-   * Lifted to the parent so it survives transient remounts of the grid
-   * (e.g. while the next record is loading).
+   * Controlled state for the value-view mode toggle (Source / Pretty / Rich) in the
+   * focused field view. Lifted to the parent so it survives transient remounts of
+   * the grid (e.g. while the next record is loading).
    */
-  prettifyActive?: boolean;
-  onPrettifyToggle?: () => void;
+  valueViewMode?: FieldValueViewMode;
+  onValueViewModeChange?: (mode: FieldValueViewMode) => void;
+}
+
+export type FieldValueViewMode = 'source' | 'pretty' | 'preview';
+
+function isHtmlMediaType(mediaType: string | undefined | null): boolean {
+  if (!mediaType) return false;
+  const normalized = mediaType.toLowerCase().split(';')[0].trim();
+  return normalized === 'text/html' || normalized === 'application/xhtml+xml';
+}
+
+/**
+ * Apply the value-view mode to a row's textual value(s). Returns a new row where:
+ * - 'source' → unchanged
+ * - 'pretty' → prettified value/fromValue when the field is prettifiable
+ * - 'preview' → for non-HTML prettifiable fields, behaves like 'pretty' so a mixed-type record
+ *   still gives the user a consistent enhanced display. HTML fields are unchanged here;
+ *   the caller is expected to switch the renderer (RichTextHtml) on its own.
+ */
+function applyValueViewModeToRow(row: RecordFieldRow, mode: FieldValueViewMode): RecordFieldRow {
+  if (mode === 'source' || !row.contentMediaType) return row;
+  if (!isPrettifiableMediaType(row.contentMediaType)) return row;
+  if (mode === 'preview' && isHtmlMediaType(row.contentMediaType)) return row;
+  return {
+    ...row,
+    value: prettifyValue(row.value, row.contentMediaType),
+    fromValue: row.fromValue != null ? prettifyValue(row.fromValue, row.contentMediaType) : row.fromValue,
+  };
 }
 
 const LABEL_COLUMN_WIDTH = 280;
@@ -323,7 +351,7 @@ function ControlsCell({ row }: { row: RecordFieldRow }) {
 }
 
 /** Render the value cell(s) for a single row in inline mode. */
-function InlineValueCell({ row }: { row: RecordFieldRow }) {
+function InlineValueCell({ row, mode = 'source' }: { row: RecordFieldRow; mode?: FieldValueViewMode }) {
   if (row.editing) {
     return null; // handled separately
   }
@@ -344,11 +372,15 @@ function InlineValueCell({ row }: { row: RecordFieldRow }) {
     : { style: { cursor: 'default' as const } };
 
   const isDiff = row.displayMode === 'diff' && row.diffKind != null;
+  // Pretty applies to diffs and non-diffs both (it's a text transform). Preview only
+  // affects non-diff HTML rows; diff rows stay raw text so the diff renderer can match tokens.
+  const displayRow = applyValueViewModeToRow(row, mode);
+  const renderRich = !isDiff && mode === 'preview' && isHtmlMediaType(row.contentMediaType);
 
   if (isDiff && isMediumOrLargeChange(row)) {
     return (
       <Box {...clickProps}>
-        <InlineWordsDiff fromValue={row.fromValue ?? ''} value={row.value} diffKind={row.diffKind} />
+        <InlineWordsDiff fromValue={displayRow.fromValue ?? ''} value={displayRow.value} diffKind={row.diffKind} />
       </Box>
     );
   }
@@ -369,7 +401,7 @@ function InlineValueCell({ row }: { row: RecordFieldRow }) {
               wordBreak: 'break-word',
             }}
           >
-            {row.fromValue ?? ''}
+            {displayRow.fromValue ?? ''}
           </span>
         </Box>
         <Box style={{ padding: '2px 12px 8px', ...DIFF_TEXT_STYLE }}>
@@ -384,29 +416,110 @@ function InlineValueCell({ row }: { row: RecordFieldRow }) {
               wordBreak: 'break-word',
             }}
           >
-            {row.value}
+            {displayRow.value}
           </span>
         </Box>
       </Box>
     );
   }
 
-  // Non-diff: plain value
+  // Non-diff: plain value (with optional rich-text rendering for HTML)
   return (
     <Box {...clickProps}>
-      <FieldCellValue value={row.value} column={row.column} muted={row.column?.readonly ?? false} />
+      {renderRich ? (
+        <RichTextHtml html={row.value} muted={row.column?.readonly ?? false} />
+      ) : (
+        <FieldCellValue value={displayRow.value} column={row.column} muted={row.column?.readonly ?? false} />
+      )}
     </Box>
   );
 }
 
-/** Toggles the "Prettify" view, which reformats the value according to its contentMediaType. */
-function PrettifyToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+/**
+ * Segmented toggle for switching the focused field's value display between Source,
+ * Prettified, and Rich text. Modeled after `DiffViewModeToggle`. The Rich segment
+ * is only rendered when the field's content type is HTML.
+ */
+function ValueViewModeToggle({
+  mode,
+  setMode,
+  showRich,
+  richDisabled = false,
+}: {
+  mode: FieldValueViewMode;
+  setMode: (mode: FieldValueViewMode) => void;
+  showRich: boolean;
+  /** When true, the rich-text segment is rendered but disabled (e.g. while showing a diff). */
+  richDisabled?: boolean;
+}) {
+  const selectedStyle: React.CSSProperties = {
+    backgroundColor: 'var(--highlight-fill)',
+    outline: '1px solid var(--highlight-border)',
+  };
+  const groupStyle: React.CSSProperties = {
+    border: '1px solid var(--fg-divider)',
+    borderRadius: 4,
+  };
   return (
-    <Tooltip label={active ? 'Show original' : 'Prettify'} position="bottom" withArrow zIndex={10020}>
-      <ActionIcon variant="subtle" size={20} radius={3} aria-label="Prettify" aria-pressed={active} onClick={onToggle}>
-        <StyledLucideIcon Icon={active ? RemoveFormatting : Sparkles} size={14} strokeWidth={2} />
-      </ActionIcon>
-    </Tooltip>
+    <ActionIcon.Group style={groupStyle}>
+      <Tooltip label="Source" withArrow zIndex={10020}>
+        <ActionIcon
+          variant="subtle"
+          size={20}
+          radius={3}
+          aria-label="Source"
+          aria-pressed={mode === 'source'}
+          onClick={() => setMode('source')}
+          style={mode === 'source' ? selectedStyle : undefined}
+        >
+          <StyledLucideIcon
+            Icon={Code}
+            size={14}
+            strokeWidth={2}
+            c={mode === 'source' ? 'var(--highlight-text)' : undefined}
+          />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Prettified" withArrow zIndex={10020}>
+        <ActionIcon
+          variant="subtle"
+          size={20}
+          radius={3}
+          aria-label="Prettified"
+          aria-pressed={mode === 'pretty'}
+          onClick={() => setMode('pretty')}
+          style={mode === 'pretty' ? selectedStyle : undefined}
+        >
+          <StyledLucideIcon
+            Icon={Sparkles}
+            size={14}
+            strokeWidth={2}
+            c={mode === 'pretty' ? 'var(--highlight-text)' : undefined}
+          />
+        </ActionIcon>
+      </Tooltip>
+      {showRich && (
+        <Tooltip label={richDisabled ? 'Preview is unavailable in diff view' : 'Preview'} withArrow zIndex={10020}>
+          <ActionIcon
+            variant="subtle"
+            size={20}
+            radius={3}
+            aria-label="Preview"
+            aria-pressed={mode === 'preview'}
+            disabled={richDisabled}
+            onClick={() => setMode('preview')}
+            style={mode === 'preview' && !richDisabled ? selectedStyle : undefined}
+          >
+            <StyledLucideIcon
+              Icon={BookOpen}
+              size={14}
+              strokeWidth={2}
+              c={mode === 'preview' && !richDisabled ? 'var(--highlight-text)' : undefined}
+            />
+          </ActionIcon>
+        </Tooltip>
+      )}
+    </ActionIcon.Group>
   );
 }
 
@@ -472,15 +585,15 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   validationWarnings,
   initialFocusedFieldName,
   onFocusedFieldChange,
-  prettifyActive: prettifyActiveProp,
-  onPrettifyToggle,
+  valueViewMode: valueViewModeProp,
+  onValueViewModeChange,
 }: RecordFieldsGridProps) {
   const [focusedFieldName, setFocusedFieldNameInternal] = useState<string | null>(initialFocusedFieldName ?? null);
   const storedDiffViewMode = useWorkspaceUiStore((s) => s.diffViewMode);
   const setStoredDiffViewMode = useWorkspaceUiStore((s) => s.setDiffViewMode);
-  const [prettifyActiveLocal, setPrettifyActiveLocal] = useState(false);
-  const prettifyActive = prettifyActiveProp ?? prettifyActiveLocal;
-  const togglePrettify = onPrettifyToggle ?? (() => setPrettifyActiveLocal((v) => !v));
+  const [valueViewModeLocal, setValueViewModeLocal] = useState<FieldValueViewMode>('source');
+  const valueViewMode = valueViewModeProp ?? valueViewModeLocal;
+  const setValueViewMode = onValueViewModeChange ?? setValueViewModeLocal;
   const hasDiffs = useMemo(() => rows.some((row) => row.diffKind != null), [rows]);
   // Side-by-side only makes sense when there are two-sided diffs (modified records).
   // Created/deleted records have only one meaningful value — force inline for them.
@@ -504,9 +617,33 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   );
 
   const focusedPrettifiable = isPrettifiableMediaType(focusedRow?.contentMediaType);
+  const focusedIsHtml = isHtmlMediaType(focusedRow?.contentMediaType);
+  const focusedIsDiff = focusedRow?.diffKind != null;
+  // Whether any row in the table view has a prettifiable / HTML content type — drives the
+  // table-view header toggle. The toggle hides entirely when no rows benefit.
+  const tableHasPrettifiable = useMemo(() => rows.some((r) => isPrettifiableMediaType(r.contentMediaType)), [rows]);
+  const tableHasHtml = useMemo(() => rows.some((r) => isHtmlMediaType(r.contentMediaType)), [rows]);
+  // Same fallback rules as the focused view, applied across the whole table so the toggle UI
+  // reflects what's actually rendered when the stored mode isn't applicable to any row. Preview
+  // is also disabled while any diff is present (mirrors the focused-field rule).
+  const tableEffectiveMode: FieldValueViewMode =
+    valueViewMode === 'preview' && (!tableHasHtml || hasDiffs)
+      ? 'source'
+      : valueViewMode === 'pretty' && !tableHasPrettifiable
+        ? 'source'
+        : valueViewMode;
+  // The stored value-view mode may not be available for this field type (e.g. 'preview' on a
+  // non-HTML field). Fall back to 'source' so the toggle visibly matches the rendered output
+  // and the diff view doesn't silently keep rendering source while 'preview' looks active.
+  const effectiveValueViewMode: FieldValueViewMode =
+    valueViewMode === 'preview' && (!focusedIsHtml || focusedIsDiff)
+      ? 'source'
+      : valueViewMode === 'pretty' && !focusedPrettifiable
+        ? 'source'
+        : valueViewMode;
   const focusedDisplayRow = useMemo<RecordFieldRow | null>(() => {
     if (!focusedRow) return null;
-    if (!prettifyActive || !focusedPrettifiable || !focusedRow.contentMediaType) return focusedRow;
+    if (effectiveValueViewMode !== 'pretty' || !focusedPrettifiable || !focusedRow.contentMediaType) return focusedRow;
     return {
       ...focusedRow,
       value: prettifyValue(focusedRow.value, focusedRow.contentMediaType),
@@ -515,7 +652,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
           ? prettifyValue(focusedRow.fromValue, focusedRow.contentMediaType)
           : focusedRow.fromValue,
     };
-  }, [focusedRow, focusedPrettifiable, prettifyActive]);
+  }, [focusedRow, focusedPrettifiable, effectiveValueViewMode]);
 
   // If the focused field is missing from a populated record (e.g. switched to a record
   // that doesn't have this field), exit focus mode. Skip while rows is empty — that
@@ -545,7 +682,6 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
     }));
     const focusedViolations = validationWarnings?.get(focusedRow.fieldName);
     const focusedHasError = focusedViolations?.some((v) => v.level === 'error');
-    const focusedIsDiff = focusedRow.diffKind != null;
     return (
       <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <Box
@@ -598,7 +734,12 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
               )}
               <Box style={{ flex: 1 }} />
               {focusedPrettifiable && !focusedRow.editing && (
-                <PrettifyToggle active={prettifyActive} onToggle={togglePrettify} />
+                <ValueViewModeToggle
+                  mode={effectiveValueViewMode}
+                  setMode={setValueViewMode}
+                  showRich={focusedIsHtml}
+                  richDisabled={focusedIsDiff}
+                />
               )}
               <DiffViewModeToggle diffViewMode={diffViewMode} setDiffViewMode={setStoredDiffViewMode} />
             </Group>
@@ -700,11 +841,15 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                     : undefined
                 }
               >
-                <FieldCellValue
-                  value={focusedDisplayRow?.value ?? ''}
-                  column={focusedRow.column}
-                  muted={focusedRow.column?.readonly ?? false}
-                />
+                {focusedIsHtml && effectiveValueViewMode === 'preview' ? (
+                  <RichTextHtml html={focusedDisplayRow?.value ?? ''} muted={focusedRow.column?.readonly ?? false} />
+                ) : (
+                  <FieldCellValue
+                    value={focusedDisplayRow?.value ?? ''}
+                    column={focusedRow.column}
+                    muted={focusedRow.column?.readonly ?? false}
+                  />
+                )}
               </Box>
             )}
           </Box>
@@ -763,14 +908,32 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
             <TextMono12Regular c="var(--fg-muted)" style={{ padding: '0 12px' }}>
               CURRENT
             </TextMono12Regular>
-            <TextMono12Regular c="var(--fg-muted)" style={{ padding: '0 12px' }}>
-              NEW
-            </TextMono12Regular>
+            <Group gap={8} align="center" wrap="nowrap" style={{ padding: '0 12px' }}>
+              <TextMono12Regular c="var(--fg-muted)">NEW</TextMono12Regular>
+              <Box style={{ flex: 1 }} />
+              {tableHasPrettifiable && (
+                <ValueViewModeToggle
+                  mode={tableEffectiveMode}
+                  setMode={setValueViewMode}
+                  showRich={tableHasHtml}
+                  richDisabled={hasDiffs}
+                />
+              )}
+            </Group>
           </>
         ) : (
-          <TextMono12Regular c="var(--fg-muted)" style={{ padding: '0 12px' }}>
-            VALUE
-          </TextMono12Regular>
+          <Group gap={8} align="center" wrap="nowrap" style={{ padding: '0 12px' }}>
+            <TextMono12Regular c="var(--fg-muted)">VALUE</TextMono12Regular>
+            <Box style={{ flex: 1 }} />
+            {tableHasPrettifiable && (
+              <ValueViewModeToggle
+                mode={tableEffectiveMode}
+                setMode={setValueViewMode}
+                showRich={tableHasHtml}
+                richDisabled={hasDiffs}
+              />
+            )}
+          </Group>
         )}
         <Box style={{ display: 'flex', justifyContent: 'center' }}>
           <DiffViewModeToggle diffViewMode={diffViewMode} setDiffViewMode={setStoredDiffViewMode} />
@@ -869,9 +1032,15 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
 
                   {/* Value column(s) */}
                   {isSideBySide ? (
-                    <SideBySideValueCells row={row} />
+                    <SideBySideValueCells row={row} mode={tableEffectiveMode} />
                   ) : (
-                    <Box>{row.editing ? <FieldEditor row={row} /> : <InlineValueCell row={row} />}</Box>
+                    <Box>
+                      {row.editing ? (
+                        <FieldEditor row={row} />
+                      ) : (
+                        <InlineValueCell row={row} mode={tableEffectiveMode} />
+                      )}
+                    </Box>
                   )}
 
                   {/* Controls column */}
@@ -890,7 +1059,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
 });
 
 /** Renders the Current and New value cells for side-by-side mode. */
-function SideBySideValueCells({ row }: { row: RecordFieldRow }) {
+function SideBySideValueCells({ row, mode = 'source' }: { row: RecordFieldRow; mode?: FieldValueViewMode }) {
   const clickProps = row.onClick
     ? {
         onClick: row.onClick,
@@ -911,18 +1080,21 @@ function SideBySideValueCells({ row }: { row: RecordFieldRow }) {
   }
 
   const isDiff = row.diffKind != null;
+  const displayRow = applyValueViewModeToRow(row, mode);
+  const renderRich = !isDiff && mode === 'preview' && isHtmlMediaType(row.contentMediaType);
 
   if (isDiff) {
-    // Changed field: word-level diff — Current highlights removed words, New highlights added words
-    const fromValue = row.fromValue ?? '';
+    // Changed field: word-level diff — Current highlights removed words, New highlights added words.
+    // Diffs always operate on raw (or prettified) text — preview mode falls back to source for diffs.
+    const fromValue = displayRow.fromValue ?? '';
     return (
       <>
         <Box style={{ minWidth: 0 }}>
-          <SideBySideCurrentDiff fromValue={fromValue} value={row.value} />
+          <SideBySideCurrentDiff fromValue={fromValue} value={displayRow.value} />
         </Box>
         <Box style={{ minWidth: 0 }}>
           <Box {...clickProps}>
-            <SideBySideNewDiff fromValue={fromValue} value={row.value} diffKind={row.diffKind} />
+            <SideBySideNewDiff fromValue={fromValue} value={displayRow.value} diffKind={row.diffKind} />
           </Box>
         </Box>
       </>
@@ -934,7 +1106,11 @@ function SideBySideValueCells({ row }: { row: RecordFieldRow }) {
     <>
       <Box style={{ minWidth: 0 }}>
         <Box {...clickProps}>
-          <FieldCellValue value={row.value} column={row.column} muted={row.column?.readonly ?? false} />
+          {renderRich ? (
+            <RichTextHtml html={row.value} muted={row.column?.readonly ?? false} />
+          ) : (
+            <FieldCellValue value={displayRow.value} column={row.column} muted={row.column?.readonly ?? false} />
+          )}
         </Box>
       </Box>
       <Box style={{ minWidth: 0 }}>
