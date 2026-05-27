@@ -52,6 +52,12 @@ module "eu_test" {
 
   # Metrics
   use_opentelemetry_metrics = true
+
+  # Allow developers to mint tokens for the cloudrun SA in test, needed for running the GCS uploads from their local Scratch servers.
+  cloudrun_service_account_token_creators = [
+    "group:role_developers@whalesync.com",
+    "user:curtis@whalesync.com",
+  ]
 }
 
 variable "as_gitlab" {

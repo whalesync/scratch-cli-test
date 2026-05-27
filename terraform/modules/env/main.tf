@@ -39,7 +39,8 @@ locals {
       service_account_users = [
         "serviceAccount:${local.gitlab_service_account_name}@${var.gcp_project_id}.iam.gserviceaccount.com"
       ]
-      roles = []
+      service_account_token_creators = var.cloudrun_service_account_token_creators
+      roles                          = []
     },
     {
       name        = "cloudsql-proxy-service-account"

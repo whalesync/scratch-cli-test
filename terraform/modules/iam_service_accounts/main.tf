@@ -38,7 +38,11 @@ resource "google_service_account_iam_binding" "service_account_token_creator" {
   service_account_id = google_service_account.service_accounts[each.value.name].id
   role               = "roles/iam.serviceAccountTokenCreator"
 
-  members = concat(each.value.service_account_users, [google_service_account.service_accounts[each.value.name].member])
+  members = concat(
+    each.value.service_account_users,
+    each.value.service_account_token_creators,
+    [google_service_account.service_accounts[each.value.name].member],
+  )
 }
 
 # Add the required roles to the SA

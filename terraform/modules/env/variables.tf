@@ -393,3 +393,9 @@ variable "vanta_contains_user_data" {
   default     = false
   description = "Whether to apply the 'vanta-contains-user-data' label to resources that store user data. Only needed in production where Vanta monitors."
 }
+
+variable "cloudrun_service_account_token_creators" {
+  type        = list(string)
+  default     = []
+  description = "Additional principals granted roles/iam.serviceAccountTokenCreator on the cloudrun service account. Used in non-production environments to allow developers to run the GCS uploads from their local machines."
+}

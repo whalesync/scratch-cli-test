@@ -9,7 +9,8 @@ variable "service_accounts" {
     name                  = string
     account_id            = string
     description           = optional(string, null)
-    service_account_users = optional(list(string), [])
+    service_account_users          = optional(list(string), [])
+    service_account_token_creators = optional(list(string), [])
     workload_identity = optional(object({
       workload_identity_project_ids = list(string)
     workload_identity_namespaces = list(string) }), null)
