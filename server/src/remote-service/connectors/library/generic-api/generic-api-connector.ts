@@ -537,6 +537,7 @@ function toStrategyOrUndefined(detected: GenericApiFolderOptions['probe']['detec
     dataPath: detected.dataPath,
     cursorParam: detected.cursorParam,
     offsetParam: detected.offsetParam,
+    pageParam: detected.pageParam,
     limitParam: detected.limitParam,
     limit: detected.limit,
   };

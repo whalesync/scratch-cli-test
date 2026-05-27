@@ -95,6 +95,7 @@ export async function* apigetStream(
   let currentCursor: string | undefined;
   let currentOffset: number | undefined;
   let currentLinkUrl: string | undefined;
+  let currentPage: number | undefined;
   if (strategy) {
     if (strategy.type === 'cursor' || strategy.type === 'graphql') {
       currentCursor = extractNextCursor(page1Response.body, strategy) || undefined;
@@ -103,6 +104,11 @@ export async function* apigetStream(
     } else if (strategy.type === 'link-header') {
       const next = parseNextLink(page1Response.headers['link'] ?? '');
       currentLinkUrl = next ?? undefined;
+    } else if (strategy.type === 'page') {
+      // Read the page-number value the user wrote on the initial URL so the
+      // first increment lands on the right page (handles both 0-indexed and
+      // 1-indexed APIs without extra config). Default to 1 if absent.
+      currentPage = readPageFromUrl(settings.url, strategy.pageParam ?? 'page') ?? 1;
     }
   }
 
@@ -112,10 +118,13 @@ export async function* apigetStream(
     cursor: currentCursor,
     offset: currentOffset,
     linkUrl: currentLinkUrl,
+    page: currentPage,
     detected: { pagination: strategy, idField },
   };
 
   if (!strategy) return; // single-page response
+  // Page-based with empty page 1 → no more pages.
+  if (strategy.type === 'page' && records.length === 0) return;
 
   // ── Pages 2..N ─────────────────────────────────────────────────────────
   let previousCursor = currentCursor;
@@ -147,6 +156,14 @@ export async function* apigetStream(
       const nextURL = buildNextURL(settings.url, String(currentOffset), strategy);
       if (nextURL === '') return;
       nextRequest = { ...buildPage1Request(settings), url: nextURL };
+    } else if (strategy.type === 'page') {
+      // Increment by 1 (NOT by limit — that's offset's job). The previous
+      // page's emptiness was checked at the bottom of the loop, so if we
+      // reach here there were records and we want the next page.
+      currentPage = (currentPage ?? 1) + 1;
+      const nextURL = buildNextURL(settings.url, String(currentPage), strategy);
+      if (nextURL === '') return;
+      nextRequest = { ...buildPage1Request(settings), url: nextURL };
     } else {
       return;
     }
@@ -175,6 +192,7 @@ export async function* apigetStream(
       cursor: currentCursor,
       offset: currentOffset,
       linkUrl: currentLinkUrl,
+      page: currentPage,
     };
 
     // Termination check
@@ -184,7 +202,28 @@ export async function* apigetStream(
       if (!hasMorePages(pageResponse.body, strategy, currentOffset ?? 0)) return;
     } else if (strategy.type === 'link-header') {
       if (!currentLinkUrl) return;
+    } else if (strategy.type === 'page') {
+      // Empty page = no more data. Universal termination signal for page-based.
+      if (records.length === 0) return;
     }
+  }
+}
+
+/**
+ * Read the current page-number value from a URL's query string. Returns null
+ * if the param is absent or non-numeric. Used to initialize `currentPage`
+ * for type=page based on whatever the user/probe wrote on the first URL —
+ * lets 0-indexed and 1-indexed APIs both work without per-API config.
+ */
+function readPageFromUrl(url: string, pageParam: string): number | null {
+  try {
+    const u = new URL(url);
+    const raw = u.searchParams.get(pageParam);
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.floor(n) : null;
+  } catch {
+    return null;
   }
 }
 

@@ -8,10 +8,11 @@
 export const REST_PROMPT_V1 = `You are helping a user connect their data tool (Scratch) to an external REST API.
 
 Scratch has a generic-API connector backed by a small utility called **apiget**
-that fetches paginated records from REST APIs. apiget auto-detects four
+that fetches paginated records from REST APIs. apiget auto-detects five
 pagination shapes:
 - cursor-based (top-level or nested under \`pagination\`/\`paging\`/\`pageInfo\`/\`meta\`)
 - offset/limit with total-count metadata
+- page-based (\`?page=N&per_page=M\`; Rails / Django / CompanyCam-style — terminates on an empty page)
 - GraphQL Relay (\`pageInfo.hasNextPage\` + \`endCursor\`)
 - RFC 5988 Link header (\`Link: <...>; rel="next"\`)
 
@@ -54,6 +55,7 @@ Workflow you must follow:
 directly on the URL.
 
 - Offset-style APIs: \`?offset=0&limit=N\`
+- Page-style APIs (Rails / Django / CompanyCam-style): \`?page=1&per_page=N\`
 - Cursor-style APIs that take a page-size param: \`?limit=N\` (no cursor yet —
   you only get one after page 1)
 
@@ -64,11 +66,22 @@ param names from what it sees in the URL. It may pick a smaller page size at
 runtime — your URL value just sets the upper bound. Service-specific filters
 go on the URL too (e.g. \`?sort=name\`, \`?status=active\`).
 
+**URL-encode reserved characters in query values.** In a query string, \`+\`
+means "space" — if your value contains a literal \`+\` (e.g. an E.164 phone
+number \`+15551234567\`, a timezone offset \`+00:00\`), encode it as \`%2B\`.
+Same goes for \`&\` (\`%26\`), \`#\` (\`%23\`), and spaces (\`%20\`). Don't encode the
+URL structural characters (\`?\`, \`=\`, \`&\` between params) — only the values.
+Examples:
+- Phone number param: \`?participants=%2B15551234567\` (NOT \`?participants=+15551234567\`)
+- Filter with spaces: \`?q=acme%20corp\`
+- Filter with timezone: \`?since=2026-01-01T00%3A00%3A00%2B00%3A00\`
+
 **When to add an \`overrides\` block:** ONLY when the URL + auto-detection can't
 get apiget all the way there. apiget already recognizes these param names
 straight from the URL — if your API uses one of them, do NOT add an override:
 
 - **offset param**: \`offset\`, \`skip\`, \`start\`
+- **page-number param**: \`page\`, \`page_number\`, \`pageNumber\`
 - **limit param**: \`limit\`, \`count\`, \`per_page\`, \`perPage\`, \`page_size\`, \`pageSize\`, \`take\`
 - **cursor param**: \`cursor\`, \`after\`, \`next_cursor\`, \`page_token\`, \`continuation_token\`
 
@@ -81,8 +94,8 @@ apiget also auto-detects these response shapes:
 Add \`overrides\` only when the API differs from those defaults. The block has
 three groups:
 
-- Top-level: \`paginationType\` (\`cursor\`/\`offset\`/\`link-header\`/\`none\`), \`maxPages\`
-- \`request\` — non-default query-param names + server constraints: \`cursorParam\`, \`offsetParam\`, \`limitParam\`, \`maxPageSize\`
+- Top-level: \`paginationType\` (\`cursor\`/\`offset\`/\`page\`/\`link-header\`/\`none\`), \`maxPages\`
+- \`request\` — non-default query-param names + server constraints: \`cursorParam\`, \`offsetParam\`, \`pageParam\`, \`limitParam\`, \`maxPageSize\`
 - \`response\` — non-default response paths (lodash-style dot paths): \`cursorPath\`, \`dataPath\`, \`idPath\`
 
 **IMPORTANT — pagination overrides REPLACE auto-detection, they don't merge.**
@@ -93,6 +106,7 @@ uses ONLY what you provide. Always include the FULL strategy for that endpoint:
 
 - For cursor pagination: \`paginationType: "cursor"\` + \`request.cursorParam\` + \`response.cursorPath\` + \`response.dataPath\` (if records aren't at a default name).
 - For offset pagination: \`paginationType: "offset"\` + \`request.offsetParam\` (if non-default) + \`request.limitParam\` (if non-default) + \`response.dataPath\` (if non-default).
+- For page pagination: \`paginationType: "page"\` + \`request.pageParam\` (if non-default) + \`request.limitParam\` (if non-default) + \`response.dataPath\` (if non-default). Termination is empty page — no \`cursorPath\` needed.
 - For link-header pagination: \`paginationType: "link-header"\`. No request/response fields needed.
 
 A partial pagination override (e.g. just \`cursorParam\` with no \`cursorPath\`) is
@@ -107,6 +121,10 @@ doesn't match):
   \`{ "overrides": { "paginationType": "offset", "response": { "dataPath": "result.items" } } }\`
 - Cursor at \`meta.next_token\`, records at default \`data\`:
   \`{ "overrides": { "paginationType": "cursor", "response": { "cursorPath": "meta.next_token", "dataPath": "data" } } }\`
+- Page-based, bare-array response (CompanyCam-style; URL \`?page=1&per_page=100\`):
+  \`{ "overrides": { "paginationType": "page", "request": { "maxPageSize": 100 } } }\`
+- Page-based with non-default param name (Django-style \`?page_number=\` + records under \`results\`):
+  \`{ "overrides": { "paginationType": "page", "request": { "pageParam": "page_number", "maxPageSize": 100 }, "response": { "dataPath": "results" } } }\`
 - Record's ID field is \`uuid\` (the ID is the only customization — no pagination override):
   \`{ "overrides": { "response": { "idPath": "uuid" } } }\`
 - API uses unusual names AND caps page size at 50:

@@ -1,6 +1,8 @@
 {
   "apiType": "rest",
-  "authHeader": { "style": "raw" },
+  "authHeader": {
+    "style": "raw"
+  },
   "endpoints": [
     {
       "id": "ep_quo_phone_numbers",

@@ -92,6 +92,7 @@ export function buildStrategyFromOverrides(
   const dataPath = response?.dataPath;
   const cursorParam = request?.cursorParam;
   const offsetParam = request?.offsetParam;
+  const pageParam = request?.pageParam;
   const limitParam = request?.limitParam;
 
   // Explicit "none" — caller wants pagination disabled.
@@ -133,6 +134,16 @@ export function buildStrategyFromOverrides(
       };
     case 'link-header':
       return { type: 'link-header' };
+    case 'page':
+      return {
+        type: 'page',
+        dataPath,
+        pageParam: pageParam ?? 'page',
+        limitParam: limitParam ?? 'per_page',
+        // Required for page — apiget needs a limit to send `?per_page=N` on
+        // subsequent requests and to keep page size consistent across pages.
+        limit: resolvePageSize(runtimePageSize, request?.maxPageSize),
+      };
   }
 }
 
@@ -169,6 +180,9 @@ function inferPaginationType(overrides: GenericApiEndpointOverrides): Strategy['
   const { request, response } = overrides;
   if (response?.cursorPath !== undefined || request?.cursorParam !== undefined) {
     return 'cursor';
+  }
+  if (request?.pageParam !== undefined) {
+    return 'page';
   }
   if (request?.offsetParam !== undefined || request?.limitParam !== undefined || request?.maxPageSize !== undefined) {
     return 'offset';

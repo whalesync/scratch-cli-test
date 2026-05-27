@@ -1,0 +1,60 @@
+{
+  "apiType": "rest",
+  "authHeader": { "style": "bearer" },
+  "endpoints": [
+    {
+      "id": "ep_calendly_event_types",
+      "name": "Event Types",
+      "method": "GET",
+      "url": "https://api.calendly.com/event_types?user=REPLACE_WITH_USER_URI&count=100",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "page_token",
+          "limitParam": "count",
+          "maxPageSize": 100
+        },
+        "response": {
+          "cursorPath": "pagination.next_page_token",
+          "dataPath": "collection"
+        }
+      }
+    },
+    {
+      "id": "ep_calendly_scheduled_events",
+      "name": "Scheduled Events",
+      "method": "GET",
+      "url": "https://api.calendly.com/scheduled_events?user=REPLACE_WITH_USER_URI&count=100",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "page_token",
+          "limitParam": "count",
+          "maxPageSize": 100
+        },
+        "response": {
+          "cursorPath": "pagination.next_page_token",
+          "dataPath": "collection"
+        }
+      }
+    },
+    {
+      "id": "ep_calendly_org_memberships",
+      "name": "Organization Memberships",
+      "method": "GET",
+      "url": "https://api.calendly.com/organization_memberships?organization=REPLACE_WITH_ORG_URI&count=100",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "page_token",
+          "limitParam": "count",
+          "maxPageSize": 100
+        },
+        "response": {
+          "cursorPath": "pagination.next_page_token",
+          "dataPath": "collection"
+        }
+      }
+    }
+  ]
+}

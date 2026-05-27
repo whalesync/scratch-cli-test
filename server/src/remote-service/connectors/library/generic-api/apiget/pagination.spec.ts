@@ -155,8 +155,92 @@ describe('detectStrategy — no-pagination responses', () => {
     expect(detectStrategy('not json at all', 'https://api.example.com/x')).toBeNull();
   });
 
-  it('returns null for JSON array response (no envelope to inspect)', () => {
+  it('returns null for JSON array response (no envelope to inspect) when URL has no page param', () => {
     expect(detectStrategy('[{"id":1}]', 'https://api.example.com/x')).toBeNull();
+  });
+});
+
+// ============================================================================
+// detectStrategy — page-based pagination (NEW in TS port; Rails / CompanyCam-style)
+// ============================================================================
+
+describe('detectStrategy — page-based pagination', () => {
+  it('detects page-based when URL has ?page= and body is a bare array', () => {
+    // Rails-style: response body IS the records array, no envelope.
+    const body = JSON.stringify([{ id: 1 }, { id: 2 }]);
+    const s = detectStrategy(body, 'https://api.companycam.com/v2/projects?page=1&per_page=100');
+    expect(s).not.toBeNull();
+    expect(s?.type).toBe('page');
+    expect(s?.pageParam).toBe('page');
+    expect(s?.limitParam).toBe('per_page');
+    expect(s?.limit).toBe(100);
+  });
+
+  it('detects page-based when URL has ?page= and body has wrapped records', () => {
+    const body = JSON.stringify({ results: [{ id: 1 }], meta: { current_page: 1, total_pages: 3 } });
+    const s = detectStrategy(body, 'https://api.example.com/x?page=1&per_page=50');
+    expect(s?.type).toBe('page');
+    expect(s?.dataPath).toBe('results');
+    expect(s?.limit).toBe(50);
+  });
+
+  it('uses default `per_page` limit param when URL has no limit param', () => {
+    const body = JSON.stringify([{ id: 1 }]);
+    const s = detectStrategy(body, 'https://api.example.com/x?page=1');
+    expect(s?.type).toBe('page');
+    expect(s?.limitParam).toBe('per_page');
+    expect(s?.limit).toBeUndefined();
+  });
+
+  it('picks up `page_number` instead of `page` when that is what URL uses', () => {
+    const body = JSON.stringify([{ id: 1 }]);
+    const s = detectStrategy(body, 'https://api.example.com/x?page_number=1');
+    expect(s?.pageParam).toBe('page_number');
+  });
+
+  it('prefers cursor over page when both signals are present', () => {
+    // Body has a cursor field. Even with `?page=` in URL, cursor wins because
+    // cursor detection runs first and an opaque token is more reliable than
+    // a page counter (which can over-paginate past the dataset boundary).
+    const body = JSON.stringify({ results: [{ id: 1 }], next_cursor: 'abc' });
+    const s = detectStrategy(body, 'https://api.example.com/x?page=1&per_page=10');
+    expect(s?.type).toBe('cursor');
+  });
+
+  it('returns null for bare-array body without a page-number URL param', () => {
+    // Bare array + no `?page=` signal → single-page response (no strategy).
+    expect(detectStrategy('[{"id":1}]', 'https://api.example.com/x?per_page=10')).toBeNull();
+  });
+});
+
+describe('buildNextURL — page-based', () => {
+  const strategy = { type: 'page' as const, pageParam: 'page', limitParam: 'per_page', limit: 100 };
+
+  it('sets the page param to the supplied page number', () => {
+    expect(buildNextURL('https://api.example.com/x?page=1&per_page=100', '2', strategy)).toBe(
+      'https://api.example.com/x?page=2&per_page=100',
+    );
+  });
+
+  it('preserves filter params on the URL', () => {
+    expect(buildNextURL('https://api.example.com/x?status=active&page=1', '3', strategy)).toBe(
+      'https://api.example.com/x?status=active&page=3&per_page=100',
+    );
+  });
+
+  it('honors custom pageParam name', () => {
+    expect(
+      buildNextURL('https://api.example.com/x?page_number=1', '5', {
+        type: 'page',
+        pageParam: 'page_number',
+        limitParam: 'per_page',
+        limit: 50,
+      }),
+    ).toBe('https://api.example.com/x?page_number=5&per_page=50');
+  });
+
+  it('returns empty string when no page value is supplied (caller stops)', () => {
+    expect(buildNextURL('https://api.example.com/x?page=1', '', strategy)).toBe('');
   });
 });
 
@@ -182,10 +266,12 @@ describe('detectStrategyFromResponse — RFC 5988 Link header (NEW in TS port)',
   });
 
   it('falls back to body-only detection when Link has no rel="next"', () => {
+    // URL deliberately has no page-number param so page detection doesn't
+    // fire — we're testing the "no detection signals at all" fallthrough.
     const s = detectStrategyFromResponse({
       body: JSON.stringify({ items: [] }),
-      headers: { link: '<https://api.example.com/x?page=1>; rel="prev"' },
-      url: 'https://api.example.com/x?page=2',
+      headers: { link: '<https://api.example.com/x>; rel="prev"' },
+      url: 'https://api.example.com/x',
     });
     expect(s).toBeNull();
   });

@@ -51,6 +51,9 @@ export const COMMON_DATA_FIELDS = ['data', 'results', 'items', 'records', 'entri
 /** Common cursor query-parameter names. Mirrors `commonCursorParams`. */
 export const COMMON_CURSOR_PARAMS = ['cursor', 'after', 'next_cursor', 'page_token', 'continuation_token', 'offset'];
 
+/** Common page-number query-parameter names. NEW in TS port. */
+export const COMMON_PAGE_PARAMS = ['page', 'page_number', 'pageNumber'];
+
 /** Pagination metadata wrapper keys. */
 const PAGINATION_KEYS = ['pagination', 'paging', 'page_info', 'pageInfo', 'meta', 'metaData', 'pagingMetadata'];
 
@@ -70,6 +73,23 @@ export function detectStrategy(responseBody: string, requestURL: string): Strate
   } catch {
     return null;
   }
+
+  // Bare-array response (Rails-style): the body itself is the records array.
+  // No body-level metadata exists. The only pagination signal is the URL's
+  // page-number param. If present, treat as page-based; otherwise no
+  // pagination (single page).
+  if (isArray(data)) {
+    const pageParam = detectPageParam(requestURL);
+    if (pageParam === null) return null;
+    const limitParam = guessLimitParamOnly(requestURL);
+    return {
+      type: 'page',
+      pageParam,
+      limitParam,
+      limit: extractLimitFromUrl(requestURL, limitParam) ?? undefined,
+    };
+  }
+
   if (!isRecord(data)) return null;
 
   // GraphQL first (most specific shape)
@@ -88,6 +108,14 @@ export function detectStrategy(responseBody: string, requestURL: string): Strate
       cursorParam,
     };
   }
+
+  // Then page-based — checked BEFORE offset because Rails/Django-style APIs
+  // often expose `total`/`per_page` metadata that pattern-matches offset
+  // detection. The deciding signal is whether the request URL uses a
+  // page-number param (`page`/`page_number`/...). Without that, fall through
+  // to offset detection (which uses record-offset semantics).
+  const pageStrategy = detectPagePagination(data, requestURL);
+  if (pageStrategy) return pageStrategy;
 
   // Then offset/limit
   const offsetStrategy = detectOffsetPagination(data, requestURL);
@@ -192,6 +220,81 @@ function detectGraphQLPagination(data: Record<string, unknown>): Strategy | null
   }
 
   return null;
+}
+
+/**
+ * Page-based pagination detection. Returns a Strategy iff the request URL has
+ * a page-number param (`page`/`page_number`/`pageNumber`). The response is
+ * expected to be either a top-level array OR wrap an array under a common
+ * data field. Body-level pagination metadata is NICE if present but not
+ * required — empty-page termination is the universal signal we rely on.
+ */
+function detectPagePagination(data: Record<string, unknown>, requestURL: string): Strategy | null {
+  const pageParam = detectPageParam(requestURL);
+  if (pageParam === null) return null;
+
+  // The response must contain a records array we can extract — either top-level
+  // (already handled in the caller) or under a common data field name.
+  const dataField = findDataField(data);
+  // No `dataPath`-required case: an unwrapped array body is caught upstream;
+  // here we only reach this branch when `data` is a Record. So either we find
+  // a data field name or we fall back to the whole record being a single
+  // entity (the extractData "[parsed]" fallback handles that case too).
+
+  const limitParam = guessLimitParamOnly(requestURL);
+  const limit = extractLimitFromUrl(requestURL, limitParam) ?? undefined;
+
+  return {
+    type: 'page',
+    pageParam,
+    dataPath: dataField || undefined,
+    limitParam,
+    limit,
+  };
+}
+
+/** Return the first page-number param name present in the URL, or null. */
+function detectPageParam(requestURL: string): string | null {
+  try {
+    const u = new URL(requestURL);
+    for (const name of COMMON_PAGE_PARAMS) {
+      if (u.searchParams.has(name)) return name;
+    }
+  } catch {
+    // unparseable URL
+  }
+  return null;
+}
+
+/**
+ * Find the limit-param name in the URL. Mirrors `guessOffsetLimitParams` but
+ * returns only the limit (offset-style logic doesn't apply to page mode).
+ * Defaults to `per_page` (most common name for page-based APIs).
+ */
+function guessLimitParamOnly(requestURL: string): string {
+  const limitNames = ['per_page', 'perPage', 'page_size', 'pageSize', 'limit', 'count', 'take'];
+  try {
+    const u = new URL(requestURL);
+    for (const name of limitNames) {
+      if (u.searchParams.has(name)) return name;
+    }
+  } catch {
+    // unparseable URL — keep default
+  }
+  return 'per_page';
+}
+
+/** Read the numeric value of the limit param from the URL, or null if absent / invalid. */
+function extractLimitFromUrl(requestURL: string, limitParam: string): number | null {
+  try {
+    const u = new URL(requestURL);
+    const raw = u.searchParams.get(limitParam);
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  } catch {
+    return null;
+  }
 }
 
 function detectOffsetPagination(data: Record<string, unknown>, requestURL: string): Strategy | null {
@@ -507,6 +610,14 @@ export function buildNextURL(baseURL: string, cursor: string, strategy: Strategy
     u.searchParams.set(strategy.offsetParam ?? 'offset', cursor);
     if (strategy.limit && strategy.limit > 0) {
       u.searchParams.set(strategy.limitParam ?? 'limit', String(strategy.limit));
+    }
+  } else if (strategy.type === 'page') {
+    // For page-based, `cursor` carries the page NUMBER as a string. Increment
+    // happens in the runner (fetch.ts); buildNextURL just writes the value.
+    if (cursor === '') return '';
+    u.searchParams.set(strategy.pageParam ?? 'page', cursor);
+    if (strategy.limit && strategy.limit > 0) {
+      u.searchParams.set(strategy.limitParam ?? 'per_page', String(strategy.limit));
     }
   } else if (strategy.type === 'graphql') {
     // GraphQL is POST; this helper isn't the right tool for it. The fetch loop

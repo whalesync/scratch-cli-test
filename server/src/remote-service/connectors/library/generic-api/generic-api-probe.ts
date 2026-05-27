@@ -206,6 +206,7 @@ function strategyToPersisted(s: Strategy | null): GenericApiFolderOptions['probe
     dataPath: s.dataPath,
     cursorParam: s.cursorParam,
     offsetParam: s.offsetParam,
+    pageParam: s.pageParam,
     limitParam: s.limitParam,
     limit: s.limit,
   };

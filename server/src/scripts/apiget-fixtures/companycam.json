@@ -1,0 +1,24 @@
+{
+  "apiType": "rest",
+  "authHeader": { "style": "bearer" },
+  "endpoints": [
+    {
+      "id": "ep_companycam_projects",
+      "name": "Projects",
+      "method": "GET",
+      "url": "https://api.companycam.com/v2/projects?page=1&per_page=100"
+    },
+    {
+      "id": "ep_companycam_users",
+      "name": "Users",
+      "method": "GET",
+      "url": "https://api.companycam.com/v2/users?page=1&per_page=100"
+    },
+    {
+      "id": "ep_companycam_photos",
+      "name": "Photos",
+      "method": "GET",
+      "url": "https://api.companycam.com/v2/photos?page=1&per_page=100"
+    }
+  ]
+}

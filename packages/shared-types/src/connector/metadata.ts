@@ -161,7 +161,7 @@ export interface GenericApiGraphqlEndpoint {
  */
 export interface GenericApiEndpointOverrides {
   /** Force a specific pagination type instead of relying on auto-detect. */
-  paginationType?: 'cursor' | 'offset' | 'graphql' | 'link-header' | 'none';
+  paginationType?: 'cursor' | 'offset' | 'graphql' | 'link-header' | 'page' | 'none';
   /** Override apiget's default maxPages backstop (default 1000). */
   maxPages?: number;
   /** Per-record enrichment: fetch full record from a detail endpoint (URL template with `{id}` placeholder). */
@@ -178,6 +178,8 @@ export interface GenericApiEndpointOverrides {
     cursorParam?: string;
     /** Override the offset query-parameter name (e.g. 'skip'). */
     offsetParam?: string;
+    /** Override the page-number query-parameter name (e.g. 'page_number'). Used only when paginationType === 'page'. Defaults to 'page'. */
+    pageParam?: string;
     /** Override the limit query-parameter name (e.g. 'per_page'). */
     limitParam?: string;
     /** The server's hard maximum records-per-page for this endpoint (from API docs). Used as the default page size and as a safety clamp on runtime requests. */
@@ -235,11 +237,12 @@ export interface GenericApiFolderOptions {
   endpointId: string;
   probe: {
     detectedPagination: {
-      type: 'cursor' | 'offset' | 'graphql' | 'link-header' | 'none';
+      type: 'cursor' | 'offset' | 'graphql' | 'link-header' | 'page' | 'none';
       cursorPath?: string;
       dataPath?: string;
       cursorParam?: string;
       offsetParam?: string;
+      pageParam?: string;
       limitParam?: string;
       limit?: number;
     } | null;

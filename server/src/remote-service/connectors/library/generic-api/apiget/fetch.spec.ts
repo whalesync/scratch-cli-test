@@ -273,6 +273,103 @@ describe('apigetStream — link-header pagination (NEW in TS port)', () => {
 });
 
 // =============================================================================
+// Page-based pagination — NEW in TS port (CompanyCam-style: ?page=N&per_page=M)
+// =============================================================================
+
+describe('apigetStream — page-based pagination', () => {
+  it('walks pages 1 → 2 → 3 and stops on empty page', async () => {
+    const { fetch, calls } = mockFetchByRoute((req) => {
+      const url = new URL(req.url);
+      const page = Number(url.searchParams.get('page') ?? 1);
+      // Pages 1 and 2 have 2 records each; page 3 is empty (signals done).
+      const records = page < 3 ? [{ id: `p${page}-r1` }, { id: `p${page}-r2` }] : [];
+      return jsonResponse(records);
+    });
+
+    const pages = [];
+    for await (const page of apigetStream(
+      { ...BASE_SETTINGS, url: 'https://api.companycam.com/v2/projects?page=1&per_page=100' },
+      { fetch },
+    )) {
+      pages.push(page);
+    }
+
+    // Page 1 (2 records) + page 2 (2 records) + page 3 (empty, terminates).
+    expect(pages).toHaveLength(3);
+    expect(pages[0].detected?.pagination?.type).toBe('page');
+    expect(pages[0].page).toBe(1);
+    expect(pages[1].page).toBe(2);
+    expect(pages[2].page).toBe(3);
+    expect(pages[2].records).toEqual([]);
+    expect(calls).toHaveLength(3);
+    // Page 2 request used ?page=2&per_page=100.
+    expect(calls[1].url).toContain('page=2');
+    expect(calls[1].url).toContain('per_page=100');
+  });
+
+  it('stops immediately when page 1 is empty (no second request)', async () => {
+    const { fetch, calls } = mockFetchByRoute(() => jsonResponse([]));
+
+    const pages = [];
+    for await (const page of apigetStream(
+      { ...BASE_SETTINGS, url: 'https://api.example.com/x?page=1&per_page=100' },
+      { fetch },
+    )) {
+      pages.push(page);
+    }
+
+    expect(pages).toHaveLength(1);
+    expect(pages[0].records).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('respects a non-default starting page (0-indexed APIs)', async () => {
+    const { fetch, calls } = mockFetchByRoute((req) => {
+      const url = new URL(req.url);
+      const page = Number(url.searchParams.get('page') ?? 0);
+      return jsonResponse(page < 1 ? [{ id: page }] : []);
+    });
+
+    const pages = [];
+    for await (const page of apigetStream(
+      { ...BASE_SETTINGS, url: 'https://api.example.com/x?page=0&per_page=10' },
+      { fetch },
+    )) {
+      pages.push(page);
+    }
+
+    expect(pages[0].page).toBe(0);
+    expect(pages[1].page).toBe(1);
+    expect(calls[1].url).toContain('page=1');
+  });
+
+  it('uses an explicit override when URL has no ?page= signal', async () => {
+    // No page param on URL → no auto-detect signal. The user supplies a
+    // pre-built page strategy as override. Runner should still iterate.
+    const { fetch, calls } = mockFetchByRoute((req) => {
+      const url = new URL(req.url);
+      const page = Number(url.searchParams.get('page') ?? 1);
+      return jsonResponse(page < 2 ? [{ id: page }] : []);
+    });
+
+    const pages = [];
+    for await (const page of apigetStream(
+      {
+        ...BASE_SETTINGS,
+        url: 'https://api.example.com/x',
+        pagination: { type: 'page', pageParam: 'page', limitParam: 'per_page', limit: 100 },
+      },
+      { fetch },
+    )) {
+      pages.push(page);
+    }
+
+    expect(pages.length).toBeGreaterThanOrEqual(2);
+    expect(calls[1].url).toContain('page=2');
+  });
+});
+
+// =============================================================================
 // GraphQL pagination — happy path (SAFETY-CRITICAL #4 part 3)
 // =============================================================================
 

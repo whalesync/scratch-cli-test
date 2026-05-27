@@ -31,14 +31,21 @@ export interface Header {
  * - `link-header` — RFC 5988 `Link: <url>; rel="next"` response header. NEW in
  *   the TS port; not detected by the Go original. The "next URL" is read off
  *   the previous response's `Link` header rather than constructed.
+ * - `page` — page-number pagination: `?page=N&per_page=M`. The page param
+ *   increments by 1 between requests (NOT by `limit` — that's offset's job).
+ *   Termination: empty page. This is the Rails / Django / CompanyCam shape;
+ *   not detected by the Go original. Starting value comes from whatever the
+ *   first-page URL contains, so 0-indexed and 1-indexed APIs both work.
  */
 export interface Strategy {
-  type: 'cursor' | 'offset' | 'graphql' | 'link-header';
+  type: 'cursor' | 'offset' | 'graphql' | 'link-header' | 'page';
   cursorPath?: string;
   dataPath?: string;
   cursorParam?: string;
   offsetParam?: string;
   limitParam?: string;
+  /** Query param holding the page number, used only when `type === 'page'`. Defaults to `page`. */
+  pageParam?: string;
   limit?: number;
 }
 
@@ -54,6 +61,8 @@ export interface ApigetProgress {
   offset?: number;
   /** For type=link-header: the full URL of the page we're about to fetch */
   linkUrl?: string;
+  /** For type=page: the page number we just fetched (increments by 1). */
+  page?: number;
   /** Monotonically increasing page index, starting at 1 for page 1 */
   pageIndex: number;
 }
@@ -124,6 +133,8 @@ export interface ApigetStreamYield {
   offset?: number;
   /** Resume state for link-header type */
   linkUrl?: string;
+  /** Resume state for page type (the page number we just fetched). */
+  page?: number;
   /** Populated only on page 1, undefined thereafter. */
   detected?: {
     pagination: Strategy | null;
