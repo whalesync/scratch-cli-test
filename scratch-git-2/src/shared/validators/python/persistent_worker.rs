@@ -13,6 +13,14 @@
 //! job carries a monotonically increasing id and the closure no-ops when the
 //! worker has moved on to a different job.
 //!
+//! The timer is only spawned *after* the worker confirms it has dequeued and
+//! started executing the job (via a one-shot `started` channel). Otherwise the
+//! 5-second budget would also cover queue-wait time — under concurrent load
+//! (the validator pipeline calls us from `rayon::par_iter`, and overloaded CI
+//! boxes run the test suite with many threads) jobs can sit behind other work
+//! for several seconds before the single worker thread picks them up, which
+//! would burn the entire budget before the validator even starts running.
+//!
 //! ## Known limitation
 //!
 //! A validator that catches `KeyboardInterrupt` in a bare `except:` clause
@@ -93,6 +101,9 @@ struct Job {
     value: serde_json::Value,
     record: serde_json::Value,
     args: serde_json::Value,
+    /// Fired by the worker right before it starts executing this job, so the
+    /// caller's timeout timer counts execution time only — not queue wait.
+    started_tx: mpsc::Sender<()>,
     response_tx: mpsc::Sender<anyhow::Result<Vec<PythonValidationItem>>>,
 }
 
@@ -119,6 +130,9 @@ fn worker_loop(
 
         while let Ok(job) = job_rx.recv() {
             current_job.store(job.id, Ordering::SeqCst);
+            // Notify the caller we're starting so it can spawn its timeout
+            // timer against execution time, not against queue wait.
+            let _ = job.started_tx.send(());
             let result = run_job(vm, &mut code_cache, &job);
             let _ = job.response_tx.send(result);
         }
@@ -242,6 +256,35 @@ pub(super) fn run(
     let state = state();
     let job_id = state.next_job_id.fetch_add(1, Ordering::SeqCst);
 
+    let (started_tx, started_rx) = mpsc::channel::<()>();
+    let (response_tx, response_rx) = mpsc::channel::<anyhow::Result<Vec<PythonValidationItem>>>();
+    let job = Job {
+        id: job_id,
+        source,
+        mtime_ns,
+        path: validator_path,
+        script_name: relative_path.to_string(),
+        filename: ctx.filename.clone(),
+        field_path: ctx.field_path.clone(),
+        value: ctx.value.clone(),
+        record: ctx.record.clone(),
+        args: ctx.args.clone(),
+        started_tx,
+        response_tx,
+    };
+    state
+        .job_tx
+        .send(job)
+        .map_err(|_| anyhow::anyhow!("python validator worker thread is not running"))?;
+
+    // Block until the worker has dequeued our job and is about to execute it.
+    // Only then do we arm the cooperative-interrupt timer, so the 5s budget
+    // covers actual Python execution and not the time spent queued behind
+    // other concurrent validator calls (rayon par_iter / parallel tests).
+    started_rx
+        .recv()
+        .map_err(|_| anyhow::anyhow!("python validator worker thread is not running"))?;
+
     // Cooperative timeout: short-lived timer pushes a KeyboardInterrupt
     // closure into the worker's shared signal channel. The closure no-ops
     // when the worker has moved on (current_job != captured id), so a late-
@@ -268,25 +311,6 @@ pub(super) fn run(
             }
         });
     }
-
-    let (response_tx, response_rx) = mpsc::channel::<anyhow::Result<Vec<PythonValidationItem>>>();
-    let job = Job {
-        id: job_id,
-        source,
-        mtime_ns,
-        path: validator_path,
-        script_name: relative_path.to_string(),
-        filename: ctx.filename.clone(),
-        field_path: ctx.field_path.clone(),
-        value: ctx.value.clone(),
-        record: ctx.record.clone(),
-        args: ctx.args.clone(),
-        response_tx,
-    };
-    state
-        .job_tx
-        .send(job)
-        .map_err(|_| anyhow::anyhow!("python validator worker thread is not running"))?;
 
     let backstop = Duration::from_secs(TIMEOUT_SECS + TIMEOUT_BACKSTOP_BUFFER_SECS);
     let recv_result = response_rx.recv_timeout(backstop);
