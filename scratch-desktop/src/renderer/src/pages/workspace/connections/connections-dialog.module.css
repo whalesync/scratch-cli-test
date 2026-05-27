@@ -1,0 +1,165 @@
+.content {
+  max-width: 650px;
+  margin: 0 auto;
+  padding: 0 14px;
+}
+
+/* -- Service block (card) -- */
+.serviceBlock {
+  border: 1px solid var(--fg-divider);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-panel);
+  margin-bottom: 8px;
+}
+
+.serviceBlockError {
+  border-color: var(--mantine-color-red-3);
+}
+
+/* -- Service header row -- */
+.serviceRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  min-height: 48px;
+  transition: background 0.1s;
+}
+
+.serviceRowWithTables {
+  border-bottom: 1px solid var(--fg-divider);
+}
+
+.serviceRow:hover {
+  background: var(--bg-selected);
+}
+
+/* -- Service icon wrapper -- */
+.serviceIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* -- Name + dot group -- */
+.serviceNameGroup {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* -- Status dot -- */
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusDotGreen {
+  background: var(--mantine-color-green-6);
+}
+
+.statusDotRed {
+  background: var(--mantine-color-red-6);
+}
+
+/* -- Error label -- */
+.errorLabel {
+  font-size: 12px;
+  color: var(--mantine-color-red-6);
+  flex: 1;
+}
+
+/* -- Row actions -- */
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* -- Action button (tiny inline) -- */
+.actionBtn {
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 400;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--fg-divider);
+  background: var(--bg-panel);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition:
+    background 0.1s,
+    color 0.1s,
+    border-color 0.1s;
+}
+
+.actionBtn:hover {
+  background: var(--bg-selected);
+  color: var(--fg-primary);
+}
+
+/* -- Group separator row -- */
+.groupRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--fg-divider);
+  background: var(--bg-base);
+}
+
+/* -- Table row -- */
+.tableRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px 8px 40px;
+  border-bottom: 1px solid var(--fg-divider);
+  min-height: 38px;
+  transition: background 0.1s;
+}
+
+.tableRowNested {
+  padding-left: 56px;
+}
+
+.tableRow:last-child {
+  border-bottom: none;
+}
+
+.tableRow:hover {
+  background: var(--bg-selected);
+}
+
+/* -- Empty connection "no tables" row -- */
+.emptyTablesRow {
+  padding: 10px 14px 10px 40px;
+}
+
+/* -- Zero/empty state -- */
+.zeroState {
+  text-align: center;
+  padding: 4.5rem 2rem;
+  border: 1.5px dashed var(--fg-divider);
+  border-radius: 12px;
+}
+
+.zeroIcon {
+  margin-bottom: 14px;
+  opacity: 0.3;
+  display: flex;
+  justify-content: center;
+}

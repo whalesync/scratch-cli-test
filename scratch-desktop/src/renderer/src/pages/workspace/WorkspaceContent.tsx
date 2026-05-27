@@ -1,8 +1,11 @@
 import { Box } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { trackOpenConnectionsDialog } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { Workspace } from '../../types/workspace';
+import { ConnectionsPanel } from './ConnectionsPanel';
 import { FolderDataGrid } from './FolderDataGrid';
 import { ResizeHandle } from './ResizeHandle';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
@@ -46,6 +49,9 @@ export function WorkspaceContent({
 }: WorkspaceContentProps) {
   const selectedFolderPath = useWorkspaceUiStore((s) => s.selectedFolderPath);
   const setSelectedFolderPath = useWorkspaceUiStore((s) => s.setSelectedFolderPath);
+  const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
+  const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
@@ -73,6 +79,26 @@ export function WorkspaceContent({
     },
     [selectedFolderPath, setSelectedFolderPath],
   );
+
+  const [newConnectionId, setNewConnectionId] = useState<string | null>(null);
+
+  // Open connections panel when returning from OAuth callback
+  useEffect(() => {
+    if (searchParams.get('openConnections') === 'true') {
+      setShowConnectionsPanel(true);
+      const connId = searchParams.get('newConnectionId') ?? null;
+      if (connId) setNewConnectionId(connId);
+      const next = new URLSearchParams(searchParams);
+      next.delete('openConnections');
+      next.delete('newConnectionId');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams, setShowConnectionsPanel]);
+
+  const handleOpenConnectionsPanel = useCallback(() => {
+    setShowConnectionsPanel(true);
+    void trackOpenConnectionsDialog(workspace.id);
+  }, [workspace.id, setShowConnectionsPanel]);
 
   // Load local folders when workspace is downloaded
   useEffect(() => {
@@ -152,25 +178,36 @@ export function WorkspaceContent({
         onSelectFolder={handleSelectFolder}
         workspacePath={localPath}
         onDataRefresh={onDataRefresh}
+        onOpenConnectionsPanel={handleOpenConnectionsPanel}
+        connectionsPanelOpen={showConnectionsPanel}
       />
 
       {/* Resize Handle */}
       <ResizeHandle onResizeStart={handleResizeStart} onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
-      {/* Data grid — memoized so sidebar width changes don't re-render it */}
-      <FolderDataGrid
-        workspaceId={workspace.id}
-        selectedFolderPath={selectedFolderPath}
-        workspacePath={localPath}
-        targetRecord={targetRecord}
-        dataRefreshKey={dataRefreshKey}
-        onDataRefresh={onDataRefresh}
-        onPublishFile={onPublishFile}
-        activateGlobalFilter={activateGlobalFilter}
-        onActivateGlobalFilterConsumed={onActivateGlobalFilterConsumed}
-        validate={validateEnabled}
-        onIndexingProgress={onIndexingProgress}
-      />
+      {/* Right panel: connections panel or data grid */}
+      {showConnectionsPanel ? (
+        <ConnectionsPanel
+          workbookId={workspace.id}
+          onDataRefresh={onDataRefresh}
+          newConnectionId={newConnectionId}
+          onNewConnectionConsumed={() => setNewConnectionId(null)}
+        />
+      ) : (
+        <FolderDataGrid
+          workspaceId={workspace.id}
+          selectedFolderPath={selectedFolderPath}
+          workspacePath={localPath}
+          targetRecord={targetRecord}
+          dataRefreshKey={dataRefreshKey}
+          onDataRefresh={onDataRefresh}
+          onPublishFile={onPublishFile}
+          activateGlobalFilter={activateGlobalFilter}
+          onActivateGlobalFilterConsumed={onActivateGlobalFilterConsumed}
+          validate={validateEnabled}
+          onIndexingProgress={onIndexingProgress}
+        />
+      )}
     </Box>
   );
 }

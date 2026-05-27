@@ -20,6 +20,9 @@ const WorkspacePage = React.lazy(() => import('./pages/WorkspacePage').then((m) 
 const WorkspacePageDebug = React.lazy(() =>
   import('./pages/WorkspacePageDebug').then((m) => ({ default: m.WorkspacePageDebug })),
 );
+const OAuthCallbackPage = React.lazy(() =>
+  import('./pages/OAuthCallbackPage').then((m) => ({ default: m.OAuthCallbackPage })),
+);
 
 function PageLoader() {
   return (
@@ -88,6 +91,14 @@ function AppRoutes() {
     <PostHogProvider user={user}>
       <Suspense fallback={<PageLoader />}>
         <Routes>
+          <Route
+            path="/oauth-callback"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <OAuthCallbackPage />
+              </Suspense>
+            }
+          />
           <Route element={<Layout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/workspace/:id" element={<WorkspacePageRoute />} />

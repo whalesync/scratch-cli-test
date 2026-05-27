@@ -6,14 +6,15 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { RouteUrls } from '@/utils/route-urls';
 import { Alert, Container, Group, Loader, Stack } from '@mantine/core';
 import { OAuthStatePayload } from '@spinner/shared-types';
-import { CircleXIcon, InfoIcon } from 'lucide-react';
+import { CheckCircle2Icon, CircleXIcon, InfoIcon } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 interface OAuthCallbackState {
-  status: 'loading' | 'error' | 'denied';
+  status: 'loading' | 'error' | 'denied' | 'desktop-redirect';
   message?: string;
   connectorAccountId?: string;
+  desktopUrl?: string;
 }
 
 /**
@@ -90,7 +91,12 @@ export default function OAuthCallbackPage() {
           desktopUrl.searchParams.set('service', oAuthState.service);
           const realmId = searchParams.get('realmId');
           if (realmId) desktopUrl.searchParams.set('realmId', realmId);
-          window.location.href = desktopUrl.toString();
+          const desktopUrlString = desktopUrl.toString();
+          window.location.href = desktopUrlString;
+          // The browser stays on this page after a custom protocol redirect,
+          // so update state to show a confirmation instead of the loading spinner.
+          setState({ status: 'desktop-redirect', desktopUrl: desktopUrlString });
+          return;
         } else {
           // Otherwise send the result to the web client.
           window.location.href = `${oAuthState.redirectPrefix}/oauth/callback-step-2${window.location.search}`;
@@ -150,6 +156,25 @@ export default function OAuthCallbackPage() {
             </Group>
           </>
         )}
+        {state.status === 'desktop-redirect' && (
+          <>
+            <StyledLucideIcon Icon={CheckCircle2Icon} size={64} c="var(--mantine-color-green-6)" />
+            <TextTitle2>Opening in Scratch desktop...</TextTitle2>
+            <Text13Regular c="dimmed" ta="center">
+              The connection was successful. You can close this tab.
+            </Text13Regular>
+            <Group gap="sm" mt="md">
+              <ButtonSecondaryOutline
+                onClick={() => {
+                  if (state.desktopUrl) window.location.href = state.desktopUrl;
+                }}
+              >
+                Open again
+              </ButtonSecondaryOutline>
+            </Group>
+          </>
+        )}
+
         {state.status === 'denied' && (
           <>
             <StyledLucideIcon Icon={InfoIcon} size={64} c="var(--mantine-color-gray-6)" />

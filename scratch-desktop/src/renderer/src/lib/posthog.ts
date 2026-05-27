@@ -25,6 +25,7 @@ export enum PostHogEvents {
   INSTALL_UPDATE = 'install_update',
   DEEP_LINK_PROCESSED = 'deep_link_processed',
   WORKSPACE_CLOUD_SYNC_DETECTED = 'workspace_cloud_sync_detected',
+  OPEN_CONNECTIONS_DIALOG = 'open_connections_dialog',
 }
 
 export type CloudSyncSurface = 'open' | 'create';
@@ -199,6 +200,10 @@ export async function trackDeepLinkProcessed(props: {
   const { source, ...rest } = props;
   const sanitizedSource = sanitizeDeepLinkSource(source);
   await captureEvent(PostHogEvents.DEEP_LINK_PROCESSED, sanitizedSource ? { ...rest, source: sanitizedSource } : rest);
+}
+
+export async function trackOpenConnectionsDialog(workbookId: string): Promise<void> {
+  await captureEvent(PostHogEvents.OPEN_CONNECTIONS_DIALOG, { workbookId });
 }
 
 export async function identifyUser(user: User, email: string | undefined): Promise<void> {

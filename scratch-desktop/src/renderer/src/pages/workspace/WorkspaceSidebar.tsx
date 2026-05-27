@@ -2,7 +2,7 @@ import { ButtonSecondaryOutline } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
-import { Bug, LinkIcon, Settings, SettingsIcon } from 'lucide-react';
+import { Bug, LinkIcon, Settings, SettingsIcon, UnplugIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
 import { useDevTools } from '../../hooks/use-dev-tools';
@@ -24,6 +24,8 @@ interface WorkspaceSidebarProps {
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
   onDataRefresh: () => void;
+  onOpenConnectionsPanel?: () => void;
+  connectionsPanelOpen?: boolean;
 }
 
 export function WorkspaceSidebar({
@@ -39,6 +41,8 @@ export function WorkspaceSidebar({
   onSelectFolder,
   workspacePath,
   onDataRefresh,
+  onOpenConnectionsPanel,
+  connectionsPanelOpen,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
@@ -130,6 +134,23 @@ export function WorkspaceSidebar({
             <Text13Regular c="var(--fg-secondary)">Manage connections</Text13Regular>
           </Group>
         </UnstyledButton>
+
+        {isDevToolsEnabled && onOpenConnectionsPanel && (
+          <UnstyledButton
+            px="sm"
+            py={8}
+            style={{
+              width: '100%',
+              backgroundColor: connectionsPanelOpen ? 'var(--highlight-fill)' : undefined,
+            }}
+            onClick={onOpenConnectionsPanel}
+          >
+            <Group gap={8} wrap="nowrap">
+              <UnplugIcon size={14} color="var(--mantine-color-violet-6)" />
+              <Text13Regular c="var(--mantine-color-violet-6)">Connections (local UI)</Text13Regular>
+            </Group>
+          </UnstyledButton>
+        )}
 
         {isDevToolsEnabled && (
           <UnstyledButton

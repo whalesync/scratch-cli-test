@@ -92,6 +92,17 @@ export async function mapDeepLinkToDesktopRoute(route: string, query: string): P
     return `/workspace/${workspace.id}${nextParams.toString() ? `?${nextParams.toString()}` : ''}`;
   }
 
+  if (segments[0] === 'oauth-callback') {
+    const params = new URLSearchParams(query);
+    const nextParams = new URLSearchParams();
+    for (const key of ['code', 'state', 'service', 'error', 'error_description', 'realmId']) {
+      const value = params.get(key);
+      if (value) nextParams.set(key, value);
+    }
+    nextParams.set('_dl', String(Date.now()));
+    return `/oauth-callback?${nextParams.toString()}`;
+  }
+
   const workbookRoute = mapWebWorkbookPathToDesktopRoute(route);
   if (workbookRoute === '/') {
     return workbookRoute;

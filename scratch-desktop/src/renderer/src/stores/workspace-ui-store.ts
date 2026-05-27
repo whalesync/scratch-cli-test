@@ -32,6 +32,7 @@ export interface WorkspaceUiState {
   selectedFolderPath: string | null;
   selectedRecordFilename: string | null;
   focusedFieldName: string | null;
+  showConnectionsPanel: boolean;
 
   // --- Grid Configuration ---
   sort: SortState;
@@ -48,6 +49,7 @@ export interface WorkspaceUiState {
   setSelectedFolderPath: (path: string | null) => void;
   setSelectedRecordFilename: (filename: string | null) => void;
   setFocusedFieldName: (name: string | null) => void;
+  setShowConnectionsPanel: (show: boolean) => void;
 
   /**
    * Switch to grid view, clearing record/field selection.
@@ -90,6 +92,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   selectedFolderPath: null,
   selectedRecordFilename: null,
   focusedFieldName: null,
+  showConnectionsPanel: false,
 
   // --- Grid Configuration ---
   sort: { column: null, direction: null },
@@ -102,11 +105,12 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   // --- Actions ---
   setSelectedFolderPath: (path) =>
     set((state) => {
-      if (state.selectedFolderPath === path) return state;
+      if (state.selectedFolderPath === path && !state.showConnectionsPanel) return state;
       return {
         selectedFolderPath: path,
         selectedRecordFilename: null,
         focusedFieldName: null,
+        showConnectionsPanel: false,
         sort: INITIAL_SORT,
         activeFilters: [],
         visibleColumnIds: null,
@@ -126,6 +130,8 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
     });
   },
   setFocusedFieldName: (name) => set({ focusedFieldName: name }),
+  setShowConnectionsPanel: (show) =>
+    set(show ? { showConnectionsPanel: true, selectedFolderPath: null } : { showConnectionsPanel: false }),
 
   showGrid: () => set({ selectedRecordFilename: null, focusedFieldName: null, diffViewMode: null }),
   showRecord: (filename) => {

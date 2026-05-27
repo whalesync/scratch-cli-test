@@ -82,7 +82,7 @@ function parseScratchDeepLink(url: string): { route: string; query: string } | n
       return null;
     }
     const route = `${parsed.hostname}${parsed.pathname}`.replace(/\/+$/, '');
-    if (!route.startsWith('workbook/') && route !== 'open') {
+    if (!route.startsWith('workbook/') && route !== 'open' && route !== 'oauth-callback') {
       return null;
     }
     if (route.includes('..')) {
