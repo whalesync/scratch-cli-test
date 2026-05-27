@@ -212,6 +212,16 @@ export function WorkspacePage() {
     setDataRefreshKey((current) => current + 1);
   }, []);
 
+  const handlePullAndRefresh = useCallback(async () => {
+    if (!localPath) return;
+    try {
+      await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'remove' });
+    } catch (err) {
+      console.debug('[workspace] connection-change pull failed:', err);
+    }
+    handleDataRefresh();
+  }, [handleDataRefresh, localPath]);
+
   const handleToggleWatching = useCallback(async () => {
     if (!localPath) return;
     const next = !watchingEnabled;
@@ -612,6 +622,7 @@ export function WorkspacePage() {
         }
         dataRefreshKey={dataRefreshKey}
         onDataRefresh={handleDataRefresh}
+        onConnectionsChanged={() => void handlePullAndRefresh()}
         onPublishFile={() => {
           // Single-file publish was removed with the upload-patch rewrite —
           // the new flow always uploads everything the user has accepted.

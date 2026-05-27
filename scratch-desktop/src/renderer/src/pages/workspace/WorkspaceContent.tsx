@@ -24,6 +24,7 @@ interface WorkspaceContentProps {
   targetRecord?: { filename: string; trigger: string } | null;
   dataRefreshKey: number;
   onDataRefresh: () => void;
+  onConnectionsChanged?: () => void;
   onPublishFile?: (relativePath: string) => void;
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
@@ -41,6 +42,7 @@ export function WorkspaceContent({
   targetRecord,
   dataRefreshKey,
   onDataRefresh,
+  onConnectionsChanged,
   onPublishFile,
   activateGlobalFilter,
   onActivateGlobalFilterConsumed,
@@ -189,7 +191,7 @@ export function WorkspaceContent({
       {showConnectionsPanel ? (
         <ConnectionsPanel
           workbookId={workspace.id}
-          onDataRefresh={onDataRefresh}
+          onDataRefresh={onConnectionsChanged ?? onDataRefresh}
           newConnectionId={newConnectionId}
           onNewConnectionConsumed={() => setNewConnectionId(null)}
         />
