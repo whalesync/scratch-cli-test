@@ -196,13 +196,14 @@ export class PostHogService implements OnModuleDestroy {
   trackCreateDataSource(
     actor: Actor,
     dataSource: ConnectorAccount,
-    options: { authType: string; healthStatus: 'ok' | 'error' },
+    options: { authType: string; healthStatus: 'ok' | 'error'; apiDomain?: string },
   ): void {
     this.captureEvent(PostHogEventName.CONNECTOR_ACCOUNT_CREATED, actor, {
       dataSourceId: dataSource.id,
       connectorService: dataSource.service,
       authType: options.authType,
       healthStatus: options.healthStatus,
+      ...(options.apiDomain && { apiDomain: options.apiDomain }),
     });
   }
 
@@ -341,6 +342,10 @@ export class PostHogService implements OnModuleDestroy {
     actor: Actor | string,
     properties: {
       workbookId: string;
+      /** Connector type (e.g. AIRTABLE, GENERIC_API) — optional only so the legacy pull-files job can omit it; new callers should always set it. */
+      connectorService?: string;
+      /** Matches dataSourceId on connector_created — lets create→pull events be joined per source. */
+      connectorAccountId?: string;
       trigger?: string;
       mode?: 'full' | 'incremental';
       result: 'success' | 'failure';
@@ -349,6 +354,8 @@ export class PostHogService implements OnModuleDestroy {
       filesUpdated: number;
       filesDeleted: number;
       foldersProcessed: number;
+      /** Set only for GENERIC_API pulls so the connector breakdowns can show which third-party APIs are being hit. */
+      apiDomain?: string;
     },
   ): void {
     this.captureEvent(PostHogEventName.PULL_COMPLETED, actor, properties);

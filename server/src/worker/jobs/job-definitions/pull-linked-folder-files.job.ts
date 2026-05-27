@@ -3,6 +3,7 @@ import {
   DataFolderId,
   type DataFolderOptions,
   type FolderError,
+  isGenericApiConnectorExtras,
   JobType,
   type WorkbookId,
 } from '@spinner/shared-types';
@@ -30,6 +31,7 @@ import { connectorRegistry } from 'src/remote-service/connectors/connector-regis
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { extractApiDomain } from 'src/utils/urls';
 import { JobCanceledError } from 'src/worker/job-errors';
 import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
@@ -222,11 +224,21 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       );
     }
 
-    const connectionName = folders[0]?.connectorAccount?.displayName ?? 'Unknown connection';
+    // The single-connection invariant above means every folder shares this account.
+    const connectorAccount = folders[0]?.connectorAccount;
     const connectorAccountId = folders[0]?.connectorAccountId ?? null;
+    const connectionName = connectorAccount?.displayName ?? 'Unknown connection';
 
-    if (!connectorAccountId) {
+    if (!connectorAccountId || !connectorAccount) {
       throw new Error(`All folders in pull job must belong to a connection`);
+    }
+
+    // Capture the GENERIC_API base domain (if applicable) so the trackPullCompleted
+    // event at the end of postProcess can break analytics down by third-party API.
+    let apiDomain: string | undefined;
+    if (connectorAccount.service === ServiceConst.GENERIC_API && isGenericApiConnectorExtras(connectorAccount.extras)) {
+      const firstEndpointUrl = connectorAccount.extras.endpoints[0]?.url;
+      if (firstEndpointUrl) apiDomain = extractApiDomain(firstEndpointUrl);
     }
 
     // Per-user gate for the GENERIC_API connector. The pull job is the single
@@ -234,7 +246,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // where the kill switch has to live to catch all of them. Fail-closed: if
     // ENABLE_GENERIC_CONNECTOR is not explicitly true for the triggering user,
     // the job aborts before any IO.
-    if (folders[0]?.connectorAccount?.service === ServiceConst.GENERIC_API) {
+    if (connectorAccount.service === ServiceConst.GENERIC_API) {
       const enabled = await this.experimentsService.isGenericConnectorEnabledForUser(data.userId);
       if (!enabled) {
         throw new Error('The Generic API connector is not enabled — pull aborted.');
@@ -405,7 +417,18 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
       // Post-processing: rebase, GC, index rebuild, tracking.
       // Runs even if some folders failed so successful folders get finalized.
-      await this.postProcess({ repoId, data, publicProgress, jobProgress, pullStats, folderCount, checkpoint });
+      await this.postProcess({
+        repoId,
+        data,
+        publicProgress,
+        jobProgress,
+        pullStats,
+        folderCount,
+        checkpoint,
+        connectorService: connectorAccount.service,
+        connectorAccountId,
+        apiDomain,
+      });
     }
   }
 
@@ -417,8 +440,25 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     pullStats: { created: number; updated: number; deleted: number; failed: boolean };
     folderCount: number;
     checkpoint: CheckpointFn;
+    /** Connector type of the (single) connection this job pulled — required for per-service breakdowns. */
+    connectorService: string;
+    /** Connection id — matches dataSourceId on connector_created for join-able analytics. */
+    connectorAccountId: string;
+    /** Set when the pulled connection is GENERIC_API; passed through to trackPullCompleted. */
+    apiDomain?: string;
   }) {
-    const { repoId, data, publicProgress, jobProgress, pullStats, folderCount, checkpoint } = params;
+    const {
+      repoId,
+      data,
+      publicProgress,
+      jobProgress,
+      pullStats,
+      folderCount,
+      checkpoint,
+      connectorService,
+      connectorAccountId,
+      apiDomain,
+    } = params;
 
     await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
 
@@ -463,6 +503,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     try {
       this.postHogService.trackPullCompleted(data.userId, {
         workbookId: data.workbookId,
+        connectorService,
+        connectorAccountId,
         trigger: data.trigger,
         mode: data.pullMode ?? 'full',
         result: pullStats.failed ? 'failure' : 'success',
@@ -471,6 +513,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         filesUpdated: pullStats.updated,
         filesDeleted: pullStats.deleted,
         foldersProcessed: folderCount,
+        apiDomain,
       });
     } catch (err) {
       WSLogger.warn({

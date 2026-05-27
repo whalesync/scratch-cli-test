@@ -10,3 +10,17 @@ export function isValidHttpUrl(str: string): boolean {
   );
   return pattern.test(str);
 }
+
+/**
+ * Returns the hostname of a URL with a leading `www.` stripped, for use as an
+ * analytics breakdown key. Subdomains other than `www` are preserved
+ * (`api.example.co.uk` stays distinct from `example.co.uk`). Returns undefined
+ * for inputs that don't parse as a URL.
+ */
+export function extractApiDomain(url: string): string | undefined {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return undefined;
+  }
+}

@@ -29,6 +29,7 @@ import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-g
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { canCreateDataSource } from 'src/users/subscription-utils';
 import { Actor, SYSTEM_ACTOR } from 'src/users/types';
+import { extractApiDomain } from 'src/utils/urls';
 import { DbService } from '../../db/db.service';
 import { PostHogService } from '../../posthog/posthog.service';
 import { EncryptedData } from '../../utils/encryption';
@@ -224,9 +225,16 @@ export class ConnectorAccountService {
 
     const testResult = await this.testConnection(workbookId, connectorAccount.id, actor);
 
+    let apiDomain: string | undefined;
+    if (createDto.service === ServiceConst.GENERIC_API && isGenericApiConnectorExtras(createDto.extras)) {
+      const firstEndpointUrl = createDto.extras.endpoints[0]?.url;
+      if (firstEndpointUrl) apiDomain = extractApiDomain(firstEndpointUrl);
+    }
+
     this.posthogService.trackCreateDataSource(actor, connectorAccount, {
       authType: createDto.authType ?? connectorAccount.authType,
       healthStatus: testResult.health,
+      apiDomain,
     });
 
     await this.auditLogService.logEvent({
