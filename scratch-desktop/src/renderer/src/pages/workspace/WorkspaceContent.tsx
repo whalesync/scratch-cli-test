@@ -21,6 +21,8 @@ export interface LocalFolder {
 interface WorkspaceContentProps {
   workspace: Workspace;
   localPath: string | null;
+  selectedFolderPath: string | null;
+  setSelectedFolderPath: (path: string | null) => void;
   targetRecord?: { filename: string; trigger: string } | null;
   dataRefreshKey: number;
   onDataRefresh: () => void;
@@ -39,6 +41,8 @@ const DEFAULT_SIDEBAR_WIDTH = 280;
 export function WorkspaceContent({
   workspace,
   localPath,
+  selectedFolderPath,
+  setSelectedFolderPath,
   targetRecord,
   dataRefreshKey,
   onDataRefresh,
@@ -49,8 +53,6 @@ export function WorkspaceContent({
   validateEnabled = false,
   onIndexingProgress,
 }: WorkspaceContentProps) {
-  const selectedFolderPath = useWorkspaceUiStore((s) => s.selectedFolderPath);
-  const setSelectedFolderPath = useWorkspaceUiStore((s) => s.setSelectedFolderPath);
   const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
   const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
   const [searchParams, setSearchParams] = useSearchParams();

@@ -90,8 +90,40 @@ export function WorkspacePage() {
   const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
   const [reinitModalOpen, setReinitModalOpen] = useState(false);
-  const selectedFolderPath = useWorkspaceUiStore((s) => s.selectedFolderPath);
-  const setSelectedFolderPath = useWorkspaceUiStore((s) => s.setSelectedFolderPath);
+  // selectedFolderPath lives in component state (not the Zustand store) so it
+  // resets cleanly when this component remounts on workspace switch (see
+  // `<WorkspacePage key={id} />` in App.tsx). Storing it in the module-level
+  // store let an absolute path from the previous workspace leak into the next
+  // one, which broke `path.relative(workspacePath, folderPath)` downstream.
+  const [selectedFolderPath, setSelectedFolderPathInner] = useState<string | null>(null);
+  const resetFolderState = useWorkspaceUiStore((s) => s.resetFolderState);
+  const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
+  const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
+  const setSelectedFolderPath = useCallback(
+    (path: string | null) => {
+      setSelectedFolderPathInner((prev) => {
+        if (prev === path) return prev;
+        // Mirror the old store action's side effect: clear per-folder state
+        // (record/field selection, sort, filters, columns, page, diff view).
+        resetFolderState();
+        return path;
+      });
+      // Selecting a folder closes the connections panel — mirrors the
+      // pre-rebase coupling between folder selection and panel visibility.
+      if (path !== null) {
+        setShowConnectionsPanel(false);
+      }
+    },
+    [resetFolderState, setShowConnectionsPanel],
+  );
+  // Opening the connections panel clears the selected folder so the grid
+  // returns to its empty state when the panel closes (preserves the
+  // pre-rebase store behavior now that selectedFolderPath lives here).
+  useEffect(() => {
+    if (showConnectionsPanel) {
+      setSelectedFolderPathInner(null);
+    }
+  }, [showConnectionsPanel]);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
@@ -615,6 +647,8 @@ export function WorkspacePage() {
       <WorkspaceContent
         workspace={workspace}
         localPath={localPath}
+        selectedFolderPath={selectedFolderPath}
+        setSelectedFolderPath={setSelectedFolderPath}
         targetRecord={
           deepLinkedPath?.recordFilename && deepLinkedPath.folderPath === selectedFolderPath
             ? { filename: deepLinkedPath.recordFilename, trigger: deepLinkedPath.trigger }

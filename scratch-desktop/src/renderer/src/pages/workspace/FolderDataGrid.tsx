@@ -1111,7 +1111,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   // Reset local-only state when folder changes. Store-managed state (sort, filters, page,
   // columnWidths, visibleColumnIds, selectedRecordFilename, focusedFieldName) is already reset
-  // by the store's setSelectedFolderPath action. We still need to:
+  // by WorkspacePage's setSelectedFolderPath wrapper (which calls resetFolderState). We still need to:
   // 1. Sync lastResetFolderRef for the folderPending/queryKey mechanism
   // 2. Apply activateGlobalFilter if pending
   // 3. Reset grid-local state (selection, schema, popover, etc.)

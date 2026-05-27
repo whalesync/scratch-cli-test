@@ -29,7 +29,12 @@ export type DiffViewMode = 'side-by-side' | 'inline-words';
 
 export interface WorkspaceUiState {
   // --- Navigation / Selection ---
-  selectedFolderPath: string | null;
+  // `selectedFolderPath` is intentionally NOT stored here. It is owned by
+  // WorkspacePage's local state, which resets on workspace switch via the
+  // `<WorkspacePage key={id} />` remount in App.tsx. Keeping it in the
+  // module-level store let stale absolute paths from a previous workspace
+  // leak into the next one, producing `relative()` output starting with
+  // `..` and triggering "connection '..' not in marker" downstream.
   selectedRecordFilename: string | null;
   focusedFieldName: string | null;
   showConnectionsPanel: boolean;
@@ -46,7 +51,6 @@ export interface WorkspaceUiState {
   diffViewMode: DiffViewMode | null;
 
   // --- Actions ---
-  setSelectedFolderPath: (path: string | null) => void;
   setSelectedRecordFilename: (filename: string | null) => void;
   setFocusedFieldName: (name: string | null) => void;
   setShowConnectionsPanel: (show: boolean) => void;
@@ -89,7 +93,6 @@ export function deriveViewMode(state: {
 
 export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   // --- Navigation / Selection ---
-  selectedFolderPath: null,
   selectedRecordFilename: null,
   focusedFieldName: null,
   showConnectionsPanel: false,
@@ -103,23 +106,6 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   diffViewMode: null,
 
   // --- Actions ---
-  setSelectedFolderPath: (path) =>
-    set((state) => {
-      if (state.selectedFolderPath === path && !state.showConnectionsPanel) return state;
-      return {
-        selectedFolderPath: path,
-        selectedRecordFilename: null,
-        focusedFieldName: null,
-        showConnectionsPanel: false,
-        sort: INITIAL_SORT,
-        activeFilters: [],
-        visibleColumnIds: null,
-        columnWidths: {},
-        page: 1,
-        diffViewMode: null,
-      };
-    }),
-
   setSelectedRecordFilename: (filename) => {
     const prev = get().selectedRecordFilename;
     const resetDiff = prev !== filename;
@@ -130,8 +116,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
     });
   },
   setFocusedFieldName: (name) => set({ focusedFieldName: name }),
-  setShowConnectionsPanel: (show) =>
-    set(show ? { showConnectionsPanel: true, selectedFolderPath: null } : { showConnectionsPanel: false }),
+  setShowConnectionsPanel: (show) => set({ showConnectionsPanel: show }),
 
   showGrid: () => set({ selectedRecordFilename: null, focusedFieldName: null, diffViewMode: null }),
   showRecord: (filename) => {
