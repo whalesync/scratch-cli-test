@@ -9,6 +9,7 @@ import {
   Modal,
   Notification,
   Popover,
+  Switch,
   Table,
   Title,
   Tooltip,
@@ -142,6 +143,10 @@ export const SCRATCH_MANTINE_THEME = createTheme({
     Checkbox: Checkbox.extend({
       defaultProps: { size: 'xs' },
       classNames: { input: classes.checkboxInput },
+    }),
+
+    Switch: Switch.extend({
+      classNames: { track: classes.switchTrack },
     }),
 
     Divider: Divider.extend({

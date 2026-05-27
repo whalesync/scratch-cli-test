@@ -268,20 +268,24 @@ export function CreateConnectionModal({
       size="lg"
       centered
     >
-      {isOAuthLoading ? (
+      {isOAuthLoading || isCreating ? (
         <Center py="xl">
           <Stack align="center" gap="md">
             <Loader size="md" />
             <Text size="sm" c="dimmed">
-              Waiting for authentication with {serviceName}...
+              {isOAuthLoading
+                ? `Waiting for authentication with ${serviceName}...`
+                : `Verifying connection to ${serviceName}...`}
             </Text>
-            <ButtonSecondaryOutline
-              onClick={() => {
-                setIsOAuthLoading(false);
-              }}
-            >
-              Cancel
-            </ButtonSecondaryOutline>
+            {isOAuthLoading && (
+              <ButtonSecondaryOutline
+                onClick={() => {
+                  setIsOAuthLoading(false);
+                }}
+              >
+                Cancel
+              </ButtonSecondaryOutline>
+            )}
           </Stack>
         </Center>
       ) : (

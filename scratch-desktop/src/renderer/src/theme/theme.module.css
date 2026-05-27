@@ -29,6 +29,16 @@
   &:checked {
     background-color: var(--highlight-fill);
     border-color: var(--highlight-border);
+    --checkbox-icon-color: var(--highlight-text);
+  }
+}
+
+/** CUSTOM SWITCH STYLES */
+.switchTrack {
+  input:checked + & {
+    --switch-color: var(--highlight-fill);
+    --switch-text-color: var(--highlight-text);
+    border: 1px solid var(--highlight-border);
   }
 }
 

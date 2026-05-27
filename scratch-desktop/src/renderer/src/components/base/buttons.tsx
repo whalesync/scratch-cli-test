@@ -16,6 +16,7 @@ export const ButtonPrimarySolid = Button.withProps({
       border: '1.5px solid var(--highlight-border)',
       fontWeight: 500,
       '--button-hover': 'var(--highlight-fill-hover)',
+      '--button-color': 'var(--highlight-text)',
     },
   },
 });
@@ -31,6 +32,7 @@ export const ButtonPrimaryLight = Button.withProps({
       border: '1.5px solid var(--highlight-border)',
       fontWeight: 500,
       '--button-hover': 'var(--highlight-fill-hover)',
+      '--button-color': 'var(--highlight-text)',
     },
   },
 });
@@ -96,6 +98,7 @@ export const IconButtonPrimaryOutline = Button.withProps({
       border: '1.5px solid var(--highlight-border)',
       fontWeight: 500,
       '--button-hover': 'var(--highlight-fill-hover)',
+      '--button-color': 'var(--highlight-text)',
     },
   },
 });
