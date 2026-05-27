@@ -1,5 +1,5 @@
 use super::*;
-use std::process::Command;
+use crate::shared::git_exec::git_command;
 use tempfile::TempDir;
 
 fn write_file(path: &Path, contents: &str) {
@@ -413,21 +413,21 @@ fn git_clone_bare_clones_remote_refs_and_origin() {
 
     git_clone_bare(remote_bare.to_str().unwrap(), &local_bare, "test-token").unwrap();
 
-    let dirty_ref = Command::new("git")
+    let dirty_ref = git_command()
         .arg(format!("--git-dir={}", local_bare.display()))
         .args(["rev-parse", "dirty"])
         .output()
         .unwrap();
     assert!(dirty_ref.status.success());
 
-    let main_ref = Command::new("git")
+    let main_ref = git_command()
         .arg(format!("--git-dir={}", local_bare.display()))
         .args(["rev-parse", "main"])
         .output()
         .unwrap();
     assert!(main_ref.status.success());
 
-    let origin_url = Command::new("git")
+    let origin_url = git_command()
         .arg(format!("--git-dir={}", local_bare.display()))
         .args(["config", "--get", "remote.origin.url"])
         .output()
@@ -543,11 +543,7 @@ fn materialize_main_worktree_is_idempotent_on_valid_worktree() {
 }
 
 fn run_git(cwd: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .unwrap();
+    let output = git_command().current_dir(cwd).args(args).output().unwrap();
     assert!(
         output.status.success(),
         "git {:?} failed: {}",

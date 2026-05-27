@@ -1,6 +1,6 @@
 use super::*;
+use crate::shared::git_exec::git_command;
 use std::path::PathBuf;
-use std::process::Command;
 use tempfile::TempDir;
 
 fn workspace_marker(connections: &[(&str, &str)]) -> markers::WorkspaceMarker {
@@ -683,7 +683,7 @@ fn read_tree_files_batched_handles_empty_tree() {
 }
 
 fn git_available() -> bool {
-    Command::new("git").arg("--version").output().is_ok()
+    git_command().arg("--version").output().is_ok()
 }
 
 #[allow(dead_code)]
@@ -1715,11 +1715,7 @@ fn discard_paths_single_repo_skips_when_main_missing() {
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .unwrap();
+    let output = git_command().current_dir(dir).args(args).output().unwrap();
     assert!(
         output.status.success(),
         "git {:?} failed: {}",

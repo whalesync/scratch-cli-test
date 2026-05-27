@@ -110,7 +110,7 @@ pub(super) fn extract_results(
     script_name: &str,
     vm: &rvm::VirtualMachine,
 ) -> anyhow::Result<Vec<PythonValidationItem>> {
-    use rvm::builtins::PyList;
+    use rvm::builtins::{PyDict, PyList};
 
     let list = result_obj.downcast::<PyList>().map_err(|obj| {
         anyhow::anyhow!(
@@ -123,30 +123,67 @@ pub(super) fn extract_results(
     let mut out = Vec::new();
     let items = list.borrow_vec();
     for (i, item) in items.iter().enumerate() {
-        let level = match item.get_item("level", vm) {
-            Ok(level_obj) if !vm.is_none(&level_obj) => {
+        let dict = item.clone().downcast::<PyDict>().map_err(|obj| {
+            anyhow::anyhow!(
+                "python validator {} returned item at index {} as {}: expected dict",
+                script_name,
+                i,
+                obj.class().name()
+            )
+        })?;
+
+        let level = match dict.get_item_opt("level", vm).map_err(|exc| {
+            anyhow::anyhow!(
+                "python validator {} failed reading 'level' at index {}: {}",
+                script_name,
+                i,
+                exc_to_string(vm, &exc)
+            )
+        })? {
+            Some(level_obj) if !vm.is_none(&level_obj) => {
                 let s = obj_to_string(vm, &level_obj, script_name, i, "level")?;
                 parse_level(&s)
             }
             _ => ValidationLevel::Warning,
         };
 
-        let message = match item.get_item("message", vm) {
-            Ok(msg_obj) if !vm.is_none(&msg_obj) => {
+        let message = match dict.get_item_opt("message", vm).map_err(|exc| {
+            anyhow::anyhow!(
+                "python validator {} failed reading 'message' at index {}: {}",
+                script_name,
+                i,
+                exc_to_string(vm, &exc)
+            )
+        })? {
+            Some(msg_obj) if !vm.is_none(&msg_obj) => {
                 Some(obj_to_string(vm, &msg_obj, script_name, i, "message")?)
             }
             _ => None,
         };
 
-        let description = match item.get_item("description", vm) {
-            Ok(desc_obj) if !vm.is_none(&desc_obj) => {
+        let description = match dict.get_item_opt("description", vm).map_err(|exc| {
+            anyhow::anyhow!(
+                "python validator {} failed reading 'description' at index {}: {}",
+                script_name,
+                i,
+                exc_to_string(vm, &exc)
+            )
+        })? {
+            Some(desc_obj) if !vm.is_none(&desc_obj) => {
                 Some(obj_to_string(vm, &desc_obj, script_name, i, "description")?)
             }
             _ => None,
         };
 
-        let fixable = match item.get_item("fixable", vm) {
-            Ok(fixable_obj) if !vm.is_none(&fixable_obj) => {
+        let fixable = match dict.get_item_opt("fixable", vm).map_err(|exc| {
+            anyhow::anyhow!(
+                "python validator {} failed reading 'fixable' at index {}: {}",
+                script_name,
+                i,
+                exc_to_string(vm, &exc)
+            )
+        })? {
+            Some(fixable_obj) if !vm.is_none(&fixable_obj) => {
                 obj_to_bool(vm, &fixable_obj, script_name, i, "fixable")?
             }
             _ => false,

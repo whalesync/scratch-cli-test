@@ -226,7 +226,7 @@ pub async fn count_objects(State(state): State<AppState>, Path(id): Path<String>
         let id = id.clone();
         move || {
             let repo_path = state.repo_path(&id);
-            let output = std::process::Command::new("git")
+            let output = crate::shared::git_exec::git_command()
                 .args(["count-objects", "-v"])
                 .current_dir(&repo_path)
                 .output()
@@ -281,7 +281,7 @@ pub async fn gc(
             let repo_path = state.repo_path(&id);
 
             let get_stats = || -> String {
-                std::process::Command::new("git")
+                crate::shared::git_exec::git_command()
                     .args(["count-objects", "-v"])
                     .current_dir(&repo_path)
                     .output()
@@ -297,7 +297,7 @@ pub async fn gc(
                 vec!["gc", "--prune=now"]
             };
 
-            std::process::Command::new("git")
+            crate::shared::git_exec::git_command()
                 .args(&gc_args)
                 .current_dir(&repo_path)
                 .output()

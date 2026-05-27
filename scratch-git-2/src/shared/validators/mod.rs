@@ -1193,7 +1193,7 @@ mod tests {
     fn readonly_validator_reads_master_from_bare_repo_refs_heads_main() {
         // Skip the test if git isn't on PATH (mirrors other git-dependent
         // tests in the crate).
-        if std::process::Command::new("git")
+        if crate::shared::git_exec::git_command()
             .arg("--version")
             .output()
             .is_err()
@@ -1212,7 +1212,7 @@ mod tests {
         // Build a source repo with a single record on main.
         let source = tmp.path().join("source");
         let run_git = |cwd: &Path, args: &[&str]| {
-            let output = std::process::Command::new("git")
+            let output = crate::shared::git_exec::git_command()
                 .current_dir(cwd)
                 .args(args)
                 .output()

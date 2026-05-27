@@ -94,21 +94,105 @@ exports.default = async function afterPack(context) {
   const nativeFilename = nativeFilenameFor(platform, arch);
   if (!nativeFilename) {
     console.warn(`afterPack: napi cdylib not supported on ${key}; cell-edit IPC will fail at runtime.`);
+  } else {
+    const srcNative = path.join(cliBinariesDir, nativeFilename);
+    if (!fs.existsSync(srcNative)) {
+      throw new Error(
+        `afterPack: native addon not found at ${srcNative}.\n` +
+          'In CI this is provided by the build-cli-for-desktop job artifacts (slice H.4).\n' +
+          'For local builds, run:\n' +
+          `  cd scratch-git-2 && cargo zigbuild --release -p scratchmd-native --target ${rustTarget}\n` +
+          `  cp target/${rustTarget}/release/libscratchmd_native.${platform === 'darwin' ? 'dylib' : 'so'} \\\n` +
+          `     cli-binaries/${rustTarget}/${nativeFilename}`,
+      );
+    }
+    const destNative = path.join(destDir, nativeFilename);
+    fs.copyFileSync(srcNative, destNative);
+    fs.chmodSync(destNative, 0o755);
+    console.log(`afterPack: bundled ${srcNative} → ${destNative}`);
+  }
+
+  // Bundled git binary (DEV-10196). Lets non-dev macOS users run the app
+  // without installing Xcode CLT / accepting Apple's developer license.
+  // The dugite-native tree is fetched by scripts/download-git.cjs into
+  // scratch-desktop/.git-bundle/<platform-arch>/.
+  //
+  // Layouts differ between platforms (dugite mirrors what each OS ships):
+  //   macOS: flat unix tree — bin/git + libexec/git-core + share/git-core
+  //   win32: full Git-for-Windows tree — mingw64/bin/git.exe +
+  //          mingw64/libexec/git-core, plus a sibling `usr/` of bash/curl/ssh
+  //          deps git.exe invokes for some commands. We keep the layout as-is
+  //          and point SCRATCH_GIT_BIN at mingw64/bin/git.exe in the desktop
+  //          spawn helper (src/main/scratchmd.ts). The Rust wrapper's
+  //          `derive_exec_path` (<git_bin>/../../libexec/git-core) lands on the
+  //          mingw64 libexec naturally because git.exe lives two dirs deep.
+  //
+  // Linux: skipped per DEV-10196 scope (package managers cover that audience).
+  if (platform === 'linux') {
+    console.log(`afterPack: skipping bundled git for ${key} (linux uses system git).`);
     return;
   }
-  const srcNative = path.join(cliBinariesDir, nativeFilename);
-  if (!fs.existsSync(srcNative)) {
+  const isWin = platform === 'win32';
+  const gitBinRel = isWin ? path.join('mingw64', 'bin', 'git.exe') : path.join('bin', 'git');
+  const gitBundleSrc = path.resolve(__dirname, '..', '.git-bundle', key);
+  if (!fs.existsSync(path.join(gitBundleSrc, gitBinRel))) {
     throw new Error(
-      `afterPack: native addon not found at ${srcNative}.\n` +
-        'In CI this is provided by the build-cli-for-desktop job artifacts (slice H.4).\n' +
-        'For local builds, run:\n' +
-        `  cd scratch-git-2 && cargo zigbuild --release -p scratchmd-native --target ${rustTarget}\n` +
-        `  cp target/${rustTarget}/release/libscratchmd_native.${platform === 'darwin' ? 'dylib' : 'so'} \\\n` +
-        `     cli-binaries/${rustTarget}/${nativeFilename}`,
+      `afterPack: bundled git not found at ${path.join(gitBundleSrc, gitBinRel)}.\n` +
+        `Run \`node scripts/download-git.cjs ${key}\` (or \`--all\`) to fetch the dugite-native tarball before packaging.`,
     );
   }
-  const destNative = path.join(destDir, nativeFilename);
-  fs.copyFileSync(srcNative, destNative);
-  fs.chmodSync(destNative, 0o755);
-  console.log(`afterPack: bundled ${srcNative} → ${destNative}`);
+  const gitBundleDest = path.join(resourcesDir, 'git');
+  copyTreeRecursive(gitBundleSrc, gitBundleDest, prunePatternsFor(platform));
+  fs.chmodSync(path.join(gitBundleDest, gitBinRel), 0o755);
+  console.log(`afterPack: bundled git from ${gitBundleSrc} → ${gitBundleDest}`);
 };
+
+// Prune dugite-native components Scratch doesn't use. Patterns are matched
+// against the basename of each entry, so they apply at any depth in the tree.
+//
+// macOS-only patterns target the .NET / Avalonia bundle dugite ships for the
+// Git Credential Manager (~135 MB). Scratch authenticates via
+// `http.extraHeader=Authorization: API-Token ...` in scratch-git-2/src/cli/
+// git_ops/remote.rs, so the GCM and its runtime are dead weight. We also drop
+// git-lfs and scalar everywhere (Scratch repos don't use either).
+//
+// On Windows we deliberately do NOT strip *.dll — Git-for-Windows depends on a
+// long list of legit DLLs in mingw64/bin/ (libgit-pcre2, libcurl-4, libssl-3,
+// zlib, …). The win-specific GCM/LFS executables are caught by the name list.
+function prunePatternsFor(platform) {
+  const common = [
+    /^\.dugite-version$/,
+    /^git-credential-manager(-ui|-core)?(\.exe)?$/i,
+    /^git-lfs(\.exe)?$/i,
+    /^scalar(\.exe)?$/i,
+    /\.pdb$/i,
+  ];
+  if (platform === 'darwin') {
+    return [
+      ...common,
+      // Every System.*.dll + Avalonia.*.dll shipped for the .NET GCM.
+      /\.dll$/i,
+      /^lib(coreclr|clrjit|hostpolicy|hostfxr|nethost|mscordaccore|HarfBuzzSharp|SkiaSharp)\.(dylib|so)$/i,
+    ];
+  }
+  return common;
+}
+
+function copyTreeRecursive(srcDir, destDir, skipNames = []) {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (skipNames.some((re) => re.test(entry.name))) continue;
+    const src = path.join(srcDir, entry.name);
+    const dest = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyTreeRecursive(src, dest, skipNames);
+    } else if (entry.isSymbolicLink()) {
+      const link = fs.readlinkSync(src);
+      fs.symlinkSync(link, dest);
+    } else {
+      fs.copyFileSync(src, dest);
+      const mode = fs.statSync(src).mode;
+      fs.chmodSync(dest, mode);
+    }
+  }
+}

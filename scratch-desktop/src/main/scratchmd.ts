@@ -175,6 +175,36 @@ export function getScratchmdBinaryPath(): string {
   return join(process.resourcesPath, 'bin', 'scratchmd');
 }
 
+// DEV-10196: in packaged builds we ship a bundled git binary so non-dev users
+// don't need Xcode CLT installed. The Rust CLI's git-exec wrapper reads
+// SCRATCH_GIT_BIN, falling back to PATH `git` when unset — so dev runs keep
+// using whatever git is on the developer's PATH.
+//
+// Layout written by scripts/afterPack.cjs differs per platform — dugite-native
+// mirrors what each OS's git distribution ships:
+//   macOS:  Resources/git/bin/git + Resources/git/libexec/git-core/
+//   Windows: Resources/git/mingw64/bin/git.exe + Resources/git/mingw64/libexec/
+//            git-core/ (plus a sibling Resources/git/usr/ tree of bash/curl/ssh
+//            deps git.exe shells out to). Two dirs above git.exe (mingw64/)
+//            is the bundle root, which is exactly what the Rust wrapper's
+//            derive_exec_path expects.
+//
+// We strip any inherited GIT_EXEC_PATH / GIT_TEMPLATE_DIR so the wrapper's
+// bundled-tree derivation wins over stale parent-shell values.
+function scratchmdEnv(): NodeJS.ProcessEnv {
+  if (!app.isPackaged) {
+    return process.env;
+  }
+  const bundledGit =
+    process.platform === 'win32'
+      ? join(process.resourcesPath, 'git', 'mingw64', 'bin', 'git.exe')
+      : join(process.resourcesPath, 'git', 'bin', 'git');
+  const env: NodeJS.ProcessEnv = { ...process.env, SCRATCH_GIT_BIN: bundledGit };
+  delete env.GIT_EXEC_PATH;
+  delete env.GIT_TEMPLATE_DIR;
+  return env;
+}
+
 // ── Core spawn helpers ──
 
 export function runScratchmdCapture(
@@ -188,7 +218,7 @@ export function runScratchmdCapture(
     const startedAt = performance.now();
     const child = spawn(binary, args, {
       cwd,
-      env: process.env,
+      env: scratchmdEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -417,7 +447,7 @@ export function startScratchmdLiveCommand(
     let stderrBuf = '';
     const child = spawn(binary, args, {
       cwd,
-      env: process.env,
+      env: scratchmdEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -504,7 +534,7 @@ export function startScratchmdLiveSequence(
 
       const child = spawn(binary, step.args, {
         cwd,
-        env: process.env,
+        env: scratchmdEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 

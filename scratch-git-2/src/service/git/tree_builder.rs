@@ -207,10 +207,9 @@ pub fn entry_kind_from_mode(mode: gix::object::tree::EntryMode) -> gix::objs::tr
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
-
     use crate::service::git::repo::GitRepo;
     use crate::service::types::*;
+    use crate::shared::git_exec::git_command;
     use tempfile::TempDir;
 
     fn setup_repo() -> (TempDir, GitRepo) {
@@ -221,7 +220,7 @@ mod tests {
 
     fn assert_git_available() {
         assert!(
-            Command::new("git")
+            git_command()
                 .arg("--version")
                 .output()
                 .map(|o| o.status.success())
@@ -249,7 +248,7 @@ mod tests {
         repo.commit_changes_to_ref(MAIN_BRANCH, &changes, "double-slash normalized")
             .expect("commit");
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(&git_dir)
             .args(["fsck", "--full", "--no-progress"])

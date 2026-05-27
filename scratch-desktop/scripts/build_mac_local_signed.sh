@@ -127,6 +127,31 @@ unset -v _CSC_RESOLVED
 
 export UPDATE_CHANNEL="${UPDATE_CHANNEL:-desktop-test}"
 
+# Build the Rust artifacts that afterPack.cjs expects in
+# scratch-git-2/cli-binaries/<rust-target>/. Mirrors the prelude in
+# build_mac_local.sh — yarn build:mac (signed) skips this prelude, so without
+# it electron-builder's afterPack fails with "native addon not found".
+SCRATCH_GIT_2="$(cd "$SCRATCH_DESKTOP/../scratch-git-2" && pwd)"
+RUST_TARGET="aarch64-apple-darwin"
+echo "==> Building scratchmd ($RUST_TARGET) in scratch-git-2"
+(
+  cd "$SCRATCH_GIT_2"
+  export SCRATCH_DEFAULT_URL="${SCRATCH_DEFAULT_URL:-}"
+  # Native arm64 host → plain cargo. zigbuild only exists for cross-compile
+  # from CI's Linux runners and fights Xcode on a native Mac.
+  if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    cargo build --release --bin scratchmd --target "$RUST_TARGET"
+    cargo build --release -p scratchmd-native --target "$RUST_TARGET"
+  else
+    cargo zigbuild --release --bin scratchmd --target "$RUST_TARGET"
+    cargo zigbuild --release -p scratchmd-native --target "$RUST_TARGET"
+  fi
+  mkdir -p "cli-binaries/$RUST_TARGET"
+  cp "target/$RUST_TARGET/release/scratchmd" "cli-binaries/$RUST_TARGET/scratchmd"
+  cp "target/$RUST_TARGET/release/libscratchmd_native.dylib" \
+     "cli-binaries/$RUST_TARGET/scratchmd-native.darwin-arm64.node"
+)
+
 cd "$SCRATCH_DESKTOP"
 echo "==> mac build (signed + notarized), env from: $ENV_FILE"
 echo "  CSC_LINK: $CSC_LINK"

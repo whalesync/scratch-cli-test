@@ -399,7 +399,7 @@ enum ValidationCommands {
 }
 
 fn require_git() -> anyhow::Result<()> {
-    match std::process::Command::new("git").arg("--version").output() {
+    match shared::git_exec::git_command().arg("--version").output() {
         Ok(output) if output.status.success() => Ok(()),
         Ok(_) => anyhow::bail!(
             "git is installed but returned an error. Please check your git installation."

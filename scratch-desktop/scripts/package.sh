@@ -61,6 +61,16 @@ echo "Building renderer + main + preload bundles..."
 rm -rf ./dist
 yarn build
 
+# Fetch dugite-native git bundle for the target platform (DEV-10196).
+# afterPack.cjs reads from scratch-desktop/.git-bundle/<target>/ and errors
+# loudly if missing. Linux skips bundling — system git is the answer there.
+if [ "$PLATFORM" = "mac" ]; then
+  # Mac runners are arm64; add darwin-x64 here if we add an Intel build target.
+  node scripts/download-git.cjs darwin-arm64
+elif [ "$PLATFORM" = "windows" ]; then
+  node scripts/download-git.cjs win32-x64
+fi
+
 if [ "$PLATFORM" = "mac" ]; then
   # Defaults match the existing local-macos job (dmg + zip).
   MAC_TARGETS="${MAC_TARGETS:-dmg zip}"

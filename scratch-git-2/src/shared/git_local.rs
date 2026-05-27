@@ -15,9 +15,11 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read as IoRead, Write as IoWrite};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::Context;
+
+use crate::shared::git_exec::git_command;
 
 /// Map of repo-relative path → file content. Mirrors what `git ls-tree` /
 /// `git cat-file --batch` produces for a tree, and what `read_dirty_disk` /
@@ -64,7 +66,7 @@ where
     F: Fn(&str) -> bool,
 {
     let git_dir = bare_repo.to_str().unwrap_or_default();
-    let ls_output = Command::new("git")
+    let ls_output = git_command()
         .args(["--git-dir", git_dir, "ls-tree", "-r", treeish])
         .output()
         .context("failed to run git ls-tree")?;
@@ -116,7 +118,7 @@ where
     let git_dir = bare_repo.to_str().unwrap_or_default();
 
     // Step 1: enumerate (mode, hash, path) entries via ls-tree.
-    let ls_output = Command::new("git")
+    let ls_output = git_command()
         .args(["--git-dir", git_dir, "ls-tree", "-r", treeish])
         .output()
         .context("failed to run git ls-tree")?;
@@ -157,7 +159,7 @@ where
     }
 
     // Step 2: pipe all hashes through `git cat-file --batch`.
-    let mut cat_file = Command::new("git")
+    let mut cat_file = git_command()
         .args(["--git-dir", git_dir, "cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -249,11 +251,11 @@ mod tests {
     use tempfile::TempDir;
 
     fn git_available() -> bool {
-        Command::new("git").arg("--version").output().is_ok()
+        git_command().arg("--version").output().is_ok()
     }
 
     fn run_git(cwd: &Path, args: &[&str]) {
-        let status = Command::new("git")
+        let status = git_command()
             .args(args)
             .current_dir(cwd)
             .status()

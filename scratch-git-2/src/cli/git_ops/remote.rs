@@ -1,5 +1,6 @@
 use std::path::Path;
-use std::process::Command;
+
+use crate::shared::git_exec::git_command;
 
 // Remote Git helpers isolate auth and transport-facing operations like clone,
 // fetch, and push so they can change without touching local repo logic.
@@ -10,7 +11,7 @@ pub(crate) fn clone_bare(url: &str, target_dir: &Path, token: &str) -> anyhow::R
     }
 
     let auth = git_auth_args(token);
-    let output = Command::new("git")
+    let output = git_command()
         .args(&auth)
         .args([
             "clone",
@@ -28,7 +29,7 @@ pub(crate) fn clone_bare(url: &str, target_dir: &Path, token: &str) -> anyhow::R
 
 pub(crate) fn fetch_origin(bare_repo: &Path, token: &str) -> anyhow::Result<()> {
     let auth = git_auth_args(token);
-    let output = Command::new("git")
+    let output = git_command()
         .arg(format!("--git-dir={}", bare_repo.display()))
         .args(&auth)
         .args(["fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"])

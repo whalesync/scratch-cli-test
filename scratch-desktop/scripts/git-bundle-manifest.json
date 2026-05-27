@@ -1,0 +1,18 @@
+{
+  "_comment": "dugite-native prebuilt git binaries. To bump: pick a release from https://github.com/desktop/dugite-native/releases, copy the corresponding `dugite-native-<git-version>-<sha>-<platform>.tar.gz` URL and its SHA256 (in the .sha256 sibling file) from that release, and update the entries below. Keys are <electron-platform>-<electron-arch> as understood by scripts/afterPack.cjs and download-git.cjs (same mapping electron-builder uses).",
+  "version": "v2.53.0-3",
+  "platforms": {
+    "darwin-arm64": {
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-3/dugite-native-v2.53.0-f49d009-macOS-arm64.tar.gz",
+      "sha256": "e561cfc80c755e6f3e938653e81efcd025c9827a5b76dd42778b1159b3fab437"
+    },
+    "darwin-x64": {
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-3/dugite-native-v2.53.0-f49d009-macOS-x64.tar.gz",
+      "sha256": "caf27c36b8834969550535bcd5e58186f970e080d1e175e76d9c1de3aac409ed"
+    },
+    "win32-x64": {
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-3/dugite-native-v2.53.0-f49d009-windows-x64.tar.gz",
+      "sha256": "f843a87a693bfdabed83b8492bca59db6f64d1168c74d23e2c8dfb7388a97142"
+    }
+  }
+}

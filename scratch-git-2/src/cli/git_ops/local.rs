@@ -1,7 +1,8 @@
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::Context;
+
+use crate::shared::git_exec::git_command;
 
 // Local Git helpers only deal with repository contents already on disk:
 // resolving refs, reading trees, materializing files, and writing commits.
@@ -217,7 +218,7 @@ pub(crate) fn diff_name_status(
     to_treeish: &str,
 ) -> anyhow::Result<Vec<(String, String)>> {
     let git_dir = bare_repo.to_str().unwrap_or_default();
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "--git-dir",
             git_dir,
@@ -284,7 +285,7 @@ pub(crate) fn setup_sparse_worktree(
     let git_dir = bare_repo.to_str().unwrap_or_default();
 
     // Prune stale entries first so the path can be reused
-    let _ = Command::new("git")
+    let _ = git_command()
         .args(["--git-dir", git_dir, "worktree", "prune"])
         .output();
 
@@ -293,7 +294,7 @@ pub(crate) fn setup_sparse_worktree(
             .with_context(|| format!("failed to remove {}", worktree_path.display()))?;
     }
 
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "--git-dir",
             git_dir,
@@ -312,7 +313,7 @@ pub(crate) fn setup_sparse_worktree(
     }
 
     // Configure sparse checkout (no-cone): include everything except .scratch/
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "-C",
             worktree_path.to_str().unwrap_or_default(),
@@ -327,7 +328,7 @@ pub(crate) fn setup_sparse_worktree(
         anyhow::bail!("git sparse-checkout init failed: {}", stderr.trim());
     }
 
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "-C",
             worktree_path.to_str().unwrap_or_default(),
@@ -345,7 +346,7 @@ pub(crate) fn setup_sparse_worktree(
     }
 
     // Initial checkout
-    let output = Command::new("git")
+    let output = git_command()
         .args(["-C", worktree_path.to_str().unwrap_or_default(), "checkout"])
         .output()
         .context("failed to spawn git checkout")?;
@@ -368,7 +369,7 @@ fn setup_full_worktree(
     let git_dir = bare_repo.to_str().unwrap_or_default();
 
     // Prune stale worktree entries first so the path can be reused.
-    let _ = Command::new("git")
+    let _ = git_command()
         .args(["--git-dir", git_dir, "worktree", "prune"])
         .output();
 
@@ -377,7 +378,7 @@ fn setup_full_worktree(
             .with_context(|| format!("failed to remove {}", worktree_path.display()))?;
     }
 
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "--git-dir",
             git_dir,
@@ -410,7 +411,7 @@ pub(crate) fn ensure_full_worktree(
         let gitlink = worktree_path.join(".git");
         if gitlink.is_file() {
             // Looks like a worktree; verify HEAD resolves before declaring it OK.
-            let output = Command::new("git")
+            let output = git_command()
                 .args([
                     "-C",
                     worktree_path.to_str().unwrap_or_default(),
@@ -450,7 +451,7 @@ pub(crate) fn ensure_full_worktree(
 /// the index after `materialize_local_repo` wrote new working files, so
 /// `gix::status` returns accurate results.
 pub(crate) fn worktree_reset_mixed(worktree_path: &Path, hash: &str) -> anyhow::Result<()> {
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "-C",
             worktree_path.to_str().unwrap_or_default(),
@@ -478,7 +479,7 @@ pub(crate) fn worktree_checkout_path(
     refname: &str,
     pathspec: &str,
 ) -> anyhow::Result<()> {
-    let output = Command::new("git")
+    let output = git_command()
         .args([
             "-C",
             worktree_path.to_str().unwrap_or_default(),

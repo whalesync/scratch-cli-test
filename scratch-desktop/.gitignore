@@ -3,6 +3,11 @@ dist/
 dist-release/
 dist-release-test/
 resources/bin/
+
+# Bundled git binaries fetched by scripts/download-git.cjs (DEV-10196).
+.git-bundle/
+.git-bundle-cache/
+
 .env
 .env.*
 !.env.example*

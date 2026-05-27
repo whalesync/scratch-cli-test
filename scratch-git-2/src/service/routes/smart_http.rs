@@ -7,11 +7,11 @@ use axum::{
 use futures::stream::StreamExt;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 use tokio_util::io::ReaderStream;
 
 use crate::service::state::AppState;
 use crate::service::types::DIRTY_BRANCH;
+use crate::shared::git_exec::git_command_async;
 
 pub async fn git_backend(
     State(state): State<AppState>,
@@ -155,7 +155,7 @@ pub async fn git_backend(
         content_length,
     );
 
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command_async();
     cmd.arg("http-backend")
         .env("GIT_PROJECT_ROOT", git_project_root)
         .env("GIT_HTTP_EXPORT_ALL", "1")
@@ -402,12 +402,12 @@ pub async fn git_backend(
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::Request, Router};
-    use std::process::Command as StdCommand;
     use tempfile::TempDir;
     use tower::ServiceExt;
 
     use crate::service::git::lock::WriteLockManager;
     use crate::service::state::AppState;
+    use crate::shared::git_exec::git_command as std_git_command;
 
     /// Build a minimal axum Router with just the git backend handler for testing.
     fn test_app(repos_dir: &std::path::Path) -> Router {
@@ -430,7 +430,7 @@ mod tests {
     /// Create a bare git repo with an initial commit containing one file.
     fn create_test_repo(repos_dir: &std::path::Path, repo_name: &str) -> std::path::PathBuf {
         let repo_path = repos_dir.join(format!("{}.git", repo_name));
-        StdCommand::new("git")
+        std_git_command()
             .args(["init", "--bare", "--initial-branch=main"])
             .arg(&repo_path)
             .output()
@@ -441,7 +441,7 @@ mod tests {
         std::fs::create_dir_all(&work_dir).unwrap();
 
         // Initialize a non-bare repo that uses the bare repo as its object store
-        StdCommand::new("git")
+        std_git_command()
             .args(["init", "--initial-branch=main"])
             .arg(&work_dir)
             .output()
@@ -450,7 +450,7 @@ mod tests {
         std::fs::write(work_dir.join("hello.txt"), "world").unwrap();
 
         let run = |args: &[&str]| {
-            let out = StdCommand::new("git")
+            let out = std_git_command()
                 .args(["-C", work_dir.to_str().unwrap()])
                 .args(["-c", "user.name=Test", "-c", "user.email=test@test.com"])
                 .args(args)
@@ -559,7 +559,7 @@ mod tests {
         let repo_path = create_test_repo(tmp.path(), "testrepo");
 
         // Get the current HEAD commit to construct a valid want line
-        let head_output = StdCommand::new("git")
+        let head_output = std_git_command()
             .args([
                 "--git-dir",
                 repo_path.to_str().unwrap(),
@@ -613,7 +613,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo_path = create_test_repo(tmp.path(), "testrepo");
 
-        let head_output = StdCommand::new("git")
+        let head_output = std_git_command()
             .args([
                 "--git-dir",
                 repo_path.to_str().unwrap(),
@@ -671,7 +671,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo_path = create_test_repo(tmp.path(), "testrepo");
 
-        let head_output = StdCommand::new("git")
+        let head_output = std_git_command()
             .args([
                 "--git-dir",
                 repo_path.to_str().unwrap(),
@@ -723,7 +723,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo_path = create_test_repo(tmp.path(), "testrepo");
 
-        let head_output = StdCommand::new("git")
+        let head_output = std_git_command()
             .args([
                 "--git-dir",
                 repo_path.to_str().unwrap(),

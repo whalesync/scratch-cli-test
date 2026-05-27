@@ -39,6 +39,8 @@ include:
     - scratch-desktop/scripts/finalize_release.sh
     - scratch-desktop/scripts/update_homebrew_cask.sh
     - scratch-desktop/scripts/afterPack.cjs
+    - scratch-desktop/scripts/download-git.cjs
+    - scratch-desktop/scripts/git-bundle-manifest.json
     - scratch-desktop/electron-builder.yml
 
 # Shared rule block for the test variant. On master pushes the test release

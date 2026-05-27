@@ -703,7 +703,7 @@ pub fn setup_connection(
         // server's own `dirty` branch (publish working area) is untouched.
         // Idempotent: error means the ref already doesn't exist, which is fine.
         let _t = PhaseTimer::new(format!("    [{}] prune local refs/heads/dirty", dir_name));
-        let _ = std::process::Command::new("git")
+        let _ = crate::shared::git_exec::git_command()
             .arg(format!("--git-dir={}", bare_repo.display()))
             .args(["update-ref", "-d", "refs/heads/dirty"])
             .output();
@@ -811,7 +811,7 @@ pub fn detach_connection(
 
 fn prune_worktrees(bare_repo: &Path) {
     if bare_repo.exists() {
-        let _ = std::process::Command::new("git")
+        let _ = crate::shared::git_exec::git_command()
             .args(["-C", &bare_repo.to_string_lossy(), "worktree", "prune"])
             .output();
     }
