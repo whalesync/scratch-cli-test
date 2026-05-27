@@ -170,12 +170,15 @@ export function buildWebflowJsonTableSpec(
   let mainContentColumnRemoteId: EntityId['remoteId'] | undefined;
 
   // Add item-level metadata fields (these are present in all Webflow items)
-  properties['id'] = Type.String({ description: 'Unique item identifier (read-only)' });
-  properties['cmsLocaleId'] = Type.Optional(Type.String({ description: 'CMS locale identifier (read-only)' }));
+  properties['id'] = Type.String({ description: 'Unique item identifier (read-only)', [X_SCRATCH_READONLY]: true });
+  properties['cmsLocaleId'] = Type.Optional(
+    Type.String({ description: 'CMS locale identifier (read-only)', [X_SCRATCH_READONLY]: true }),
+  );
   properties['lastPublished'] = Type.Optional(
     Type.Union([Type.String({ format: 'date-time' }), Type.Null()], {
       description: 'When the item was last published (read-only)',
       [X_SCRATCH_REMOTE_FIELD_ID]: 'published-on',
+      [X_SCRATCH_READONLY]: true,
     }),
   );
   properties['lastUpdated'] = Type.Optional(
@@ -183,6 +186,7 @@ export function buildWebflowJsonTableSpec(
       format: 'date-time',
       description: 'When the item was last updated (read-only)',
       [X_SCRATCH_REMOTE_FIELD_ID]: 'updated-on',
+      [X_SCRATCH_READONLY]: true,
     }),
   );
   properties['createdOn'] = Type.Optional(
@@ -190,14 +194,13 @@ export function buildWebflowJsonTableSpec(
       format: 'date-time',
       description: 'When the item was created (read-only)',
       [X_SCRATCH_REMOTE_FIELD_ID]: 'created-on',
+      [X_SCRATCH_READONLY]: true,
     }),
   );
   properties['isArchived'] = Type.Optional(
-    Type.Boolean({ description: 'Whether the item is archived (default: false)', [X_SCRATCH_READONLY]: true }),
+    Type.Boolean({ description: 'Whether the item is archived (default: false)' }),
   );
-  properties['isDraft'] = Type.Optional(
-    Type.Boolean({ description: 'Whether the item is a draft (default: false)', [X_SCRATCH_READONLY]: true }),
-  );
+  properties['isDraft'] = Type.Optional(Type.Boolean({ description: 'Whether the item is a draft (default: false)' }));
 
   // Add fieldData wrapper to indicate where custom fields are stored
   const fieldDataProperties: Record<string, TSchema> = {};

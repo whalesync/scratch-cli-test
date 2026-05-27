@@ -534,22 +534,28 @@ export class WebflowConnector extends Connector {
       throw new Error('Creating pages is not supported via the Webflow API');
     }
 
-    const fieldDataArray: Record<string, unknown>[] = [];
+    // Use the Live endpoint so Scratch publish == Webflow live publish in one round-trip.
+    // The multi-item body shape preserves per-item isArchived/isDraft, unlike the bulk
+    // `createItems` endpoint which only accepts request-level flags.
+    const items: Webflow.CollectionItem[] = [];
     for (const file of files) {
-      const fields = await this.extractFieldDataForApi(file, tableSpec);
-      fieldDataArray.push(fields);
+      const fieldData = await this.extractFieldDataForApi(file, tableSpec);
+      const item: Webflow.CollectionItem = {
+        fieldData: fieldData as Webflow.CollectionItemFieldData,
+      };
+      if (typeof file.isArchived === 'boolean') item.isArchived = file.isArchived;
+      if (typeof file.isDraft === 'boolean') item.isDraft = file.isDraft;
+      items.push(item);
     }
 
-    const created = await this.withRetry(() =>
-      this.client.collections.items.createItems(collectionId, {
+    const response = await this.withRetry(() =>
+      this.client.collections.items.createItemLive(collectionId, {
         skipInvalidFiles: false,
-        isArchived: false,
-        isDraft: false,
-        fieldData: fieldDataArray as Webflow.collections.CreateBulkCollectionItemRequestBodyFieldData,
+        items,
       }),
     );
 
-    const createdItems = _.get(created, 'items', []) as Webflow.CollectionItem[];
+    const createdItems = _.get(response, 'items', []) as Webflow.CollectionItem[];
     return createdItems as unknown as ConnectorFile[];
   }
 
@@ -584,19 +590,22 @@ export class WebflowConnector extends Connector {
       return;
     }
 
-    const items: { id: string; fieldData: Webflow.CollectionItemFieldData }[] = [];
+    const items: Webflow.CollectionItemWithIdInput[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const source = changedFields?.[i] ?? file;
       const fieldData = await this.extractFieldDataForApi(source, tableSpec);
-      items.push({
+      const item: Webflow.CollectionItemWithIdInput = {
         id: file.id as string,
-        fieldData: fieldData as Webflow.CollectionItemFieldData,
-      });
+        fieldData: fieldData as Webflow.CollectionItemWithIdInputFieldData,
+      };
+      if (typeof source.isArchived === 'boolean') item.isArchived = source.isArchived;
+      if (typeof source.isDraft === 'boolean') item.isDraft = source.isDraft;
+      items.push(item);
     }
 
     await this.withRetry(() =>
-      this.client.collections.items.updateItems(collectionId, { skipInvalidFiles: false, items }),
+      this.client.collections.items.updateItemsLive(collectionId, { skipInvalidFiles: false, items }),
     );
   }
 
@@ -613,13 +622,25 @@ export class WebflowConnector extends Connector {
     }
 
     const items = files.map((file) => ({ id: file.id as string }));
+
+    // Step 1: unpublish from the live site so the records disappear from the rendered
+    // pages immediately. Best-effort — items that were never published return 404 and
+    // we silently move on to the CMS delete below.
+    try {
+      await this.withRetry(() => this.client.collections.items.deleteItemsLive(collectionId, { items }));
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      const isNotFound =
+        errorMessage.includes('404') || errorMessage.includes('not_found') || errorMessage.includes('not found');
+      if (!isNotFound) throw e;
+    }
+
+    // Step 2: remove from the CMS (staging).
     try {
       await this.withRetry(() => this.client.collections.items.deleteItems(collectionId, { items }));
     } catch (e) {
-      // If item not found (404), that's fine - it's already deleted
       const errorMessage = e instanceof Error ? e.message : String(e);
       if (errorMessage.includes('404') || errorMessage.includes('not_found') || errorMessage.includes('not found')) {
-        // Item already deleted on remote, return success
         return;
       }
       throw e;

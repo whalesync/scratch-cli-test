@@ -23,15 +23,7 @@ const COLLECTION_ITEM_PRIORITY: string[] = [
 const COLLECTION_ITEM_HIDDEN_FIELDS = new Set(['cmsLocaleId']);
 
 // Fixed fields that are system-generated and cannot be edited via the API.
-const COLLECTION_ITEM_READONLY_FIXED = new Set([
-  'id',
-  'cmsLocaleId',
-  'lastPublished',
-  'lastUpdated',
-  'createdOn',
-  'isDraft',
-  'isArchived',
-]);
+const COLLECTION_ITEM_READONLY_FIXED = new Set(['id', 'cmsLocaleId', 'lastPublished', 'lastUpdated', 'createdOn']);
 
 // ── Assets: priority ordering ──
 

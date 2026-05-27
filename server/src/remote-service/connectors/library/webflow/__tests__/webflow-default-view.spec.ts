@@ -179,14 +179,14 @@ describe('buildWebflowDefaultView — collection_items', () => {
       expect(col.readonly).toBe(true);
     });
 
-    it('should mark isArchived as readonly', () => {
+    it('should NOT mark isArchived as readonly', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'isArchived') as TableViewCol;
-      expect(col.readonly).toBe(true);
+      expect(col.readonly).toBeUndefined();
     });
 
-    it('should mark isDraft as readonly', () => {
+    it('should NOT mark isDraft as readonly', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'isDraft') as TableViewCol;
-      expect(col.readonly).toBe(true);
+      expect(col.readonly).toBeUndefined();
     });
   });
 

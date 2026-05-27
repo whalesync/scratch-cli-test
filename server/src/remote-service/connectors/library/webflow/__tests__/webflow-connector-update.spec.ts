@@ -8,12 +8,12 @@ jest.mock('../../../display-names', () => ({
 }));
 
 // Mock the webflow-api module
-const mockUpdateItems = jest.fn().mockResolvedValue({});
+const mockUpdateItemsLive = jest.fn().mockResolvedValue({});
 jest.mock('webflow-api', () => ({
   WebflowClient: jest.fn().mockImplementation(() => ({
     collections: {
       items: {
-        updateItems: mockUpdateItems,
+        updateItemsLive: mockUpdateItemsLive,
       },
     },
   })),
@@ -76,7 +76,7 @@ describe('WebflowConnector.updateRecords', () => {
 
     await connector.updateRecords(tableSpec, files, changedFields);
 
-    expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
+    expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [{ id: 'item1', fieldData: { name: 'New Name' } }],
     });
@@ -89,7 +89,7 @@ describe('WebflowConnector.updateRecords', () => {
 
     await connector.updateRecords(tableSpec, files);
 
-    expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
+    expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [{ id: 'item1', fieldData: { name: 'Full Name', slug: 'full-slug' } }],
     });
@@ -104,7 +104,7 @@ describe('WebflowConnector.updateRecords', () => {
 
     await connector.updateRecords(tableSpec, files, changedFields);
 
-    expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
+    expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [
         { id: 'item1', fieldData: { name: 'Changed' } },
@@ -124,7 +124,7 @@ describe('WebflowConnector.updateRecords', () => {
     await connector.updateRecords(tableSpec, files, changedFields);
 
     expect(mockedMinifyHtml).toHaveBeenCalledWith('<p>  new content  </p>');
-    expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
+    expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [{ id: 'item1', fieldData: { name: 'Name', body: 'minified:<p>  new content  </p>' } }],
     });
@@ -140,7 +140,7 @@ describe('WebflowConnector.updateRecords', () => {
 
     await connector.updateRecords(tableSpec, files, changedFields);
 
-    expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
+    expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [{ id: 'item1', fieldData: { name: 'New Name' } }],
     });
@@ -152,7 +152,7 @@ describe('WebflowConnector.updateRecords', () => {
 
     await connector.updateRecords(tableSpec, files, changedFields);
 
-    expect(mockUpdateItems).toHaveBeenCalledWith('col1', {
+    expect(mockUpdateItemsLive).toHaveBeenCalledWith('col1', {
       skipInvalidFiles: false,
       items: [{ id: 'correct-id', fieldData: { name: 'New Name' } }],
     });
