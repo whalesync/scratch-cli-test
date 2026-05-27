@@ -1,18 +1,26 @@
 'use client';
 
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
-import { Text16Regular, TextTitle3, TextTitle4 } from '@/app/components/base/text';
+import {
+  Text12Regular,
+  Text13Medium,
+  Text13Regular,
+  Text16Regular,
+  TextTitle2,
+  TextTitle4,
+} from '@/app/components/base/text';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import MainContent from '@/app/components/layouts/MainContent';
 import { useCliRelease } from '@/hooks/use-cli-release';
 import { useDesktopRelease } from '@/hooks/use-desktop-release';
-import { useDevTools } from '@/hooks/use-dev-tools';
-import { Anchor, Box, Card, Center, Divider, Group, Image, Stack } from '@mantine/core';
+import { Anchor, Box, Card, Collapse, Divider, Group, Image, Stack, UnstyledButton } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import { DesktopReleaseAsset, DesktopReleaseResponse } from '@spinner/shared-types';
-import { Download, ExternalLink } from 'lucide-react';
+import { Calendar, ChevronRight, Download, ExternalLink, Mail, TerminalSquare } from 'lucide-react';
 
 const RELEASES_URL = 'https://github.com/whalesync/scratch-desktop/releases';
+const CALENDLY_URL = 'https://calendly.com/d/cx4x-772-kpg/welcome-to-scratch';
 
 const OS_ICON_BASE_URL = 'https://static.scratch.md/os-icons';
 
@@ -82,128 +90,243 @@ function formatBytes(bytes: number): string {
 export default function DownloadPage() {
   const { release: desktopRelease, isLoading: desktopLoading, error: desktopError } = useDesktopRelease();
   const { release: cliRelease, error: cliError } = useCliRelease();
-  const { isDevToolsEnabled } = useDevTools();
 
   if (desktopLoading) return <FullPageLoader message="Loading latest release…" />;
+
+  if (!desktopRelease || desktopError) {
+    return (
+      <MainContent h="100vh">
+        <MainContent.Body p="xl">
+          <Stack gap="md" maw={480} mx="auto" mt={80}>
+            <Text16Regular>We couldn&apos;t load the latest release from GitHub.</Text16Regular>
+            <ButtonSecondaryOutline
+              component="a"
+              href={RELEASES_URL}
+              rightSection={<StyledLucideIcon Icon={ExternalLink} size="sm" />}
+            >
+              Browse all releases on GitHub
+            </ButtonSecondaryOutline>
+          </Stack>
+        </MainContent.Body>
+      </MainContent>
+    );
+  }
 
   return (
     <MainContent h="100vh">
       <MainContent.Body p="xl">
-        <Center w="100%">
-          <Stack gap="xl" maw={960} w="100%" align="center" py="xl">
-            {!desktopRelease || desktopError ? (
-              <UnavailableState />
-            ) : (
-              <DesktopSection release={desktopRelease} showDevTools={isDevToolsEnabled} />
-            )}
+        <Box maw={960} mx="auto" py="xl">
+          <Group align="flex-start" gap={48} wrap="nowrap" style={{ minHeight: 0 }}>
+            {/* Left: Download section */}
+            <Box style={{ flex: 1, minWidth: 0 }}>
+              <DesktopSection release={desktopRelease} />
+              {cliRelease && !cliError && <CliDisclosure release={cliRelease} />}
+            </Box>
 
-            {cliRelease && !cliError && (
-              <>
-                <Divider w="100%" />
-                <CliSection release={cliRelease} showDevTools={isDevToolsEnabled} />
-              </>
-            )}
-          </Stack>
-        </Center>
+            {/* Right: Getting started sidebar */}
+            <Box w={300} style={{ flexShrink: 0 }}>
+              <GettingStartedCard />
+            </Box>
+          </Group>
+        </Box>
       </MainContent.Body>
     </MainContent>
   );
 }
 
-function UnavailableState() {
-  return (
-    <Stack gap="md">
-      <Text16Regular>We couldn&apos;t load the latest release from GitHub.</Text16Regular>
-      <ButtonSecondaryOutline
-        component="a"
-        href={RELEASES_URL}
-        rightSection={<StyledLucideIcon Icon={ExternalLink} size="sm" />}
-      >
-        Browse all releases on GitHub
-      </ButtonSecondaryOutline>
-    </Stack>
-  );
-}
-
-function DesktopSection({ release, showDevTools }: { release: DesktopReleaseResponse; showDevTools: boolean }) {
+function DesktopSection({ release }: { release: DesktopReleaseResponse }) {
   const groups = groupDesktopAssetsByPlatform(release.assets);
   return (
-    <Stack gap="lg" w="100%" align="center">
-      <Box
-        style={{
-          width: 80,
-          height: 80,
-          backgroundColor: '#9BF9EB',
-          borderRadius: 16,
-          backgroundImage: 'url(/logo-color.svg)',
-          backgroundSize: 90,
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'center',
-        }}
-      />
-      <TextTitle3>Download Scratch Desktop {release.version}</TextTitle3>
-
-      <Group gap="md" align="stretch" justify="center" w="100%">
-        {groups.map((group) => (
-          <PlatformCard key={group.platform} group={group} />
-        ))}
+    <Stack gap="lg">
+      {/* Header: icon + version */}
+      <Group gap="lg" align="center">
+        <Box
+          style={{
+            width: 80,
+            height: 80,
+            backgroundColor: '#9BF9EB',
+            borderRadius: 16,
+            backgroundImage: 'url(/logo-color.svg)',
+            backgroundSize: 90,
+            backgroundRepeat: 'no-repeat',
+            backgroundPosition: 'center',
+            boxShadow: '0 4px 16px rgba(11,107,79,.12)',
+            flexShrink: 0,
+          }}
+        />
+        <Stack gap={4}>
+          <TextTitle2>Scratch Desktop</TextTitle2>
+          <Group gap="sm">
+            <Text12Regular c="dimmed">{release.version}</Text12Regular>
+            <Text12Regular c="dimmed">·</Text12Regular>
+            <Anchor href="https://www.scratch.md/changelog/" size="xs" c="dimmed">
+              View changelog
+            </Anchor>
+            <Text12Regular c="dimmed">·</Text12Regular>
+            <Anchor href={release.htmlUrl} size="xs" c="dimmed">
+              View on GitHub
+            </Anchor>
+          </Group>
+        </Stack>
       </Group>
 
-      {showDevTools && (
-        <Group align="center" justify="flex-end" w="100%">
-          <Anchor href={release.htmlUrl} size="xs" c="devTool">
-            View on Github
-          </Anchor>
-        </Group>
-      )}
+      <Divider />
+
+      {/* Platform download groups — indented to align with title text */}
+      <Stack gap="xl" pl={96}>
+        {groups.map((group) => (
+          <PlatformDownloadRow key={group.platform} group={group} />
+        ))}
+      </Stack>
     </Stack>
   );
 }
 
-function CliSection({ release, showDevTools }: { release: DesktopReleaseResponse; showDevTools: boolean }) {
+function PlatformDownloadRow({ group }: { group: PlatformGroup }) {
+  return (
+    <Stack gap="xs">
+      <Group gap="sm" align="center">
+        <Image src={group.iconUrl} alt={`${group.platform} icon`} w={20} h={20} />
+        <Text13Medium>{group.platform}</Text13Medium>
+      </Group>
+      <Stack gap={6} pl={28}>
+        {group.variants.map(({ label, asset }) => (
+          <Anchor key={asset.name} href={asset.url} size="sm" c="var(--mantine-color-green-7)" underline="hover">
+            <Group gap={6} align="center">
+              <StyledLucideIcon Icon={Download} size="sm" c="var(--mantine-color-green-7)" />
+              {label}
+              <Text12Regular c="dimmed" component="span">
+                ({formatBytes(asset.size)})
+              </Text12Regular>
+            </Group>
+          </Anchor>
+        ))}
+      </Stack>
+    </Stack>
+  );
+}
+
+function CliDisclosure({ release }: { release: DesktopReleaseResponse }) {
+  const [opened, { toggle }] = useDisclosure(false);
   const groups = groupCliAssetsByPlatform(release.assets);
   if (!groups.length) return null;
+
   return (
-    <Stack gap="lg" w="100%" align="center">
-      <TextTitle3>Download Scratch CLI {release.version}</TextTitle3>
-
-      <Group gap="md" align="stretch" justify="center" w="100%">
-        {groups.map((group) => (
-          <PlatformCard key={group.platform} group={group} />
-        ))}
-      </Group>
-
-      {showDevTools && (
-        <Group align="center" justify="flex-end" w="100%">
-          <Anchor href={release.htmlUrl} size="xs" c="devTool">
-            View on Github
-          </Anchor>
+    <Box mt="xl">
+      <Divider mb="lg" />
+      <UnstyledButton onClick={toggle}>
+        <Group gap={4} align="center">
+          <Box style={{ transform: opened ? 'rotate(90deg)' : undefined, transition: 'transform 150ms' }}>
+            <StyledLucideIcon Icon={ChevronRight} size="sm" c="dimmed" />
+          </Box>
+          <Text13Regular c="dimmed">Advanced: Download only Scratch CLI</Text13Regular>
         </Group>
-      )}
-    </Stack>
+      </UnstyledButton>
+      <Collapse in={opened}>
+        <Stack gap="lg" mt="lg">
+          {/* CLI header: icon + title, mirroring desktop section */}
+          <Group gap="lg" align="center">
+            <Box
+              style={{
+                width: 80,
+                height: 80,
+                backgroundColor: 'var(--mantine-color-gray-1)',
+                borderRadius: 16,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <TerminalSquare size={40} color="var(--fg-secondary)" strokeWidth={1.5} />
+            </Box>
+            <Stack gap={4}>
+              <TextTitle2>Scratch CLI</TextTitle2>
+              <Text12Regular c="dimmed">
+                Scratch Desktop includes the CLI. This standalone install is for advanced users only.
+              </Text12Regular>
+              <Anchor href={release.htmlUrl} size="xs" c="dimmed">
+                View on GitHub
+              </Anchor>
+            </Stack>
+          </Group>
+
+          <Divider />
+
+          <Stack gap="xl" pl={96}>
+            {groups.map((group) => (
+              <PlatformDownloadRow key={group.platform} group={group} />
+            ))}
+          </Stack>
+        </Stack>
+      </Collapse>
+    </Box>
   );
 }
 
-function PlatformCard({ group }: { group: PlatformGroup }) {
+function GettingStartedCard() {
   return (
-    <Card withBorder flex={1} miw={240} maw={300}>
-      <Stack gap="sm">
-        <Group gap="sm" align="center">
-          <Image src={group.iconUrl} alt={`${group.platform} icon`} w={32} h={32} />
-          <TextTitle4>{group.platform}</TextTitle4>
-        </Group>
-        <Stack gap="xs">
-          {group.variants.map(({ label, asset }) => (
-            <ButtonPrimaryLight
-              key={asset.name}
-              component="a"
-              href={asset.url}
-              fullWidth
-              leftSection={<StyledLucideIcon Icon={Download} size="sm" />}
-            >
-              {label} ({formatBytes(asset.size)})
+    <Card
+      withBorder
+      padding="lg"
+      radius="md"
+      style={{
+        backgroundColor: 'var(--bg-panel)',
+      }}
+    >
+      <Stack gap="md">
+        <TextTitle4>Get started with Scratch</TextTitle4>
+        <Text13Regular c="dimmed">
+          Scratch is in early beta and we&apos;re building fast. Here are a few things to help you hit the ground
+          running.
+        </Text13Regular>
+
+        <Divider />
+
+        <Stack gap="sm">
+          <Group gap="sm" align="flex-start" wrap="nowrap">
+            <Box mt={2} style={{ flexShrink: 0 }}>
+              <StyledLucideIcon Icon={Calendar} size="md" c="var(--mantine-color-green-7)" />
+            </Box>
+            <Stack gap={2}>
+              <Text13Medium>Book a tour</Text13Medium>
+              <Text12Regular c="dimmed">
+                Totally optional, but we&apos;d love to hear how you&apos;re planning to use Scratch and point you in the
+                right direction.
+              </Text12Regular>
+            </Stack>
+          </Group>
+          <Box pl={28}>
+            <ButtonPrimaryLight component="a" href={CALENDLY_URL} target="_blank" size="xs" fullWidth>
+              Schedule a call
             </ButtonPrimaryLight>
-          ))}
+          </Box>
+        </Stack>
+
+        <Divider />
+
+        <Stack gap="sm">
+          <Group gap="sm" align="flex-start" wrap="nowrap">
+            <Box mt={2} style={{ flexShrink: 0 }}>
+              <StyledLucideIcon Icon={Mail} size="md" c="var(--mantine-color-green-7)" />
+            </Box>
+            <Stack gap={2}>
+              <Text13Medium>Tell us what you think</Text13Medium>
+              <Text12Regular c="dimmed">
+                What&apos;s working? What isn&apos;t? Email us anytime — we read every message.
+              </Text12Regular>
+            </Stack>
+          </Group>
+          <Box pl={28}>
+            <Stack gap={4}>
+              <Anchor href="mailto:curtis@whalesync.com" size="xs">
+                curtis@whalesync.com
+              </Anchor>
+              <Anchor href="mailto:ryder@whalesync.com" size="xs">
+                ryder@whalesync.com
+              </Anchor>
+            </Stack>
+          </Box>
         </Stack>
       </Stack>
     </Card>

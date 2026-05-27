@@ -130,6 +130,7 @@ export class RouteUrls {
   static publicRoutePatterns = [
     this.healthEndpoint,
     this.pricingPageUrl,
+    this.downloadsPageUrl,
     '/open(.*)',
     '/open-desktop',
     this.signInPageUrl,
