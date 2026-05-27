@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditLogModule } from 'src/audit/audit-log.module';
 import { CredentialEncryptionModule } from 'src/credential-encryption/credential-encryption.module';
+import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { OAuthModule } from 'src/oauth/oauth.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { UserModule } from 'src/users/users.module';
@@ -22,6 +23,7 @@ import { ConnectorAccountService } from './connector-account.service';
     UserModule,
     ScratchGitModule,
     WorkbookEventModule,
+    ExperimentsModule,
   ],
   controllers: [ConnectorAccountController],
   providers: [ConnectorAccountService],

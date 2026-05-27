@@ -21,6 +21,7 @@ import {
 import _ from 'lodash';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
@@ -54,7 +55,22 @@ export class ConnectorAccountService {
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
     private readonly workbookEventService: WorkbookEventService,
+    private readonly experimentsService: ExperimentsService,
   ) {}
+
+  /**
+   * Fail-closed gate for the GENERIC_API connector. No-op when the operation
+   * targets a different service or when invoked from the system actor; throws
+   * 403 when the user does not have ENABLE_GENERIC_CONNECTOR set.
+   */
+  private async assertGenericConnectorEnabled(serviceType: string, actor: Actor): Promise<void> {
+    if (serviceType !== ServiceConst.GENERIC_API) return;
+    if (actor.userId === SYSTEM_ACTOR.userId) return;
+    const enabled = await this.experimentsService.isGenericConnectorEnabledForUser(actor.userId);
+    if (!enabled) {
+      throw new ForbiddenException('The Generic API connector is not enabled for your account.');
+    }
+  }
 
   /**
    * Find a unique display name for a connector account within a workbook.
@@ -114,6 +130,8 @@ export class ConnectorAccountService {
     const workbook = await this.loadWorkbook(workbookId);
 
     checkWorkspacePermissions(actor, workbookId);
+
+    await this.assertGenericConnectorEnabled(createDto.service, actor);
 
     if (!canCreateDataSource(actor.subscriptionStatus, await this.countForType(createDto.service, workbookId, actor))) {
       throw new ForbiddenException(
@@ -317,6 +335,8 @@ export class ConnectorAccountService {
       throw new NotFoundException('ConnectorAccount not found');
     }
 
+    await this.assertGenericConnectorEnabled(currentAccount.service, actor);
+
     const decryptedCredentials = await this.credentialEncryptionService.decryptCredentials(
       currentAccount.encryptedCredentials as unknown as EncryptedData,
     );
@@ -432,6 +452,8 @@ export class ConnectorAccountService {
       throw new NotFoundException('ConnectorAccount not found');
     }
 
+    await this.assertGenericConnectorEnabled(account.service, actor);
+
     const workbook = await this.loadWorkbook(workbookId);
 
     await this.removeConnectionData(account);
@@ -542,6 +564,8 @@ export class ConnectorAccountService {
       throw new NotFoundException('ConnectorAccount not found');
     }
 
+    await this.assertGenericConnectorEnabled(account.service, actor);
+
     // Delete all data folders for this connection
     await this.db.client.dataFolder.deleteMany({
       where: { workbookId, connectorAccountId: id },
@@ -591,6 +615,8 @@ export class ConnectorAccountService {
   async listTables(connectorAccountId: string, actor: Actor): Promise<TableList> {
     const account = await this.findOneById(connectorAccountId, actor);
 
+    await this.assertGenericConnectorEnabled(account.service, actor);
+
     let connector: Connector;
     try {
       connector = await this.connectorsService.getConnector({
@@ -623,6 +649,8 @@ export class ConnectorAccountService {
 
   async searchTables(connectorAccountId: string, searchTerm: string, actor: Actor): Promise<TableSearchResult> {
     const account = await this.findOneById(connectorAccountId, actor);
+
+    await this.assertGenericConnectorEnabled(account.service, actor);
 
     let connector: Connector;
     try {
@@ -660,6 +688,8 @@ export class ConnectorAccountService {
     actor: Actor,
   ): Promise<TableSchemaPreview> {
     const account = await this.findOne(workbookId, connectorAccountId, actor);
+
+    await this.assertGenericConnectorEnabled(account.service, actor);
 
     let connector: Connector;
     try {
@@ -717,6 +747,7 @@ export class ConnectorAccountService {
 
   async testConnection(workbookId: WorkbookId, id: string, actor: Actor): Promise<TestConnectionResponse> {
     const account = await this.findOne(workbookId, id, actor);
+    await this.assertGenericConnectorEnabled(account.service, actor);
     let connector: Connector | undefined;
     try {
       connector = await this.connectorsService.getConnector({
@@ -774,6 +805,7 @@ export class ConnectorAccountService {
    */
   async getApiQuota(workbookId: WorkbookId, id: string, actor: Actor): Promise<ApiQuotaResponse> {
     const account = await this.findOne(workbookId, id, actor);
+    await this.assertGenericConnectorEnabled(account.service, actor);
     const connector = await this.connectorsService.getConnector({
       service: account.service,
       connectorAccount: account,

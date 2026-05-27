@@ -27,6 +27,16 @@ export enum UserFlag {
    * `ClientUserFlags`.
    */
   INCREMENTAL_POLLING_ENABLED = 'INCREMENTAL_POLLING_ENABLED',
+  /**
+   * Per-user gate for the GENERIC_API connector. When TRUE for a user:
+   *   - the "Bring your own API" entry point is shown in the create-connection modal,
+   *   - creating a new GENERIC_API connector account succeeds,
+   *   - all operations on existing GENERIC_API connector accounts succeed (update,
+   *     remove, reset, test, list/search/schema, quota, probe, reprobe).
+   * Default (flag false / unmatched / PostHog unreachable): connector is disabled
+   * for that user. Fail-closed — enable only via an explicit release condition.
+   */
+  ENABLE_GENERIC_CONNECTOR = 'ENABLE_GENERIC_CONNECTOR',
 }
 
 /**
@@ -49,4 +59,5 @@ export const ClientUserFlags: Partial<Record<UserFlag, FlagDataType>> = {
   [UserFlag.ENABLE_CREATE_BUG_REPORT]: 'boolean',
   [UserFlag.SHOW_OPEN_IN_DESKTOP]: 'boolean',
   [UserFlag.INCREMENTAL_POLLING_ENABLED]: 'boolean',
+  [UserFlag.ENABLE_GENERIC_CONNECTOR]: 'boolean',
 };

@@ -156,6 +156,31 @@ export class ExperimentsService implements OnModuleDestroy {
   }
 
   /**
+   * Convenience check for the ENABLE_GENERIC_CONNECTOR per-user gate.
+   * Returns true only when PostHog explicitly enables the GENERIC_API
+   * connector for the given user via a matching release condition.
+   * Fail-closed: missing user id, missing PostHog config, evaluation
+   * failures, and unmatched users all resolve to `false` (connector
+   * disabled) so the kill switch is reliable even during a PostHog outage.
+   */
+  public async isGenericConnectorEnabledForUser(userId: string): Promise<boolean> {
+    if (!this.posthog || !userId) {
+      return false;
+    }
+    try {
+      const result = await this.posthog.isFeatureEnabled(UserFlag.ENABLE_GENERIC_CONNECTOR, userId);
+      return result === true;
+    } catch (err) {
+      WSLogger.warn({
+        source: ExperimentsService.name,
+        message: `Failed to evaluate ENABLE_GENERIC_CONNECTOR for user ${userId}`,
+        error: err,
+      });
+      return false;
+    }
+  }
+
+  /**
    * Gets a JSON payload for a given feature flag. JSON and Array types are the same for the client.
    * NOTE, in Posthog the payload is separate from the feature flag value. getStringFlag() will return the variant name, while getJsonFlag() will return the payload.
    * @param flag - The feature flag to get the value for

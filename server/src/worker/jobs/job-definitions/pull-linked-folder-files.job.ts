@@ -27,6 +27,7 @@ import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import type { Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
+import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { JobCanceledError } from 'src/worker/job-errors';
@@ -226,6 +227,18 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 
     if (!connectorAccountId) {
       throw new Error(`All folders in pull job must belong to a connection`);
+    }
+
+    // Per-user gate for the GENERIC_API connector. The pull job is the single
+    // chokepoint for web-, CLI-, and scheduler-triggered pulls, so this is
+    // where the kill switch has to live to catch all of them. Fail-closed: if
+    // ENABLE_GENERIC_CONNECTOR is not explicitly true for the triggering user,
+    // the job aborts before any IO.
+    if (folders[0]?.connectorAccount?.service === ServiceConst.GENERIC_API) {
+      const enabled = await this.experimentsService.isGenericConnectorEnabledForUser(data.userId);
+      if (!enabled) {
+        throw new Error('The Generic API connector is not enabled — pull aborted.');
+      }
     }
 
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);

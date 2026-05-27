@@ -28,6 +28,7 @@ export interface UserExperimentFlags {
   ENABLE_CREATE_BUG_REPORT: boolean;
   SHOW_OPEN_IN_DESKTOP: boolean;
   INCREMENTAL_POLLING_ENABLED: boolean;
+  ENABLE_GENERIC_CONNECTOR: boolean;
 }
 
 export function isExperimentEnabled(experiment: keyof UserExperimentFlags, user: User | null): boolean {

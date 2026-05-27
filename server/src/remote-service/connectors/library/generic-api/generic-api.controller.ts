@@ -43,6 +43,7 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { checkWorkspacePermissions } from 'src/users/permissions';
 import { Actor, userToActor } from 'src/users/types';
 import { Service as ServiceConst } from '../../service-constants';
@@ -84,7 +85,19 @@ export class GenericApiProbeService {
   constructor(
     private readonly dbService: DbService,
     private readonly credentialEncryption: CredentialEncryptionService,
+    private readonly experimentsService: ExperimentsService,
   ) {}
+
+  /**
+   * Fail-closed gate — every method on this service operates on GENERIC_API
+   * by definition, so we don't need to inspect the account first.
+   */
+  private async assertEnabled(actor: Actor): Promise<void> {
+    const enabled = await this.experimentsService.isGenericConnectorEnabledForUser(actor.userId);
+    if (!enabled) {
+      throw new ForbiddenException('The Generic API connector is not enabled for your account.');
+    }
+  }
 
   /**
    * Probe one endpoint on a connection and return the result (without
@@ -99,6 +112,7 @@ export class GenericApiProbeService {
     actor: Actor,
   ): Promise<ProbeResult> {
     checkWorkspacePermissions(actor, workbookId);
+    await this.assertEnabled(actor);
 
     const account = await this.dbService.client.connectorAccount.findFirst({
       where: { id: connectorAccountId, workbookId },
@@ -133,6 +147,7 @@ export class GenericApiProbeService {
    */
   async reprobe(workbookId: WorkbookId, dataFolderId: DataFolderId, actor: Actor): Promise<ReprobeResponse> {
     checkWorkspacePermissions(actor, workbookId);
+    await this.assertEnabled(actor);
 
     const folder = await this.dbService.client.dataFolder.findFirst({
       where: { id: dataFolderId, workbookId },
@@ -199,6 +214,7 @@ export class GenericApiProbeService {
     actor: Actor,
   ): Promise<void> {
     checkWorkspacePermissions(actor, workbookId);
+    await this.assertEnabled(actor);
     const folder = await this.dbService.client.dataFolder.findFirst({
       where: { id: dataFolderId, workbookId },
     });

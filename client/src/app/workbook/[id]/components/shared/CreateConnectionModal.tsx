@@ -9,7 +9,9 @@ import {
   getServiceName,
   useConnectorsMetadata,
 } from '@/hooks/use-connectors-metadata';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useSubscription } from '@/hooks/use-subscription';
+import { isExperimentEnabled } from '@/types/server-entities/users';
 import { ScratchpadApiError } from '@/lib/api/error';
 import { initiateOAuth } from '@/utils/oauth';
 import {
@@ -70,6 +72,8 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
   const { canCreateDataSource } = useSubscription();
   const { connectorAccounts, createConnectorAccount } = useConnectorAccounts(workbookId);
   const { getDefaultAuthMethod, getSupportedAuthMethods, availableServices } = useConnectors();
+  const { user } = useScratchPadUser();
+  const isGenericConnectorEnabled = isExperimentEnabled('ENABLE_GENERIC_CONNECTOR', user);
 
   const currentFields: ConnectorSettingDefinition[] =
     (newService ? metadata?.[newService]?.credentialFields?.[authMethod] : undefined) ?? [];
@@ -300,7 +304,7 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
           <MantineText size="sm" fw={500}>
             App
           </MantineText>
-          {availableServices.includes('GENERIC_API') && (
+          {availableServices.includes('GENERIC_API') && isGenericConnectorEnabled && (
             <MantineText size="xs" c="dimmed">
               Not finding your App:{' '}
               <Anchor component="button" type="button" size="xs" onClick={() => handleSelectNewService('GENERIC_API')}>
