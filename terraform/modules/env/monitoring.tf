@@ -784,6 +784,58 @@ resource "google_monitoring_alert_policy" "scratch_git_disk_usage_too_high" {
   severity              = "WARNING"
 }
 
+resource "google_monitoring_alert_policy" "scratch_git_ops_agent_unresponsive" {
+  display_name = "Scratch ${local.display_env} Scratch Git Ops Agent unresponsive"
+  count        = var.enable_alerts && var.enable_scratch_git ? 1 : 0
+  documentation {
+    subject = "Scratch ${local.display_env} Scratch Git Ops Agent has not reported for ${var.scratch_git_ops_agent_alert_duration} while the VM is running"
+    content = "Ops Playbook: ${local.playbook_link}"
+  }
+  combiner = "AND_WITH_MATCHING_RESOURCE"
+  severity = "CRITICAL"
+
+  conditions {
+    display_name = "VM Instance - Ops Agent uptime metric absent"
+    condition_absent {
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_RATE"
+      }
+      duration = var.scratch_git_ops_agent_alert_duration
+      filter   = "resource.type = \"gce_instance\" AND metric.type = \"agent.googleapis.com/agent/uptime\" AND metadata.system_labels.name = \"${module.scratch_git_gce[0].instance_name}\""
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  conditions {
+    display_name = "VM Instance - Compute Engine uptime present"
+    condition_threshold {
+      aggregations {
+        alignment_period   = "60s"
+        per_series_aligner = "ALIGN_RATE"
+      }
+      comparison      = "COMPARISON_GT"
+      duration        = "0s"
+      filter          = "resource.type = \"gce_instance\" AND metric.type = \"compute.googleapis.com/instance/uptime\" AND metric.labels.instance_name = \"${module.scratch_git_gce[0].instance_name}\""
+      threshold_value = 0
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "604800s"
+    notification_channel_strategy {
+      renotify_interval = local.renotify_interval
+    }
+  }
+
+  notification_channels = local.notification_channels
+}
+
 resource "google_cloud_ids_endpoint" "intrusion_detection_system_endpoint" {
   count      = var.enable_intrusion_detection && var.intrusion_detection_external_url == null ? 1 : 0
   name       = "ids-endpoint"

@@ -311,6 +311,12 @@ variable "enable_scratch_git" {
   description = "Whether to enable the scratch-git GCE instance."
 }
 
+variable "scratch_git_ops_agent_alert_duration" {
+  type        = string
+  default     = "300s"
+  description = "How long the Ops Agent uptime metric must be absent before opening an incident for the scratch-git GCE instance (e.g. \"300s\" for 5 minutes)."
+}
+
 variable "scratch_git_machine_type" {
   type        = string
   default     = "e2-medium"
