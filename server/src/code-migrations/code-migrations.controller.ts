@@ -175,7 +175,7 @@ export class CodeMigrationsController {
     const folderRows =
       dto.ids && dto.ids.length > 0
         ? await this.db.client.dataFolder.findMany({
-            where: { id: { in: dto.ids }, connectorService: Service.NOTION },
+            where: { workbookId: { in: dto.ids }, connectorService: Service.NOTION },
             include: { workbook: { select: { organizationId: true } } },
           })
         : await this.db.client.dataFolder.findMany({

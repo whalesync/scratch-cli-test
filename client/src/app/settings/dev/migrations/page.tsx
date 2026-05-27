@@ -12,7 +12,7 @@ export default function MigrationsDevPage() {
   const [availableMigrations, setAvailableMigrations] = useState<MigrationDescriptor[]>([]);
   const [isLoadingMigrations, setIsLoadingMigrations] = useState(true);
   const [selectedMigration, setSelectedMigration] = useState<string | null>(null);
-  const [qty, setQty] = useState<number | string>(5);
+  const [qty, setQty] = useState<number | string>('');
   const [ids, setIds] = useState<string>('');
   const [isRunning, setIsRunning] = useState(false);
   const [lastResult, setLastResult] = useState<{
@@ -99,7 +99,7 @@ export default function MigrationsDevPage() {
       });
 
       // Reset form
-      setQty(5);
+      setQty('');
       setIds('');
     } catch (error) {
       console.error('Migration error:', error);

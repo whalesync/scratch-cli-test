@@ -207,18 +207,18 @@ describe('CodeMigrationsController', () => {
       );
     });
 
-    it('queries DataFolders filtered to ids + NOTION when ids supplied', async () => {
+    it('queries DataFolders filtered to workbookId + NOTION when ids supplied', async () => {
       dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]);
 
       await controller.runMigration(makeReqWithUser(), {
         migration: 'notion-data-source-backfill',
-        ids: ['fld_a', 'fld_b'],
+        ids: ['wkb_a', 'wkb_b'],
       });
 
       expect(dbService.client.dataFolder.findMany).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({
-          where: { id: { in: ['fld_a', 'fld_b'] }, connectorService: 'NOTION' },
+          where: { workbookId: { in: ['wkb_a', 'wkb_b'] }, connectorService: 'NOTION' },
         }),
       );
     });
