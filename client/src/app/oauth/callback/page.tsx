@@ -82,7 +82,19 @@ export default function OAuthCallbackPage() {
           return;
         }
 
-        window.location.href = `${oAuthState.redirectPrefix}/oauth/callback-step-2${window.location.search}`;
+        // Desktop deep-link flow: redirect OAuth result back to desktop app if they originated there.
+        if (oAuthState.returnPage?.startsWith('scratch://')) {
+          const desktopUrl = new URL(oAuthState.returnPage);
+          desktopUrl.searchParams.set('code', code);
+          desktopUrl.searchParams.set('state', oAuthStateString);
+          desktopUrl.searchParams.set('service', oAuthState.service);
+          const realmId = searchParams.get('realmId');
+          if (realmId) desktopUrl.searchParams.set('realmId', realmId);
+          window.location.href = desktopUrl.toString();
+        } else {
+          // Otherwise send the result to the web client.
+          window.location.href = `${oAuthState.redirectPrefix}/oauth/callback-step-2${window.location.search}`;
+        }
       } catch (error) {
         console.error('OAuth callback error:', error);
         const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
