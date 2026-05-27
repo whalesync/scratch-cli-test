@@ -4,6 +4,7 @@ import {
   createApiTokenId,
   createOrganizationId,
   createUserId,
+  createWorkbookId,
   createWorkspacePermissionId,
   TokenType,
   UpdateSettingsDto,
@@ -12,6 +13,7 @@ import {
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { EmailService } from 'src/email/email.service';
+import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackFormatters } from 'src/slack/slack-formatters';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
@@ -137,6 +139,30 @@ export class UsersService {
       },
       include: UserCluster._validator.include,
     });
+
+    // Create a default workspace for the new user, set as the new
+    try {
+      await this.db.client.workbook.create({
+        data: {
+          id: createWorkbookId(),
+          name: 'My Scratch workspace',
+          version: 2,
+          userId: newUser.id,
+          organizationId: newUser.organizationId!,
+          workspacePermissions: {
+            create: {
+              id: createWorkspacePermissionId(),
+              userId: newUser.id,
+              role: 'editor',
+            },
+          },
+          // Set it as default for the new user.
+          usersWithAsDefault: { connect: { id: newUser.id } },
+        },
+      });
+    } catch (error) {
+      WSLogger.error({ source: 'UsersService', message: 'Failed to create default workspace', error });
+    }
 
     this.postHogService.identifyNewUser(newUser);
 
