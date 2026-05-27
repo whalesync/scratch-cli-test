@@ -1,6 +1,7 @@
 //! `scratchmd validation` subcommands — read validation results, dump configs,
 //! and run dry-run validation without writing to the index.
 
+use crate::shared::folder_index::validation_results_table;
 use crate::shared::layout::WorkspaceLayout;
 use crate::shared::validators;
 use serde::Serialize;
@@ -45,26 +46,31 @@ pub fn get_folder_problems_command(
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
 
-    let (sql, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(n) = limit {
+    let table = validation_results_table();
+    let (sql, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(n) = limit {
         (
-            "SELECT filename, field_path, validator_kind, level, message, description, fixable \
-             FROM validation_results \
-             WHERE folder_path = ?1 \
-             ORDER BY level DESC, filename, field_path \
-             LIMIT ?2",
+            format!(
+                "SELECT filename, field_path, validator_kind, level, message, description, fixable \
+                 FROM {table} \
+                 WHERE folder_path = ?1 \
+                 ORDER BY level DESC, filename, field_path \
+                 LIMIT ?2"
+            ),
             vec![Box::new(folder_path_arg.to_string()), Box::new(n)],
         )
     } else {
         (
-            "SELECT filename, field_path, validator_kind, level, message, description, fixable \
-             FROM validation_results \
-             WHERE folder_path = ?1",
+            format!(
+                "SELECT filename, field_path, validator_kind, level, message, description, fixable \
+                 FROM {table} \
+                 WHERE folder_path = ?1"
+            ),
             vec![Box::new(folder_path_arg.to_string())],
         )
     };
 
     let mut stmt = conn
-        .prepare(sql)
+        .prepare(&sql)
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
@@ -115,11 +121,12 @@ pub fn get_files_with_problems_command(
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
 
+    let table = validation_results_table();
     let mut stmt = conn
-        .prepare(
-            "SELECT DISTINCT filename, field_path FROM validation_results \
-             WHERE folder_path = ?1",
-        )
+        .prepare(&format!(
+            "SELECT DISTINCT filename, field_path FROM {table} \
+             WHERE folder_path = ?1"
+        ))
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let rows = stmt
@@ -180,9 +187,10 @@ pub fn get_stats_command(workspace_start: &std::path::Path) -> anyhow::Result<()
             Err(_) => continue,
         };
 
-        let mut folder_stmt = match conn
-            .prepare("SELECT DISTINCT folder_path FROM validation_results ORDER BY folder_path")
-        {
+        let table = validation_results_table();
+        let mut folder_stmt = match conn.prepare(&format!(
+            "SELECT DISTINCT folder_path FROM {table} ORDER BY folder_path"
+        )) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -195,7 +203,7 @@ pub fn get_stats_command(workspace_start: &std::path::Path) -> anyhow::Result<()
         for full_folder_path in folder_paths {
             let records: i64 = conn
                 .query_row(
-                    "SELECT COUNT(DISTINCT filename) FROM validation_results WHERE folder_path = ?1",
+                    &format!("SELECT COUNT(DISTINCT filename) FROM {table} WHERE folder_path = ?1"),
                     rusqlite::params![full_folder_path],
                     |r| r.get(0),
                 )
@@ -207,8 +215,10 @@ pub fn get_stats_command(workspace_start: &std::path::Path) -> anyhow::Result<()
 
             let errors: i64 = conn
                 .query_row(
-                    "SELECT COUNT(DISTINCT filename) FROM validation_results \
-                     WHERE folder_path = ?1 AND level = 'error'",
+                    &format!(
+                        "SELECT COUNT(DISTINCT filename) FROM {table} \
+                         WHERE folder_path = ?1 AND level = 'error'"
+                    ),
                     rusqlite::params![full_folder_path],
                     |r| r.get(0),
                 )
@@ -216,8 +226,10 @@ pub fn get_stats_command(workspace_start: &std::path::Path) -> anyhow::Result<()
 
             let warnings: i64 = conn
                 .query_row(
-                    "SELECT COUNT(DISTINCT filename) FROM validation_results \
-                     WHERE folder_path = ?1 AND level = 'warning'",
+                    &format!(
+                        "SELECT COUNT(DISTINCT filename) FROM {table} \
+                         WHERE folder_path = ?1 AND level = 'warning'"
+                    ),
                     rusqlite::params![full_folder_path],
                     |r| r.get(0),
                 )
@@ -273,12 +285,13 @@ pub fn get_file_problems_command(
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", db_path.display()))?;
 
+    let table = validation_results_table();
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT field_path, validator_kind, level, message, description, fixable \
-             FROM validation_results \
-             WHERE folder_path = ?1 AND filename = ?2",
-        )
+             FROM {table} \
+             WHERE folder_path = ?1 AND filename = ?2"
+        ))
         .map_err(|e| anyhow::anyhow!("failed to prepare query: {e}"))?;
 
     let rows: Vec<ValidationResultRow> = stmt

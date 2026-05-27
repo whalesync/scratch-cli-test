@@ -27,7 +27,7 @@ fn version_suffix() -> String {
 }
 
 /// Versioned name for the shared validation_results table.
-fn validation_results_table() -> String {
+pub fn validation_results_table() -> String {
     format!("validation_results{}", version_suffix())
 }
 

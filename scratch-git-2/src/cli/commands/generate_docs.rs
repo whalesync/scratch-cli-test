@@ -164,7 +164,11 @@ mod tests {
 
     #[test]
     fn claude_md_uses_environment_specific_relay_host() {
-        let docs = claude_md("Test Workbook", "https://test.scratch.md", "/usr/local/bin/scratchmd");
+        let docs = claude_md(
+            "Test Workbook",
+            "https://test.scratch.md",
+            "/usr/local/bin/scratchmd",
+        );
 
         assert!(docs.contains(
             "[Open in Scratch Desktop](https://test.scratch.md/open-desktop?url=<url-encoded-scratch-url>)"
@@ -173,7 +177,11 @@ mod tests {
 
     #[test]
     fn claude_md_inlines_sandbox_check_recipe() {
-        let docs = claude_md("Test Workbook", "https://app.scratch.md", "/usr/local/bin/scratchmd");
+        let docs = claude_md(
+            "Test Workbook",
+            "https://app.scratch.md",
+            "/usr/local/bin/scratchmd",
+        );
         // Procedure trigger — fires on any scratchmd use, not on agent self-identification.
         assert!(docs.contains("Run `uname -s` once at the start"));
         // Inlined recipe — agent shouldn't need to read another file to act.
