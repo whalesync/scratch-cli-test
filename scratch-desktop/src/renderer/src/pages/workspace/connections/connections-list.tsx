@@ -174,26 +174,29 @@ export function ConnectionsList({
 
       {/* Service blocks */}
       {!isLoading &&
-        dataFolderGroups.map((group) => {
-          const connectorAccountId = group.dataFolders[0]?.connectorAccountId;
-          const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
-          const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
+        [...dataFolderGroups]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((group) => {
+            const connectorAccountId = group.dataFolders[0]?.connectorAccountId;
+            const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
+            const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
 
-          return (
-            <ServiceBlock
-              key={key}
-              group={group}
-              workbookId={workbookId}
-              connectorAccount={connectorAccount}
-              onDataRefresh={onDataRefresh}
-            />
-          );
-        })}
+            return (
+              <ServiceBlock
+                key={key}
+                group={group}
+                workbookId={workbookId}
+                connectorAccount={connectorAccount}
+                onDataRefresh={onDataRefresh}
+              />
+            );
+          })}
 
       {/* Empty connector accounts (connected but no tables yet) */}
       {!isLoading &&
         (connectorAccounts ?? [])
           .filter((ca) => !dataFolderGroups.some((g) => g.dataFolders.some((f) => f.connectorAccountId === ca.id)))
+          .sort((a, b) => a.displayName.localeCompare(b.displayName))
           .map((ca) => (
             <EmptyServiceBlock
               key={ca.id}

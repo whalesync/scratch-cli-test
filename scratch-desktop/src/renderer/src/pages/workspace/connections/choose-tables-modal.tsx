@@ -1,5 +1,6 @@
 import { ButtonPrimaryLight, ButtonSecondaryInline, ButtonSecondaryOutline } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
+import { CapabilityIcons } from '@/components/icons/CapabilityIcons';
 import { ConnectorIcon } from '@/components/icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { useDataFolders } from '@/hooks/use-data-folders';
@@ -12,6 +13,7 @@ import {
   type TableSearchResult,
 } from '@/lib/connector-accounts-api';
 import { dataFoldersApi } from '@/lib/data-folders-api';
+import { genericApiApi } from '@/lib/generic-api-api';
 import {
   Alert,
   Badge,
@@ -105,38 +107,18 @@ function groupTables(tables: TablePreview[]): TableGroup[] | null {
     }));
 }
 
-// ── Capability indicator for table rows ──
-
-function CapabilityDot({ label, disabled }: { label: string; disabled: boolean }) {
-  return (
-    <Tooltip label={`${label} ${disabled ? 'disabled' : 'enabled'}`} position="top" withArrow>
-      <Text
-        span
-        size="10px"
-        fw={600}
-        c={disabled ? 'var(--mantine-color-gray-4)' : 'var(--mantine-color-teal-6)'}
-        style={{ lineHeight: 1, cursor: 'default' }}
-      >
-        {label}
-      </Text>
-    </Tooltip>
-  );
-}
+// ── Table label with capability & warning icons ──
 
 function TableLabel({ table }: { table: TablePreview }) {
-  const hasCapabilityInfo =
-    table.disabledCreates !== undefined || table.disabledUpdates !== undefined || table.disabledDeletes !== undefined;
-
   return (
     <Group gap={6} wrap="nowrap" align="center">
       <Text13Regular c={table.disabled ? 'dimmed' : undefined}>{table.displayName}</Text13Regular>
-      {hasCapabilityInfo && (
-        <Group gap={2} wrap="nowrap">
-          <CapabilityDot label="C" disabled={!!table.disabledCreates} />
-          <CapabilityDot label="U" disabled={!!table.disabledUpdates} />
-          <CapabilityDot label="D" disabled={!!table.disabledDeletes} />
-        </Group>
-      )}
+      <CapabilityIcons
+        disabledCreates={table.disabledCreates}
+        disabledUpdates={table.disabledUpdates}
+        disabledDeletes={table.disabledDeletes}
+        size={14}
+      />
       {table.disabled && table.disabledReason && (
         <Tooltip label={table.disabledReason} multiline maw={300}>
           <span style={{ display: 'inline-flex' }}>
@@ -284,6 +266,10 @@ export function ChooseTablesModal({
     setSchemasLoading(new Set());
     setSearchTerm('');
     setConnectorOptions(new Map());
+    setSaveErrors([]);
+    setSuccessCount(0);
+    setShowConfirmation(false);
+    setDirtyFileCount(0);
     setStep(1);
 
     const initialReadOnly = new Map<string, boolean>();
@@ -490,7 +476,27 @@ export function ChooseTablesModal({
         if (isTableFullyLocked(table) || readOnly) options.readOnly = true;
 
         try {
-          await dataFoldersApi.create({
+          // GENERIC_API: probe the endpoint before persisting so the connector
+          // has pagination strategy, idPath, and inferred schema for pulls.
+          if (connectorAccount.service === 'GENERIC_API') {
+            try {
+              const probeResult = await genericApiApi.probeEndpoint(workbookId, connectorAccount.id, table.id.wsId);
+              options.genericApi = { endpointId: table.id.wsId, probe: probeResult.probe };
+            } catch (probeErr) {
+              const axiosData = (probeErr as { response?: { data?: { message?: unknown } } })?.response?.data;
+              const msg =
+                typeof axiosData?.message === 'string'
+                  ? axiosData.message
+                  : probeErr instanceof Error
+                    ? probeErr.message
+                    : 'Probe failed.';
+              errors.push({ name: table.displayName, error: `Probe failed: ${msg}` });
+              console.debug(`Probe failed for ${table.displayName}:`, probeErr);
+              continue;
+            }
+          }
+
+          const createDto = {
             tableId: table.id.remoteId,
             workbookId,
             name: table.displayName,
@@ -500,12 +506,22 @@ export function ChooseTablesModal({
             nameFieldOverride: fields?.nameField || undefined,
             options: Object.keys(options).length > 0 ? options : undefined,
             triggerPull,
-          });
+          };
+          await dataFoldersApi.create(createDto);
           succeeded++;
         } catch (err) {
-          const msg = err instanceof Error ? err.message : 'Unknown error';
+          const axiosData = (err as { response?: { data?: { message?: unknown } } })?.response?.data;
+          const serverMsg = axiosData?.message;
+          const msg = serverMsg
+            ? typeof serverMsg === 'string'
+              ? serverMsg
+              : JSON.stringify(serverMsg)
+            : err instanceof Error
+              ? err.message
+              : 'Unknown error';
           errors.push({ name: table.displayName, error: msg });
           console.debug(`Failed to add table ${table.displayName}:`, err);
+          console.debug('Server response data:', axiosData);
         }
       }
 

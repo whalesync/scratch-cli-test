@@ -31,6 +31,7 @@ import { ConnectorHealthStatus } from '@spinner/shared-types';
 import { Check } from 'lucide-react';
 import { useState } from 'react';
 import { useCurrentUser } from '../../../hooks/use-current-user';
+import { GenericApiConnectionModal } from './generic-api-connection-modal';
 
 interface CreateConnectionModalProps {
   opened: boolean;
@@ -238,6 +239,23 @@ export function CreateConnectionModal({
   };
 
   const serviceName = newService ? getServiceName(metadata, newService) : '';
+
+  if (newService === 'GENERIC_API') {
+    return (
+      <GenericApiConnectionModal
+        opened={opened}
+        onClose={() => {
+          handleClearForm();
+          onClose();
+        }}
+        workbookId={workbookId}
+        onConnectionCreated={(account) => {
+          handleClearForm();
+          onConnectionCreated?.(account);
+        }}
+      />
+    );
+  }
 
   return (
     <Modal

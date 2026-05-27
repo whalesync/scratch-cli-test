@@ -4,6 +4,7 @@ import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { Alert, Checkbox, Group, Modal, PasswordInput, Stack, TextInput } from '@mantine/core';
 import { AuthType, type ConnectorAccount, type ConnectorSettingDefinition } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
+import { GenericApiConnectionModal } from './generic-api-connection-modal';
 
 interface UpdateConnectionModalProps {
   opened: boolean;
@@ -13,6 +14,29 @@ interface UpdateConnectionModalProps {
 }
 
 export function UpdateConnectionModal({ opened, onClose, workbookId, connectorAccount }: UpdateConnectionModalProps) {
+  // Delegate to GenericApiConnectionModal for GENERIC_API connections
+  if (connectorAccount.service === 'GENERIC_API') {
+    return (
+      <GenericApiConnectionModal
+        opened={opened}
+        onClose={onClose}
+        workbookId={workbookId}
+        existingAccount={connectorAccount}
+      />
+    );
+  }
+
+  return (
+    <StandardUpdateConnectionModal
+      opened={opened}
+      onClose={onClose}
+      workbookId={workbookId}
+      connectorAccount={connectorAccount}
+    />
+  );
+}
+
+function StandardUpdateConnectionModal({ opened, onClose, workbookId, connectorAccount }: UpdateConnectionModalProps) {
   const { data: metadata } = useConnectorsMetadata();
   const [updatedName, setUpdatedName] = useState('');
   const [fieldValues, setFieldValues] = useState<Record<string, string | boolean>>({});
