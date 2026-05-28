@@ -72,6 +72,10 @@ declare -A TARGETS=(
   ["x86_64-pc-windows-gnu"]="${BINARY}_windows_amd64"
 )
 
+# Thin LTO + many codegen units produces ~2.9k object files; lld opens them
+# all at link time and trips the default RLIMIT_NOFILE (1024).
+ulimit -n 65536
+
 for TARGET in "${!TARGETS[@]}"; do
   # Output markers for sections in Gitlab job view
   echo -e "\e[0Ksection_start:$(date +%s):${TARGET}\r\e[0KBuilding ${TARGET}"
