@@ -81,6 +81,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::Path;
+    use std::sync::Mutex;
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -90,9 +91,29 @@ mod tests {
     type BackendFn =
         fn(&str, &Path, &FieldValidationContext) -> anyhow::Result<Option<ValidationResult>>;
 
+    /// All persistent-backend calls in tests go through this mutex so the suite
+    /// doesn't pile up on the single worker thread under `cargo test`'s default
+    /// parallelism. Without it, the intentionally-slow `runaway_loop_is_interrupted_within_timeout`
+    /// test holds the worker for ~5s while every other persistent test waits
+    /// in the queue — and on an overloaded CI box, signal-delivery / scheduling
+    /// delays can stretch that out far enough that queued tests appear to hang.
+    /// Production paths (rayon par_iter over real validators) don't have an
+    /// equivalent of the runaway-loop test, so this serialization is a test-only
+    /// concern.
+    static PERSISTENT_LOCK: Mutex<()> = Mutex::new(());
+
+    fn run_persistent_serial(
+        rel: &str,
+        ws: &Path,
+        ctx: &FieldValidationContext,
+    ) -> anyhow::Result<Option<ValidationResult>> {
+        let _guard = PERSISTENT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        persistent_worker::run(rel, ws, ctx)
+    }
+
     const BACKENDS: &[(&str, BackendFn)] = &[
         ("per_invocation", per_invocation::run),
-        ("persistent", persistent_worker::run),
+        ("persistent", run_persistent_serial),
     ];
 
     fn write(root: &Path, rel: &str, contents: &str) {
@@ -793,7 +814,7 @@ def validate(ctx):
         for _ in 0..3 {
             let start = std::time::Instant::now();
             let result =
-                persistent_worker::run("validators/quick.py", tmp.path(), &ctx(json!("hi")))
+                run_persistent_serial("validators/quick.py", tmp.path(), &ctx(json!("hi")))
                     .unwrap();
             let elapsed = start.elapsed();
             assert!(result.is_none());
@@ -815,8 +836,8 @@ def validate(ctx):
             "validators/changing.py",
             "def validate(ctx):\n    return []\n",
         );
-        let first = persistent_worker::run("validators/changing.py", tmp.path(), &ctx(json!("hi")))
-            .unwrap();
+        let first =
+            run_persistent_serial("validators/changing.py", tmp.path(), &ctx(json!("hi"))).unwrap();
         assert!(first.is_none());
 
         // Sleep briefly so the mtime tick advances on filesystems with
@@ -828,10 +849,9 @@ def validate(ctx):
             "validators/changing.py",
             "def validate(ctx):\n    return [{'level': 'error', 'message': 'changed'}]\n",
         );
-        let second =
-            persistent_worker::run("validators/changing.py", tmp.path(), &ctx(json!("hi")))
-                .unwrap()
-                .unwrap();
+        let second = run_persistent_serial("validators/changing.py", tmp.path(), &ctx(json!("hi")))
+            .unwrap()
+            .unwrap();
         assert_eq!(second.level, ValidationLevel::Error);
         assert_eq!(second.message.as_deref(), Some("changed"));
     }
