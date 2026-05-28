@@ -164,6 +164,7 @@ export function HomePage() {
         void trackDownloadWorkspace(workspace.id);
         setDownloadingIds((prev) => new Set(prev).add(workspace.id));
         await window.scratchDesktop.initWorkspace(workspace.id, parentFolder);
+        void window.scratchPreferences.setCurrentWorkspaceId(workspace.id);
         void navigate(`/workspace/${workspace.id}`);
       } catch (err) {
         notifications.show({
@@ -185,6 +186,7 @@ export function HomePage() {
   const handleOpen = useCallback(
     (workspace: Workspace) => {
       void trackOpenWorkspace(workspace.id);
+      void window.scratchPreferences.setCurrentWorkspaceId(workspace.id);
       void navigate(`/workspace/${workspace.id}`);
     },
     [navigate],
@@ -246,6 +248,7 @@ export function HomePage() {
         return;
       }
       await window.scratchDesktop.initWorkspace(result.id, parentFolder);
+      void window.scratchPreferences.setCurrentWorkspaceId(result.id);
       setCreateModalOpen(false);
       setNewWorkspaceName('');
       void navigate(`/workspace/${result.id}`);

@@ -1,4 +1,5 @@
 import Store from 'electron-store';
+import { setCurrentWorkspaceId } from './preferences-store';
 
 interface AuthStoreSchema {
   apiToken: string | null;
@@ -40,6 +41,12 @@ export function saveCredentials(creds: {
   tokenExpiresAt?: string;
   serverUrl: string;
 }): void {
+  // If the user changed (different email), clear the stored workspace — it belongs to the old account.
+  const previousEmail = store.get('email');
+  if (previousEmail && creds.email && previousEmail !== creds.email) {
+    setCurrentWorkspaceId(null);
+  }
+
   store.set('apiToken', creds.apiToken);
   store.set('email', creds.email ?? null);
   store.set('tokenExpiresAt', creds.tokenExpiresAt ?? null);
@@ -48,6 +55,7 @@ export function saveCredentials(creds: {
 
 export function clearCredentials(): void {
   store.clear();
+  setCurrentWorkspaceId(null);
 }
 
 export function isTokenExpired(): boolean {

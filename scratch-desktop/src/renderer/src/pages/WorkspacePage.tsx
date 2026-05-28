@@ -181,6 +181,7 @@ export function WorkspacePage() {
         setWorkspace(data);
         setLocalPath(nextLocalPath);
         setCloudSyncWarning(localWorkspace?.cloudSyncWarning ?? null);
+        void window.scratchPreferences.setCurrentWorkspaceId(id);
         const uniqueConnections = new Set((data.dataFolders ?? []).map((f) => f.connectorAccountId).filter(Boolean));
         return {
           localPath: nextLocalPath,
@@ -189,6 +190,14 @@ export function WorkspacePage() {
           hasPullLock: (data.dataFolders ?? []).some((f) => f.lock === 'pull'),
         };
       } catch (err) {
+        // If the workspace is inaccessible (403 wrong account, 404 deleted), clear stored preference
+        // and go back to the workspace picker.
+        const axiosError = err as { response?: { status?: number } };
+        if (axiosError?.response?.status === 403 || axiosError?.response?.status === 404) {
+          void window.scratchPreferences.setCurrentWorkspaceId(null);
+          void navigate('/');
+          return undefined;
+        }
         if (!silent) {
           if (isServerConnectionError(err)) {
             setConnectionError(true);
@@ -207,7 +216,7 @@ export function WorkspacePage() {
         }
       }
     },
-    [id],
+    [id, navigate],
   );
 
   const handleDownload = useCallback(async () => {

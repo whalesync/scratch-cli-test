@@ -76,6 +76,11 @@ export interface CloudSyncWarning {
   evidencePath: string;
 }
 
+const scratchPreferences = {
+  getCurrentWorkspaceId: (): Promise<string | null> => invoke('preferences:get-current-workspace-id'),
+  setCurrentWorkspaceId: (id: string | null): Promise<void> => invoke('preferences:set-current-workspace-id', id),
+};
+
 const scratchDesktop = {
   getWorkspacesRegistry: (): Promise<
     Array<{ id: string; path: string; fileCount: number; cloudSyncWarning: CloudSyncWarning | null }>
@@ -528,6 +533,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('electron', electronAPI);
     contextBridge.exposeInMainWorld('scratchDeepLink', scratchDeepLink);
     contextBridge.exposeInMainWorld('scratchAuth', scratchAuth);
+    contextBridge.exposeInMainWorld('scratchPreferences', scratchPreferences);
     contextBridge.exposeInMainWorld('scratchDesktop', scratchDesktop);
     contextBridge.exposeInMainWorld('scratchFiles', scratchFiles);
   } catch (error) {
@@ -540,6 +546,8 @@ if (process.contextIsolated) {
   window.scratchDeepLink = scratchDeepLink;
   // @ts-expect-error -- fallback for non-isolated contexts
   window.scratchAuth = scratchAuth;
+  // @ts-expect-error -- fallback for non-isolated contexts
+  window.scratchPreferences = scratchPreferences;
   // @ts-expect-error -- fallback for non-isolated contexts
   window.scratchDesktop = scratchDesktop;
   // @ts-expect-error -- fallback for non-isolated contexts

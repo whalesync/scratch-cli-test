@@ -1,6 +1,6 @@
 import { Alert, Center, Loader, Stack } from '@mantine/core';
-import React, { Suspense } from 'react';
-import { HashRouter, Route, Routes, useParams } from 'react-router-dom';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
+import { HashRouter, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { SWRConfig } from 'swr';
 import { ButtonPrimaryLight } from './components/base/buttons';
 import { DeepLinkBridge } from './components/DeepLinkBridge';
@@ -8,6 +8,8 @@ import { Layout } from './components/Layout';
 import { ServerConnectionSplash } from './components/ServerConnectionSplash';
 import { useCurrentUser } from './hooks/use-current-user';
 import { isServerConnectionError } from './lib/is-server-connection-error';
+import { listLocalWorkspaces } from './lib/local-workspaces';
+import { workspacesApi } from './lib/workspaces-api';
 import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { CliInstallProvider } from './providers/CliInstallProvider';
@@ -16,6 +18,7 @@ import { PostHogProvider } from './providers/PostHogProvider';
 import { UpdaterProvider } from './providers/UpdaterProvider';
 
 const HomePage = React.lazy(() => import('./pages/HomePage').then((m) => ({ default: m.HomePage })));
+const WelcomePage = React.lazy(() => import('./pages/WelcomePage').then((m) => ({ default: m.WelcomePage })));
 const WorkspacePage = React.lazy(() => import('./pages/WorkspacePage').then((m) => ({ default: m.WorkspacePage })));
 const WorkspacePageDebug = React.lazy(() =>
   import('./pages/WorkspacePageDebug').then((m) => ({ default: m.WorkspacePageDebug })),
@@ -61,6 +64,88 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * One-time startup interstitial: checks for a stored workspace (or first available)
+ * and navigates there before showing any UI. Only runs on initial app launch —
+ * subsequent navigations to "/" show the normal HomePage picker.
+ */
+function StartupRedirect({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const [ready, setReady] = useState(false);
+  const didRun = useRef(false);
+
+  useEffect(() => {
+    if (didRun.current) return;
+    didRun.current = true;
+
+    void (async () => {
+      try {
+        const storedId = await window.scratchPreferences.getCurrentWorkspaceId();
+        console.log('[StartupRedirect] storedId:', storedId, typeof storedId);
+        if (storedId) {
+          // Validate the stored workspace is accessible and downloaded locally before navigating.
+          try {
+            const [, localWorkspaces] = await Promise.all([workspacesApi.detail(storedId), listLocalWorkspaces()]);
+            const isDownloaded = localWorkspaces.some((entry) => entry.id === storedId);
+            console.log(
+              '[StartupRedirect] stored-ID branch: isDownloaded:',
+              isDownloaded,
+              'localWorkspaces:',
+              localWorkspaces,
+            );
+            if (isDownloaded) {
+              console.log('[StartupRedirect] → navigating to workspace', storedId);
+              void navigate(`/workspace/${storedId}`, { replace: true });
+              setReady(true);
+              return;
+            }
+          } catch (err) {
+            console.log('[StartupRedirect] stored-ID validation error:', err);
+          }
+          console.log('[StartupRedirect] clearing stored ID, falling through');
+          void window.scratchPreferences.setCurrentWorkspaceId(null);
+          // Fall through to the no-stored-ID check below (user may still have 0 downloaded workspaces)
+        }
+
+        // No stored ID (or just cleared) — show welcome when there are remote workspaces but nothing downloaded yet.
+        // Cross-check registry IDs against the remote list (same logic as useWorkspaces) so stale/orphaned
+        // registry entries from other accounts don't count as "downloaded".
+        const [workspaces, localRegistry] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
+        const remoteIds = new Set(workspaces.map((ws) => ws.id));
+        const downloadedCount = localRegistry.filter((entry) => remoteIds.has(entry.id)).length;
+        console.log(
+          '[StartupRedirect] no-stored-ID branch: remoteWorkspaces:',
+          workspaces.length,
+          'registryEntries:',
+          localRegistry.length,
+          'downloadedCount:',
+          downloadedCount,
+        );
+        if (workspaces.length > 0 && downloadedCount === 0) {
+          console.log('[StartupRedirect] → navigating to /welcome');
+          void navigate('/welcome', { replace: true });
+          setReady(true);
+          return;
+        }
+        console.log('[StartupRedirect] → falling through to HomePage');
+      } catch (err) {
+        console.log('[StartupRedirect] outer catch:', err);
+      }
+      setReady(true);
+    })();
+  }, [navigate]);
+
+  if (!ready) {
+    return (
+      <Center h="100vh">
+        <Loader size="sm" />
+      </Center>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   const { user, isLoading, error, refreshUser } = useCurrentUser();
 
@@ -89,23 +174,26 @@ function AppRoutes() {
 
   return (
     <PostHogProvider user={user}>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route
-            path="/oauth-callback"
-            element={
-              <Suspense fallback={<PageLoader />}>
-                <OAuthCallbackPage />
-              </Suspense>
-            }
-          />
-          <Route element={<Layout />}>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/workspace/:id" element={<WorkspacePageRoute />} />
-            <Route path="/workspace/:id/debug" element={<WorkspacePageDebugRoute />} />
-          </Route>
-        </Routes>
-      </Suspense>
+      <StartupRedirect>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route
+              path="/oauth-callback"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <OAuthCallbackPage />
+                </Suspense>
+              }
+            />
+            <Route path="/welcome" element={<WelcomePage />} />
+            <Route element={<Layout />}>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/workspace/:id" element={<WorkspacePageRoute />} />
+              <Route path="/workspace/:id/debug" element={<WorkspacePageDebugRoute />} />
+            </Route>
+          </Routes>
+        </Suspense>
+      </StartupRedirect>
     </PostHogProvider>
   );
 }

@@ -49,6 +49,11 @@ interface ScratchAuthAPI {
   openExternal: (url: string) => Promise<void>;
 }
 
+interface ScratchPreferencesAPI {
+  getCurrentWorkspaceId: () => Promise<string | null>;
+  setCurrentWorkspaceId: (id: string | null) => Promise<void>;
+}
+
 interface ScratchDesktopAPI {
   getWorkspacesRegistry: () => Promise<Array<{ id: string; path: string; fileCount: number }>>;
   createWorkspace: (name: string) => Promise<{ id: string; name: string }>;
@@ -437,6 +442,7 @@ declare global {
     electron: ElectronAPI;
     scratchDeepLink?: ScratchDeepLinkAPI;
     scratchAuth: ScratchAuthAPI;
+    scratchPreferences: ScratchPreferencesAPI;
     scratchDesktop: ScratchDesktopAPI;
     scratchFiles: ScratchFilesAPI;
   }

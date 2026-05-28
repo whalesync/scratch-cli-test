@@ -35,6 +35,7 @@ import {
   type DiffGridFilter,
   type FilterStatus,
 } from './local-files';
+import { getCurrentWorkspaceId, setCurrentWorkspaceId } from './preferences-store';
 import {
   acceptFieldChanges,
   clearFolderIndex,
@@ -527,6 +528,11 @@ ipcMain.handle('auth:is-token-expired', () => {
   return result;
 });
 ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url));
+
+// Preferences IPC handlers
+ipcMain.handle('preferences:get-current-workspace-id', () => getCurrentWorkspaceId());
+ipcMain.handle('preferences:set-current-workspace-id', (_, id: string | null) => setCurrentWorkspaceId(id));
+
 ipcMain.handle('scratch:get-workspaces-registry', async () => {
   const start = performance.now();
   const rawEntries = await readWorkspaceRegistry();

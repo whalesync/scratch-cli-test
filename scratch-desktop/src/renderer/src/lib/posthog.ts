@@ -26,6 +26,7 @@ export enum PostHogEvents {
   DEEP_LINK_PROCESSED = 'deep_link_processed',
   WORKSPACE_CLOUD_SYNC_DETECTED = 'workspace_cloud_sync_detected',
   OPEN_CONNECTIONS_DIALOG = 'open_connections_dialog',
+  FIRST_RUN_DOWNLOAD = 'first_run_download',
 }
 
 export type CloudSyncSurface = 'open' | 'create';
@@ -204,6 +205,10 @@ export async function trackDeepLinkProcessed(props: {
 
 export async function trackOpenConnectionsDialog(workbookId: string): Promise<void> {
   await captureEvent(PostHogEvents.OPEN_CONNECTIONS_DIALOG, { workbookId });
+}
+
+export async function trackFirstRunDownload(workspaceId: string): Promise<void> {
+  await captureEvent(PostHogEvents.FIRST_RUN_DOWNLOAD, { workspaceId });
 }
 
 export async function identifyUser(user: User, email: string | undefined): Promise<void> {
