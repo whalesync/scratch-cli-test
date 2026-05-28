@@ -149,6 +149,9 @@ Bootstrap test desktop release:
     expire_in: 1 day
   script:
     - cd scratch-git-2
+    # Thin LTO + many codegen units produces ~2.9k object files; lld opens them
+    # all at link time and trips the default RLIMIT_NOFILE (1024).
+    - ulimit -n 65536
     - mkdir -p cli-binaries/aarch64-apple-darwin cli-binaries/x86_64-unknown-linux-gnu cli-binaries/x86_64-pc-windows-gnu
     - SCRATCH_DEFAULT_URL="$SCRATCH_DEFAULT_URL" cargo zigbuild --release --bin scratchmd --target aarch64-apple-darwin
     - SCRATCH_DEFAULT_URL="$SCRATCH_DEFAULT_URL" cargo zigbuild --release --bin scratchmd --target x86_64-unknown-linux-gnu

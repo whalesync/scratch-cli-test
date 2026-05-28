@@ -267,6 +267,9 @@ fill fallback cross-compile cache for scratch-git-2:
       policy: pull-push
   script:
     - cd scratch-git-2
+    # Thin LTO + many codegen units produces ~2.9k object files; lld opens them
+    # all at link time and trips the default RLIMIT_NOFILE (1024).
+    - ulimit -n 65536
     # Cross builds warm the `cargo_cross` fallback (target/<triple>).
     - cargo zigbuild --release --target aarch64-apple-darwin
     - cargo zigbuild --release --target x86_64-unknown-linux-gnu
