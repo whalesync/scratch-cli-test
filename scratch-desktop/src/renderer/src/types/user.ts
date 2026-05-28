@@ -1,3 +1,5 @@
+import { ScratchPlanType } from '@spinner/shared-types';
+
 /** User-scoped feature flag settings provided by the server */
 export interface UserExperimentFlags {
   DEV_TOOLBOX: boolean;
@@ -32,7 +34,7 @@ export interface User {
 export interface SubscriptionInfo {
   status: 'valid' | 'expired' | 'payment_failed' | 'none';
   planDisplayName: string;
-  planType: string;
+  planType: ScratchPlanType;
   costUSD: number;
   daysRemaining: number;
   isTrial: boolean;

@@ -21,6 +21,10 @@ import { DbService } from '../db/db.service';
 import { generateApiToken, generateTokenExpirationDate, generateWebsocketTokenExpirationDate } from './tokens';
 import { UserSettings } from './types';
 
+// When the waitlist is required, the user is blocked from using the app and will get an email until an
+// admin clicks approve.
+const REQUIRE_WAITLIST_APPROVAL_FOR_NEW_USER = false;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -121,6 +125,7 @@ export class UsersService {
         role: UserRole.USER,
         name,
         email,
+        waitlistApproved: !REQUIRE_WAITLIST_APPROVAL_FOR_NEW_USER,
         apiTokens: {
           create: {
             id: createApiTokenId(),
