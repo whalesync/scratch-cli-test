@@ -7,6 +7,7 @@ import {
   TableView,
   WorkbookId,
 } from '@spinner/shared-types';
+import { isEqual } from 'lodash';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
@@ -29,6 +30,15 @@ export type RepoId = `${string}/${string}/${string}`;
  */
 export function getDefaultRepoPath(orgId: string, workbookId: WorkbookId, connAccountId: string): RepoId {
   return [orgId, workbookId, connAccountId].join('/') as RepoId;
+}
+
+function stripGeneratedAt(spec: Record<string, unknown>): Record<string, unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { generatedAt, ...rest } = spec as Record<string, unknown> & { generatedAt?: unknown };
+  // Round-trip through JSON to drop any `undefined`-valued keys. This matches what
+  // gets serialized to disk — otherwise `{slugFieldPath: undefined}` (in-memory)
+  // would compare unequal to `{}` (on-disk, after JSON.stringify dropped it).
+  return JSON.parse(JSON.stringify(rest)) as Record<string, unknown>;
 }
 
 @Injectable()
@@ -336,6 +346,14 @@ export class ScratchGitService {
     await this.scratchGitClient.deleteCheckpoint(workbookId, name);
   }
 
+  /**
+   * Tag the commit that `ref` resolves to (branch, tag, or oid) with `name`.
+   * Overwrites any existing tag with the same name.
+   */
+  async writeTag(repoId: string, name: string, ref: string): Promise<void> {
+    await this.scratchGitClient.writeTag(repoId, name, ref);
+  }
+
   async deleteAllFilesInDataFolder(repoId: string, folderPath: string): Promise<void> {
     // Delete the folder from dirty branch only to ensure a diff is generated
     await this.deleteFolder(repoId, folderPath, `Delete all records in ${folderPath}`, DIRTY_BRANCH);
@@ -358,6 +376,7 @@ export class ScratchGitService {
       const message = `Update schema for ${folderPath}`;
 
       const legacyGitPath = `${normalizedFolder}/${SCHEMA_JSON_FILENAME}`;
+      const newCompare = stripGeneratedAt(schemaWithoutView as Record<string, unknown>);
 
       // TODO: Only write to MAIN_BRANCH, not DIRTY_BRANCH. Nothing reads schemas from dirty
       // (readSchemaFromGit and the index route both read from main). Writing to dirty is unnecessary
@@ -367,7 +386,24 @@ export class ScratchGitService {
       // scratch-git-2/src/service/git/repo.rs) so this is no longer user-visible, but the extra
       // writes are still wasted work.
       for (const branch of [MAIN_BRANCH, DIRTY_BRANCH]) {
-        await this.commitFilesToBranch(repoId, branch, [file], message);
+        // Skip the commit if the current schema on this branch is identical to what we'd write,
+        // ignoring the volatile `generatedAt` timestamp. Avoids no-op commits on every publish.
+        let shouldWriteSchema = true;
+        const existing = await this.getRepoFile(repoId, branch, newGitPath);
+        if (existing) {
+          try {
+            const existingSpec = JSON.parse(existing.content) as Record<string, unknown>;
+            if (isEqual(stripGeneratedAt(existingSpec), newCompare)) {
+              shouldWriteSchema = false;
+            }
+          } catch {
+            // Malformed existing file — fall through and overwrite.
+          }
+        }
+
+        if (shouldWriteSchema) {
+          await this.commitFilesToBranch(repoId, branch, [file], message);
+        }
         // Clean up the legacy .schema.json if it still exists on this branch
         const legacy = await this.getRepoFile(repoId, branch, legacyGitPath);
         if (legacy) {

@@ -389,6 +389,10 @@ export class ScratchGitClient {
     await this.callGitApi(`/api/repo/checkpoint/${this.encodeRepoId(repoId)}/${encodeURIComponent(name)}`, 'DELETE');
   }
 
+  async writeTag(repoId: string, name: string, ref: string): Promise<void> {
+    await this.callGitApi(`/api/repo/tag/${this.encodeRepoId(repoId)}`, 'POST', { name, ref });
+  }
+
   async stripConnectionPrefix(repoId: string): Promise<StripPrefixResult> {
     return this.callGitApi(
       `/api/repo/manage/${this.encodeRepoId(repoId)}/strip-prefix`,

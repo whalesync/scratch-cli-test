@@ -7,4 +7,5 @@ pub mod read;
 pub mod smart_http;
 pub mod staging;
 pub mod system;
+pub mod tag;
 pub mod write;

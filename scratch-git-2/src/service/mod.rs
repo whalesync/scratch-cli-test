@@ -147,6 +147,8 @@ pub async fn run() {
             "/api/repo/checkpoint/{id}/{name}",
             delete(routes::checkpoint::delete_checkpoint),
         )
+        // Tag
+        .route("/api/repo/tag/{id}", post(routes::tag::write_tag))
         // Index
         .route(
             "/api/repo/index/{id}/build",
