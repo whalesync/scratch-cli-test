@@ -1003,13 +1003,16 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                   <Group h="100%" mih={40} py={8} pr={8} align="top">
                     <Stack gap="xs" flex={1}>
                       <Text12Medium
+                        component="button"
                         c="var(--fg-primary)"
                         style={{
+                          all: 'unset',
                           wordBreak: 'break-all',
                           whiteSpace: 'pre-wrap',
                           lineHeight: 1.5,
                           cursor: 'pointer',
                           textDecoration: 'none',
+                          font: 'inherit',
                         }}
                         onClick={() => setFocusedFieldName(row.fieldName)}
                         onMouseOver={(e: React.MouseEvent<HTMLElement>) => {

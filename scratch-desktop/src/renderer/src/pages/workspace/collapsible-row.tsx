@@ -41,6 +41,13 @@ export function CollapsibleRow({
       onClickCapture={
         collapsed
           ? (e) => {
+              // When collapsed, clicking the row expands it — but we want native interactive
+              // elements (approve/reject/discard buttons, links) to work on the first click.
+              // We check for actual <button> and <a> elements only, NOT [role="button"],
+              // because the value cells use role="button" on <div> wrappers and those
+              // should still trigger expansion rather than entering edit mode.
+              const target = e.target as HTMLElement;
+              if (target.closest('button, a')) return;
               e.stopPropagation();
               setExpanded(true);
             }
