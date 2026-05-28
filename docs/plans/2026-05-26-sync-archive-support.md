@@ -736,11 +736,22 @@ The build order from the prior eng review (Lane A → B/C/D in parallel) still w
   - Typed errors `SyncMappingNormalizeError` (with `detail`) and `SyncMappingVersionError` (with `receivedVersion`), matching the field shape `SyncExceptionFilter` (T22) will read.
   - Verified: `yarn build` clean across all 14 packages; `yarn lint` clean across all 5 packages.
 
+- **T2 (Lane A) — Zod schemas** (`server/src/sync/sync-mapping.schema.ts`)
+  - Renamed v1 schemas: `columnMappingV1Schema`, `tableMappingV1Schema`, `syncMappingV1Schema`. Back-compat alias `syncMappingSchema = syncMappingV1Schema` kept for `sync.service.ts` + `debug-openrouter.ts`.
+  - V2 schemas added: `columnMappingV2SourceSchema` (`z.discriminatedUnion('kind', [...])` over `column` / `constant`), `columnMappingV2Schema`, `unmatchedSourcePolicySchema` (discriminated on `type`), `unmatchedDestinationPolicySchema`, `tableMappingV2Schema`, exported `syncMappingV2Schema`. Constant value union is `z.union([z.string(), z.number(), z.boolean(), z.null()])` — JSON primitives only for v1-of-v2.
+  - Refinements wired via `.superRefine` for precise issue paths:
+    - **(a)** Column source `superRefine` on `columnMappingV2Schema` — `source.kind === 'column'` with `when ∈ {'unmatched', 'always'}` raises a custom issue at `path: ['when']`. Also folds in transformer-vs-transformers exclusivity (mirrors the v1 refinement, scoped to the column source variant).
+    - **(b)** Table-level `superRefine` — emits a custom issue at `path: ['columnMappings', idx, 'source']` if any `{ source.kind: 'constant' }` mapping targets `recordMatching.destinationColumnId`, regardless of `when`.
+    - **(d)** Table-level `superRefine` — emits a custom issue at `path: ['columnMappings', idx]` on duplicate `(destinationColumnId, when ?? 'matched')` pairs, naming the colliding earlier index.
+  - Refinement **(c)** — at the bare-schema level, `constant.value` is enforced as a JSON primitive. The destination-column-type compatibility check (`ConstantTypeMismatchError`) needs DataFolder schema info and lives in the service layer; comment in the schema flags this for whoever wires it (T6 / save-time validation).
+  - `previewRecordBodySchema` and `validateMappingBodySchema` re-pointed at `columnMappingV1Schema` (these endpoints still operate on the v1 shape until their consumers migrate).
+  - Verified: root `yarn build` and `yarn lint` clean. Server lint already runs with `--max-warnings=0`, so strict lint is covered by the root command.
+
 ### Next up
 
-- **T2 (Lane A) — Zod schemas** in `server/src/sync/sync-mapping.schema.ts`. Adds v1 + v2 schemas, `z.discriminatedUnion('kind', ...)` on `source`, and the refinements: (a) `source.kind === 'column'` + `when ∈ {'unmatched', 'always'}` is illegal; (b) `source.kind === 'constant'` cannot target the `recordMatching.destinationColumnId`; (c) `constant.value` primitive type matches the destination column type; (d) one mapping per `(destinationColumnId, when)` pair.
+- **T4 (Lane A) — Single read choke point.** Land `SyncService.getMappings()` returning `StoredSyncMapping = SyncMappingV1 | SyncMappingV2` (parsing through `syncMappingV1Schema` / `syncMappingV2Schema` respectively), plus `getSync()`. Update the six direct-cast consumers — `sync.service.ts:1188`, `sync-data-folders.job.ts`, `dev-tools.service.ts`, `workbook-repo.service.ts`, `whalesync-import.service.ts`, `cli-workbook.controller.ts` — to route through the choke point. T13 (Prisma migration adding `mappingsV2 Json?`) needs to land alongside so `getMappings()` can `select: { mappings: true, mappingsV2: true }`.
 
 ### Lane status
 
-- **Lane A** (T1, T2, T4, T13) — in progress; T1 done, T2/T4/T13 remaining. Sequential.
+- **Lane A** (T1, T2, T4, T13) — in progress; T1 + T2 done, T4 + T13 remaining (T13 prepares the column for T4 to read from). Sequential.
 - **Lanes B / C / D / E / F** — blocked on Lane A completion (parallelization unlocks after T4).
