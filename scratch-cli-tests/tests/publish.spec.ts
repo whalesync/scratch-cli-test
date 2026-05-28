@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import YAML from "yaml";
 import { Client } from "pg";
+import YAML from "yaml";
 import { ScratchCli } from "../src/cli";
 import {
   deleteWorkspace,
@@ -231,13 +231,15 @@ describeIfPostgres(
       try {
         // Mutate the working file. The change is now "unreviewed" — present
         // on disk but not yet in accepted-patches.json.
+        // NOTE: The Trailing Newline is to allow the test to pass when the server canonical format is `JSON.stringify(data, null, 2) + '\n'`.
+        // There is a followup task to properly handle this in the scratchmd CLI during reconciliation (see docs/plans/2026-05-27-unreviewed-detection-semantic-compare.md).
         const data = JSON.parse(
           fs.readFileSync(editedRecordAbsPath, "utf-8"),
         ) as Record<string, unknown>;
         data.author = newAuthor;
         fs.writeFileSync(
           editedRecordAbsPath,
-          JSON.stringify(data, null, 2),
+          JSON.stringify(data, null, 2) + "\n",
         );
 
         const unreviewed = cli.json<{
