@@ -67,6 +67,9 @@ tower = { version = "0.5.3", features = ["util"] }
 debug = "line-tables-only"
 
 # Keep release symbols thin so the napi `.node` ships small (slice H.2).
+# Thin LTO + multiple codegen units to keep peak rustc memory under the
+# GitLab runner's cgroup limit during cross-compile (was OOM-killing on fat LTO).
 [profile.release]
-lto = true
+lto = "thin"
+codegen-units = 16
 strip = "symbols"
