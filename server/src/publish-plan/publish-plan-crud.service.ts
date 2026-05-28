@@ -21,6 +21,9 @@ export class PublishPlanCrudService {
         _count: {
           select: { operations: true },
         },
+        author: {
+          select: { id: true, name: true, email: true },
+        },
       },
     });
 
@@ -101,7 +104,7 @@ export class PublishPlanCrudService {
 
   async listPublishPlanOperations(
     pipelineId: string,
-    options?: { page?: number; pageSize?: number; phase?: string; hasError?: boolean },
+    options?: { page?: number; pageSize?: number; phase?: string; filePath?: string; hasError?: boolean },
   ) {
     const page = options?.page ?? 1;
     const pageSize = Math.min(options?.pageSize ?? 50, 200);
@@ -110,6 +113,9 @@ export class PublishPlanCrudService {
     const where: Record<string, unknown> = { planId: pipelineId };
     if (options?.phase) {
       where.phase = options.phase;
+    }
+    if (options?.filePath) {
+      where.filePath = options.filePath;
     }
     if (options?.hasError) {
       where.error = { not: null };
@@ -132,6 +138,112 @@ export class PublishPlanCrudService {
     return await this.db.client.publishPlan.delete({
       where: { id: pipelineId },
     });
+  }
+
+  async getPublishPlanById(workbookId: string, planId: string) {
+    const p = await this.db.client.publishPlan.findFirst({
+      where: { workbookId, id: planId },
+      include: {
+        _count: { select: { operations: true } },
+        connectorAccount: { select: { id: true, displayName: true, service: true } },
+        author: { select: { id: true, name: true, email: true } },
+      },
+    });
+    return p;
+  }
+
+  /**
+   * List records (operations grouped by filePath) for a publish plan.
+   * One row per distinct filePath, with the list of phases that touched it.
+   * Includes the distinct folders and phases present in the plan (for filter UIs).
+   */
+  async listPublishPlanRecords(
+    pipelineId: string,
+    options?: { page?: number; pageSize?: number; dataFolderId?: string; phase?: string },
+  ) {
+    const page = options?.page ?? 1;
+    const pageSize = Math.min(options?.pageSize ?? 50, 200);
+
+    // All operations matching plan + folder filter. Phase filter is applied
+    // *after* grouping so that records show their full phase list even when
+    // the user filters to records that have a specific phase.
+    const baseWhere: Record<string, unknown> = { planId: pipelineId };
+    if (options?.dataFolderId) {
+      baseWhere.dataFolderId = options.dataFolderId;
+    }
+
+    const operations = await this.db.client.publishPlanOperation.findMany({
+      where: baseWhere,
+      select: { filePath: true, phase: true, status: true, dataFolderId: true, error: true },
+      orderBy: { filePath: 'asc' },
+    });
+
+    // Group by filePath
+    const byPath = new Map<
+      string,
+      { filePath: string; dataFolderId: string | null; phases: Set<string>; hasError: boolean }
+    >();
+    for (const op of operations) {
+      const key = op.filePath;
+      let row = byPath.get(key);
+      if (!row) {
+        row = { filePath: op.filePath, dataFolderId: op.dataFolderId ?? null, phases: new Set(), hasError: false };
+        byPath.set(key, row);
+      }
+      row.phases.add(op.phase);
+      if (op.status === 'failed-batch' || op.error) {
+        row.hasError = true;
+      }
+    }
+
+    let records = Array.from(byPath.values()).map((r) => ({
+      filePath: r.filePath,
+      dataFolderId: r.dataFolderId,
+      phases: Array.from(r.phases).sort(),
+      hasError: r.hasError,
+    }));
+
+    if (options?.phase) {
+      records = records.filter((r) => r.phases.includes(options.phase!));
+    }
+
+    const total = records.length;
+    const skip = (page - 1) * pageSize;
+    const paged = records.slice(skip, skip + pageSize);
+
+    // Build filter options across the full (unfiltered) operation set for this plan.
+    const allOps = await this.db.client.publishPlanOperation.findMany({
+      where: { planId: pipelineId },
+      select: { dataFolderId: true, phase: true },
+    });
+    const folderCounts = new Map<string, number>();
+    const phaseCounts = new Map<string, number>();
+    for (const op of allOps) {
+      if (op.dataFolderId) folderCounts.set(op.dataFolderId, (folderCounts.get(op.dataFolderId) ?? 0) + 1);
+      phaseCounts.set(op.phase, (phaseCounts.get(op.phase) ?? 0) + 1);
+    }
+    const dataFolderIds = Array.from(folderCounts.keys());
+    const dataFolders = dataFolderIds.length
+      ? await this.db.client.dataFolder.findMany({
+          where: { id: { in: dataFolderIds } },
+          select: { id: true, path: true },
+        })
+      : [];
+
+    return {
+      data: paged,
+      total,
+      page,
+      pageSize,
+      filters: {
+        folders: dataFolders
+          .map((f) => ({ id: f.id, path: f.path ?? '', count: folderCounts.get(f.id) ?? 0 }))
+          .sort((a, b) => a.path.localeCompare(b.path)),
+        phases: Array.from(phaseCounts.entries())
+          .map(([phase, count]) => ({ phase, count }))
+          .sort((a, b) => a.phase.localeCompare(b.phase)),
+      },
+    };
   }
 
   async getPublishPlanByJobId(workbookId: string, jobId: string) {

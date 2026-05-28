@@ -150,19 +150,44 @@ export class PublishPlanController {
     return this.publishAdminService.getPublishPlanByJobId(workbookId, jobId);
   }
 
+  @Get(':planId')
+  getById(@Param('workbookId') workbookId: WorkbookId, @Param('planId') planId: string, @Req() req: RequestWithUser) {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId);
+    return this.publishAdminService.getPublishPlanById(workbookId, planId);
+  }
+
   @Get(':pipelineId/operations')
   operations(
     @Param('pipelineId') pipelineId: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('phase') phase?: string,
+    @Query('filePath') filePath?: string,
     @Query('hasError') hasError?: string,
   ) {
     return this.publishAdminService.listPublishPlanOperations(pipelineId, {
       page: page ? parseInt(page, 10) : undefined,
       pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
       phase,
+      filePath,
       hasError: hasError === 'true',
+    });
+  }
+
+  @Get(':pipelineId/records')
+  records(
+    @Param('pipelineId') pipelineId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('dataFolderId') dataFolderId?: string,
+    @Query('phase') phase?: string,
+  ) {
+    return this.publishAdminService.listPublishPlanRecords(pipelineId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      dataFolderId,
+      phase,
     });
   }
 

@@ -85,6 +85,7 @@ model User {
   jobs                 DbJob[]
   workbooks            Workbook[]
   publishPlans         PublishPlan[]
+  authoredPublishPlans PublishPlan[]         @relation("PublishPlanAuthor")
   schedules            Schedule[]
   workspacePermissions WorkspacePermission[]
   workspaceInvites     WorkspaceInvites[]
@@ -498,8 +499,27 @@ model PublishPlan {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // The user who initiated this publish. Populated at plan creation from the
+  // current actor. Nullable so that scheduled / automated publishes (no user
+  // context) can leave it empty.
+  authorId String?
+  author   User?   @relation("PublishPlanAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
   status     String // "planned", "building", "ready", "failed", "running", "completed"
   branchName String
+
+  // SHA of dirty HEAD captured before the publish work began. The user's local
+  // edits that the publish is about to apply. Mirrors the `dirty_plan_{id}` git tag.
+  preDirtyCommitSha String?
+  // SHA of main HEAD captured before the publish work began. The canonical state
+  // the publish is changing. Mirrors the `main_pre_plan_{id}` git tag. The primary
+  // diff on the publish history detail page is (preMainCommitSha → preDirtyCommitSha) —
+  // i.e. what was about to be published when the plan ran.
+  preMainCommitSha String?
+  // SHA of main HEAD captured after a successful run (including completed-with-errors).
+  // What got shipped. Mirrors the `main_plan_{id}` git tag. Kept for reference /
+  // rollback; not used in the primary diff.
+  postMainCommitSha String?
 
   result Json? @db.Json
 

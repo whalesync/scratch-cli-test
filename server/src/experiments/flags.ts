@@ -37,6 +37,13 @@ export enum UserFlag {
    * for that user. Fail-closed — enable only via an explicit release condition.
    */
   ENABLE_GENERIC_CONNECTOR = 'ENABLE_GENERIC_CONNECTOR',
+  /**
+   * Per-user gate for the Publish History UI surface. When TRUE for a user, a
+   * "Publish History" sub-tab appears under Runs in the workbook web app.
+   * Client-only gate today — the underlying publish-plan data is already
+   * available to anyone with workbook access.
+   */
+  ENABLE_PUBLISH_HISTORY = 'ENABLE_PUBLISH_HISTORY',
 }
 
 /**
@@ -60,4 +67,5 @@ export const ClientUserFlags: Partial<Record<UserFlag, FlagDataType>> = {
   [UserFlag.SHOW_OPEN_IN_DESKTOP]: 'boolean',
   [UserFlag.INCREMENTAL_POLLING_ENABLED]: 'boolean',
   [UserFlag.ENABLE_GENERIC_CONNECTOR]: 'boolean',
+  [UserFlag.ENABLE_PUBLISH_HISTORY]: 'boolean',
 };

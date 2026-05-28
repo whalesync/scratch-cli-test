@@ -85,4 +85,11 @@ export const SWR_KEYS = {
     schema: (dataFolderId: DataFolderId, mode: 'view' | 'refresh') =>
       ['data-folders', 'schema', dataFolderId, mode] as const,
   },
+  publishPlans: {
+    detail: (workbookId: WorkbookId, planId: string) => ['publish-plans', 'detail', workbookId, planId] as const,
+    records: (workbookId: WorkbookId, planId: string, page: number, dataFolderId?: string, phase?: string) =>
+      ['publish-plans', 'records', workbookId, planId, page, dataFolderId ?? '', phase ?? ''] as const,
+    operation: (workbookId: WorkbookId, planId: string, filePath: string, phase: string) =>
+      ['publish-plans', 'operation', workbookId, planId, filePath, phase] as const,
+  },
 };

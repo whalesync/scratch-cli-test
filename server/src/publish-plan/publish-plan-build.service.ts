@@ -67,6 +67,7 @@ export class PublishPlanBuildService {
         id: pipelineId,
         workbookId,
         userId,
+        authorId: userId,
         status: PublishPlanStatus.Planning,
         branchName,
         connectorAccountId: connectorAccountId || null,

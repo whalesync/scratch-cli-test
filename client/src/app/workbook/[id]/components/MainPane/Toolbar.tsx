@@ -4,12 +4,14 @@ import { IconButtonToolbar } from '@/app/components/base/buttons';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { OpenInDesktopButton } from '@/app/components/open-in-desktop-button';
+import { usePublishPlan } from '@/hooks/use-publish-plan';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { trackToggleDisplayMode } from '@/lib/posthog';
 import { useLayoutManagerStore } from '@/stores/layout-manager-store';
 import { Box, Breadcrumbs, Group, Tooltip, useMantineColorScheme } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { WorkbookId } from '@spinner/shared-types';
+import dayjs from 'dayjs';
 import { BugIcon, ChevronRightIcon, MoonIcon, SunIcon, TerminalIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
@@ -24,6 +26,11 @@ function getPageName(pathname: string): { label: string; id: string } {
   if (segment === 'runs') {
     if (pathname.split('/').at(4) === 'scheduled') return { label: 'Scheduled runs', id: 'runs/scheduled' };
     return { label: 'Recent runs', id: 'runs' };
+  }
+  if (segment === 'publish-history') return { label: 'Publish History', id: 'publish-history' };
+  if (segment === 'publish-plan') {
+    // The leaf label is filled in by the caller using `usePublishPlan` once the plan loads.
+    return { label: 'Publish Plan', id: 'publish-plan' };
   }
   return { label: 'Files', id: 'files' };
 }
@@ -51,6 +58,17 @@ export function Toolbar({ workbookId }: ToolbarProps) {
 
   const page = getPageName(pathname);
 
+  // For /publish-plan/[planId], fetch the plan so we can render a meaningful leaf.
+  const publishPlanIdFromRoute = page.id === 'publish-plan' ? pathname.split('/').at(4) : undefined;
+  const { publishPlan } = usePublishPlan(params.id as WorkbookId, publishPlanIdFromRoute);
+  const publishPlanLeafLabel = useMemo(() => {
+    if (page.id !== 'publish-plan') return page.label;
+    if (!publishPlan) return 'Publish Plan';
+    const when = dayjs(publishPlan.createdAt).format('MMM D, YYYY h:mm A');
+    const connection = publishPlan.connectorAccount?.displayName;
+    return connection ? `${when} (${connection})` : when;
+  }, [page.id, page.label, publishPlan]);
+
   const breadcrumbs = useMemo(() => {
     const items: { label: string; href: string }[] = [];
 
@@ -62,10 +80,21 @@ export function Toolbar({ workbookId }: ToolbarProps) {
       });
     }
 
+    // Publish-plan detail pages get a "Publish History" parent breadcrumb
+    if (page.id === 'publish-plan') {
+      items.push({
+        label: 'Publish History',
+        href: `/workbook/${params.id}/publish-history`,
+      });
+    }
+
     const basePath = page.id === 'review' ? 'review' : page.id;
     items.push({
-      label: page.label,
-      href: `/workbook/${params.id}/${basePath}`,
+      label: page.id === 'publish-plan' ? publishPlanLeafLabel : page.label,
+      href:
+        page.id === 'publish-plan' && publishPlanIdFromRoute
+          ? `/workbook/${params.id}/publish-plan/${publishPlanIdFromRoute}`
+          : `/workbook/${params.id}/${basePath}`,
     });
 
     if (params.path && params.path.length > 0 && (page.id === 'files' || page.id === 'review')) {
@@ -83,7 +112,7 @@ export function Toolbar({ workbookId }: ToolbarProps) {
     }
 
     return items;
-  }, [page.label, page.id, params.id, params.path]);
+  }, [page.label, page.id, params.id, params.path, publishPlanIdFromRoute, publishPlanLeafLabel]);
 
   return (
     <Box

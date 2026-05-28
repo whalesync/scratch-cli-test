@@ -2,12 +2,14 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Regular, Text13Regular } from '@/app/components/base/text';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
+import { isExperimentEnabled } from '@/types/server-entities/users';
 import { Badge, Box, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
-import { CalendarIcon, FolderIcon, HistoryIcon, RefreshCwIcon, RocketIcon, SquareIcon } from 'lucide-react';
+import { CalendarIcon, FolderIcon, HistoryIcon, RefreshCwIcon, RocketIcon, ScrollTextIcon, SquareIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import useSWR from 'swr';
@@ -27,6 +29,8 @@ export function NavTabs() {
   const pathname = usePathname();
   const workbookId = params.id as WorkbookId;
 
+  const { user } = useScratchPadUser();
+  const publishHistoryEnabled = isExperimentEnabled('ENABLE_PUBLISH_HISTORY', user);
   const { activeJobs } = useWorkbookActiveJobs(workbookId);
   const { data: dirtyStatus } = useSWR(
     SWR_KEYS.dirtyFiles.hasDirty(workbookId),
@@ -66,6 +70,17 @@ export function NavTabs() {
       disabled: false,
       badge: activeJobs && activeJobs.length > 0 ? activeJobs.length : undefined,
     },
+    ...(publishHistoryEnabled
+      ? [
+          {
+            id: 'publish-history',
+            label: 'Publish History',
+            icon: ScrollTextIcon,
+            href: `/workbook/${params.id}/publish-history`,
+            disabled: false,
+          },
+        ]
+      : []),
   ];
 
   const topSegment = pathname.split('/').at(3);

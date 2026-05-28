@@ -13,6 +13,7 @@ import {
   PublishPlanBuildDto,
   PublishPlanEntity,
   PublishPlanOperationEntity,
+  PublishPlanRecordsResponse,
   PublishPlanRunDto,
   TestTransformerDto,
   TestTransformerResponse,
@@ -536,6 +537,35 @@ export const workbookApi = {
     }
   },
 
+  getPublishPlan: async (workbookId: WorkbookId, planId: string): Promise<PublishPlanEntity | null> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<PublishPlanEntity | null>(`/workbook/${workbookId}/publish-v2/${planId}`);
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to fetch publish plan');
+      throw error;
+    }
+  },
+
+  listPublishPlanRecords: async (
+    workbookId: WorkbookId,
+    planId: string,
+    options?: { page?: number; pageSize?: number; dataFolderId?: string; phase?: string },
+  ): Promise<PublishPlanRecordsResponse> => {
+    try {
+      const axios = API_CONFIG.getAxiosInstance();
+      const res = await axios.get<PublishPlanRecordsResponse>(
+        `/workbook/${workbookId}/publish-v2/${planId}/records`,
+        { params: options },
+      );
+      return res.data;
+    } catch (error) {
+      handleAxiosError(error, 'Failed to list publish plan records');
+      throw error;
+    }
+  },
+
   listFileIndex: async (workbookId: WorkbookId): Promise<unknown[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
@@ -573,7 +603,7 @@ export const workbookApi = {
   listPublishPlanOperations: async (
     workbookId: WorkbookId,
     publishPlanId: string,
-    options?: { page?: number; pageSize?: number; phase?: string; hasError?: boolean },
+    options?: { page?: number; pageSize?: number; phase?: string; filePath?: string; hasError?: boolean },
   ): Promise<{ data: PublishPlanOperationEntity[]; total: number; page: number; pageSize: number }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
@@ -587,6 +617,7 @@ export const workbookApi = {
           page: options?.page,
           pageSize: options?.pageSize,
           phase: options?.phase,
+          filePath: options?.filePath,
           hasError: options?.hasError ? 'true' : undefined,
         },
       });

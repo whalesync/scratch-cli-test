@@ -90,15 +90,31 @@ export class PublishPlanRunService {
     // Resolve the correct git repo ID for this plan (V2 uses per-connection repos)
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(plan.connectorAccountId);
 
-    // Tag the starting dirty commit on the first run (not on resume) so that
-    // rollback has a fixed reference to the pre-publish state.
+    // Tag and persist the starting dirty + main commits on the first run (not on resume).
+    // The primary diff shown in the publish history UI is
+    // (preMainCommitSha → preDirtyCommitSha) — what was about to be published. The
+    // post-publish main SHA is captured below after rebaseDirty.
     if ((plan.status as PublishPlanStatus) === PublishPlanStatus.Planned) {
       try {
+        const [dirtySha, mainSha] = await Promise.all([
+          this.scratchGitService.getBranchHead(repoId, 'dirty'),
+          this.scratchGitService.getBranchHead(repoId, 'main'),
+        ]);
         await this.scratchGitService.writeTag(repoId, `dirty_plan_${plan.id}`, 'dirty');
+        await this.scratchGitService.writeTag(repoId, `main_pre_plan_${plan.id}`, 'main');
+        if (dirtySha || mainSha) {
+          await this.db.client.publishPlan.update({
+            where: { id: pipelineId },
+            data: {
+              ...(dirtySha ? { preDirtyCommitSha: dirtySha } : {}),
+              ...(mainSha ? { preMainCommitSha: mainSha } : {}),
+            },
+          });
+        }
       } catch (err) {
         WSLogger.warn({
           source: 'PublishRunService.runPipeline',
-          message: 'Failed to tag starting dirty commit',
+          message: 'Failed to tag starting commits',
           error: err,
           workbookId: plan.workbookId,
           data: { pipelineId },
@@ -445,10 +461,17 @@ export class PublishPlanRunService {
       });
       await this.scratchGitService.rebaseDirty(repoId);
 
-      // Tag the resulting main commit so rollback can reference what was shipped.
-      // Include partial publishes — those commits landed and may still need undo.
+      // Tag and persist the resulting main commit so rollback can reference what was
+      // shipped. Include partial publishes — those commits landed and may still need undo.
       try {
+        const mainSha = await this.scratchGitService.getBranchHead(repoId, 'main');
         await this.scratchGitService.writeTag(repoId, `main_plan_${plan.id}`, 'main');
+        if (mainSha) {
+          await this.db.client.publishPlan.update({
+            where: { id: pipelineId },
+            data: { postMainCommitSha: mainSha },
+          });
+        }
       } catch (err) {
         WSLogger.warn({
           source: 'PublishRunService.runPipeline',

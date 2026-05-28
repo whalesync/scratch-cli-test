@@ -27,6 +27,7 @@ function parseArgs(argv) {
     createCount: undefined,
     deleteCount: undefined,
     setAuthorRecord: undefined,
+    fkEvery: undefined,
     remoteDirtyRecord: undefined,
     failingEditRecord: undefined,
     serverUrl: undefined,
@@ -111,6 +112,14 @@ function parseArgs(argv) {
       args.setAuthorRecord = arg.slice("--set-author-record=".length);
       continue;
     }
+    if (arg === "--fk-every") {
+      args.fkEvery = argv[++i];
+      continue;
+    }
+    if (arg.startsWith("--fk-every=")) {
+      args.fkEvery = arg.slice("--fk-every=".length);
+      continue;
+    }
     if (arg === "--change-remote-dirty") {
       args.remoteDirtyRecord = argv[++i];
       continue;
@@ -174,6 +183,8 @@ Options:
   --create-count <n>       Include N new local records in the same publish cycle as the edited records.
   --delete-count <n>       Delete N existing local records in the same publish cycle before upload.
   --set-author-record <n>  Set post N to reference the seeded author (authorId=1) during local edits.
+  --fk-every <n>           At seed time, set authorId=1 on every Nth post (e.g. 3 -> every 3rd post).
+                           Combine with --count to produce many records with FKs pointing at author 1.
   --change-remote-dirty <n> Commit a remote dirty change to record N (simulates a concurrent external edit).
   --failing-edit-record <n> Make record N invalid locally by writing a bad timestamp (expected publish failure).
   --add-fk <postN>-<authorM>
@@ -478,7 +489,7 @@ async function dropDatabase(adminDbUrl, dbName) {
   }
 }
 
-async function seedDatabase(databaseUrl, recordCount, setAuthorRecord = null) {
+async function seedDatabase(databaseUrl, recordCount, setAuthorRecord = null, fkEvery = null) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   try {
@@ -541,12 +552,12 @@ async function seedDatabase(databaseUrl, recordCount, setAuthorRecord = null) {
     `);
 
     for (let index = 1; index <= recordCount; index += 1) {
+      const referencesAuthor =
+        (setAuthorRecord !== null && index === setAuthorRecord) ||
+        (fkEvery !== null && fkEvery > 0 && index % fkEvery === 0);
       await client.query(
         `INSERT INTO ${quoteIdent(POSTS_TABLE_NAME)} (name, "authorId") VALUES ($1, $2)`,
-        [
-          `Post ${index}`,
-          setAuthorRecord !== null && index === setAuthorRecord ? 1 : null,
-        ],
+        [`Post ${index}`, referencesAuthor ? 1 : null],
       );
     }
   } finally {
@@ -1387,6 +1398,7 @@ async function main() {
     cliArgs.deleteCount != null ? Number(cliArgs.deleteCount) : 0;
   const setAuthorRecord =
     cliArgs.setAuthorRecord != null ? Number(cliArgs.setAuthorRecord) : null;
+  const fkEvery = cliArgs.fkEvery != null ? Number(cliArgs.fkEvery) : null;
   const remoteDirtyRecord =
     cliArgs.remoteDirtyRecord != null
       ? Number(cliArgs.remoteDirtyRecord)
@@ -1555,7 +1567,7 @@ async function main() {
       [`Database: ${dbName}`, `Rows planned: ${recordCount}`],
     );
     await createDatabase(adminDbUrl, dbName);
-    await seedDatabase(databaseUrl, recordCount, setAuthorRecord);
+    await seedDatabase(databaseUrl, recordCount, setAuthorRecord, fkEvery);
     const seededRows = await readPostRows(databaseUrl);
     const seededAuthors = await readAuthorRows(databaseUrl);
     console.log(

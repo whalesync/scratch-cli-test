@@ -59,13 +59,37 @@ export interface PublishPlanEntity {
   userId: string;
   status: PublishPlanStatus;
   branchName: string;
+  preDirtyCommitSha: string | null;
+  preMainCommitSha: string | null;
+  postMainCommitSha: string | null;
   result: unknown;
   activeJobId: string | null;
   connectorAccountId: string | null;
+  connectorAccount?: { id: string; displayName: string; service: string } | null;
+  authorId: string | null;
+  author?: { id: string; name: string | null; email: string | null } | null;
   _count: { operations: number };
   dbJob: { status: string; type: string; progress: unknown } | null;
   bullJob: Record<string, unknown> | null;
   job: PublishPlanJobEntity | null;
+}
+
+export interface PublishPlanRecordRow {
+  filePath: string;
+  dataFolderId: string | null;
+  phases: string[];
+  hasError: boolean;
+}
+
+export interface PublishPlanRecordsResponse {
+  data: PublishPlanRecordRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  filters: {
+    folders: { id: string; path: string; count: number }[];
+    phases: { phase: string; count: number }[];
+  };
 }
 
 ///
