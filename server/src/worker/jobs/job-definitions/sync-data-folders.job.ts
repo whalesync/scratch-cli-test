@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { DataFolderId, SyncId, SyncMapping, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { JobType, RunId, TransformerTypes } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import type { CustomMetricsService } from 'src/metrics/custom-metrics-service';
@@ -110,25 +110,20 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       },
     });
 
-    // Load the Sync record
-    const sync = await this.prisma.sync.findUnique({
-      where: { id: data.syncId },
-      include: {
-        syncTablePairs: {
-          include: {
-            sourceDataFolder: true,
-            destinationDataFolder: true,
-          },
-        },
-      },
-    });
+    // Load the Sync record through the SyncService choke point so the v1/v2
+    // shape is parsed correctly.
+    const sync = await this.syncService.getSyncForExecution(data.syncId);
 
     if (!sync) {
       throw new Error(`Sync with id ${data.syncId} not found`);
     }
 
-    const syncMapping = sync.mappings as unknown as SyncMapping;
-    const tableMappings = syncMapping.tableMappings ?? [];
+    // TODO(DEV-10008): when the executor adopts v2, replace this narrow
+    // with `transformV1ToV2(sync.mappings)` at the executor entry.
+    if (sync.mappings.version !== 1) {
+      throw new Error(`Sync ${data.syncId}: executor does not yet support v2 mappings.`);
+    }
+    const tableMappings = sync.mappings.tableMappings;
 
     WSLogger.info({
       source: 'SyncDataFoldersJob',

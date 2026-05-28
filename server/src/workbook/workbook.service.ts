@@ -257,6 +257,7 @@ export class WorkbookService {
 
     // Delete orphaned SyncMatchKeys (no FK, must delete before cascade removes Sync rows)
     await emit({ phase: 'deleting_syncs' });
+    // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): id-only enumeration for cascade-delete; no mappings read.
     const syncs = await this.db.client.sync.findMany({ where: { workbookId: id }, select: { id: true } });
     if (syncs.length > 0) {
       await this.db.client.syncMatchKeys.deleteMany({ where: { syncId: { in: syncs.map((s) => s.id) } } });

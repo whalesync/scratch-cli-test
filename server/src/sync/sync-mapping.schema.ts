@@ -1,4 +1,4 @@
-import { TransformerTypes } from '@spinner/shared-types';
+import { StoredSyncMapping, TransformerTypes } from '@spinner/shared-types';
 import { z } from 'zod';
 
 // -- Transformer schemas --
@@ -193,8 +193,10 @@ export const syncMappingV1Schema = z
 /**
  * Back-compat alias. Existing consumers (`sync.service.ts`, `debug-openrouter.ts`)
  * import `syncMappingSchema`; keep the name pointing at v1 so the surface stays
- * stable until the T4 read choke point introduces the discriminated union.
- * Removed in the Phase 4 cleanup.
+ * stable while the v2 rollout is in progress.
+ *
+ * TODO(DEV-10008): drop this alias once the v1 column is removed and all
+ * consumers have migrated to the v1/v2 schemas explicitly.
  */
 export const syncMappingSchema = syncMappingV1Schema;
 
@@ -335,6 +337,37 @@ export const syncMappingV2Schema = z
     tableMappings: z.array(tableMappingV2Schema).min(1),
   })
   .strict();
+
+// -- On-disk shape parser (read choke point) --
+
+/**
+ * Parse a `Sync` row's on-disk mappings into the `StoredSyncMapping`
+ * discriminated union. Prefers `mappingsV2` when non-null; falls back to v1
+ * `mappings`. Returns the row with `mappingsV2` stripped and `mappings`
+ * replaced by the parsed shape so downstream consumers narrow on
+ * `mappings.version` and cannot reach around the choke point.
+ *
+ * This is the only sanctioned way to read `Sync.mappings` / `Sync.mappingsV2`.
+ * The ESLint rule on `prisma.sync.find*` is the static enforcement; this is
+ * the runtime parse + strip.
+ */
+export function parseStoredMappings<R extends { mappings: unknown; mappingsV2: unknown }>(
+  row: R,
+): Omit<R, 'mappings' | 'mappingsV2'> & { mappings: StoredSyncMapping } {
+  // zod schemas parse to structurally-equivalent types with plain `string`
+  // where the TS shape uses branded IDs (DataFolderId etc.). The structural
+  // validation is what matters at the read boundary; the brand is a static
+  // marker that the rest of the codebase already casts to/from at every
+  // serialization boundary. Match that convention here.
+  const parsed =
+    row.mappingsV2 !== null && row.mappingsV2 !== undefined
+      ? (syncMappingV2Schema.parse(row.mappingsV2) as unknown as StoredSyncMapping)
+      : (syncMappingV1Schema.parse(row.mappings) as unknown as StoredSyncMapping);
+  const { mappings: _v1, mappingsV2: _v2, ...rest } = row;
+  void _v1;
+  void _v2;
+  return { ...rest, mappings: parsed };
+}
 
 // -- Request body schemas --
 

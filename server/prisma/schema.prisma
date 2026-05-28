@@ -574,8 +574,14 @@ model Sync {
   workbookId String?
   workbook   Workbook? @relation(fields: [workbookId], references: [id], onDelete: Cascade)
 
-  // No default here, so the application should set a valid empty SyncMapping on creation
-  mappings Json // SyncMapping - @see packages/shared-types/src/sync-mapping.ts
+  // Frozen as v1 source of truth from the moment `mappingsV2` is first written.
+  // Reads route through `SyncService.getMappings()`/`getSync()` — the ESLint
+  // rule on `prisma.sync.find*` defends the choke point.
+  mappings   Json // SyncMappingV1 — @see packages/shared-types/src/sync-mapping.ts
+  // Orphan-aware v2 shape. Preferred over `mappings` once non-null.
+  // TODO(DEV-10008): final cleanup migration drops the v1 column and renames
+  // `mappingsV2 → mappings`.
+  mappingsV2 Json? // SyncMappingV2 — @see packages/shared-types/src/sync-mapping.ts
 
   /// Whether the sync is enabled.
   syncState            SyncState @default(OFF)

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type Sync as PrismaSync } from '@prisma/client';
 import { TSchema } from '@sinclair/typebox';
 import type { Service } from '@spinner/shared-types';
 import {
@@ -15,6 +15,7 @@ import {
   PreviewRecordResponse,
   SaveSyncBody,
   ScheduleAction,
+  StoredSyncMapping,
   SyncId,
   SyncMapping,
   SyncMappingValidationError,
@@ -37,6 +38,7 @@ import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
 import {
+  parseStoredMappings,
   previewRecordBodySchema,
   saveSyncBodySchema,
   validateMappingTypeBodySchema,
@@ -89,6 +91,15 @@ export interface SyncTableMappingResult {
   warnings: Array<{ sourceRemoteId: string; warning: string }>;
 }
 
+/**
+ * Sync row with its on-disk mappings resolved to the `StoredSyncMapping`
+ * discriminated union. `mappingsV2` is omitted so consumers cannot reach
+ * around the read choke point.
+ */
+export type SyncWithMappings = Omit<PrismaSync, 'mappings' | 'mappingsV2'> & {
+  mappings: StoredSyncMapping;
+};
+
 @Injectable()
 export class SyncService {
   constructor(
@@ -100,6 +111,63 @@ export class SyncService {
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly workbookService: WorkbookService,
   ) {}
+
+  /**
+   * Read choke point — fetches a Sync row and resolves its on-disk mappings
+   * (v1 or v2) to the `StoredSyncMapping` discriminated union. Prefers
+   * `mappingsV2` when non-null, falls back to v1 `mappings`. The returned row
+   * has `mappingsV2` stripped so consumers cannot reach around the choke
+   * point.
+   *
+   * The ESLint rule on `prisma.sync.find*` ensures all reads route through
+   * this method (or its sibling `getMappings`).
+   */
+  async getSync(syncId: SyncId): Promise<SyncWithMappings | null> {
+    const row = await this.db.client.sync.findFirst({ where: { id: syncId } });
+    return row ? parseStoredMappings(row) : null;
+  }
+
+  /**
+   * Convenience: just the mappings for a sync. Returns the on-disk shape via
+   * `StoredSyncMapping`; consumers narrow on `mappings.version`.
+   */
+  async getMappings(syncId: SyncId): Promise<StoredSyncMapping | null> {
+    const row = await this.db.client.sync.findFirst({
+      where: { id: syncId },
+      select: { mappings: true, mappingsV2: true },
+    });
+    return row ? parseStoredMappings(row).mappings : null;
+  }
+
+  /**
+   * Fetches a Sync with `syncTablePairs` and their source/destination
+   * `DataFolder`s included, mappings parsed via the choke point. Used by the
+   * `sync-data-folders` worker job; surfaces the deep include in one place so
+   * the job doesn't need its own Prisma read.
+   */
+  async getSyncForExecution(syncId: SyncId): Promise<
+    | (SyncWithMappings & {
+        syncTablePairs: Array<
+          Prisma.SyncTablePairGetPayload<{
+            include: { sourceDataFolder: true; destinationDataFolder: true };
+          }>
+        >;
+      })
+    | null
+  > {
+    const row = await this.db.client.sync.findUnique({
+      where: { id: syncId },
+      include: {
+        syncTablePairs: {
+          include: {
+            sourceDataFolder: true,
+            destinationDataFolder: true,
+          },
+        },
+      },
+    });
+    return row ? parseStoredMappings(row) : null;
+  }
 
   /** Fire-and-forget: persist all syncs for the workbook to the workbook git repo. */
   private pushSyncsToGitInBackground(workbookId: WorkbookId, actor: Actor): void {
@@ -424,10 +492,17 @@ export class SyncService {
 
     return syncs.map((sync) => {
       const schedule = scheduleByEntityId.get(sync.id);
+      const stored = parseStoredMappings(sync);
+      // TODO(DEV-10008): widen ExportSyncConfig.mappings to StoredSyncMapping
+      // and drop this narrow. Today the export DTO is v1-shaped only.
+      if (stored.mappings.version !== 1) {
+        throw new BadRequestException(`Sync ${sync.id}: v2 mappings export is not yet supported.`);
+      }
+      const v1Mappings: SyncMapping = stored.mappings;
       return {
         id: sync.id,
         displayName: sync.displayName,
-        mappings: sync.mappings as unknown as SyncMapping,
+        mappings: v1Mappings,
         validateMappings: false,
         schedule: schedule?.cronExpression ?? '',
         publishAfterSync: sync.publishAfterSync,
@@ -1180,13 +1255,17 @@ export class SyncService {
     sourceDataFolderId: DataFolderId,
     actor: Actor,
   ): Promise<{ created: boolean; updated: boolean; destinationPath: string | null; error: string | null }> {
-    const sync = await this.db.client.sync.findFirst({ where: { id: syncId } });
+    const sync = await this.getSync(syncId);
     if (!sync) {
       throw new NotFoundException(`Sync ${syncId} not found`);
     }
 
-    const syncMapping = sync.mappings as unknown as SyncMapping;
-    const tableMapping = syncMapping.tableMappings.find((tm) => tm.sourceDataFolderId === sourceDataFolderId);
+    // TODO(DEV-10008): when the executor adopts v2, replace this narrow
+    // with `transformV1ToV2(sync.mappings)` at the executor entry.
+    if (sync.mappings.version !== 1) {
+      throw new BadRequestException(`Sync ${syncId}: executor does not yet support v2 mappings.`);
+    }
+    const tableMapping = sync.mappings.tableMappings.find((tm) => tm.sourceDataFolderId === sourceDataFolderId);
     if (!tableMapping) {
       throw new NotFoundException(`No table mapping found for source folder ${sourceDataFolderId} in sync ${syncId}`);
     }
@@ -1975,8 +2054,13 @@ export class SyncService {
       throw new NotFoundException('Sync not found');
     }
 
-    const syncMapping = sync.mappings as unknown as SyncMapping;
-    const tableMappings = syncMapping?.tableMappings ?? [];
+    const stored = parseStoredMappings(sync);
+    if (stored.mappings.version !== 1) {
+      // TODO(DEV-10008): widen the type-validator pipeline to accept v2
+      // column mappings; today it operates on v1 only.
+      throw new BadRequestException(`Sync ${syncId}: validate-mapping-types does not yet support v2 mappings.`);
+    }
+    const tableMappings = stored.mappings.tableMappings;
     const errors: SyncMappingValidationError[] = [];
 
     for (let tableMappingIndex = 0; tableMappingIndex < tableMappings.length; tableMappingIndex++) {

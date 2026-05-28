@@ -101,13 +101,10 @@ export class CliSyncController {
   ): Promise<unknown> {
     const actor = userToActor(req.user);
     await this.workbookService.assertReadableWorkbook(actor, workbookId);
-    const sync = await this.db.client.sync.findUnique({
-      where: { id: syncId },
-      include: { syncTablePairs: true },
-    });
-    if (!sync) {
-      throw new NotFoundException('Sync not found');
-    }
+    // findOneForWorkbook routes through the SyncService choke point: scopes
+    // the query to the workbook and resolves v1/v2 mappings to the on-disk
+    // shape. Throws NotFoundException if the sync is missing.
+    const sync = await this.syncService.findOneForWorkbook(workbookId, syncId as SyncId, actor);
     this.posthogService.trackCliListSyncs(actor, workbookId, { syncId, scope: 'single' });
     return sync;
   }
@@ -175,6 +172,7 @@ export class CliSyncController {
     const actor = userToActor(req.user);
     const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
 
+    // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): existence check + posthog metadata only; no mappings read.
     const sync = await this.db.client.sync.findFirst({
       where: {
         id: syncId,

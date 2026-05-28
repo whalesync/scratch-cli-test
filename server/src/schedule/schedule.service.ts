@@ -161,6 +161,7 @@ export class ScheduleService {
       });
       return folder !== null;
     } else if (action === 'SYNC') {
+      // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): existence check via id-only select; no mappings read.
       const sync = await this.db.client.sync.findFirst({
         where: { id: entityId, syncTablePairs: { some: { sourceDataFolder: { workbookId } } } },
         select: { id: true },
@@ -192,6 +193,7 @@ export class ScheduleService {
         throw new BadRequestException(`DataFolder ${entityId} is not a linked folder (no connector account)`);
       }
     } else if (action === 'SYNC') {
+      // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): existence check via id-only select; no mappings read.
       const sync = await this.db.client.sync.findFirst({
         where: {
           id: entityId,

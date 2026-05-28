@@ -724,6 +724,23 @@ The build order from the prior eng review (Lane A → B/C/D in parallel) still w
 - Whether `mappings` is ever populated after first v2 save. **No** — frozen at last v1 state forever (or until Phase 4 drops the column).
 - Whether old clients can read or display v2 syncs. **No** — they read `mappings` only, which is the frozen v1 snapshot. They see stale data, which is acceptable because (a) the v1-write-rejection guard prevents them from making it worse, and (b) Phase 2 minimizes the population of old clients before backfill.
 
+## Implementation Conventions
+
+Notes that apply across every session implementing this plan.
+
+### Code-comment terminology
+
+Plan-internal jargon (Lane A/B/C/D/E/F, phase numbers, task IDs like T4/T13/T19) is only meaningful while reading this doc. It rots fast in code comments: anyone who hits the comment cold has no idea what "Lane B" refers to, and once the rollout is complete, the references are actively misleading.
+
+Two acceptable patterns in source code:
+
+1. **Reword without the jargon.** Describe the concrete future change ("when the executor adopts v2, replace this narrow with `transformV1ToV2(sync.mappings)`"), the static reason ("frozen as v1 source of truth from the moment `mappingsV2` is first written"), or the call site involved — anything a cold reader can follow.
+2. **Pair the jargon (or the cleanup intent) with `TODO(DEV-10008)`.** The ticket reference is greppable, durable past the rollout, and survives terminology churn. Use this when the cleanup is the _point_ of the comment — e.g., temporary narrows that throw on v2, or back-compat aliases that get deleted once the v1 column is dropped.
+
+Avoid: bare references to "Phase 4", "Lane C", "T19", or similar — they only make sense if the reader has this doc open. Note that pre-existing `Phase N` references inside `sync.service.ts` and `sync-data-folders.job.ts` refer to the executor's FK-resolution phases (`DATA` vs `FOREIGN_KEY_MAPPING`); that's real domain terminology, not plan jargon.
+
+The same applies to the audit-trail prefixes in this doc itself (`D1-eng`, `OV4`, `UI-R3`, etc.). Those live here and in the review JSONL artifacts; they should never appear in shipped code comments.
+
 ## Implementation Progress
 
 ### Completed
@@ -747,11 +764,37 @@ The build order from the prior eng review (Lane A → B/C/D in parallel) still w
   - `previewRecordBodySchema` and `validateMappingBodySchema` re-pointed at `columnMappingV1Schema` (these endpoints still operate on the v1 shape until their consumers migrate).
   - Verified: root `yarn build` and `yarn lint` clean. Server lint already runs with `--max-warnings=0`, so strict lint is covered by the root command.
 
+- **T13 (Lane A) — Prisma `mappingsV2 Json?` column**
+  - Added `mappingsV2 Json?` to `Sync` in `server/prisma/schema.prisma`, alongside the existing `mappings Json`. Comments document the freeze semantics (`mappings` becomes frozen-v1 once `mappingsV2` is first written) and the Phase 4 drop-rename.
+  - Migration: `server/prisma/migrations/20260528140713_add_sync_mappings_v2/migration.sql` — single `ALTER TABLE "Sync" ADD COLUMN "mappingsV2" JSONB;`. Nullable, no default, no data migration in SQL — the explicit Phase 3 backfill descriptor populates it.
+  - `yarn prisma generate` run; client types updated. Existing rows: `mappingsV2 = NULL` → `parseStoredMappings` falls back to v1 `mappings`. No behavioral change until a v2 write lands (Lane C).
+
+- **T4 (Lane A) — Single read choke point** (`server/src/sync/sync-mapping.schema.ts`, `server/src/sync/sync.service.ts`)
+  - Added pure helper `parseStoredMappings(row)` in `sync-mapping.schema.ts`. Generic over the row shape so includes (e.g., `syncTablePairs`) flow through. Prefers `mappingsV2` when non-null, falls back to v1 `mappings`. Returns the row with `mappings` typed as `StoredSyncMapping` and `mappingsV2` stripped so consumers cannot reach around the choke point. Branded-ID cast at the parse boundary matches the codebase's existing zod-vs-shared-types convention.
+  - Added `SyncService.getSync(syncId): Promise<SyncWithMappings | null>`, `getMappings(syncId): Promise<StoredSyncMapping | null>`, and `getSyncForExecution(syncId)` (deep include for the worker job). Exported type `SyncWithMappings = Omit<Sync, 'mappings' | 'mappingsV2'> & { mappings: StoredSyncMapping }`.
+  - Routed three internal casts in `sync.service.ts` through `parseStoredMappings`/`getSync`: `exportSyncs` map (was line 430), `syncOneRecord` (was line 1188), `validateSyncMappingTypes` (was line 1978). Each adds a `mappings.version !== 1` defensive narrow that throws today — v2 is never produced yet (Lane C writer not shipped). Lane B replaces these throws with `transformV1ToV2` at the executor entry.
+  - Routed three external consumers: `worker/jobs/job-definitions/sync-data-folders.job.ts` (now calls `syncService.getSyncForExecution`), `workbook/workbook-repo.service.ts` (uses `parseStoredMappings` directly — `WorkbookRepoService` cannot import `SyncService` because the dep is already one-way the other direction; ESLint rule explicitly disabled at the `findMany` with justification), `cli/cli-sync.controller.ts` GET endpoint (now uses `syncService.findOneForWorkbook`, preserves the `assertReadableWorkbook` permission check the prior code did directly).
+  - **Consumer list correction (vs plan body §"Phase 1"):** the plan listed `dev-tools.service.ts`, `whalesync-import.service.ts`, `cli-workbook.controller.ts` as direct-cast consumers. Audit found they are not: `dev-tools.service.ts`'s `remapSyncMappings` takes `unknown` from an internal caller and never touches Prisma; `whalesync-import.service.ts` reads `sync.mappings` from a **Whalesync export JSON payload**, not from a `Sync` row; `cli-workbook.controller.ts` delegates to `WorkbookRepoService.pushSyncs`. The actual direct-cast set is the five inventoried above plus three internal-to-sync.service sites.
+
+- **T19 (Lane F, landed with T4) — ESLint choke-point enforcement** (`server/eslint.config.mjs`)
+  - Added `no-restricted-syntax` blocking `<chain>.sync.find{First,Unique,Many,UniqueOrThrow,FirstOrThrow}` via selector `CallExpression[callee.object.property.name='sync'][callee.property.name=/^find.../]`. Catches `prisma.sync.find*`, `db.client.sync.find*`, `tx.sync.find*` patterns uniformly.
+  - Rule disabled for `src/sync/sync.service.ts` (the choke point itself), `**/__tests__/**`, and `**/*.spec.ts` (mocks).
+  - Per-call `// eslint-disable-next-line no-restricted-syntax -- <reason>` added to four existence-only callers that demonstrably do not read mappings: `schedule/schedule.service.ts:entityExists` and `:validateEntityId` (id-only existence via `syncTablePairs.some.sourceDataFolder.workbookId`), `cli/cli-sync.controller.ts:runSync` (existence + posthog metadata), `sync/sync.controller.ts:runSync` (same), `workbook/workbook.service.ts:delete` (id-only enumeration for cascade-delete). The disable comments document the exception cases and surface them for future review.
+
+- **Verified:** root `yarn build` clean across 14 packages; root `yarn lint` clean (server runs `--max-warnings=0`); `yarn jest src/sync/__tests__/sync.service.spec.ts src/sync/__tests__/sync.controller.spec.ts src/workbook/__tests__/workbook.service.spec.ts src/schedule` → 91 tests pass. Integration tests not run (require local DB).
+
 ### Next up
 
-- **T4 (Lane A) — Single read choke point.** Land `SyncService.getMappings()` returning `StoredSyncMapping = SyncMappingV1 | SyncMappingV2` (parsing through `syncMappingV1Schema` / `syncMappingV2Schema` respectively), plus `getSync()`. Update the six direct-cast consumers — `sync.service.ts:1188`, `sync-data-folders.job.ts`, `dev-tools.service.ts`, `workbook-repo.service.ts`, `whalesync-import.service.ts`, `cli-workbook.controller.ts` — to route through the choke point. T13 (Prisma migration adding `mappingsV2 Json?`) needs to land alongside so `getMappings()` can `select: { mappings: true, mappingsV2: true }`.
+Lane A complete. Lane B / C / D / E / F now unblocked and can land in parallel.
+
+- **Lane B (executor + helpers)** — T3 (executor entry-point `transformV1ToV2` dispatch), T6 (`applyColumnMappings` extraction), T7 (Pass 3 orphan-driven write), T8 (`classifyOrphan` helper), T14 (Pass 3 audit + metrics), T21 (extract `sync-execution.ts`). With T4's `SyncWithMappings` in place, the executor entry can narrow `sync.mappings.version` and call `transformV1ToV2` for v2 rows; the three `version !== 1 → throw` narrows added in T4 become the natural replacement sites.
+- **Lane C (backfill + writer)** — T5 (sentinel-v1 + v2-writer in `createSync`/`updateSync`), T9 (Phase 3 backfill descriptor in `code-migrations.controller.ts` with compare-and-set on `(id, updatedAt, mappingsV2 IS NULL)`), T10 (Phase 2 server-side guard rejecting v1-shape writes once `mappingsV2 IS NOT NULL`).
+- **Lane D (client)** — T11 (sync-edit UI: stacked layout, accordion, policy pickers, ConfirmDialog), T12 (v1 JSON paste auto-upgrade flow).
+- **Lane E (tests)** — T15, T16 (v1-compat regression specs in `server/test/integration/sync-mapping-v1-compat.spec.ts`), T20 (CI `sync_v1_compat` job).
+- **Lane F (remaining)** — T17 (`server/src/sync/README.md` Pass 3 + v2 examples), T18 (Posthog/CustomMetrics counters), T22 (`SyncExceptionFilter`), T23 (README refresh follow-up).
 
 ### Lane status
 
-- **Lane A** (T1, T2, T4, T13) — in progress; T1 + T2 done, T4 + T13 remaining (T13 prepares the column for T4 to read from). Sequential.
-- **Lanes B / C / D / E / F** — blocked on Lane A completion (parallelization unlocks after T4).
+- **Lane A** (T1, T2, T4, T13) — **complete**. T19 (Lane F) landed early with T4.
+- **Lanes B / C / D / E** — unblocked; can land in parallel.
+- **Lane F** — partially landed (T19 done with T4); T17, T18, T22, T23 remain.

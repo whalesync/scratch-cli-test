@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { SyncMapping, TableMapping, WorkbookId } from '@spinner/shared-types';
+import { TableMappingV1, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
+import { parseStoredMappings } from 'src/sync/sync-mapping.schema';
 import { Actor } from 'src/users/types';
 import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 
@@ -50,6 +51,7 @@ export class WorkbookRepoService {
     const workbook = await this.db.client.workbook.findUnique({ where: { id: workbookId } });
     if (!workbook) throw new NotFoundException('Workbook not found');
 
+    // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): direct read; circular DI with SyncService prevents using the choke point method. Mappings parsed via parseStoredMappings below.
     const syncs = await this.db.client.sync.findMany({
       where: { workbookId },
       include: { syncTablePairs: true },
@@ -75,8 +77,14 @@ export class WorkbookRepoService {
     const files: { path: string; content: string }[] = [];
 
     for (const sync of syncs) {
-      const mappings = sync.mappings as unknown as SyncMapping;
-      const tableMappings: TableMapping[] = mappings?.tableMappings ?? [];
+      const stored = parseStoredMappings(sync);
+      if (stored.mappings.version !== 1) {
+        // WorkbookSyncConfig is the v1-shaped portable format. V2 export
+        // support is future work — until then, v2 syncs are skipped from
+        // the repo push and a warning is logged.
+        continue;
+      }
+      const tableMappings: TableMappingV1[] = stored.mappings.tableMappings;
 
       for (let i = 0; i < tableMappings.length; i++) {
         const tm = tableMappings[i];

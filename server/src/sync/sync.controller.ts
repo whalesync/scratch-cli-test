@@ -136,6 +136,7 @@ export class SyncController {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
 
+    // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): existence check + posthog metadata only; no mappings read.
     const sync = await this.dbService.client.sync.findFirst({
       where: {
         id: syncId,
