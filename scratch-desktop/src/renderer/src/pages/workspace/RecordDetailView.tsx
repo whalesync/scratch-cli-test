@@ -697,10 +697,11 @@ export const RecordDetailView = memo(function RecordDetailView({
     }
 
     // Row-level statuses (added, deleted) are styled at the record level — don't overlay
-    // per-field diff colours on top.
+    // per-field diff colours on top. Exception: an approved create ('addedUnpublished')
+    // with edited fields should still show per-field diffs for those edits.
     const isRowLevel =
       recordData.row.__rowStatus === 'added' ||
-      recordData.row.__rowStatus === 'addedUnpublished' ||
+      (recordData.row.__rowStatus === 'addedUnpublished' && recordData.row.__changedFields.length === 0) ||
       recordData.row.__rowStatus === 'deleted' ||
       recordData.row.__rowStatus === 'deletedUnpublished' ||
       recordData.row.__rowStatus === 'invalidJson';

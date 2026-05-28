@@ -1065,11 +1065,13 @@ function compareFlattenedRecordVersions(
       }
     }
 
+    // If there's no published version the record hasn't been published yet.
+    // We're in the workingRow && dirtyRow branch, so the create has already
+    // been approved — status is 'addedUnpublished' even if individual fields
+    // have since been edited (those show as per-field diffs in the UI).
     const isNewRecord = !masterRow;
     const status: RowStatus = isNewRecord
-      ? changedFields.length > 0
-        ? 'added'
-        : 'addedUnpublished'
+      ? 'addedUnpublished'
       : changedFields.length > 0
         ? 'modified'
         : unpublishedFields.length > 0
