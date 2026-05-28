@@ -30,6 +30,7 @@ import {
   readGridData,
   readSchema,
   readWorkspaceConfig,
+  revertRecordFile,
   undoApprovedCellChange,
   writeFileTextRaw,
   type DiffGridFilter,
@@ -973,6 +974,25 @@ ipcMain.handle('files:write-file-text-raw', async (_, filePath: string, contents
     const result = await writeFileTextRaw(filePath, contents);
     return result;
   }),
+);
+ipcMain.handle(
+  'files:revert-record-file',
+  async (_, workspacePath: string, connectorAccountId: string, filePath: string, contents: string) =>
+    // Whole-record overwrite that lands as an approved-but-unpublished
+    // change. `revertRecordFile` resolves the connection-relative file
+    // path against the marker's dirName, writes the file, then snapshots
+    // every affected top-level field into accepted-patches.json. Reindex
+    // afterwards so the grid picks up the new dirty + approved state.
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await revertRecordFile(workspacePath, connectorAccountId, filePath, contents);
+      if ('ok' in result) {
+        await reindexFiles(workspacePath, relative(workspacePath, result.folderPath), [result.filename], {
+          validate: true,
+        });
+        return { ok: true } as const;
+      }
+      return result;
+    }),
 );
 ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>
   readBatch(filePaths, opts),

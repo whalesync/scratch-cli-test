@@ -99,6 +99,8 @@ export function WorkspacePage() {
   const resetFolderState = useWorkspaceUiStore((s) => s.resetFolderState);
   const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
   const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
+  const showPublishHistoryPanel = useWorkspaceUiStore((s) => s.showPublishHistoryPanel);
+  const setShowPublishHistoryPanel = useWorkspaceUiStore((s) => s.setShowPublishHistoryPanel);
   const setSelectedFolderPath = useCallback(
     (path: string | null) => {
       setSelectedFolderPathInner((prev) => {
@@ -108,13 +110,14 @@ export function WorkspacePage() {
         resetFolderState();
         return path;
       });
-      // Selecting a folder closes the connections panel — mirrors the
-      // pre-rebase coupling between folder selection and panel visibility.
+      // Selecting a folder closes either central panel — same coupling as
+      // the connections panel had before publish-history was added.
       if (path !== null) {
         setShowConnectionsPanel(false);
+        setShowPublishHistoryPanel(false);
       }
     },
-    [resetFolderState, setShowConnectionsPanel],
+    [resetFolderState, setShowConnectionsPanel, setShowPublishHistoryPanel],
   );
   // Opening the connections panel clears the selected folder so the grid
   // returns to its empty state when the panel closes (preserves the
@@ -124,6 +127,13 @@ export function WorkspacePage() {
       setSelectedFolderPathInner(null);
     }
   }, [showConnectionsPanel]);
+  // Opening the publish-history panel clears the selected folder for the
+  // same reason — the grid empties when the panel closes again.
+  useEffect(() => {
+    if (showPublishHistoryPanel) {
+      setSelectedFolderPathInner(null);
+    }
+  }, [showPublishHistoryPanel]);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);

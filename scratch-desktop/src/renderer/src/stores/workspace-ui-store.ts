@@ -38,6 +38,12 @@ export interface WorkspaceUiState {
   selectedRecordFilename: string | null;
   focusedFieldName: string | null;
   showConnectionsPanel: boolean;
+  /** When true, the central content area shows the Publish History panel
+   * instead of the folder grid or connections panel. */
+  showPublishHistoryPanel: boolean;
+  /** When non-null while `showPublishHistoryPanel` is true, the panel drills
+   * into the detail view for this plan id. Null means "show the list". */
+  publishHistoryDetailPlanId: string | null;
 
   // --- Grid Configuration ---
   sort: SortState;
@@ -54,6 +60,8 @@ export interface WorkspaceUiState {
   setSelectedRecordFilename: (filename: string | null) => void;
   setFocusedFieldName: (name: string | null) => void;
   setShowConnectionsPanel: (show: boolean) => void;
+  setShowPublishHistoryPanel: (show: boolean) => void;
+  setPublishHistoryDetailPlanId: (planId: string | null) => void;
 
   /**
    * Switch to grid view, clearing record/field selection.
@@ -96,6 +104,8 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   selectedRecordFilename: null,
   focusedFieldName: null,
   showConnectionsPanel: false,
+  showPublishHistoryPanel: false,
+  publishHistoryDetailPlanId: null,
 
   // --- Grid Configuration ---
   sort: { column: null, direction: null },
@@ -116,7 +126,14 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
     });
   },
   setFocusedFieldName: (name) => set({ focusedFieldName: name }),
-  setShowConnectionsPanel: (show) => set({ showConnectionsPanel: show }),
+  setShowConnectionsPanel: (show) =>
+    set({ showConnectionsPanel: show, ...(show ? { showPublishHistoryPanel: false } : {}) }),
+  setShowPublishHistoryPanel: (show) =>
+    set({
+      showPublishHistoryPanel: show,
+      ...(show ? { showConnectionsPanel: false } : { publishHistoryDetailPlanId: null }),
+    }),
+  setPublishHistoryDetailPlanId: (planId) => set({ publishHistoryDetailPlanId: planId }),
 
   showGrid: () => set({ selectedRecordFilename: null, focusedFieldName: null, diffViewMode: null }),
   showRecord: (filename) => {

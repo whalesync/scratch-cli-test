@@ -26,6 +26,12 @@ const WorkspacePageDebug = React.lazy(() =>
 const OAuthCallbackPage = React.lazy(() =>
   import('./pages/OAuthCallbackPage').then((m) => ({ default: m.OAuthCallbackPage })),
 );
+const PublishHistoryPage = React.lazy(() =>
+  import('./pages/PublishHistoryPage').then((m) => ({ default: m.PublishHistoryPage })),
+);
+const PublishPlanDetailPage = React.lazy(() =>
+  import('./pages/PublishPlanDetailPage').then((m) => ({ default: m.PublishPlanDetailPage })),
+);
 
 function PageLoader() {
   return (
@@ -190,6 +196,8 @@ function AppRoutes() {
               <Route path="/" element={<HomePage />} />
               <Route path="/workspace/:id" element={<WorkspacePageRoute />} />
               <Route path="/workspace/:id/debug" element={<WorkspacePageDebugRoute />} />
+              <Route path="/workspace/:id/publish-history" element={<PublishHistoryPage />} />
+              <Route path="/workspace/:id/publish-plan/:planId" element={<PublishPlanDetailPage />} />
             </Route>
           </Routes>
         </Suspense>

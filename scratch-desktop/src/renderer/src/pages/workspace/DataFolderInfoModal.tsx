@@ -3,6 +3,7 @@ import { FolderOpen } from 'lucide-react';
 import { Text13Medium, TextMono9Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '../../hooks/use-connectors-metadata';
+import { relativeTime } from '../../lib/date-format';
 import type { DataFolder } from '../../types/workspace';
 
 const isMac = window.electron?.process?.platform === 'darwin';
@@ -13,27 +14,6 @@ interface DataFolderInfoModalProps {
   folder: DataFolder;
   workingCopyPath: string;
   fileCount: number;
-}
-
-const RELATIVE_RANGES: [Intl.RelativeTimeFormatUnit, number][] = [
-  ['year', 3600 * 24 * 365],
-  ['month', 3600 * 24 * 30],
-  ['week', 3600 * 24 * 7],
-  ['day', 3600 * 24],
-  ['hour', 3600],
-  ['minute', 60],
-  ['second', 1],
-];
-
-function relativeTime(iso: string): string {
-  const formatter = new Intl.RelativeTimeFormat('en', { style: 'long' });
-  const secondsElapsed = (new Date(iso).getTime() - Date.now()) / 1000;
-  for (const [unit, seconds] of RELATIVE_RANGES) {
-    if (seconds < Math.abs(secondsElapsed)) {
-      return formatter.format(Math.round(secondsElapsed / seconds), unit);
-    }
-  }
-  return 'just now';
 }
 
 interface InfoRow {

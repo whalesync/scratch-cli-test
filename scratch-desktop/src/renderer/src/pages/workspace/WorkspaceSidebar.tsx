@@ -2,11 +2,13 @@ import { ButtonSecondaryOutline } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
-import { Bug, LinkIcon, Settings, SettingsIcon, UnplugIcon } from 'lucide-react';
+import { Bug, LinkIcon, ScrollTextIcon, Settings, SettingsIcon, UnplugIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../../components/user-menu';
+import { useCurrentUser } from '../../hooks/use-current-user';
 import { useDevTools } from '../../hooks/use-dev-tools';
 import type { WorkspaceConnection } from '../../types/local-files';
+import { isExperimentEnabled } from '../../types/user';
 import { Workspace } from '../../types/workspace';
 import { FolderTree } from './FolderTree';
 import { LocalFolder } from './WorkspaceContent';
@@ -26,6 +28,8 @@ interface WorkspaceSidebarProps {
   onDataRefresh: () => void;
   onOpenConnectionsPanel?: () => void;
   connectionsPanelOpen?: boolean;
+  onTogglePublishHistoryPanel?: () => void;
+  publishHistoryPanelOpen?: boolean;
 }
 
 export function WorkspaceSidebar({
@@ -43,9 +47,13 @@ export function WorkspaceSidebar({
   onDataRefresh,
   onOpenConnectionsPanel,
   connectionsPanelOpen,
+  onTogglePublishHistoryPanel,
+  publishHistoryPanelOpen,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
+  const { user } = useCurrentUser();
+  const publishHistoryEnabled = isExperimentEnabled('ENABLE_PUBLISH_HISTORY', user);
   const showInitialLoader = isFoldersLoading && !hasLoadedFoldersOnce;
 
   return (
@@ -134,6 +142,26 @@ export function WorkspaceSidebar({
             <Text13Regular c="var(--fg-secondary)">Manage connections</Text13Regular>
           </Group>
         </UnstyledButton>
+
+        {/* Render only after user is loaded so the button doesn't flicker.
+            Matches the "Connections (local UI)" toggle pattern: click swaps
+            the central content area between the folder grid and the panel. */}
+        {user && publishHistoryEnabled && onTogglePublishHistoryPanel && (
+          <UnstyledButton
+            px="sm"
+            py={8}
+            style={{
+              width: '100%',
+              backgroundColor: publishHistoryPanelOpen ? 'var(--highlight-fill)' : undefined,
+            }}
+            onClick={onTogglePublishHistoryPanel}
+          >
+            <Group gap={8} wrap="nowrap">
+              <ScrollTextIcon size={14} color="var(--fg-secondary)" />
+              <Text13Regular c="var(--fg-secondary)">Publish History</Text13Regular>
+            </Group>
+          </UnstyledButton>
+        )}
 
         {isDevToolsEnabled && onOpenConnectionsPanel && (
           <UnstyledButton

@@ -5,6 +5,7 @@ export interface UserExperimentFlags {
   DEV_TOOLBOX: boolean;
   ENABLE_CREATE_BUG_REPORT: boolean;
   SHOW_OPEN_IN_DESKTOP: boolean;
+  ENABLE_PUBLISH_HISTORY: boolean;
 }
 
 export function isExperimentEnabled(experiment: keyof UserExperimentFlags, user: User | null): boolean {

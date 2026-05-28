@@ -56,6 +56,14 @@ export function mapWebWorkbookPathToDesktopRoute(route: string): string {
     return `/workspace/${workbookId}/debug`;
   }
 
+  if (rest[0] === 'publish-history') {
+    return `/workspace/${workbookId}/publish-history`;
+  }
+
+  if (rest[0] === 'publish-plan' && rest[1] && WORKBOOK_ID_PATTERN.test(rest[1])) {
+    return `/workspace/${workbookId}/publish-plan/${rest[1]}`;
+  }
+
   return `/workspace/${workbookId}`;
 }
 

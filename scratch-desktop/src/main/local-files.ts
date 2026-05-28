@@ -1610,6 +1610,96 @@ export async function acceptCellInputText(
 }
 
 /**
+ * Replace the whole working file with `contents` and snapshot every
+ * affected top-level field into `accepted-patches.json`, producing a
+ * record that is approved-but-unpublished (skipping the unreviewed
+ * state). Used by the publish-history "Revert to this value" action.
+ *
+ * `connectionRelativeFilePath` is the path the publish-history API
+ * returns (e.g. `/public/posts/post-102.json`) — connection-relative,
+ * NOT workspace-relative. The function resolves the on-disk folder by
+ * prepending the connection's `dirName` from `.scratchmd`.
+ *
+ * The accept loop covers the union of top-level keys present in the new
+ * contents AND in the current on-disk contents. That handles all three
+ * field-shape transitions:
+ *   - value changed:  disk now has old value → patch updates approved
+ *   - field added:    key was only on disk before → patch removes it
+ *   - field deleted:  key only in new contents → patch sets it back
+ *
+ * Top-level granularity is sufficient because `accept_field` snapshots
+ * the entire subtree under the given top-level key when invoked with the
+ * bare key (no dot path).
+ *
+ * Returns `{ folderPath, filename }` on success so the caller can run a
+ * follow-up reindex with the on-disk paths it would otherwise have to
+ * recompute.
+ */
+export async function revertRecordFile(
+  workspacePath: string,
+  connectorAccountId: string,
+  connectionRelativeFilePath: string,
+  contents: string,
+): Promise<{ ok: true; folderPath: string; filename: string } | { error: string }> {
+  const config = await readWorkspaceConfig(workspacePath);
+  const connection = config.connections.find((c) => c.id === connectorAccountId);
+  if (!connection) {
+    return { error: `Connection ${connectorAccountId} not registered in workspace marker.` };
+  }
+
+  // Connection-relative path → workspace-relative path. `filePath` from
+  // the publish-history API starts with `/`; strip it so `join` works.
+  const trimmed = connectionRelativeFilePath.replace(/^\/+/, '');
+  const lastSlash = trimmed.lastIndexOf('/');
+  const relFolder = lastSlash === -1 ? '' : trimmed.slice(0, lastSlash);
+  const filename = lastSlash === -1 ? trimmed : trimmed.slice(lastSlash + 1);
+  if (!filename) {
+    return { error: `Invalid file path: ${connectionRelativeFilePath}` };
+  }
+  const folderPath = relFolder
+    ? join(workspacePath, connection.dirName, relFolder)
+    : join(workspacePath, connection.dirName);
+  const filePath = join(folderPath, filename);
+
+  let previousKeys: string[] = [];
+  try {
+    const existing = await readFile(filePath, 'utf-8');
+    const parsedExisting: unknown = JSON.parse(existing);
+    if (parsedExisting && typeof parsedExisting === 'object' && !Array.isArray(parsedExisting)) {
+      previousKeys = Object.keys(parsedExisting as Record<string, unknown>);
+    }
+  } catch (err) {
+    if (!isFileNotFoundError(err)) {
+      // Treat invalid-JSON disk state as "no known keys" — we'll still
+      // accept the keys present in the new contents below.
+    }
+  }
+
+  let nextKeys: string[] = [];
+  try {
+    const parsedNext: unknown = JSON.parse(contents);
+    if (parsedNext && typeof parsedNext === 'object' && !Array.isArray(parsedNext)) {
+      nextKeys = Object.keys(parsedNext as Record<string, unknown>);
+    }
+  } catch (err) {
+    return { error: `Revert contents are not valid JSON: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const write = await writeFileTextRaw(filePath, contents);
+  if ('error' in write) return write;
+
+  const fields = Array.from(new Set([...previousKeys, ...nextKeys]));
+  for (const fieldName of fields) {
+    try {
+      await acceptCellField({ workspacePath, folderPath, filename, fieldName });
+    } catch (err) {
+      console.debug('revertRecordFile: acceptCellField failed', { fieldName, err });
+    }
+  }
+  return { ok: true, folderPath, filename };
+}
+
+/**
  * Set a nested field on the JSON object at `filePath`. Dot-separated
  * `fieldName` drills into nested objects. Used by the cell-edit handlers to
  * keep the on-disk working file in sync with the value the user just

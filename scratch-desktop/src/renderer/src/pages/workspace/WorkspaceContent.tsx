@@ -7,6 +7,7 @@ import type { WorkspaceConnection } from '../../types/local-files';
 import { Workspace } from '../../types/workspace';
 import { ConnectionsPanel } from './ConnectionsPanel';
 import { FolderDataGrid } from './FolderDataGrid';
+import { PublishHistoryPanel } from './PublishHistoryPanel';
 import { ResizeHandle } from './ResizeHandle';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
 
@@ -55,6 +56,8 @@ export function WorkspaceContent({
 }: WorkspaceContentProps) {
   const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
   const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
+  const showPublishHistoryPanel = useWorkspaceUiStore((s) => s.showPublishHistoryPanel);
+  const setShowPublishHistoryPanel = useWorkspaceUiStore((s) => s.setShowPublishHistoryPanel);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
@@ -184,13 +187,17 @@ export function WorkspaceContent({
         onDataRefresh={onDataRefresh}
         onOpenConnectionsPanel={handleOpenConnectionsPanel}
         connectionsPanelOpen={showConnectionsPanel}
+        onTogglePublishHistoryPanel={() => setShowPublishHistoryPanel(!showPublishHistoryPanel)}
+        publishHistoryPanelOpen={showPublishHistoryPanel}
       />
 
       {/* Resize Handle */}
       <ResizeHandle onResizeStart={handleResizeStart} onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
-      {/* Right panel: connections panel or data grid */}
-      {showConnectionsPanel ? (
+      {/* Right panel: publish history, connections, or data grid */}
+      {showPublishHistoryPanel ? (
+        <PublishHistoryPanel workspaceId={workspace.id} workspacePath={localPath} />
+      ) : showConnectionsPanel ? (
         <ConnectionsPanel
           workbookId={workspace.id}
           onDataRefresh={onConnectionsChanged ?? onDataRefresh}
