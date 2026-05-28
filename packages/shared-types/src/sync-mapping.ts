@@ -1,24 +1,30 @@
 import { DataFolderId } from './ids';
 
 // ============================================================================
-// Sync Mapping Types
+// Sync Mapping Types — V1 (legacy on-disk shape)
 // ============================================================================
+//
+// V1 is frozen as of the introduction of the `Sync.mappingsV2` column. Existing
+// rows that have not yet been backfilled still hold v1; new writes go to v2.
+// Keep the Zod schema in @server/src/sync/sync-mapping.schema.ts in sync.
+//
+// Read path: SyncService.getMappings() returns a discriminated union over
+// `version` — see `StoredSyncMapping` below.
 
-// Make sure to keep the Zod schema up to date with this in @server/src/sync/sync-mapping.schema.ts
-export interface SyncMapping {
-  /** Version number for future migrations */
+export interface SyncMappingV1 {
+  /** On-disk schema version. */
   version: 1;
 
-  /** Column mappings from source to destination */
-  tableMappings: TableMapping[];
+  /** Per-table mappings. */
+  tableMappings: TableMappingV1[];
 }
 
-export interface TableMapping {
+export interface TableMappingV1 {
   sourceDataFolderId: DataFolderId;
   destinationDataFolderId: DataFolderId;
 
   /** Column mappings from source to destination */
-  columnMappings: ColumnMapping[];
+  columnMappings: ColumnMappingV1[];
 
   /**
    * When records from source and destination
@@ -32,7 +38,7 @@ export interface TableMapping {
   };
 }
 
-export interface ColumnMapping {
+export interface ColumnMappingV1 {
   /** Column ID in the source DataFolder schema */
   sourceColumnId: string;
 
@@ -44,6 +50,233 @@ export interface ColumnMapping {
 
   /** Optional pipeline of transformers applied sequentially (mutually exclusive with `transformer`) */
   transformers?: TransformerConfig[];
+}
+
+// Back-compat aliases. Pre-v2 consumers import these unsuffixed names; routing
+// each one through the v2 shape happens in follow-up tasks (server choke point,
+// client editor). Removed in the Phase 4 cleanup along with the v1 column.
+export type SyncMapping = SyncMappingV1;
+export type TableMapping = TableMappingV1;
+export type ColumnMapping = ColumnMappingV1;
+
+// ============================================================================
+// Sync Mapping Types — V2 (orphan-aware shape)
+// ============================================================================
+//
+// V2 lifts `when` to the top-level `ColumnMapping` and makes `source` a
+// discriminated union so a single destination column can carry distinct rules
+// for the matched bucket and the orphan bucket. Adds per-table policies
+// describing what to do with unmatched source / destination records.
+
+export interface SyncMappingV2 {
+  /** On-disk schema version. */
+  version: 2;
+
+  /** Per-table mappings. */
+  tableMappings: TableMappingV2[];
+}
+
+export interface TableMappingV2 {
+  sourceDataFolderId: DataFolderId;
+  destinationDataFolderId: DataFolderId;
+
+  /** Column mappings from source to destination, partitioned by `when`. */
+  columnMappings: ColumnMappingV2[];
+
+  /**
+   * When records from source and destination
+   * have the same value in these columns, they are considered the same record.
+   */
+  recordMatching?: {
+    /** Column ID in the source DataFolder to use for matching */
+    sourceColumnId: string;
+    /** Column ID in the destination DataFolder to use for matching */
+    destinationColumnId: string;
+  };
+
+  /**
+   * What to do with source records that have no destination match.
+   * Defaults to `{ type: 'create' }` (today's behavior).
+   */
+  unmatchedSourcePolicy?: UnmatchedSourcePolicy;
+
+  /**
+   * What to do with destination records that have no source match —
+   * subdivided by whether the destination's match-key field is populated.
+   * Defaults to `{ withMatchKey: 'ignore', withoutMatchKey: 'ignore' }`
+   * (today's behavior — orphans are not visited).
+   */
+  unmatchedDestinationPolicy?: UnmatchedDestinationPolicy;
+}
+
+export interface ColumnMappingV2 {
+  /** Column ID in the destination DataFolder schema */
+  destinationColumnId: string;
+
+  /**
+   * Which bucket the mapping applies to. Defaults to 'matched'.
+   *
+   * Structural constraint (enforced by zod refinement at save time):
+   *   `source.kind === 'column'` with `when` of 'unmatched' or 'always' is
+   *   illegal — there is no source value to copy for an orphan record.
+   */
+  when?: ColumnMappingWhen;
+
+  /** Value source — either a copy from a source column or a literal constant. */
+  source: ColumnMappingSource;
+}
+
+/**
+ * - 'matched'   — fires when the source record exists and is paired with this destination.
+ * - 'unmatched' — fires when the destination has no source counterpart this run (orphan).
+ * - 'always'    — fires for both buckets.
+ */
+export type ColumnMappingWhen = 'matched' | 'unmatched' | 'always';
+
+export type ColumnMappingSource =
+  | {
+      kind: 'column';
+      /** Source column to copy from. */
+      columnId: string;
+      /** Optional transformer to apply to the value during sync */
+      transformer?: TransformerConfig;
+      /** Optional pipeline of transformers applied sequentially (mutually exclusive with `transformer`) */
+      transformers?: TransformerConfig[];
+    }
+  | {
+      kind: 'constant';
+      /**
+       * Literal value to write. V1 of v2 limits this to JSON primitives;
+       * arrays/objects come later once per-element destination-column
+       * type-checking lands.
+       */
+      value: string | number | boolean | null;
+    };
+
+export type UnmatchedSourcePolicy =
+  | { type: 'create' } // DEFAULT — today's behavior
+  | { type: 'ignore' };
+
+export interface UnmatchedDestinationPolicy {
+  /** Records that claim to be synced — destination match-key field is populated. */
+  withMatchKey: 'ignore' | 'apply';
+  /** Records that were never managed by this sync — match-key field is empty/null. */
+  withoutMatchKey: 'ignore' | 'apply';
+}
+
+// ============================================================================
+// Storage discriminated union + v1 → v2 transform
+// ============================================================================
+
+/**
+ * Shape returned by `SyncService.getMappings()`. Consumers narrow on
+ * `mapping.version`. The executor and the editor transform v1 → v2 in memory
+ * at their entry points; the read path itself never normalizes.
+ */
+export type StoredSyncMapping = SyncMappingV1 | SyncMappingV2;
+
+/**
+ * Thrown when an input that claims to be a `SyncMappingV1` is structurally
+ * corrupt (missing required fields, wrong primitive types). Mapped to HTTP
+ * 500 `SYNC_MAPPING_NORMALIZE_FAILED` by `SyncExceptionFilter`.
+ */
+export class SyncMappingNormalizeError extends Error {
+  readonly detail: string;
+
+  constructor(detail: string) {
+    super(`Sync mapping normalization failed: ${detail}`);
+    this.name = 'SyncMappingNormalizeError';
+    this.detail = detail;
+  }
+}
+
+/**
+ * Thrown when a stored mapping carries an unknown `version` value. Mapped to
+ * HTTP 500 `SYNC_MAPPING_UNKNOWN_VERSION` by `SyncExceptionFilter`.
+ */
+export class SyncMappingVersionError extends Error {
+  readonly receivedVersion: unknown;
+
+  constructor(receivedVersion: unknown) {
+    super(`Unknown sync mapping version: ${String(receivedVersion)}`);
+    this.name = 'SyncMappingVersionError';
+    this.receivedVersion = receivedVersion;
+  }
+}
+
+/**
+ * Pure shape transform from the v1 on-disk shape to the v2 in-memory shape.
+ *
+ * Not used by the read path — `SyncService.getMappings()` returns the on-disk
+ * shape via the `StoredSyncMapping` discriminated union. Used by:
+ *   - the executor's entry point (`syncTableMapping`),
+ *   - the editor's "open v1 sync" flow,
+ *   - the v1 → v2 backfill descriptor.
+ *
+ * Transformed v1 mappings have no orphan policies and every column mapping
+ * defaults to `when: 'matched'`, so Pass 3 is a no-op and v1 syncs behave
+ * exactly as before.
+ */
+export function transformV1ToV2(mapping: SyncMappingV1): SyncMappingV2 {
+  if (mapping === null || typeof mapping !== 'object') {
+    throw new SyncMappingNormalizeError('mapping is not an object');
+  }
+  if (mapping.version !== 1) {
+    throw new SyncMappingVersionError(mapping.version);
+  }
+  if (!Array.isArray(mapping.tableMappings)) {
+    throw new SyncMappingNormalizeError('tableMappings is not an array');
+  }
+
+  return {
+    version: 2,
+    tableMappings: mapping.tableMappings.map((table, tableIndex) => transformTableMappingV1ToV2(table, tableIndex)),
+  };
+}
+
+function transformTableMappingV1ToV2(table: TableMappingV1, tableIndex: number): TableMappingV2 {
+  if (table === null || typeof table !== 'object') {
+    throw new SyncMappingNormalizeError(`tableMappings[${tableIndex}] is not an object`);
+  }
+  if (!Array.isArray(table.columnMappings)) {
+    throw new SyncMappingNormalizeError(`tableMappings[${tableIndex}].columnMappings is not an array`);
+  }
+
+  return {
+    sourceDataFolderId: table.sourceDataFolderId,
+    destinationDataFolderId: table.destinationDataFolderId,
+    columnMappings: table.columnMappings.map((column, columnIndex) =>
+      transformColumnMappingV1ToV2(column, tableIndex, columnIndex),
+    ),
+    ...(table.recordMatching !== undefined ? { recordMatching: table.recordMatching } : {}),
+  };
+}
+
+function transformColumnMappingV1ToV2(
+  column: ColumnMappingV1,
+  tableIndex: number,
+  columnIndex: number,
+): ColumnMappingV2 {
+  const location = `tableMappings[${tableIndex}].columnMappings[${columnIndex}]`;
+  if (column === null || typeof column !== 'object') {
+    throw new SyncMappingNormalizeError(`${location} is not an object`);
+  }
+  if (typeof column.sourceColumnId !== 'string') {
+    throw new SyncMappingNormalizeError(`${location}.sourceColumnId is missing or not a string`);
+  }
+  if (typeof column.destinationColumnId !== 'string') {
+    throw new SyncMappingNormalizeError(`${location}.destinationColumnId is missing or not a string`);
+  }
+
+  return {
+    destinationColumnId: column.destinationColumnId,
+    source: {
+      kind: 'column',
+      columnId: column.sourceColumnId,
+      ...(column.transformer !== undefined ? { transformer: column.transformer } : {}),
+      ...(column.transformers !== undefined ? { transformers: column.transformers } : {}),
+    },
+  };
 }
 
 // ============================================================================

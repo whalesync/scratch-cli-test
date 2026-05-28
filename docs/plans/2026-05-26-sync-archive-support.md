@@ -723,3 +723,24 @@ The build order from the prior eng review (Lane A → B/C/D in parallel) still w
 
 - Whether `mappings` is ever populated after first v2 save. **No** — frozen at last v1 state forever (or until Phase 4 drops the column).
 - Whether old clients can read or display v2 syncs. **No** — they read `mappings` only, which is the frozen v1 snapshot. They see stale data, which is acceptable because (a) the v1-write-rejection guard prevents them from making it worse, and (b) Phase 2 minimizes the population of old clients before backfill.
+
+## Implementation Progress
+
+### Completed
+
+- **T1 (Lane A) — Reshape shared-types** (`packages/shared-types/src/sync-mapping.ts`)
+  - V1 types renamed to `SyncMappingV1` / `TableMappingV1` / `ColumnMappingV1`. Back-compat aliases (`SyncMapping`, `TableMapping`, `ColumnMapping`) kept so the 11 downstream consumers compile untouched; aliases are removed in the Phase 4 cleanup.
+  - V2 types added: `SyncMappingV2`, `TableMappingV2`, `ColumnMappingV2`, `ColumnMappingSource` (discriminated `kind: 'column' | 'constant'`), `ColumnMappingWhen`, `UnmatchedSourcePolicy`, `UnmatchedDestinationPolicy`.
+  - `StoredSyncMapping = SyncMappingV1 | SyncMappingV2` — the discriminated union the T4 choke point will return.
+  - `transformV1ToV2()` pure transform with defensive validation. Imports planned from the executor entry, the editor's open-v1 flow, and the backfill descriptor; not used by the read path.
+  - Typed errors `SyncMappingNormalizeError` (with `detail`) and `SyncMappingVersionError` (with `receivedVersion`), matching the field shape `SyncExceptionFilter` (T22) will read.
+  - Verified: `yarn build` clean across all 14 packages; `yarn lint` clean across all 5 packages.
+
+### Next up
+
+- **T2 (Lane A) — Zod schemas** in `server/src/sync/sync-mapping.schema.ts`. Adds v1 + v2 schemas, `z.discriminatedUnion('kind', ...)` on `source`, and the refinements: (a) `source.kind === 'column'` + `when ∈ {'unmatched', 'always'}` is illegal; (b) `source.kind === 'constant'` cannot target the `recordMatching.destinationColumnId`; (c) `constant.value` primitive type matches the destination column type; (d) one mapping per `(destinationColumnId, when)` pair.
+
+### Lane status
+
+- **Lane A** (T1, T2, T4, T13) — in progress; T1 done, T2/T4/T13 remaining. Sequential.
+- **Lanes B / C / D / E / F** — blocked on Lane A completion (parallelization unlocks after T4).
