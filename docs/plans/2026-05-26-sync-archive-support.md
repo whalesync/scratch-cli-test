@@ -122,40 +122,99 @@ For the new optional fields, defaults match today's executor:
 
 After migration (see next section), existing syncs work identically.
 
-### Schema Versioning and Migration
+### Storage Model and Migration
 
-`SyncMapping` carries a `version` field (currently `1`) specifically for shape migrations. We bump it to `2` and roll out in three phases:
+V2 lives in a **new column** alongside v1, not on top of it. The existing `Sync.mappings` (`Json`, non-null) column is frozen as the v1 source of truth from the moment this change ships. A new `Sync.mappingsV2` (`Json?`, nullable) column holds the v2 shape. Reads prefer v2 when present; writes go to `mappingsV2` only and never touch `mappings`.
 
-**Phase 1 — Deploy dual-version support behind a writer feature flag.**
+The dual-column model is the rollback story: if a v2 writer or backfill produces a corrupt v2 shape on some rows, ops sets `mappingsV2 = NULL` on those rows and the system falls back to the still-pristine v1 column. No destructive in-place transformation ever happens to `mappings`, so v1 is always a safe harbor.
 
-- Update `packages/shared-types/src/sync-mapping.ts` and `server/src/sync/sync-mapping.schema.ts` to define both v1 and v2 shapes.
-- **All `Sync.mappings` reads go through a single choke point.** `SyncService.getSync()` / `SyncService.getMappings()` always return v2 (normalized in memory). The six existing direct-cast consumers route through it: `sync.service.ts:1188`, `sync-data-folders.job.ts`, `dev-tools.service.ts`, `workbook-repo.service.ts`, `whalesync-import.service.ts`, `cli-workbook.controller.ts`. An ESLint `no-restricted-syntax` rule on `server/eslint.config.mjs` bans `prisma.sync.find*` outside `sync.service.ts` so the choke point stays enforceable as new consumers land.
-- **The writer is feature-flagged.** `WRITE_SYNC_MAPPING_V2=1` enables v2 writes; off by default. The flag is flipped to `1` in prod only after a 24-48h soak with `sync_mapping_normalize_error_total = 0`. Flag flip happens **after** a rolling deploy converges (do not flip mid-deploy). Flag is removed in Phase 3.
-- After this deploy, all reads work whether the row is v1 or v2 on disk. With the flag on, new saves persist as v2.
+**Prisma schema:**
 
-**Phase 2 — Run the backfill via `code-migrations`.**
+```prisma
+model Sync {
+  // ...existing fields unchanged...
 
-- Register a new descriptor in `server/src/code-migrations/code-migrations.controller.ts` — the in-repo backfill pattern that already wires `ScratchAuthGuard + hasAdminToolsPermission` and `AuditLogService`. Do not introduce a parallel `/backfill/...` controller.
-- The descriptor accepts `n` (batch size) and `cursor` (last `Sync.id` from the previous response). It selects up to `n` `Sync` rows whose `mappings.version === 1` (ordered by id), transforms each to v2, and writes back via **compare-and-set on `updatedAt`**: `updateMany({ where: { id, updatedAt: previouslyRead }, data: ... })`. If the user PATCH-ed between the read and the write, the conditional update affects zero rows and the backfill picks the row up on the next sweep. Returns `{ processed, updated, lastId, isDone }` for cursor-based sweep.
+  // V1 shape. Frozen on disk from the moment mappingsV2 is first written.
+  // Read via SyncService.getMappings() only — direct reads are blocked by ESLint.
+  mappings   Json
+  mappingsV2 Json? // SyncMappingV2 — @see packages/shared-types/src/sync-mapping.ts
+}
+```
+
+Migration is a single `ALTER TABLE "Sync" ADD COLUMN "mappingsV2" JSONB;`. Nullable, no default, no data migration in the SQL itself — the explicit code-migrations sweep populates it in Phase 3.
+
+**Single read choke point — `SyncService.getMappings()`.** Returns a **discriminated union** reflecting the on-disk shape, not a normalized v2:
+
+```ts
+// packages/shared-types/src/sync-mapping.ts
+export interface SyncMappingV1 { version: 1; tableMappings: TableMappingV1[] }
+export interface SyncMappingV2 { version: 2; tableMappings: TableMappingV2[] }
+export type StoredSyncMapping = SyncMappingV1 | SyncMappingV2;
+
+// server/src/sync/sync.service.ts
+async getMappings(syncId: SyncId): Promise<StoredSyncMapping | null> {
+  const row = await this.db.client.sync.findFirst({
+    where: { id: syncId },
+    select: { mappings: true, mappingsV2: true },
+  });
+  if (!row) return null;
+  return row.mappingsV2 !== null
+    ? syncMappingV2Schema.parse(row.mappingsV2)
+    : syncMappingV1Schema.parse(row.mappings);
+}
+
+async getSync(syncId: SyncId): Promise<(Sync & { mappings: StoredSyncMapping }) | null> {
+  // Full row with `mappings` shadowed by the resolved discriminated union;
+  // `mappingsV2` is omitted from the return type so consumers can't reach
+  // around the choke point.
+}
+```
+
+Consumers narrow on `mapping.version`. Most consumers don't need to narrow — they read `tableMappings[].sourceDataFolderId`, `destinationDataFolderId`, or `recordMatching`, all of which have the same shape in v1 and v2. The executor is the one consumer that branches behavior on `version` (see §"Executor Changes").
+
+An ESLint `no-restricted-syntax` rule on `server/eslint.config.mjs` blocks any `prisma.sync.find*` call that selects `mappings` or `mappingsV2` outside `sync.service.ts`. Forces every read to flow through `getMappings()`/`getSync()`.
+
+**Write asymmetry.** Once this change ships:
+
+- `createSync()` writes a sentinel empty v1 (`mappings: { version: 1, tableMappings: [] }`) plus the real shape to `mappingsV2`. Pre-update clients reading just `mappings` see an empty sync — fail-safe, not a corrupt half-state.
+- `updateSync()` writes only to `mappingsV2`. The `mappings` column is frozen at whatever it was at the moment of first v2 save. Reverting `mappingsV2 → NULL` loses any edits made since the v2 transition. Acceptable: routine edits on prod syncs are rare today, and the rollback is the emergency hatch, not a daily-use path.
+- The backfill descriptor populates `mappingsV2` from `mappings` on rows where `mappingsV2 IS NULL`. Non-destructive.
+
+No writer feature flag is needed — because v2 writes target a separate column, there is no destructive overwrite to gate. The old plan's `WRITE_SYNC_MAPPING_V2` flag is removed.
+
+**Rollout phases.**
+
+**Phase 1 — Ship the column, the reader, and the writer in one deploy.** Add the `mappingsV2` Prisma column. Land `SyncService.getMappings()`, the v2 writer in `updateSync()`/`createSync()`, the ESLint rule, and all six direct-cast consumers routed through the choke point (`sync.service.ts:1188`, `sync-data-folders.job.ts`, `dev-tools.service.ts`, `workbook-repo.service.ts`, `whalesync-import.service.ts`, `cli-workbook.controller.ts`). From this point forward every sync save writes v2; existing rows (`mappingsV2 = NULL`) still read v1 from `mappings` until an edit or the backfill touches them.
+
+**Phase 2 — Update all clients.** The desktop app has released versions in the wild. Before running the backfill, ensure every active client has been updated to the v2-aware reader. Monitor desktop version analytics; broadcast an update prompt for stragglers. **Risk being mitigated:** an old client editing a row with a populated `mappingsV2` would write only to `mappings`, and its edits would be silently shadowed by the v2 column. A server-side guard rejects v1-shape writes once `mappingsV2 IS NOT NULL` for that row (HTTP 409 → client prompt to update). The guard is enabled at the start of Phase 2 and stays on through Phase 4.
+
+**Phase 3 — Run the backfill via `code-migrations`.** Register a new descriptor in `server/src/code-migrations/code-migrations.controller.ts` — the in-repo backfill pattern wires `ScratchAuthGuard + hasAdminToolsPermission` and `AuditLogService`. Do not introduce a parallel `/backfill/...` controller. The descriptor:
+
+- Accepts `n` (batch size) and `cursor` (last `Sync.id` from the previous response).
+- Selects up to `n` `Sync` rows where `mappingsV2 IS NULL` (ordered by id), parses `mappings` as v1, runs `transformV1ToV2()`.
+- Writes back via **compare-and-set on `updatedAt` and `mappingsV2 IS NULL`**: `updateMany({ where: { id, updatedAt: previouslyRead, mappingsV2: null }, data: { mappingsV2: <v2> } })`. If a concurrent save populated `mappingsV2` between read and write, the conditional update affects zero rows; the row is left alone because it's already migrated.
+- Returns `{ processed, updated, lastId, isDone }` for cursor-based sweep.
+- Idempotent — rows already at v2 are skipped by the `WHERE mappingsV2 IS NULL` filter. Safe to re-run.
 - A kill-switch endpoint (`POST /code-migrations/sync-mapping-v2/stop`) sets a flag; in-flight batches finish, no new batches start. Used for the "stop the sweep" rollback path.
-- Idempotent — rows already at v2 are skipped without a write. Safe to re-run.
 - **Local dev**: gated by `SCRATCH_DEV_AUTO_MIGRATE_SYNC_MAPPING_V2=1`. Without the flag, server start logs a warning and skips. First-time devs opt in once after reading the warning.
 - **Production**: ops invokes the descriptor explicitly via the standard `code-migrations` sweep loop.
 
-**Phase 3 — Drop v1 support (separate cleanup, ~6 weeks after Phase 2 completes).**
+**Phase 4 — Drop v1 (separate cleanup, ~6 weeks after Phase 3 completes).** Once `backfill_sync_mapping_v1_remaining = 0` has held for the soak window, run a migration that drops the `mappings` column and renames `mappingsV2 → mappings`. Delete the v1 type, the v1 zod schema, the v1 branch in the executor, the dual-column logic in `getMappings()`, and the Phase 2 server-side guard. A calendar-triggered ticket avoids the "deferred cleanup stays forever" failure mode.
 
-Once all rows are verified at v2, remove the v1 normalization code, tighten the validator to v2-only, and delete the writer feature flag. A calendar-triggered ticket avoids the "deferred cleanup stays forever" failure mode.
-
-**The v1 → v2 transform itself:**
+**The v1 → v2 transform.**
 
 ```
 v1: { sourceColumnId: "Title", destinationColumnId: "name", transformer?: T, transformers?: T[] }
 v2: { destinationColumnId: "name", source: { kind: 'column', columnId: "Title", transformer?: T, transformers?: T[] } }
 ```
 
-`tableMappings`, `recordMatching`, and unrelated fields pass through unchanged. Sets `version: 2` on the outer `SyncMapping`. `when` is not added by the transform — it defaults to `'matched'`, which matches v1 semantics exactly. The transform is purely shape-level; no semantic change.
+`tableMappings`, `recordMatching`, and unrelated fields pass through unchanged. Sets `version: 2` on the outer `SyncMappingV2`. `when` is not added by the transform — it defaults to `'matched'`, which matches v1 semantics exactly. Purely shape-level; no semantic change.
 
-`transformV1ToV2(mapping)` lives at `packages/shared-types/src/sync-mapping.ts` so both the read path (`SyncService.getSync()`) and the backfill descriptor import it from the same place.
+`transformV1ToV2(mapping)` lives at `packages/shared-types/src/sync-mapping.ts`. **It is NOT used by the read path** — `getMappings()` returns the on-disk shape via the discriminated union. It IS used by:
+
+- The editor's "open v1 sync" flow — when the editor receives a v1 mapping, it transforms in memory for the UI; the next save persists as v2 to `mappingsV2`.
+- The backfill descriptor — transforms v1 → v2 in batches and writes to `mappingsV2`.
+- The executor's entry point — see §"Executor Changes" (transform-in-memory dispatch).
 
 The transform raises typed errors on malformed input:
 
@@ -226,9 +285,11 @@ The match-key column is never overwritten by a constant mapping — enforced at 
 
 ### Executor Changes
 
-`syncTableMapping` gains one new pass and absorbs three pure helpers extracted into `server/src/sync/sync-execution.ts`:
+`syncTableMapping` operates internally on v2 only. At its entry point, if `getMappings()` returns a v1 mapping, the executor calls `transformV1ToV2(mapping)` in memory before running anything. Because a transformed v1 mapping has no `unmatchedDestinationPolicy` and every column mapping defaults to `when: 'matched'`, Pass 3 is a no-op for v1 syncs — they retain today's behavior exactly. This keeps the executor as a single codepath instead of duplicating v1/v2 branches.
 
-- **`transformV1ToV2(mapping)`** — pure shape transform. Imported by both `SyncService.getSync()` (read path) and the backfill descriptor (write path) from `packages/shared-types/src/sync-mapping.ts`.
+The executor gains one new pass and absorbs three pure helpers extracted into `server/src/sync/sync-execution.ts`:
+
+- **`transformV1ToV2(mapping)`** — pure shape transform. Imported from `packages/shared-types/src/sync-mapping.ts` by the executor (entry point), the editor (open-v1 flow), and the backfill descriptor.
 - **`classifyOrphan(destRecord, sourceMatchKeySet, matchCol)`** — returns `'matched' | 'withMatchKey' | 'withoutMatchKey'`. Empty / null / whitespace-only match-key values classify as `withoutMatchKey`. Non-string, non-number match-key values classify as `withoutMatchKey`.
 - **`applyColumnMappings(bucket, sourceFields | null, destFields, mappings, ...)`** — filters mappings to the bucket-applicable subset, dispatches `kind: 'column'` vs `kind: 'constant'`, returns merged fields. `transformer-pipeline.ts` stays bucket-agnostic; the executor pre-filters.
 
@@ -610,3 +671,55 @@ JSONL artifact: `~/.gstack/projects/whalesync-spinner/tasks-design-review-202605
 **UNRESOLVED:** 0.
 
 **VERDICT:** CEO + ENG + DESIGN CLEARED — ready to implement. Run `/ship` when the work is done.
+
+## Review-Agreed Changes (from implementation discussion on 2026-05-27)
+
+Audit trail for a redesign of the migration model during pre-implementation discussion. The plan body above has been updated to reflect each decision below; this section retains the rationale (what changed, why this design wins, and which earlier decisions it supersedes).
+
+### What changed
+
+The original plan migrated `Sync.mappings` in place — same column, two possible shapes (v1 or v2 on disk), with `SyncService.getMappings()` auto-normalizing to v2 on read and a `WRITE_SYNC_MAPPING_V2` feature flag gating destructive v2 writes. The redesign splits v2 into a **separate `mappingsV2 Json?` column**, leaving the v1 column frozen and pristine from the moment v2 ships.
+
+The trigger was the rollback story. With the in-place model, a buggy v2 transform destructively overwrites v1 data and there is no safe-harbor row state to fall back to. With the dual-column model, the rollback is `UPDATE Sync SET mappingsV2 = NULL` — the v1 column is still authoritative, untouched.
+
+### Locked decisions
+
+- **D1-storage — Dual-column storage.** Add `mappingsV2 Json?` to `Sync`. The existing `mappings` column is frozen as v1 source of truth from the moment v2 ships. Writes go to `mappingsV2` only; reads prefer `mappingsV2` if non-null. Supersedes the in-place "bump `mappings.version` to 2" model.
+
+- **D2-storage — `SyncService.getMappings()` returns a discriminated union.** Returns `StoredSyncMapping = SyncMappingV1 | SyncMappingV2` reflecting the on-disk shape. Consumers narrow on `mapping.version`. Supersedes the original D3 wording in the CEO review (which said the read path always returns v2 normalized in memory).
+
+- **D3-storage — Executor transforms v1 → v2 in memory at its entry point.** `syncTableMapping` operates internally on v2 only. v1 mappings get `transformV1ToV2()` applied at the top of the executor, then run through the unified v2 codepath. Because transformed v1 has no orphan policies and all column mappings default to `when: 'matched'`, Pass 3 is a no-op for v1 syncs — preserving today's behavior with zero duplicated executor code.
+
+- **D4-storage — Sentinel empty-v1 on create.** `createSync()` writes `mappings: { version: 1, tableMappings: [] }` plus the real shape to `mappingsV2`. Pre-update clients reading only `mappings` see an empty sync — fail-safe rather than corrupt half-state. Supersedes the question of "can `mappings` be nullable" — it stays non-nullable; the sentinel handles new-sync creation.
+
+- **D5-storage — No writer feature flag.** With v2 writes going to a separate column, there's no destructive overwrite to gate. Supersedes the original D5 (CEO review) `WRITE_SYNC_MAPPING_V2` flag and removes the associated 24-48h soak-then-flip ceremony.
+
+- **D6-storage — Server-side rejection of v1-shape writes once `mappingsV2 IS NOT NULL`.** Closes the "old client writes v1, new system reads v2" silent-shadow gap. Returns HTTP 409 → old client prompts user to update. Enabled at the start of Phase 2 and stays on through Phase 4.
+
+- **D7-storage — Reordered rollout phases.** Four phases now:
+  - **Phase 1:** ship column + reader + writer in one deploy.
+  - **Phase 2:** update all clients (desktop especially); enable v1-write rejection guard.
+  - **Phase 3:** run the backfill (compare-and-set on `(id, updatedAt, mappingsV2 IS NULL)`).
+  - **Phase 4:** drop the `mappings` column, rename `mappingsV2 → mappings`, delete v1 code.
+
+  Supersedes the original 3-phase rollout. The new Phase 2 (client updates before backfill) is explicit because the desktop app has released versions in the wild and the backfill's correctness depends on no concurrent v1 writers.
+
+### Eng-review decisions that still hold
+
+- **D1-eng (ESLint choke point)** — still applies, with a tightened selector: block `prisma.sync.find*` outside `sync.service.ts` when the query selects `mappings` or `mappingsV2`.
+- **A1-eng (extract `sync-execution.ts`)** — unchanged. `transformV1ToV2`, `classifyOrphan`, `applyColumnMappings` still pure helpers in that module.
+- **`transformV1ToV2` colocation** — still in `packages/shared-types/src/sync-mapping.ts`. Now imported by three call sites: executor entry, editor open-v1 flow, backfill descriptor. NOT used by the read path.
+- **Typed exception → HTTP mapping** — unchanged.
+
+### Implications for the Eng-review parallelization lanes
+
+The build order from the prior eng review (Lane A → B/C/D in parallel) still works, but the contents of each lane shift slightly:
+
+- **Lane A (shape + reader)** — now also includes the Prisma migration for `mappingsV2`, the dual-column `getMappings()`, and the executor's v1-transform-at-entry. Sentinel-empty-v1 logic in `createSync()`.
+- **Lane C (backfill + flag)** — drops the writer feature-flag work entirely. Adds the v1-write rejection guard (Phase 2 gate) and the `mappingsV2 IS NULL` filter on the backfill descriptor.
+- **Lane B / D / E / F** — unchanged.
+
+### Out of scope for this redesign
+
+- Whether `mappings` is ever populated after first v2 save. **No** — frozen at last v1 state forever (or until Phase 4 drops the column).
+- Whether old clients can read or display v2 syncs. **No** — they read `mappings` only, which is the frozen v1 snapshot. They see stale data, which is acceptable because (a) the v1-write-rejection guard prevents them from making it worse, and (b) Phase 2 minimizes the population of old clients before backfill.
