@@ -19,7 +19,7 @@ interface AuthContextValue {
   isLoading: boolean;
   email: string | null;
   expiringSoon: boolean;
-  login: () => Promise<void>;
+  login: (opts?: { signUp?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   cancelLogin: () => void;
   authFlow: AuthFlowState;
@@ -152,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const login = useCallback(async () => {
+  const login = useCallback(async (opts?: { signUp?: boolean }) => {
     setAuthFlow({
       active: true,
       userCode: null,
@@ -177,7 +177,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const verificationUrlWithCode = `${initResp.verificationUrl}?code=${initResp.userCode}&client=desktop`;
+      const cliAuthorizeUrl = `${initResp.verificationUrl}?code=${initResp.userCode}&client=desktop`;
+      let verificationUrlWithCode: string;
+      if (opts?.signUp) {
+        const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
+        verificationUrlWithCode = `${webUrl}/sign-up?redirect_url=${encodeURIComponent(cliAuthorizeUrl)}`;
+      } else {
+        verificationUrlWithCode = cliAuthorizeUrl;
+      }
       setAuthFlow((prev) => ({
         ...prev,
         userCode: initResp.userCode!,
