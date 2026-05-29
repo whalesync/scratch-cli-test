@@ -57,6 +57,7 @@ import {
   uploadWorkspaceChanges,
 } from './scratchmd';
 import { initAutoUpdater } from './updater';
+import { getValidationConfigs, writeValidationConfig } from './validation-config';
 import { attachWindowStatePersistence, getRestoredWindowState } from './window-state';
 import { WorkspaceFileWatchService } from './workspace-file-watch';
 import {
@@ -1065,6 +1066,17 @@ ipcMain.handle('files:get-folder-validation-results', async (_, workspacePath: s
 ipcMain.handle('files:get-validation-stats', async (_, workspacePath: string) => getValidationStats(workspacePath));
 ipcMain.handle('files:get-folder-validation-sample', async (_, workspacePath: string, folder: string) =>
   getFolderValidationSample(workspacePath, folder),
+);
+ipcMain.handle('files:get-validation-configs', async (_, workspacePath: string) => getValidationConfigs(workspacePath));
+ipcMain.handle(
+  'files:write-validation-config',
+  async (_, workspacePath: string, connection: string, folderPath: string, entries: unknown[]) =>
+    writeValidationConfig(
+      workspacePath,
+      connection,
+      folderPath,
+      entries as Parameters<typeof writeValidationConfig>[3],
+    ),
 );
 ipcMain.handle(
   'files:accept-cell-input-text',

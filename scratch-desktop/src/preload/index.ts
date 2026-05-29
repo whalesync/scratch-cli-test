@@ -4,7 +4,12 @@ import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-i
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
-import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
+import type {
+  ValidationResultRow,
+  ValidationStat,
+  ValidatorConfig,
+  ValidatorConfigEntry,
+} from '../shared/validation-types';
 import {
   CONNECTION_FILE_CHANGED_EVENT_CHANNEL,
   WORKSPACE_FILE_WATCH_EVENT_CHANNEL,
@@ -481,6 +486,14 @@ const scratchFiles = {
     invoke('files:get-validation-stats', workspacePath),
   getFolderValidationSample: (workspacePath: string, folder: string): Promise<ValidationResultRow[]> =>
     invoke('files:get-folder-validation-sample', workspacePath, folder),
+  getValidationConfigs: (workspacePath: string): Promise<ValidatorConfig[]> =>
+    invoke('files:get-validation-configs', workspacePath),
+  writeValidationConfig: (
+    workspacePath: string,
+    connection: string,
+    folderPath: string,
+    entries: ValidatorConfigEntry[],
+  ): Promise<void> => invoke('files:write-validation-config', workspacePath, connection, folderPath, entries),
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,

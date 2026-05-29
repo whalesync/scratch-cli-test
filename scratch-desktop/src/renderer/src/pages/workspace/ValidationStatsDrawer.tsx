@@ -16,6 +16,10 @@ type ValidationStat = {
 
 interface ValidationStatsDrawerProps {
   workspacePath: string;
+  /** Pre-loaded stats from the useValidation hook. When provided, the drawer skips its own fetch. */
+  stats?: ValidationStat[];
+  /** Whether the parent is currently loading stats. */
+  statsLoading?: boolean;
 }
 
 function mapRows(rows: ValidationResultRow[]) {
@@ -34,26 +38,37 @@ interface FolderKey {
   folder_path: string;
 }
 
-export function ValidationStatsDrawer({ workspacePath }: ValidationStatsDrawerProps) {
+export function ValidationStatsDrawer({
+  workspacePath,
+  stats: propStats,
+  statsLoading: propStatsLoading,
+}: ValidationStatsDrawerProps) {
   const [open, setOpen] = useState(false);
-  const [stats, setStats] = useState<ValidationStat[]>([]);
-  const [statsLoading, setStatsLoading] = useState(false);
+  const [localStats, setLocalStats] = useState<ValidationStat[]>([]);
+  const [localStatsLoading, setLocalStatsLoading] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<FolderKey | null>(null);
   const [sample, setSample] = useState<ValidationResultRow[]>([]);
   const [sampleLoading, setSampleLoading] = useState(false);
+
+  // Use prop stats when available; fall back to local fetch
+  const stats = propStats ?? localStats;
+  const statsLoading = propStatsLoading ?? localStatsLoading;
 
   const handleOpen = useCallback(async () => {
     setOpen(true);
     setSelectedFolder(null);
     setSample([]);
-    setStatsLoading(true);
-    try {
-      const result = await window.scratchFiles.getValidationStats(workspacePath);
-      setStats(result);
-    } finally {
-      setStatsLoading(false);
+    // Only fetch locally if the parent didn't provide stats
+    if (propStats === undefined) {
+      setLocalStatsLoading(true);
+      try {
+        const result = await window.scratchFiles.getValidationStats(workspacePath);
+        setLocalStats(result);
+      } finally {
+        setLocalStatsLoading(false);
+      }
     }
-  }, [workspacePath]);
+  }, [workspacePath, propStats]);
 
   const handleSelectFolder = useCallback(
     async (key: FolderKey) => {

@@ -13,9 +13,11 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import type { ValidationStat } from '../../../../shared/validation-types';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
 import { useCurrentUser } from '../../hooks/use-current-user';
+import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import { Workspace } from '../../types/workspace';
 import { ValidationStatsDrawer } from './ValidationStatsDrawer';
 
@@ -33,8 +35,8 @@ interface WorkspaceHeaderProps {
   onPullAll: () => void;
   watchingEnabled?: boolean;
   onToggleWatching?: () => void;
-  validateEnabled?: boolean;
-  onToggleValidate?: () => void;
+  validationStats?: ValidationStat[];
+  validationStatsLoading?: boolean;
 }
 
 const isMac = window.electron?.process?.platform === 'darwin';
@@ -57,11 +59,13 @@ export function WorkspaceHeader({
   onPullAll,
   watchingEnabled,
   onToggleWatching,
-  validateEnabled,
-  onToggleValidate,
+  validationStats,
+  validationStatsLoading,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
   const { user } = useCurrentUser();
+  const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
+  const setValidateEnabled = useWorkspaceUiStore((s) => s.setValidateEnabled);
   const { width } = useViewportSize();
   const compact = width > 0 && width < 800;
 
@@ -131,7 +135,13 @@ export function WorkspaceHeader({
           <img src={logoColor} alt="Scratch" width={32} height={32} />
         </IconButtonGhost>
         <WorkspaceSwitcher currentWorkspaceId={workspace.id} currentWorkspaceName={workspace.name} />
-        {user?.isAdmin && localPath && <ValidationStatsDrawer workspacePath={localPath} />}
+        {user?.isAdmin && localPath && (
+          <ValidationStatsDrawer
+            workspacePath={localPath}
+            stats={validationStats}
+            statsLoading={validationStatsLoading}
+          />
+        )}
         {localPath && onToggleWatching !== undefined && (
           <Tooltip
             label={watchingEnabled ? 'Watching files (click to stop)' : 'Not watching files (click to start)'}
@@ -142,12 +152,16 @@ export function WorkspaceHeader({
             </IconButtonGhost>
           </Tooltip>
         )}
-        {localPath && onToggleValidate !== undefined && (
+        {localPath && (
           <Tooltip
             label={validateEnabled ? 'Validation on (click to disable)' : 'Validation off (click to enable)'}
             position="bottom"
           >
-            <IconButtonGhost size="compact-xs" onClick={onToggleValidate} c={validateEnabled ? 'blue' : undefined}>
+            <IconButtonGhost
+              size="compact-xs"
+              onClick={() => setValidateEnabled(!validateEnabled)}
+              c={validateEnabled ? 'blue' : undefined}
+            >
               <ShieldCheck size={12} />
             </IconButtonGhost>
           </Tooltip>

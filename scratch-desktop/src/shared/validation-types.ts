@@ -56,3 +56,57 @@ export type ValidationEntry = {
   /** Field path within the record. Optional when showing record-level aggregates. */
   fieldPath?: string;
 };
+
+// ---------------------------------------------------------------------------
+// Validator configuration types (mirrors the on-disk validation.json format)
+// ---------------------------------------------------------------------------
+
+/**
+ * One entry in a table's `validation.json` file.
+ *
+ * Mirrors the Rust `ValidatorEntry` struct in
+ * `scratch-git-2/src/shared/validators/mod.rs`.
+ */
+export type ValidatorConfigEntry = {
+  /** Validator kind string (e.g. `required`, `length`, `python:validators/check.py`). */
+  validator: string;
+  /** Single field path targeted by this validator. Mutually exclusive with `fields`. */
+  field?: string;
+  /** Multiple field paths (for multi-field validators). Mutually exclusive with `field`. */
+  fields?: string[];
+  /** Arguments passed to the validator function. */
+  params?: Record<string, unknown>;
+  /** Optional execution order (ascending). */
+  order?: number;
+  /** Free-text annotation for humans. */
+  note?: string;
+};
+
+/**
+ * The parsed contents of one folder's `validation.json`, enriched with its
+ * location within the workspace.
+ */
+export type ValidatorConfig = {
+  /** Connection directory name (e.g. `my-airtable`). */
+  connection: string;
+  /** Subfolder path relative to the connection directory (e.g. `posts` or empty string for root). */
+  folderPath: string;
+  /** Workspace-relative path to the validation.json file (e.g. `.scratch/connections/scratch/my-airtable/posts/validation.json`). */
+  configFilePath: string;
+  /** The validator entries defined in this file. */
+  entries: ValidatorConfigEntry[];
+};
+
+/**
+ * Describes a built-in validator available in the system.
+ */
+export type BuiltinValidatorInfo = {
+  /** Validator kind name (e.g. `required`). */
+  name: string;
+  /** Human-readable description of what this validator checks. */
+  description: string;
+  /** Whether this validator targets a single field (`field`), multiple fields (`fields`), or the whole record (`record`). */
+  scope: 'field' | 'fields' | 'record';
+  /** JSON-schema-like description of expected `params`. Null when no params are needed. */
+  paramSchema: Record<string, unknown> | null;
+};

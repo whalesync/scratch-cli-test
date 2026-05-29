@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular, TextMono12Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
+import { useValidation } from '../hooks/use-validation';
 import { API_CONFIG } from '../lib/api';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { jobApi } from '../lib/job-api';
@@ -137,7 +138,7 @@ export function WorkspacePage() {
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
-  const [validateEnabled, setValidateEnabled] = useState(false);
+  const validation = useValidation(localPath, dataRefreshKey);
   const [gridFilterActivation, setGridFilterActivation] = useState<{
     kind: 'has-problems';
     trigger: number;
@@ -648,8 +649,8 @@ export function WorkspacePage() {
         }}
         watchingEnabled={watchingEnabled}
         onToggleWatching={() => void handleToggleWatching()}
-        validateEnabled={validateEnabled}
-        onToggleValidate={() => setValidateEnabled((v) => !v)}
+        validationStats={validation.stats}
+        validationStatsLoading={validation.statsLoading}
       />
       {localPath && cloudSyncWarning && (
         <CloudSyncWarningBanner
@@ -684,7 +685,6 @@ export function WorkspacePage() {
         }}
         activateGlobalFilter={gridFilterActivation}
         onActivateGlobalFilterConsumed={() => setGridFilterActivation(null)}
-        validateEnabled={validateEnabled}
         onIndexingProgress={setIndexingProgress}
       />
     </Box>

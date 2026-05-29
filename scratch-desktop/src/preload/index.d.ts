@@ -4,7 +4,12 @@ import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
-import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
+import type {
+  ValidationResultRow,
+  ValidationStat,
+  ValidatorConfig,
+  ValidatorConfigEntry,
+} from '../shared/validation-types';
 import type { ConnectionFileChangedEvent, WorkspaceFilesChangedEvent } from '../shared/workspace-file-watch';
 import type { WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
 
@@ -393,6 +398,13 @@ interface ScratchFilesAPI {
   getFolderValidationResults: (workspacePath: string, folderPath: string) => Promise<ValidationResultRow[]>;
   getValidationStats: (workspacePath: string) => Promise<ValidationStat[]>;
   getFolderValidationSample: (workspacePath: string, folder: string) => Promise<ValidationResultRow[]>;
+  getValidationConfigs: (workspacePath: string) => Promise<ValidatorConfig[]>;
+  writeValidationConfig: (
+    workspacePath: string,
+    connection: string,
+    folderPath: string,
+    entries: ValidatorConfigEntry[],
+  ) => Promise<void>;
   acceptCellInputText: (
     folderPath: string,
     workspacePath: string,

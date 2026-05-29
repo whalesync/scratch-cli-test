@@ -31,7 +31,6 @@ interface WorkspaceContentProps {
   onPublishFile?: (relativePath: string) => void;
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
-  validateEnabled?: boolean;
   onIndexingProgress?: (message: string | null) => void;
 }
 
@@ -51,7 +50,6 @@ export function WorkspaceContent({
   onPublishFile,
   activateGlobalFilter,
   onActivateGlobalFilterConsumed,
-  validateEnabled = false,
   onIndexingProgress,
 }: WorkspaceContentProps) {
   const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
@@ -215,7 +213,6 @@ export function WorkspaceContent({
           onPublishFile={onPublishFile}
           activateGlobalFilter={activateGlobalFilter}
           onActivateGlobalFilterConsumed={onActivateGlobalFilterConsumed}
-          validate={validateEnabled}
           onIndexingProgress={onIndexingProgress}
         />
       )}

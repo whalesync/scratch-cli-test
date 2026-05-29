@@ -56,6 +56,10 @@ export interface WorkspaceUiState {
   /** User-chosen diff view mode. `null` means "use the default" (side-by-side when diffs exist, inline otherwise). */
   diffViewMode: DiffViewMode | null;
 
+  // --- Validation ---
+  /** Whether inline validation is enabled workspace-wide. Not reset on folder change. */
+  validateEnabled: boolean;
+
   // --- Actions ---
   setSelectedRecordFilename: (filename: string | null) => void;
   setFocusedFieldName: (name: string | null) => void;
@@ -82,6 +86,7 @@ export interface WorkspaceUiState {
   setColumnWidths: (widths: Updater<Record<string, number>>) => void;
   setPage: (page: Updater<number>) => void;
   setDiffViewMode: (mode: DiffViewMode | null) => void;
+  setValidateEnabled: (enabled: boolean) => void;
   resetFolderState: () => void;
 }
 
@@ -114,6 +119,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   columnWidths: {},
   page: 1,
   diffViewMode: null,
+  validateEnabled: false,
 
   // --- Actions ---
   setSelectedRecordFilename: (filename) => {
@@ -158,6 +164,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   setColumnWidths: (v) => set({ columnWidths: typeof v === 'function' ? v(get().columnWidths) : v }),
   setPage: (v) => set({ page: typeof v === 'function' ? v(get().page) : v }),
   setDiffViewMode: (mode) => set({ diffViewMode: mode }),
+  setValidateEnabled: (enabled) => set({ validateEnabled: enabled }),
 
   resetFolderState: () =>
     set({

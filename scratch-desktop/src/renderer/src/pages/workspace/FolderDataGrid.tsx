@@ -159,8 +159,6 @@ interface FolderDataGridProps {
   /** When set, activates the given filter once the folder is ready. Increment trigger to re-trigger. */
   activateGlobalFilter?: { kind: FilterKind; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
-  /** When true, paginate-records will run validators on stale records for the current page. */
-  validate?: boolean;
   /**
    * Fires with the latest progress message while a full folder reindex is running, and with `null`
    * when the reindex finishes. Lets the parent block UI to prevent overlapping reindex requests.
@@ -793,8 +791,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     onDataRefresh,
     activateGlobalFilter,
     onActivateGlobalFilterConsumed,
-    validate = false,
   } = props;
+  const validate = useWorkspaceUiStore((s) => s.validateEnabled);
   const [diffData, setDiffData] = useState<DiffGridResult | null>(null);
   const [loadingMode, setLoadingMode] = useState<GridLoadMode>('idle');
   const [error, setError] = useState<string | null>(null);
