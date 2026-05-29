@@ -181,7 +181,14 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   setColumnWidths: (v) => set({ columnWidths: typeof v === 'function' ? v(get().columnWidths) : v }),
   setPage: (v) => set({ page: typeof v === 'function' ? v(get().page) : v }),
   setDiffViewMode: (mode) => set({ diffViewMode: mode }),
-  setCurrentWorkbookId: (id) => set({ currentWorkbookId: id }),
+  setCurrentWorkbookId: (id) =>
+    set({
+      currentWorkbookId: id,
+      showConnectionsPanel: false,
+      showPublishHistoryPanel: false,
+      showValidationPanel: false,
+      publishHistoryDetailPlanId: null,
+    }),
   hydrateWorkbookSettings: (settings) => {
     set({ validateEnabled: settings.validateEnabled ?? false });
   },

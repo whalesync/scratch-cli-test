@@ -1,4 +1,4 @@
-import { ButtonSecondaryOutline } from '@/components/base/buttons';
+import { ButtonPrimaryLight } from '@/components/base/buttons';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular, Text16Medium } from '@/components/base/text';
 import { ConnectorIcon } from '@/components/icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
@@ -10,7 +10,7 @@ import { ActionIcon, Box, Menu, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, DataFolder, DataFolderGroup, DataFolderOptions } from '@spinner/shared-types';
 import { AuthType, ConnectorHealthStatus } from '@spinner/shared-types';
-import { FolderIcon, FolderLockIcon, LinkIcon, PlusIcon, SettingsIcon, Trash2Icon, UnlinkIcon } from 'lucide-react';
+import { FolderIcon, FolderLockIcon, Plug2Icon, PlugZapIcon, SettingsIcon, Trash2Icon, UnlinkIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { AdvancedFolderSettingsModal } from './advanced-folder-settings-modal';
 import { ChooseTablesModal } from './choose-tables-modal';
@@ -157,18 +157,15 @@ export function ConnectionsList({
       {!isLoading && !hasConnections && (
         <div className={styles.zeroState}>
           <div className={styles.zeroIcon}>
-            <StyledLucideIcon Icon={LinkIcon} size="xl" c="var(--fg-primary)" />
+            <PlugZapIcon size={64} strokeWidth={1} />
           </div>
-          <Text16Medium mb={6}>No connections yet</Text16Medium>
-          <Text13Regular c="var(--fg-secondary)" mb="lg" style={{ maxWidth: 280, margin: '0 auto 22px' }}>
-            Connect a service to see your data.
+          <Text16Medium mb={6}>Your workspace is ready</Text16Medium>
+          <Text13Regular c="var(--fg-muted)" mb="lg" style={{ maxWidth: 300, margin: '0 auto 22px', lineHeight: 1.5 }}>
+            Connect a service to pull your data into Scratch.
           </Text13Regular>
-          <ButtonSecondaryOutline
-            leftSection={<StyledLucideIcon Icon={PlusIcon} size="sm" />}
-            onClick={onOpenCreateModal}
-          >
+          <ButtonPrimaryLight size="md" leftSection={<Plug2Icon size={16} />} onClick={onOpenCreateModal}>
             Connect service
-          </ButtonSecondaryOutline>
+          </ButtonPrimaryLight>
         </div>
       )}
 

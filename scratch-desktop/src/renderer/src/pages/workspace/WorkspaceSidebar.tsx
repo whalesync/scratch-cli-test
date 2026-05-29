@@ -1,20 +1,19 @@
-import { ButtonSecondaryOutline } from '@/components/base/buttons';
+import { ButtonPrimaryLight } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
-import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Badge, Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
 import {
-  Bug,
+  BugIcon,
   CheckIcon,
   CircleXIcon,
   LinkIcon,
+  LucideIcon,
+  PlugZapIcon,
   ScrollTextIcon,
-  Settings,
-  SettingsIcon,
-  ShieldCheck,
+  ShieldCheckIcon,
   TriangleAlertIcon,
   UnplugIcon,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { JSX, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ValidationStat } from '../../../../shared/validation-types';
 import { UserMenu } from '../../components/user-menu';
@@ -22,7 +21,6 @@ import { useCurrentUser } from '../../hooks/use-current-user';
 import { useDevTools } from '../../hooks/use-dev-tools';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
-import { isExperimentEnabled } from '../../types/user';
 import { Workspace } from '../../types/workspace';
 import { FolderTree } from './FolderTree';
 import { LocalFolder } from './WorkspaceContent';
@@ -74,7 +72,7 @@ export function WorkspaceSidebar({
   const { isDevToolsEnabled } = useDevTools();
   const { user } = useCurrentUser();
   const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
-  const publishHistoryEnabled = isExperimentEnabled('ENABLE_PUBLISH_HISTORY', user);
+  const publishHistoryEnabled = true; // isExperimentEnabled('ENABLE_PUBLISH_HISTORY', user);
   const showInitialLoader = isFoldersLoading && !hasLoadedFoldersOnce;
 
   // Build a lookup map for validation counts keyed by "connection/folder_path".
@@ -106,7 +104,7 @@ export function WorkspaceSidebar({
       }}
     >
       {/* Folder tree */}
-      <Box style={{ flex: 1, minHeight: 0, overflow: 'auto' }} py="xs">
+      <Box style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }} py="xs">
         {showInitialLoader ? (
           <Group justify="center" align="center" gap="sm">
             <Loader size="xs" />
@@ -116,26 +114,23 @@ export function WorkspaceSidebar({
           </Group>
         ) : (
           <>
-            {localFolders.length === 0 && (
-              <Stack align="center" gap="xs" px="sm" py="xl">
-                <Box style={{ opacity: 0.3 }}>
-                  <StyledLucideIcon Icon={LinkIcon} size="lg" c="var(--fg-muted)" />
-                </Box>
-                <Text13Medium c="var(--fg-primary)">No connections yet</Text13Medium>
-                <Text12Regular c="var(--fg-secondary)" ta="center" maw={200}>
-                  Connect a service to see your data.
-                </Text12Regular>
-                <ButtonSecondaryOutline
-                  size="xs"
+            {localFolders.length === 0 && !connectionsPanelOpen && (
+              <Stack align="center" justify="center" gap="sm" px="md" style={{ flex: 1, minHeight: 0 }}>
+                <PlugZapIcon size={48} strokeWidth={1} />
+                <Stack align="center" gap={4}>
+                  <Text13Medium c="var(--fg-primary)">Your workspace is ready</Text13Medium>
+                  <Text12Regular c="var(--fg-muted)" ta="center" maw={220} lh={1.4}>
+                    Connect a service to pull your data into Scratch.
+                  </Text12Regular>
+                </Stack>
+                <ButtonPrimaryLight
+                  size="sm"
                   mt={4}
-                  leftSection={<StyledLucideIcon Icon={SettingsIcon} size="sm" />}
-                  onClick={() => {
-                    const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
-                    void window.scratchAuth.openExternal(`${webUrl}/workspace/${workspace.id}/connections`);
-                  }}
+                  leftSection={<LinkIcon size={14} />}
+                  onClick={onOpenConnectionsPanel}
                 >
-                  Manage connections
-                </ButtonSecondaryOutline>
+                  Connect service
+                </ButtonPrimaryLight>
               </Stack>
             )}
             <FolderTree
@@ -162,59 +157,23 @@ export function WorkspaceSidebar({
           flexShrink: 0,
         }}
       >
-        <UnstyledButton
-          px="sm"
-          py={8}
-          style={{
-            width: '100%',
-          }}
-          onClick={() => {
-            const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
-            void window.scratchAuth.openExternal(`${webUrl}/workspace/${workspace.id}/connections`);
-          }}
-        >
-          <Group gap={8} wrap="nowrap">
-            <Settings size={14} color="var(--fg-secondary)" />
-            <Text13Regular c="var(--fg-secondary)">Manage connections</Text13Regular>
-          </Group>
-        </UnstyledButton>
-
-        {/* Render only after user is loaded so the button doesn't flicker.
-            Matches the "Connections (local UI)" toggle pattern: click swaps
-            the central content area between the folder grid and the panel. */}
-        {user && publishHistoryEnabled && onTogglePublishHistoryPanel && (
-          <UnstyledButton
-            px="sm"
-            py={8}
-            style={{
-              width: '100%',
-              backgroundColor: publishHistoryPanelOpen ? 'var(--highlight-fill)' : undefined,
-            }}
-            onClick={onTogglePublishHistoryPanel}
-          >
-            <Group gap={8} wrap="nowrap">
-              <ScrollTextIcon size={14} color="var(--fg-secondary)" />
-              <Text13Regular c="var(--fg-secondary)">Publish History</Text13Regular>
-            </Group>
-          </UnstyledButton>
+        {onOpenConnectionsPanel && (
+          <MenuButton
+            title="Connections"
+            Icon={UnplugIcon}
+            isSelected={connectionsPanelOpen}
+            onClick={onOpenConnectionsPanel}
+          />
         )}
 
         {onToggleValidationPanel && (
-          <UnstyledButton
-            px="sm"
-            py={8}
-            style={{
-              width: '100%',
-              backgroundColor: validationPanelOpen ? 'var(--highlight-fill)' : undefined,
-            }}
+          <MenuButton
+            title="Validation"
+            Icon={ShieldCheckIcon}
+            isSelected={validationPanelOpen}
             onClick={onToggleValidationPanel}
-          >
-            <Group gap={8} wrap="nowrap" justify="space-between" style={{ flex: 1 }}>
-              <Group gap={8} wrap="nowrap">
-                <ShieldCheck size={14} color="var(--fg-secondary)" />
-                <Text13Regular c="var(--fg-secondary)">Validation</Text13Regular>
-              </Group>
-              {!validateEnabled ? (
+            rightLabel={
+              !validateEnabled ? (
                 <Badge size="xs" variant="light" color="gray" radius="sm">
                   off
                 </Badge>
@@ -235,46 +194,66 @@ export function WorkspaceSidebar({
                     </Group>
                   )}
                 </Group>
-              )}
-            </Group>
-          </UnstyledButton>
+              )
+            }
+          />
         )}
 
-        {isDevToolsEnabled && onOpenConnectionsPanel && (
-          <UnstyledButton
-            px="sm"
-            py={8}
-            style={{
-              width: '100%',
-              backgroundColor: connectionsPanelOpen ? 'var(--highlight-fill)' : undefined,
-            }}
-            onClick={onOpenConnectionsPanel}
-          >
-            <Group gap={8} wrap="nowrap">
-              <UnplugIcon size={14} color="var(--mantine-color-violet-6)" />
-              <Text13Regular c="var(--mantine-color-violet-6)">Connections (local UI)</Text13Regular>
-            </Group>
-          </UnstyledButton>
+        {/* Render only after user is loaded so the button doesn't flicker.
+            Matches the "Connections (local UI)" toggle pattern: click swaps
+            the central content area between the folder grid and the panel. */}
+        {user && publishHistoryEnabled && onTogglePublishHistoryPanel && (
+          <MenuButton
+            title="Publish History"
+            Icon={ScrollTextIcon}
+            isSelected={publishHistoryPanelOpen}
+            onClick={onTogglePublishHistoryPanel}
+          />
         )}
 
         {isDevToolsEnabled && (
-          <UnstyledButton
-            px="sm"
-            py={8}
-            style={{
-              width: '100%',
-            }}
+          <MenuButton
+            devOnly
             onClick={() => void navigate(`/workspace/${workspace.id}/debug`)}
-          >
-            <Group gap={8} wrap="nowrap">
-              <Bug size={14} color="var(--mantine-color-devTool-9)" />
-              <Text13Regular c="var(--mantine-color-devTool-9)">Debug</Text13Regular>
-            </Group>
-          </UnstyledButton>
+            Icon={BugIcon}
+            title="Debug"
+          />
         )}
-
         <UserMenu />
       </Box>
     </Stack>
+  );
+}
+
+function MenuButton({
+  title,
+  onClick,
+  Icon,
+  isSelected,
+  devOnly,
+  rightLabel,
+}: {
+  title: string;
+  onClick: () => void;
+  Icon: LucideIcon;
+  isSelected?: boolean;
+  devOnly?: boolean;
+  rightLabel?: JSX.Element;
+}) {
+  return (
+    <UnstyledButton
+      px="sm"
+      py={8}
+      w="100%"
+      bg={isSelected ? 'var(--highlight-fill)' : undefined}
+      c={devOnly ? 'var(--mantine-color-devTool-9)' : 'var(--fg-secondary)'}
+      onClick={onClick}
+    >
+      <Group gap={8} wrap="nowrap" justify="space-between">
+        <Icon size={14} />
+        <Text13Regular flex={1}>{title}</Text13Regular>
+        {rightLabel}
+      </Group>
+    </UnstyledButton>
   );
 }

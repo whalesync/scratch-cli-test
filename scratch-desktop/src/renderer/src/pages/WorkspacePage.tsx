@@ -341,9 +341,12 @@ export function WorkspacePage() {
       if (snapshot) {
         previousFolderCountRef.current = snapshot.serverDataFolderCount;
         previousConnectionCountRef.current = snapshot.connectionCount;
+        if (snapshot.connectionCount === 0) {
+          setShowConnectionsPanel(true);
+        }
       }
     });
-  }, [fetchWorkspace]);
+  }, [fetchWorkspace, setShowConnectionsPanel]);
 
   const workspaceId = workspace?.id;
 
