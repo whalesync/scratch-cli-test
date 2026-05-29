@@ -1,9 +1,9 @@
 'use client';
 
 import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
+import { Text13Regular, Text16Medium, TextMono12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
-import { Text13Regular, Text16Medium, TextMono12Regular } from '@/app/components/base/text';
 import { useFolderFileList } from '@/hooks/use-folder-file-list';
 import { genericApiApi } from '@/lib/api/generic-api';
 import { Box, Group, Stack } from '@mantine/core';

@@ -21,13 +21,7 @@ export const UpdateConnectionModal = (props: UpdateConnectionModalProps) => {
   // AI-assist, structured extras are too rich for the data-driven field
   // form the StandardUpdateForm renders.
   if (connectorAccount?.service === 'GENERIC_API' && workbook?.id) {
-    return (
-      <GenericApiConnectionModal
-        {...modalProps}
-        workbookId={workbook.id}
-        existingAccount={connectorAccount}
-      />
-    );
+    return <GenericApiConnectionModal {...modalProps} workbookId={workbook.id} existingAccount={connectorAccount} />;
   }
   return <StandardUpdateForm {...props} />;
 };

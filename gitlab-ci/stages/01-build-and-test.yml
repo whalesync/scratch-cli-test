@@ -13,6 +13,7 @@ include:
     - !reference [.build_shared_types, script]
     - cd client
     - !reference [.use_nvm, script]
+    - yarn prettier:check
     - yarn lint-strict
     - yarn test
     - export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY_DEVELOPMENT
@@ -112,6 +113,7 @@ build client docker image for production:
     - !reference [.build_shared_types, script]
     - cd server
     - !reference [.use_nvm, script]
+    - yarn prettier:check
     - yarn lint-strict
     - yarn test --reporters=default --reporters=jest-junit
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
@@ -326,6 +328,7 @@ build scratch-git docker image:
     - !reference [.build_shared_types, script]
     - cd scratch-desktop
     - !reference [.use_nvm, script]
+    - yarn prettier:check
     - yarn lint-strict
     - yarn build
 

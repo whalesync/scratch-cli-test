@@ -291,8 +291,8 @@ function GettingStartedCard() {
             <Stack gap={2}>
               <Text13Medium>Book a tour</Text13Medium>
               <Text12Regular c="dimmed">
-                Totally optional, but we&apos;d love to hear how you&apos;re planning to use Scratch and point you in the
-                right direction.
+                Totally optional, but we&apos;d love to hear how you&apos;re planning to use Scratch and point you in
+                the right direction.
               </Text12Regular>
             </Stack>
           </Group>

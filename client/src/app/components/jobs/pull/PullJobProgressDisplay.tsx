@@ -1,3 +1,4 @@
+import { Text13Regular } from '@/app/components/base/text';
 import { getTerminalTableStatus } from '@/app/components/jobs/job-utils';
 import { TableStatus } from '@/app/components/jobs/publish/PublishJobProgress';
 import {
@@ -7,7 +8,6 @@ import {
   isPullLinkedFolderFilesProgress,
 } from '@/app/components/jobs/pull/PullJobProgress';
 import { SyncStatus } from '@/app/components/jobs/SyncStatus/sync-status';
-import { Text13Regular } from '@/app/components/base/text';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { JobEntity } from '@/types/server-entities/job';
 import { Alert, Stack } from '@mantine/core';

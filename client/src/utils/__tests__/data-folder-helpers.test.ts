@@ -204,12 +204,12 @@ describe('findDataFolderForFile', () => {
       connectorAccountId: 'cac_airtable',
     });
     // Order shouldn't matter — child should win regardless
-    expect(
-      findDataFolderForFile([parentFolder, childFolder], 'Airtable/Base/Table1/record.json', 'cac_airtable'),
-    ).toBe(childFolder);
-    expect(
-      findDataFolderForFile([childFolder, parentFolder], 'Airtable/Base/Table1/record.json', 'cac_airtable'),
-    ).toBe(childFolder);
+    expect(findDataFolderForFile([parentFolder, childFolder], 'Airtable/Base/Table1/record.json', 'cac_airtable')).toBe(
+      childFolder,
+    );
+    expect(findDataFolderForFile([childFolder, parentFolder], 'Airtable/Base/Table1/record.json', 'cac_airtable')).toBe(
+      childFolder,
+    );
   });
 
   it('skips folders with null path', () => {

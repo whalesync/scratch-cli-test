@@ -9,10 +9,10 @@ import {
   getServiceName,
   useConnectorsMetadata,
 } from '@/hooks/use-connectors-metadata';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useSubscription } from '@/hooks/use-subscription';
-import { isExperimentEnabled } from '@/types/server-entities/users';
+import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { ScratchpadApiError } from '@/lib/api/error';
+import { isExperimentEnabled } from '@/types/server-entities/users';
 import { initiateOAuth } from '@/utils/oauth';
 import {
   Alert,

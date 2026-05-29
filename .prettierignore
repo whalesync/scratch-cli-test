@@ -17,3 +17,7 @@ client/test-results/
 client/next-env.d.ts
 server/debug-openrouter.js
 server/openrouter-out.json
+
+# Markdown and JSON are not auto-formatted
+*.md
+*.json

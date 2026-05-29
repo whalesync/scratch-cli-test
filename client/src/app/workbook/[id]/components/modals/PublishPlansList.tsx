@@ -372,10 +372,7 @@ export function PublishPlansList({
                   return (
                     <Table.Tr key={p.id}>
                       <Table.Td>
-                        <Link
-                          href={detailHref}
-                          style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
-                        >
+                        <Link href={detailHref} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
                           <Group gap={6} wrap="nowrap">
                             <Text size="xs" fw={500}>
                               {dayjs(p.createdAt).format('MMM D, YYYY h:mm A')}
@@ -629,14 +626,7 @@ export function PublishPlansList({
                           </Tooltip>
 
                           <Tooltip label="Open" position="top" withArrow>
-                            <Button
-                              component={Link}
-                              href={detailHref}
-                              size="xs"
-                              variant="light"
-                              color="gray"
-                              px={6}
-                            >
+                            <Button component={Link} href={detailHref} size="xs" variant="light" color="gray" px={6}>
                               <ExternalLinkIcon size={14} />
                             </Button>
                           </Tooltip>

@@ -6,7 +6,6 @@ import { usePublishPlan } from '@/hooks/use-publish-plan';
 import { usePublishPlanOperation } from '@/hooks/use-publish-plan-operation';
 import { usePublishPlanRecords } from '@/hooks/use-publish-plan-records';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { PublishPlanRecordsList } from './PublishPlanRecordsList';
 import { isExperimentEnabled } from '@/types/server-entities/users';
 import { publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import {
@@ -43,6 +42,7 @@ import {
 } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useState } from 'react';
+import { PublishPlanRecordsList } from './PublishPlanRecordsList';
 
 dayjs.extend(relativeTime);
 
@@ -66,11 +66,7 @@ function CopyableCode({ value }: { value: string }) {
           style={{ color: 'var(--fg-muted)', flexShrink: 0, padding: 2, display: 'flex' }}
           aria-label="Copy to clipboard"
         >
-          {clipboard.copied ? (
-            <CheckIcon size={12} color="var(--mantine-color-green-7)" />
-          ) : (
-            <CopyIcon size={12} />
-          )}
+          {clipboard.copied ? <CheckIcon size={12} color="var(--mantine-color-green-7)" /> : <CopyIcon size={12} />}
         </UnstyledButton>
       </Tooltip>
     </Group>
@@ -98,9 +94,7 @@ export default function PublishPlanPage() {
   const { publishPlan, isLoading } = usePublishPlan(workbookId, params.planId);
   const { connectorAccounts } = useConnectorAccounts(workbookId);
   const connection =
-    publishPlan?.connectorAccount ??
-    connectorAccounts?.find((ca) => ca.id === publishPlan?.connectorAccountId) ??
-    null;
+    publishPlan?.connectorAccount ?? connectorAccounts?.find((ca) => ca.id === publishPlan?.connectorAccountId) ?? null;
 
   const [page, setPage] = useState(1);
   const [dataFolderId, setDataFolderId] = useState<string | null>(null);

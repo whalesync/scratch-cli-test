@@ -147,9 +147,7 @@ export default function ConnectionsPage() {
         <div className={styles.topBar}>
           <TextTitle2>
             Connections
-            {workbook?.name && (
-              <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}> · {workbook.name}</span>
-            )}
+            {workbook?.name && <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}> · {workbook.name}</span>}
           </TextTitle2>
           <ButtonSecondaryOutline
             leftSection={<StyledLucideIcon Icon={PlusIcon} size="sm" />}
@@ -214,14 +212,7 @@ export default function ConnectionsPage() {
             const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
             const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
 
-            return (
-              <ServiceBlock
-                key={key}
-                group={group}
-                workbookId={workbookId}
-                connectorAccount={connectorAccount}
-              />
-            );
+            return <ServiceBlock key={key} group={group} workbookId={workbookId} connectorAccount={connectorAccount} />;
           })}
 
         {/* Empty connector accounts (connected but no tables yet) */}
@@ -461,11 +452,7 @@ function ServiceActions({
             <ActionIconThreeDots size="sm" />
           </Menu.Target>
           <Menu.Dropdown>
-            <Menu.Item
-              data-delete
-              leftSection={<Trash2Icon size={16} />}
-              onClick={onRemove}
-            >
+            <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={onRemove}>
               Remove connection
             </Menu.Item>
           </Menu.Dropdown>
@@ -489,19 +476,15 @@ function ServiceActions({
         </button>
       )}
       <Menu>
-          <Menu.Target>
-            <ActionIconThreeDots size="sm" />
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Item
-              data-delete
-              leftSection={<Trash2Icon size={16} />}
-              onClick={onRemove}
-            >
-              Remove connection
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
+        <Menu.Target>
+          <ActionIconThreeDots size="sm" />
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item data-delete leftSection={<Trash2Icon size={16} />} onClick={onRemove}>
+            Remove connection
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
     </div>
   );
 }
@@ -521,11 +504,7 @@ function TableActions({ onAdvancedSettings, onUnlink }: { onAdvancedSettings: ()
           <ActionIconThreeDots size="sm" />
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Item
-            data-delete
-            leftSection={<UnlinkIcon size={16} />}
-            onClick={onUnlink}
-          >
+          <Menu.Item data-delete leftSection={<UnlinkIcon size={16} />} onClick={onUnlink}>
             Unlink table
           </Menu.Item>
         </Menu.Dropdown>

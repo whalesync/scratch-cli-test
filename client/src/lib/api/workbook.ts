@@ -555,10 +555,9 @@ export const workbookApi = {
   ): Promise<PublishPlanRecordsResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<PublishPlanRecordsResponse>(
-        `/workbook/${workbookId}/publish-v2/${planId}/records`,
-        { params: options },
-      );
+      const res = await axios.get<PublishPlanRecordsResponse>(`/workbook/${workbookId}/publish-v2/${planId}/records`, {
+        params: options,
+      });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to list publish plan records');
@@ -793,9 +792,7 @@ export const workbookApi = {
     }
   },
 
-  getConnectionGitUrl: async (
-    connectorAccountId: string,
-  ): Promise<{ gitUrl: string; gitCloneCommand: string }> => {
+  getConnectionGitUrl: async (connectorAccountId: string): Promise<{ gitUrl: string; gitCloneCommand: string }> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.get<{ gitUrl: string; gitCloneCommand: string }>(

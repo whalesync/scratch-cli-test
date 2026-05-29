@@ -1309,7 +1309,9 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
   const createdCount = (progress.createdCount as number | undefined) ?? createdPaths.length;
   const updatedCount = (progress.updatedCount as number | undefined) ?? updatedPaths.length;
   const deletedCount = (progress.deletedCount as number | undefined) ?? deletedPaths.length;
-  const folderErrors = progress.folderErrors as Record<string, { folderName: string; message: string; details?: string }> | undefined;
+  const folderErrors = progress.folderErrors as
+    | Record<string, { folderName: string; message: string; details?: string }>
+    | undefined;
   const folderErrorEntries = folderErrors ? Object.entries(folderErrors) : [];
 
   if (!folderName && totalFiles === undefined) return null;
@@ -1349,9 +1351,7 @@ function PullProgressTable({ progress }: { progress: Record<string, unknown> }) 
               <Table.Td colSpan={deletedCount > 0 ? 4 : 3}>
                 <Stack gap={2}>
                   <Text13Regular c="var(--mantine-color-red-6)">{folderError.message}</Text13Regular>
-                  {folderError.details && (
-                    <Text13Regular c="dimmed">{folderError.details}</Text13Regular>
-                  )}
+                  {folderError.details && <Text13Regular c="dimmed">{folderError.details}</Text13Regular>}
                 </Stack>
               </Table.Td>
               <Table.Td>-</Table.Td>

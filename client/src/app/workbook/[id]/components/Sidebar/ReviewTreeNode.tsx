@@ -416,9 +416,7 @@ function ReviewFileNode({ file, connectorAccountId }: ReviewFileNodeProps) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const href = connectorAccountId
-    ? RouteUrls.workbookReviewFileUrl(params.id, connectorAccountId, file.path)
-    : null;
+  const href = connectorAccountId ? RouteUrls.workbookReviewFileUrl(params.id, connectorAccountId, file.path) : null;
   const isSelected = href !== null && pathname === href;
 
   const handleFileClick = () => {

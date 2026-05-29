@@ -31,8 +31,7 @@ export const ScratchPadUserProvider = ({ children }: { children: ReactNode }): J
 
   const needsRedirect =
     isReady &&
-    ((!user!.waitlistApproved && pathname !== RouteUrls.waitlistPageUrl) ||
-      pathname === RouteUrls.homePageUrl);
+    ((!user!.waitlistApproved && pathname !== RouteUrls.waitlistPageUrl) || pathname === RouteUrls.homePageUrl);
 
   useEffect(() => {
     if (!isReady || !user) return;

@@ -25,13 +25,8 @@ export function usePublishPlanRecordDiff(
   mode: PlanRecordDiffMode = 'old-vs-edits',
 ) {
   const canFetch = !!workbookId && !!planId && !!connectorAccountId && !!filePath && enabled;
-  const { data, error, isLoading } = useSWR<
-    { original: string | null; modified: string | null },
-    Error
-  >(
-    canFetch
-      ? ['publish-plan-record-diff', workbookId, planId, connectorAccountId, filePath, mode]
-      : null,
+  const { data, error, isLoading } = useSWR<{ original: string | null; modified: string | null }, Error>(
+    canFetch ? ['publish-plan-record-diff', workbookId, planId, connectorAccountId, filePath, mode] : null,
     async () => {
       const originalRef = `main_pre_plan_${planId!}`;
       const modifiedRef = mode === 'old-vs-new' ? `main_plan_${planId!}` : `dirty_plan_${planId!}`;
@@ -40,8 +35,8 @@ export function usePublishPlanRecordDiff(
         workbookApi.getRepoFile(workbookId!, filePath!, modifiedRef, connectorAccountId!),
       ]);
       return {
-        original: originalRes.status === 'fulfilled' ? originalRes.value?.content ?? null : null,
-        modified: modifiedRes.status === 'fulfilled' ? modifiedRes.value?.content ?? null : null,
+        original: originalRes.status === 'fulfilled' ? (originalRes.value?.content ?? null) : null,
+        modified: modifiedRes.status === 'fulfilled' ? (modifiedRes.value?.content ?? null) : null,
       };
     },
   );

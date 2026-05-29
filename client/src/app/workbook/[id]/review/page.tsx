@@ -166,13 +166,7 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, onDiscard 
       e.stopPropagation();
       setIsPublishing(true);
       try {
-        const result = await workbookApi.planPublishV2(
-          workbookId,
-          file.connectorAccountId,
-          true,
-          undefined,
-          file.path,
-        );
+        const result = await workbookApi.planPublishV2(workbookId, file.connectorAccountId, true, undefined, file.path);
         if (result?.jobId) {
           useActiveJobsStore.getState().trackJobIds([result.jobId]);
           useActiveJobsStore.getState().refreshJobs();
@@ -341,7 +335,12 @@ function SourceGroupSection({ group, workbookId, onDiscard }: SourceGroupSection
 
       {/* Files */}
       {displayedFiles.map((file) => (
-        <ReviewFileRow key={`${file.connectorAccountId}:${file.path}`} file={file} workbookId={workbookId} onDiscard={onDiscard} />
+        <ReviewFileRow
+          key={`${file.connectorAccountId}:${file.path}`}
+          file={file}
+          workbookId={workbookId}
+          onDiscard={onDiscard}
+        />
       ))}
 
       {/* Load more */}

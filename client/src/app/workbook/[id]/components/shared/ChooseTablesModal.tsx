@@ -10,8 +10,8 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useWorkbook } from '@/hooks/use-workbook';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
-import { genericApiApi } from '@/lib/api/generic-api';
 import { ScratchpadApiError } from '@/lib/api/error';
+import { genericApiApi } from '@/lib/api/generic-api';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { workbookApi } from '@/lib/api/workbook';
 import {
@@ -753,18 +753,13 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         // endpoint UUID from extras.endpoints — set by the connector class.
         if (connectorAccount.service === 'GENERIC_API') {
           try {
-            const probeResult = await genericApiApi.probeEndpoint(
-              workbookId,
-              connectorAccount.id,
-              table.id.wsId,
-            );
+            const probeResult = await genericApiApi.probeEndpoint(workbookId, connectorAccount.id, table.id.wsId);
             options = {
               ...options,
               genericApi: { endpointId: table.id.wsId, probe: probeResult.probe },
             };
           } catch (probeError) {
-            const message =
-              probeError instanceof ScratchpadApiError ? probeError.message : 'Probe failed.';
+            const message = probeError instanceof ScratchpadApiError ? probeError.message : 'Probe failed.';
             tableFailures.push({ displayName: table.displayName, error: `Probe failed: ${message}` });
             continue;
           }

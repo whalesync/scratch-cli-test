@@ -20,7 +20,6 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import { MergeEditor } from '../../components/shared/MergeEditor';
 import { PublishPlanRecordRow, WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import {
@@ -36,6 +35,7 @@ import {
   Trash2Icon,
 } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
+import { MergeEditor } from '../../components/shared/MergeEditor';
 
 const PHASE_ICONS: Record<string, { Icon: typeof FilePenLineIcon; label: string; color: string }> = {
   edit: { Icon: FilePenLineIcon, label: 'Edit', color: 'blue' },
@@ -85,13 +85,7 @@ function computeDiffCounts(original: string | null, modified: string | null): { 
   return { added, removed };
 }
 
-function PhaseIcons({
-  phases,
-  onClickPhase,
-}: {
-  phases: string[];
-  onClickPhase: (phase: string) => void;
-}) {
+function PhaseIcons({ phases, onClickPhase }: { phases: string[]; onClickPhase: (phase: string) => void }) {
   return (
     <Group gap={4} wrap="nowrap">
       {phases.map((phase) => {
@@ -304,9 +298,7 @@ const RecordRow = memo(function RecordRow({
 
         {diffCounts && (diffCounts.added > 0 || diffCounts.removed > 0) && (
           <Text12Regular c="var(--fg-muted)" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
-            {diffCounts.added > 0 && (
-              <span style={{ color: 'var(--mantine-color-green-7)' }}>+{diffCounts.added}</span>
-            )}
+            {diffCounts.added > 0 && <span style={{ color: 'var(--mantine-color-green-7)' }}>+{diffCounts.added}</span>}
             {diffCounts.added > 0 && diffCounts.removed > 0 && ' / '}
             {diffCounts.removed > 0 && (
               <span style={{ color: 'var(--mantine-color-red-6)' }}>-{diffCounts.removed}</span>
@@ -365,13 +357,10 @@ export function PublishPlanRecordsList({
   const [diffMode, setDiffMode] = useState<'unified' | 'side-by-side'>('unified');
   const [diffSource, setDiffSource] = useState<PlanRecordDiffMode>('old-vs-edits');
 
-  const sortedRecords = useMemo(
-    () => [...records].sort((a, b) => a.filePath.localeCompare(b.filePath)),
-    [records],
-  );
+  const sortedRecords = useMemo(() => [...records].sort((a, b) => a.filePath.localeCompare(b.filePath)), [records]);
 
   const fullDiffRecord = useMemo(
-    () => (fullDiffPath ? sortedRecords.find((r) => r.filePath === fullDiffPath) ?? null : null),
+    () => (fullDiffPath ? (sortedRecords.find((r) => r.filePath === fullDiffPath) ?? null) : null),
     [fullDiffPath, sortedRecords],
   );
 
@@ -509,7 +498,6 @@ export function PublishPlanRecordsList({
           </Box>
         </Stack>
       </Modal>
-
     </>
   );
 }

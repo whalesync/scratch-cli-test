@@ -2,8 +2,8 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
-import { genericApiApi } from '@/lib/api/generic-api';
 import { ScratchpadApiError } from '@/lib/api/error';
+import { genericApiApi } from '@/lib/api/generic-api';
 import {
   ActionIcon,
   Alert,
@@ -275,9 +275,7 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
   const buildAiPromptWithContext = (basePrompt: string): string => {
     if (!userConfigured) return basePrompt;
     const extras = buildExtras();
-    const hasRealEndpoints = extras.endpoints.some(
-      (e) => e.url || (e as GenericApiGraphqlEndpoint).query,
-    );
+    const hasRealEndpoints = extras.endpoints.some((e) => e.url || (e as GenericApiGraphqlEndpoint).query);
     if (!hasRealEndpoints) return basePrompt;
     const contextBlock =
       `The user is **editing an existing Scratch connection**, not creating a new one. ` +
@@ -554,12 +552,7 @@ const ConfigSummary = ({ summary, onCopyJson }: ConfigSummaryProps) => {
       }}
     >
       <Tooltip label="Copy config JSON" position="left">
-        <ActionIcon
-          variant="subtle"
-          size="sm"
-          onClick={onCopyJson}
-          style={{ position: 'absolute', top: 6, right: 6 }}
-        >
+        <ActionIcon variant="subtle" size="sm" onClick={onCopyJson} style={{ position: 'absolute', top: 6, right: 6 }}>
           <Copy size={14} />
         </ActionIcon>
       </Tooltip>
@@ -606,12 +599,7 @@ const ConfigSummary = ({ summary, onCopyJson }: ConfigSummaryProps) => {
                 >
                   {ep.name}
                 </Text>
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap' }}
-                  title={ep.url}
-                >
+                <Text size="xs" c="dimmed" style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap' }} title={ep.url}>
                   {truncateMiddle(ep.url, URL_MAX_DISPLAY_CHARS)}
                 </Text>
               </div>
@@ -671,13 +659,7 @@ const ManualEditorModal = ({
   const [nestedOpen, setNestedOpen] = useState(0);
   const onNestedOpenChange = (open: boolean) => setNestedOpen((c) => Math.max(0, c + (open ? 1 : -1)));
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title="Edit endpoints manually"
-      size="lg"
-      closeOnEscape={nestedOpen === 0}
-    >
+    <Modal opened={opened} onClose={onClose} title="Edit endpoints manually" size="lg" closeOnEscape={nestedOpen === 0}>
       <Stack gap="md">
         <Stack gap={4}>
           <Text size="sm" fw={500}>
@@ -783,8 +765,8 @@ const AiAssistModal = ({
         <Alert color="teal" variant="light">
           <Stack gap={4}>
             <Text size="sm">
-              The prompt is in your clipboard. Paste it into ChatGPT, Claude, or any LLM — the
-              agent will walk you through picking endpoints and return a JSON config.
+              The prompt is in your clipboard. Paste it into ChatGPT, Claude, or any LLM — the agent will walk you
+              through picking endpoints and return a JSON config.
               {userConfigured && !endpointsEmpty
                 ? ' Your existing endpoints are included so the AI can edit or extend them.'
                 : ''}
@@ -894,13 +876,7 @@ interface RestEndpointRowProps {
   onSettingsOpenChange?: (open: boolean) => void;
 }
 
-const RestEndpointRow = ({
-  endpoint,
-  removable,
-  onChange,
-  onRemove,
-  onSettingsOpenChange,
-}: RestEndpointRowProps) => {
+const RestEndpointRow = ({ endpoint, removable, onChange, onRemove, onSettingsOpenChange }: RestEndpointRowProps) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = () => {
     setSettingsOpen(true);
@@ -910,10 +886,7 @@ const RestEndpointRow = ({
     setSettingsOpen(false);
     onSettingsOpenChange?.(false);
   };
-  const hasAdvanced =
-    endpoint.method === 'POST' ||
-    !!endpoint.body ||
-    !!cleanOverrides(endpoint.overrides);
+  const hasAdvanced = endpoint.method === 'POST' || !!endpoint.body || !!cleanOverrides(endpoint.overrides);
   return (
     <>
       <Group gap="xs" wrap="nowrap" align="center">
