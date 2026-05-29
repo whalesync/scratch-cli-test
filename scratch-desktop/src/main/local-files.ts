@@ -797,24 +797,21 @@ async function collectLeafFolders(root: string, dir: string, out: FolderEntry[])
   const subdirs = entries.filter((e) => e.isDirectory() && e.name !== SCRATCH_DIR && !e.name.startsWith(HIDDEN_PREFIX));
 
   if (subdirs.length === 0) {
-    // Leaf folder — only add if it's not the root itself
     if (dir !== root) {
-      const meta = await computeFolderStats(dir);
-      const relativePath = dir.slice(root.length + 1); // strip root + separator
+      const fileCount = entries.filter((e) => e.isFile() && !e.name.startsWith(HIDDEN_PREFIX)).length;
+      const relativePath = dir.slice(root.length + 1);
       out.push({
         name: relativePath,
         path: dir,
-        fileCount: meta.fileCount,
-        lastModified: meta.lastModified,
-        totalSize: meta.totalSize,
+        fileCount,
+        lastModified: 0,
+        totalSize: 0,
       });
     }
     return;
   }
 
-  for (const sub of subdirs) {
-    await collectLeafFolders(root, join(dir, sub.name), out);
-  }
+  await Promise.all(subdirs.map((sub) => collectLeafFolders(root, join(dir, sub.name), out)));
 }
 
 async function resolveFilterStatus(
