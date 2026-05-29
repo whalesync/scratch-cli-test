@@ -353,11 +353,16 @@ build and test scratch-desktop:
       curl -X POST -H 'Content-type: application/json' \
       --data "{\"text\":\"${SLACK_PROD_PIPELINE_STARTED_PREFIX} Scratch production release build started — ${CI_COMMIT_SHORT_SHA}\n>${CI_COMMIT_TITLE}\n<${CI_PIPELINE_URL}|View Pipeline> | <https://gitlab.com/whalesync/spinner/-/commit/${CI_COMMIT_SHA}|View Commit>\"}" \
       "${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}"
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"${SLACK_PROD_DESKTOP_BUILD_REQUEST_PREFIX} Please start a Scratch Desktop prod release manually\n<https://gitlab.com/whalesync/spinner/-/pipelines/new?ref=prod&var[RELEASE_DESKTOP_ONLY]=true|Run Desktop Release (just click New Pipeline)>\"}" \
+      "${SLACK_SCRATCH_PROD_FEED_WEBHOOK_URL}"
 
 notify slack prod release pipeline started:
   extends: .notify_slack_prod_release_pipeline_started
   variables:
-    SLACK_PROD_PIPELINE_STARTED_PREFIX: '🚀'
+    SLACK_PROD_PIPELINE_STARTED_PREFIX: "🚀"
+    SLACK_PROD_DESKTOP_BUILD_REQUEST_PREFIX: "🥺"
   rules:
     - !reference [.rules, on_merge_to_prod]
 
