@@ -9,6 +9,7 @@ import { transformV1ToV2 } from '@spinner/shared-types';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import {
   applyColumnMappings,
+  classifyDestinationRecord,
   findTransformerConfigsV2,
   getColumnMappingPhaseV2,
   getTransformerConfigsV2,
@@ -589,5 +590,71 @@ describe('applyColumnMappings', () => {
       expect(Object.keys(v2Result.fields)).toEqual(Object.keys(v1Result.fields));
       expect(v2Result.fields).toEqual(v1Result.fields);
     });
+  });
+});
+
+// ===========================================================================
+// classifyDestinationRecord
+// ===========================================================================
+describe('classifyDestinationRecord', () => {
+  const MATCH_COL = 'external-id';
+
+  const recordWith = (fieldValue: unknown) => ({
+    id: 'dest-1',
+    filePath: 'dest/x.json',
+    fields: { [MATCH_COL]: fieldValue, name: 'X' },
+  });
+
+  it('returns "matched" when the match-key value is present in the source set', () => {
+    const set = new Set(['rec_123']);
+    expect(classifyDestinationRecord(recordWith('rec_123'), set, MATCH_COL)).toBe('matched');
+  });
+
+  it('returns "matched" with a numeric match-key value present in the source set', () => {
+    // Source set stores `String(matchValue)` per insertMatchKeys, so the
+    // classifier must coerce numbers the same way.
+    const set = new Set(['42']);
+    expect(classifyDestinationRecord(recordWith(42), set, MATCH_COL)).toBe('matched');
+  });
+
+  it('trims surrounding whitespace before lookup (mirrors insertMatchKeys normalization)', () => {
+    const set = new Set(['rec_123']);
+    expect(classifyDestinationRecord(recordWith('  rec_123  '), set, MATCH_COL)).toBe('matched');
+  });
+
+  it('returns "unmatchedWithMatchKey" when match-key value is populated but missing from source set', () => {
+    const set = new Set(['rec_999']);
+    expect(classifyDestinationRecord(recordWith('rec_123'), set, MATCH_COL)).toBe('unmatchedWithMatchKey');
+  });
+
+  it('returns "unmatchedWithoutMatchKey" for null', () => {
+    expect(classifyDestinationRecord(recordWith(null), new Set(), MATCH_COL)).toBe('unmatchedWithoutMatchKey');
+  });
+
+  it('returns "unmatchedWithoutMatchKey" for undefined', () => {
+    expect(classifyDestinationRecord(recordWith(undefined), new Set(), MATCH_COL)).toBe('unmatchedWithoutMatchKey');
+  });
+
+  it('returns "unmatchedWithoutMatchKey" for an empty string', () => {
+    expect(classifyDestinationRecord(recordWith(''), new Set(), MATCH_COL)).toBe('unmatchedWithoutMatchKey');
+  });
+
+  it('returns "unmatchedWithoutMatchKey" for a whitespace-only string', () => {
+    expect(classifyDestinationRecord(recordWith('   '), new Set(), MATCH_COL)).toBe('unmatchedWithoutMatchKey');
+  });
+
+  it('returns "unmatchedWithoutMatchKey" for non-string/non-number values', () => {
+    // Booleans, arrays, objects — never legitimately a match key.
+    expect(classifyDestinationRecord(recordWith(true), new Set(['true']), MATCH_COL)).toBe('unmatchedWithoutMatchKey');
+    expect(classifyDestinationRecord(recordWith([1, 2]), new Set(), MATCH_COL)).toBe('unmatchedWithoutMatchKey');
+    expect(classifyDestinationRecord(recordWith({ x: 1 }), new Set(['[object Object]']), MATCH_COL)).toBe(
+      'unmatchedWithoutMatchKey',
+    );
+  });
+
+  it('supports nested match-key paths via lodash get', () => {
+    const record = { id: 'd1', filePath: 'p', fields: { fieldData: { externalId: 'rec_55' } } };
+    const set = new Set(['rec_55']);
+    expect(classifyDestinationRecord(record, set, 'fieldData.externalId')).toBe('matched');
   });
 });

@@ -4,6 +4,7 @@ import { JobType } from '@spinner/shared-types';
 import { AssetDownloadService } from 'src/asset/asset-download.service';
 import { AssetExtractorService } from 'src/asset/asset-extractor.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
 import { WSLogger } from 'src/logger';
@@ -57,6 +58,7 @@ export class JobHandlerService {
     private readonly workbookService: WorkbookService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
     private readonly experimentsService: ExperimentsService,
+    private readonly auditLogService: AuditLogService,
   ) {
     WSLogger.info({ source: 'JobHandlerService', message: 'Job handler services initializing... 🔄' });
   }
@@ -106,6 +108,7 @@ export class JobHandlerService {
           this.pipelinePlanService,
           this.postHogService,
           this.metricsService,
+          this.auditLogService,
         ) as JobHandler<JobDefinition>;
 
       case JobType.RehostAssets:

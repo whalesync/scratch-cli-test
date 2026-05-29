@@ -286,3 +286,48 @@ export async function applyColumnMappings(args: ApplyColumnMappingsArgs): Promis
 
   return result;
 }
+
+// ============================================================================
+// Destination-record classification (Pass 3)
+// ============================================================================
+
+/**
+ * Set-theoretic classification of a destination record relative to the source
+ * side this run. The three buckets are mutually exclusive.
+ *
+ * - `matched` — destination record paired with a source record this run.
+ * - `unmatchedWithMatchKey` — destination record whose match-key field is
+ *   populated, but whose source counterpart isn't present this run. Typically
+ *   records this sync previously wrote whose source has since been deleted.
+ * - `unmatchedWithoutMatchKey` — destination record whose match-key field is
+ *   empty/null/whitespace, or a non-string/number value. Typically hand-authored
+ *   or pre-existing records that this sync never managed.
+ */
+export type DestinationRecordClassification = 'matched' | 'unmatchedWithMatchKey' | 'unmatchedWithoutMatchKey';
+
+/**
+ * Classifies a single destination record against the source match-key set
+ * built in Pass 1. Pure — no Nest deps. See `DestinationRecordClassification`
+ * for bucket semantics.
+ *
+ * The match-key normalization rules mirror `insertMatchKeys` exactly: only
+ * string or number values count, and they are `String()`-coerced + trimmed.
+ * Anything else (null, undefined, arrays, objects, booleans, whitespace-only
+ * strings) is treated as no match key — preventing accidental matches via a
+ * coerced object representation like `"[object Object]"`.
+ */
+export function classifyDestinationRecord(
+  destRecord: SyncRecord,
+  sourceMatchKeySet: ReadonlySet<string>,
+  destinationMatchColumnId: string,
+): DestinationRecordClassification {
+  const raw = get(destRecord.fields, destinationMatchColumnId);
+  if (typeof raw !== 'string' && typeof raw !== 'number') {
+    return 'unmatchedWithoutMatchKey';
+  }
+  const key = String(raw).trim();
+  if (key === '') {
+    return 'unmatchedWithoutMatchKey';
+  }
+  return sourceMatchKeySet.has(key) ? 'matched' : 'unmatchedWithMatchKey';
+}

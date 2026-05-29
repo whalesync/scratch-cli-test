@@ -50,6 +50,12 @@ export enum CustomMetric {
   JOB_APPLY_PATCHES_STALLED = 'job_apply_patches_stalled',
   JOB_PUBLISH_STALLED = 'job_publish_stalled',
   JOB_DELETE_WORKBOOK_STALLED = 'job_delete_workbook_stalled',
+
+  // Sync — unmatched-destination (Pass 3) accounting. Summed across all table
+  // mappings within one sync run.
+  SYNC_UNMATCHED_WITH_KEY_COUNT = 'sync_unmatched_with_key_count',
+  SYNC_UNMATCHED_WITHOUT_KEY_COUNT = 'sync_unmatched_without_key_count',
+  SYNC_ARCHIVE_WRITES_TOTAL = 'sync_archive_writes_total',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -87,6 +93,9 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.JOB_APPLY_PATCHES_STALLED:
     case CustomMetric.JOB_PUBLISH_STALLED:
     case CustomMetric.JOB_DELETE_WORKBOOK_STALLED:
+    case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
+    case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
+    case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -133,6 +142,9 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.JOB_APPLY_PATCHES_STALLED:
     case CustomMetric.JOB_PUBLISH_STALLED:
     case CustomMetric.JOB_DELETE_WORKBOOK_STALLED:
+    case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
+    case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
+    case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
       return CustomMetricUnit.EVENT_COUNT;
     default:
       return assertUnreachable(metric);

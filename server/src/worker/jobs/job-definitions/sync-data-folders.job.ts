@@ -1,7 +1,10 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { JobType, RunId, TransformerTypes, transformV1ToV2 } from '@spinner/shared-types';
+import { createHash } from 'crypto';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import { UserCluster } from 'src/db/cluster-types';
+import { CustomMetric } from 'src/metrics/custom-metrics';
 import type { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
@@ -72,6 +75,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     private readonly publishPlanBuildService: PublishPlanBuildService,
     private readonly postHogService: PostHogService,
     private readonly metricsService: CustomMetricsService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async run(params: {
@@ -180,6 +184,10 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     // Track unique source records that hit errors, per table
     const erroredRecordIds: Set<string>[] = tableMappings.map(() => new Set<string>());
 
+    // Aggregate Pass 3 (unmatched-destination) counts across table mappings.
+    // Surfaces in the per-run PostHog event, audit log entry, and metrics.
+    const unmatchedDestinationTotals = { withMatchKey: 0, withoutMatchKey: 0, archived: 0, unarchived: 0 };
+
     // Process each table mapping
     for (let i = 0; i < tableMappings.length; i++) {
       const tableMapping = tableMappings[i];
@@ -228,6 +236,10 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         tableProgress.errors = result.errors.slice(0, MAX_PROGRESS_ERRORS);
         tableProgress.status = result.errors.length > 0 ? 'failed' : 'completed';
         totalFilesSynced += result.recordsCreated + result.recordsUpdated;
+        unmatchedDestinationTotals.withMatchKey += result.unmatchedDestinationCounts.withMatchKey;
+        unmatchedDestinationTotals.withoutMatchKey += result.unmatchedDestinationCounts.withoutMatchKey;
+        unmatchedDestinationTotals.archived += result.unmatchedDestinationCounts.archived;
+        unmatchedDestinationTotals.unarchived += result.unmatchedDestinationCounts.unarchived;
 
         // Store warnings in dedicated warnings array
         if (result.warnings.length > 0) {
@@ -443,7 +455,17 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       totalFilesSynced,
       tablesProcessed: tableMappings.length,
       allTablesSucceeded,
+      unmatchedDestinationTotals,
     });
+
+    // Per-run metrics for Pass 3 activity. Emitted even when zero so dashboards
+    // see a consistent stream of zeros for syncs that don't enable archive policy.
+    this.metricsService.logValue(CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT, unmatchedDestinationTotals.withMatchKey);
+    this.metricsService.logValue(
+      CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT,
+      unmatchedDestinationTotals.withoutMatchKey,
+    );
+    this.metricsService.logValue(CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL, unmatchedDestinationTotals.archived);
 
     try {
       this.postHogService.trackSyncCompleted(data.userId, {
@@ -456,6 +478,10 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         recordsUpdated: tablesProgress.reduce((sum, t) => sum + t.updates, 0),
         tablesProcessed: tableMappings.length,
         failedTableCount: failedTables.length,
+        unmatchedWithKeyCount: unmatchedDestinationTotals.withMatchKey,
+        unmatchedWithoutKeyCount: unmatchedDestinationTotals.withoutMatchKey,
+        archiveWritesCount: unmatchedDestinationTotals.archived,
+        unarchiveWritesCount: unmatchedDestinationTotals.unarchived,
       });
     } catch (err) {
       WSLogger.warn({
@@ -464,5 +490,48 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
         error: err,
       });
     }
+
+    // Audit log: one entry per sync run when Pass 3 visited any unmatched
+    // destination record. Narrowly scoped per D11 — broader "audit every sync
+    // run" is tracked as a separate P2 follow-up.
+    const visitedAny =
+      unmatchedDestinationTotals.withMatchKey > 0 ||
+      unmatchedDestinationTotals.withoutMatchKey > 0 ||
+      unmatchedDestinationTotals.archived > 0 ||
+      unmatchedDestinationTotals.unarchived > 0;
+    if (visitedAny) {
+      try {
+        await this.auditLogService.logEvent({
+          actor,
+          eventType: 'update',
+          message: `Sync "${sync.displayName ?? data.syncId}" applied unmatched-destination rules: ${unmatchedDestinationTotals.archived} archived, ${unmatchedDestinationTotals.unarchived} unarchived`,
+          entityId: data.syncId,
+          context: {
+            syncId: data.syncId,
+            workbookId: data.workbookId,
+            withMatchKey: unmatchedDestinationTotals.withMatchKey,
+            withoutMatchKey: unmatchedDestinationTotals.withoutMatchKey,
+            archived: unmatchedDestinationTotals.archived,
+            unarchived: unmatchedDestinationTotals.unarchived,
+            mappingsSnapshotHash: hashV2Mappings(v2Mappings),
+          },
+        });
+      } catch (err) {
+        WSLogger.warn({
+          source: 'SyncDataFoldersJob',
+          message: 'Failed to write unmatched-destination audit log',
+          error: err,
+        });
+      }
+    }
   }
+}
+
+/**
+ * Stable SHA-256 over the v2 mappings JSON. Persisted on the audit log entry
+ * so ops can correlate "what config was active when this archive happened"
+ * weeks later, even if the sync has been edited since.
+ */
+function hashV2Mappings(mappings: { tableMappings: unknown[] }): string {
+  return createHash('sha256').update(JSON.stringify(mappings)).digest('hex');
 }

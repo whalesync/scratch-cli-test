@@ -5,6 +5,7 @@ import type { Service } from '@spinner/shared-types';
 import {
   AiContextResponse,
   ColumnMapping,
+  ColumnMappingV2,
   createScratchPendingPublishId,
   createSyncId,
   DataFolderId,
@@ -37,9 +38,10 @@ import { Service as ServiceConst } from 'src/remote-service/connectors/service-c
 import { BaseJsonTableSpec, IdPath, idPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
-import { validateSchemaMapping } from 'src/sync/schema-validator';
+import { getSchemaAtPath, validateSchemaMapping } from 'src/sync/schema-validator';
 import {
   applyColumnMappings,
+  classifyDestinationRecord,
   ensureTableMappingV2,
   findTransformerConfigsV2,
   getColumnMappingPhaseV2,
@@ -96,6 +98,27 @@ export interface SyncTableMappingResult {
   updatedPaths: string[];
   errors: Array<{ sourceRemoteId: string; error: string }>;
   warnings: Array<{ sourceRemoteId: string; warning: string }>;
+  /**
+   * Per-table summary of Pass 3 (unmatched-destination) activity. Zero across
+   * the board when Pass 3 is gated off (no `unmatchedDestinationPolicy`, no
+   * `recordMatching`, or `onlySourceFilePath` is set). The worker job
+   * aggregates these across tables to populate the per-run AuditLogEvent and
+   * the PostHog `sync_completed` event.
+   */
+  unmatchedDestinationCounts: {
+    /** Unmatched dest records whose match-key field is populated (visited count). */
+    withMatchKey: number;
+    /** Unmatched dest records whose match-key field is empty/null/whitespace (visited count). */
+    withoutMatchKey: number;
+    /** Records actually written by Pass 3 — proxy for "flipped to the archived value." */
+    archived: number;
+    /**
+     * Records updated in Pass 2 when the table mapping has any `when: 'matched'`
+     * or `when: 'always'` constant — proxy for "flipped to the unarchived value."
+     * Upper bound, not exact (a record already at the constant value still counts).
+     */
+    unarchived: number;
+  };
 }
 
 /**
@@ -865,6 +888,13 @@ export class SyncService {
     // for inputs that are already v2.
     const tableMapping = ensureTableMappingV2(inputTableMapping);
 
+    // Used by Pass 2 to estimate "unarchived" — records that received any
+    // matched-bucket constant write. Upper bound, not exact: a record already
+    // at the constant value still counts.
+    const hasMatchedBucketConstant = tableMapping.columnMappings.some(
+      (m) => m.source.kind === 'constant' && ((m.when ?? 'matched') === 'matched' || m.when === 'always'),
+    );
+
     WSLogger.info({
       source: 'SyncService.syncTableMapping',
       message: 'Entering executor',
@@ -883,6 +913,7 @@ export class SyncService {
       updatedPaths: [],
       errors: [],
       warnings: [],
+      unmatchedDestinationCounts: { withMatchKey: 0, withoutMatchKey: 0, archived: 0, unarchived: 0 },
     };
 
     // 1. Fetch source and destination DataFolders with their schemas
@@ -1211,6 +1242,9 @@ export class SyncService {
 
             result.recordsUpdated++;
             result.updatedPaths.push(destinationPath);
+            if (hasMatchedBucketConstant) {
+              result.unmatchedDestinationCounts.unarchived++;
+            }
           }
 
           const content = serializeRecord(transformedFields);
@@ -1226,6 +1260,130 @@ export class SyncService {
       sourceCursor = page.nextCursor;
       batchCounter++;
     } while (sourceCursor);
+
+    // ===========================================================================================
+    // Pass 3: Apply `unmatchedDestinationPolicy` to records with no source counterpart.
+    //
+    // Skipped entirely when:
+    //   - phase !== 'DATA' (constants are DATA-only; Pass 3 would be a no-op in FK phase),
+    //   - `onlySourceFilePath` is set (single-record scope is incompatible with a
+    //     dest-folder-wide enumeration — `syncOneRecord` never runs Pass 3),
+    //   - `recordMatching` is unset (no way to classify dest records),
+    //   - `unmatchedDestinationPolicy` is absent or all-`ignore`,
+    //   - the match-key column is missing from the destination schema
+    //     (defensive: rather than crash, log a warning and bail).
+    // ===========================================================================================
+    if (
+      phase === 'DATA' &&
+      onlySourceFilePath === undefined &&
+      tableMapping.recordMatching !== undefined &&
+      tableMapping.unmatchedDestinationPolicy !== undefined &&
+      (tableMapping.unmatchedDestinationPolicy.withMatchKey === 'apply' ||
+        tableMapping.unmatchedDestinationPolicy.withoutMatchKey === 'apply')
+    ) {
+      const matchColPath = tableMapping.recordMatching.destinationColumnId;
+      const matchSchema = destinationTableSpec ? getSchemaAtPath(destinationTableSpec.schema, matchColPath) : undefined;
+      if (matchSchema === undefined) {
+        WSLogger.warn({
+          source: 'SyncService.syncTableMapping',
+          message: 'Pass 3 skipped: match-key column missing from destination schema',
+          syncId,
+          destinationColumnId: matchColPath,
+        });
+      } else {
+        // Defensive: drop any constant mapping targeting the match-key column.
+        // Save-time validation rejects this combo; runtime defense covers
+        // manually-edited rows from sneaking past the schema and overwriting
+        // the only identifier classifying a record as belonging to this sync.
+        const mappingsForPass3: ColumnMappingV2[] = [];
+        for (const m of tableMapping.columnMappings) {
+          if (m.source.kind === 'constant' && m.destinationColumnId === matchColPath) {
+            WSLogger.warn({
+              source: 'SyncService.syncTableMapping',
+              message: 'Pass 3: omitting constant mapping that targets the match-key column',
+              syncId,
+              destinationColumnId: matchColPath,
+            });
+            continue;
+          }
+          mappingsForPass3.push(m);
+        }
+
+        // Hydrate the source-side match-key set for O(1) classification. Uses
+        // the unique (syncId, dataFolderId) index on SyncMatchKeys.
+        const sourceMatchKeyRows = await this.db.client.syncMatchKeys.findMany({
+          where: { syncId, dataFolderId: tableMapping.sourceDataFolderId },
+          select: { matchId: true },
+        });
+        const sourceMatchKeySet = new Set(sourceMatchKeyRows.map((r) => r.matchId));
+
+        WSLogger.info({
+          source: 'SyncService.syncTableMapping',
+          message: 'Pass 3: starting unmatched-destination write',
+          syncId,
+          sourceMatchKeyCount: sourceMatchKeySet.size,
+          destinationRecordCount: destinationRecordsByPath.size,
+          policy: tableMapping.unmatchedDestinationPolicy,
+        });
+
+        const policy = tableMapping.unmatchedDestinationPolicy;
+        for (const [destPath, destRecord] of destinationRecordsByPath) {
+          const classification = classifyDestinationRecord(destRecord, sourceMatchKeySet, matchColPath);
+          if (classification === 'matched') {
+            continue;
+          }
+
+          if (classification === 'unmatchedWithMatchKey') {
+            result.unmatchedDestinationCounts.withMatchKey++;
+            if (policy.withMatchKey !== 'apply') continue;
+          } else {
+            result.unmatchedDestinationCounts.withoutMatchKey++;
+            if (policy.withoutMatchKey !== 'apply') continue;
+          }
+
+          try {
+            const transformResult = await applyColumnMappings({
+              bucket: 'unmatched',
+              sourceRecord: null,
+              baseFields: destRecord.fields,
+              mappings: mappingsForPass3,
+              sourceTableSpec,
+              destinationTableSpec,
+              lookupTools,
+              phase: 'DATA',
+              syncContext: {
+                sourceService: sourceFolder.connectorService as Service,
+                destinationService: destinationFolder.connectorService as Service,
+              },
+            });
+            for (const w of transformResult.warnings) {
+              result.warnings.push({ sourceRemoteId: destRecord.id, warning: w });
+            }
+            if (isEqual(transformResult.fields, destRecord.fields)) {
+              // No effective change — the unmatched rules produced the same
+              // bytes already on disk. Skip the write (mirrors Pass 2).
+              continue;
+            }
+            result.unmatchedDestinationCounts.archived++;
+            result.recordsUpdated++;
+            result.updatedPaths.push(destPath);
+            filesToWrite.push({ path: destPath, content: serializeRecord(transformResult.fields) });
+          } catch (error) {
+            result.errors.push({
+              sourceRemoteId: destRecord.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        WSLogger.info({
+          source: 'SyncService.syncTableMapping',
+          message: 'Pass 3: completed',
+          syncId,
+          counts: result.unmatchedDestinationCounts,
+        });
+      }
+    }
 
     // 7. Backfill SyncRemoteIdMapping for newly created records with their file paths
     // This is needed so the FOREIGN_KEY_MAPPING phase can resolve FK references to new records
@@ -1259,6 +1417,11 @@ export class SyncService {
         }
         result.recordsCreated = 0;
         result.recordsUpdated = 0;
+        // Pass 3 writes were rolled back too — zero the archive/unarchive counts.
+        // The classification visited-counts (withMatchKey, withoutMatchKey) stay
+        // since the work happened even if no file landed.
+        result.unmatchedDestinationCounts.archived = 0;
+        result.unmatchedDestinationCounts.unarchived = 0;
         return result;
       }
     }

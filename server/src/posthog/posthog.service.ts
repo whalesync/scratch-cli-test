@@ -318,6 +318,11 @@ export class PostHogService implements OnModuleDestroy {
       recordsUpdated: number;
       tablesProcessed: number;
       failedTableCount: number;
+      /** Per-run unmatched-destination (Pass 3) counts, summed across tables. */
+      unmatchedWithKeyCount?: number;
+      unmatchedWithoutKeyCount?: number;
+      archiveWritesCount?: number;
+      unarchiveWritesCount?: number;
     },
   ): void {
     this.captureEvent(PostHogEventName.SYNC_COMPLETED, actor, properties);

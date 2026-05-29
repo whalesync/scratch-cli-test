@@ -825,17 +825,37 @@ UI copy can still use the word "archive" — that names the _action_ (`archived:
 
 - **Verified (T21 + T3 + T6):** root `yarn build` clean across all 14 packages; root `yarn lint` and `server/` `yarn lint-strict` clean; `yarn jest src/sync src/sync-execution src/worker` → 575 tests pass (46 v1 transformRecordAsync + 22 new sync-execution + 507 other sync/worker). Integration tests not run (require local DB).
 
+- **T8 (Lane B) — `classifyDestinationRecord` helper** (`server/src/sync/sync-execution.ts`)
+  - Pure helper returning `'matched' | 'unmatchedWithMatchKey' | 'unmatchedWithoutMatchKey'` against a `Set<string>` of source match-keys built from `SyncMatchKeys`. Normalization mirrors `insertMatchKeys` exactly — only `string`/`number` field values count, then `String()`-coerce + trim. Anything else (null, undefined, boolean, array, object, whitespace-only) classifies as `unmatchedWithoutMatchKey`, preventing accidental matches via a coerced `"[object Object]"`.
+  - 10 new unit tests (`server/src/sync/__tests__/sync-execution.spec.ts`) cover the matched / unmatchedWithMatchKey / unmatchedWithoutMatchKey buckets, including nested match-key paths via lodash `get`.
+
+- **T7 (Lane B) — Pass 3 unmatched-destination write** (`server/src/sync/sync.service.ts`)
+  - New Pass 3 block in `syncTableMapping`, positioned between the Pass 2 source loop and the SyncRemoteIdMapping backfill. Appends to the same `filesToWrite` array; the existing single `commitFilesToBranch` at the end commits Pass 2 + Pass 3 atomically.
+  - **Gating** — Pass 3 runs only when ALL hold: `phase === 'DATA'`, `onlySourceFilePath === undefined` (`syncOneRecord` skips Pass 3), `recordMatching` is configured, `unmatchedDestinationPolicy` exists and has any `'apply'` value, AND the match-key column exists in the destination schema (checked via `getSchemaAtPath`). When the schema check fails, a WSLogger warning fires and Pass 3 is skipped — never crashes.
+  - **Source match-key set** hydrated via a single `SELECT matchId FROM SyncMatchKeys WHERE syncId=? AND dataFolderId=<source>` (the existing unique index), materialized into a `Set<string>` for O(1) classification.
+  - **Per-record loop** — walk `destinationRecordsByPath`, classify via `classifyDestinationRecord`. `matched` records skip (Pass 2 handled them). `unmatchedWithMatchKey` / `unmatchedWithoutMatchKey` increment the bucket count, then bail unless the corresponding policy field is `'apply'`. If apply, call `applyColumnMappings({ bucket: 'unmatched', sourceRecord: null, baseFields: destRecord.fields, mappings: mappingsForPass3, ... })`, inherit the `isEqual` no-op skip, and on actual change push to `filesToWrite` + bump `recordsUpdated` and `unmatchedDestinationCounts.archived`.
+  - **Defensive runtime** — before the loop, any `{ source.kind: 'constant' }` mapping targeting the match-key column is stripped from the mapping list with a WSLogger warning. Save-time validation rejects this combo (D10/OV8); the runtime defense handles manually-edited rows.
+  - **Counts surfaced via `SyncTableMappingResult.unmatchedDestinationCounts: { withMatchKey, withoutMatchKey, archived, unarchived }`.** The `unarchived` counter is a Pass 2 proxy: incremented alongside every `recordsUpdated++` when the table has any `when: 'matched'`/`'always'` constant mapping. Upper bound, not exact — flagged in the field doc. On commit failure, `archived` and `unarchived` are zeroed since the batch never landed.
+
+- **T14 (Lane B) — Audit + metrics** (`server/src/worker/jobs/job-definitions/sync-data-folders.job.ts`, `server/src/metrics/custom-metrics.ts`, `server/src/posthog/posthog.service.ts`, `server/src/worker/job-handler.service.ts`, `server/src/worker/workers.module.ts`)
+  - **`CustomMetric` enum** gains three event-count metrics with `NO_DIMENSION`: `SYNC_UNMATCHED_WITH_KEY_COUNT`, `SYNC_UNMATCHED_WITHOUT_KEY_COUNT`, `SYNC_ARCHIVE_WRITES_TOTAL`. Emitted once per sync-data-folders run via `metricsService.logValue`, summed across table mappings.
+  - **`PostHogService.trackSyncCompleted`** signature gains four optional properties: `unmatchedWithKeyCount`, `unmatchedWithoutKeyCount`, `archiveWritesCount`, `unarchiveWritesCount`. The job populates them from the aggregated totals.
+  - **Audit log** — a single `auditLogEvent` (`eventType: 'update'`) is written per sync run when Pass 3 visited any unmatched-destination record. Message reads `Sync "<name>" applied unmatched-destination rules: N archived, M unarchived`. Context captures the four totals plus `mappingsSnapshotHash` — a SHA-256 over the v2 mappings JSON — so ops can correlate "what config was active when this archive happened" weeks later even if the sync has been edited since. AuditLog write failure is caught and warn-logged (never blocks the sync run).
+  - **Wiring** — `JobHandlerService` and `SyncDataFoldersJobHandler` constructors take `AuditLogService`; `workers.module.ts` imports `AuditLogModule`. The broader "wire AuditLogService into every sync run" task is unchanged (still a separate P2 follow-up).
+  - **WSLogger** — Pass 3 emits info traces at start and end (with policy + counts); the worker job's final "Completed sync data folders job" log now includes `unmatchedDestinationTotals`.
+
+- **Verified (T7 + T8 + T14):** root `yarn build` clean across all 14 packages; root `yarn lint` (server `--max-warnings=0`) clean; `yarn jest src/sync src/worker src/metrics src/posthog` → 601 tests pass (32 sync-execution unit + 569 other sync/worker/metrics/posthog). Pass 3 itself has no end-to-end test yet — the existing `classifyDestinationRecord` + `applyColumnMappings({ bucket: 'unmatched' })` unit suites are the proxy until T16's DB-backed integration spec lands.
+
 ### Next up
 
-- **Lane B (remaining)** — T7 (Pass 3 unmatched-destination write), T8 (`classifyDestinationRecord` helper), T14 (Pass 3 audit + metrics). With `applyColumnMappings({ bucket: 'unmatched', ... })` in place, T7's Pass 3 loop just needs to walk `destinationRecordsByPath`, classify via `classifyDestinationRecord`, and call `applyColumnMappings` on the unmatched-applicable rules.
 - **Lane C (backfill + writer)** — T5 (sentinel-v1 + v2-writer in `createSync`/`updateSync`), T9 (Phase 3 backfill descriptor in `code-migrations.controller.ts` with compare-and-set on `(id, updatedAt, mappingsV2 IS NULL)`), T10 (Phase 2 server-side guard rejecting v1-shape writes once `mappingsV2 IS NOT NULL`).
 - **Lane D (client)** — T11 (sync-edit UI: stacked layout, accordion, policy pickers, ConfirmDialog), T12 (v1 JSON paste auto-upgrade flow).
-- **Lane E (tests)** — T15, T16 (v1-compat regression specs in `server/test/integration/sync-mapping-v1-compat.spec.ts`), T20 (CI `sync_v1_compat` job).
-- **Lane F (remaining)** — T17 (`server/src/sync/README.md` Pass 3 + v2 examples), T18 (Posthog/CustomMetrics counters), T22 (`SyncExceptionFilter`), T23 (README refresh follow-up).
+- **Lane E (tests)** — T15, T16 (v1-compat regression specs in `server/test/integration/sync-mapping-v1-compat.spec.ts`), T20 (CI `sync_v1_compat` job). Now also covers an end-to-end Pass 3 integration spec exercising the archive worked example from DEV-10008.
+- **Lane F (remaining)** — T17 (`server/src/sync/README.md` Pass 3 + v2 examples), T22 (`SyncExceptionFilter`), T23 (README refresh follow-up). T18 (PostHog/CustomMetrics counters) landed with T14.
 
 ### Lane status
 
 - **Lane A** (T1, T2, T4, T13) — **complete**. T19 (Lane F) landed early with T4.
-- **Lane B** — partially landed: T3, T6, T21 complete (executor consumes v2 internally; v1 syncs continue to behave identically). T7, T8, T14 remain (Pass 3 unmatched-destination handling).
+- **Lane B** (T3, T6, T7, T8, T14, T21) — **complete**. Executor runs Pass 3 against the v2 mappings; v1 syncs remain byte-identical because transformed v1 has no `unmatchedDestinationPolicy` and so Pass 3 is gated off.
 - **Lanes C / D / E** — unblocked; can land in parallel.
-- **Lane F** — partially landed (T19 with T4); T17, T18, T22, T23 remain.
+- **Lane F** — T19 + T18 landed; T17, T22, T23 remain.

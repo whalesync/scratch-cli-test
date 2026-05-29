@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AssetModule } from 'src/asset/asset.module';
+import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
 import { ExperimentsModule } from 'src/experiments/experiments.module';
@@ -37,6 +38,7 @@ import { WorkersController } from './test/workers.controller';
     PosthogModule,
     MetricsModule,
     ExperimentsModule,
+    AuditLogModule,
   ],
   controllers: [WorkersController],
   providers: [WorkerPoolService, QueueService, QueueTestService, JobHandlerService],
