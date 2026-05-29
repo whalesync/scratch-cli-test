@@ -60,12 +60,12 @@ export type TableMapping = TableMappingV1;
 export type ColumnMapping = ColumnMappingV1;
 
 // ============================================================================
-// Sync Mapping Types — V2 (orphan-aware shape)
+// Sync Mapping Types — V2 (unmatched-aware shape)
 // ============================================================================
 //
 // V2 lifts `when` to the top-level `ColumnMapping` and makes `source` a
 // discriminated union so a single destination column can carry distinct rules
-// for the matched bucket and the orphan bucket. Adds per-table policies
+// for the matched bucket and the unmatched bucket. Adds per-table policies
 // describing what to do with unmatched source / destination records.
 
 export interface SyncMappingV2 {
@@ -104,7 +104,7 @@ export interface TableMappingV2 {
    * What to do with destination records that have no source match —
    * subdivided by whether the destination's match-key field is populated.
    * Defaults to `{ withMatchKey: 'ignore', withoutMatchKey: 'ignore' }`
-   * (today's behavior — orphans are not visited).
+   * (today's behavior — unmatched destination records are not visited).
    */
   unmatchedDestinationPolicy?: UnmatchedDestinationPolicy;
 }
@@ -118,7 +118,7 @@ export interface ColumnMappingV2 {
    *
    * Structural constraint (enforced by zod refinement at save time):
    *   `source.kind === 'column'` with `when` of 'unmatched' or 'always' is
-   *   illegal — there is no source value to copy for an orphan record.
+   *   illegal — there is no source value to copy for an unmatched destination record.
    */
   when?: ColumnMappingWhen;
 
@@ -128,7 +128,7 @@ export interface ColumnMappingV2 {
 
 /**
  * - 'matched'   — fires when the source record exists and is paired with this destination.
- * - 'unmatched' — fires when the destination has no source counterpart this run (orphan).
+ * - 'unmatched' — fires when the destination has no source counterpart this run.
  * - 'always'    — fires for both buckets.
  */
 export type ColumnMappingWhen = 'matched' | 'unmatched' | 'always';
@@ -213,9 +213,9 @@ export class SyncMappingVersionError extends Error {
  *   - the editor's "open v1 sync" flow,
  *   - the v1 → v2 backfill descriptor.
  *
- * Transformed v1 mappings have no orphan policies and every column mapping
- * defaults to `when: 'matched'`, so Pass 3 is a no-op and v1 syncs behave
- * exactly as before.
+ * Transformed v1 mappings have no unmatched-destination policy and every
+ * column mapping defaults to `when: 'matched'`, so Pass 3 is a no-op and v1
+ * syncs behave exactly as before.
  */
 export function transformV1ToV2(mapping: SyncMappingV1): SyncMappingV2 {
   if (mapping === null || typeof mapping !== 'object') {

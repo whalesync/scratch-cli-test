@@ -208,7 +208,7 @@ function mappingAppliesToBucket(mapping: ColumnMappingV2, bucket: ColumnMappingW
 export interface ApplyColumnMappingsArgs {
   /** Which bucket is being processed. */
   bucket: ColumnMappingWhen;
-  /** Source record for the matched bucket; `null` for orphan/unmatched. */
+  /** Source record for the matched bucket; `null` for the unmatched bucket. */
   sourceRecord: SyncRecord | null;
   /**
    * Existing destination fields. When defined the result is a structural-clone

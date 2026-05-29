@@ -119,9 +119,9 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
     }
 
     // Executor consumes v2 internally. Transform v1 mappings at the entry —
-    // a transformed v1 has no orphan policies and every column mapping defaults
-    // to `when: 'matched'`, so Pass 3 (when it lands with T7) is a no-op for
-    // v1 syncs.
+    // a transformed v1 has no unmatched-destination policy and every column
+    // mapping defaults to `when: 'matched'`, so Pass 3 (the unmatched-destination
+    // pass, when it lands with TODO(DEV-10008)) is a no-op for v1 syncs.
     const v2Mappings = sync.mappings.version === 1 ? transformV1ToV2(sync.mappings) : sync.mappings;
     const tableMappings = v2Mappings.tableMappings;
 

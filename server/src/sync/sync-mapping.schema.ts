@@ -200,7 +200,7 @@ export const syncMappingV1Schema = z
  */
 export const syncMappingSchema = syncMappingV1Schema;
 
-// -- V2 column / table / sync mapping schemas (orphan-aware shape) --
+// -- V2 column / table / sync mapping schemas (unmatched-aware shape) --
 //
 // V2 lifts `when` to the top-level column mapping and makes `source` a
 // discriminated union. A destination column may carry multiple rules, one
@@ -253,13 +253,13 @@ const columnMappingV2Schema = z
           path: ['source'],
         });
       }
-      // Refinement (a): a column-sourced mapping cannot fire on orphan
-      // buckets — there is no source value to copy when there is no source.
+      // Refinement (a): a column-sourced mapping cannot fire on the unmatched
+      // bucket — there is no source value to copy when there is no source.
       if (data.when === 'unmatched' || data.when === 'always') {
         ctx.addIssue({
           code: 'custom',
           message:
-            'A column-sourced mapping is only legal with when="matched" (or omitted). To force a value on orphan records, use a constant source.',
+            'A column-sourced mapping is only legal with when="matched" (or omitted). To force a value on unmatched destination records, use a constant source.',
           path: ['when'],
         });
       }

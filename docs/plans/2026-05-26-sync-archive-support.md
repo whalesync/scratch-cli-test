@@ -72,12 +72,12 @@ export interface ColumnMapping {
   /**
    * Which bucket the mapping applies to. Defaults to 'matched'.
    * - 'matched'   — fires when the source record exists and is paired with this destination.
-   * - 'unmatched' — fires when the destination has no source counterpart this run (orphan).
+   * - 'unmatched' — fires when the destination has no source counterpart this run.
    * - 'always'    — fires for both buckets.
    *
    * Structural constraint enforced by zod refinement:
    *   `source.kind === 'column'` with `when` of 'unmatched' or 'always' is illegal —
-   *   there is no source value to copy for an orphan record.
+   *   there is no source value to copy for an unmatched destination record.
    */
   when?: "matched" | "unmatched" | "always";
 
@@ -118,7 +118,7 @@ For the new optional fields, defaults match today's executor:
 
 - `unmatchedSourcePolicy` defaults to `{ type: 'create' }`.
 - `unmatchedDestinationPolicy` defaults to `{ withMatchKey: 'ignore', withoutMatchKey: 'ignore' }`.
-- `ColumnMapping.when` defaults to `'matched'` — matches v1 semantics for any mapping that doesn't explicitly opt into orphan handling.
+- `ColumnMapping.when` defaults to `'matched'` — matches v1 semantics for any mapping that doesn't explicitly opt into unmatched-destination handling.
 
 After migration (see next section), existing syncs work identically.
 
@@ -241,7 +241,7 @@ A `SyncExceptionFilter` (extending NestJS `BaseExceptionFilter`) maps both to HT
 }
 ```
 
-Reading the config tells you exactly what the sync does in each case: matched records get `archived: false`, claimed orphans get `archived: true`, hand-authored content is left alone.
+Reading the config tells you exactly what the sync does in each case: matched records get `archived: false`, claimed unmatched records get `archived: true`, hand-authored content is left alone.
 
 `when: 'always'` is also available for fields that should be written on every record the sync touches regardless of bucket — e.g., a `lastSyncRunId` constant on every visited record.
 
@@ -249,7 +249,7 @@ Reading the config tells you exactly what the sync does in each case: matched re
 
 A Webflow collection often mixes synced records with hand-authored content. Both fall into "in destination, not in source" — but they have very different semantics:
 
-- **With match key**: the destination's match-key field is populated, indicating the sync (or a previous sync) wrote a value there. The source counterpart has since disappeared. These are clear orphans of this sync.
+- **With match key**: the destination's match-key field is populated, indicating the sync (or a previous sync) wrote a value there. The source counterpart has since disappeared. These are clearly records this sync previously wrote.
 - **Without match key**: the match-key field is empty/null. The record was never managed by this sync — hand-authored, imported through another channel, or pre-existed the sync.
 
 Subdividing makes the choice explicit in config and lets users handle both real-world patterns:
@@ -265,7 +265,7 @@ Subdividing makes the choice explicit in config and lets users handle both real-
 The persisted shape's invariants — all enforced at save time, most as zod refinements:
 
 - **One mapping per `(destinationColumnId, when)` pair.** Two mappings sharing the same column and the same `when` value collide. Save fails with a clear error citing the colliding entries. Two mappings sharing the same column but with different `when` values are legal and expected (the archive case is the canonical example).
-- **`source.kind === 'column'` is only legal with `when: 'matched'` (or `when` omitted, which defaults to `'matched'`).** Structural — `when: 'unmatched'` or `when: 'always'` with a column source is illegal because there is no source value to copy for an orphan record.
+- **`source.kind === 'column'` is only legal with `when: 'matched'` (or `when` omitted, which defaults to `'matched'`).** Structural — `when: 'unmatched'` or `when: 'always'` with a column source is illegal because there is no source value to copy for an unmatched destination record.
 - **`source.kind === 'constant'` cannot write to the `recordMatching.destinationColumnId`** regardless of `when`. The match-key column identifies the record; overwriting it from a constant rule would destroy the only identifier that classifies it as belonging to this sync. The only legitimate match-key write path is a `{ kind: 'column', columnId: <matchSrc> }` mapping during new-record creation in Pass 2.
 - **`constant.value` types match the destination column type.** The schema validator checks `typeof value` against the dest column's type. For v1 the value union is `string | number | boolean | null`.
 - Existing data is forward-compatible: today's `{ sourceColumnId, destinationColumnId, transformer? }` maps cleanly to `{ destinationColumnId, source: { kind: 'column', columnId: sourceColumnId, transformer? } }` with `when` defaulting to `'matched'`. No existing destination is covered by two mappings, so the new invariant holds for the entire installed base.
@@ -279,7 +279,7 @@ Today's rule: destination fields not covered by `columnMappings` are preserved.
 Updated rule: destination fields not covered by any mapping **for the bucket being processed** are preserved.
 
 - For matched records in Pass 2: "covered" means any mapping whose `when` is `'matched'` (or undefined → defaults to matched) or `'always'`.
-- For orphan records visited by Pass 3: "covered" means `when: 'unmatched'` or `when: 'always'`.
+- For unmatched destination records visited by Pass 3: "covered" means `when: 'unmatched'` or `when: 'always'`.
 
 The match-key column is never overwritten by a constant mapping — enforced at save time, defended at runtime by Pass 3 if a manually-edited DB row sneaks one through (omit + warn, never crash).
 
@@ -290,7 +290,7 @@ The match-key column is never overwritten by a constant mapping — enforced at 
 The executor gains one new pass and absorbs three pure helpers extracted into `server/src/sync/sync-execution.ts`:
 
 - **`transformV1ToV2(mapping)`** — pure shape transform. Imported from `packages/shared-types/src/sync-mapping.ts` by the executor (entry point), the editor (open-v1 flow), and the backfill descriptor.
-- **`classifyOrphan(destRecord, sourceMatchKeySet, matchCol)`** — returns `'matched' | 'withMatchKey' | 'withoutMatchKey'`. Empty / null / whitespace-only match-key values classify as `withoutMatchKey`. Non-string, non-number match-key values classify as `withoutMatchKey`.
+- **`classifyDestinationRecord(destRecord, sourceMatchKeySet, matchCol)`** — returns `'matched' | 'unmatchedWithMatchKey' | 'unmatchedWithoutMatchKey'`. Empty / null / whitespace-only match-key values classify as `unmatchedWithoutMatchKey`. Non-string, non-number match-key values classify as `unmatchedWithoutMatchKey`.
 - **`applyColumnMappings(bucket, sourceFields | null, destFields, mappings, ...)`** — filters mappings to the bucket-applicable subset, dispatches `kind: 'column'` vs `kind: 'constant'`, returns merged fields. `transformer-pipeline.ts` stays bucket-agnostic; the executor pre-filters.
 
 The flow inside `syncTableMapping`:
@@ -299,7 +299,7 @@ The flow inside `syncTableMapping`:
 
 **Pass 2 — source-driven write (modified).** Iterate source records. For each matched record call `applyColumnMappings({ bucket: 'matched' }, sourceFields, destFields, mappings)` and write to the existing destination file. For each unmatched-source record, create a new destination file via the existing `createScratchPendingPublishId` path (skipped if `unmatchedSourcePolicy.type === 'ignore'`). Pre-existing batch-write error handling (`sync.service.ts:1146-1165`) is unchanged. The `isEqual` no-op skip at line 1108-1112 is inherited.
 
-**Pass 3 — destination-orphan write (NEW).** Gated by `unmatchedDestinationPolicy` having any `'apply'` value AND `recordMatching` being configured AND `onlySourceFilePath` NOT being set (the `syncOneRecord` path skips Pass 3 entirely — single-record-scope is incompatible with a dest-folder-wide enumeration). Pseudocode:
+**Pass 3 — unmatched-destination write (NEW).** Gated by `unmatchedDestinationPolicy` having any `'apply'` value AND `recordMatching` being configured AND `onlySourceFilePath` NOT being set (the `syncOneRecord` path skips Pass 3 entirely — single-record-scope is incompatible with a dest-folder-wide enumeration). Pseudocode:
 
 ```
 sourceMatchKeySet := SELECT matchId
@@ -309,13 +309,13 @@ sourceMatchKeySet := SELECT matchId
 
 for each (path, record) in destinationRecordsByPath:
     destKey := record.fields[recordMatching.destinationColumnId]
-    classify via classifyOrphan(destKey, sourceMatchKeySet, …):
-        matched           → SKIP (handled by Pass 2)
-        withMatchKey      → if policy.withMatchKey === 'apply':
-                              applyColumnMappings({ bucket: 'unmatched' }, null, record.fields, mappings)
-                              omit + warn if a rule attempts to write the match-key column
-                              accumulate into filesToWrite (inherits isEqual no-op skip)
-        withoutMatchKey   → same as withMatchKey, gated by policy.withoutMatchKey
+    classify via classifyDestinationRecord(destKey, sourceMatchKeySet, …):
+        matched                  → SKIP (handled by Pass 2)
+        unmatchedWithMatchKey    → if policy.withMatchKey === 'apply':
+                                     applyColumnMappings({ bucket: 'unmatched' }, null, record.fields, mappings)
+                                     omit + warn if a rule attempts to write the match-key column
+                                     accumulate into filesToWrite (inherits isEqual no-op skip)
+        unmatchedWithoutMatchKey → same as unmatchedWithMatchKey, gated by policy.withoutMatchKey
 
 commit batch via the same commitFilesToBranch error-handling pattern as Pass 2
 ```
@@ -328,7 +328,7 @@ commit batch via the same commitFilesToBranch error-handling pattern as Pass 2
 **Audit + observability:**
 
 - One `AuditLogEntry` per sync run with summary counts: `{ archived, unarchived, withMatchKey, withoutMatchKey }`. No per-record entries. Wires through `AuditLogService` per `server/CLAUDE.md`.
-- New metrics: `sync_orphan_with_key_count`, `sync_orphan_without_key_count`, `sync_archive_writes_total`, `backfill_sync_mapping_v1_remaining`, `backfill_sync_mapping_v2_transformed_total`, `sync_mapping_normalize_error_total`.
+- New metrics: `sync_unmatched_with_key_count`, `sync_unmatched_without_key_count`, `sync_archive_writes_total`, `backfill_sync_mapping_v1_remaining`, `backfill_sync_mapping_v2_transformed_total`, `sync_mapping_normalize_error_total`.
 - A SHA over the normalized v2 mappings is persisted on each sync run record (`mappings_snapshot_hash`) so ops can correlate "what config was active when this archive happened" weeks later.
 - `WSLogger.info` on every sync save logs the writer-flag value for postmortem traceability during the Phase 1 soak window.
 
@@ -336,25 +336,25 @@ commit batch via the same commitFilesToBranch error-handling pattern as Pass 2
 
 ### Sync-Edit UI
 
-The persisted shape stores multi-rule destination columns as multiple `ColumnMapping` entries. The editor groups them by `destinationColumnId` and renders **stacked** — matched-side on top, orphan-side indented below. On save the editor splits a multi-rule row into multiple entries with the appropriate `when` values; on load it groups them back. Persisted shape is normalized JSON; grouping is a presentation layer.
+The persisted shape stores multi-rule destination columns as multiple `ColumnMapping` entries. The editor groups them by `destinationColumnId` and renders **stacked** — matched-side on top, unmatched-side indented below. On save the editor splits a multi-rule row into multiple entries with the appropriate `when` values; on load it groups them back. Persisted shape is normalized JSON; grouping is a presentation layer.
 
 **Locked layout (UI-R4):**
 
 ```
 ┌── dest col: archived ────────────────────────────────────────────┐
-│  Matched    [ Constant ▾ ]  [ false        ]                    │
-│    on orphan:   [ Constant ▾ ]  [ true      ]  [×]             │
+│  Matched    [ Constant ▾ ]  [ false        ]                     │
+│    on unmatched:   [ Constant ▾ ]  [ true      ]  [×]            │
 └──────────────────────────────────────────────────────────────────┘
 
 Multi-rule overflow (3+ rules same dest col):
 ┌── dest col: archived ────────────────────────────────────────────┐
-│  Matched    [ Constant ▾ ]  [ false        ]                    │
-│    on orphan (with-key):    [ Constant ▾ ]  [ true   ]  [×]    │
-│    on orphan (without-key): [ Constant ▾ ]  [ stale  ]  [×]    │
+│  Matched    [ Constant ▾ ]  [ false        ]                     │
+│    on unmatched (with-key):    [ Constant ▾ ]  [ true   ]  [×]   │
+│    on unmatched (without-key): [ Constant ▾ ]  [ stale  ]  [×]   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-Implementation uses Mantine `<Stack>` with `sm` gap; orphan side indented via `padding-left: md`. Both rules stay visible at a glance — the matched/orphan coupling is the feature.
+Implementation uses Mantine `<Stack>` with `sm` gap; unmatched side indented via `padding-left: md`. Both rules stay visible at a glance — the matched/unmatched coupling is the feature.
 
 **Two new policy pickers**, placed in a **collapsed accordion at the bottom of the table-mapping form** labeled "Unmatched record handling — advanced" (`Text13Medium`). Defaults visible when expanded. Order inside the accordion: source policy first, destination policy second (matches the source-to-destination cognitive flow of the column mappings themselves).
 
@@ -372,7 +372,7 @@ Implementation uses Mantine `<Stack>` with `sm` gap; orphan side indented via `p
 
 **Destructive safeguard (`client/CLAUDE.md` mandates `ConfirmDialog` for destructive actions):** when a user toggles `withMatchKey` or `withoutMatchKey` from `ignore` to `apply` for the first time on a sync that has previously run, a `ConfirmDialog` (via `useConfirmDialog`) opens:
 
-- Title: _"Enable orphan record handling?"_
+- Title: _"Enable unmatched-destination handling?"_
 - Body: _"Saving with this setting means the next sync run will apply archive rules to {count} destination records that have no source counterpart. You can review and reject these changes in publish review before they go live."_
 - Confirm: "Enable" (`variant: 'primary'`); Cancel: "Keep ignore."
 - One-time per setting flip per sync (lifetime). Count is computed at save time from the already-loaded `destinationRecordsByPath` — no new server endpoint needed.
@@ -390,7 +390,7 @@ Implementation uses Mantine `<Stack>` with `sm` gap; orphan side indented via `p
 - `[×]`: `aria-label="Remove mapping for column {destinationColumnId}"`.
 - ConfirmDialog: title becomes `aria-labelledby`.
 
-The implementer verifies `var(--fg-tertiary)` meets WCAG AA (4.5:1) on the form panel background; falls back to `var(--fg-secondary)` for the matched/orphan sub-labels if not.
+The implementer verifies `var(--fg-tertiary)` meets WCAG AA (4.5:1) on the form panel background; falls back to `var(--fg-secondary)` for the matched/unmatched sub-labels if not.
 
 ## Out of Scope for v1
 
@@ -428,7 +428,7 @@ This section is the audit trail for a HOLD-SCOPE CEO review. The plan body above
   }
   ```
 
-  Zod uses `discriminatedUnion('kind', ...)` on `source`. A schema refinement makes `{ source.kind: 'column' } + when: 'unmatched' | 'always' }` structurally illegal (no source value exists for an orphan to copy). The conflict matrix collapses to "same `(destinationColumnId, when)` pair collides."
+  Zod uses `discriminatedUnion('kind', ...)` on `source`. A schema refinement makes `{ source.kind: 'column' } + when: 'unmatched' | 'always' }` structurally illegal (no source value exists for an unmatched destination record to copy). The conflict matrix collapses to "same `(destinationColumnId, when)` pair collides."
 
 - **R2 — Tighten `constant.value` zod schema** for v1 to `z.union([z.string(), z.number(), z.boolean(), z.null()])`. Add arrays/objects later once their dest-column type checking is wired.
 
@@ -436,7 +436,7 @@ This section is the audit trail for a HOLD-SCOPE CEO review. The plan body above
 
 - **D3 — Single read choke point.** Add `SyncService.getSync()` / `SyncService.getMappings()` that always return v2 (normalized in memory). Update all six existing direct-cast consumers to route through it: `sync.service.ts:1188`, `sync-data-folders.job.ts`, `dev-tools.service.ts`, `workbook-repo.service.ts`, `whalesync-import.service.ts`, `cli-workbook.controller.ts`.
 
-- **D4 — In-memory orphan classification.** Pass 3 walks `destinationRecordsByPath` (already built in Pass 1 at `sync.service.ts:834`); for each record, computes the dest match-key value, classifies into `{ matched, withMatchKey, withoutMatchKey }` against the transformed source match-key Set. No new SQL query. Pass 3 is skipped entirely when `recordMatching` is unset OR `onlySourceFilePath` is set (the latter is the `syncOneRecord` path — see OV9).
+- **D4 — In-memory destination-record classification.** Pass 3 walks `destinationRecordsByPath` (already built in Pass 1 at `sync.service.ts:834`); for each record, computes the dest match-key value, classifies into `{ matched, unmatchedWithMatchKey, unmatchedWithoutMatchKey }` against the transformed source match-key Set. No new SQL query. Pass 3 is skipped entirely when `recordMatching` is unset OR `onlySourceFilePath` is set (the latter is the `syncOneRecord` path — see OV9).
 
 - **D6 + Q8 — Pre-filter at executor; extract helper.** Introduce `applyColumnMappings(bucket, sourceFields | null, destFields, mappings, ...)` and have the executor filter `mappings` to the bucket-applicable subset before calling it. `transformer-pipeline.ts` stays bucket-agnostic.
 
@@ -458,7 +458,7 @@ This section is the audit trail for a HOLD-SCOPE CEO review. The plan body above
 
 - **D11 — One AuditLog entry per sync run with summary counts**: `{ archived, unarchived, withMatchKey, withoutMatchKey }`. No per-record audit entries.
 
-- **O2 — Metrics**: `sync_orphan_with_key_count`, `sync_orphan_without_key_count`, `sync_archive_writes_total`, `backfill_sync_mapping_v1_remaining`, `backfill_sync_mapping_v2_transformed_total`, `sync_mapping_normalize_error_total`.
+- **O2 — Metrics**: `sync_unmatched_with_key_count`, `sync_unmatched_without_key_count`, `sync_archive_writes_total`, `backfill_sync_mapping_v1_remaining`, `backfill_sync_mapping_v2_transformed_total`, `sync_mapping_normalize_error_total`.
 
 - **O5 — Per-run mappings hash.** Persist a SHA over the normalized v2 mappings on the sync-run record so ops can correlate "what config was active when this archive happened."
 
@@ -468,7 +468,7 @@ This section is the audit trail for a HOLD-SCOPE CEO review. The plan body above
 
 - **UI-R2 — Inline help copy** for the `withMatchKey` and `withoutMatchKey` toggles: name the real-world intuition ("Synced records that lost their source — typically: archive them" / "Hand-authored or pre-existing records — typically: don't touch").
 
-- **UI-R3 — Per-row orphan affordance gating**: the "add orphan-side rule" affordance on a destination-column row only appears when `unmatchedDestinationPolicy` has any `apply` value.
+- **UI-R3 — Per-row unmatched-side affordance gating**: the "add unmatched-side rule" affordance on a destination-column row only appears when `unmatchedDestinationPolicy` has any `apply` value.
 
 - **I2 — Editor JSON paste**: v1 JSON paste auto-upgrades to v2 silently before save (matches the dual-version reader policy).
 
@@ -488,7 +488,7 @@ This section is the audit trail for a HOLD-SCOPE CEO review. The plan body above
 
 ## Follow-Ups Added During Review
 
-- **Wire `AuditLogService` into all sync runs (separate ticket, P2).** Pre-existing gap surfaced during review; server CLAUDE.md mandates audit logs for record-file mutations, but sync currently uses only PostHog. The orphan-pass scope (D11) addresses this for archive writes only. File as separate Linear ticket.
+- **Wire `AuditLogService` into all sync runs (separate ticket, P2).** Pre-existing gap surfaced during review; server CLAUDE.md mandates audit logs for record-file mutations, but sync currently uses only PostHog. The unmatched-destination-pass scope (D11) addresses this for archive writes only. File as separate Linear ticket.
 - **Schedule Phase 3 v1-removal ticket for ~6 weeks after Phase 2 sweep completes.** Without a calendar trigger, deferred cleanup stays forever.
 - **`dryRun: true` mode on `POST /syncs/:syncId/run` (P2).** Returns counts of what would archive / unarchive / create without writing. Real safety net before enabling archive policy on a CMS with existing data.
 
@@ -504,7 +504,7 @@ Audit trail for the eng review. The plan body above incorporates every gating de
 
 ### Code organization (inline)
 
-- **Extract pure helpers to `server/src/sync/sync-execution.ts`** — `transformV1ToV2`, `classifyOrphan`, `applyColumnMappings`. Pure, no Nest deps, easy to unit-test. Keeps `sync.service.ts` under 2400 lines and stops the god-class trajectory without committing to a full `SyncExecutorService` extraction.
+- **Extract pure helpers to `server/src/sync/sync-execution.ts`** — `transformV1ToV2`, `classifyDestinationRecord`, `applyColumnMappings`. Pure, no Nest deps, easy to unit-test. Keeps `sync.service.ts` under 2400 lines and stops the god-class trajectory without committing to a full `SyncExecutorService` extraction.
 
 - **`transformV1ToV2` lives in `packages/shared-types/src/sync-mapping.ts`** — colocated with the v1 + v2 shape definitions. Imported by both `SyncService.getSync()` (read path) and the backfill descriptor (write path).
 
@@ -563,27 +563,27 @@ Audit trail for the design review. The Sync-Edit UI section above incorporates e
 ### Gating decisions (locked)
 
 - **D2-design — ConfirmDialog on first ignore→apply transition.** When a user toggles `withMatchKey` or `withoutMatchKey` from `ignore` to `apply` for the first time on a sync that has previously run, surface a `ConfirmDialog` via `useConfirmDialog` (per `client/CLAUDE.md`):
-  - Title: `"Enable orphan record handling?"`
+  - Title: `"Enable unmatched-destination handling?"`
   - Body: `"Saving with this setting means the next sync run will apply archive rules to {count} destination records that have no source counterpart. You can review and reject these changes in publish review before they go live."`
   - Confirm: `"Enable"` (variant: `primary`); Cancel: `"Keep ignore"`
   - Count is computed at save time from the already-loaded `destinationRecordsByPath`. No new server endpoint needed.
   - One-time per setting flip per sync (lifetime). After confirm, no further dialogs.
 
-- **D3-design — UI-R4: matched + orphan slot layout is STACKED.** Per dest-column row, matched-side renders on top; orphan-side renders indented below. Multi-rule overflow (3+ rules same dest col) extends the same stacked pattern. Implemented via Mantine `<Stack>` with `sm` gap; orphan-side indented via `padding-left: md`.
+- **D3-design — UI-R4: matched + unmatched slot layout is STACKED.** Per dest-column row, matched-side renders on top; unmatched-side renders indented below. Multi-rule overflow (3+ rules same dest col) extends the same stacked pattern. Implemented via Mantine `<Stack>` with `sm` gap; unmatched-side indented via `padding-left: md`.
 
 ### Layout wireframe — locked
 
 ```
 ┌── dest col: archived ────────────────────────────────────────────┐
-│  Matched    [ Constant ▾ ]  [ false        ]                    │
-│    on orphan:   [ Constant ▾ ]  [ true      ]  [×]             │
+│  Matched    [ Constant ▾ ]  [ false        ]                     │
+│    on unmatched:   [ Constant ▾ ]  [ true      ]  [×]            │
 └──────────────────────────────────────────────────────────────────┘
 
 Multi-rule overflow:
 ┌── dest col: archived ────────────────────────────────────────────┐
-│  Matched    [ Constant ▾ ]  [ false        ]                    │
-│    on orphan (with-key):    [ Constant ▾ ]  [ true   ]  [×]    │
-│    on orphan (without-key): [ Constant ▾ ]  [ stale  ]  [×]    │
+│  Matched    [ Constant ▾ ]  [ false        ]                     │
+│    on unmatched (with-key):    [ Constant ▾ ]  [ true   ]  [×]   │
+│    on unmatched (without-key): [ Constant ▾ ]  [ stale  ]  [×]   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -591,7 +591,7 @@ Multi-rule overflow:
 
 - Inside the `Unmatched record handling — advanced` accordion: source policy first, destination policy second (matches the source-to-destination cognitive flow of the column mappings themselves).
 - Inside the destination policy block: `withMatchKey` toggle first (synced records that lost their source — the common case), `withoutMatchKey` toggle second (hand-authored — the edge case).
-- Per-row order: matched-side first (default case), orphan-side second (exception case).
+- Per-row order: matched-side first (default case), unmatched-side second (exception case).
 
 ### State coverage (inline — written into the plan)
 
@@ -601,7 +601,7 @@ Each affordance gets concrete user-visible copy:
 - **`unmatchedDestinationPolicy` toggles** — both default to `Ignore`. Inline help in `Text12Regular var(--fg-secondary)`:
   - `withMatchKey`: _"Records previously created by this sync whose source has been deleted. Typically: yes, archive them."_
   - `withoutMatchKey`: _"Records that were never managed by this sync (hand-authored or pre-existing). Typically: don't touch."_
-- **Orphan-side affordance** — `[+ Add unmatched rule]` link (`IconButtonGhost` + `PlusIcon` + `Text13Regular` label). **Hidden** (not disabled) when `unmatchedDestinationPolicy` is all-ignore for the table mapping.
+- **Unmatched-side affordance** — `[+ Add unmatched rule]` link (`IconButtonGhost` + `PlusIcon` + `Text13Regular` label). **Hidden** (not disabled) when `unmatchedDestinationPolicy` is all-ignore for the table mapping.
 - **Conflict-matrix violation** — per-row red left-border (`border-left: 2px solid var(--fg-error)`) + `Text12Regular` helper text below the row with the specific zod refinement message. Linked to the row via `aria-describedby`.
 - **v1 JSON paste** — auto-upgrades to v2 silently before save. Toast on success: `"Sync upgraded from v1 to v2 format"`. Malformed paste: inline `Text12Regular var(--fg-error)` below the textarea with the zod error path.
 - **Save success** — existing toast: `"Sync saved"`. No change.
@@ -612,22 +612,22 @@ Each affordance gets concrete user-visible copy:
 
 ### Component mapping (Pass 5)
 
-| Affordance                    | UI_SYSTEM.md component                                                  |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| Accordion shell               | Mantine `<Accordion>`; label `Text13Medium`                             |
-| Section labels in accordion   | `Text13Medium`                                                          |
-| Policy toggles                | Mantine `<SegmentedControl>` with `Apply` / `Ignore` options            |
-| Inline help copy              | `Text12Regular` with `var(--fg-secondary)`, italic                      |
-| Per-row dest column label     | `Text13Medium`                                                          |
-| Matched / orphan sub-labels   | `Text12Regular` with `var(--fg-tertiary)`                               |
-| Source col vs Constant picker | Mantine `<Select>`                                                      |
-| Constant editor               | Type-driven: `<TextInput>` / `<NumberInput>` / `<Switch>`               |
-| `[+ Add unmatched rule]`      | `IconButtonGhost` + `PlusIcon` via `StyledLucideIcon` + `Text13Regular` |
-| `[×]` remove                  | `IconButtonGhost` + `XIcon` via `StyledLucideIcon`                      |
-| Conflict helper text          | `Text12Regular` with `var(--fg-error)`                                  |
-| Conflict row accent           | `border-left: 2px solid var(--fg-error)` (functional, not decorative)   |
-| ConfirmDialog                 | `ConfirmDialog` via `useConfirmDialog`                                  |
-| Paste-success toast           | Existing project `notifications.show` pattern                           |
+| Affordance                     | UI_SYSTEM.md component                                                  |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| Accordion shell                | Mantine `<Accordion>`; label `Text13Medium`                             |
+| Section labels in accordion    | `Text13Medium`                                                          |
+| Policy toggles                 | Mantine `<SegmentedControl>` with `Apply` / `Ignore` options            |
+| Inline help copy               | `Text12Regular` with `var(--fg-secondary)`, italic                      |
+| Per-row dest column label      | `Text13Medium`                                                          |
+| Matched / unmatched sub-labels | `Text12Regular` with `var(--fg-tertiary)`                               |
+| Source col vs Constant picker  | Mantine `<Select>`                                                      |
+| Constant editor                | Type-driven: `<TextInput>` / `<NumberInput>` / `<Switch>`               |
+| `[+ Add unmatched rule]`       | `IconButtonGhost` + `PlusIcon` via `StyledLucideIcon` + `Text13Regular` |
+| `[×]` remove                   | `IconButtonGhost` + `XIcon` via `StyledLucideIcon`                      |
+| Conflict helper text           | `Text12Regular` with `var(--fg-error)`                                  |
+| Conflict row accent            | `border-left: 2px solid var(--fg-error)` (functional, not decorative)   |
+| ConfirmDialog                  | `ConfirmDialog` via `useConfirmDialog`                                  |
+| Paste-success toast            | Existing project `notifications.show` pattern                           |
 
 ### Responsive + accessibility
 
@@ -638,16 +638,16 @@ Each affordance gets concrete user-visible copy:
   - `[+ Add unmatched rule]`: `aria-label="Add unmatched-side rule to column {destinationColumnId}"`.
   - `[×]`: `aria-label="Remove mapping for column {destinationColumnId}"`.
   - ConfirmDialog: title becomes `aria-labelledby`.
-- **Contrast:** implementer verifies `var(--fg-tertiary)` meets WCAG AA (4.5:1) on the form panel background; falls back to `var(--fg-secondary)` for matched/orphan sub-labels if not.
+- **Contrast:** implementer verifies `var(--fg-tertiary)` meets WCAG AA (4.5:1) on the form panel background; falls back to `var(--fg-secondary)` for matched/unmatched sub-labels if not.
 
 ### Design-review tasks
 
-- **T24** — Wire ConfirmDialog with orphan count (D2-design).
+- **T24** — Wire ConfirmDialog with unmatched-destination count (D2-design).
 - **T25** — Implement stacked per-row layout (D3-design).
 - **T26** — Lock UI copy for accordion + toggles.
 - **T27** — Type-driven Constant editor.
 - **T28** — Conflict-matrix violation rendering.
-- **T29** — Orphan-side affordance with gating.
+- **T29** — Unmatched-side affordance with gating.
 - **T30** — v1 JSON paste auto-upgrade flow.
 - **T31** — Plan-body annotation: desktop-only declaration.
 - **T32** — Multi-rule overflow visual.
@@ -688,7 +688,7 @@ The trigger was the rollback story. With the in-place model, a buggy v2 transfor
 
 - **D2-storage — `SyncService.getMappings()` returns a discriminated union.** Returns `StoredSyncMapping = SyncMappingV1 | SyncMappingV2` reflecting the on-disk shape. Consumers narrow on `mapping.version`. Supersedes the original D3 wording in the CEO review (which said the read path always returns v2 normalized in memory).
 
-- **D3-storage — Executor transforms v1 → v2 in memory at its entry point.** `syncTableMapping` operates internally on v2 only. v1 mappings get `transformV1ToV2()` applied at the top of the executor, then run through the unified v2 codepath. Because transformed v1 has no orphan policies and all column mappings default to `when: 'matched'`, Pass 3 is a no-op for v1 syncs — preserving today's behavior with zero duplicated executor code.
+- **D3-storage — Executor transforms v1 → v2 in memory at its entry point.** `syncTableMapping` operates internally on v2 only. v1 mappings get `transformV1ToV2()` applied at the top of the executor, then run through the unified v2 codepath. Because transformed v1 has no unmatched-destination policies and all column mappings default to `when: 'matched'`, Pass 3 is a no-op for v1 syncs — preserving today's behavior with zero duplicated executor code.
 
 - **D4-storage — Sentinel empty-v1 on create.** `createSync()` writes `mappings: { version: 1, tableMappings: [] }` plus the real shape to `mappingsV2`. Pre-update clients reading only `mappings` see an empty sync — fail-safe rather than corrupt half-state. Supersedes the question of "can `mappings` be nullable" — it stays non-nullable; the sentinel handles new-sync creation.
 
@@ -707,7 +707,7 @@ The trigger was the rollback story. With the in-place model, a buggy v2 transfor
 ### Eng-review decisions that still hold
 
 - **D1-eng (ESLint choke point)** — still applies, with a tightened selector: block `prisma.sync.find*` outside `sync.service.ts` when the query selects `mappings` or `mappingsV2`.
-- **A1-eng (extract `sync-execution.ts`)** — unchanged. `transformV1ToV2`, `classifyOrphan`, `applyColumnMappings` still pure helpers in that module.
+- **A1-eng (extract `sync-execution.ts`)** — unchanged. `transformV1ToV2`, `classifyDestinationRecord`, `applyColumnMappings` still pure helpers in that module.
 - **`transformV1ToV2` colocation** — still in `packages/shared-types/src/sync-mapping.ts`. Now imported by three call sites: executor entry, editor open-v1 flow, backfill descriptor. NOT used by the read path.
 - **Typed exception → HTTP mapping** — unchanged.
 
@@ -740,6 +740,22 @@ Two acceptable patterns in source code:
 Avoid: bare references to "Phase 4", "Lane C", "T19", or similar — they only make sense if the reader has this doc open. Note that pre-existing `Phase N` references inside `sync.service.ts` and `sync-data-folders.job.ts` refer to the executor's FK-resolution phases (`DATA` vs `FOREIGN_KEY_MAPPING`); that's real domain terminology, not plan jargon.
 
 The same applies to the audit-trail prefixes in this doc itself (`D1-eng`, `OV4`, `UI-R3`, etc.). Those live here and in the review JSONL artifacts; they should never appear in shipped code comments.
+
+### Record-classification terminology
+
+The sync executor pairs source and destination records via a match key — peers in a matchmaking diagram, not generations of the same record. "Orphan" was used informally in early drafts of this plan; it has been retired because the parent/child framing it implies doesn't match how syncs actually work. Use the set-theoretic vocabulary below in code, tests, and any new doc prose:
+
+- **matched** — destination record paired with a source record this run.
+- **unmatchedWithMatchKey** — destination record whose match-key field is populated, but whose source counterpart isn't present this run. Typically: records this sync previously wrote whose source has since been deleted.
+- **unmatchedWithoutMatchKey** — destination record whose match-key field is empty/null/whitespace (or a non-string/number value). Typically: hand-authored or pre-existing records that this sync never managed.
+
+Canonical identifiers:
+
+- Classifier helper: `classifyDestinationRecord` (T8). Returns one of the three strings above.
+- Policy object: `UnmatchedDestinationPolicy` with fields `withMatchKey` and `withoutMatchKey`. The fields don't repeat the `unmatched` prefix because they live inside an already-named-`Unmatched` policy object — context disambiguates.
+- Pass 3 is the "unmatched-destination write" pass. Avoid "orphan-pass" / "orphan-driven."
+
+UI copy can still use the word "archive" — that names the _action_ (`archived: true`), which is a use-case framing for users, not internal taxonomy. The user-facing ConfirmDialog title is `"Enable unmatched-destination handling?"` because "enable orphan handling" reads as a moral judgement on the records, which they don't deserve.
 
 ## Implementation Progress
 
@@ -811,7 +827,7 @@ The same applies to the audit-trail prefixes in this doc itself (`D1-eng`, `OV4`
 
 ### Next up
 
-- **Lane B (remaining)** — T7 (Pass 3 orphan-driven write), T8 (`classifyOrphan` helper), T14 (Pass 3 audit + metrics). With `applyColumnMappings({ bucket: 'unmatched', ... })` in place, T7's Pass 3 loop just needs to walk `destinationRecordsByPath`, classify via `classifyOrphan`, and call `applyColumnMappings` on the orphan-applicable rules.
+- **Lane B (remaining)** — T7 (Pass 3 unmatched-destination write), T8 (`classifyDestinationRecord` helper), T14 (Pass 3 audit + metrics). With `applyColumnMappings({ bucket: 'unmatched', ... })` in place, T7's Pass 3 loop just needs to walk `destinationRecordsByPath`, classify via `classifyDestinationRecord`, and call `applyColumnMappings` on the unmatched-applicable rules.
 - **Lane C (backfill + writer)** — T5 (sentinel-v1 + v2-writer in `createSync`/`updateSync`), T9 (Phase 3 backfill descriptor in `code-migrations.controller.ts` with compare-and-set on `(id, updatedAt, mappingsV2 IS NULL)`), T10 (Phase 2 server-side guard rejecting v1-shape writes once `mappingsV2 IS NOT NULL`).
 - **Lane D (client)** — T11 (sync-edit UI: stacked layout, accordion, policy pickers, ConfirmDialog), T12 (v1 JSON paste auto-upgrade flow).
 - **Lane E (tests)** — T15, T16 (v1-compat regression specs in `server/test/integration/sync-mapping-v1-compat.spec.ts`), T20 (CI `sync_v1_compat` job).
@@ -820,6 +836,6 @@ The same applies to the audit-trail prefixes in this doc itself (`D1-eng`, `OV4`
 ### Lane status
 
 - **Lane A** (T1, T2, T4, T13) — **complete**. T19 (Lane F) landed early with T4.
-- **Lane B** — partially landed: T3, T6, T21 complete (executor consumes v2 internally; v1 syncs continue to behave identically). T7, T8, T14 remain (Pass 3 orphan handling).
+- **Lane B** — partially landed: T3, T6, T21 complete (executor consumes v2 internally; v1 syncs continue to behave identically). T7, T8, T14 remain (Pass 3 unmatched-destination handling).
 - **Lanes C / D / E** — unblocked; can land in parallel.
 - **Lane F** — partially landed (T19 with T4); T17, T18, T22, T23 remain.
