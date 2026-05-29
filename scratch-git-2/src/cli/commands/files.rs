@@ -2858,24 +2858,33 @@ fn detect_selected_connection(
 /// previous `detect_unreviewed_for_pull` (now deleted) was paying.
 ///
 /// `gix::status` answers "working tree differs from index"; the index reflects
-/// `refs/heads/main` after [`worktree_reset_mixed`] (run on init + pull). For
-/// paths the user has *accepted* (entries in `accepted-patches.json`), the
-/// working tree is intentionally != index — those are NOT unreviewed. We
-/// filter by membership in `accepted-patches.json` and only fall back to the
-/// expensive per-file JSON compare for the (typically tiny) intersection.
+/// `refs/heads/main` after [`worktree_reset_mixed`] (run on init + pull). The
+/// byte-level diff is a fast pre-filter — every data path it flags gets a
+/// semantic JSON compare in the second pass against its "expected" content:
 ///
-/// If `short_circuit` is true, returns as soon as the first unreviewed path is
-/// found — for the "any?" check that gates the Publish action.
+///   - paths in `accepted-patches.json` → expected = `apply(main_blob, entry)`
+///   - paths not in `accepted-patches.json` → expected = `main_blob` verbatim
+///
+/// This collapses what used to be two branches (immediate-flag for unpatched
+/// paths; semantic compare for patched paths) into one. Without it, a file
+/// that is byte-different from `main` but JSON-equivalent (e.g. trailing
+/// newline, key reordering) gets flagged as unreviewed even though there's no
+/// semantic change for the user to review — the post-publish refresh in
+/// particular hit this when the reconcile dropped the published patch entry
+/// and the worktree still held the user's pre-canonical bytes.
+///
+/// If `short_circuit` is true, returns as soon as the first truly-unreviewed
+/// path is found — for the "any?" check that gates the Publish action.
 fn detect_unreviewed_fast(
     ctx: &ConnectionContext,
     short_circuit: bool,
 ) -> anyhow::Result<Vec<UnreviewedEntry>> {
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let patched_paths: HashSet<String> = accepted_file
+    let patched_by_path: HashMap<&str, &crate::shared::re_anchor::AnchoredPatch> = accepted_file
         .patches
         .iter()
-        .map(|p| p.path.clone())
+        .map(|p| (p.path.as_str(), p))
         .collect();
 
     let repo = gix::open(&ctx.worktree_dir)
@@ -2883,7 +2892,6 @@ fn detect_unreviewed_fast(
     let platform = repo.status(gix::progress::Discard)?;
     let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
 
-    let mut entries: Vec<UnreviewedEntry> = Vec::new();
     let mut ambiguous: Vec<(String, &'static str)> = Vec::new();
 
     use gix::status::index_worktree::iter::Summary;
@@ -2911,33 +2919,23 @@ fn detect_unreviewed_fast(
             continue;
         }
 
-        if patched_paths.contains(&rel_path) {
-            ambiguous.push((rel_path, status));
-        } else {
-            entries.push(UnreviewedEntry {
-                connection_name: ctx.conn_dir_name.clone(),
-                path: rel_path,
-                status: status.to_string(),
-            });
-            if short_circuit {
-                return Ok(entries);
-            }
-        }
+        ambiguous.push((rel_path, status));
     }
 
+    let mut entries: Vec<UnreviewedEntry> = Vec::new();
     if !ambiguous.is_empty() {
-        // Only paths in `accepted-patches.json` reach here. For each, check
-        // whether the working content matches `apply(main_blob, patch_entry)`.
-        // If not, the user has stacked unreviewed edits on top of accepted
-        // ones — count as unreviewed.
+        // Load the main tree once and resolve every byte-flagged path
+        // semantically. The expected-content rule depends on whether the path
+        // has an accepted patch (which makes `apply(main, patch)` the
+        // user-intended state) or not (where `main` is the authoritative
+        // state and any working-tree edit is unreviewed by definition).
         let main_map = read_main_tree(&ctx.bare_repo)?;
         for (rel_path, status) in ambiguous {
-            let entry = match accepted_file.patches.iter().find(|p| p.path == rel_path) {
-                Some(e) => e,
-                None => continue, // shouldn't happen — patched_paths was built from accepted_file
-            };
             let main_blob = main_map.get(&rel_path).map(|v| v.as_slice());
-            let expected = review_ops::apply_patch_entry_to_blob(main_blob, entry)?;
+            let expected: Option<Vec<u8>> = match patched_by_path.get(rel_path.as_str()) {
+                Some(entry) => review_ops::apply_patch_entry_to_blob(main_blob, entry)?,
+                None => main_blob.map(|b| b.to_vec()),
+            };
             let actual = std::fs::read(ctx.worktree_dir.join(&rel_path)).ok();
             if json_content_differs(expected.as_deref(), actual.as_deref()) {
                 entries.push(UnreviewedEntry {
@@ -3145,14 +3143,31 @@ fn reconcile_accepted_after_publish(
     let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
         patches: re_anchored.patches,
     };
+
+    // Snap the worktree to the post-publish canonical state: successfully
+    // published paths get `new_main` bytes; failed-publish paths get
+    // `apply(new_main, surviving_patch)`. Mirrors the same materialize step
+    // `download_single_repo` runs after re-anchor — without it, the CLI
+    // publish flow leaves the worktree byte-different from `main` (no
+    // subsequent `files download` re-canonicalizes because main has already
+    // advanced and the "up to date" short-circuit fires). Only meaningful
+    // when there is actually a worktree on disk; tests that exercise
+    // reconcile against a bare-only fixture skip this branch.
+    if ctx.worktree_dir.join(".git").exists() {
+        let approved_map_new = compute_accepted_state(&main_map_new, &new_accepted)?;
+        let local_map = read_materialized_repo(ctx)?;
+        materialize_local_repo(ctx, &approved_map_new, &local_map)?;
+    }
+
     crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
 
     if let Some(hash) = new_main_hash.as_deref() {
         git_update_ref(&ctx.bare_repo, "refs/heads/main", hash)?;
-        // Mirror update_main_worktree_after_pull: advancing the ref leaves the
-        // gix index pointing at the old main, so detect_unreviewed_fast would
-        // report just-published files as Modified. Reset the index to match
-        // HEAD without touching the working tree.
+        // Advancing the ref leaves the gix index pointing at the old main, so
+        // detect_unreviewed_fast would see modifications until we reset it.
+        // The mixed reset is harmless when materialize has already aligned
+        // the worktree (the next index/worktree diff is empty) and necessary
+        // when there were no path-level changes for materialize to make.
         if ctx.worktree_dir.join(".git").exists() {
             crate::git_ops::worktree_reset_mixed(&ctx.worktree_dir, hash)?;
         }

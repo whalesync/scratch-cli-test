@@ -192,6 +192,74 @@ export async function teardownProductsTable(): Promise<void> {
   }
 }
 
+const AUTHORS_TABLE = "integration_authors";
+
+/**
+ * Fixed author IDs the publish-failure test references by hand so it can
+ * target the same row across the edit / publish / verify steps without
+ * having to discover the UUID from the worktree.
+ */
+export const AUTHOR_IDS = {
+  alice: "11111111-1111-1111-1111-111111111111",
+  bob: "22222222-2222-2222-2222-222222222222",
+  carol: "33333333-3333-3333-3333-333333333333",
+} as const;
+
+/**
+ * Drop and recreate `integration_authors` (a VARCHAR(20)-constrained table)
+ * and seed three rows with deterministic UUIDs. Used by the publish-failure
+ * test that pushes a >20-character name to provoke a connector-level error.
+ */
+export async function setupAuthorsTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${AUTHORS_TABLE} CASCADE`);
+
+    const sqlPath = path.resolve(__dirname, "../test_table_authors.sql");
+    const createSql = fs.readFileSync(sqlPath, "utf-8");
+    await client.query(createSql);
+
+    const rows: Array<[string, string, string]> = [
+      [AUTHOR_IDS.alice, "Alice", "Novelist from Seattle"],
+      [AUTHOR_IDS.bob, "Bob", "Tech writer"],
+      [AUTHOR_IDS.carol, "Carol", "Poet"],
+    ];
+    for (const [author_id, name, bio] of rows) {
+      await client.query(
+        `INSERT INTO ${AUTHORS_TABLE} (author_id, name, bio) VALUES ($1, $2, $3)`,
+        [author_id, name, bio],
+      );
+    }
+
+    const count = await client.query(
+      `SELECT COUNT(*) AS cnt FROM ${AUTHORS_TABLE}`,
+    );
+    const rowCount = parseInt(count.rows[0].cnt, 10);
+    if (rowCount !== rows.length) {
+      throw new Error(
+        `Expected ${rows.length} rows in ${AUTHORS_TABLE} but found ${rowCount}`,
+      );
+    }
+    console.log(`[postgres] ${AUTHORS_TABLE}: ${rowCount} rows loaded`);
+  } finally {
+    await client.end();
+  }
+}
+
+/** Drop the integration_authors table. */
+export async function teardownAuthorsTable(): Promise<void> {
+  const client = new Client({ connectionString: getConnectionString() });
+  await client.connect();
+
+  try {
+    await client.query(`DROP TABLE IF EXISTS ${AUTHORS_TABLE} CASCADE`);
+  } finally {
+    await client.end();
+  }
+}
+
 interface BlogPostRow {
   post_id: string;
   title: string;

@@ -3244,3 +3244,229 @@ mod publish_results_formatting {
             .contains("fetch_origin"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// DEV-10222 Bug A — `detect_unreviewed_fast` collapses byte-only diffs against
+// the expected post-publish content. Whitespace / trailing-newline drift on a
+// path that has no entry in `accepted-patches.json` must not be reported as
+// unreviewed (previously fired immediately because the legacy branch flagged
+// any byte-different unpatched path without a semantic check).
+// ---------------------------------------------------------------------------
+
+fn setup_main_worktree_for_detector(
+    canonical_path: &str,
+    canonical_main_bytes: &str,
+) -> (TempDir, BareFixture, ConnectionContext) {
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, canonical_path, canonical_main_bytes);
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.worktree_dir, "refs/heads/main")
+        .unwrap();
+    (tmp, fixture, ctx)
+}
+
+#[test]
+fn detect_unreviewed_fast_ignores_whitespace_only_diff_on_unpatched_path() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    // Main holds the canonical record with a trailing newline. After setup
+    // the worktree file matches main byte-for-byte.
+    let (_tmp, _fixture, ctx) =
+        setup_main_worktree_for_detector("posts/rec_acme.json", "{\n  \"name\": \"Acme\"\n}\n");
+
+    // Rewrite the worktree file without the trailing newline. JSON value is
+    // identical to main's; only the bytes differ.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\"\n}",
+    );
+
+    let entries = detect_unreviewed_fast(&ctx, false).unwrap();
+    assert!(
+        entries.is_empty(),
+        "whitespace-only diff on an unpatched path must not be flagged; got {:?}",
+        entries
+    );
+}
+
+#[test]
+fn detect_unreviewed_fast_flags_real_semantic_change_on_unpatched_path() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, _fixture, ctx) =
+        setup_main_worktree_for_detector("posts/rec_acme.json", "{\n  \"name\": \"Acme\"\n}\n");
+
+    // Actual content change → must be reported as unreviewed.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Globex\"\n}\n",
+    );
+
+    let entries = detect_unreviewed_fast(&ctx, false).unwrap();
+    assert_eq!(
+        entries.len(),
+        1,
+        "expected one unreviewed entry, got {:?}",
+        entries
+    );
+    assert_eq!(entries[0].path, "posts/rec_acme.json");
+    assert_eq!(entries[0].status, "modified");
+}
+
+// ---------------------------------------------------------------------------
+// DEV-10222 Bug B — `reconcile_accepted_after_publish` rewrites the worktree
+// to the post-publish canonical state (the goal: after a successful publish
+// the local working copy reflects main, like a hard reset). Without this,
+// the CLI publish flow left the worktree byte-different from main forever
+// because the next `files download` short-circuits as "up to date".
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reconcile_rewrites_worktree_to_canonical_bytes_after_publish() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.worktree_dir, "refs/heads/main")
+        .unwrap();
+
+    // User accepted industry → SaaS. Worktree file holds the user's bytes,
+    // which happen to be missing the trailing newline (simulating an editor
+    // that serializes JSON without one).
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+        }],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}",
+    );
+
+    // Server publishes the user's edit verbatim — canonical form (with the
+    // trailing newline).
+    let canonical_after_publish = "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n";
+    advance_remote_main(
+        &fixture,
+        "posts/rec_acme.json",
+        canonical_after_publish,
+        "publish lands user's edit",
+    );
+
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+
+    // Patch dropped, main advanced, AND worktree now matches main byte-for-byte.
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(reloaded.patches.is_empty());
+
+    let on_disk = std::fs::read(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap();
+    assert_eq!(
+        String::from_utf8(on_disk).unwrap(),
+        canonical_after_publish,
+        "worktree must snap to main's canonical bytes after publish"
+    );
+}
+
+#[test]
+fn reconcile_materializes_failed_publish_patch_value_to_worktree() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec_a.json", "{\n  \"v\": 1\n}\n");
+    seed_main_with_record(&fixture, &ctx, "posts/rec_b.json", "{\n  \"v\": 1\n}\n");
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.worktree_dir, "refs/heads/main")
+        .unwrap();
+
+    // Both accepted as v=2; both worktree files hold v=2 with a byte-level
+    // wobble that we'll prove gets normalized.
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![
+            crate::shared::re_anchor::AnchoredPatch {
+                path: "posts/rec_a.json".to_string(),
+                kind: crate::shared::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({"v": 2}),
+            },
+            crate::shared::re_anchor::AnchoredPatch {
+                path: "posts/rec_b.json".to_string(),
+                kind: crate::shared::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({"v": 2}),
+            },
+        ],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_a.json"),
+        "{\"v\":2}", // compact bytes, no newline
+    );
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_b.json"),
+        "{\"v\":2}", // compact bytes, no newline
+    );
+
+    // Connector succeeded for A only; main now has rec_a at v=2 and rec_b
+    // still at v=1.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_a.json",
+        "{\n  \"v\": 2\n}\n",
+        "publish lands A",
+    );
+
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+
+    // rec_a's patch was dropped; rec_b's survives.
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(reloaded.patches.len(), 1);
+    assert_eq!(reloaded.patches[0].path, "posts/rec_b.json");
+
+    // rec_a worktree = new_main canonical bytes (v=2 with trailing newline).
+    let rec_a_on_disk = std::fs::read(ctx.worktree_dir.join("posts/rec_a.json")).unwrap();
+    assert_eq!(
+        String::from_utf8(rec_a_on_disk).unwrap(),
+        "{\n  \"v\": 2\n}\n",
+        "rec_a (published) must snap to main's canonical bytes"
+    );
+
+    // rec_b worktree = apply(new_main_blob_for_b, surviving_patch) canonical
+    // bytes (v=2 with trailing newline — the user's intended value, NOT the
+    // server's still-stale v=1).
+    let rec_b_on_disk = std::fs::read(ctx.worktree_dir.join("posts/rec_b.json")).unwrap();
+    assert_eq!(
+        String::from_utf8(rec_b_on_disk).unwrap(),
+        "{\n  \"v\": 2\n}\n",
+        "rec_b (failed publish) must show apply(new_main, surviving_patch) canonical bytes"
+    );
+}

@@ -604,6 +604,14 @@ async fn main() {
     };
 
     if let Err(e) = result {
+        // Flush stdout before the hard exit: when stdout is piped (tests,
+        // desktop UI, CI logs), Rust's stdout uses a fully buffered writer
+        // and `process::exit` skips destructors. Without this any JSON the
+        // command already println'd in an error path (e.g. publish's
+        // `failedConnections` payload printed before `anyhow::bail!`) would
+        // be lost from the pipe.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
