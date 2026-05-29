@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import type { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
-import { JobType, RunId, TransformerTypes } from '@spinner/shared-types';
+import { JobType, RunId, TransformerTypes, transformV1ToV2 } from '@spinner/shared-types';
 import { UserCluster } from 'src/db/cluster-types';
 import type { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import type { PostHogService } from 'src/posthog/posthog.service';
@@ -9,8 +9,8 @@ import { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
 import { ScratchGitService } from '../../../scratch-git/scratch-git.service';
+import { findTransformerConfigsV2 } from '../../../sync/sync-execution';
 import { SyncService } from '../../../sync/sync.service';
-import { findTransformerConfigs } from '../../../sync/transformers';
 import { Actor, userToActor } from '../../../users/types';
 import type { JsonSafeObject } from '../../../utils/objects';
 import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-types';
@@ -118,12 +118,12 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       throw new Error(`Sync with id ${data.syncId} not found`);
     }
 
-    // TODO(DEV-10008): when the executor adopts v2, replace this narrow
-    // with `transformV1ToV2(sync.mappings)` at the executor entry.
-    if (sync.mappings.version !== 1) {
-      throw new Error(`Sync ${data.syncId}: executor does not yet support v2 mappings.`);
-    }
-    const tableMappings = sync.mappings.tableMappings;
+    // Executor consumes v2 internally. Transform v1 mappings at the entry —
+    // a transformed v1 has no orphan policies and every column mapping defaults
+    // to `when: 'matched'`, so Pass 3 (when it lands with T7) is a no-op for
+    // v1 syncs.
+    const v2Mappings = sync.mappings.version === 1 ? transformV1ToV2(sync.mappings) : sync.mappings;
+    const tableMappings = v2Mappings.tableMappings;
 
     WSLogger.info({
       source: 'SyncDataFoldersJob',
@@ -273,8 +273,8 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       const tableMapping = tableMappings[i];
       const hasFkOrAssetColumns = tableMapping.columnMappings.some(
         (m) =>
-          findTransformerConfigs(m, TransformerTypes.SourceFkToDestFk).length > 0 ||
-          findTransformerConfigs(m, TransformerTypes.SourceAssetToDestAsset).length > 0,
+          findTransformerConfigsV2(m, TransformerTypes.SourceFkToDestFk).length > 0 ||
+          findTransformerConfigsV2(m, TransformerTypes.SourceAssetToDestAsset).length > 0,
       );
       if (hasFkOrAssetColumns) {
         try {

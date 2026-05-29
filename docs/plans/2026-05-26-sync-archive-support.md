@@ -783,11 +783,35 @@ The same applies to the audit-trail prefixes in this doc itself (`D1-eng`, `OV4`
 
 - **Verified:** root `yarn build` clean across 14 packages; root `yarn lint` clean (server runs `--max-warnings=0`); `yarn jest src/sync/__tests__/sync.service.spec.ts src/sync/__tests__/sync.controller.spec.ts src/workbook/__tests__/workbook.service.spec.ts src/schedule` → 91 tests pass. Integration tests not run (require local DB).
 
+- **T21 (Lane B) — Extract `server/src/sync/sync-execution.ts`**
+  - New module hosting pure executor helpers. `transformRecordAsync` and `TransformRecordResult` moved out of `sync.service.ts` into `sync-execution.ts` (re-exported from `sync.service.ts` for back-compat with the existing v1 test suite). The move broke a would-be circular import: `applyColumnMappings` needs to call into `transformRecordAsync`, so both live in `sync-execution.ts` now.
+  - New v2-aware helpers: `applyColumnMappings`, `v2ColumnAsV1` (returns `null` for constant sources), `getTransformerConfigsV2`, `findTransformerConfigsV2`, `getColumnMappingPhaseV2`. Pure functions, no Nest dependencies.
+  - `v2ColumnAsV1` is the central seam — wherever executor-internal code historically read `mapping.sourceColumnId` or v1 transformer-config helpers, it now calls `v2ColumnAsV1(mappingV2)` and runs the existing logic on the v1 view, skipping constants.
+
+- **T3 (Lane B) — Executor entry transforms v1→v2** (`sync.service.ts`, `worker/jobs/job-definitions/sync-data-folders.job.ts`)
+  - Both executor entry points (`syncOneRecord` and the worker job's `run`) now apply `transformV1ToV2(sync.mappings)` when `sync.mappings.version === 1` and iterate `v2Mappings.tableMappings`. The previous `BadRequestException`/`Error` throws on `version !== 1` are removed.
+  - `SyncService.syncTableMapping` signature widened from `tableMapping: TableMapping` (v1) → `tableMapping: TableMappingV2`. Internal helpers (`fillSyncCachesBatch`, `buildRecordMatchingMappings`, `collectForeignKeyValues`, `insertSourceMatchKeys`, `insertTransformedMatchKeys`, `insertDestinationMatchKeys`, `upsertRemoteIdMappings`) widened in lockstep.
+  - WSLogger trace at `syncTableMapping` entry: `{ source: 'SyncService.syncTableMapping', message: 'Entering executor', syncId, phase, sourceDataFolderId, destinationDataFolderId, columnMappingCount }`. Operational attribution for any v2-rollout regression.
+  - `validateSyncMappingTypes` (line 2058) and `exportSyncs` (line 498) still throw on v2 — these are **not executor entries**; their DTOs are v1-only and have their own TODOs to widen. T3 is scoped to the executor.
+
+- **T6 (Lane B) — `applyColumnMappings` in `sync-execution.ts`**
+  - Public API: `applyColumnMappings({ bucket, sourceRecord, baseFields, mappings, sourceTableSpec, destinationTableSpec, lookupTools?, phase, syncContext? }) → Promise<TransformRecordResult>`.
+  - Filters to mappings where `(when ?? 'matched') ∈ {bucket, 'always'}`. Splits applicable mappings by `source.kind`: column sources route to `transformRecordAsync` (via `v2ColumnAsV1`), constant sources write the literal via lodash `set` (nested-path-friendly).
+  - **Defensive runtime**: column sources in the `'unmatched'` bucket are silently skipped (the schema refinement forbids them; this catches manually-edited DB rows).
+  - **Phase gating**: constants do not fire in `FOREIGN_KEY_MAPPING` phase. They have no transformer pipeline, so they're DATA-only — matches the existing FK-resolution-only semantics of the FK phase.
+  - The two callsites inside `syncTableMapping` Pass 2 that previously called `transformRecordAsync(.., tableMapping.columnMappings, ..)` (new-record creation and existing-record update) now call `applyColumnMappings({ bucket: 'matched', ... })`. The matched-bucket-with-no-constants path is byte-identical to the prior call — see the round-trip-identity unit tests below.
+
+- **Regression guards landed with T3/T6**
+  - **Unit-level v1 round-trip identity** in `server/src/sync/__tests__/sync-execution.spec.ts` (22 tests): for three representative v1 configs (column copy, single transformer, FK pipeline), `applyColumnMappings({ bucket: 'matched', v2 })` produces fields that deep-equal `transformRecordAsync(v1)` — including the key-ordering-preservation contract on `baseFields` overlays. This is the regression-locking proxy for T16's eventual DB-backed integration spec.
+  - **WSLogger entry trace** (described above) for postmortem attribution.
+  - Existing `sync.service.spec.ts` (46 tests) and the broader `src/sync src/worker` suite (553 tests) pass untouched.
+  - **Deferred to T16 (Lane E)**: the end-to-end integration spec (`server/test/integration/sync-mapping-v1-compat.spec.ts`) that round-trips real Prisma rows through `syncTableMapping` and snapshots committed file bytes. The unit-level identity tests above are the proxy until that lands.
+
+- **Verified (T21 + T3 + T6):** root `yarn build` clean across all 14 packages; root `yarn lint` and `server/` `yarn lint-strict` clean; `yarn jest src/sync src/sync-execution src/worker` → 575 tests pass (46 v1 transformRecordAsync + 22 new sync-execution + 507 other sync/worker). Integration tests not run (require local DB).
+
 ### Next up
 
-Lane A complete. Lane B / C / D / E / F now unblocked and can land in parallel.
-
-- **Lane B (executor + helpers)** — T3 (executor entry-point `transformV1ToV2` dispatch), T6 (`applyColumnMappings` extraction), T7 (Pass 3 orphan-driven write), T8 (`classifyOrphan` helper), T14 (Pass 3 audit + metrics), T21 (extract `sync-execution.ts`). With T4's `SyncWithMappings` in place, the executor entry can narrow `sync.mappings.version` and call `transformV1ToV2` for v2 rows; the three `version !== 1 → throw` narrows added in T4 become the natural replacement sites.
+- **Lane B (remaining)** — T7 (Pass 3 orphan-driven write), T8 (`classifyOrphan` helper), T14 (Pass 3 audit + metrics). With `applyColumnMappings({ bucket: 'unmatched', ... })` in place, T7's Pass 3 loop just needs to walk `destinationRecordsByPath`, classify via `classifyOrphan`, and call `applyColumnMappings` on the orphan-applicable rules.
 - **Lane C (backfill + writer)** — T5 (sentinel-v1 + v2-writer in `createSync`/`updateSync`), T9 (Phase 3 backfill descriptor in `code-migrations.controller.ts` with compare-and-set on `(id, updatedAt, mappingsV2 IS NULL)`), T10 (Phase 2 server-side guard rejecting v1-shape writes once `mappingsV2 IS NOT NULL`).
 - **Lane D (client)** — T11 (sync-edit UI: stacked layout, accordion, policy pickers, ConfirmDialog), T12 (v1 JSON paste auto-upgrade flow).
 - **Lane E (tests)** — T15, T16 (v1-compat regression specs in `server/test/integration/sync-mapping-v1-compat.spec.ts`), T20 (CI `sync_v1_compat` job).
@@ -796,5 +820,6 @@ Lane A complete. Lane B / C / D / E / F now unblocked and can land in parallel.
 ### Lane status
 
 - **Lane A** (T1, T2, T4, T13) — **complete**. T19 (Lane F) landed early with T4.
-- **Lanes B / C / D / E** — unblocked; can land in parallel.
-- **Lane F** — partially landed (T19 done with T4); T17, T18, T22, T23 remain.
+- **Lane B** — partially landed: T3, T6, T21 complete (executor consumes v2 internally; v1 syncs continue to behave identically). T7, T8, T14 remain (Pass 3 orphan handling).
+- **Lanes C / D / E** — unblocked; can land in parallel.
+- **Lane F** — partially landed (T19 with T4); T17, T18, T22, T23 remain.

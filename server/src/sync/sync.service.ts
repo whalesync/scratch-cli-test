@@ -19,16 +19,17 @@ import {
   SyncId,
   SyncMapping,
   SyncMappingValidationError,
-  TableMapping,
+  TableMappingV1,
+  TableMappingV2,
   TransformerConfig,
   TransformerTypes,
+  transformV1ToV2,
   ValidateSyncMappingTypesResponse,
   WorkbookId,
 } from '@spinner/shared-types';
 import get from 'lodash/get';
 import isEqual from 'lodash/isEqual';
 import set from 'lodash/set';
-import zipObjectDeep from 'lodash/zipObjectDeep';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -38,6 +39,13 @@ import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateSchemaMapping } from 'src/sync/schema-validator';
 import {
+  applyColumnMappings,
+  ensureTableMappingV2,
+  findTransformerConfigsV2,
+  getColumnMappingPhaseV2,
+  v2ColumnAsV1,
+} from 'src/sync/sync-execution';
+import {
   parseStoredMappings,
   previewRecordBodySchema,
   saveSyncBodySchema,
@@ -46,7 +54,6 @@ import {
 import {
   applyTransformerPipeline,
   createLookupTools,
-  findTransformerConfigs,
   getColumnMappingPhase,
   getTransformerConfigs,
   LookupTools,
@@ -843,7 +850,7 @@ export class SyncService {
    */
   async syncTableMapping(
     syncId: SyncId,
-    tableMapping: TableMapping,
+    inputTableMapping: TableMappingV1 | TableMappingV2,
     workbookId: WorkbookId,
     actor: Actor,
     phase: SyncPhase = 'DATA',
@@ -854,6 +861,20 @@ export class SyncService {
      */
     onlySourceFilePath?: string,
   ): Promise<SyncTableMappingResult> {
+    // Defensively normalize to v2 — callers may pass either shape. Idempotent
+    // for inputs that are already v2.
+    const tableMapping = ensureTableMappingV2(inputTableMapping);
+
+    WSLogger.info({
+      source: 'SyncService.syncTableMapping',
+      message: 'Entering executor',
+      syncId,
+      phase,
+      sourceDataFolderId: tableMapping.sourceDataFolderId,
+      destinationDataFolderId: tableMapping.destinationDataFolderId,
+      columnMappingCount: tableMapping.columnMappings.length,
+    });
+
     const result: SyncTableMappingResult = {
       recordsCreated: 0,
       recordsUpdated: 0,
@@ -1111,19 +1132,20 @@ export class SyncService {
 
           if (mapping.destinationFilePath === null) {
             // This is a new record
-            const transformResult = await transformRecordAsync(
+            const transformResult = await applyColumnMappings({
+              bucket: 'matched',
               sourceRecord,
-              tableMapping.columnMappings,
+              baseFields: undefined,
+              mappings: tableMapping.columnMappings,
               sourceTableSpec,
               destinationTableSpec,
               lookupTools,
               phase,
-              undefined,
-              {
+              syncContext: {
                 sourceService: sourceFolder.connectorService as Service,
                 destinationService: destinationFolder.connectorService as Service,
               },
-            );
+            });
             transformedFields = transformResult.fields;
             for (const w of transformResult.warnings) {
               result.warnings.push({ sourceRemoteId, warning: w });
@@ -1156,25 +1178,26 @@ export class SyncService {
             result.recordsCreated++;
             result.createdPaths.push(destinationPath);
           } else {
-            // Existing record: pass the existing fields as the base so transformRecordAsync
+            // Existing record: pass the existing fields as the base so applyColumnMappings
             // surgically updates only the mapped fields. This is critical to preserve the
             // original JSON key ordering in the destination file (see baseFields param docs).
             destinationPath = mapping.destinationFilePath;
             const existingRecord = destinationRecordsByPath.get(mapping.destinationFilePath);
 
-            const transformResult = await transformRecordAsync(
+            const transformResult = await applyColumnMappings({
+              bucket: 'matched',
               sourceRecord,
-              tableMapping.columnMappings,
+              baseFields: existingRecord?.fields,
+              mappings: tableMapping.columnMappings,
               sourceTableSpec,
               destinationTableSpec,
               lookupTools,
               phase,
-              existingRecord?.fields,
-              {
+              syncContext: {
                 sourceService: sourceFolder.connectorService as Service,
                 destinationService: destinationFolder.connectorService as Service,
               },
-            );
+            });
             transformedFields = transformResult.fields;
             for (const w of transformResult.warnings) {
               result.warnings.push({ sourceRemoteId, warning: w });
@@ -1260,12 +1283,8 @@ export class SyncService {
       throw new NotFoundException(`Sync ${syncId} not found`);
     }
 
-    // TODO(DEV-10008): when the executor adopts v2, replace this narrow
-    // with `transformV1ToV2(sync.mappings)` at the executor entry.
-    if (sync.mappings.version !== 1) {
-      throw new BadRequestException(`Sync ${syncId}: executor does not yet support v2 mappings.`);
-    }
-    const tableMapping = sync.mappings.tableMappings.find((tm) => tm.sourceDataFolderId === sourceDataFolderId);
+    const v2Mappings = sync.mappings.version === 1 ? transformV1ToV2(sync.mappings) : sync.mappings;
+    const tableMapping = v2Mappings.tableMappings.find((tm) => tm.sourceDataFolderId === sourceDataFolderId);
     if (!tableMapping) {
       throw new NotFoundException(`No table mapping found for source folder ${sourceDataFolderId} in sync ${syncId}`);
     }
@@ -1274,7 +1293,7 @@ export class SyncService {
     const dataResult = await this.syncTableMapping(syncId, tableMapping, workbookId, actor, 'DATA', sourceFilePath);
 
     // Run FK phase if any column mappings need it (reuses caches built by DATA phase)
-    const hasFkMappings = tableMapping.columnMappings.some((m) => getColumnMappingPhase(m) === 'FOREIGN_KEY_MAPPING');
+    const hasFkMappings = tableMapping.columnMappings.some((m) => getColumnMappingPhaseV2(m) === 'FOREIGN_KEY_MAPPING');
     const fkResult = hasFkMappings
       ? await this.syncTableMapping(syncId, tableMapping, workbookId, actor, 'FOREIGN_KEY_MAPPING', sourceFilePath)
       : null;
@@ -1311,11 +1330,12 @@ export class SyncService {
    */
   async fillSyncCachesBatch(
     syncId: SyncId,
-    tableMapping: TableMapping,
+    inputTableMapping: TableMappingV1 | TableMappingV2,
     sourceRecords: SyncRecord[],
     destinationRecords: SyncRecord[],
     transformContext?: MatchKeyTransformContext,
   ): Promise<void> {
+    const tableMapping = ensureTableMappingV2(inputTableMapping);
     if (!tableMapping.recordMatching) {
       // No record matching — every source record is a create.
       // Insert mappings directly with null destination so the rest of the flow treats them as new.
@@ -1344,7 +1364,8 @@ export class SyncService {
    * Joins source and destination match keys to create remote ID mappings.
    * Only needed when recordMatching is configured.
    */
-  async buildRecordMatchingMappings(syncId: SyncId, tableMapping: TableMapping): Promise<void> {
+  async buildRecordMatchingMappings(syncId: SyncId, inputTableMapping: TableMappingV1 | TableMappingV2): Promise<void> {
+    const tableMapping = ensureTableMappingV2(inputTableMapping);
     if (!tableMapping.recordMatching) {
       return;
     }
@@ -1385,15 +1406,19 @@ export class SyncService {
    * Accumulates values into the provided map of sets, keyed by referenced DataFolder ID.
    */
   private collectForeignKeyValues(
-    tableMapping: TableMapping,
+    tableMapping: TableMappingV2,
     sourceRecords: SyncRecord[],
     fkValuesByFolder: Map<DataFolderId, Set<string>>,
   ): void {
-    // Collect all lookup_field configs across all column mappings
+    // Collect all lookup_field configs across all column mappings.
+    // Constants have no source column and no transformers — skip them.
     const lookupEntries: { mapping: ColumnMapping; opts: LookupFieldOptions }[] = [];
-    for (const mapping of tableMapping.columnMappings) {
-      for (const config of findTransformerConfigs(mapping, TransformerTypes.LookupField)) {
-        lookupEntries.push({ mapping, opts: config.options as LookupFieldOptions });
+    for (const mappingV2 of tableMapping.columnMappings) {
+      for (const config of findTransformerConfigsV2(mappingV2, TransformerTypes.LookupField)) {
+        const mapping = v2ColumnAsV1(mappingV2);
+        if (mapping !== null) {
+          lookupEntries.push({ mapping, opts: config.options as LookupFieldOptions });
+        }
       }
     }
     if (lookupEntries.length === 0) {
@@ -1515,7 +1540,7 @@ export class SyncService {
    */
   private async upsertRemoteIdMappings(
     syncId: SyncId,
-    tableMapping: TableMapping,
+    tableMapping: TableMappingV2,
     mappings: RemoteIdMappingPair[],
   ): Promise<void> {
     if (mappings.length === 0) {
@@ -1667,7 +1692,7 @@ export class SyncService {
    */
   private async insertSourceMatchKeys(
     syncId: SyncId,
-    tableMapping: TableMapping,
+    tableMapping: TableMappingV2,
     records: SyncRecord[],
     transformContext?: MatchKeyTransformContext,
   ): Promise<void> {
@@ -1675,13 +1700,21 @@ export class SyncService {
       throw new Error('TableMapping must have recordMatching configured');
     }
 
-    // Check if the source match column has DATA-phase transformers configured
+    // Check if the source match column has DATA-phase transformers configured.
+    // The match-key column must be a `kind: 'column'` source with `when: 'matched'`
+    // (or undefined); constant sources can't carry the match value and are excluded
+    // by save-time validation (D10/OV8).
     if (transformContext) {
       const matchColumnId = tableMapping.recordMatching.sourceColumnId;
       const matchDestColumnId = tableMapping.recordMatching.destinationColumnId;
-      const matchMapping = tableMapping.columnMappings?.find(
-        (m) => m.sourceColumnId === matchColumnId && m.destinationColumnId === matchDestColumnId,
+      const matchMappingV2 = tableMapping.columnMappings?.find(
+        (m) =>
+          (m.when ?? 'matched') === 'matched' &&
+          m.source.kind === 'column' &&
+          m.source.columnId === matchColumnId &&
+          m.destinationColumnId === matchDestColumnId,
       );
+      const matchMapping = matchMappingV2 ? v2ColumnAsV1(matchMappingV2) : null;
       if (matchMapping) {
         const allConfigs = getTransformerConfigs(matchMapping);
         const dataConfigs = allConfigs.filter((c) => {
@@ -1711,7 +1744,7 @@ export class SyncService {
    */
   private async insertTransformedMatchKeys(
     syncId: SyncId,
-    tableMapping: TableMapping,
+    tableMapping: TableMappingV2,
     records: SyncRecord[],
     transformerConfigs: TransformerConfig[],
     ctx: MatchKeyTransformContext,
@@ -1800,7 +1833,7 @@ export class SyncService {
    */
   private async insertDestinationMatchKeys(
     syncId: SyncId,
-    tableMapping: TableMapping,
+    tableMapping: TableMappingV2,
     records: SyncRecord[],
   ): Promise<void> {
     if (!tableMapping.recordMatching) {
@@ -2162,119 +2195,10 @@ function parseFileToRecord(file: FileContent, idColumnRemoteId: IdPath): SyncRec
   };
 }
 
-/**
- * Transform a source record's fields to destination schema using column mappings.
- * Supports ColumnMapping with optional transformers.
- *
- * @param sourceRecord - The source record to transform
- * @param columnMappings - Array of column mappings defining field transformations
- * @param lookupTools - Tools for FK lookups (optional, required for FK transformers)
- * @param phase - The sync phase (DATA or FK)
- * @param baseFields - When updating an existing record, pass its current fields here.
- *   The function will clone this object and use lodash `set()` to write only the mapped
- *   values into it. This preserves the original JSON key ordering of the destination file.
- *   IMPORTANT: Do NOT replace this with a merge/spread/Object.assign approach — those
- *   strategies reorder keys based on insertion order which corrupts the destination file's
- *   key ordering. When omitted (new records), builds a fresh object with zipObjectDeep.
- * @returns Transformed fields for the destination record
- */
-export interface TransformRecordResult {
-  fields: Record<string, unknown>;
-  warnings: string[];
-}
-
-export async function transformRecordAsync(
-  sourceRecord: SyncRecord,
-  columnMappings: ColumnMapping[],
-  sourceTableSpec: BaseJsonTableSpec | null,
-  destinationTableSpec: BaseJsonTableSpec | null,
-  lookupTools?: LookupTools,
-  phase: SyncPhase = 'DATA',
-  baseFields?: Record<string, unknown>,
-  syncContext?: { sourceService: Service; destinationService: Service },
-): Promise<TransformRecordResult> {
-  const definedPaths: string[] = [];
-  const definedValues: unknown[] = [];
-  const warnings: string[] = [];
-
-  const phaseFilteredMappings = columnMappings.filter((mapping) => getColumnMappingPhase(mapping) === phase);
-
-  for (const mapping of phaseFilteredMappings) {
-    const sourceValue = get(sourceRecord.fields, mapping.sourceColumnId);
-
-    // Skip undefined source values
-    if (sourceValue === undefined) {
-      continue;
-    }
-
-    let transformedValue: unknown = sourceValue;
-    let skip = false;
-
-    // Apply transformer pipeline if configured
-    const configs = getTransformerConfigs(mapping);
-    if (configs.length > 0) {
-      const result = await applyTransformerPipeline(configs, sourceValue, {
-        sourceRecord,
-        sourceFieldPath: mapping.sourceColumnId,
-        sourceTableSpec,
-        sourceService: syncContext!.sourceService,
-        destinationFieldPath: mapping.destinationColumnId,
-        destinationTableSpec,
-        destinationService: syncContext!.destinationService,
-        lookupTools: lookupTools ?? {
-          getDestinationMappingForSourceFk: () => Promise.resolve(null),
-          lookupFieldFromFkRecord: () => Promise.resolve(null),
-          getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Asset lookup not available')),
-          matchDestinationAssetByHash: () => Promise.resolve([]),
-        },
-        destinationValue: baseFields ? get(baseFields, mapping.destinationColumnId) : undefined,
-        phase,
-      });
-
-      if (result.success) {
-        if (result.skip) {
-          skip = true;
-        }
-        if (result.warnings) {
-          warnings.push(...result.warnings);
-        }
-        transformedValue = result.value;
-      } else {
-        if (result.useOriginal) {
-          transformedValue = sourceValue;
-        }
-        WSLogger.error({
-          source: 'transformRecordAsync',
-          message: 'Failed to transform field',
-          error: result.error,
-          transformerType: result.failedTransformerType,
-          sourceColumnId: mapping.sourceColumnId,
-          sourceRecordId: sourceRecord.id,
-        });
-        throw new Error(`Failed to transform field "${mapping.sourceColumnId}": ${result.error}`);
-      }
-    }
-
-    if (!skip) {
-      definedPaths.push(mapping.destinationColumnId);
-      definedValues.push(transformedValue);
-    }
-  }
-
-  // IMPORTANT: When baseFields is provided (updating an existing record), we clone the
-  // existing object and use lodash set() to write only the mapped fields. This preserves
-  // the original key ordering of the JSON file. Do NOT replace this with merge/spread/
-  // Object.assign — those approaches reorder keys and corrupt the destination file layout.
-  if (baseFields) {
-    const fields = structuredClone(baseFields);
-    for (let i = 0; i < definedPaths.length; i++) {
-      set(fields, definedPaths[i], definedValues[i]);
-    }
-    return { fields, warnings };
-  }
-
-  return { fields: zipObjectDeep(definedPaths, definedValues) as Record<string, unknown>, warnings };
-}
+// `transformRecordAsync` and `TransformRecordResult` moved to sync-execution.ts.
+// Re-exported here for back-compat with existing test imports.
+export { transformRecordAsync } from 'src/sync/sync-execution';
+export type { TransformRecordResult } from 'src/sync/sync-execution';
 
 /**
  * Serialize transformed fields to markdown with YAML front matter.
