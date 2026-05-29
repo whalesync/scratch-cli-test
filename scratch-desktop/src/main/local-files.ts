@@ -183,6 +183,7 @@ function getString(value: unknown): string | null {
 export async function listFolders(workspacePath: string): Promise<FolderEntry[]> {
   const folders: FolderEntry[] = [];
   await collectLeafFolders(workspacePath, workspacePath, folders);
+  folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   return folders;
 }
 
