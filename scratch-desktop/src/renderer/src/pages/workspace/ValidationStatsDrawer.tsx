@@ -3,7 +3,7 @@ import { Box, Divider, Group, Loader, Modal, ScrollArea, Stack, Text, Tooltip } 
 import { AlertTriangle } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import type { ValidationResultRow } from '../../../../shared/validation-types';
-import { ValidationTooltipContent } from './RecordFieldsGrid';
+import { ValidationTooltipContent } from './ValidationIndicator';
 
 // Mirrors ValidationStat from shared/validation-types.ts
 type ValidationStat = {

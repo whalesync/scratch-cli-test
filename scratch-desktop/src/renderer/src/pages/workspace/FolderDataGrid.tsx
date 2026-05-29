@@ -255,39 +255,60 @@ function drawStatusIcon(ctx: CanvasRenderingContext2D, x: number, y: number, siz
   ctx.restore();
 }
 
-function drawValidationIcon(
+const VALIDATION_GUTTER_WIDTH = 28;
+
+/**
+ * Draw a full-height validation gutter on the right edge of a cell with a centred
+ * lucide triangle-alert icon. The gutter acts as a distinct affordance zone rather
+ * than a floating overlay on top of cell content.
+ */
+function drawValidationGutter(
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
+  rect: { x: number; y: number; width: number; height: number },
   level: 'error' | 'warning',
 ): void {
-  ctx.save();
-  ctx.fillStyle =
+  const bg = level === 'error' ? '#ffebe8' : '#fff2e9';
+  const fg =
     level === 'error'
       ? getCssVar('--mantine-color-red-6') || '#e03131'
       : getCssVar('--mantine-color-orange-6') || '#f08c00';
-  ctx.strokeStyle = ctx.fillStyle;
-  ctx.lineWidth = 1.5;
+
+  const gutterX = rect.x + rect.width - VALIDATION_GUTTER_WIDTH;
+
+  ctx.save();
+
+  // Full-height background fill
+  ctx.fillStyle = bg;
+  ctx.fillRect(gutterX, rect.y, VALIDATION_GUTTER_WIDTH, rect.height);
+
+  // Lucide triangle-alert icon centred in the gutter.
+  // Lucide icons use a 24x24 viewBox; we scale to fit a 16px icon.
+  const iconSize = 16;
+  const scale = iconSize / 24;
+  const iconX = gutterX + (VALIDATION_GUTTER_WIDTH - iconSize) / 2;
+  const iconY = rect.y + (rect.height - iconSize) / 2;
+  ctx.translate(iconX, iconY);
+  ctx.scale(scale, scale);
+
+  ctx.strokeStyle = fg;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
+  // Triangle body
+  const triangle = new Path2D('M21.73 18l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z');
+  ctx.stroke(triangle);
+
+  // Exclamation line
+  const line = new Path2D('M12 9v4');
+  ctx.stroke(line);
+
+  // Exclamation dot
+  ctx.fillStyle = fg;
   ctx.beginPath();
-  ctx.moveTo(x + size / 2, y + 1.5);
-  ctx.lineTo(x + size - 1.5, y + size - 1.5);
-  ctx.lineTo(x + 1.5, y + size - 1.5);
-  ctx.closePath();
+  ctx.arc(12, 17, 1, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = '#fff';
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x + size / 2, y + 5);
-  ctx.lineTo(x + size / 2, y + size - 6);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(x + size / 2, y + size - 3.5, 0.9, 0, Math.PI * 2);
-  ctx.fillStyle = '#fff';
-  ctx.fill();
   ctx.restore();
 }
 
@@ -2427,6 +2448,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       const { diffKind, fromValue, classification } = getCellDiffState(row, colId, viewColMap.get(colId));
 
+      // Check for validation entries up-front so we can clip content away from the gutter.
+      const validationEntries = validationByCell.get(validationCellKey(row.__filename, colId));
+      const hasValidation = validationEntries && validationEntries.length > 0;
+
+      // Clip content to leave room for the validation gutter on the right.
+      if (hasValidation) {
+        args.ctx.save();
+        args.ctx.beginPath();
+        args.ctx.rect(args.rect.x, args.rect.y, args.rect.width - VALIDATION_GUTTER_WIDTH, args.rect.height);
+        args.ctx.clip();
+      }
+
       // Small / extra-small text fields render the new value with changed words highlighted
       // blue. Boolean / Number cells fall through to glide's default rendering even when
       // their classification is XS — only string text is word-diffable.
@@ -2451,6 +2484,11 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         drawContent();
       }
 
+      // Restore clip before drawing overlays that span the full cell width.
+      if (hasValidation) {
+        args.ctx.restore();
+      }
+
       if (diffKind !== null) {
         args.ctx.save();
         args.ctx.fillStyle = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER() : DIFF_UNPUBLISHED_BORDER();
@@ -2458,17 +2496,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         args.ctx.restore();
       }
 
-      const validationEntries = validationByCell.get(validationCellKey(row.__filename, colId));
-      if (validationEntries && validationEntries.length > 0) {
+      if (hasValidation) {
         const level = validationEntries.some((entry) => entry.level === 'error') ? 'error' : 'warning';
-        const iconSize = 14;
-        drawValidationIcon(
-          args.ctx,
-          args.rect.x + args.rect.width - iconSize - 8,
-          args.rect.y + (args.rect.height - iconSize) / 2,
-          iconSize,
-          level,
-        );
+        drawValidationGutter(args.ctx, args.rect, level);
       }
 
       // Strikethrough for deleted rows

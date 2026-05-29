@@ -1,8 +1,7 @@
 import { ActionIcon, Box, Group, Tooltip } from '@mantine/core';
-import { RotateCcw } from 'lucide-react';
+import { Undo2 } from 'lucide-react';
 import { memo } from 'react';
 import { Text12Medium } from '../../components/base/text';
-import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 
 interface FieldReferenceStripProps {
   value: string;
@@ -64,32 +63,16 @@ export const FieldReferenceStrip = memo(function FieldReferenceStrip({
 
         {onUndo && (
           <Box style={{ flexShrink: 0 }}>
-            <Tooltip label="Restore" position="left" withArrow zIndex={10020}>
+            <Tooltip label="Discard unpublished change" position="left" withArrow zIndex={10020}>
               <ActionIcon
-                variant="transparent"
-                size={ACTION_BUTTON_SIZE}
-                radius={3}
-                aria-label="Restore"
+                variant="subtle"
+                size="sm"
+                c="red.5"
+                aria-label="Discard unpublished change"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={onUndo}
-                styles={{
-                  root: {
-                    backgroundColor: 'var(--mantine-color-red-1)',
-                    color: 'var(--mantine-color-red-8)',
-                    border: '1px solid var(--mantine-color-red-3)',
-                    minWidth: ACTION_BUTTON_SIZE,
-                    minHeight: ACTION_BUTTON_SIZE,
-                    padding: 3,
-                    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)',
-                    '&:hover': {
-                      filter: 'brightness(0.97)',
-                    },
-                  },
-                }}
               >
-                <span style={{ display: 'inline-flex', pointerEvents: 'none' }}>
-                  <StyledLucideIcon Icon={RotateCcw} size={14} strokeWidth={2.25} />
-                </span>
+                <Undo2 size={14} />
               </ActionIcon>
             </Tooltip>
           </Box>
