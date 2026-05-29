@@ -199,6 +199,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
   "id": {
     "remoteId": [
       "36b81e58-1794-80d8-89a4-d65d5dd08119",
+      "36b81e58-1794-80fb-bfb8-000b87a88bb4",
     ],
     "wsId": "scratch_integration_test",
   },
@@ -425,21 +426,41 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
         },
       },
       "parent": {
-        "description": "Parent database reference",
-        "properties": {
-          "database_id": {
-            "type": "string",
+        "anyOf": [
+          {
+            "properties": {
+              "database_id": {
+                "type": "string",
+              },
+              "type": {
+                "const": "database_id",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "database_id",
+            ],
+            "type": "object",
           },
-          "type": {
-            "const": "database_id",
-            "type": "string",
+          {
+            "properties": {
+              "data_source_id": {
+                "type": "string",
+              },
+              "type": {
+                "const": "data_source_id",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "data_source_id",
+            ],
+            "type": "object",
           },
-        },
-        "required": [
-          "type",
-          "database_id",
         ],
-        "type": "object",
+        "description": "Parent reference (database or data source)",
       },
       "properties": {
         "description": "Page properties",

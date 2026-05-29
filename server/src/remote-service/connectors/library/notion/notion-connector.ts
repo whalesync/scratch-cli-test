@@ -1,11 +1,4 @@
-import {
-  APIErrorCode,
-  APIResponseError,
-  Client,
-  DatabaseObjectResponse,
-  PageObjectResponse,
-  RequestTimeoutError,
-} from '@notionhq/client';
+import { APIErrorCode, APIResponseError, Client, PageObjectResponse, RequestTimeoutError } from '@notionhq/client';
 import {
   BlockObjectResponse,
   CreatePageParameters,
@@ -35,6 +28,11 @@ import { NotionBlockDiffExecutor } from './conversion/notion-block-diff-executor
 import { NotionMarkdownConverter } from './conversion/notion-markdown-converter';
 import { convertToNotionBlocks } from './conversion/notion-rich-text-push';
 import { ConvertedNotionBlock } from './conversion/notion-rich-text-push-types';
+import {
+  NotionDataSourceObjectResponse,
+  NotionDataSourceSearchResult,
+  NotionQueryDataSourceResponse,
+} from './notion-data-source-types';
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { NotionSchemaParser } from './notion-schema-parser';
@@ -51,6 +49,15 @@ const NOTION_RETRY_OPTS: WithRetryOpts = {
 
 export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
+
+/**
+ * Notion API version that exposes the data-source endpoints used by the
+ * connector. Pinned explicitly so a future SDK bump (Phase 4) doesn't silently
+ * change the active version under us. The SDK v3 doesn't validate response
+ * shapes strictly, so other typed calls (`pages.*`, `blocks.*`, `search`)
+ * continue to work under this newer version.
+ */
+const NOTION_API_VERSION = '2025-09-03';
 
 type NotionDownloadProgress = {
   nextCursor: string | undefined;
@@ -126,10 +133,17 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   private readonly schemaParser = new NotionSchemaParser();
   private readonly markdownConverter = new NotionMarkdownConverter();
   private readonly rateLimiter?: RateLimiter;
+  /**
+   * Per-instance cache mapping databaseId → dataSourceId. Populated lazily by
+   * {@link resolveDataSourceId} on the fallback path (folders whose `remoteId`
+   * has not yet been backfilled to include the data source id). Removable once
+   * the Phase 2 backfill has caught every folder.
+   */
+  private readonly dataSourceIdCache = new Map<string, string>();
 
   constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new Client({ auth: apiKey });
+    this.client = new Client({ auth: apiKey, notionVersion: NOTION_API_VERSION });
     this.rateLimiter = opts?.rateLimiter;
   }
 
@@ -140,18 +154,108 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     return standaloneWithRetry(fn, NOTION_RETRY_OPTS);
   }
 
+  /**
+   * Resolve the Notion data source id for a folder's `remoteId`.
+   *
+   * After Phase 2 of DEV-8910, every Notion DataFolder's `remoteId` is
+   * `[databaseId, dataSourceId]`. This helper supplies the fallback for any
+   * folder created before the backfill caught it (or any new folder discovered
+   * via `listTables` between Phase 2 and Phase 3 shipping) by calling
+   * `databases.retrieve` and picking `data_sources[0]`. Memoized per Client
+   * instance so a single multi-page pull doesn't trigger N extra retrievals.
+   */
+  private async resolveDataSourceId(remoteId: string[]): Promise<string> {
+    if (remoteId[1]) {
+      return remoteId[1];
+    }
+    const databaseId = remoteId[0];
+    if (!databaseId) {
+      throw new Error('Notion remoteId is empty — cannot resolve data source id');
+    }
+    const cached = this.dataSourceIdCache.get(databaseId);
+    if (cached) return cached;
+
+    const database = (await this.withRetry(() => this.client.databases.retrieve({ database_id: databaseId }))) as {
+      data_sources?: Array<{ id: string; name: string }>;
+    };
+    const first = database.data_sources?.[0]?.id;
+    if (!first) {
+      throw new Error(`Notion database ${databaseId} has no data sources`);
+    }
+    this.dataSourceIdCache.set(databaseId, first);
+    return first;
+  }
+
+  /**
+   * Raw GET /v1/data_sources/{id}. The SDK v3 has no typed method for this
+   * endpoint, so we use the public `Client.request` escape hatch. Replaced by
+   * `client.dataSources.retrieve` in Phase 4.
+   */
+  private async requestDataSource(dataSourceId: string): Promise<NotionDataSourceObjectResponse> {
+    const response = await this.client.request({
+      method: 'get',
+      path: `data_sources/${dataSourceId}`,
+    });
+    return response as NotionDataSourceObjectResponse;
+  }
+
+  /**
+   * Raw POST /v1/data_sources/{id}/query. Replaces `client.databases.query`,
+   * which is removed in the v5 SDK. Replaced by `client.dataSources.query` in
+   * Phase 4.
+   */
+  private async requestDataSourceQuery(
+    dataSourceId: string,
+    body: {
+      start_cursor?: string;
+      page_size?: number;
+      filter?: QueryDatabaseParameters['filter'];
+    },
+  ): Promise<NotionQueryDataSourceResponse> {
+    const response = await this.client.request({
+      method: 'post',
+      path: `data_sources/${dataSourceId}/query`,
+      body,
+    });
+    return response as NotionQueryDataSourceResponse;
+  }
+
   get tableDiscoveryMode(): TableDiscoveryMode {
     return TableDiscoveryMode.SEARCH;
   }
 
+  /**
+   * Search the Notion workspace for objects of `object: 'data_source'`.
+   *
+   * The SDK v3's `search` filter is typed against the 2022-06-28 vocabulary
+   * (`'database' | 'page'`), so we route through `client.request` to ship the
+   * new 2025-09-03 filter value `'data_source'` without an `as` cast. Replaced
+   * by a typed `client.search({ filter: { value: 'data_source' } })` call in
+   * Phase 4 after the SDK bump.
+   */
+  private async searchDataSources(args: {
+    query?: string;
+    pageSize?: number;
+  }): Promise<{ results: NotionDataSourceSearchResult[]; has_more: boolean }> {
+    const response = await this.client.request({
+      method: 'post',
+      path: 'search',
+      body: {
+        ...(args.query !== undefined ? { query: args.query } : {}),
+        filter: { property: 'object', value: 'data_source' },
+        ...(args.pageSize !== undefined ? { page_size: args.pageSize } : {}),
+      },
+    });
+    const raw = response as { results: Array<{ object?: string }>; has_more: boolean };
+    const results = raw.results.filter((r): r is NotionDataSourceSearchResult => r.object === 'data_source');
+    return { results, has_more: raw.has_more };
+  }
+
   async testConnection(): Promise<void> {
-    // Just don't throw.
-    await this.withRetry(() =>
-      this.client.search({
-        filter: { property: 'object', value: 'database' },
-        page_size: 1,
-      }),
-    );
+    // Just don't throw. We search for `data_source` rather than `database` so
+    // testConnection exercises the same surface (the 2025-09-03 search index)
+    // that listTables and searchTables rely on.
+    await this.withRetry(() => this.searchDataSources({ pageSize: 1 }));
   }
 
   /**
@@ -193,40 +297,30 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   async listTables(): Promise<TablePreview[]> {
-    const response = await this.withRetry(() =>
-      this.client.search({
-        query: '',
-        filter: { property: 'object', value: 'database' },
-        page_size: 10,
-      }),
-    );
-    const databases = response.results.filter((r): r is DatabaseObjectResponse => r.object === 'database');
-    return databases.map((db) => this.schemaParser.parseDatabaseTablePreview(db));
+    const response = await this.withRetry(() => this.searchDataSources({ query: '', pageSize: 10 }));
+    return response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds));
   }
 
   async searchTables(searchTerm: string): Promise<{ tables: TablePreview[]; hasMore: boolean }> {
-    const response = await this.withRetry(() =>
-      this.client.search({
-        query: searchTerm,
-        filter: { property: 'object', value: 'database' },
-      }),
-    );
-
-    const databases = response.results.filter((r): r is DatabaseObjectResponse => r.object === 'database');
-    const tables = databases.map((db) => this.schemaParser.parseDatabaseTablePreview(db));
+    const response = await this.withRetry(() => this.searchDataSources({ query: searchTerm }));
+    const tables = response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds));
     return { tables, hasMore: response.has_more };
   }
 
   /**
    * Fetch JSON Table Spec for Notion database pages.
    * Returns a schema describing the raw Notion page API response format.
+   *
+   * Under 2025-09-03, `properties` lives on the *data source*, not the
+   * database — so we fetch the data source object directly via the raw
+   * endpoint (the SDK v3 has no typed `dataSources.retrieve`). Folders that
+   * haven't been backfilled to a 2-element `remoteId` fall through
+   * `resolveDataSourceId`.
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
-    const [databaseId] = id.remoteId;
-    const database = (await this.withRetry(() =>
-      this.client.databases.retrieve({ database_id: databaseId }),
-    )) as DatabaseObjectResponse;
-    return buildNotionJsonTableSpec(id, database);
+    const dataSourceId = await this.resolveDataSourceId(id.remoteId);
+    const dataSource = await this.withRetry(() => this.requestDataSource(dataSourceId));
+    return buildNotionJsonTableSpec(id, dataSource);
   }
 
   /**
@@ -292,7 +386,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'NotionConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
 
-    const [databaseId] = tableSpec.id.remoteId;
+    const dataSourceId = await this.resolveDataSourceId(tableSpec.id.remoteId);
     let hasMore = true;
     let nextCursor = progress?.nextCursor;
 
@@ -338,8 +432,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
     while (hasMore) {
       const response = await this.withRetry(() =>
-        this.client.databases.query({
-          database_id: databaseId,
+        this.requestDataSourceQuery(dataSourceId, {
           start_cursor: nextCursor,
           page_size: options.pageSize ?? 100,
           filter: notionFilter,
@@ -444,16 +537,21 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    */
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const results: ConnectorFile[] = [];
-    const databaseId = tableSpec.id.remoteId[0];
+    const dataSourceId = await this.resolveDataSourceId(tableSpec.id.remoteId);
 
     for (const file of files) {
       const rawProperties = (file.properties as Record<string, unknown>) || {};
       // Transform properties from read format to create format (same rules as update)
       const properties = this.transformPropertiesForUpdate(rawProperties);
 
+      // The SDK v3 `CreatePageParameters` parent type is the 2022-06-28 union
+      // (`database_id | page_id | workspace`). Notion accepts the new
+      // `data_source_id` parent on the wire under both old and new API
+      // versions, but the typed shape doesn't include it yet — cast through
+      // unknown until the Phase 4 SDK bump.
       const newPage = await this.withRetry(() =>
         this.client.pages.create({
-          parent: { database_id: databaseId },
+          parent: { type: 'data_source_id', data_source_id: dataSourceId } as unknown as CreatePageParameters['parent'],
           properties: properties as CreatePageParameters['properties'],
         }),
       );

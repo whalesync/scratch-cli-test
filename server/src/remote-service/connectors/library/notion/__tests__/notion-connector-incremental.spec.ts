@@ -6,11 +6,11 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Notion'),
 }));
 
-const mockDatabasesQuery = jest.fn();
+const mockClientRequest = jest.fn();
 
 jest.mock('@notionhq/client', () => ({
   Client: jest.fn().mockImplementation(() => ({
-    databases: { query: mockDatabasesQuery },
+    request: mockClientRequest,
   })),
   APIResponseError: class extends Error {},
   RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
@@ -28,8 +28,11 @@ import { NotionConnector } from '../notion-connector';
 import { buildNotionLastEditedFilter } from '../notion-incremental';
 
 function buildTableSpec(): BaseJsonTableSpec {
+  // remoteId is `[databaseId, dataSourceId]` after the Phase 2 backfill —
+  // exercising the post-backfill path here avoids invoking the connector's
+  // resolveDataSourceId fallback (which would hit the unmocked databases.retrieve).
   return {
-    id: { wsId: 'db', remoteId: ['db_123'] },
+    id: { wsId: 'db', remoteId: ['db_123', 'ds_123'] },
     slug: 'db',
     name: 'db',
     idColumnRemoteId: 'id',
@@ -38,8 +41,13 @@ function buildTableSpec(): BaseJsonTableSpec {
 }
 
 function lastQueryFilter(): unknown {
-  const [args] = mockDatabasesQuery.mock.calls[0] as [{ filter?: unknown }];
-  return args.filter;
+  const [args] = mockClientRequest.mock.calls[0] as [{ body?: { filter?: unknown } }];
+  return args.body?.filter;
+}
+
+function lastQueryPath(): string {
+  const [args] = mockClientRequest.mock.calls[0] as [{ path: string }];
+  return args.path;
 }
 
 describe('NotionConnector.supportsIncrementalPull', () => {
@@ -55,7 +63,7 @@ describe('NotionConnector.pullRecordFiles (incremental)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockDatabasesQuery.mockResolvedValue({
+    mockClientRequest.mockResolvedValue({
       results: [{ object: 'page', id: 'page_1', last_edited_time: '2026-05-14T13:00:00.000Z' }],
       has_more: false,
       next_cursor: null,
@@ -71,6 +79,7 @@ describe('NotionConnector.pullRecordFiles (incremental)', () => {
 
     expect(result).toEqual({});
     expect(lastQueryFilter()).toBeUndefined();
+    expect(lastQueryPath()).toBe('data_sources/ds_123/query');
   });
 
   it('injects the last_edited_time filter and returns a newWatermark when incremental', async () => {

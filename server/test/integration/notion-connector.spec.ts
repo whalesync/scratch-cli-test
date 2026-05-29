@@ -107,11 +107,16 @@ describeIfKey('NotionConnector — live API', () => {
     it('every table has a valid Notion-shaped EntityId', () => {
       for (const table of allTables) {
         expect(table.id.wsId.length).toBeGreaterThan(0);
-        expect(table.id.remoteId).toHaveLength(1);
-        // Notion IDs are 32 hex chars with optional dashes — match either form.
-        expect(table.id.remoteId[0]).toMatch(/^[0-9a-f-]{32,36}$/i);
+        // Under 2025-09-03 every table is a data source, surfaced as
+        // `remoteId = [databaseId, dataSourceId]` to match the Phase 2 backfill
+        // shape. Both elements must be valid Notion IDs (32 hex chars with
+        // optional dashes).
+        expect(table.id.remoteId).toHaveLength(2);
+        for (const id of table.id.remoteId) {
+          expect(id).toMatch(/^[0-9a-f-]{32,36}$/i);
+        }
         expect(table.displayName.length).toBeGreaterThan(0);
-        expect((table.metadata as { notionType?: string } | undefined)?.notionType).toBe('database');
+        expect((table.metadata as { notionType?: string } | undefined)?.notionType).toBe('data_source');
       }
     });
   });

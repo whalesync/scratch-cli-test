@@ -14,6 +14,7 @@ import {
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { getDataSourceDisplayName, NotionDataSourceObjectResponse } from './notion-data-source-types';
 import { buildNotionDefaultView } from './notion-default-view';
 
 /**
@@ -31,16 +32,21 @@ export const NOTION_READ_ONLY_PROPERTY_TYPES = new Set([
 ]);
 
 /**
- * Build a BaseJsonTableSpec from a Notion database definition.
+ * Build a BaseJsonTableSpec from a Notion 2025-09-03 data source definition.
+ *
  * Generates a JSON Schema describing the raw Notion page API response format.
+ * The `dataSource` argument carries the property map (which moved from the
+ * database to the data source in 2025-09-03) plus its display name. Property
+ * shapes themselves are unchanged, so {@link notionPropertyToJsonSchema}
+ * still reads them via the SDK v3 `DatabaseObjectResponse['properties']` type.
  */
-export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectResponse): BaseJsonTableSpec {
+export function buildNotionJsonTableSpec(id: EntityId, dataSource: NotionDataSourceObjectResponse): BaseJsonTableSpec {
   const [databaseId] = id.remoteId;
 
   const propertySchemas: Record<string, TSchema> = {};
   let titleColumnRemoteId: string[] | undefined;
 
-  for (const [name, property] of Object.entries(database.properties)) {
+  for (const [name, property] of Object.entries(dataSource.properties)) {
     const propSchema = notionPropertyToJsonSchema(property);
     propertySchemas[name] = Type.Optional(propSchema);
 
@@ -49,7 +55,7 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
     }
   }
 
-  const tableTitle = database.title.map((t) => t.plain_text).join('');
+  const tableTitle = getDataSourceDisplayName(dataSource);
 
   const schema = Type.Object(
     {
@@ -114,12 +120,18 @@ export function buildNotionJsonTableSpec(id: EntityId, database: DatabaseObjectR
           { [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
         ),
       ),
-      parent: Type.Object(
-        {
-          type: Type.Literal('database_id'),
-          database_id: Type.String(),
-        },
-        { description: 'Parent database reference' },
+      parent: Type.Union(
+        [
+          Type.Object({
+            type: Type.Literal('database_id'),
+            database_id: Type.String(),
+          }),
+          Type.Object({
+            type: Type.Literal('data_source_id'),
+            data_source_id: Type.String(),
+          }),
+        ],
+        { description: 'Parent reference (database or data source)' },
       ),
       archived: Type.Boolean({ description: 'Is page archived' }),
       in_trash: Type.Optional(Type.Boolean({ description: 'Is page in trash' })),
