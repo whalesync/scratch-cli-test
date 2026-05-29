@@ -34,9 +34,8 @@ include:
     - !reference [.caches, cargo_cli_integration]
   timeout: 45m
   before_script:
-    - apt-get update && apt-get install -y pkg-config libssl-dev git ca-certificates curl gnupg python3-pip && rm -rf /var/lib/apt/lists/*
-    - pip3 install --break-system-packages git-restore-mtime 2>/dev/null || pip3 install git-restore-mtime || true
-    - git -C "${CI_PROJECT_DIR}" restore-mtime || true
+    - apt-get update && apt-get install -y pkg-config libssl-dev git git-restore-mtime ca-certificates curl gnupg && rm -rf /var/lib/apt/lists/*
+    - git -C "${CI_PROJECT_DIR}" restore-mtime
     - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     - apt-get update && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
     - corepack enable && corepack prepare yarn@1.22.22 --activate

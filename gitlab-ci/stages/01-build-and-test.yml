@@ -215,9 +215,8 @@ build server docker image:
       - scratch-git-2/target/release/scratch-git-2
     expire_in: 1 hour
   before_script:
-    - apt-get update && apt-get install -y pkg-config libssl-dev git python3-pip && rm -rf /var/lib/apt/lists/*
-    - pip3 install --break-system-packages git-restore-mtime 2>/dev/null || pip3 install git-restore-mtime || true
-    - git -C "${CI_PROJECT_DIR}" restore-mtime || true
+    - apt-get update && apt-get install -y pkg-config libssl-dev git git-restore-mtime && rm -rf /var/lib/apt/lists/*
+    - git -C "${CI_PROJECT_DIR}" restore-mtime
   script:
     - command -v git && git --version
     - cd scratch-git-2
