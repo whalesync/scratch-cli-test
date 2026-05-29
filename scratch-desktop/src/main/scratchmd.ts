@@ -786,7 +786,7 @@ export async function getValidationStats(workspacePath: string): Promise<Validat
 export async function getFolderValidationSample(workspacePath: string, folder: string): Promise<ValidationResultRow[]> {
   try {
     return await runScratchmdJson<ValidationResultRow[]>(
-      ['validation', 'get-folder-problems', '--folder', folder, '--limit', '20'],
+      ['validation', 'get-folder-problems', '--folder', folder, '--limit', '100'],
       workspacePath,
     );
   } catch {

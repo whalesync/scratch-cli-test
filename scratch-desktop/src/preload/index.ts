@@ -24,6 +24,10 @@ function invoke(channel: string, ...args: unknown[]): Promise<any> {
   return ipcRenderer.invoke(channel, ...args);
 }
 
+export interface WorkbookSettings {
+  validateEnabled?: boolean;
+}
+
 type ScratchCommandEvent =
   | {
       sessionId: string;
@@ -84,6 +88,10 @@ export interface CloudSyncWarning {
 const scratchPreferences = {
   getCurrentWorkspaceId: (): Promise<string | null> => invoke('preferences:get-current-workspace-id'),
   setCurrentWorkspaceId: (id: string | null): Promise<void> => invoke('preferences:set-current-workspace-id', id),
+  getWorkbookSettings: (workbookId: string): Promise<WorkbookSettings> =>
+    invoke('preferences:get-workbook-settings', workbookId),
+  setWorkbookSetting: (workbookId: string, key: string, value: unknown): Promise<void> =>
+    invoke('preferences:set-workbook-setting', workbookId, key, value),
 };
 
 const scratchDesktop = {

@@ -54,9 +54,15 @@ interface ScratchAuthAPI {
   openExternal: (url: string) => Promise<void>;
 }
 
+interface WorkbookSettings {
+  validateEnabled?: boolean;
+}
+
 interface ScratchPreferencesAPI {
   getCurrentWorkspaceId: () => Promise<string | null>;
   setCurrentWorkspaceId: (id: string | null) => Promise<void>;
+  getWorkbookSettings: (workbookId: string) => Promise<WorkbookSettings>;
+  setWorkbookSetting: (workbookId: string, key: string, value: unknown) => Promise<void>;
 }
 
 interface ScratchDesktopAPI {
@@ -158,6 +164,7 @@ interface ScratchDesktopAPI {
       label: string;
       type?: 'separator';
       enabled?: boolean;
+      checked?: boolean;
       submenu?: Array<{ id: string; label: string; checked?: boolean }>;
     }>,
     onClick: (id: string) => void,

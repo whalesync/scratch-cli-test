@@ -41,6 +41,8 @@ export interface WorkspaceUiState {
   /** When true, the central content area shows the Publish History panel
    * instead of the folder grid or connections panel. */
   showPublishHistoryPanel: boolean;
+  /** When true, the central content area shows the Validation panel. */
+  showValidationPanel: boolean;
   /** When non-null while `showPublishHistoryPanel` is true, the panel drills
    * into the detail view for this plan id. Null means "show the list". */
   publishHistoryDetailPlanId: string | null;
@@ -56,8 +58,10 @@ export interface WorkspaceUiState {
   /** User-chosen diff view mode. `null` means "use the default" (side-by-side when diffs exist, inline otherwise). */
   diffViewMode: DiffViewMode | null;
 
-  // --- Validation ---
-  /** Whether inline validation is enabled workspace-wide. Not reset on folder change. */
+  // --- Per-workbook settings ---
+  /** The active workbook ID, used for persisting per-workbook settings. */
+  currentWorkbookId: string | null;
+  /** Whether inline validation is enabled for this workbook. Not reset on folder change. */
   validateEnabled: boolean;
 
   // --- Actions ---
@@ -65,6 +69,7 @@ export interface WorkspaceUiState {
   setFocusedFieldName: (name: string | null) => void;
   setShowConnectionsPanel: (show: boolean) => void;
   setShowPublishHistoryPanel: (show: boolean) => void;
+  setShowValidationPanel: (show: boolean) => void;
   setPublishHistoryDetailPlanId: (planId: string | null) => void;
 
   /**
@@ -86,6 +91,8 @@ export interface WorkspaceUiState {
   setColumnWidths: (widths: Updater<Record<string, number>>) => void;
   setPage: (page: Updater<number>) => void;
   setDiffViewMode: (mode: DiffViewMode | null) => void;
+  setCurrentWorkbookId: (id: string | null) => void;
+  hydrateWorkbookSettings: (settings: { validateEnabled?: boolean }) => void;
   setValidateEnabled: (enabled: boolean) => void;
   resetFolderState: () => void;
 }
@@ -110,6 +117,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   focusedFieldName: null,
   showConnectionsPanel: false,
   showPublishHistoryPanel: false,
+  showValidationPanel: false,
   publishHistoryDetailPlanId: null,
 
   // --- Grid Configuration ---
@@ -119,6 +127,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   columnWidths: {},
   page: 1,
   diffViewMode: null,
+  currentWorkbookId: null,
   validateEnabled: false,
 
   // --- Actions ---
@@ -133,11 +142,19 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   },
   setFocusedFieldName: (name) => set({ focusedFieldName: name }),
   setShowConnectionsPanel: (show) =>
-    set({ showConnectionsPanel: show, ...(show ? { showPublishHistoryPanel: false } : {}) }),
+    set({
+      showConnectionsPanel: show,
+      ...(show ? { showPublishHistoryPanel: false, showValidationPanel: false } : {}),
+    }),
   setShowPublishHistoryPanel: (show) =>
     set({
       showPublishHistoryPanel: show,
-      ...(show ? { showConnectionsPanel: false } : { publishHistoryDetailPlanId: null }),
+      ...(show ? { showConnectionsPanel: false, showValidationPanel: false } : { publishHistoryDetailPlanId: null }),
+    }),
+  setShowValidationPanel: (show) =>
+    set({
+      showValidationPanel: show,
+      ...(show ? { showConnectionsPanel: false, showPublishHistoryPanel: false } : {}),
     }),
   setPublishHistoryDetailPlanId: (planId) => set({ publishHistoryDetailPlanId: planId }),
 
@@ -164,7 +181,17 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   setColumnWidths: (v) => set({ columnWidths: typeof v === 'function' ? v(get().columnWidths) : v }),
   setPage: (v) => set({ page: typeof v === 'function' ? v(get().page) : v }),
   setDiffViewMode: (mode) => set({ diffViewMode: mode }),
-  setValidateEnabled: (enabled) => set({ validateEnabled: enabled }),
+  setCurrentWorkbookId: (id) => set({ currentWorkbookId: id }),
+  hydrateWorkbookSettings: (settings) => {
+    set({ validateEnabled: settings.validateEnabled ?? false });
+  },
+  setValidateEnabled: (enabled) => {
+    set({ validateEnabled: enabled });
+    const workbookId = get().currentWorkbookId;
+    if (workbookId) {
+      void window.scratchPreferences.setWorkbookSetting(workbookId, 'validateEnabled', enabled);
+    }
+  },
 
   resetFolderState: () =>
     set({

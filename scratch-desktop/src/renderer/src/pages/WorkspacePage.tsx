@@ -97,11 +97,15 @@ export function WorkspacePage() {
   // store let an absolute path from the previous workspace leak into the next
   // one, which broke `path.relative(workspacePath, folderPath)` downstream.
   const [selectedFolderPath, setSelectedFolderPathInner] = useState<string | null>(null);
+  const setCurrentWorkbookId = useWorkspaceUiStore((s) => s.setCurrentWorkbookId);
+  const hydrateWorkbookSettings = useWorkspaceUiStore((s) => s.hydrateWorkbookSettings);
   const resetFolderState = useWorkspaceUiStore((s) => s.resetFolderState);
   const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
   const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
   const showPublishHistoryPanel = useWorkspaceUiStore((s) => s.showPublishHistoryPanel);
   const setShowPublishHistoryPanel = useWorkspaceUiStore((s) => s.setShowPublishHistoryPanel);
+  const showValidationPanel = useWorkspaceUiStore((s) => s.showValidationPanel);
+  const setShowValidationPanel = useWorkspaceUiStore((s) => s.setShowValidationPanel);
   const setSelectedFolderPath = useCallback(
     (path: string | null) => {
       if (selectedFolderPathRef.current === path) return;
@@ -114,9 +118,10 @@ export function WorkspacePage() {
       if (path !== null) {
         setShowConnectionsPanel(false);
         setShowPublishHistoryPanel(false);
+        setShowValidationPanel(false);
       }
     },
-    [resetFolderState, setShowConnectionsPanel, setShowPublishHistoryPanel],
+    [resetFolderState, setShowConnectionsPanel, setShowPublishHistoryPanel, setShowValidationPanel],
   );
   // Opening the connections panel clears the selected folder so the grid
   // returns to its empty state when the panel closes (preserves the
@@ -133,6 +138,12 @@ export function WorkspacePage() {
       setSelectedFolderPathInner(null);
     }
   }, [showPublishHistoryPanel]);
+  // Opening the validation panel clears the selected folder too.
+  useEffect(() => {
+    if (showValidationPanel) {
+      setSelectedFolderPathInner(null);
+    }
+  }, [showValidationPanel]);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
@@ -311,6 +322,15 @@ export function WorkspacePage() {
       setReDownloading(false);
     }
   }, [handleDataRefresh, id, localPath, reDownloading]);
+
+  // Hydrate per-workbook settings from electron-store on mount.
+  useEffect(() => {
+    if (!id) return;
+    setCurrentWorkbookId(id);
+    void window.scratchPreferences.getWorkbookSettings(id).then((settings) => {
+      hydrateWorkbookSettings(settings);
+    });
+  }, [id, setCurrentWorkbookId, hydrateWorkbookSettings]);
 
   useEffect(() => {
     focusSyncBootAtRef.current = performance.now();
@@ -647,8 +667,6 @@ export function WorkspacePage() {
         }}
         watchingEnabled={watchingEnabled}
         onToggleWatching={() => void handleToggleWatching()}
-        validationStats={validation.stats}
-        validationStatsLoading={validation.statsLoading}
       />
       {localPath && cloudSyncWarning && (
         <CloudSyncWarningBanner
@@ -684,6 +702,11 @@ export function WorkspacePage() {
         activateGlobalFilter={gridFilterActivation}
         onActivateGlobalFilterConsumed={() => setGridFilterActivation(null)}
         onIndexingProgress={setIndexingProgress}
+        validationStats={validation.stats}
+        validationStatsLoading={validation.statsLoading}
+        validationConfigs={validation.configs}
+        validationConfigsLoading={validation.configsLoading}
+        onRefreshValidationStats={validation.refreshStats}
       />
     </Box>
   );

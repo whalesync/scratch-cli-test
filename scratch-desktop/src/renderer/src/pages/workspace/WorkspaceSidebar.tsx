@@ -1,12 +1,26 @@
 import { ButtonSecondaryOutline } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
-import { Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
-import { Bug, LinkIcon, ScrollTextIcon, Settings, SettingsIcon, UnplugIcon } from 'lucide-react';
+import { Badge, Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
+import {
+  Bug,
+  CheckIcon,
+  CircleXIcon,
+  LinkIcon,
+  ScrollTextIcon,
+  Settings,
+  SettingsIcon,
+  ShieldCheck,
+  TriangleAlertIcon,
+  UnplugIcon,
+} from 'lucide-react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { ValidationStat } from '../../../../shared/validation-types';
 import { UserMenu } from '../../components/user-menu';
 import { useCurrentUser } from '../../hooks/use-current-user';
 import { useDevTools } from '../../hooks/use-dev-tools';
+import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { isExperimentEnabled } from '../../types/user';
 import { Workspace } from '../../types/workspace';
@@ -30,6 +44,9 @@ interface WorkspaceSidebarProps {
   connectionsPanelOpen?: boolean;
   onTogglePublishHistoryPanel?: () => void;
   publishHistoryPanelOpen?: boolean;
+  onToggleValidationPanel?: () => void;
+  validationPanelOpen?: boolean;
+  validationStats?: ValidationStat[];
 }
 
 export function WorkspaceSidebar({
@@ -49,12 +66,30 @@ export function WorkspaceSidebar({
   connectionsPanelOpen,
   onTogglePublishHistoryPanel,
   publishHistoryPanelOpen,
+  onToggleValidationPanel,
+  validationPanelOpen,
+  validationStats,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
   const { user } = useCurrentUser();
+  const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
   const publishHistoryEnabled = isExperimentEnabled('ENABLE_PUBLISH_HISTORY', user);
   const showInitialLoader = isFoldersLoading && !hasLoadedFoldersOnce;
+
+  // Build a lookup map for validation counts keyed by "connection/folder_path".
+  const validationByFolder = useMemo(() => {
+    const map = new Map<string, { errors: number; warnings: number }>();
+    if (validationStats) {
+      for (const s of validationStats) {
+        map.set(`${s.connection}/${s.folder_path}`, { errors: s.errors, warnings: s.warnings });
+      }
+    }
+    return map;
+  }, [validationStats]);
+
+  const totalErrors = validationStats?.reduce((sum, s) => sum + s.errors, 0) ?? 0;
+  const totalWarnings = validationStats?.reduce((sum, s) => sum + s.warnings, 0) ?? 0;
 
   return (
     <Stack
@@ -113,6 +148,7 @@ export function WorkspaceSidebar({
               workspacePath={workspacePath}
               isDevToolsEnabled={isDevToolsEnabled}
               onDataRefresh={onDataRefresh}
+              validationByFolder={validateEnabled ? validationByFolder : undefined}
             />
           </>
         )}
@@ -159,6 +195,47 @@ export function WorkspaceSidebar({
             <Group gap={8} wrap="nowrap">
               <ScrollTextIcon size={14} color="var(--fg-secondary)" />
               <Text13Regular c="var(--fg-secondary)">Publish History</Text13Regular>
+            </Group>
+          </UnstyledButton>
+        )}
+
+        {onToggleValidationPanel && (
+          <UnstyledButton
+            px="sm"
+            py={8}
+            style={{
+              width: '100%',
+              backgroundColor: validationPanelOpen ? 'var(--highlight-fill)' : undefined,
+            }}
+            onClick={onToggleValidationPanel}
+          >
+            <Group gap={8} wrap="nowrap" justify="space-between" style={{ flex: 1 }}>
+              <Group gap={8} wrap="nowrap">
+                <ShieldCheck size={14} color="var(--fg-secondary)" />
+                <Text13Regular c="var(--fg-secondary)">Validation</Text13Regular>
+              </Group>
+              {!validateEnabled ? (
+                <Badge size="xs" variant="light" color="gray" radius="sm">
+                  off
+                </Badge>
+              ) : totalErrors === 0 && totalWarnings === 0 ? (
+                <CheckIcon size={14} color="var(--mantine-color-green-6)" strokeWidth={1.5} />
+              ) : (
+                <Group gap={6} wrap="nowrap">
+                  {totalErrors > 0 && (
+                    <Group gap={2} wrap="nowrap">
+                      <CircleXIcon size={12} color="var(--mantine-color-red-6)" strokeWidth={1.5} />
+                      <Text12Regular c="var(--mantine-color-red-6)">{totalErrors}</Text12Regular>
+                    </Group>
+                  )}
+                  {totalWarnings > 0 && (
+                    <Group gap={2} wrap="nowrap">
+                      <TriangleAlertIcon size={12} color="var(--mantine-color-orange-6)" strokeWidth={1.5} />
+                      <Text12Regular c="var(--mantine-color-orange-6)">{totalWarnings}</Text12Regular>
+                    </Group>
+                  )}
+                </Group>
+              )}
             </Group>
           </UnstyledButton>
         )}

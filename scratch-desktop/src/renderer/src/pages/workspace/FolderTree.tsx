@@ -1,8 +1,16 @@
 import { Text12Regular, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
-import { Box, List, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Box, Group, List, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { ChevronDown, ChevronRight, EllipsisVertical, Folder, FolderLock } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleXIcon,
+  EllipsisVertical,
+  Folder,
+  FolderLock,
+  TriangleAlertIcon,
+} from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { useConfirmModal } from '../../components/ConfirmModal';
 import { trackPullTable, trackShowFolderInfo } from '../../lib/posthog';
@@ -121,6 +129,7 @@ interface FolderTreeNodeProps {
   dataFoldersByConnection: Map<string, DataFolder[]>;
   onRequestPull: (request: PullRequest) => void;
   onShowFolderInfo: (request: FolderInfoRequest) => void;
+  validationByFolder?: Map<string, { errors: number; warnings: number }>;
 }
 
 function FolderTreeNodeRow({
@@ -136,6 +145,7 @@ function FolderTreeNodeRow({
   dataFoldersByConnection,
   onRequestPull,
   onShowFolderInfo,
+  validationByFolder,
 }: FolderTreeNodeProps) {
   const hasChildren = node.children.size > 0;
   const [expanded, setExpanded] = useState(true);
@@ -288,15 +298,64 @@ function FolderTreeNodeRow({
           <Box style={{ width: 12, flexShrink: 0 }} />
         )}
 
-        {isReadOnly ? (
-          <Tooltip label="Read-only — pull only, never published back" position="right">
-            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-              <StyledLucideIcon Icon={FolderLock} size={14} c="var(--fg-secondary)" />
-            </span>
-          </Tooltip>
-        ) : (
-          <StyledLucideIcon Icon={Folder} size="sm" c="var(--fg-secondary)" />
-        )}
+        <Box component="span" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+          {(() => {
+            const v = node.folder ? validationByFolder?.get(node.folder.name) : undefined;
+            const color =
+              v && v.errors > 0
+                ? 'var(--mantine-color-red-6)'
+                : v && v.warnings > 0
+                  ? 'var(--mantine-color-orange-6)'
+                  : null;
+            if (!color || !v) return null;
+            return (
+              <Tooltip
+                label={
+                  <Group gap={6} wrap="nowrap">
+                    <span>Validation</span>
+                    {v.errors > 0 && (
+                      <Group gap={2} wrap="nowrap">
+                        <CircleXIcon size={12} color="var(--mantine-color-red-6)" strokeWidth={1.5} />
+                        <span>{v.errors}</span>
+                      </Group>
+                    )}
+                    {v.warnings > 0 && (
+                      <Group gap={2} wrap="nowrap">
+                        <TriangleAlertIcon size={12} color="var(--mantine-color-orange-6)" strokeWidth={1.5} />
+                        <span>{v.warnings}</span>
+                      </Group>
+                    )}
+                  </Group>
+                }
+                position="right"
+                withArrow
+              >
+                <Box
+                  component="span"
+                  style={{
+                    position: 'absolute',
+                    left: -4,
+                    top: '50%',
+                    transform: 'translate(-100%, -50%)',
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    backgroundColor: color,
+                  }}
+                />
+              </Tooltip>
+            );
+          })()}
+          {isReadOnly ? (
+            <Tooltip label="Read-only — pull only, never published back" position="right">
+              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <StyledLucideIcon Icon={FolderLock} size={14} c="var(--fg-secondary)" />
+              </span>
+            </Tooltip>
+          ) : (
+            <StyledLucideIcon Icon={Folder} size="sm" c="var(--fg-secondary)" />
+          )}
+        </Box>
 
         <Box style={{ flex: 1, minWidth: 0 }}>
           <Text13Regular c="var(--fg-primary)" truncate>
@@ -349,6 +408,7 @@ function FolderTreeNodeRow({
               dataFoldersByConnection={dataFoldersByConnection}
               onRequestPull={onRequestPull}
               onShowFolderInfo={onShowFolderInfo}
+              validationByFolder={validationByFolder}
             />
           ))}
         </>
@@ -369,6 +429,7 @@ interface FolderTreeProps {
   workspacePath: string | null;
   isDevToolsEnabled: boolean;
   onDataRefresh: () => void;
+  validationByFolder?: Map<string, { errors: number; warnings: number }>;
 }
 
 export function FolderTree({
@@ -381,6 +442,7 @@ export function FolderTree({
   workspacePath,
   isDevToolsEnabled,
   onDataRefresh,
+  validationByFolder,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildTree(localFolders), [localFolders]);
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
@@ -489,6 +551,7 @@ export function FolderTree({
           dataFoldersByConnection={dataFoldersByConnection}
           onRequestPull={handlePullRequest}
           onShowFolderInfo={handleShowFolderInfo}
+          validationByFolder={validationByFolder}
         />
       ))}
 

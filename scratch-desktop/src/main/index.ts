@@ -36,7 +36,12 @@ import {
   type DiffGridFilter,
   type FilterStatus,
 } from './local-files';
-import { getCurrentWorkspaceId, setCurrentWorkspaceId } from './preferences-store';
+import {
+  getCurrentWorkspaceId,
+  getWorkbookSettings,
+  setCurrentWorkspaceId,
+  setWorkbookSetting,
+} from './preferences-store';
 import {
   acceptFieldChanges,
   clearFolderIndex,
@@ -534,6 +539,10 @@ ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url)
 // Preferences IPC handlers
 ipcMain.handle('preferences:get-current-workspace-id', () => getCurrentWorkspaceId());
 ipcMain.handle('preferences:set-current-workspace-id', (_, id: string | null) => setCurrentWorkspaceId(id));
+ipcMain.handle('preferences:get-workbook-settings', (_, workbookId: string) => getWorkbookSettings(workbookId));
+ipcMain.handle('preferences:set-workbook-setting', (_, workbookId: string, key: string, value: unknown) =>
+  setWorkbookSetting(workbookId, key, value),
+);
 
 ipcMain.handle('scratch:get-workspaces-registry', async () => {
   const start = performance.now();
@@ -786,6 +795,7 @@ ipcMain.on(
       type?: 'separator';
       danger?: boolean;
       enabled?: boolean;
+      checked?: boolean;
       submenu?: Array<{ id: string; label: string; checked?: boolean }>;
     }>,
   ) => {
@@ -808,6 +818,8 @@ ipcMain.on(
       return {
         label: item.label,
         enabled: item.enabled,
+        type: item.checked !== undefined ? ('checkbox' as const) : undefined,
+        checked: item.checked,
         click: () => event.sender.send('scratch:native-context-menu-click', item.id),
       };
     });

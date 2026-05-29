@@ -1904,6 +1904,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         .acceptCellInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
         .then(() => {
           refreshGridDataInBackground();
+          onDataRefresh();
         })
         .catch((err: unknown) => {
           console.error(`[acceptCellChange] ${logLabel} failed:`, err);
@@ -1916,7 +1917,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [closeGridEditorChrome, refreshGridData, refreshGridDataInBackground, schema, selectedFolderPath, workspacePath],
+    [
+      closeGridEditorChrome,
+      onDataRefresh,
+      refreshGridData,
+      refreshGridDataInBackground,
+      schema,
+      selectedFolderPath,
+      workspacePath,
+    ],
   );
 
   const undoApprovedGridCellChange = useCallback(
@@ -1930,12 +1939,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         .then(() => {
           closeGridEditorChrome();
           refreshGridDataInBackground();
+          onDataRefresh();
         })
         .catch((err: unknown) => {
           console.error('[undoApprovedCellChange] undo failed:', err);
         });
     },
-    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, onDataRefresh, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const discardUnreviewedGridCellChange = useCallback(
@@ -1949,12 +1959,13 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         .then(() => {
           closeGridEditorChrome();
           refreshGridDataInBackground();
+          onDataRefresh();
         })
         .catch((err: unknown) => {
           console.error('[acceptCellChange] discard unreviewed failed:', err);
         });
     },
-    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
+    [closeGridEditorChrome, onDataRefresh, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const acceptGridFieldChanges = useCallback(
@@ -3081,10 +3092,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   setGridSelection(undefined);
                 }}
                 dataRefreshKey={dataRefreshKey}
-                onRecordChanged={refreshGridDataInBackground}
-                onRecordFieldChanged={(filename, fieldName, nextValue) =>
-                  setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev))
-                }
+                onRecordChanged={() => {
+                  refreshGridDataInBackground();
+                  onDataRefresh();
+                }}
+                onRecordFieldChanged={(filename, fieldName, nextValue) => {
+                  setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev));
+                  onDataRefresh();
+                }}
                 onPublishFile={props.onPublishFile}
                 onAddColumn={handleAddColumn}
                 onToggleColumnVisible={handleToggleColumnVisible}

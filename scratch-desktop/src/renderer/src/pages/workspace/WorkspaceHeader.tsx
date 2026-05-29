@@ -7,19 +7,14 @@ import {
   CloudUpload,
   Download,
   HardDriveDownload as DownloadIcon,
+  EllipsisVertical,
   ExternalLink,
-  Eye,
-  EyeOff,
-  ShieldCheck,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import type { ValidationStat } from '../../../../shared/validation-types';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
-import { useCurrentUser } from '../../hooks/use-current-user';
-import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
+import { useDevTools } from '../../hooks/use-dev-tools';
 import { Workspace } from '../../types/workspace';
-import { ValidationStatsDrawer } from './ValidationStatsDrawer';
 
 interface WorkspaceHeaderProps {
   workspace: Workspace;
@@ -35,8 +30,6 @@ interface WorkspaceHeaderProps {
   onPullAll: () => void;
   watchingEnabled?: boolean;
   onToggleWatching?: () => void;
-  validationStats?: ValidationStat[];
-  validationStatsLoading?: boolean;
 }
 
 const isMac = window.electron?.process?.platform === 'darwin';
@@ -59,17 +52,22 @@ export function WorkspaceHeader({
   onPullAll,
   watchingEnabled,
   onToggleWatching,
-  validationStats,
-  validationStatsLoading,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
-  const { user } = useCurrentUser();
-  const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
-  const setValidateEnabled = useWorkspaceUiStore((s) => s.setValidateEnabled);
   const { width } = useViewportSize();
   const compact = width > 0 && width < 800;
+  const { isDevToolsEnabled } = useDevTools();
 
   const anyRunning = reDownloading || pullingAll || publishingAll;
+
+  const handleDevMenu = () => {
+    window.scratchDesktop.showNativeContextMenu(
+      [{ id: 'toggle-watching', label: 'Watching files', checked: !!watchingEnabled }],
+      (id) => {
+        if (id === 'toggle-watching') onToggleWatching?.();
+      },
+    );
+  };
 
   const handleOpenIn = () => {
     if (!localPath) return;
@@ -135,37 +133,6 @@ export function WorkspaceHeader({
           <img src={logoColor} alt="Scratch" width={32} height={32} />
         </IconButtonGhost>
         <WorkspaceSwitcher currentWorkspaceId={workspace.id} currentWorkspaceName={workspace.name} />
-        {user?.isAdmin && localPath && (
-          <ValidationStatsDrawer
-            workspacePath={localPath}
-            stats={validationStats}
-            statsLoading={validationStatsLoading}
-          />
-        )}
-        {localPath && onToggleWatching !== undefined && (
-          <Tooltip
-            label={watchingEnabled ? 'Watching files (click to stop)' : 'Not watching files (click to start)'}
-            position="bottom"
-          >
-            <IconButtonGhost size="compact-xs" onClick={() => void onToggleWatching()}>
-              {watchingEnabled ? <Eye size={12} /> : <EyeOff size={12} />}
-            </IconButtonGhost>
-          </Tooltip>
-        )}
-        {localPath && (
-          <Tooltip
-            label={validateEnabled ? 'Validation on (click to disable)' : 'Validation off (click to enable)'}
-            position="bottom"
-          >
-            <IconButtonGhost
-              size="compact-xs"
-              onClick={() => setValidateEnabled(!validateEnabled)}
-              c={validateEnabled ? 'blue' : undefined}
-            >
-              <ShieldCheck size={12} />
-            </IconButtonGhost>
-          </Tooltip>
-        )}
       </Group>
 
       {/* Action buttons */}
@@ -261,6 +228,11 @@ export function WorkspaceHeader({
               </ButtonSecondaryGhost>
             </Tooltip>
           ))}
+        {isDevToolsEnabled && localPath && (
+          <IconButtonGhost size="compact-xs" c="var(--mantine-color-devTool-9)" onClick={handleDevMenu}>
+            <EllipsisVertical size={14} />
+          </IconButtonGhost>
+        )}
       </Group>
     </Group>
   );

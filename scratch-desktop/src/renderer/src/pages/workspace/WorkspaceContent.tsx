@@ -1,6 +1,7 @@
 import { Box } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import type { ValidationStat, ValidatorConfig } from '../../../../shared/validation-types';
 import { trackOpenConnectionsDialog } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
@@ -9,6 +10,7 @@ import { ConnectionsPanel } from './ConnectionsPanel';
 import { FolderDataGrid } from './FolderDataGrid';
 import { PublishHistoryPanel } from './PublishHistoryPanel';
 import { ResizeHandle } from './ResizeHandle';
+import { ValidationPanel } from './ValidationPanel';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
 
 export interface LocalFolder {
@@ -32,6 +34,11 @@ interface WorkspaceContentProps {
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
   onIndexingProgress?: (message: string | null) => void;
+  validationStats?: ValidationStat[];
+  validationStatsLoading?: boolean;
+  validationConfigs?: ValidatorConfig[];
+  validationConfigsLoading?: boolean;
+  onRefreshValidationStats?: () => void;
 }
 
 const MIN_SIDEBAR_WIDTH = 220;
@@ -51,11 +58,19 @@ export function WorkspaceContent({
   activateGlobalFilter,
   onActivateGlobalFilterConsumed,
   onIndexingProgress,
+  validationStats,
+  validationStatsLoading,
+  validationConfigs,
+  validationConfigsLoading,
+  onRefreshValidationStats,
 }: WorkspaceContentProps) {
   const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
   const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
   const showPublishHistoryPanel = useWorkspaceUiStore((s) => s.showPublishHistoryPanel);
   const setShowPublishHistoryPanel = useWorkspaceUiStore((s) => s.setShowPublishHistoryPanel);
+  const showValidationPanel = useWorkspaceUiStore((s) => s.showValidationPanel);
+  const setShowValidationPanel = useWorkspaceUiStore((s) => s.setShowValidationPanel);
+  const showField = useWorkspaceUiStore((s) => s.showField);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
@@ -187,13 +202,33 @@ export function WorkspaceContent({
         connectionsPanelOpen={showConnectionsPanel}
         onTogglePublishHistoryPanel={() => setShowPublishHistoryPanel(!showPublishHistoryPanel)}
         publishHistoryPanelOpen={showPublishHistoryPanel}
+        onToggleValidationPanel={() => setShowValidationPanel(!showValidationPanel)}
+        validationPanelOpen={showValidationPanel}
+        validationStats={validationStats}
       />
 
       {/* Resize Handle */}
       <ResizeHandle onResizeStart={handleResizeStart} onResize={handleResize} onResizeEnd={handleResizeEnd} />
 
-      {/* Right panel: publish history, connections, or data grid */}
-      {showPublishHistoryPanel ? (
+      {/* Right panel: validation, publish history, connections, or data grid */}
+      {showValidationPanel && localPath ? (
+        <ValidationPanel
+          workspacePath={localPath}
+          stats={validationStats ?? []}
+          statsLoading={validationStatsLoading ?? false}
+          configs={validationConfigs ?? []}
+          configsLoading={validationConfigsLoading ?? false}
+          onRefreshStats={onRefreshValidationStats ?? (() => undefined)}
+          onNavigateToField={(folderPath, filename, fieldName) => {
+            setShowValidationPanel(false);
+            setSelectedFolderPath(folderPath);
+            // Defer showField so it runs after setSelectedFolderPath's
+            // resetFolderState (which executes inside a React setState callback
+            // and may be batched after this synchronous block).
+            setTimeout(() => showField(filename, fieldName), 0);
+          }}
+        />
+      ) : showPublishHistoryPanel ? (
         <PublishHistoryPanel workspaceId={workspace.id} workspacePath={localPath} />
       ) : showConnectionsPanel ? (
         <ConnectionsPanel
