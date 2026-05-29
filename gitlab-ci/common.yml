@@ -13,12 +13,12 @@ variables:
 
 # default image used by all jobs unless overridden
 image:
-  name: unawareguitar/leaning-basket:e54db988
+  name: unawareguitar/leaning-basket:latest
   #pull_policy: if-not-present
 
 .docker_builder_image:
   image:
-    name: unawareguitar/gcp-dind:0cae23fe
+    name: unawareguitar/gcp-dind:latest
     #pull_policy: if-not-present
   variables:
     DOCKER_TLS_CERTDIR: ""

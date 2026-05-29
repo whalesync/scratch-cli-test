@@ -129,16 +129,7 @@ RUN nvm install -b 22.22.0
 
 2. Update Gitlab pipeline to use the new image
 
-Update the hard-coded tag for the `unawareguitar/leaning-basket` image in [common.yml](gitlab-ci/common.yml) to match the new image generated in Step 1.
-
-```YAML
-# default image used by all jobs unless overridden
-image:
-  name: unawareguitar/leaning-basket:e54db988
-  #pull_policy: if-not-present
-```
-
-For some, unknown reason, using the `:latest` tag fo the image doesn't work. We've tried a few times but it never seems to pick the right version.
+[common.yml](gitlab-ci/common.yml) pins `unawareguitar/leaning-basket:latest`, so once the new image lands in Docker Hub the next pipeline picks it up automatically — no edit needed here.
 
 3. Update `.nvmrc` files
 
