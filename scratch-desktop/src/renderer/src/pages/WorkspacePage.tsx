@@ -104,13 +104,11 @@ export function WorkspacePage() {
   const setShowPublishHistoryPanel = useWorkspaceUiStore((s) => s.setShowPublishHistoryPanel);
   const setSelectedFolderPath = useCallback(
     (path: string | null) => {
-      setSelectedFolderPathInner((prev) => {
-        if (prev === path) return prev;
-        // Mirror the old store action's side effect: clear per-folder state
-        // (record/field selection, sort, filters, columns, page, diff view).
-        resetFolderState();
-        return path;
-      });
+      if (selectedFolderPathRef.current === path) return;
+      setSelectedFolderPathInner(path);
+      // Mirror the old store action's side effect: clear per-folder state
+      // (record/field selection, sort, filters, columns, page, diff view).
+      resetFolderState();
       // Selecting a folder closes either central panel — same coupling as
       // the connections panel had before publish-history was added.
       if (path !== null) {
