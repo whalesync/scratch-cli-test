@@ -6,6 +6,14 @@ Every record field has three conceptual values: **published**, **approved**, and
 
 > If you've ever wondered "what's the difference between `reject` and `discard`?" — that's the question this doc was written to answer.
 
+## Strict invariant
+
+> **Only `accept` writes entries to `accepted-patches.json`. Only `discard` removes them. `reject` MUST NEVER mutate the patch file.**
+
+This invariant holds at every layer that exposes review actions — the CLI subcommands, the napi bindings (`acceptField` / `rejectField` / `discardField`), and any UI button or wrapper that calls them. If you're implementing a new "Reject"-style action, the only thing it is allowed to touch is the working tree. If you find yourself reaching for `acceptField` (or any code that writes patches) to implement a reject, stop — you want `rejectField`.
+
+Why: once a field is in `accepted-patches.json`, it's a committed promise that the value will be published. Letting a Reject silently mutate that file (even with a "no-op" same-value snapshot) breaks the "Approved" tab classification, the publish plan, and the user's mental model that they only approved what they actually approved.
+
 ## The three states
 
 | State         | Where it lives                                                          | Git analogy                             |

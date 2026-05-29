@@ -20,6 +20,7 @@ import {
   discardCellField,
   listFolderFilenames,
   readFolderBlobsFiltered,
+  rejectCellField,
 } from './native/scratchmd-native';
 import {
   listUnpublishedChanges,
@@ -1729,6 +1730,23 @@ async function writeWorkingFileField(filePath: string, fieldName: string, value:
 
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(obj, null, 2));
+}
+
+/**
+ * Reverts an unreviewed working-tree edit for a single cell back to the
+ * approved value. Delegates to the napi binding's `rejectField`, which
+ * restores the working file's value WITHOUT touching `accepted-patches.json`.
+ * Strict invariant: Reject never mutates the patch file — use
+ * `undoApprovedCellChange` (which calls `discardField`) when the caller
+ * wants to also drop an existing approved patch entry.
+ */
+export async function rejectCellChange(
+  folderPath: string,
+  workspacePath: string,
+  filename: string,
+  fieldName: string,
+): Promise<void> {
+  await rejectCellField({ workspacePath, folderPath, filename, fieldName });
 }
 
 /**

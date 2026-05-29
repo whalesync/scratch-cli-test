@@ -52,6 +52,12 @@ interface NativeModule {
     recordRelPath: string,
     field: string,
   ): Promise<ReviewOpResult>;
+  rejectField(
+    workspaceDir: string,
+    connectionDirName: string,
+    recordRelPath: string,
+    field: string,
+  ): Promise<ReviewOpResult>;
   discardField(
     workspaceDir: string,
     connectionDirName: string,
@@ -151,6 +157,20 @@ export async function acceptField(
 }
 
 /**
+ * Reject the unreviewed working-tree edit for `field` on `recordRelPath`.
+ * Restores the working file's field value to the approved value WITHOUT
+ * touching `accepted-patches.json`. Same error contract as `acceptField`.
+ */
+export async function rejectField(
+  workspaceDir: string,
+  connectionDirName: string,
+  recordRelPath: string,
+  field: string,
+): Promise<ReviewOpResult> {
+  return loadNative().rejectField(workspaceDir, connectionDirName, recordRelPath, field);
+}
+
+/**
  * Discard `field` on `recordRelPath`. Drops the field from any patch entry
  * AND restores the working file's value for that field to whatever `main`
  * says. Same error contract as `acceptField`.
@@ -213,6 +233,21 @@ export async function acceptCellField(args: {
 }): Promise<ReviewOpResult> {
   const { connectionDirName, recordRelPath } = deriveRecordPaths(args.workspacePath, args.folderPath, args.filename);
   return acceptField(args.workspacePath, connectionDirName, recordRelPath, args.fieldName);
+}
+
+/**
+ * Reject-the-field analogue of `acceptCellField`. Used by the
+ * `files:reject-cell-change` IPC handler. Restores the working file's field
+ * value to the approved value without touching `accepted-patches.json`.
+ */
+export async function rejectCellField(args: {
+  workspacePath: string;
+  folderPath: string;
+  filename: string;
+  fieldName: string;
+}): Promise<ReviewOpResult> {
+  const { connectionDirName, recordRelPath } = deriveRecordPaths(args.workspacePath, args.folderPath, args.filename);
+  return rejectField(args.workspacePath, connectionDirName, recordRelPath, args.fieldName);
 }
 
 /**

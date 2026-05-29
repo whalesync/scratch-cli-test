@@ -432,6 +432,7 @@ interface ScratchFilesAPI {
     filename: string,
     fieldName: string,
   ) => Promise<void>;
+  rejectCellChange: (folderPath: string, workspacePath: string, filename: string, fieldName: string) => Promise<void>;
   restoreDeletedRecord: (folderPath: string, workspacePath: string, filename: string) => Promise<void>;
   discardCreatedRecord: (folderPath: string, workspacePath: string, filename: string) => Promise<void>;
   acceptFieldChanges: (

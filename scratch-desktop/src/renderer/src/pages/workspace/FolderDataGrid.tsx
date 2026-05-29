@@ -1928,6 +1928,26 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     ],
   );
 
+  const rejectUnreviewedGridCellChange = useCallback(
+    (filename: string, fieldName: string) => {
+      if (!selectedFolderPath || !workspacePath) {
+        return;
+      }
+
+      void window.scratchFiles
+        .rejectCellChange(selectedFolderPath, workspacePath, filename, fieldName)
+        .then(() => {
+          closeGridEditorChrome();
+          refreshGridDataInBackground();
+          onDataRefresh();
+        })
+        .catch((err: unknown) => {
+          console.error('[rejectCellChange] reject failed:', err);
+        });
+    },
+    [closeGridEditorChrome, onDataRefresh, refreshGridDataInBackground, selectedFolderPath, workspacePath],
+  );
+
   const undoApprovedGridCellChange = useCallback(
     (filename: string, fieldName: string) => {
       if (!selectedFolderPath || !workspacePath) {
@@ -1943,26 +1963,6 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         })
         .catch((err: unknown) => {
           console.error('[undoApprovedCellChange] undo failed:', err);
-        });
-    },
-    [closeGridEditorChrome, onDataRefresh, refreshGridDataInBackground, selectedFolderPath, workspacePath],
-  );
-
-  const discardUnreviewedGridCellChange = useCallback(
-    (filename: string, fieldName: string, dirtyValue: string) => {
-      if (!selectedFolderPath || !workspacePath) {
-        return;
-      }
-
-      void window.scratchFiles
-        .acceptCellChange(selectedFolderPath, workspacePath, filename, fieldName, dirtyValue)
-        .then(() => {
-          closeGridEditorChrome();
-          refreshGridDataInBackground();
-          onDataRefresh();
-        })
-        .catch((err: unknown) => {
-          console.error('[acceptCellChange] discard unreviewed failed:', err);
         });
     },
     [closeGridEditorChrome, onDataRefresh, refreshGridDataInBackground, selectedFolderPath, workspacePath],
@@ -3590,7 +3590,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             editingCell != null && editingCell[0] === cellPopover.col && editingCell[1] === cellPopover.row;
           let undoAction: (() => void) | undefined;
           if (diffKind === 'unreviewed') {
-            undoAction = () => discardUnreviewedGridCellChange(filename, fieldName, fromValue);
+            undoAction = () => rejectUnreviewedGridCellChange(filename, fieldName);
           } else if (diffKind === 'unpublished') {
             undoAction = () => undoApprovedGridCellChange(filename, fieldName);
           }

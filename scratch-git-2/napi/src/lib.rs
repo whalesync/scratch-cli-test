@@ -107,6 +107,38 @@ pub async fn accept_field(
     .map_err(map_err)
 }
 
+/// Reject the user's unreviewed working-tree edit for `field` on
+/// `recordRelPath`: restore the working file's field value to the *approved*
+/// value (the patch entry's value if present, else `refs/heads/main`'s value)
+/// WITHOUT touching `accepted-patches.json`. Field-level analogue of `files
+/// reject`. The strict invariant is that Reject never mutates the patch file
+/// — use `discardField` when the caller wants to also drop an existing
+/// approved patch entry.
+///
+/// Uses `LockMode::ShortWait` (100ms budget); same error shape as
+/// `acceptField`.
+#[napi]
+pub async fn reject_field(
+    workspace_dir: String,
+    connection_dir_name: String,
+    record_rel_path: String,
+    field: String,
+) -> Result<ReviewOpResult> {
+    napi::tokio::task::spawn_blocking(move || {
+        review_ops::reject_field(
+            &PathBuf::from(&workspace_dir),
+            &connection_dir_name,
+            &record_rel_path,
+            &field,
+            LockMode::ShortWait,
+        )
+    })
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
+    .map(Into::into)
+    .map_err(map_err)
+}
+
 /// Discard the user's pending change for `field` on `recordRelPath`. Drops
 /// the field from any accepted-patches entry AND restores the working file's
 /// value for that field to whatever `refs/heads/main` says. Mirrors the

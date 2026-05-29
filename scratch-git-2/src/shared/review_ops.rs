@@ -1261,6 +1261,86 @@ pub fn accept_field(
     })
 }
 
+/// Public entry point. Reject the unreviewed working-tree edit for `field` on
+/// `record_rel_path`: restore the working file's field value to the *approved*
+/// value (the patch entry's value if present, else `refs/heads/main`'s value)
+/// WITHOUT mutating `accepted-patches.json`. This is the field-level analogue
+/// of `files reject` — the strict invariant is that Reject never touches the
+/// patch file. Use `discard_field` when the caller wants to also drop an
+/// existing approved patch entry.
+///
+/// NoOp when the working file already matches approved, or when there's no
+/// working file on disk (nothing to revert).
+pub fn reject_field(
+    workspace_dir: &Path,
+    connection_dir_name: &str,
+    record_rel_path: &str,
+    field: &str,
+    lock_mode: LockMode,
+) -> Result<ReviewOpResult, ReviewOpError> {
+    let paths = resolve_connection_paths(workspace_dir, connection_dir_name)?;
+    validate_record_path(&paths, record_rel_path)?;
+    let workspace_path = workspace_path_for(&paths, record_rel_path);
+
+    let _lock = acquire_lock(workspace_dir, lock_mode)?;
+
+    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let connection_dir = accepted_patches_dir(&paths);
+    let file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
+
+    let approved_obj_opt = approved_object_for_path(&main_map, &file, record_rel_path)
+        .map_err(ReviewOpError::Internal)?;
+    let approved_value = approved_obj_opt
+        .as_ref()
+        .and_then(|obj| read_nested_json_value(obj, field));
+
+    let disk_path = paths.worktree_dir.join(record_rel_path);
+    let working_bytes = match std::fs::read(&disk_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ReviewOpResult {
+                workspace_path,
+                patches_changed: false,
+                working_changed: false,
+                effect: ReviewOpEffect::NoOp,
+            });
+        }
+        Err(err) => return Err(ReviewOpError::Io(err)),
+    };
+    let mut working_obj = parse_json_object_bytes(&working_bytes, record_rel_path)
+        .map_err(ReviewOpError::Internal)?;
+    let local_value = read_nested_json_value(&working_obj, field);
+
+    if local_value == approved_value {
+        return Ok(ReviewOpResult {
+            workspace_path,
+            patches_changed: false,
+            working_changed: false,
+            effect: ReviewOpEffect::NoOp,
+        });
+    }
+
+    apply_nested_json_value(&mut working_obj, field, approved_value);
+
+    if working_obj.is_empty() && approved_obj_opt.is_none() {
+        // Approved state says the file shouldn't exist AND the field was the
+        // last one in working — remove the working file. Matches
+        // `reject_field_in_folder`'s `next_local_obj.is_empty()` branch.
+        std::fs::remove_file(&disk_path).map_err(ReviewOpError::Io)?;
+    } else {
+        let new_bytes = json_object_to_bytes(&working_obj).map_err(ReviewOpError::Internal)?;
+        write_or_remove_working_file(&paths, record_rel_path, Some(&new_bytes))
+            .map_err(ReviewOpError::Internal)?;
+    }
+
+    Ok(ReviewOpResult {
+        workspace_path,
+        patches_changed: false,
+        working_changed: true,
+        effect: ReviewOpEffect::WorkingRestored,
+    })
+}
+
 /// Public entry point. Discard the field on `record_rel_path`: drop it from
 /// any patch entry AND restore the working file's value for that field to
 /// whatever `refs/heads/main` says. Stripping the last field from a `Create`

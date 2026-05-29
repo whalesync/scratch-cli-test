@@ -30,6 +30,7 @@ import {
   readGridData,
   readSchema,
   readWorkspaceConfig,
+  rejectCellChange,
   revertRecordFile,
   undoApprovedCellChange,
   writeFileTextRaw,
@@ -1113,6 +1114,15 @@ ipcMain.handle(
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
       const result = await undoApprovedCellChange(folderPath, workspacePath, filename, fieldName);
+      await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
+      return result;
+    }),
+);
+ipcMain.handle(
+  'files:reject-cell-change',
+  async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await rejectCellChange(folderPath, workspacePath, filename, fieldName);
       await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),

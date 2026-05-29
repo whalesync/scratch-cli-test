@@ -575,19 +575,19 @@ export const RecordDetailView = memo(function RecordDetailView({
     [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged],
   );
 
-  const handleDiscardUnreviewedCellChange = useCallback(
-    (fieldName: string, dirtyValue: string) => {
+  const handleRejectUnreviewedCellChange = useCallback(
+    (fieldName: string) => {
       const filename = filenameRef.current;
       if (!filename) return;
       clearFieldEdit();
       void window.scratchFiles
-        .acceptCellChange(folderPath, workspacePath, filename, fieldName, dirtyValue)
+        .rejectCellChange(folderPath, workspacePath, filename, fieldName)
         .then(() => {
           reloadRecordAndValidations();
           onRecordChanged?.();
         })
         .catch((err: unknown) => {
-          console.error('[acceptCellChange] discard unreviewed failed:', err);
+          console.error('[rejectCellChange] reject failed:', err);
         });
     },
     [clearFieldEdit, folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged],
@@ -773,7 +773,7 @@ export const RecordDetailView = memo(function RecordDetailView({
         onUndo: isDeleted
           ? undefined
           : isUnreviewed
-            ? () => handleDiscardUnreviewedCellChange(effectivePath, fromValue)
+            ? () => handleRejectUnreviewedCellChange(effectivePath)
             : isUnpublished
               ? () => handleUndoApprovedCellChange(effectivePath)
               : undefined,
@@ -796,7 +796,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     columnEffectivePaths,
     columnGroups,
     handleAcceptCellChange,
-    handleDiscardUnreviewedCellChange,
+    handleRejectUnreviewedCellChange,
     handleUndoApprovedCellChange,
     schema,
   ]);

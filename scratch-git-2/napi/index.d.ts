@@ -42,6 +42,23 @@ export function acceptField(
 ): Promise<ReviewOpResult>;
 
 /**
+ * Reject the unreviewed working-tree edit for `field` on `recordRelPath`.
+ * Restores the working file's field value to the approved value (the patch
+ * entry's value if present, else `refs/heads/main`) WITHOUT touching
+ * `accepted-patches.json`. Strict invariant: Reject never mutates the patch
+ * file. Use `discardField` when the caller also wants to drop an existing
+ * approved patch entry.
+ *
+ * Same error-prefix convention as `acceptField`.
+ */
+export function rejectField(
+  workspaceDir: string,
+  connectionDirName: string,
+  recordRelPath: string,
+  field: string,
+): Promise<ReviewOpResult>;
+
+/**
  * Discard the pending change for `field` on `recordRelPath`. Drops the field
  * from any `accepted-patches.json` entry AND restores the working file's
  * value for that field to whatever `refs/heads/main` says. Stripping the
