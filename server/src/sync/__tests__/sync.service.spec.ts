@@ -162,7 +162,10 @@ describe('SyncService', () => {
         data: {
           workbookId: string;
           displayName: string;
+          // T5 write asymmetry: `mappings` holds the frozen sentinel-v1 and the
+          // real shape lives in `mappingsV2`.
           mappings: { version: number; tableMappings: Record<string, unknown>[] };
+          mappingsV2: { version: number; tableMappings: Record<string, unknown>[] };
           syncTablePairs: { create: unknown[] };
         };
         include: { syncTablePairs: boolean };
@@ -170,12 +173,15 @@ describe('SyncService', () => {
       const createArg = ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as SyncCreateArg;
       expect(createArg.data.workbookId).toBe(WORKBOOK_ID);
       expect(createArg.data.displayName).toBe('Test Sync');
-      expect(createArg.data.mappings.version).toBe(1);
-      expect(createArg.data.mappings.tableMappings).toHaveLength(1);
-      expect(createArg.data.mappings.tableMappings[0].sourceDataFolderId).toBe(SOURCE_FOLDER_ID);
-      expect(createArg.data.mappings.tableMappings[0].destinationDataFolderId).toBe(DEST_FOLDER_ID);
-      expect(createArg.data.mappings.tableMappings[0].columnMappings).toEqual([
-        { sourceColumnId: 'title', destinationColumnId: 'name' },
+      // Sentinel-empty-v1 on the frozen column.
+      expect(createArg.data.mappings).toEqual({ version: 1, tableMappings: [] });
+      // Real (v2-normalized) shape on `mappingsV2`.
+      expect(createArg.data.mappingsV2.version).toBe(2);
+      expect(createArg.data.mappingsV2.tableMappings).toHaveLength(1);
+      expect(createArg.data.mappingsV2.tableMappings[0].sourceDataFolderId).toBe(SOURCE_FOLDER_ID);
+      expect(createArg.data.mappingsV2.tableMappings[0].destinationDataFolderId).toBe(DEST_FOLDER_ID);
+      expect(createArg.data.mappingsV2.tableMappings[0].columnMappings).toEqual([
+        { destinationColumnId: 'name', source: { kind: 'column', columnId: 'title' } },
       ]);
       expect(createArg.data.syncTablePairs.create).toHaveLength(1);
       expect(createArg.include.syncTablePairs).toBe(true);
@@ -260,9 +266,9 @@ describe('SyncService', () => {
       await service.createSync(WORKBOOK_ID, body, ACTOR);
 
       const createArg = ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
-        data: { mappings: { tableMappings: unknown[] }; syncTablePairs: { create: unknown[] } };
+        data: { mappingsV2: { tableMappings: unknown[] }; syncTablePairs: { create: unknown[] } };
       };
-      expect(createArg.data.mappings.tableMappings).toHaveLength(2);
+      expect(createArg.data.mappingsV2.tableMappings).toHaveLength(2);
       expect(createArg.data.syncTablePairs.create).toHaveLength(2);
     });
 
@@ -290,9 +296,9 @@ describe('SyncService', () => {
 
       const tableMapping = (
         ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
-          data: { mappings: { tableMappings: Array<Record<string, unknown>> } };
+          data: { mappingsV2: { tableMappings: Array<Record<string, unknown>> } };
         }
-      ).data.mappings.tableMappings[0];
+      ).data.mappingsV2.tableMappings[0];
       expect(tableMapping.recordMatching).toEqual({
         sourceColumnId: 'email',
         destinationColumnId: 'email_addr',
@@ -308,9 +314,9 @@ describe('SyncService', () => {
 
       const tableMapping = (
         ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
-          data: { mappings: { tableMappings: Array<Record<string, unknown>> } };
+          data: { mappingsV2: { tableMappings: Array<Record<string, unknown>> } };
         }
-      ).data.mappings.tableMappings[0];
+      ).data.mappingsV2.tableMappings[0];
       expect(tableMapping.recordMatching).toBeUndefined();
     });
 
@@ -350,14 +356,17 @@ describe('SyncService', () => {
 
       const columnMappings = (
         ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
-          data: { mappings: { tableMappings: Array<{ columnMappings: unknown }> } };
+          data: { mappingsV2: { tableMappings: Array<{ columnMappings: unknown }> } };
         }
-      ).data.mappings.tableMappings[0].columnMappings;
+      ).data.mappingsV2.tableMappings[0].columnMappings;
       expect(columnMappings).toEqual([
         {
-          sourceColumnId: 'price',
           destinationColumnId: 'amount',
-          transformer: { type: 'string_to_number', options: { stripCurrency: true } },
+          source: {
+            kind: 'column',
+            columnId: 'price',
+            transformer: { type: 'string_to_number', options: { stripCurrency: true } },
+          },
         },
       ]);
     });
@@ -385,12 +394,12 @@ describe('SyncService', () => {
 
       const columnMappings = (
         ((dbService.client.sync.create as jest.Mock).mock.calls as unknown[][])[0][0] as {
-          data: { mappings: { tableMappings: Array<{ columnMappings: unknown }> } };
+          data: { mappingsV2: { tableMappings: Array<{ columnMappings: unknown }> } };
         }
-      ).data.mappings.tableMappings[0].columnMappings;
+      ).data.mappingsV2.tableMappings[0].columnMappings;
       expect(columnMappings).toEqual([
-        { sourceColumnId: 'title', destinationColumnId: 'name' },
-        { sourceColumnId: 'slug', destinationColumnId: 'url_slug' },
+        { destinationColumnId: 'name', source: { kind: 'column', columnId: 'title' } },
+        { destinationColumnId: 'url_slug', source: { kind: 'column', columnId: 'slug' } },
       ]);
     });
 

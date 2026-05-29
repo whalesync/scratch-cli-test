@@ -1,10 +1,23 @@
 import { DataFolderId } from '../../ids';
-import type { ColumnMapping, SyncMapping, TransformerConfig, TransformerType } from '../../sync-mapping';
+import type {
+  ColumnMapping,
+  StoredSyncMapping,
+  SyncMapping,
+  TransformerConfig,
+  TransformerType,
+} from '../../sync-mapping';
 
-/** POST/PATCH body for creating or updating a sync */
+/**
+ * POST/PATCH body for creating or updating a sync.
+ *
+ * `mappings` accepts either the v1 or v2 on-disk shape. The server normalizes
+ * v1 inputs to v2 via `transformV1ToV2` before persisting to `Sync.mappingsV2`;
+ * Lane D's v2-aware editor sends v2 directly. Existing v1 callers (whalesync
+ * import, scratchmd CLI, pre-update clients) keep working unchanged.
+ */
 export interface SaveSyncBody {
   displayName: string;
-  mappings: SyncMapping;
+  mappings: StoredSyncMapping;
   validateMappings: boolean;
   /** Optional cron expression for a sync schedule. Empty string means "no schedule". */
   schedule?: string;

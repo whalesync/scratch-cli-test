@@ -371,10 +371,19 @@ export function parseStoredMappings<R extends { mappings: unknown; mappingsV2: u
 
 // -- Request body schemas --
 
+/**
+ * Mapping shape accepted by save endpoints. Either v1 or v2 — the writer
+ * normalizes v1 to v2 in memory before persisting to `Sync.mappingsV2`.
+ * Discriminates on `version`, so a malformed body fails on the more precise
+ * branch's path (e.g. `mappings.tableMappings[0].source.kind`) rather than a
+ * generic union-mismatch error.
+ */
+const saveSyncBodyMappingsSchema = z.discriminatedUnion('version', [syncMappingV1Schema, syncMappingV2Schema]);
+
 export const saveSyncBodySchema = z
   .object({
     displayName: z.string().min(1),
-    mappings: syncMappingSchema,
+    mappings: saveSyncBodyMappingsSchema,
     validateMappings: z.boolean().optional(),
     schedule: z.string().optional(),
     publishAfterSync: z.boolean().optional(),

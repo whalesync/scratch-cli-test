@@ -19,6 +19,8 @@ import {
   StoredSyncMapping,
   SyncId,
   SyncMapping,
+  SyncMappingV1,
+  SyncMappingV2,
   SyncMappingValidationError,
   TableMappingV1,
   TableMappingV2,
@@ -129,6 +131,51 @@ export interface SyncTableMappingResult {
 export type SyncWithMappings = Omit<PrismaSync, 'mappings' | 'mappingsV2'> & {
   mappings: StoredSyncMapping;
 };
+
+/**
+ * Sentinel value written to the frozen `Sync.mappings` column when a new sync
+ * is created. The real mapping shape goes to `Sync.mappingsV2`. A pre-update
+ * client that reads `mappings` directly sees an empty sync — fail-safe rather
+ * than a corrupt half-state. See plan §"Storage Model and Migration".
+ *
+ * TODO(DEV-10008): delete this sentinel when the `mappings` column is dropped
+ * in the Phase 4 cleanup.
+ */
+const SENTINEL_EMPTY_V1_MAPPINGS: SyncMappingV1 = { version: 1, tableMappings: [] };
+
+/**
+ * Project a v2 column-mapping list down to the v1 `ColumnMapping` shape used by
+ * `validateSchemaMapping` (source/destination type compatibility) and the
+ * record-matching cross-check below. Drops constant sources — they have no
+ * source-column path to validate — and unmatched-side rules, which have no
+ * source-column read at all. The resulting list is what the v1 codepath would
+ * have produced from the same logical sync.
+ */
+function projectV2ColumnMappingsToV1(columnMappings: ColumnMappingV2[]): ColumnMapping[] {
+  const out: ColumnMapping[] = [];
+  for (const cm of columnMappings) {
+    if (cm.source.kind !== 'column') continue;
+    if (cm.when !== undefined && cm.when !== 'matched') continue;
+    out.push({
+      sourceColumnId: cm.source.columnId,
+      destinationColumnId: cm.destinationColumnId,
+      ...(cm.source.transformer ? { transformer: cm.source.transformer } : {}),
+      ...(cm.source.transformers ? { transformers: cm.source.transformers } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * Normalize a request body's `mappings` field to the v2 shape for writing to
+ * `Sync.mappingsV2`. The body may already be v2 (Lane D's editor) or v1 (the
+ * scratchmd CLI, whalesync import, pre-update web client). Both are accepted
+ * by `saveSyncBodySchema`; this helper produces the single shape that gets
+ * persisted.
+ */
+function normalizeSaveBodyMappings(mappings: StoredSyncMapping): SyncMappingV2 {
+  return mappings.version === 2 ? mappings : transformV1ToV2(mappings);
+}
 
 @Injectable()
 export class SyncService {
@@ -255,9 +302,13 @@ export class SyncService {
       throw new NotFoundException('Workbook not found');
     }
 
-    // Validate mappings — skip gracefully when schemas are absent
+    const v2Mappings = normalizeSaveBodyMappings(body.mappings);
+
+    // Validate mappings — skip gracefully when schemas are absent. The
+    // validator is v1-only today; project v2 down to v1-shaped column
+    // mappings (kind='column', when='matched'/undefined) before calling it.
     if (body.validateMappings) {
-      for (const tableMapping of body.mappings.tableMappings) {
+      for (const tableMapping of v2Mappings.tableMappings) {
         const sourceId = tableMapping.sourceDataFolderId;
         const destId = tableMapping.destinationDataFolderId;
 
@@ -265,7 +316,8 @@ export class SyncService {
         const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
 
         if (sourceFolder?.schema && destFolder?.schema) {
-          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
+          const v1Cols = projectV2ColumnMappingsToV1(tableMapping.columnMappings);
+          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, v1Cols);
           if (errors.length > 0) {
             throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
           }
@@ -280,10 +332,12 @@ export class SyncService {
         id: syncId,
         workbookId,
         displayName: body.displayName,
-        mappings: body.mappings as unknown as Prisma.InputJsonValue,
+        // Sentinel-v1 on the frozen column; the real shape lives in mappingsV2.
+        mappings: SENTINEL_EMPTY_V1_MAPPINGS as unknown as Prisma.InputJsonValue,
+        mappingsV2: v2Mappings as unknown as Prisma.InputJsonValue,
         publishAfterSync: false,
         syncTablePairs: {
-          create: body.mappings.tableMappings.map((tm) => ({
+          create: v2Mappings.tableMappings.map((tm) => ({
             id: createSyncId(),
             sourceDataFolderId: tm.sourceDataFolderId,
             destinationDataFolderId: tm.destinationDataFolderId,
@@ -333,16 +387,23 @@ export class SyncService {
       throw new NotFoundException('Workbook not found');
     }
 
+    // Existence check only — does not select mappings, so it sits outside the
+    // read choke point.
     const sync = await this.db.client.sync.findFirst({
       where: { id: syncId },
+      select: { id: true },
     });
     if (!sync) {
       throw new NotFoundException('Sync not found');
     }
 
+    const v2Mappings = normalizeSaveBodyMappings(body.mappings);
+
     if (body.validateMappings) {
-      // Validate mappings — skip gracefully when schemas are absent
-      for (const tableMapping of body.mappings.tableMappings) {
+      // Validate mappings — skip gracefully when schemas are absent. The
+      // validator is v1-only today; project v2 down to v1-shaped column
+      // mappings before calling it.
+      for (const tableMapping of v2Mappings.tableMappings) {
         const sourceId = tableMapping.sourceDataFolderId;
         const destId = tableMapping.destinationDataFolderId;
 
@@ -350,7 +411,8 @@ export class SyncService {
         const destFolder = await this.dataFolderService.fetchSchemaSpec(destId, actor);
 
         if (sourceFolder?.schema && destFolder?.schema) {
-          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, tableMapping.columnMappings);
+          const v1Cols = projectV2ColumnMappingsToV1(tableMapping.columnMappings);
+          const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, v1Cols);
           if (errors.length > 0) {
             throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
           }
@@ -358,12 +420,16 @@ export class SyncService {
       }
     }
 
-    // Validate record matching fields exist in column mappings
-    for (const tableMapping of body.mappings.tableMappings) {
+    // Validate record matching fields exist in column mappings. A constant
+    // mapping cannot serve as the match-key source (the v2 zod refinement
+    // already blocks constants from targeting the match-key column); only
+    // `kind: 'column'` mappings with a matching source/destination pair count.
+    for (const tableMapping of v2Mappings.tableMappings) {
       if (tableMapping.recordMatching) {
         const hasMatchingColumn = tableMapping.columnMappings.some(
           (cm) =>
-            cm.sourceColumnId === tableMapping.recordMatching!.sourceColumnId &&
+            cm.source.kind === 'column' &&
+            cm.source.columnId === tableMapping.recordMatching!.sourceColumnId &&
             cm.destinationColumnId === tableMapping.recordMatching!.destinationColumnId,
         );
         if (!hasMatchingColumn) {
@@ -374,7 +440,10 @@ export class SyncService {
       }
     }
 
-    // Transaction to update sync details and replace mappings
+    // Transaction to update sync details and replace mappings. Writes only
+    // `mappingsV2` — the v1 `mappings` column is frozen from the moment v2
+    // ships and stays at whatever was there (sentinel for post-T5-created
+    // syncs, real v1 data for pre-T5 syncs that haven't been backfilled).
     const updated = await this.db.client.$transaction(async (tx) => {
       // 1. Delete existing table pairs
       await tx.syncTablePair.deleteMany({
@@ -386,10 +455,10 @@ export class SyncService {
         where: { id: syncId },
         data: {
           displayName: body.displayName,
-          mappings: body.mappings as unknown as Prisma.InputJsonValue,
+          mappingsV2: v2Mappings as unknown as Prisma.InputJsonValue,
           ...(body.publishAfterSync !== undefined && { publishAfterSync: body.publishAfterSync }),
           syncTablePairs: {
-            create: body.mappings.tableMappings.map((tm) => ({
+            create: v2Mappings.tableMappings.map((tm) => ({
               id: createSyncId(),
               sourceDataFolderId: tm.sourceDataFolderId,
               destinationDataFolderId: tm.destinationDataFolderId,

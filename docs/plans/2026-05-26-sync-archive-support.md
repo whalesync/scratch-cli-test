@@ -846,10 +846,21 @@ UI copy can still use the word "archive" — that names the _action_ (`archived:
 
 - **Verified (T7 + T8 + T14):** root `yarn build` clean across all 14 packages; root `yarn lint` (server `--max-warnings=0`) clean; `yarn jest src/sync src/worker src/metrics src/posthog` → 601 tests pass (32 sync-execution unit + 569 other sync/worker/metrics/posthog). Pass 3 itself has no end-to-end test yet — the existing `classifyDestinationRecord` + `applyColumnMappings({ bucket: 'unmatched' })` unit suites are the proxy until T16's DB-backed integration spec lands.
 
+- **T5 (Lane C) — Sentinel-v1 + v2 writer in `createSync` / `updateSync`** (`packages/shared-types/src/dto/sync/sync-api.ts`, `server/src/sync/sync-mapping.schema.ts`, `server/src/sync/sync.service.ts`)
+  - **Body widening.** `SaveSyncBody.mappings` retyped from `SyncMapping` (v1-only) to `StoredSyncMapping = SyncMappingV1 | SyncMappingV2`. The save endpoint accepts either shape — existing v1 callers (scratchmd CLI, whalesync import, pre-update web client) keep working; Lane D's v2-aware editor sends v2 directly. `saveSyncBodySchema.mappings` switched from `syncMappingV1Schema` to a `z.discriminatedUnion('version', [v1, v2])` so a malformed body fails on the more precise branch's path.
+  - **Write asymmetry now matches the plan.** Both writers normalize incoming v1 → v2 in memory via the new `normalizeSaveBodyMappings(body.mappings)` helper. `createSync` writes the sentinel-empty-v1 `{ version: 1, tableMappings: [] }` to the frozen `mappings` column AND the v2-normalized shape to `mappingsV2`. `updateSync` writes only `mappingsV2`; the `mappings` column is left untouched at whatever it was (sentinel for post-T5 syncs, real v1 for pre-T5 unbackfilled syncs). Sentinel constant lives at module scope (`SENTINEL_EMPTY_V1_MAPPINGS`) so the Phase 4 cleanup can grep + delete it in one shot.
+  - **Validation projection.** `validateSchemaMapping` is v1-only today; both writers now pre-normalize to v2, then call a new `projectV2ColumnMappingsToV1` helper that filters to `kind: 'column'` + `when` ∈ `{undefined, 'matched'}` and reshapes back to v1 column-mappings. Constants and unmatched-side rules have no source-column to type-check, so dropping them from the validation projection is correct. The record-matching cross-check inside `updateSync` was rewritten to walk v2 column mappings directly (`cm.source.kind === 'column' && cm.source.columnId === ...`); constants never satisfy the predicate, which lines up with the schema-level refinement (b).
+  - **`SyncTablePair.create` source.** `tm.sourceDataFolderId` / `tm.destinationDataFolderId` exist on both v1 and v2 table mappings, so the `syncTablePairs.create` loop just iterates the normalized v2's `tableMappings`. No behavior change versus today.
+  - **Existence-check cleanup.** `updateSync`'s pre-update existence read now uses `select: { id: true }` so it doesn't pull `mappings` / `mappingsV2` and stays out of the read choke point's contract (parse-required reads).
+  - **Tests updated.** Six `sync.service.spec.ts` assertions that previously inspected `createArg.data.mappings.tableMappings` switched to `createArg.data.mappingsV2.tableMappings` with the v2 column shape (`{ destinationColumnId, source: { kind: 'column', columnId, ... } }`). The first test additionally locks in the sentinel by asserting `createArg.data.mappings` deep-equals `{ version: 1, tableMappings: [] }`.
+  - **Phase 1 deploy status.** With T5 in, Phase 1 (column + reader + writer) is feature-complete from the storage side. From this deploy forward every sync save lands in `mappingsV2`; pre-existing rows (`mappingsV2 IS NULL`) keep reading v1 via `parseStoredMappings` until edited or backfilled.
+  - **Out of scope (T5).** No Phase 2 server-side v1-write rejection guard (T10), no backfill descriptor (T9), no client v2 editor (T11/T12). T5 alone unblocks Lane D — the editor now has a real v2 write path to save into.
+  - **Verified:** root `yarn build` clean across all 14 packages; root `yarn lint` (server `--max-warnings=0`) clean; `yarn jest src/sync src/worker src/metrics src/posthog src/schedule src/workbook` → 686 tests pass.
+
 ### Next up
 
-- **Lane C (backfill + writer)** — T5 (sentinel-v1 + v2-writer in `createSync`/`updateSync`), T9 (Phase 3 backfill descriptor in `code-migrations.controller.ts` with compare-and-set on `(id, updatedAt, mappingsV2 IS NULL)`), T10 (Phase 2 server-side guard rejecting v1-shape writes once `mappingsV2 IS NOT NULL`).
-- **Lane D (client)** — T11 (sync-edit UI: stacked layout, accordion, policy pickers, ConfirmDialog), T12 (v1 JSON paste auto-upgrade flow).
+- **Lane C (continued)** — T9 (Phase 3 backfill descriptor in `code-migrations.controller.ts` with compare-and-set on `(id, updatedAt, mappingsV2 IS NULL)`), T10 (Phase 2 server-side guard rejecting v1-shape writes once `mappingsV2 IS NOT NULL`).
+- **Lane D (client)** — T11 (sync-edit UI: stacked layout, accordion, policy pickers, ConfirmDialog), T12 (v1 JSON paste auto-upgrade flow). Unblocked now that the server persists v2.
 - **Lane E (tests)** — T15, T16 (v1-compat regression specs in `server/test/integration/sync-mapping-v1-compat.spec.ts`), T20 (CI `sync_v1_compat` job). Now also covers an end-to-end Pass 3 integration spec exercising the archive worked example from DEV-10008.
 - **Lane F (remaining)** — T17 (`server/src/sync/README.md` Pass 3 + v2 examples), T22 (`SyncExceptionFilter`), T23 (README refresh follow-up). T18 (PostHog/CustomMetrics counters) landed with T14.
 
@@ -857,5 +868,6 @@ UI copy can still use the word "archive" — that names the _action_ (`archived:
 
 - **Lane A** (T1, T2, T4, T13) — **complete**. T19 (Lane F) landed early with T4.
 - **Lane B** (T3, T6, T7, T8, T14, T21) — **complete**. Executor runs Pass 3 against the v2 mappings; v1 syncs remain byte-identical because transformed v1 has no `unmatchedDestinationPolicy` and so Pass 3 is gated off.
-- **Lanes C / D / E** — unblocked; can land in parallel.
+- **Lane C** — T5 **complete**; T9 (backfill descriptor) and T10 (v1-write rejection guard) remain.
+- **Lanes D / E** — unblocked; can land in parallel.
 - **Lane F** — T19 + T18 landed; T17, T22, T23 remain.
