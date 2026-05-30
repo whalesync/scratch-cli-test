@@ -285,12 +285,29 @@ are the single biggest source of "what is this?" confusion in the codebase.
 | Current | Proposed |
 |---|---|
 | `main_map` | `file_path_to_contents_map_in_main_branch` |
-| `local_map` | `file_path_to_contents_map_in_local_folder` |
+| `local_map` | `file_path_to_contents_map_in_worktree` |
 | `approved_map` | `file_path_to_contents_map_for_approved_state` |
 | `master_blobs` (folder_index) | `file_name_to_contents_map_in_main_branch_for_folder` |
-| `main_files` (validators) | `file_path_to_contents_map_in_main_branch` |
+| `main_files` (validators + `cli/commands/validation.rs` + test fixtures) | `file_path_to_contents_map_in_main_branch` |
 | `patched_by_path` | `accepted_patch_entry_by_record_path` |
-| `ambiguous` (detect_unreviewed_fast) | `record_paths_with_byte_differences_against_main` |
+| `ambiguous` (detect_unreviewed_fast) | `gix_status_flagged_record_paths_and_status` |
+
+Notes on the two tightened entries:
+
+- `local_map` holds **worktree** contents read from disk (via `read_dirty_disk` /
+  `read_materialized_repo`). "worktree" is the term the surrounding helpers
+  already use (`worktree_dir`, `is_data_path_in_folder`), and avoids the
+  ambiguity of "local folder" (the local repo's folder? *a* folder?).
+- `ambiguous` is a `Vec<(String, &'static str)>` of paths flagged by
+  `gix::status` (index-vs-worktree iter), each paired with its status string
+  (`"modified" | "added" | "deleted"`). The name keeps the (path, status)
+  tuple shape visible and names the actual source (gix status), not the
+  conceptual goal (which is "needs further disambiguation against main +
+  patches" — that's what the surrounding loop does *with* this list).
+- `main_files` shows up in four places, not the two originally flagged:
+  `validators/mod.rs:544` and `:682`, `cli/commands/validation.rs:479, 515`,
+  and three test fixtures in `cli/commands/tests/files.rs`. Rename all four
+  for consistency.
 
 Reads as English at the call site:
 
@@ -310,13 +327,30 @@ let approved_object_at_path_if_any =
 | `read_main_tree_for_entry_point` | `read_main_branch_contents` |
 | `read_main_tree_for_entry_point_filtered` | `read_main_branch_contents_filtered_by_path` |
 | `read_materialized_repo` | `read_worktree_files_and_scratch_state` |
-| `read_dirty_disk` | `read_files_recursively_into_path_contents_map` |
-| `read_scratch_disk` | (same — internal mirror for the `.scratch/` walk; could merge with above) |
+| `read_dirty_disk` | `load_worktree_into_path_contents_map` |
+| `read_scratch_disk` | `load_connection_scratch_into_path_contents_map` |
 | `reject_field` | `revert_field_edit_to_approved_value` |
 | `discard_field` | `drop_approved_field_and_restore_to_main_value` |
 | `accept_field` | `accept_field_edit_into_patch_file` (optional — current name is OK on its own) |
 | `restore_deleted_record` | `restore_record_from_main_after_dropping_delete_patch` |
 | `discard_created_record` | `drop_create_patch_and_delete_working_file` |
+
+`load_worktree_into_path_contents_map` and `load_connection_scratch_into_path_contents_map`
+are NOT mergeable: different ignore rules (only the scratch walk currently
+allows `.publish-plans`), different key prefixes (worktree paths as-is vs
+`.scratch/<rel>`), and called as two distinct passes by
+`read_worktree_files_and_scratch_state`. Keep them as a symmetric pair.
+
+**Bundled cleanup: kill the `.publish-plans` exception.** The dotdir
+allow-list at `review_ops.rs:887` (`&& name_str != ".publish-plans"`) is the
+only runtime reference. Per `docs/REPO_STRUCTURES.md:42`, the
+`publish-from-git` job that wrote `.scratch/.publish-plans/` is dead-coded as
+of Phase 7a (no in-tree caller). The tests at
+`cli/commands/tests/files.rs:139, 148, 154, 168` only assert the exception
+still works — they're guarding dead behavior. Confirm Phase 7 server cleanup
+is done, then in the rename PR: drop the exception, delete the four test
+assertions, and `load_connection_scratch_into_path_contents_map` skips all
+dotdirs uniformly.
 
 The `reject_field` / `discard_field` distinction is the most worth renaming —
 the current names can't be told apart without reading REVIEW_MODEL.md, and
@@ -331,16 +365,55 @@ they show up in the desktop's IPC surface (`rejectCellChange`,
 | `read_main_tree_filtered` | `read_main_branch_contents_filtered_by_path` |
 | `read_folder_scoped_maps` | `read_main_local_and_approved_maps_scoped_to_folder` |
 | `read_materialized_repo` (CLI alias) | `read_worktree_files_and_scratch_state` |
-| `detect_unreviewed_fast` | `list_unreviewed_record_paths_using_index_status_compare` |
+| `detect_unreviewed_fast` | `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main` |
 | `discard_paths_single_repo` | `discard_record_paths_in_connection_repo` |
-| `accept_all_single_repo` | `accept_all_unreviewed_changes_in_connection_repo` |
-| `accept_all_full_scan` | `accept_all_unreviewed_changes_by_scanning_connection_repo` |
-| `reject_all_single_repo` / `reject_all_full_scan` | mirror the `accept_all` pair |
-| `discard_all_single_repo` / `discard_all_full_scan` | mirror the `accept_all` pair |
+| `accept_all_single_repo` | `accept_all_unreviewed_changes_in_connection_repo` (inline `_full_scan` inner — see below) |
+| `reject_all_single_repo` / `reject_all_full_scan` | inline the `_full_scan` inner into `_single_repo`, then rename to `reject_all_unreviewed_changes_in_connection_repo` |
+| `discard_all_single_repo` / `discard_all_full_scan` | inline the `_full_scan` inner into `_single_repo`, then rename to `discard_all_unreviewed_changes_in_connection_repo` |
 | `restore_deleted_records_locally` | `restore_deleted_record_paths_from_main_branch` |
-| `discard_created_records_locally` | `discard_created_record_paths_from_patch_file` |
+| `discard_created_records_locally` | `drop_create_patches_and_delete_working_files_for_record_paths` |
 | `refresh_problem_record_index_for_ctx` | `revalidate_paths_for_connection_context` |
-| `unpushed_entries` / `unpublished_entries` | clarify whether they're paths or entries (they return `Vec<UnreviewedEntry>`) |
+| `unpushed_entries` | **delete** — one-line delegate to `unpublished_entries`, no other callers per `cli/commands/files.rs` grep |
+| `unpublished_entries` | `list_unpublished_accepted_patch_entries` |
+
+The `_full_scan` suffix is a historical scar. There used to be a
+`_scoped_via_index` fast-path companion that no longer exists (sub-slice B
+decision, see comment at `files.rs:3580-3585`). The only remaining
+distinction between `accept_all_single_repo` and `accept_all_full_scan` is
+that the wrapper does `sync_schema_files_from_worktree` first. Inlining the
+inner (one line: the wrapper just calls schema-sync then `_full_scan`)
+collapses the pair into one truthful name and removes the misleading "scan
+vs not-scan" framing. Do this in the rename PR.
+
+The "Cell" → "Field" renames in the IPC layer (next section) imply renaming
+the `UnreviewedEntry` struct too. See "Type rename" below.
+
+### Type rename: `UnreviewedEntry` → `RecordChangeEntry`
+
+`UnreviewedEntry` at `files.rs:411` is used in three semantically different
+contexts that share only the JSON shape `(connection_name, path, status)`:
+
+| Caller | Semantic |
+|---|---|
+| `detect_unreviewed_fast` (populated at `files.rs:2947`) | Genuinely unreviewed — dirty bytes that haven't been accepted yet. |
+| `unpublished_entries` (`files.rs:3865`) | **Accepted but not yet published** — entries from `accepted-patches.json`. |
+| Diff helper at `files.rs:4087-4120`, `blocked` lists at `files.rs:537, 891, 2418` | Path-level change records, semantically neutral. |
+
+The name "Unreviewed" only fits one of the three uses; the other two borrow
+it for serialization convenience. Calling the second use's function
+something like "accepted patch entries as unreviewed entries" reads as a
+contradiction precisely because the type name is lying.
+
+Rename the type to `RecordChangeEntry` (or `PathChangeEntry`) — a neutral
+shape name. Then each function returning `Vec<RecordChangeEntry>` can have a
+name that truthfully describes which kind of change it returns:
+
+- `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main` — dirty bytes.
+- `list_unpublished_accepted_patch_entries` — approved-but-not-published.
+- The diff helper — its own neutral name (TBD when it's renamed).
+
+Land the type rename in the same mechanical PR as the function renames so
+the function-name table reads coherently on review.
 
 The `_single_repo` / `_full_scan` / `_locally` suffixes carry no useful
 information from the caller's perspective and should be retired entirely or
