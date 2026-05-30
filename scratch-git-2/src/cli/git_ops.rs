@@ -13,7 +13,9 @@ mod local;
 mod remote;
 
 pub(crate) use crate::shared::git_local::rev_parse_optional_to_string;
-pub(crate) use crate::shared::git_local::{open_bare_repo, read_tree_files};
+pub(crate) use crate::shared::git_local::{
+    open_bare_repo, read_tree_files, read_tree_files_filtered,
+};
 #[cfg(test)]
 pub(crate) use local::commit_file_map_to_ref;
 #[cfg(test)]

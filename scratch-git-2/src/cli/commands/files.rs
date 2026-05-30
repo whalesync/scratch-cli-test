@@ -1632,33 +1632,39 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
     for (ctx_idx, path_pairs) in &by_conn {
         let ctx = &contexts[*ctx_idx];
 
-        let main_map = read_main_tree(&ctx.bare_repo)?;
-        sync_schema_files_from_worktree(ctx)?;
-        let local_map = read_materialized_repo(ctx)?;
+        // Read only the main blobs we actually need. `read_main_tree_filtered`
+        // still walks `ls-tree` (cheap metadata only) but `cat-file --batch`
+        // is scoped to the rel_paths we're rejecting, so a single-record
+        // reject pays O(1) blob reads instead of loading the whole connection.
+        let wanted: HashSet<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
+        let main_map = read_main_tree_filtered(&ctx.bare_repo, |p| wanted.contains(p))?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-        let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
 
-        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
-        let changed_paths: std::collections::HashSet<&str> =
-            changes.iter().map(|e| e.path.as_str()).collect();
-
+        // Two-pass to keep all-or-nothing semantics: validate every path in
+        // this connection has unreviewed changes before writing anything.
+        let mut resolved: Vec<(&str, Option<Vec<u8>>)> = Vec::with_capacity(path_pairs.len());
         for (input_path, rel_path) in path_pairs {
-            if !changed_paths.contains(rel_path.as_str()) {
+            let approved_bytes = approved_bytes_for_path(&main_map, &accepted_file, rel_path)?;
+            let working_bytes = match std::fs::read(ctx.worktree_dir.join(rel_path)) {
+                Ok(bytes) => Some(review_ops::normalize_crlf(bytes)),
+                Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+                Err(err) => return Err(err.into()),
+            };
+
+            if !json_content_differs(approved_bytes.as_deref(), working_bytes.as_deref()) {
                 anyhow::bail!("No unreviewed local changes for '{}'.", input_path);
             }
+
+            resolved.push((rel_path.as_str(), approved_bytes));
         }
 
-        // Restore working file to its approved bytes. Accepted-patches
+        // Restore each working file to its approved bytes. Accepted-patches
         // file is untouched — reject only undoes the unreviewed delta
         // between working and approved.
-        for (_, rel_path) in path_pairs {
-            write_or_remove_working_file(
-                ctx,
-                rel_path,
-                approved_map.get(rel_path.as_str()).map(|v| v.as_slice()),
-            )?;
+        for (rel_path, approved_bytes) in &resolved {
+            write_or_remove_working_file(ctx, rel_path, approved_bytes.as_deref())?;
         }
 
         all_rejected.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
@@ -3056,6 +3062,75 @@ fn read_main_tree(bare_repo: &Path) -> anyhow::Result<FileMap> {
     }
 }
 
+/// Like [`read_main_tree`] but only reads blobs whose path matches `keep`.
+/// `ls-tree` still enumerates the whole tree (cheap — metadata only) but
+/// `cat-file --batch` only processes the matching subset. Per-path callers
+/// (e.g. `files reject <path>`) pass a path-set predicate to avoid loading a
+/// 500MB worktree into memory just to touch one record.
+fn read_main_tree_filtered<F>(bare_repo: &Path, keep: F) -> anyhow::Result<FileMap>
+where
+    F: Fn(&str) -> bool,
+{
+    match git_rev_parse_optional(bare_repo, "refs/heads/main")? {
+        Some(hash) => crate::git_ops::read_tree_files_filtered(bare_repo, &hash, keep),
+        None => Ok(FileMap::new()),
+    }
+}
+
+/// Per-path equivalent of `compute_accepted_state`: returns the bytes that
+/// would appear at `path` in the synthetic approved tree (`main` overlaid with
+/// `accepted-patches.json`). `None` means the path is approved-deleted or
+/// simply doesn't exist. Caller must have read `main_map` with at least
+/// `path` included.
+fn approved_bytes_for_path(
+    main_map: &FileMap,
+    file: &crate::shared::accepted_patches::AcceptedPatchesFile,
+    path: &str,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    if let Some(entry) = crate::shared::accepted_patches::get_entry(file, path) {
+        review_ops::apply_patch_entry_to_blob(main_map.get(path).map(|v| v.as_slice()), entry)
+    } else {
+        Ok(main_map.get(path).cloned())
+    }
+}
+
+/// Build `(main_map, approved_map, local_map)` scoped to a single folder for
+/// the `*-all --folder` commands. `main_map` is read via `cat-file --batch`
+/// filtered to the folder's blobs only; `local_map` walks just
+/// `<worktree>/<folder>`; `approved_map` is `main_map` overlaid with the
+/// in-folder subset of `accepted_file.patches`. Out-of-folder patches in
+/// `accepted_file` are intentionally not reflected here — callers that need
+/// to mutate the patch file still hold the full `accepted_file` and write
+/// it back unchanged outside the folder.
+fn read_folder_scoped_maps(
+    ctx: &ConnectionContext,
+    folder: &str,
+    accepted_file: &crate::shared::accepted_patches::AcceptedPatchesFile,
+) -> anyhow::Result<(FileMap, FileMap, FileMap)> {
+    let main_map = read_main_tree_filtered(&ctx.bare_repo, |p| is_data_path_in_folder(p, folder))?;
+    let mut approved_map = main_map.clone();
+    for entry in &accepted_file.patches {
+        if !is_data_path_in_folder(&entry.path, folder) {
+            continue;
+        }
+        match review_ops::apply_patch_entry_to_blob(
+            main_map.get(entry.path.as_str()).map(|v| v.as_slice()),
+            entry,
+        )? {
+            Some(bytes) => {
+                approved_map.insert(entry.path.clone(), bytes);
+            }
+            None => {
+                approved_map.remove(entry.path.as_str());
+            }
+        }
+    }
+    let folder_dir = ctx.worktree_dir.join(folder);
+    let mut local_map = FileMap::new();
+    review_ops::read_dirty_disk(&ctx.worktree_dir, &folder_dir, &mut local_map)?;
+    Ok((main_map, approved_map, local_map))
+}
+
 /// Resolve `<workspace>/.scratch/connections/<conn>` for a context.
 ///
 /// `ctx.workspace_dir` is historically the workbook materialization path
@@ -3522,22 +3597,27 @@ fn discard_all_full_scan(
     ctx: &ConnectionContext,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<DiscardAllResult> {
-    let main_hash = match git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")? {
-        Some(hash) => hash,
-        None => {
-            return Ok(DiscardAllResult {
-                skipped_missing_main: true,
-                ..Default::default()
-            });
-        }
-    };
-    let main_map = read_git_tree(&ctx.bare_repo, &main_hash)?;
+    if git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?.is_none() {
+        return Ok(DiscardAllResult {
+            skipped_missing_main: true,
+            ..Default::default()
+        });
+    }
 
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    let local_map = read_materialized_repo(ctx)?;
-    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+    // Folder-scoped reads when `--folder` is set; see `read_folder_scoped_maps`.
+    let (main_map, approved_map, local_map) = match repo_folder {
+        Some(folder) => read_folder_scoped_maps(ctx, folder, &accepted_file)?,
+        None => {
+            let main_map = read_main_tree(&ctx.bare_repo)?;
+            let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+            let local_map = read_materialized_repo(ctx)?;
+            (main_map, approved_map, local_map)
+        }
+    };
+
     let unreviewed = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
 
     let path_in_scope = |path: &str| match repo_folder {
@@ -3676,20 +3756,23 @@ fn accept_all_full_scan(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<AcceptAllResult> {
     let connection_dir = accepted_patches_dir(ctx);
-
-    let main_map = read_main_tree(&ctx.bare_repo)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-    let local_map = read_materialized_repo(ctx)?;
 
-    let all_changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
-    let changes: Vec<UnreviewedEntry> = match repo_folder {
-        Some(folder) => all_changes
-            .into_iter()
-            .filter(|entry| is_data_path_in_folder(&entry.path, folder))
-            .collect(),
-        None => all_changes,
+    // Folder-scoped reads when `--folder` is set: `cat-file --batch` only on
+    // that folder's main blobs, `read_dirty_disk` only on `<worktree>/<folder>`.
+    // Out-of-folder paths in `accepted_file` are left untouched in the saved
+    // file at the end (only in-folder entries get upserted/removed below).
+    let (main_map, approved_map, local_map) = match repo_folder {
+        Some(folder) => read_folder_scoped_maps(ctx, folder, &accepted_file)?,
+        None => {
+            let main_map = read_main_tree(&ctx.bare_repo)?;
+            let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+            let local_map = read_materialized_repo(ctx)?;
+            (main_map, approved_map, local_map)
+        }
     };
+
+    let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
 
     if changes.is_empty() {
         return Ok(AcceptAllResult::default());
@@ -3743,20 +3826,20 @@ fn reject_all_full_scan(
     repo_folder: Option<&str>,
 ) -> anyhow::Result<RejectAllResult> {
     let connection_dir = accepted_patches_dir(ctx);
-
-    let main_map = read_main_tree(&ctx.bare_repo)?;
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-    let local_map = read_materialized_repo(ctx)?;
 
-    let all_changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
-    let changes: Vec<UnreviewedEntry> = match repo_folder {
-        Some(folder) => all_changes
-            .into_iter()
-            .filter(|entry| is_data_path_in_folder(&entry.path, folder))
-            .collect(),
-        None => all_changes,
+    // Folder-scoped reads when `--folder` is set; see `read_folder_scoped_maps`.
+    let (_main_map, approved_map, local_map) = match repo_folder {
+        Some(folder) => read_folder_scoped_maps(ctx, folder, &accepted_file)?,
+        None => {
+            let main_map = read_main_tree(&ctx.bare_repo)?;
+            let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+            let local_map = read_materialized_repo(ctx)?;
+            (main_map, approved_map, local_map)
+        }
     };
+
+    let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
 
     if changes.is_empty() {
         return Ok(RejectAllResult::default());
