@@ -54,15 +54,13 @@ include:
   on_merge_to_prod:
     - if: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
 
-  # Local-runner opt-ins — defined here (not in local-runners.yml) so the
-  # release pipeline can reference them even when local-runners.yml is excluded
-  # via RELEASE_DESKTOP_ONLY / RELEASE_CLI_ONLY.
+  # Local-runner opt-in — gates the docker-executor MR jobs in
+  # gitlab-runner-users.yml to a specific user's local runner. Defined here
+  # (not in local-runners.yml) so other files can reference it even when
+  # local-runners.yml is excluded via RELEASE_DESKTOP_ONLY / RELEASE_CLI_ONLY.
   # ✏️  ADD YOUR USERNAME HERE (1 of 2 — you must also update
-  #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml)
-  #    NOTE: update the list of users in ALL three rules below.
+  #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml).
   local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324|ivanjdws)$/'
-  local_runner_users_master: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324|ivanjdws)$/'
-  local_runner_users_prod: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "schedule" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324|ivanjdws)$/'
 
   # Local runner user list
   #
@@ -125,7 +123,7 @@ include:
 # RELEASE_DESKTOP_ONLY / RELEASE_CLI_ONLY.
 .local-macos-runner-defaults:
   tags:
-    - "local-macos-$GITLAB_USER_LOGIN"
+    - team-macos-release
   variables:
     GIT_STRATEGY: fetch
     GIT_DEPTH: 0

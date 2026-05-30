@@ -116,10 +116,9 @@ The desktop release pipeline lives in [.gitlab-ci-release.yml](.gitlab-ci-releas
 
 ### Prerequisites (one-time, per developer)
 
-1. **Register a local macOS shell runner.** Follow [docs/ops/local-gitlab-runner.md § macOS Shell Runner](../docs/ops/local-gitlab-runner.md#macos-shell-runner-for-native-dmg-builds). The runner must be tagged `local-macos-YOUR_GITLAB_USERNAME` and have Node 22, Yarn, and Git on its `PATH`.
-2. **Register your GitLab username in the pipeline.** Add it to the regex in all three rules in [gitlab-ci/common.yml](../gitlab-ci/common.yml) — `.rules.local_runner_users_mr`, `.rules.local_runner_users_master`, and `.rules.local_runner_users_prod`. Without this, the pipeline will not generate the `Package * macOS` / `Upload * macOS assets` jobs for you and the release will ship without mac artifacts.
+Register a local macOS shell runner. Follow [docs/ops/local-gitlab-runner.md § macOS Shell Runner](../docs/ops/local-gitlab-runner.md#macos-shell-runner-for-native-dmg-builds). The runner must be tagged with both `local-macos-YOUR_GITLAB_USERNAME` (personal MR jobs) and `team-macos-release` (team-wide desktop release jobs), and have Node 22, Yarn, and Git on its `PATH`.
 
-The macOS runner must be running when the pipeline reaches the `release desktop app` stage, otherwise the job will sit pending until it's available.
+The mac Package + Upload jobs always generate on prod/master pipelines and are dispatched to whichever team-tagged runner is online — no per-user opt-in is needed in `gitlab-ci/common.yml`. At least one teammate's mac runner must be online when the pipeline reaches the `release desktop app` stage, otherwise the mac job will sit pending until one comes up or the job hits its timeout.
 
 ### Cutting a release
 
@@ -133,8 +132,8 @@ The macOS runner must be running when the pipeline reaches the `release desktop 
 4. Optionally set `RELEASE_TYPE` (`patch` / `minor` / `major`) on the bootstrap job — defaults to `patch`.
 5. Run the pipeline, then click ▶︎ on **Bootstrap prod desktop release** (or test) to start the release. Downstream jobs (`Build CLI for…`, `Package… macOS/Linux/Windows`, `Upload… assets`, `Finalize…`) run automatically once bootstrap completes.
 
-`Finalize` uses `optional: true` on the mac upload, so a release will still publish (without mac artifacts) if your runner is offline or your username isn't registered.
+`Finalize` blocks on the mac upload — if no team-tagged mac runner is online when the pipeline reaches the mac stage, Finalize fails and the release is not published, rather than silently shipping without mac artifacts.
 
 ### Triggering a test release from an MR
 
-For MRs that touch the release pipeline itself (any of the files listed in `.changes.release_pipeline`), the test variant jobs appear as manual ▶︎ buttons on the MR pipeline. You don't need `RELEASE_DESKTOP_ONLY` here — the trigger is the file change. Click `Bootstrap test desktop release` to run the full release end-to-end against the `test-api.scratch.md` environment. The mac jobs are gated on `local_runner_users_mr`, same as a manual pipeline run.
+For MRs that touch the release pipeline itself (any of the files listed in `.changes.release_pipeline`), the test variant jobs appear as manual ▶︎ buttons on the MR pipeline. You don't need `RELEASE_DESKTOP_ONLY` here — the trigger is the file change. Click `Bootstrap test desktop release` to run the full release end-to-end against the `test-api.scratch.md` environment. The mac jobs are dispatched to any online `team-macos-release` runner — same as a manual pipeline run.

@@ -10,24 +10,24 @@
 #
 # ⚠️  SHARED PIECES LIVE IN gitlab-ci/common.yml
 #
-# The bits used by BOTH the normal CI pipeline (this file) AND the release
+# The bits used by both the normal CI pipeline (this file) and the release
 # pipelines (scratch-desktop/.gitlab-ci-release.yml etc.) are defined in
 # gitlab-ci/common.yml rather than here, so they remain available when this
 # file is excluded via RELEASE_DESKTOP_ONLY / RELEASE_CLI_ONLY:
 #
-#   - .rules.local_runner_users_mr       (used here + by release mac jobs)
-#   - .rules.local_runner_users_master   (used here + by release mac jobs)
-#   - .rules.local_runner_users_prod     (used by release mac jobs)
-#   - .local-macos-runner-defaults       (used by release mac jobs)
+#   - .rules.local_runner_users_mr  (used here for per-user docker MR jobs)
+#   - .local-macos-runner-defaults  (used by release mac jobs; tagged
+#                                    `team-macos-release` so any team mac
+#                                    runner picks it up — no user gating)
 #
 # Anything defined in THIS file (.local-runner-defaults, .local-docker-build,
 # and the `local *` jobs) is only loaded in the normal CI pipeline.
 #
-# To opt in:
-# 1. Register a local runner (see docs/local-gitlab-runner.md)
+# To opt in (docker local runner for MR jobs):
+# 1. Register a local runner (see docs/ops/local-gitlab-runner.md)
 # 2. Add your username to BOTH regexes (see step 6 in the doc):
-#    a. .rules.local_runner_users_{mr,master,prod} in gitlab-ci/common.yml
-#       (routes jobs to your runner)
+#    a. .rules.local_runner_users_mr in gitlab-ci/common.yml
+#       (routes your MR jobs to your runner)
 #    b. .rules.skip_for_local_runner_users in 01-build-and-test.yml
 #       (disables shared-runner duplicates)
 #

@@ -83,12 +83,10 @@ Each repo has its own opt-in lists. **Update only the repo(s) you want to route 
 
 Two files:
 
-1. **`gitlab-ci/common.yml`** — add your username to all three `.rules.local_runner_users_{mr,master,prod}` regexes:
+1. **`gitlab-ci/common.yml`** — add your username to the `.rules.local_runner_users_mr` regex:
 
    ```yaml
    local_runner_users_mr: "... && $GITLAB_USER_LOGIN =~ /^(cfonger|YOUR_USERNAME)$/"
-   local_runner_users_master: "... && $GITLAB_USER_LOGIN =~ /^(cfonger|YOUR_USERNAME)$/"
-   local_runner_users_prod: "... && $GITLAB_USER_LOGIN =~ /^(cfonger|YOUR_USERNAME)$/"
    ```
 
 2. **`gitlab-ci/stages/01-build-and-test.yml`** — `.rules.skip_for_local_runner_users` (suppresses shared-runner duplicates):
@@ -97,6 +95,8 @@ Two files:
    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|YOUR_USERNAME)$/'
      when: never
    ```
+
+> The macOS shell runner used for desktop releases does **not** require username opt-in — it's dispatched by the shared `team-macos-release` tag instead. See [§ macOS Shell Runner](#macos-shell-runner-for-native-dmg-builds) below.
 
 #### Whalesync (`whalesync/whalesync`)
 
@@ -144,7 +144,7 @@ The default Docker-executor runner builds everything inside Linux containers, so
 ### 1. Create the runner in GitLab
 
 1. Go to [New project runner](https://gitlab.com/whalesync/spinner/-/runners/new)
-2. In the **Tags** field, enter `local-macos-YOUR_GITLAB_USERNAME` (e.g., `local-macos-jdoe`)
+2. In the **Tags** field, enter both `local-macos-YOUR_GITLAB_USERNAME` (e.g., `local-macos-jdoe`) and `team-macos-release` — comma-separated. The first tag is for personal MR jobs; the second lets this runner pick up team-wide prod/test desktop releases regardless of who triggered the pipeline.
 3. Click **Create runner** and copy the token
 
 ### 2. Register the runner locally
@@ -178,6 +178,34 @@ No additional opt-in is needed — the macOS jobs use the same username list as 
 These jobs build `.dmg` + `.zip` for macOS (no Linux targets) and create a GitHub test release, just like the Docker-based release jobs but with native macOS packaging.
 
 > **Note:** This runner is only used for desktop release jobs. All other local jobs (client, server, scratch-cli, etc.) continue to use the Docker-executor runner.
+
+### 5. Cap concurrency in `config.toml`
+
+The shell runner builds an Electron app on your laptop, which is heavy. Add `limit = 1` to the shell runner block in `~/.gitlab-runner/config.toml` so it only takes one job at a time even when multiple team-tagged release jobs are queued:
+
+```toml
+[[runners]]
+  name = "your-machine.shell"
+  executor = "shell"
+  # ...
+  limit = 1
+```
+
+Then restart the runner:
+
+```bash
+brew services restart gitlab-runner
+```
+
+### Adding the team tag to an existing runner
+
+If you registered a macOS shell runner before the `team-macos-release` tag existed, add it via the GitLab UI:
+
+1. Go to [Project runners](https://gitlab.com/whalesync/spinner/-/settings/ci_cd) → expand **Runners** → click your runner's edit (pencil) icon.
+2. In the **Tags** field, append `team-macos-release` (comma-separated with your existing `local-macos-…` tag).
+3. Save.
+
+No runner restart is required — GitLab tracks tags server-side. Also add `limit = 1` to `config.toml` (above) if you haven't already.
 
 ## Integration tests
 

@@ -81,10 +81,12 @@ include:
   resource_group: github-releases
 
 # Anyone on prod/master can cut a desktop release. The mac Package + Upload
-# jobs are only created in the pipeline for users with a registered local-macos
-# shell runner (gated by local_runner_users_*); for everyone else, the release
-# ships without mac artifacts. Finalize uses needs.optional:true on the mac
-# upload so it completes in both cases.
+# jobs always generate and are dispatched to whichever team-tagged mac shell
+# runner (tag: team-macos-release) is online at that moment — see
+# docs/ops/local-gitlab-runner.md § macOS Shell Runner. If no mac runner is
+# online when the pipeline reaches the mac stage, the job sits pending until
+# one comes up or hits its timeout; Finalize blocks on the mac upload, so a
+# release never publishes without mac artifacts.
 
 Bootstrap prod desktop release:
   extends: .bootstrap_release
@@ -259,7 +261,7 @@ Package prod macOS:
     - job: Build CLI for prod desktop release
       artifacts: true
   rules:
-    - if: !reference [.rules, local_runner_users_prod]
+    - if: '$CI_COMMIT_BRANCH == "prod"'
 
 Package prod Linux:
   extends: .package_desktop_linux
@@ -306,12 +308,7 @@ Package test macOS:
       artifacts: true
     - job: Build CLI for test desktop release
       artifacts: true
-  rules:
-    - if: !reference [.rules, local_runner_users_mr]
-      changes: !reference [.changes, release_pipeline]
-      when: manual
-      allow_failure: true
-    - if: !reference [.rules, local_runner_users_master]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 Package test Linux:
   extends: .package_desktop_linux
@@ -365,7 +362,7 @@ Upload prod macOS assets:
     - job: Package prod macOS
       artifacts: true
   rules:
-    - if: !reference [.rules, local_runner_users_prod]
+    - if: '$CI_COMMIT_BRANCH == "prod"'
 
 Upload prod Linux assets:
   extends: .upload_assets
@@ -394,12 +391,7 @@ Upload test macOS assets:
       artifacts: true
     - job: Package test macOS
       artifacts: true
-  rules:
-    - if: !reference [.rules, local_runner_users_mr]
-      changes: !reference [.changes, release_pipeline]
-      when: manual
-      allow_failure: true
-    - if: !reference [.rules, local_runner_users_master]
+  rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 Upload test Linux assets:
   extends: .upload_assets
@@ -440,10 +432,8 @@ Finalize prod release:
   needs:
     - job: Bootstrap prod desktop release
       artifacts: true
-    # Mac is optional so non-local-runner users can still cut a release.
     - job: Upload prod macOS assets
       artifacts: false
-      optional: true
     - job: Upload prod Linux assets
       artifacts: false
     - job: Upload prod Windows assets
@@ -462,7 +452,6 @@ Finalize test release:
       artifacts: true
     - job: Upload test macOS assets
       artifacts: false
-      optional: true
     - job: Upload test Linux assets
       artifacts: false
     - job: Upload test Windows assets
