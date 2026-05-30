@@ -11,8 +11,13 @@ cd "$(dirname "$0")/.."
 #   2. Flips the release's `draft` flag to false (makes it visible).
 #   3. Writes annotations.json so GitLab's job UI links to the release.
 #
+# If the draft referenced by $RELEASE_ID is missing (Cleanup may have deleted
+# it between a failed run and the retry — DEV-10257), the sourced
+# ensure_draft_release helper looks up or recreates a draft with the same tag
+# and updates $RELEASE_ID / $RELEASE_UPLOAD_URL in place.
+#
 # Required env (normally from bootstrap dotenv):
-#   RELEASE_ID, NEW_VERSION, RELEASE_UPLOAD_URL
+#   RELEASE_ID, NEW_VERSION, RELEASE_UPLOAD_URL, IS_PRERELEASE
 # Required secret:
 #   GITHUB_TOKEN
 
@@ -28,6 +33,10 @@ if ! command -v jq &>/dev/null; then
   echo "ERROR: jq is required but not installed."
   exit 1
 fi
+
+# shellcheck source=scripts/ensure_draft_release.sh
+. "$(dirname "$0")/ensure_draft_release.sh"
+ensure_draft_release
 
 GITHUB_REPO="whalesync/scratch-desktop"
 UPLOAD_URL_BASE="${RELEASE_UPLOAD_URL%%\{*}"

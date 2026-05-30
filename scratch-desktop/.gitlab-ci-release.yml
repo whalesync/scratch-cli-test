@@ -37,6 +37,7 @@ include:
     - scratch-desktop/scripts/package.sh
     - scratch-desktop/scripts/upload_assets.sh
     - scratch-desktop/scripts/finalize_release.sh
+    - scratch-desktop/scripts/ensure_draft_release.sh
     - scratch-desktop/scripts/update_homebrew_cask.sh
     - scratch-desktop/scripts/afterPack.cjs
     - scratch-desktop/scripts/download-git.cjs

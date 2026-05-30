@@ -15,8 +15,15 @@ cd "$(dirname "$0")/.."
 # fetched once at startup, so another job may delete an asset before we do — a
 # DELETE that returns 404 is treated as success (already absent).
 #
+# If the draft release referenced by $RELEASE_ID is missing (Cleanup may have
+# deleted it between a failed run and the retry — DEV-10257), the sourced
+# ensure_draft_release helper looks up or recreates a draft with the same tag
+# and updates $RELEASE_ID / $RELEASE_UPLOAD_URL in place. Sibling platform
+# uploads racing on the recreate are resolved via the same helper (422 →
+# refetch).
+#
 # Required env (normally propagated via bootstrap's release.env dotenv):
-#   RELEASE_ID, RELEASE_UPLOAD_URL, NEW_VERSION
+#   RELEASE_ID, RELEASE_UPLOAD_URL, NEW_VERSION, IS_PRERELEASE
 # Required secret:
 #   GITHUB_TOKEN
 
@@ -32,6 +39,10 @@ if ! command -v jq &>/dev/null; then
   echo "ERROR: jq is required but not installed."
   exit 1
 fi
+
+# shellcheck source=scripts/ensure_draft_release.sh
+. "$(dirname "$0")/ensure_draft_release.sh"
+ensure_draft_release
 
 GITHUB_REPO="whalesync/scratch-desktop"
 DIST_DIR="./dist-release"
