@@ -1984,10 +1984,15 @@ pub fn clear_folder_index(
     let rows_cleared: i64 =
         conn.query_row(&format!("SELECT COUNT(*) FROM {tq}"), [], |row| row.get(0))?;
 
-    // Rename → recreate → drop: atomically clears all data and all dynamically-added
-    // field columns (including their :mt/:sz companions and indexes) in one transaction.
-    let tmp = format!("{}__clrtmp", table);
-    let tq_tmp = quote_ident(&tmp);
+    // Drop the table and any dynamically-added field columns / indexes in one
+    // shot, then call `ensure_schema` to recreate with the canonical schema +
+    // partial indexes. Previously this function recreated the table inline
+    // with a hand-written column list, which drifted from `ensure_schema`
+    // (e.g. it forgot `accepted_patches_mtime` and the two partial indexes).
+    // Drift left the folder with a `__v<N>`-suffixed table whose name matched
+    // the current schema version but whose columns didn't — every subsequent
+    // refresh hit `no such column` errors. Delegating to `ensure_schema`
+    // makes this function impossible to drift again.
     let vr_tq = quote_ident(&validation_results_table());
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute(
@@ -1995,30 +2000,10 @@ pub fn clear_folder_index(
         params![folder],
     )
     .context("failed to clear validation_results for folder")?;
-    tx.execute_batch(&format!(
-        "ALTER TABLE {tq} RENAME TO {tq_tmp};
-         CREATE TABLE {tq} (
-             filename             TEXT PRIMARY KEY,
-             working_mtime        INTEGER,
-             working_size         INTEGER,
-             dirty_mtime          INTEGER,
-             dirty_size           INTEGER,
-             master_mtime         INTEGER,
-             master_size          INTEGER,
-             master_present       INTEGER NOT NULL DEFAULT 0,
-             accepted_kind        TEXT,
-             approvedChanges      INTEGER NOT NULL DEFAULT 0,
-             unapprovedChanges    INTEGER NOT NULL DEFAULT 0,
-             parse_error          TEXT,
-             has_errors           INTEGER NOT NULL DEFAULT 0,
-             validated_mtime_working   INTEGER,
-             validated_mtime_master    INTEGER,
-             validated_mtime_validator INTEGER
-         );
-         DROP TABLE {tq_tmp};"
-    ))
-    .context("failed to clear folder index")?;
+    tx.execute_batch(&format!("DROP TABLE IF EXISTS {tq};"))
+        .context("failed to drop folder index table")?;
     tx.commit()?;
+    ensure_schema(&conn, &table)?;
 
     Ok(ClearFolderIndexResult { rows_cleared })
 }

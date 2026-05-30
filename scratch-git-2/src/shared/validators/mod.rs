@@ -541,8 +541,22 @@ fn validate_records(
     // master worktree (the worktree no longer exists post-slice-F). On a
     // path that isn't a valid bare repo, the helper errs and we fall through
     // to an empty map — readonly checks then skip silently.
-    let file_path_to_contents_map_in_main_branch =
-        crate::shared::git_local::read_tree_files(bare_repo, "refs/heads/main").unwrap_or_default();
+    //
+    // On partial revalidations (e.g. a single-cell edit), narrow the main-tree
+    // read to just the paths the caller asked about. `ls-tree` still walks the
+    // whole tree (metadata only, cheap), but `cat-file --batch` skips every
+    // blob that isn't in the filter — the difference between megabytes and
+    // bytes on a workspace with tens of thousands of records.
+    let file_path_to_contents_map_in_main_branch = match selected_paths {
+        Some(selected) => crate::shared::git_local::read_tree_files_filtered(
+            bare_repo,
+            "refs/heads/main",
+            |path| selected.contains(path),
+        )
+        .unwrap_or_default(),
+        None => crate::shared::git_local::read_tree_files(bare_repo, "refs/heads/main")
+            .unwrap_or_default(),
+    };
 
     // Phase 1 (serial): enumerate work items, loading schema once per folder.
     let mut work_items: Vec<WorkItem> = Vec::new();

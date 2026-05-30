@@ -9,12 +9,12 @@
 |---|---|---|
 | §0 Vocabulary & renaming pass (Rust) | ✅ Shipped | `cfonger-81` commit `7b2a675a` |
 | §0 Vocabulary & renaming pass (desktop TS) | ✅ Shipped | `cfonger-83` commit `4d7117f0` |
-| §1 Single-record napi ops (per-field Approve perf fix) | ⏳ Not started | — |
-| §2 CLI path-list / per-path ops | ⏳ Not started | — |
-| §3 CLI folder-scoped field ops | ⏳ Not started | — |
-| §4 Validators partial-revalidation filter | ⏳ Not started | — |
-| §5.1 / §5.2 / §5.3 Bulk all-ops (re-classified — see note) | ⏳ Not started | — |
-| §6.1 / §6.2 Frontend amplifier fixes | ⏳ Not started | — |
+| §1 Single-record napi ops (per-field Approve perf fix) | ✅ Shipped | `cfonger-84` |
+| §2 CLI path-list / per-path ops | ✅ Shipped | `cfonger-84` |
+| §3 CLI folder-scoped field ops | ✅ Shipped | `cfonger-84` |
+| §4 Validators partial-revalidation filter | ✅ Shipped | `cfonger-84` |
+| §5.1 / §5.2 / §5.3 Bulk all-ops (re-classified — see note) | ✅ Shipped | `cfonger-84` |
+| §6.1 / §6.2 Frontend amplifier fixes | ✅ Shipped (per-field accept paths) | `cfonger-84` |
 
 > **Re-classification note (2026-05-30):** §5.1 / §5.2 / §5.3
 > (`{accept,reject,discard}_all_unreviewed_changes_in_connection_repo`)
@@ -437,15 +437,36 @@ where before there were three layers of "wait, which one again?"
 0. ✅ **Vocabulary & renaming pass** — shipped as two PRs (`cfonger-81` for
    Rust, `cfonger-83` for desktop TS). See "Implementation status" at the
    top of this doc for landing details.
-1. ⏳ **Section 1** (5 one-line changes in renamed `review_ops.rs`) + **Section
-   6.1 / 6.2** (drop the redundant invalidation from the per-field path).
+1. ✅ **Section 1** (5 one-line changes in renamed `review_ops.rs`) + **Section
+   6.1 / 6.2** (drop the redundant invalidation from the per-field accept paths).
    Together they ship the per-field approve performance fix end-to-end.
-2. ⏳ **Section 4.1** — validators filter on partial revalidations.
-3. ⏳ **Section 3** — refactor 3 functions onto
+2. ✅ **Section 4.1** — validators filter on partial revalidations.
+3. ✅ **Section 3** — refactored 3 functions onto
    `read_main_local_and_approved_maps_scoped_to_folder` (folder-scoped
-   maps). Optionally tighten further to gix-status-scoped maps with §5
-   (see §3 note).
-4. ⏳ **Section 2** — narrower path-list reads in the CLI.
-5. ⏳ **Section 5.1 / 5.2 / 5.3** (re-classified) — switch the bulk all-ops
-   to the gix-status + patch-file union pattern. Same shape across the three
-   (accept/reject/discard); share the candidate-set helper.
+   maps). The further gix-status-scoped tightening landed in §5.
+4. ✅ **Section 2** — narrower path-list reads in the CLI. New helper
+   `read_worktree_files_for_record_paths` reads just the requested
+   worktree files instead of walking the whole worktree.
+5. ✅ **Section 5.1 / 5.2 / 5.3** — bulk all-ops now build the candidate
+   set with `collect_all_ops_candidate_record_paths`
+   (`gix::status ∪ accepted-patches.json` entries, optionally folder-scoped),
+   load just those bytes via
+   `read_main_approved_worktree_maps_for_candidate_paths`, and drive
+   accept/reject/discard from that bounded set. The folder-scoped branches
+   that used to live alongside the full-repo branches collapsed into a
+   single candidate-set flow.
+
+## What didn't ship
+
+The §6.1/§6.2 fix landed for the **accept** paths
+(`acceptGridCellChange`, `acceptFieldEditFromInputText`, and the
+`onSingleFieldAcceptedApplyOptimistically` wiring). The grid-side
+**reject** and **undo-approved** handlers also lost their
+`invalidateWorkspaceLevelData()` calls, since they're per-field operations
+with no need to bump workspace-wide validation.
+
+The RecordDetailView reject/undo handlers still call
+`onRecordStructurallyChangedRefetchAll`, which fires
+`invalidateWorkspaceLevelData()`. Splitting that callback into
+"record-scoped per-field" vs "structural" is a real follow-up but is outside
+the literal §6.1/§6.2 fix and was not enumerated in the audit.

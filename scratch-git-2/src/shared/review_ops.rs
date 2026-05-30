@@ -893,7 +893,7 @@ pub fn write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
 /// Read the user's editable directory + the per-connection `.scratch/` state
 /// into a single `FileMap`. Schema/validation/state files appear under
 /// `.scratch/<rel>` keys; record files appear under their normal repo-relative
-/// path. Mirrors what `read_main_branch_contents` produces from git.
+/// path. Mirrors what `read_main_branch_contents_filtered_by_path` produces from git.
 pub fn read_worktree_files_and_scratch_state(paths: &ConnectionPaths) -> anyhow::Result<FileMap> {
     let mut map = FileMap::new();
     load_worktree_into_path_contents_map(&paths.worktree_dir, &paths.worktree_dir, &mut map)?;
@@ -1171,10 +1171,6 @@ fn acquire_lock(
     }
 }
 
-fn read_main_branch_contents(bare_repo: &Path) -> Result<FileMap, ReviewOpError> {
-    read_main_branch_contents_filtered_by_path(bare_repo, |_| true)
-}
-
 /// Read `refs/heads/main` with a path-level filter applied at the
 /// `git ls-tree` stage so `cat-file --batch` only processes matching blobs.
 /// Lets paginated callers (e.g. [`read_folder_blobs_filtered`]) read only
@@ -1270,7 +1266,8 @@ pub fn accept_field(
     let field_value_in_working_file =
         read_nested_json_value(&working_file_parsed_json_object, field);
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&paths.bare_repo, |p| p == record_rel_path)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
@@ -1376,7 +1373,8 @@ pub fn revert_field_edit_to_approved_value(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&paths.bare_repo, |p| p == record_rel_path)?;
     let connection_dir = accepted_patches_dir(&paths);
     let file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
@@ -1463,7 +1461,8 @@ pub fn drop_approved_field_and_restore_to_main_value(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&paths.bare_repo, |p| p == record_rel_path)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
@@ -1613,7 +1612,8 @@ pub fn restore_record_from_main_after_dropping_delete_patch(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&paths.bare_repo, |p| p == record_rel_path)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
@@ -1661,7 +1661,8 @@ pub fn drop_create_patch_and_delete_working_file(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&paths.bare_repo, |p| p == record_rel_path)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 

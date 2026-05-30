@@ -1905,8 +1905,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       void window.scratchFiles
         .acceptFieldEditFromInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
         .then(() => {
+          // Per-field changes don't bump workspaceLevelDataInvalidationCounter:
+          // the optimistic setDiffData above already reflects the new value, and a
+          // full-workspace validation refetch would re-run scratchmd across every
+          // connection just to track one cell. The local refresh below keeps the
+          // grid's unreviewed/approved markers honest.
           refreshGridDataInBackground();
-          invalidateWorkspaceLevelData();
         })
         .catch((err: unknown) => {
           console.error(`[acceptUnreviewedFieldEdit] ${logLabel} failed:`, err);
@@ -1919,15 +1923,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
           });
         });
     },
-    [
-      closeGridEditorChrome,
-      invalidateWorkspaceLevelData,
-      refreshGridData,
-      refreshGridDataInBackground,
-      schema,
-      selectedFolderPath,
-      workspacePath,
-    ],
+    [closeGridEditorChrome, refreshGridData, refreshGridDataInBackground, schema, selectedFolderPath, workspacePath],
   );
 
   const rejectUnreviewedGridCellChange = useCallback(
@@ -1941,19 +1937,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         .then(() => {
           closeGridEditorChrome();
           refreshGridDataInBackground();
-          invalidateWorkspaceLevelData();
         })
         .catch((err: unknown) => {
           console.error('[revertUnreviewedFieldEditToApproved] reject failed:', err);
         });
     },
-    [
-      closeGridEditorChrome,
-      invalidateWorkspaceLevelData,
-      refreshGridDataInBackground,
-      selectedFolderPath,
-      workspacePath,
-    ],
+    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const undoApprovedGridCellChange = useCallback(
@@ -1967,19 +1956,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         .then(() => {
           closeGridEditorChrome();
           refreshGridDataInBackground();
-          invalidateWorkspaceLevelData();
         })
         .catch((err: unknown) => {
           console.error('[dropApprovedFieldAndRestoreToMain] undo failed:', err);
         });
     },
-    [
-      closeGridEditorChrome,
-      invalidateWorkspaceLevelData,
-      refreshGridDataInBackground,
-      selectedFolderPath,
-      workspacePath,
-    ],
+    [closeGridEditorChrome, refreshGridDataInBackground, selectedFolderPath, workspacePath],
   );
 
   const acceptGridFieldChanges = useCallback(
@@ -3111,10 +3093,12 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   invalidateWorkspaceLevelData();
                 }}
                 onSingleFieldAcceptedApplyOptimistically={(filename, fieldName, nextValue) => {
+                  // No invalidateWorkspaceLevelData here: the setDiffData call already updates
+                  // the grid's view of this cell. See acceptGridCellChange for the same
+                  // reasoning.
                   setDiffData((prev) =>
                     prev ? applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue) : prev,
                   );
-                  invalidateWorkspaceLevelData();
                 }}
                 onPublishFile={props.onPublishFile}
                 onAddColumn={handleAddColumn}

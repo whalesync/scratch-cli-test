@@ -1531,9 +1531,21 @@ fn run_accept(
     for (ctx_idx, path_pairs) in &by_conn {
         let ctx = &contexts[*ctx_idx];
 
-        let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
+        // Narrow both reads to just the paths the caller asked about. Without
+        // this, `scratchmd files accept <one-path>` paid for a full main-tree
+        // read plus a full worktree walk — order of seconds on workspaces with
+        // tens of thousands of records.
+        let requested_rel_paths: Vec<String> =
+            path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
+        let requested_rel_paths_set: std::collections::HashSet<&str> =
+            requested_rel_paths.iter().map(String::as_str).collect();
+        let file_path_to_contents_map_in_main_branch =
+            read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+                requested_rel_paths_set.contains(p)
+            })?;
         sync_schema_files_from_worktree(ctx)?;
-        let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
+        let file_path_to_contents_map_in_worktree =
+            read_worktree_files_for_record_paths(&ctx.worktree_dir, &requested_rel_paths)?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
@@ -1860,10 +1872,18 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
     sync_schema_files_from_worktree(&ctx)?;
-    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+    // Folder-scoped: ls-tree still enumerates the whole main tree because
+    // cat-file --batch needs the OIDs (there's no path → OID primitive that
+    // skips the walk), but only blobs under `repo_folder` get cat-file'd. On
+    // a 38k-record workspace with a 5k-record folder, the cat-file step drops
+    // from megabytes to a few hundred KB.
+    let (
+        file_path_to_contents_map_in_main_branch,
+        _approved_state,
+        file_path_to_contents_map_in_worktree,
+    ) = read_main_local_and_approved_maps_scoped_to_folder(&ctx, &repo_folder, &accepted_file)?;
 
     let result = accept_field_in_folder(
         &ctx,
@@ -1954,10 +1974,16 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
     sync_schema_files_from_worktree(&ctx)?;
-    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(&ctx)?;
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+    // Folder-scoped main + worktree reads; see run_accept_field for why
+    // ls-tree still enumerates the whole tree (cat-file needs OIDs) while
+    // cat-file is the path that actually narrows.
+    let (
+        file_path_to_contents_map_in_main_branch,
+        _approved_state,
+        file_path_to_contents_map_in_worktree,
+    ) = read_main_local_and_approved_maps_scoped_to_folder(&ctx, &repo_folder, &accepted_file)?;
 
     let (next_file_path_to_contents_map_in_worktree, result) = reject_field_in_folder(
         &ctx,
@@ -2049,10 +2075,16 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
     sync_schema_files_from_worktree(&ctx)?;
-    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+    // Folder-scoped main + worktree reads; see run_accept_field for why
+    // ls-tree still enumerates the whole tree (cat-file needs OIDs) while
+    // cat-file is the path that actually narrows.
+    let (
+        file_path_to_contents_map_in_main_branch,
+        _approved_state,
+        file_path_to_contents_map_in_worktree,
+    ) = read_main_local_and_approved_maps_scoped_to_folder(&ctx, &repo_folder, &accepted_file)?;
 
     let (next_file_path_to_contents_map_in_worktree, result) = discard_field_in_folder(
         &ctx,
@@ -2702,7 +2734,12 @@ fn restore_deleted_record_paths_from_main_branch(
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
+    let requested_rel_paths_set: std::collections::HashSet<&str> =
+        rel_paths.iter().map(String::as_str).collect();
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+            requested_rel_paths_set.contains(p)
+        })?;
 
     let mut to_restore: Vec<(String, Vec<u8>)> = Vec::with_capacity(rel_paths.len());
     for rel_path in rel_paths {
@@ -2744,7 +2781,12 @@ fn drop_create_patches_and_delete_working_files_for_record_paths(
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
+    let requested_rel_paths_set: std::collections::HashSet<&str> =
+        rel_paths.iter().map(String::as_str).collect();
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+            requested_rel_paths_set.contains(p)
+        })?;
 
     let mut to_discard: Vec<String> = Vec::with_capacity(rel_paths.len());
     for rel_path in rel_paths {
@@ -2980,12 +3022,24 @@ fn list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(
 
     let mut entries: Vec<RecordChangeEntry> = Vec::new();
     if !gix_status_flagged_record_paths_and_status.is_empty() {
-        // Load the main tree once and resolve every byte-flagged path
-        // semantically. The expected-content rule depends on whether the path
-        // has an accepted patch (which makes `apply(main, patch)` the
-        // user-intended state) or not (where `main` is the authoritative
-        // state and any working-tree edit is unreviewed by definition).
-        let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
+        // Load only the byte-flagged paths from main; ls-tree still enumerates
+        // the whole tree (cat-file needs OIDs), but cat-file only streams the
+        // handful of blobs we'll actually compare against. Pre-narrowing, a
+        // single dirty record in a 38k-record workspace caused us to read the
+        // entire main tree before we could even answer "anything to review?".
+        let gix_status_flagged_paths_set: std::collections::HashSet<&str> =
+            gix_status_flagged_record_paths_and_status
+                .iter()
+                .map(|(p, _)| p.as_str())
+                .collect();
+        // The expected-content rule depends on whether the path has an
+        // accepted patch (which makes `apply(main, patch)` the user-intended
+        // state) or not (where `main` is the authoritative state and any
+        // working-tree edit is unreviewed by definition).
+        let file_path_to_contents_map_in_main_branch =
+            read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+                gix_status_flagged_paths_set.contains(p)
+            })?;
         for (rel_path, status) in gix_status_flagged_record_paths_and_status {
             let main_blob = file_path_to_contents_map_in_main_branch
                 .get(&rel_path)
@@ -3131,6 +3185,144 @@ where
         Some(hash) => crate::git_ops::read_tree_files_filtered(bare_repo, &hash, keep),
         None => Ok(FileMap::new()),
     }
+}
+
+/// Counterpart of [`read_main_branch_contents_filtered_by_path`] for the
+/// worktree side. Reads exactly the requested repo-relative paths from disk
+/// and returns them in a [`FileMap`] keyed by `rel_path`. Files that don't
+/// exist on disk are silently skipped — the caller's job to interpret an
+/// absent key (e.g. "locally deleted").
+///
+/// Scratch state (`.scratch/*`) is NOT loaded. Callers that need both must
+/// either widen this read or use [`read_worktree_files_and_scratch_state`].
+fn read_worktree_files_for_record_paths(
+    worktree_dir: &Path,
+    rel_paths: &[String],
+) -> anyhow::Result<FileMap> {
+    let mut out = FileMap::new();
+    for rel in rel_paths {
+        let disk_path = worktree_dir.join(rel);
+        match std::fs::read(&disk_path) {
+            Ok(bytes) => {
+                out.insert(rel.clone(), bytes);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(anyhow::Error::from(err).context(format!(
+                    "failed to read working file {}",
+                    disk_path.display()
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Candidate repo-relative paths for an `accept-all` / `reject-all` /
+/// `discard-all` invocation. The set is the union of:
+///
+/// - `gix::status` byte-dirty paths (paths whose worktree bytes differ from
+///   the git index; since HEAD == main in the dirty branch, these are paths
+///   that differ from `refs/heads/main`).
+/// - Entries in `accepted-patches.json` (paths where approved differs from
+///   main; the user may also have reverted the worktree back to main, which
+///   the all-ops need to detect so they can drop the now-stale entry).
+///
+/// Any path outside this union is at "worktree == main == approved → already
+/// at published," with nothing for the all-ops to do. Scoping by folder when
+/// `repo_folder` is `Some` shrinks the set further.
+///
+/// Both inputs matter:
+///
+/// - A path with a patch entry but no gix-status flag: the user manually
+///   reverted to main. accept-all should drop the entry; discard-all should
+///   too. Without iterating patch-file paths, this state is missed.
+/// - A path with a gix-status flag but no patch entry: a new unreviewed edit.
+///   accept-all should fold it in as a new entry; reject-all should restore
+///   it. Without iterating gix-status, this is missed.
+fn collect_all_ops_candidate_record_paths(
+    ctx: &ConnectionContext,
+    accepted_file: &crate::shared::accepted_patches::AcceptedPatchesFile,
+    repo_folder: Option<&str>,
+) -> anyhow::Result<std::collections::HashSet<String>> {
+    let scope_filter = |path: &str| match repo_folder {
+        Some(folder) => is_data_path_in_folder(path, folder),
+        None => is_data_path_in_folder(path, ""),
+    };
+
+    let mut candidate_rel_paths: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    let repo = gix::open(&ctx.worktree_dir)
+        .with_context(|| format!("failed to open worktree at {}", ctx.worktree_dir.display()))?;
+    let platform = repo.status(gix::progress::Discard)?;
+    let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
+    for item in iter {
+        let item = item?;
+        if item.summary().is_none() {
+            continue;
+        }
+        let rel_path: String = String::from_utf8_lossy(item.rela_path()).into_owned();
+        if !scope_filter(&rel_path) {
+            continue;
+        }
+        candidate_rel_paths.insert(rel_path);
+    }
+
+    for entry in &accepted_file.patches {
+        if scope_filter(&entry.path) {
+            candidate_rel_paths.insert(entry.path.clone());
+        }
+    }
+
+    Ok(candidate_rel_paths)
+}
+
+/// Load main + approved + worktree maps restricted to a candidate path set.
+/// Produces drop-in replacements for the maps the all-ops used to build from
+/// full-tree reads, but only the bytes for paths in `candidate_rel_paths` get
+/// loaded.
+///
+/// `accepted_file` is filtered to candidate paths before being overlaid on
+/// the narrowed main — without this, an out-of-scope patch (e.g. an
+/// `articles/` patch during a `--folder posts` run) would apply against a
+/// `None` main blob and synthesize an out-of-scope key in the approved map.
+/// That breaks downstream consumers that assume the approved map is bounded
+/// to candidates.
+fn read_main_approved_worktree_maps_for_candidate_paths(
+    ctx: &ConnectionContext,
+    accepted_file: &crate::shared::accepted_patches::AcceptedPatchesFile,
+    candidate_rel_paths: &std::collections::HashSet<String>,
+) -> anyhow::Result<(FileMap, FileMap, FileMap)> {
+    let candidate_rel_paths_borrowed: std::collections::HashSet<&str> =
+        candidate_rel_paths.iter().map(String::as_str).collect();
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+            candidate_rel_paths_borrowed.contains(p)
+        })?;
+    let accepted_file_filtered_to_candidate_paths =
+        crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: accepted_file
+                .patches
+                .iter()
+                .filter(|patch_entry| {
+                    candidate_rel_paths_borrowed.contains(patch_entry.path.as_str())
+                })
+                .cloned()
+                .collect(),
+        };
+    let file_path_to_contents_map_for_approved_state = compute_accepted_state(
+        &file_path_to_contents_map_in_main_branch,
+        &accepted_file_filtered_to_candidate_paths,
+    )?;
+    let candidate_rel_paths_vec: Vec<String> = candidate_rel_paths.iter().cloned().collect();
+    let file_path_to_contents_map_in_worktree =
+        read_worktree_files_for_record_paths(&ctx.worktree_dir, &candidate_rel_paths_vec)?;
+    Ok((
+        file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_for_approved_state,
+        file_path_to_contents_map_in_worktree,
+    ))
 }
 
 /// Per-path equivalent of `compute_accepted_state`: returns the bytes that
@@ -3714,28 +3906,25 @@ fn discard_all_unreviewed_changes_in_connection_repo(
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    // Folder-scoped reads when `--folder` is set; see `read_main_local_and_approved_maps_scoped_to_folder`.
+    // Candidate path set = gix::status (byte-dirty) ∪ accepted-patches.json
+    // entries, scoped to `repo_folder` when set. Pre-§5.1 this routine read
+    // the entire main tree + worktree to discover candidates; the candidate
+    // set is bounded by the size of the unreviewed working set, not by
+    // workspace size.
+    let candidate_rel_paths =
+        collect_all_ops_candidate_record_paths(ctx, &accepted_file, repo_folder)?;
+    if candidate_rel_paths.is_empty() {
+        return Ok(DiscardAllResult::default());
+    }
     let (
         file_path_to_contents_map_in_main_branch,
         file_path_to_contents_map_for_approved_state,
         file_path_to_contents_map_in_worktree,
-    ) = match repo_folder {
-        Some(folder) => {
-            read_main_local_and_approved_maps_scoped_to_folder(ctx, folder, &accepted_file)?
-        }
-        None => {
-            let file_path_to_contents_map_in_main_branch =
-                read_main_branch_contents(&ctx.bare_repo)?;
-            let file_path_to_contents_map_for_approved_state =
-                compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
-            let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
-            (
-                file_path_to_contents_map_in_main_branch,
-                file_path_to_contents_map_for_approved_state,
-                file_path_to_contents_map_in_worktree,
-            )
-        }
-    };
+    ) = read_main_approved_worktree_maps_for_candidate_paths(
+        ctx,
+        &accepted_file,
+        &candidate_rel_paths,
+    )?;
 
     let unreviewed = compute_unreviewed_entries(
         &ctx.conn_dir_name,
@@ -3743,24 +3932,19 @@ fn discard_all_unreviewed_changes_in_connection_repo(
         &file_path_to_contents_map_in_worktree,
     );
 
-    let path_in_scope = |path: &str| match repo_folder {
-        Some(folder) => is_data_path_in_folder(path, folder),
-        None => is_data_path_in_folder(path, ""),
-    };
-
     // Union of (paths with patch entries) and (paths with unreviewed working
     // edits). Either makes the path "non-published" and therefore in scope for
-    // discard-back-to-main.
+    // discard-back-to-main. The candidate set is the bounding superset; we
+    // still filter by patch-entry / unreviewed status to drop gix-flagged
+    // paths whose worktree turns out to be JSON-equivalent to approved.
     let mut affected_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for entry in &accepted_file.patches {
-        if path_in_scope(&entry.path) {
+        if candidate_rel_paths.contains(&entry.path) {
             affected_paths.insert(entry.path.clone());
         }
     }
     for entry in &unreviewed {
-        if path_in_scope(&entry.path) {
-            affected_paths.insert(entry.path.clone());
-        }
+        affected_paths.insert(entry.path.clone());
     }
 
     if affected_paths.is_empty() {
@@ -3809,10 +3993,19 @@ fn discard_record_paths_in_connection_repo(
             ..Default::default()
         });
     }
-    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
+    // Narrow main + worktree reads to just `rel_paths`. The downstream check
+    // ("is this path actually a discard target?") only inspects the requested
+    // paths, so a narrowed map produces identical results.
+    let requested_rel_paths_set: std::collections::HashSet<&str> =
+        rel_paths.iter().map(String::as_str).collect();
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+            requested_rel_paths_set.contains(p)
+        })?;
 
     sync_schema_files_from_worktree(ctx)?;
-    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
+    let file_path_to_contents_map_in_worktree =
+        read_worktree_files_for_record_paths(&ctx.worktree_dir, rel_paths)?;
 
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
@@ -3891,31 +4084,27 @@ fn accept_all_unreviewed_changes_in_connection_repo(
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    // Folder-scoped reads when `--folder` is set: `cat-file --batch` only on
-    // that folder's main blobs, `load_worktree_into_path_contents_map` only on `<worktree>/<folder>`.
-    // Out-of-folder paths in `accepted_file` are left untouched in the saved
-    // file at the end (only in-folder entries get upserted/removed below).
+    // Candidate path set = gix::status ∪ accepted-patches.json entries,
+    // scoped to `repo_folder` when set. See
+    // `collect_all_ops_candidate_record_paths` for the reasoning. Out-of-set
+    // paths are already at "worktree == main == approved" → nothing for
+    // accept-all to do. Out-of-folder patch entries are left untouched in
+    // the saved file at the end (only candidate entries get upserted/removed
+    // below).
+    let candidate_rel_paths =
+        collect_all_ops_candidate_record_paths(ctx, &accepted_file, repo_folder)?;
+    if candidate_rel_paths.is_empty() {
+        return Ok(AcceptAllResult::default());
+    }
     let (
         file_path_to_contents_map_in_main_branch,
         file_path_to_contents_map_for_approved_state,
         file_path_to_contents_map_in_worktree,
-    ) = match repo_folder {
-        Some(folder) => {
-            read_main_local_and_approved_maps_scoped_to_folder(ctx, folder, &accepted_file)?
-        }
-        None => {
-            let file_path_to_contents_map_in_main_branch =
-                read_main_branch_contents(&ctx.bare_repo)?;
-            let file_path_to_contents_map_for_approved_state =
-                compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
-            let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
-            (
-                file_path_to_contents_map_in_main_branch,
-                file_path_to_contents_map_for_approved_state,
-                file_path_to_contents_map_in_worktree,
-            )
-        }
-    };
+    ) = read_main_approved_worktree_maps_for_candidate_paths(
+        ctx,
+        &accepted_file,
+        &candidate_rel_paths,
+    )?;
 
     let changes = compute_unreviewed_entries(
         &ctx.conn_dir_name,
@@ -3978,28 +4167,24 @@ fn reject_all_unreviewed_changes_in_connection_repo(
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    // Folder-scoped reads when `--folder` is set; see `read_main_local_and_approved_maps_scoped_to_folder`.
+    // Candidate path set = gix::status ∪ accepted-patches.json entries; see
+    // `collect_all_ops_candidate_record_paths`. reject-all only writes the
+    // worktree back to approved for paths where worktree != approved, so it
+    // genuinely only needs paths in this set.
+    let candidate_rel_paths =
+        collect_all_ops_candidate_record_paths(ctx, &accepted_file, repo_folder)?;
+    if candidate_rel_paths.is_empty() {
+        return Ok(RejectAllResult::default());
+    }
     let (
         _file_path_to_contents_map_in_main_branch,
         file_path_to_contents_map_for_approved_state,
         file_path_to_contents_map_in_worktree,
-    ) = match repo_folder {
-        Some(folder) => {
-            read_main_local_and_approved_maps_scoped_to_folder(ctx, folder, &accepted_file)?
-        }
-        None => {
-            let file_path_to_contents_map_in_main_branch =
-                read_main_branch_contents(&ctx.bare_repo)?;
-            let file_path_to_contents_map_for_approved_state =
-                compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
-            let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
-            (
-                file_path_to_contents_map_in_main_branch,
-                file_path_to_contents_map_for_approved_state,
-                file_path_to_contents_map_in_worktree,
-            )
-        }
-    };
+    ) = read_main_approved_worktree_maps_for_candidate_paths(
+        ctx,
+        &accepted_file,
+        &candidate_rel_paths,
+    )?;
 
     let changes = compute_unreviewed_entries(
         &ctx.conn_dir_name,
