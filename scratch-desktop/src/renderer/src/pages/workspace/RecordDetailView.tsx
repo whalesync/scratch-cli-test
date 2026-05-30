@@ -89,11 +89,11 @@ interface RecordDetailViewProps {
   columnGroups?: Map<string, string>;
   onSelectIndex: (index: number) => void;
   onClose: () => void;
-  onRecordChanged?: () => void;
-  onRecordFieldChanged?: (filename: string, fieldName: string, nextValue: unknown) => void;
+  onRecordStructurallyChangedRefetchAll?: () => void;
+  onSingleFieldAcceptedApplyOptimistically?: (filename: string, fieldName: string, nextValue: unknown) => void;
   onPublishFile?: (relativePath: string) => void;
   /** Incremented by the parent when external file changes are detected, triggering a reload. */
-  dataRefreshKey?: number;
+  workspaceLevelDataInvalidationCounter?: number;
   /** When set, hovering JSON keys in raw view shows column add/toggle tooltips. */
   onAddColumn?: (path: string) => void;
   /** Toggle visibility of an existing column. */
@@ -231,7 +231,11 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
   cursor[parts[parts.length - 1]] = value;
 }
 
-function applyAcceptedFieldChangeToRecord(prev: DiffRecordData, fieldName: string, nextValue: unknown): DiffRecordData {
+function applyAcceptedFieldChangeToOpenRecordData(
+  prev: DiffRecordData,
+  fieldName: string,
+  nextValue: unknown,
+): DiffRecordData {
   const prevRow = prev.row;
 
   const masterValue = prevRow.__masterFields[fieldName];
@@ -278,10 +282,10 @@ export const RecordDetailView = memo(function RecordDetailView({
   columnTypes,
   onSelectIndex,
   onClose,
-  onRecordChanged,
-  onRecordFieldChanged,
+  onRecordStructurallyChangedRefetchAll,
+  onSingleFieldAcceptedApplyOptimistically,
   onPublishFile,
-  dataRefreshKey,
+  workspaceLevelDataInvalidationCounter,
   onAddColumn,
   onToggleColumnVisible,
   allColumnPaths,
@@ -294,7 +298,7 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [recordData, setRecordData] = useState<DiffRecordData | null>(null);
   const [loading, setLoading] = useState(false);
   const [recordReloadKey, setRecordReloadKey] = useState(0);
-  const [validationReloadKey, setValidationReloadKey] = useState(0);
+  const [openRecordValidationReloadCounter, setValidationReloadKey] = useState(0);
   const [validationResults, setValidationResults] = useState<ValidationResultRow[]>([]);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
@@ -390,7 +394,7 @@ export const RecordDetailView = memo(function RecordDetailView({
     return () => {
       cancelled = true;
     };
-  }, [selectedFilename, folderPath, workspacePath, recordReloadKey, dataRefreshKey]);
+  }, [selectedFilename, folderPath, workspacePath, recordReloadKey, workspaceLevelDataInvalidationCounter]);
 
   useEffect(() => {
     if (!selectedFilename) {
@@ -409,7 +413,14 @@ export const RecordDetailView = memo(function RecordDetailView({
     return () => {
       cancelled = true;
     };
-  }, [selectedFilename, folderPath, workspacePath, recordReloadKey, validationReloadKey, dataRefreshKey]);
+  }, [
+    selectedFilename,
+    folderPath,
+    workspacePath,
+    recordReloadKey,
+    openRecordValidationReloadCounter,
+    workspaceLevelDataInvalidationCounter,
+  ]);
 
   // Escape key minimizes the focused field if one is open, otherwise closes the overlay.
   // Capture phase so it fires before the grid handles it.
@@ -482,13 +493,13 @@ export const RecordDetailView = memo(function RecordDetailView({
       .then((result) => {
         if (result.exitCode === 0) {
           reloadRecordAndValidations();
-          onRecordChanged?.();
+          onRecordStructurallyChangedRefetchAll?.();
         }
       })
       .catch((err: unknown) => {
         console.debug('acceptRecord failed', err);
       });
-  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordChanged]);
+  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
   const handleReject = useCallback(() => {
     if (!currentRecordCliPath) return;
@@ -497,13 +508,13 @@ export const RecordDetailView = memo(function RecordDetailView({
       .then((result) => {
         if (result.exitCode === 0) {
           reloadRecordAndValidations();
-          onRecordChanged?.();
+          onRecordStructurallyChangedRefetchAll?.();
         }
       })
       .catch((err: unknown) => {
         console.debug('rejectRecord failed', err);
       });
-  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordChanged]);
+  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
   const handleDiscard = useCallback(() => {
     if (!currentRecordCliPath) return;
@@ -512,13 +523,13 @@ export const RecordDetailView = memo(function RecordDetailView({
       .then((result) => {
         if (result.exitCode === 0) {
           reloadRecordAndValidations();
-          onRecordChanged?.();
+          onRecordStructurallyChangedRefetchAll?.();
         }
       })
       .catch((err: unknown) => {
         console.debug('discardRecord failed', err);
       });
-  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordChanged]);
+  }, [workspacePath, currentRecordCliPath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
   const handleRestore = useCallback(() => {
     const filename = filenameRef.current;
@@ -527,12 +538,12 @@ export const RecordDetailView = memo(function RecordDetailView({
       .restoreDeletedRecord(folderPath, workspacePath, filename)
       .then(() => {
         reloadRecordAndValidations();
-        onRecordChanged?.();
+        onRecordStructurallyChangedRefetchAll?.();
       })
       .catch((err: unknown) => {
         console.debug('restoreDeletedRecord failed', err);
       });
-  }, [folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged]);
+  }, [folderPath, workspacePath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
   const handleDiscardCreate = useCallback(() => {
     const filename = filenameRef.current;
@@ -541,12 +552,12 @@ export const RecordDetailView = memo(function RecordDetailView({
       .discardCreatedRecord(folderPath, workspacePath, filename)
       .then(() => {
         reloadRecordAndValidations();
-        onRecordChanged?.();
+        onRecordStructurallyChangedRefetchAll?.();
       })
       .catch((err: unknown) => {
         console.debug('discardCreatedRecord failed', err);
       });
-  }, [folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged]);
+  }, [folderPath, workspacePath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
   const clearFieldEdit = useCallback(() => {
     editingFieldRef.current = null;
@@ -556,65 +567,67 @@ export const RecordDetailView = memo(function RecordDetailView({
   const filenameRef = useRef(currentFilename);
   filenameRef.current = currentFilename;
 
-  const handleAcceptCellChange = useCallback(
+  const handleApproveFieldClick = useCallback(
     (fieldName: string, value: string, logLabel: string) => {
       const filename = filenameRef.current;
       if (!filename) return;
       clearFieldEdit();
       void window.scratchFiles
-        .acceptCellChange(folderPath, workspacePath, filename, fieldName, value)
+        .acceptUnreviewedFieldEdit(folderPath, workspacePath, filename, fieldName, value)
         .then((result) => {
-          setRecordData((prev) => (prev ? applyAcceptedFieldChangeToRecord(prev, fieldName, result.value) : prev));
+          setRecordData((prev) =>
+            prev ? applyAcceptedFieldChangeToOpenRecordData(prev, fieldName, result.value) : prev,
+          );
           setValidationReloadKey((k) => k + 1);
-          onRecordFieldChanged?.(filename, fieldName, result.value);
+          onSingleFieldAcceptedApplyOptimistically?.(filename, fieldName, result.value);
         })
         .catch((err: unknown) => {
-          console.error(`[acceptCellChange] ${logLabel} failed:`, err);
+          console.error(`[acceptUnreviewedFieldEdit] ${logLabel} failed:`, err);
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged],
+    [clearFieldEdit, folderPath, workspacePath, onSingleFieldAcceptedApplyOptimistically],
   );
 
-  const handleRejectUnreviewedCellChange = useCallback(
+  const handleRejectUnreviewedFieldClick = useCallback(
     (fieldName: string) => {
       const filename = filenameRef.current;
       if (!filename) return;
       clearFieldEdit();
       void window.scratchFiles
-        .rejectCellChange(folderPath, workspacePath, filename, fieldName)
+        .revertUnreviewedFieldEditToApproved(folderPath, workspacePath, filename, fieldName)
         .then(() => {
           reloadRecordAndValidations();
-          onRecordChanged?.();
+          onRecordStructurallyChangedRefetchAll?.();
         })
         .catch((err: unknown) => {
-          console.error('[rejectCellChange] reject failed:', err);
+          console.error('[revertUnreviewedFieldEditToApproved] reject failed:', err);
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged],
+    [clearFieldEdit, folderPath, workspacePath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll],
   );
 
-  const handleUndoApprovedCellChange = useCallback(
+  const handleUndoApprovedFieldClick = useCallback(
     (fieldName: string) => {
       const filename = filenameRef.current;
       if (!filename) return;
       clearFieldEdit();
       void window.scratchFiles
-        .undoApprovedCellChange(folderPath, workspacePath, filename, fieldName)
+        .dropApprovedFieldAndRestoreToMain(folderPath, workspacePath, filename, fieldName)
         .then(() => {
           reloadRecordAndValidations();
-          onRecordChanged?.();
+          onRecordStructurallyChangedRefetchAll?.();
         })
         .catch((err: unknown) => {
-          console.error('[undoApprovedCellChange] undo failed:', err);
+          console.error('[dropApprovedFieldAndRestoreToMain] undo failed:', err);
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, reloadRecordAndValidations, onRecordChanged],
+    [clearFieldEdit, folderPath, workspacePath, reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll],
   );
 
   const handleRawFileSaved = useCallback(() => {
     reloadRecordAndValidations();
-    onRecordChanged?.();
-  }, [reloadRecordAndValidations, onRecordChanged]);
+    onRecordStructurallyChangedRefetchAll?.();
+  }, [reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
   const beginFieldEdit = useCallback((fieldName: string) => {
     editingFieldRef.current = fieldName;
@@ -657,14 +670,16 @@ export const RecordDetailView = memo(function RecordDetailView({
       clearFieldEdit();
 
       void window.scratchFiles
-        .acceptCellInputText(folderPath, workspacePath, filename, fieldName, nextValue)
+        .acceptFieldEditFromInputText(folderPath, workspacePath, filename, fieldName, nextValue)
         .then((result) => {
-          setRecordData((prev) => (prev ? applyAcceptedFieldChangeToRecord(prev, fieldName, result.value) : prev));
+          setRecordData((prev) =>
+            prev ? applyAcceptedFieldChangeToOpenRecordData(prev, fieldName, result.value) : prev,
+          );
           setValidationReloadKey((k) => k + 1);
-          onRecordFieldChanged?.(filename, fieldName, result.value);
+          onSingleFieldAcceptedApplyOptimistically?.(filename, fieldName, result.value);
         })
         .catch((err: unknown) => {
-          console.error('[acceptCellChange] record edit failed:', err);
+          console.error('[acceptUnreviewedFieldEdit] record edit failed:', err);
           notifications.show({
             color: 'red',
             title: 'Failed to save field',
@@ -672,7 +687,7 @@ export const RecordDetailView = memo(function RecordDetailView({
           });
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onRecordFieldChanged, schema],
+    [clearFieldEdit, folderPath, workspacePath, onSingleFieldAcceptedApplyOptimistically, schema],
   );
 
   const validationWarnings = useMemo(() => {
@@ -769,13 +784,13 @@ export const RecordDetailView = memo(function RecordDetailView({
         onEditCommit: isEditable ? (nv: string) => commitFieldEdit(effectivePath, value, nv) : undefined,
         onEditCancel: isEditable ? () => cancelFieldEdit(fieldName) : undefined,
         onApprove:
-          isDeleted || !isUnreviewed ? undefined : () => handleAcceptCellChange(effectivePath, value, 'approve'),
+          isDeleted || !isUnreviewed ? undefined : () => handleApproveFieldClick(effectivePath, value, 'approve'),
         onUndo: isDeleted
           ? undefined
           : isUnreviewed
-            ? () => handleRejectUnreviewedCellChange(effectivePath)
+            ? () => handleRejectUnreviewedFieldClick(effectivePath)
             : isUnpublished
-              ? () => handleUndoApprovedCellChange(effectivePath)
+              ? () => handleUndoApprovedFieldClick(effectivePath)
               : undefined,
       };
     });
@@ -795,9 +810,9 @@ export const RecordDetailView = memo(function RecordDetailView({
     showAllFields,
     columnEffectivePaths,
     columnGroups,
-    handleAcceptCellChange,
-    handleRejectUnreviewedCellChange,
-    handleUndoApprovedCellChange,
+    handleApproveFieldClick,
+    handleRejectUnreviewedFieldClick,
+    handleUndoApprovedFieldClick,
     schema,
   ]);
 

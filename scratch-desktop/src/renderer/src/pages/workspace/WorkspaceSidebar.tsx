@@ -37,7 +37,7 @@ interface WorkspaceSidebarProps {
   selectedFolderPath: string | null;
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
-  onDataRefresh: () => void;
+  invalidateWorkspaceLevelData: () => void;
   onOpenConnectionsPanel?: () => void;
   connectionsPanelOpen?: boolean;
   onTogglePublishHistoryPanel?: () => void;
@@ -59,7 +59,7 @@ export function WorkspaceSidebar({
   selectedFolderPath,
   onSelectFolder,
   workspacePath,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
   onOpenConnectionsPanel,
   connectionsPanelOpen,
   onTogglePublishHistoryPanel,
@@ -142,7 +142,7 @@ export function WorkspaceSidebar({
               onSelectFolder={onSelectFolder}
               workspacePath={workspacePath}
               isDevToolsEnabled={isDevToolsEnabled}
-              onDataRefresh={onDataRefresh}
+              invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
               validationByFolder={validateEnabled ? validationByFolder : undefined}
             />
           </>

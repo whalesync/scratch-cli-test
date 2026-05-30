@@ -65,7 +65,7 @@ interface PublishChangesModalProps {
   localPath: string | null;
   autoStartUploadOnOpen?: boolean;
   assumeUnreviewedApproved?: boolean;
-  onDataRefresh: () => void;
+  invalidateWorkspaceLevelData: () => void;
   /** The currently selected folder path in the workspace grid. */
   currentFolderPath?: string | null;
   /** Called when the user wants to view problems in the grid. */
@@ -379,7 +379,7 @@ export function PublishChangesModal({
   localPath,
   autoStartUploadOnOpen = false,
   assumeUnreviewedApproved = false,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
   currentFolderPath,
   onViewProblems,
 }: PublishChangesModalProps) {
@@ -988,7 +988,7 @@ export function PublishChangesModal({
       if (!localPath) return;
       try {
         await window.scratchDesktop.pullWorkspaceChanges(localPath);
-        onDataRefresh();
+        invalidateWorkspaceLevelData();
       } catch (err) {
         console.debug('Post-publish pull failed:', err);
       }
@@ -1003,7 +1003,7 @@ export function PublishChangesModal({
     setPublishErrorDetails(failedConnections.map((c) => `${c.connectionName}: ${c.failureMessage ?? 'failed'}`));
     setMode('error');
     setError(failedConnections.map((c) => `${c.connectionName} failed`).join('; '));
-  }, [mode, publishConnections, workspaceId, localPath, onDataRefresh]);
+  }, [mode, publishConnections, workspaceId, localPath, invalidateWorkspaceLevelData]);
 
   const aggregateTotals = useMemo(() => {
     if (!uploadResult) {

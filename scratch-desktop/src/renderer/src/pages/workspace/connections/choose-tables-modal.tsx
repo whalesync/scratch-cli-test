@@ -135,7 +135,7 @@ interface ChooseTablesModalProps {
   onClose: () => void;
   workbookId: string;
   connectorAccount: ConnectorAccount;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
 }
 
 export function ChooseTablesModal({
@@ -143,7 +143,7 @@ export function ChooseTablesModal({
   onClose,
   workbookId,
   connectorAccount,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
 }: ChooseTablesModalProps) {
   const { data, isLoading, isValidating } = useSWR<TableList>(
     opened ? ['connector-tables', workbookId, connectorAccount.id] : null,
@@ -550,7 +550,7 @@ export function ChooseTablesModal({
       }
 
       await refreshFolders();
-      onDataRefresh?.();
+      invalidateWorkspaceLevelData?.();
 
       if (errors.length > 0) {
         setSaveErrors(errors);

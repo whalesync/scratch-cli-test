@@ -14,8 +14,9 @@ import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } fro
 import { detectCloudSync, type CloudSyncDetection } from './cloud-sync';
 import { installScratchmdToPath, isCliSymlinkInstalled, uninstallScratchmdFromPath } from './install-cli';
 import {
-  acceptCellChange,
-  acceptCellInputText,
+  acceptFieldEditFromInputText,
+  acceptUnreviewedFieldEdit,
+  dropApprovedFieldAndRestoreToMain,
   findRecordOffset,
   getFolderMetadata,
   listFiles,
@@ -30,9 +31,8 @@ import {
   readGridData,
   readSchema,
   readWorkspaceConfig,
-  rejectCellChange,
   revertRecordFile,
-  undoApprovedCellChange,
+  revertUnreviewedFieldEditToApproved,
   writeFileTextRaw,
   type DiffGridFilter,
   type FilterStatus,
@@ -1095,7 +1095,7 @@ ipcMain.handle(
   'files:accept-cell-input-text',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
-      const result = await acceptCellInputText(folderPath, workspacePath, filename, fieldName, value);
+      const result = await acceptFieldEditFromInputText(folderPath, workspacePath, filename, fieldName, value);
       await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),
@@ -1104,7 +1104,7 @@ ipcMain.handle(
   'files:accept-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string, value: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
-      const result = await acceptCellChange(folderPath, workspacePath, filename, fieldName, value);
+      const result = await acceptUnreviewedFieldEdit(folderPath, workspacePath, filename, fieldName, value);
       await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),
@@ -1113,7 +1113,7 @@ ipcMain.handle(
   'files:undo-approved-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
-      const result = await undoApprovedCellChange(folderPath, workspacePath, filename, fieldName);
+      const result = await dropApprovedFieldAndRestoreToMain(folderPath, workspacePath, filename, fieldName);
       await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),
@@ -1122,7 +1122,7 @@ ipcMain.handle(
   'files:reject-cell-change',
   async (_, folderPath: string, workspacePath: string, filename: string, fieldName: string) =>
     withWorkspaceInternalMutation(workspacePath, async () => {
-      const result = await rejectCellChange(folderPath, workspacePath, filename, fieldName);
+      const result = await revertUnreviewedFieldEditToApproved(folderPath, workspacePath, filename, fieldName);
       await reindexFiles(workspacePath, relative(workspacePath, folderPath), [filename], { validate: true });
       return result;
     }),

@@ -412,27 +412,32 @@ interface ScratchFilesAPI {
     folderPath: string,
     entries: ValidatorConfigEntry[],
   ) => Promise<void>;
-  acceptCellInputText: (
+  acceptFieldEditFromInputText: (
     folderPath: string,
     workspacePath: string,
     filename: string,
     fieldName: string,
     value: string,
   ) => Promise<{ value: unknown }>;
-  acceptCellChange: (
+  acceptUnreviewedFieldEdit: (
     folderPath: string,
     workspacePath: string,
     filename: string,
     fieldName: string,
     value: string,
   ) => Promise<{ value: unknown }>;
-  undoApprovedCellChange: (
+  dropApprovedFieldAndRestoreToMain: (
     folderPath: string,
     workspacePath: string,
     filename: string,
     fieldName: string,
   ) => Promise<void>;
-  rejectCellChange: (folderPath: string, workspacePath: string, filename: string, fieldName: string) => Promise<void>;
+  revertUnreviewedFieldEditToApproved: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+  ) => Promise<void>;
   restoreDeletedRecord: (folderPath: string, workspacePath: string, filename: string) => Promise<void>;
   discardCreatedRecord: (folderPath: string, workspacePath: string, filename: string) => Promise<void>;
   acceptFieldChanges: (

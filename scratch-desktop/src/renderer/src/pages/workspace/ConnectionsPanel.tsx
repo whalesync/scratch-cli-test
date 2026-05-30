@@ -8,14 +8,14 @@ import { ConnectionsList } from './connections/connections-list';
 
 interface ConnectionsPanelProps {
   workbookId: string;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
   newConnectionId?: string | null;
   onNewConnectionConsumed?: () => void;
 }
 
 export function ConnectionsPanel({
   workbookId,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
   newConnectionId,
   onNewConnectionConsumed,
 }: ConnectionsPanelProps) {
@@ -64,7 +64,7 @@ export function ConnectionsPanel({
           createModalOpened={createModalOpened}
           onOpenCreateModal={openCreateModal}
           onCloseCreateModal={closeCreateModal}
-          onDataRefresh={onDataRefresh}
+          invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
           newConnectionId={newConnectionId}
           onNewConnectionConsumed={onNewConnectionConsumed}
         />

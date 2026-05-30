@@ -428,7 +428,7 @@ interface FolderTreeProps {
   onSelectFolder: (folderPath: string) => void;
   workspacePath: string | null;
   isDevToolsEnabled: boolean;
-  onDataRefresh: () => void;
+  invalidateWorkspaceLevelData: () => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
 }
 
@@ -441,7 +441,7 @@ export function FolderTree({
   onSelectFolder,
   workspacePath,
   isDevToolsEnabled,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
   validationByFolder,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildTree(localFolders), [localFolders]);
@@ -572,7 +572,7 @@ export function FolderTree({
           title={pullRequest.title}
           dataFolderIds={pullRequest.dataFolderIds}
           emptyStateMessage={pullRequest.emptyStateMessage}
-          onDataRefresh={onDataRefresh}
+          invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
         />
       )}
 

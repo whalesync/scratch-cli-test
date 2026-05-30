@@ -1569,7 +1569,7 @@ export async function readDiffRecordData(
  * display strings rather than raw typed values. Dot-separated fieldName paths
  * address nested fields.
  */
-export async function acceptCellChange(
+export async function acceptUnreviewedFieldEdit(
   folderPath: string,
   workspacePath: string,
   filename: string,
@@ -1593,7 +1593,7 @@ export async function acceptCellChange(
  * then the napi binding snapshots that disk state into
  * `accepted-patches.json`.
  */
-export async function acceptCellInputText(
+export async function acceptFieldEditFromInputText(
   folderPath: string,
   workspacePath: string,
   filename: string,
@@ -1737,10 +1737,10 @@ async function writeWorkingFileField(filePath: string, fieldName: string, value:
  * approved value. Delegates to the napi binding's `rejectField`, which
  * restores the working file's value WITHOUT touching `accepted-patches.json`.
  * Strict invariant: Reject never mutates the patch file — use
- * `undoApprovedCellChange` (which calls `discardField`) when the caller
+ * `dropApprovedFieldAndRestoreToMain` (which calls `discardField`) when the caller
  * wants to also drop an existing approved patch entry.
  */
-export async function rejectCellChange(
+export async function revertUnreviewedFieldEditToApproved(
   folderPath: string,
   workspacePath: string,
   filename: string,
@@ -1756,7 +1756,7 @@ export async function rejectCellChange(
  * field from `accepted-patches.json` AND restore the working file's value to
  * what `refs/heads/main` says.
  */
-export async function undoApprovedCellChange(
+export async function dropApprovedFieldAndRestoreToMain(
   folderPath: string,
   workspacePath: string,
   filename: string,

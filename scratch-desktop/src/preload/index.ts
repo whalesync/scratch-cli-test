@@ -502,7 +502,7 @@ const scratchFiles = {
     folderPath: string,
     entries: ValidatorConfigEntry[],
   ): Promise<void> => invoke('files:write-validation-config', workspacePath, connection, folderPath, entries),
-  acceptCellInputText: (
+  acceptFieldEditFromInputText: (
     folderPath: string,
     workspacePath: string,
     filename: string,
@@ -510,7 +510,7 @@ const scratchFiles = {
     value: string,
   ): Promise<{ value: unknown }> =>
     invoke('files:accept-cell-input-text', folderPath, workspacePath, filename, fieldName, value),
-  acceptCellChange: (
+  acceptUnreviewedFieldEdit: (
     folderPath: string,
     workspacePath: string,
     filename: string,
@@ -518,14 +518,18 @@ const scratchFiles = {
     value: string,
   ): Promise<{ value: unknown }> =>
     invoke('files:accept-cell-change', folderPath, workspacePath, filename, fieldName, value),
-  undoApprovedCellChange: (
+  dropApprovedFieldAndRestoreToMain: (
     folderPath: string,
     workspacePath: string,
     filename: string,
     fieldName: string,
   ): Promise<void> => invoke('files:undo-approved-cell-change', folderPath, workspacePath, filename, fieldName),
-  rejectCellChange: (folderPath: string, workspacePath: string, filename: string, fieldName: string): Promise<void> =>
-    invoke('files:reject-cell-change', folderPath, workspacePath, filename, fieldName),
+  revertUnreviewedFieldEditToApproved: (
+    folderPath: string,
+    workspacePath: string,
+    filename: string,
+    fieldName: string,
+  ): Promise<void> => invoke('files:reject-cell-change', folderPath, workspacePath, filename, fieldName),
   restoreDeletedRecord: (folderPath: string, workspacePath: string, filename: string): Promise<void> =>
     invoke('files:restore-deleted-record', folderPath, workspacePath, filename),
   discardCreatedRecord: (folderPath: string, workspacePath: string, filename: string): Promise<void> =>

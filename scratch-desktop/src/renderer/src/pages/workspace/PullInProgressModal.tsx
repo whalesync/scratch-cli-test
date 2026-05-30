@@ -55,7 +55,7 @@ interface PullInProgressModalProps {
   onClose: () => void;
   workbookId: string;
   localPath: string;
-  onDataRefresh: () => void;
+  invalidateWorkspaceLevelData: () => void;
 }
 
 /**
@@ -68,7 +68,7 @@ export function PullInProgressModal({
   onClose,
   workbookId,
   localPath,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
 }: PullInProgressModalProps) {
   const { user } = useCurrentUser();
   const [phase, setPhase] = useState<'loading' | 'polling' | 'downloading' | 'done' | 'error'>('loading');
@@ -189,19 +189,19 @@ export function PullInProgressModal({
       .then(() => {
         if (cancelled) return;
         setPhase('done');
-        onDataRefresh();
+        invalidateWorkspaceLevelData();
       })
       .catch((err) => {
         if (cancelled) return;
         console.debug('[PullInProgressModal] Post-pull download failed:', err);
         setPhase('done');
-        onDataRefresh();
+        invalidateWorkspaceLevelData();
       });
 
     return () => {
       cancelled = true;
     };
-  }, [phase, localPath, onDataRefresh]);
+  }, [phase, localPath, invalidateWorkspaceLevelData]);
 
   const completedCount = jobs.filter((j) => j.state === 'completed').length;
   const progress = jobs.length > 0 ? Math.round((completedCount / jobs.length) * 100) : phase === 'done' ? 100 : 0;

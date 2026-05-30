@@ -68,7 +68,7 @@ interface ConnectionsListProps {
   createModalOpened: boolean;
   onOpenCreateModal: () => void;
   onCloseCreateModal: () => void;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
   newConnectionId?: string | null;
   onNewConnectionConsumed?: () => void;
 }
@@ -78,7 +78,7 @@ export function ConnectionsList({
   createModalOpened,
   onOpenCreateModal,
   onCloseCreateModal,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
   newConnectionId,
   onNewConnectionConsumed,
 }: ConnectionsListProps) {
@@ -184,7 +184,7 @@ export function ConnectionsList({
                 group={group}
                 workbookId={workbookId}
                 connectorAccount={connectorAccount}
-                onDataRefresh={onDataRefresh}
+                invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
               />
             );
           })}
@@ -199,7 +199,7 @@ export function ConnectionsList({
               key={ca.id}
               connectorAccount={ca}
               workbookId={workbookId}
-              onDataRefresh={onDataRefresh}
+              invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
             />
           ))}
     </div>
@@ -217,10 +217,10 @@ interface ServiceBlockProps {
   group: DataFolderGroup;
   workbookId: string;
   connectorAccount?: ConnectorAccount;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
 }
 
-function ServiceBlock({ group, workbookId, connectorAccount, onDataRefresh }: ServiceBlockProps) {
+function ServiceBlock({ group, workbookId, connectorAccount, invalidateWorkspaceLevelData }: ServiceBlockProps) {
   const [chooseTablesOpen, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
   const [updateConnectionOpen, { open: openUpdateConnection, close: closeUpdateConnection }] = useDisclosure(false);
   const [removeConnectionOpen, { open: openRemoveConnection, close: closeRemoveConnection }] = useDisclosure(false);
@@ -284,7 +284,7 @@ function ServiceBlock({ group, workbookId, connectorAccount, onDataRefresh }: Se
           groupName={group.name}
           workbookId={workbookId}
           nested={false}
-          onDataRefresh={onDataRefresh}
+          invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
         />
       </div>
 
@@ -295,7 +295,7 @@ function ServiceBlock({ group, workbookId, connectorAccount, onDataRefresh }: Se
             onClose={closeChooseTables}
             workbookId={workbookId}
             connectorAccount={connectorAccount}
-            onDataRefresh={onDataRefresh}
+            invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
           />
           <UpdateConnectionModal
             opened={updateConnectionOpen}
@@ -308,7 +308,7 @@ function ServiceBlock({ group, workbookId, connectorAccount, onDataRefresh }: Se
             onClose={closeRemoveConnection}
             connectorAccount={connectorAccount}
             workbookId={workbookId}
-            onDataRefresh={onDataRefresh}
+            invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
           />
         </>
       )}
@@ -323,10 +323,10 @@ function ServiceBlock({ group, workbookId, connectorAccount, onDataRefresh }: Se
 interface EmptyServiceBlockProps {
   connectorAccount: ConnectorAccount;
   workbookId: string;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
 }
 
-function EmptyServiceBlock({ connectorAccount, workbookId, onDataRefresh }: EmptyServiceBlockProps) {
+function EmptyServiceBlock({ connectorAccount, workbookId, invalidateWorkspaceLevelData }: EmptyServiceBlockProps) {
   const { data: metadata } = useConnectorsMetadata();
   const displayName = connectorAccount.displayName || getServiceName(metadata, connectorAccount.service);
   const [chooseTablesOpen, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
@@ -384,7 +384,7 @@ function EmptyServiceBlock({ connectorAccount, workbookId, onDataRefresh }: Empt
         onClose={closeChooseTables}
         workbookId={workbookId}
         connectorAccount={connectorAccount}
-        onDataRefresh={onDataRefresh}
+        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
       />
       <UpdateConnectionModal
         opened={updateConnectionOpen}
@@ -397,7 +397,7 @@ function EmptyServiceBlock({ connectorAccount, workbookId, onDataRefresh }: Empt
         onClose={closeRemoveConnection}
         connectorAccount={connectorAccount}
         workbookId={workbookId}
-        onDataRefresh={onDataRefresh}
+        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
       />
     </>
   );
@@ -516,10 +516,16 @@ interface FolderTreeRendererProps {
   groupName: string;
   workbookId: string;
   nested: boolean;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
 }
 
-function FolderTreeRenderer({ tree, groupName, workbookId, nested, onDataRefresh }: FolderTreeRendererProps) {
+function FolderTreeRenderer({
+  tree,
+  groupName,
+  workbookId,
+  nested,
+  invalidateWorkspaceLevelData,
+}: FolderTreeRendererProps) {
   return (
     <>
       {Array.from(tree.children.entries()).map(([segName, childNode]) => (
@@ -529,7 +535,7 @@ function FolderTreeRenderer({ tree, groupName, workbookId, nested, onDataRefresh
             groupName={groupName}
             workbookId={workbookId}
             nested
-            onDataRefresh={onDataRefresh}
+            invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
           />
         </IntermediateFolderGroup>
       ))}
@@ -539,7 +545,7 @@ function FolderTreeRenderer({ tree, groupName, workbookId, nested, onDataRefresh
           folder={folder}
           workbookId={workbookId}
           nested={nested}
-          onDataRefresh={onDataRefresh}
+          invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
         />
       ))}
     </>
@@ -567,10 +573,10 @@ interface DataFolderRowProps {
   folder: DataFolder;
   workbookId: string;
   nested: boolean;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
 }
 
-function DataFolderRow({ folder, workbookId, nested, onDataRefresh }: DataFolderRowProps) {
+function DataFolderRow({ folder, workbookId, nested, invalidateWorkspaceLevelData }: DataFolderRowProps) {
   const [removeOpened, { open: openRemove, close: closeRemove }] = useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
   const isReadOnly = (folder.options as DataFolderOptions | null)?.readOnly === true;
@@ -597,7 +603,7 @@ function DataFolderRow({ folder, workbookId, nested, onDataRefresh }: DataFolder
         onClose={closeRemove}
         folder={folder}
         workbookId={workbookId}
-        onDataRefresh={onDataRefresh}
+        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
       />
       <AdvancedFolderSettingsModal
         opened={settingsOpened}

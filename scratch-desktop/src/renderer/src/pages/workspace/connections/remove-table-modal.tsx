@@ -9,10 +9,16 @@ interface RemoveTableModalProps {
   onClose: () => void;
   folder: DataFolder;
   workbookId: string;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
 }
 
-export function RemoveTableModal({ opened, onClose, folder, workbookId, onDataRefresh }: RemoveTableModalProps) {
+export function RemoveTableModal({
+  opened,
+  onClose,
+  folder,
+  workbookId,
+  invalidateWorkspaceLevelData,
+}: RemoveTableModalProps) {
   const { refresh } = useDataFolders(workbookId);
   const [loading, setLoading] = useState(false);
 
@@ -21,7 +27,7 @@ export function RemoveTableModal({ opened, onClose, folder, workbookId, onDataRe
     try {
       await dataFoldersApi.delete(folder.id);
       await refresh();
-      onDataRefresh?.();
+      invalidateWorkspaceLevelData?.();
       onClose();
     } catch (error) {
       console.debug('Failed to remove table:', error);

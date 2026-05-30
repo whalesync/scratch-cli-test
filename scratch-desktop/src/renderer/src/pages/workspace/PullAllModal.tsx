@@ -6,7 +6,7 @@ interface PullAllModalProps {
   localPath: string | null;
   workspaceId: string;
   workspaceName?: string | null;
-  onDataRefresh: () => void;
+  invalidateWorkspaceLevelData: () => void;
 }
 
 export function PullAllModal({
@@ -15,7 +15,7 @@ export function PullAllModal({
   localPath,
   workspaceId,
   workspaceName,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
 }: PullAllModalProps) {
   return (
     <PullFoldersModal
@@ -25,7 +25,7 @@ export function PullAllModal({
       workspaceId={workspaceId}
       title={`Pull all — ${workspaceName ?? 'workspace'}`}
       emptyStateMessage="No linked tables found in this workspace."
-      onDataRefresh={onDataRefresh}
+      invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
     />
   );
 }

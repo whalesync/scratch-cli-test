@@ -27,8 +27,8 @@ interface WorkspaceContentProps {
   selectedFolderPath: string | null;
   setSelectedFolderPath: (path: string | null) => void;
   targetRecord?: { filename: string; trigger: string } | null;
-  dataRefreshKey: number;
-  onDataRefresh: () => void;
+  workspaceLevelDataInvalidationCounter: number;
+  invalidateWorkspaceLevelData: () => void;
   onConnectionsChanged?: () => void;
   onPublishFile?: (relativePath: string) => void;
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
@@ -51,8 +51,8 @@ export function WorkspaceContent({
   selectedFolderPath,
   setSelectedFolderPath,
   targetRecord,
-  dataRefreshKey,
-  onDataRefresh,
+  workspaceLevelDataInvalidationCounter,
+  invalidateWorkspaceLevelData,
   onConnectionsChanged,
   onPublishFile,
   activateGlobalFilter,
@@ -172,7 +172,7 @@ export function WorkspaceContent({
         setWorkspaceConnections([]);
       },
     );
-  }, [dataRefreshKey, localPath]);
+  }, [workspaceLevelDataInvalidationCounter, localPath]);
 
   return (
     <Box
@@ -197,7 +197,7 @@ export function WorkspaceContent({
         selectedFolderPath={selectedFolderPath}
         onSelectFolder={handleSelectFolder}
         workspacePath={localPath}
-        onDataRefresh={onDataRefresh}
+        invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
         onOpenConnectionsPanel={handleOpenConnectionsPanel}
         connectionsPanelOpen={showConnectionsPanel}
         onTogglePublishHistoryPanel={() => setShowPublishHistoryPanel(!showPublishHistoryPanel)}
@@ -233,7 +233,7 @@ export function WorkspaceContent({
       ) : showConnectionsPanel ? (
         <ConnectionsPanel
           workbookId={workspace.id}
-          onDataRefresh={onConnectionsChanged ?? onDataRefresh}
+          invalidateWorkspaceLevelData={onConnectionsChanged ?? invalidateWorkspaceLevelData}
           newConnectionId={newConnectionId}
           onNewConnectionConsumed={() => setNewConnectionId(null)}
         />
@@ -243,8 +243,8 @@ export function WorkspaceContent({
           selectedFolderPath={selectedFolderPath}
           workspacePath={localPath}
           targetRecord={targetRecord}
-          dataRefreshKey={dataRefreshKey}
-          onDataRefresh={onDataRefresh}
+          workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
+          invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
           onPublishFile={onPublishFile}
           activateGlobalFilter={activateGlobalFilter}
           onActivateGlobalFilterConsumed={onActivateGlobalFilterConsumed}

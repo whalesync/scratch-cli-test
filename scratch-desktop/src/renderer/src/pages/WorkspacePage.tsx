@@ -145,9 +145,9 @@ export function WorkspacePage() {
     }
   }, [showValidationPanel]);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
-  const [dataRefreshKey, setDataRefreshKey] = useState(0);
+  const [workspaceLevelDataInvalidationCounter, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
-  const validation = useValidation(localPath, dataRefreshKey);
+  const validation = useValidation(localPath, workspaceLevelDataInvalidationCounter);
   const [gridFilterActivation, setGridFilterActivation] = useState<{
     kind: 'has-problems';
     trigger: number;
@@ -513,7 +513,7 @@ export function WorkspacePage() {
     void window.scratchDesktop.watchWorkspaceFiles(localPath).catch((error: unknown) => {
       console.debug('[workspace] failed to reconcile workspace file watch roots:', error);
     });
-  }, [dataRefreshKey, localPath, watchingEnabled]);
+  }, [workspaceLevelDataInvalidationCounter, localPath, watchingEnabled]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -606,7 +606,7 @@ export function WorkspacePage() {
         workspaceName={workspace.name}
         workspaceId={workspace.id}
         localPath={localPath}
-        onDataRefresh={handleDataRefresh}
+        invalidateWorkspaceLevelData={handleDataRefresh}
         currentFolderPath={selectedFolderPath}
         onViewProblems={(folderPath) => {
           setPublishModalOpen(false);
@@ -621,7 +621,7 @@ export function WorkspacePage() {
         workspaceName={workspace.name}
         localPath={localPath}
         workspaceId={workspace.id}
-        onDataRefresh={handleDataRefresh}
+        invalidateWorkspaceLevelData={handleDataRefresh}
       />
       {localPath && (
         <PullInProgressModal
@@ -629,7 +629,7 @@ export function WorkspacePage() {
           onClose={() => setPullInProgressModalOpen(false)}
           workbookId={workspace.id}
           localPath={localPath}
-          onDataRefresh={handleDataRefresh}
+          invalidateWorkspaceLevelData={handleDataRefresh}
         />
       )}
       {localPath && (
@@ -693,8 +693,8 @@ export function WorkspacePage() {
             ? { filename: deepLinkedPath.recordFilename, trigger: deepLinkedPath.trigger }
             : null
         }
-        dataRefreshKey={dataRefreshKey}
-        onDataRefresh={handleDataRefresh}
+        workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
+        invalidateWorkspaceLevelData={handleDataRefresh}
         onConnectionsChanged={() => void handlePullAndRefresh()}
         onPublishFile={() => {
           // Single-file publish was removed with the upload-patch rewrite —

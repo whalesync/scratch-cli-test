@@ -153,8 +153,8 @@ interface FolderDataGridProps {
   selectedFolderPath: string | null;
   workspacePath: string | null;
   targetRecord?: { filename: string; trigger: string } | null;
-  dataRefreshKey: number;
-  onDataRefresh: () => void;
+  workspaceLevelDataInvalidationCounter: number;
+  invalidateWorkspaceLevelData: () => void;
   onPublishFile?: (relativePath: string) => void;
   /** When set, activates the given filter once the folder is ready. Increment trigger to re-trigger. */
   activateGlobalFilter?: { kind: FilterKind; trigger: number } | null;
@@ -475,7 +475,7 @@ function replaceRowInResult(result: DiffGridResult, prevRow: DiffRow, nextRow: D
   return { ...result, rows: nextRows, summary, filterCounts };
 }
 
-function applyAcceptedCellChange(
+function applyAcceptedFieldChangeToFolderDiffData(
   result: DiffGridResult,
   filename: string,
   fieldName: string,
@@ -787,8 +787,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     selectedFolderPath,
     workspacePath,
     targetRecord,
-    dataRefreshKey,
-    onDataRefresh,
+    workspaceLevelDataInvalidationCounter,
+    invalidateWorkspaceLevelData,
     activateGlobalFilter,
     onActivateGlobalFilterConsumed,
   } = props;
@@ -1072,7 +1072,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
   // Keep the current rows painted during passive background refreshes (e.g. app focus).
   // currentQuery and selectedFolderPath are intentionally NOT in the dep array — we read them
-  // via refs so this effect only fires when dataRefreshKey changes, never on folder switches or
+  // via refs so this effect only fires when workspaceLevelDataInvalidationCounter changes, never on folder switches or
   // user-initiated query changes. Folder switches are handled by the main load effect above.
   // Without this separation, both effects would fire on every folder switch and the second
   // (refreshing) call would race and cancel the first (blocking) one.
@@ -1086,7 +1086,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       return;
     }
     void loadDiffData('refreshing', q);
-  }, [dataRefreshKey, loadDiffData]);
+  }, [workspaceLevelDataInvalidationCounter, loadDiffData]);
 
   // Reconcile visibleColumnIds with the focus column set on every data load.
   //
@@ -1898,16 +1898,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         });
         return;
       }
-      setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, parsedValue) : prev));
+      setDiffData((prev) =>
+        prev ? applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, parsedValue) : prev,
+      );
 
       void window.scratchFiles
-        .acceptCellInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
+        .acceptFieldEditFromInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)
         .then(() => {
           refreshGridDataInBackground();
-          onDataRefresh();
+          invalidateWorkspaceLevelData();
         })
         .catch((err: unknown) => {
-          console.error(`[acceptCellChange] ${logLabel} failed:`, err);
+          console.error(`[acceptUnreviewedFieldEdit] ${logLabel} failed:`, err);
           closeGridEditorChrome();
           refreshGridData();
           notifications.show({
@@ -1919,7 +1921,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     },
     [
       closeGridEditorChrome,
-      onDataRefresh,
+      invalidateWorkspaceLevelData,
       refreshGridData,
       refreshGridDataInBackground,
       schema,
@@ -1935,17 +1937,23 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
 
       void window.scratchFiles
-        .rejectCellChange(selectedFolderPath, workspacePath, filename, fieldName)
+        .revertUnreviewedFieldEditToApproved(selectedFolderPath, workspacePath, filename, fieldName)
         .then(() => {
           closeGridEditorChrome();
           refreshGridDataInBackground();
-          onDataRefresh();
+          invalidateWorkspaceLevelData();
         })
         .catch((err: unknown) => {
-          console.error('[rejectCellChange] reject failed:', err);
+          console.error('[revertUnreviewedFieldEditToApproved] reject failed:', err);
         });
     },
-    [closeGridEditorChrome, onDataRefresh, refreshGridDataInBackground, selectedFolderPath, workspacePath],
+    [
+      closeGridEditorChrome,
+      invalidateWorkspaceLevelData,
+      refreshGridDataInBackground,
+      selectedFolderPath,
+      workspacePath,
+    ],
   );
 
   const undoApprovedGridCellChange = useCallback(
@@ -1955,17 +1963,23 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
 
       void window.scratchFiles
-        .undoApprovedCellChange(selectedFolderPath, workspacePath, filename, fieldName)
+        .dropApprovedFieldAndRestoreToMain(selectedFolderPath, workspacePath, filename, fieldName)
         .then(() => {
           closeGridEditorChrome();
           refreshGridDataInBackground();
-          onDataRefresh();
+          invalidateWorkspaceLevelData();
         })
         .catch((err: unknown) => {
-          console.error('[undoApprovedCellChange] undo failed:', err);
+          console.error('[dropApprovedFieldAndRestoreToMain] undo failed:', err);
         });
     },
-    [closeGridEditorChrome, onDataRefresh, refreshGridDataInBackground, selectedFolderPath, workspacePath],
+    [
+      closeGridEditorChrome,
+      invalidateWorkspaceLevelData,
+      refreshGridDataInBackground,
+      selectedFolderPath,
+      workspacePath,
+    ],
   );
 
   const acceptGridFieldChanges = useCallback(
@@ -2930,7 +2944,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 leftSection={<RotateCcw size={14} />}
                 onClick={() => {
                   void trackRefreshFolderDataGrid(workspaceId, selectedFolderPath);
-                  onDataRefresh();
+                  invalidateWorkspaceLevelData();
                 }}
                 disabled={loadingMode === 'blocking'}
               >
@@ -3091,14 +3105,16 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                   // when returning to the grid — require a fresh click.
                   setGridSelection(undefined);
                 }}
-                dataRefreshKey={dataRefreshKey}
-                onRecordChanged={() => {
+                workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
+                onRecordStructurallyChangedRefetchAll={() => {
                   refreshGridDataInBackground();
-                  onDataRefresh();
+                  invalidateWorkspaceLevelData();
                 }}
-                onRecordFieldChanged={(filename, fieldName, nextValue) => {
-                  setDiffData((prev) => (prev ? applyAcceptedCellChange(prev, filename, fieldName, nextValue) : prev));
-                  onDataRefresh();
+                onSingleFieldAcceptedApplyOptimistically={(filename, fieldName, nextValue) => {
+                  setDiffData((prev) =>
+                    prev ? applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, nextValue) : prev,
+                  );
+                  invalidateWorkspaceLevelData();
                 }}
                 onPublishFile={props.onPublishFile}
                 onAddColumn={handleAddColumn}

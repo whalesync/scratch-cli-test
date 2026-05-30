@@ -9,7 +9,7 @@ interface RemoveConnectionModalProps {
   onClose: () => void;
   connectorAccount: ConnectorAccount;
   workbookId: string;
-  onDataRefresh?: () => void;
+  invalidateWorkspaceLevelData?: () => void;
 }
 
 export function RemoveConnectionModal({
@@ -17,7 +17,7 @@ export function RemoveConnectionModal({
   onClose,
   connectorAccount,
   workbookId,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
 }: RemoveConnectionModalProps) {
   const { deleteConnectorAccount } = useConnectorAccounts(workbookId);
   const { refresh: refreshFolders } = useDataFolders(workbookId);
@@ -28,7 +28,7 @@ export function RemoveConnectionModal({
     try {
       await deleteConnectorAccount(connectorAccount.id);
       await refreshFolders();
-      onDataRefresh?.();
+      invalidateWorkspaceLevelData?.();
       onClose();
     } catch (error) {
       console.debug('Failed to remove connection:', error);

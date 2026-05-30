@@ -9,7 +9,7 @@
  *     `predev` so `yarn dev` rebuilds it automatically).
  *
  * No IPC handlers consume this yet — slice H.3 wires the three cell-edit
- * handlers (`acceptCellChange`, `acceptCellInputText`, `undoApprovedCellChange`)
+ * handlers (`acceptUnreviewedFieldEdit`, `acceptFieldEditFromInputText`, `dropApprovedFieldAndRestoreToMain`)
  * in `local-files.ts` to call `acceptField` / (later) `discardField` through
  * this module.
  */

@@ -3,6 +3,46 @@
 **Date:** 2026-05-30
 **Author:** Curtis Fonger
 
+## Implementation status (updated 2026-05-30)
+
+| Slice | Status | Landed in |
+|---|---|---|
+| §0 Vocabulary & renaming pass (Rust) | ✅ Shipped | `cfonger-81` commit `7b2a675a` |
+| §0 Vocabulary & renaming pass (desktop TS) | ✅ Shipped | `cfonger-83` commit `4d7117f0` |
+| §1 Single-record napi ops (per-field Approve perf fix) | ⏳ Not started | — |
+| §2 CLI path-list / per-path ops | ⏳ Not started | — |
+| §3 CLI folder-scoped field ops | ⏳ Not started | — |
+| §4 Validators partial-revalidation filter | ⏳ Not started | — |
+| §5.1 / §5.2 / §5.3 Bulk all-ops (re-classified — see note) | ⏳ Not started | — |
+| §6.1 / §6.2 Frontend amplifier fixes | ⏳ Not started | — |
+
+> **Re-classification note (2026-05-30):** §5.1 / §5.2 / §5.3
+> (`{accept,reject,discard}_all_unreviewed_changes_in_connection_repo`)
+> were originally marked Justified. On follow-up review they were
+> re-classified as Needs improvement: the unreviewed set is bounded by
+> `gix::status ∪ accepted-patches.json`, not the whole tree. See §5.1
+> for the full reasoning.
+
+**Renames intentionally not applied:**
+- `paths` local (audit §"Internal locals") — used as a parameter name across
+  many functions, not just §1. Skipped as too-broad-for-value.
+- Broader "Cell → Field standardize everywhere" recommendation — grid-library
+  adapter methods (`onCellClicked`, `getCellContent`, etc.) retained their
+  `Cell` naming to match the underlying library API. Only the audit's
+  explicitly-enumerated identifiers were renamed.
+
+**Non-rename cleanup deferred:**
+- `.publish-plans` exception removal in
+  `load_connection_scratch_into_path_contents_map` — HELD pending server-side
+  Phase 7 cleanup of the `POST /:id/publish-v2/run-from-git` endpoint at
+  `server/src/cli/cli-workbook.controller.ts:434`. Inline comment at the gate
+  notes the condition.
+
+**Verification at landing:**
+- Rust: `cargo check --workspace --all-targets` + `cargo fmt` + `cargo test`
+  (336 passing).
+- Desktop: `yarn build` + `yarn lint-strict` + `yarn test` (174 passing).
+
 ## Problem
 
 Several user-facing actions in the desktop app and CLI walk the entire
@@ -29,22 +69,22 @@ Findings are grouped by the helper they call so the fix patterns line up.
 
 ---
 
-## 1. `review_ops::read_main_tree_for_entry_point` (single-record napi ops)
+## 1. `review_ops::read_main_branch_contents` (single-record napi ops)
 
 All five functions below are called from the desktop via napi for one record at
-a time. Each one's downstream code only consumes `main_map.get(record_rel_path)`
+a time. Each one's downstream code only consumes `file_path_to_contents_map_in_main_branch.get(record_rel_path)`
 — a single key lookup — but the helper reads every blob in the bare repo.
 
 Fix pattern (per call site):
 
 ```rust
-let main_map = read_main_tree_for_entry_point_filtered(
+let file_path_to_contents_map_in_main_branch = read_main_branch_contents_filtered_by_path(
     &paths.bare_repo,
     |p| p == record_rel_path,
 )?;
 ```
 
-`read_main_tree_for_entry_point_filtered` already exists and is the documented
+`read_main_branch_contents_filtered_by_path` already exists and is the documented
 narrowing pattern (`git_local.rs:105-109`).
 
 ### 1.1 `accept_field` — `scratch-git-2/src/shared/review_ops.rs:1197`
@@ -53,27 +93,27 @@ narrowing pattern (`git_local.rs:105-109`).
 
 UI trigger: "Approve" button per field in the Needs review tab. Today's bug.
 
-### 1.2 `reject_field` — `scratch-git-2/src/shared/review_ops.rs:1287`
+### 1.2 `revert_field_edit_to_approved_value` — `scratch-git-2/src/shared/review_ops.rs:1287`
 
 **Status: Needs improvement.**
 
 UI trigger: per-field "Reject" — reverts an unreviewed edit back to the approved
 value.
 
-### 1.3 `discard_field` — `scratch-git-2/src/shared/review_ops.rs:1363`
+### 1.3 `drop_approved_field_and_restore_to_main_value` — `scratch-git-2/src/shared/review_ops.rs:1363`
 
 **Status: Needs improvement.**
 
 UI trigger: per-field undo on an already-approved field.
 
-### 1.4 `restore_deleted_record` — `scratch-git-2/src/shared/review_ops.rs:1511`
+### 1.4 `restore_record_from_main_after_dropping_delete_patch` — `scratch-git-2/src/shared/review_ops.rs:1511`
 
 **Status: Needs improvement.**
 
 UI trigger: "Revert" from publish history when the record is currently in an
 approved-delete state.
 
-### 1.5 `discard_created_record` — `scratch-git-2/src/shared/review_ops.rs:1559`
+### 1.5 `drop_create_patch_and_delete_working_file` — `scratch-git-2/src/shared/review_ops.rs:1559`
 
 **Status: Needs improvement.**
 
@@ -86,8 +126,8 @@ UI trigger: discard a pending-create record from the Needs review tab.
 These commands take an explicit list of paths (or a known small set derived from
 gix::status) but read the full main tree + full materialized repo.
 
-Fix pattern: filter `read_main_tree` to the path set and replace
-`read_materialized_repo` with a narrower disk read over the affected folders.
+Fix pattern: filter `read_main_branch_contents` to the path set and replace
+`read_worktree_files_and_scratch_state` with a narrower disk read over the affected folders.
 
 ### 2.1 `run_accept` — `files.rs:1515, 1517`
 
@@ -96,28 +136,28 @@ Fix pattern: filter `read_main_tree` to the path set and replace
 CLI: `scratchmd files accept <paths>`. Desktop shells out to this for explicit
 path lists. Walks the full tree even when `paths.len() == 1`.
 
-### 2.2 `discard_paths_single_repo` — `files.rs:3683, 3686`
+### 2.2 `discard_record_paths_in_connection_repo` — `files.rs:3683, 3686`
 
 **Status: Needs improvement.**
 
 Same pattern as 2.1 for the discard verb.
 
-### 2.3 `detect_unreviewed_fast` — `files.rs:2938`
+### 2.3 `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main` — `files.rs:2938`
 
 **Status: Needs improvement.**
 
 Called from `run_unreviewed`, which the desktop spawns every time the
-pre-publish modal opens. `gix::status` already produces a small `ambiguous` list
+pre-publish modal opens. `gix::status` already produces a small `gix_status_flagged_record_paths_and_status` list
 of byte-flagged paths, then we read the entire main tree just to disambiguate
-them. Narrow `read_main_tree` to the `ambiguous` set.
+them. Narrow `read_main_branch_contents` to the `gix_status_flagged_record_paths_and_status` set.
 
-### 2.4 `restore_deleted_records_locally` — `files.rs:2659`
+### 2.4 `restore_deleted_record_paths_from_main_branch` — `files.rs:2659`
 
 **Status: Needs improvement.**
 
 Takes an explicit path list; reads the whole tree.
 
-### 2.5 `discard_created_records_locally` — `files.rs:2700`
+### 2.5 `drop_create_patches_and_delete_working_files_for_record_paths` — `files.rs:2700`
 
 **Status: Needs improvement.**
 
@@ -127,11 +167,28 @@ Same pattern as 2.4.
 
 ## 3. CLI folder-scoped field ops
 
-The `*-all --folder` commands already use `read_folder_scoped_maps`
+The `*-all --folder` commands already use `read_main_local_and_approved_maps_scoped_to_folder`
 (`files.rs:3105`) per commit `797b4707`. The three single-field folder
 variants still use the unfiltered helpers.
 
-Fix: refactor each to use `read_folder_scoped_maps`.
+**Original fix:** refactor each to use
+`read_main_local_and_approved_maps_scoped_to_folder` (folder-scoped maps).
+
+**Tighter fix (per §5.1 re-classification):** the candidate set isn't every
+record in the folder — it's `gix-status-flagged-in-folder ∪
+patch-file-entries-in-folder`. For a 22k-record folder where 5 are dirty
+and 3 have patch entries, the folder-scoped variant reads 22k blobs; the
+gix-status-scoped variant reads 8. Same pattern as §5.1–§5.3.
+
+The folder-scoped fix is still a real improvement over today's
+workspace-wide read; the gix-status-scoped fix is a further improvement on
+top. Either one is reviewable in isolation. If sequencing matters, ship the
+folder-scoped version first (smaller diff, easier to validate against the
+existing `*-all --folder` helper) and the gix-status-scoped version with
+§5.1–§5.3.
+
+§5.7 (the `_in_folder` inner helpers in `review_ops.rs`) is map-agnostic —
+it iterates whatever the caller passes. The narrowing lives here.
 
 ### 3.1 `run_accept_field` — `files.rs:1822, 1824`
 
@@ -155,36 +212,73 @@ Fix: refactor each to use `read_folder_scoped_maps`.
 
 `validate_records` accepts an optional `selected_paths` filter for partial
 revalidation (single-record edits in the desktop, single-path CLI ops). The
-filter is honoured by the per-record work loop, but `main_files` is still
+filter is honoured by the per-record work loop, but `file_path_to_contents_map_in_main_branch` is still
 populated with the full `refs/heads/main` tree.
 
 Fix: when `selected_paths.is_some()`, pass a predicate to `read_tree_files`
 that keeps only those paths.
 
 Every CLI accept / reject / discard ends with
-`refresh_problem_record_index_for_ctx` (`files.rs:386`) which feeds
+`revalidate_paths_for_connection_context` (`files.rs:386`) which feeds
 `selected_paths` through, so every per-record review op pays this cost.
 
 ---
 
-## 5. Justified bulk reads (no change)
+## 5. Bulk reads (mostly justified)
 
-Documented here so they stay off future audits.
+Documented here so they stay off future audits — except §5.1–§5.3, which
+were re-classified after a follow-up review (see note at the head of each).
 
-### 5.1 `accept_all_full_scan` — `files.rs:3754`
+### 5.1 `accept_all_unreviewed_changes_in_connection_repo` — `files.rs:3754`
 
-**Status: Justified.**
+**Status: ~~Justified~~ → Needs improvement.** (re-classified)
 
-Workspace-wide accept-all. Full main tree + full materialized repo is the
-intended scope.
+The original entry framed this as workspace-wide accept-all = workspace-wide
+read. That conflates the user-facing operation's scope with the set of
+paths the function actually mutates. accept-all only writes patch entries
+for the **unreviewed** subset, which is bounded by:
 
-### 5.2 `reject_all_full_scan` — `files.rs:3824`
+- `gix::status(worktree)` — paths where worktree bytes differ from the git
+  index (and HEAD == main, so this is "differ from main"). Empty on a
+  clean repo; small on an active edit session.
+- Paths in `accepted-patches.json` — also small.
 
-**Status: Justified.** Same as 5.1 for reject.
+Everything else has worktree == main == approved → already at published,
+nothing to do. So the candidate set is `gix-status ∪ patch-file`, and the
+function only needs to read `main_at_path` + `working_at_path` for those
+paths (via `read_main_branch_contents_filtered_by_path` + direct disk
+reads), not the entire tree.
 
-### 5.3 `discard_all_full_scan` — `files.rs:3596`
+Both inputs to the union matter:
+- A path with a patch entry but no gix-status flag means the user manually
+  reverted to main. accept-all should drop the entry. Without iterating the
+  patch file, this state would be missed.
+- A path with a gix-status flag but no patch entry is a new edit. accept-all
+  should create a Create/Update entry. Without iterating gix-status, this
+  is missed.
 
-**Status: Justified.** Same as 5.1 for discard.
+This is the same primitive `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main`
+already uses for §2.3's "any unreviewed?" check, extended to also iterate
+patch-file paths.
+
+(Historical context: the comment at `files.rs:3573–3576` mentions a pre-B
+`_scoped_via_index` fast path that was removed. That one queried
+`folder_index`'s SQLite columns, which had reliability issues. The
+gix-status approach uses the git index directly, which is always accurate
+— different primitive, different reliability profile.)
+
+### 5.2 `reject_all_unreviewed_changes_in_connection_repo` — `files.rs:3824`
+
+**Status: ~~Justified~~ → Needs improvement.** (re-classified) Same
+candidate set as §5.1. reject-all writes the worktree back to approved for
+each unreviewed path, so it needs `approved_at_path` + writes to the
+working file — both bounded to the candidate set.
+
+### 5.3 `discard_all_unreviewed_changes_in_connection_repo` — `files.rs:3596`
+
+**Status: ~~Justified~~ → Needs improvement.** (re-classified) Same
+candidate set as §5.1. discard-all writes the worktree back to main + drops
+patch entries, bounded to the candidate set.
 
 ### 5.4 `validators::run_validations` (full rebuild) — `validators/mod.rs:212`
 
@@ -218,7 +312,7 @@ that makes this measurable.
 **Status: Justified.**
 
 `review_ops.rs:510, 582, 646`. These are the inner helpers — they operate over
-`(main_map, local_map)` that the caller provides. Whether the caller passes a
+`(file_path_to_contents_map_in_main_branch, file_path_to_contents_map_in_worktree)` that the caller provides. Whether the caller passes a
 filtered or unfiltered map is a property of the caller (see findings 3.1–3.3).
 
 ---
@@ -236,12 +330,12 @@ now" while the post-action UI still grinds.
 
 `scratch-desktop/src/renderer/src/pages/workspace/FolderDataGrid.tsx:1079-1089`
 
-`onRecordFieldChanged` (line 3099-3102) calls `onDataRefresh()`, which bumps
-`dataRefreshKey` on `WorkspacePage`. That re-fires `loadDiffData('refreshing',
+`onSingleFieldAcceptedApplyOptimistically` (line 3099-3102) calls `invalidateWorkspaceLevelData()`, which bumps
+`workspaceLevelDataInvalidationCounter` on `WorkspacePage`. That re-fires `loadDiffData('refreshing',
 q)` for the entire folder. The grid's optimistic update via
-`applyAcceptedCellChange` (line 3100) already shows the correct state.
+`applyAcceptedFieldChangeToFolderDiffData` (line 3100) already shows the correct state.
 
-Fix: drop the `onDataRefresh()` call from the per-field-change path, or split
+Fix: drop the `invalidateWorkspaceLevelData()` call from the per-field-change path, or split
 the parent's refresh signal into "record changed" (re-fetch nothing — UI
 already in sync) and "structural change" (re-fetch grid).
 
@@ -252,238 +346,106 @@ already in sync) and "structural change" (re-fetch grid).
 `scratch-desktop/src/renderer/src/pages/WorkspacePage.tsx:150`,
 `scratch-desktop/src/renderer/src/hooks/use-validation.ts:155-162`.
 
-`useValidation(localPath, dataRefreshKey)` re-fires `getValidationConfigs` and
-`getValidationStats` whenever `dataRefreshKey` changes. These shell out to
+`useValidation(localPath, workspaceLevelDataInvalidationCounter)` re-fires `getValidationConfigs` and
+`getValidationStats` whenever `workspaceLevelDataInvalidationCounter` changes. These shell out to
 scratchmd across every connection in the workspace.
 
-Fix: same as 6.1 — stop bumping `dataRefreshKey` for per-field changes.
+Fix: same as 6.1 — stop bumping `workspaceLevelDataInvalidationCounter` for per-field changes.
 
 ### 6.3 Per-record validation refetch
 
 **Status: Justified.**
 
 `RecordDetailView.tsx:395-412` re-runs `getValidationResults` for the open
-record when `validationReloadKey` changes. Scope is one record; cost is small;
+record when `openRecordValidationReloadCounter` changes. Scope is one record; cost is small;
 the result can genuinely change after an approve. Keep.
 
 ---
 
-## Vocabulary & renaming
+## Rename pass: design decisions worth recording
 
-Many of the call sites flagged above use terse, type-redundant, or
-historically-scarred identifiers that make the code hard to read in isolation.
-Before (or alongside) landing the perf fixes, these should be renamed to
-maximum-self-documenting forms. The principle: a reader looking at one call
-site, with no surrounding context, should be able to tell what is stored or
-what the function does from the name alone.
+The rename pass landed in two PRs (Rust: `cfonger-81/7b2a675a`; desktop:
+`cfonger-83/4d7117f0`). The mechanical was→is mapping lives in those
+commits' diffs and isn't reproduced here. A few non-obvious design calls
+*are* recorded below.
 
-### Variable renames (the two `FileMap` carriers)
+### Why `local_map` became `_in_worktree`, not `_in_local_folder`
 
-These two variables flow through nearly every function in §1–§3 and §5. They
-are the single biggest source of "what is this?" confusion in the codebase.
+The variable held worktree contents read from disk (via
+`load_worktree_into_path_contents_map`). "worktree" is the term the
+surrounding helpers already use (`worktree_dir`, `is_data_path_in_folder`)
+and avoids the ambiguity of "local folder" — the local repo's folder? *a*
+folder?
 
-| Current | Proposed |
-|---|---|
-| `main_map` | `file_path_to_contents_map_in_main_branch` |
-| `local_map` | `file_path_to_contents_map_in_worktree` |
-| `approved_map` | `file_path_to_contents_map_for_approved_state` |
-| `master_blobs` (folder_index) | `file_name_to_contents_map_in_main_branch_for_folder` |
-| `main_files` (validators + `cli/commands/validation.rs` + test fixtures) | `file_path_to_contents_map_in_main_branch` |
-| `patched_by_path` | `accepted_patch_entry_by_record_path` |
-| `ambiguous` (detect_unreviewed_fast) | `gix_status_flagged_record_paths_and_status` |
+### Why `ambiguous` became `gix_status_flagged_record_paths_and_status`
 
-Notes on the two tightened entries:
+The variable is a `Vec<(String, &'static str)>` of paths flagged by
+`gix::status` (index-vs-worktree iter), each paired with its status string
+(`"modified" | "added" | "deleted"`). The name keeps the (path, status)
+tuple shape visible and names the actual source (gix status), not the
+conceptual goal (which is "needs further disambiguation against main +
+patches" — that's what the surrounding loop does *with* this list).
 
-- `local_map` holds **worktree** contents read from disk (via `read_dirty_disk` /
-  `read_materialized_repo`). "worktree" is the term the surrounding helpers
-  already use (`worktree_dir`, `is_data_path_in_folder`), and avoids the
-  ambiguity of "local folder" (the local repo's folder? *a* folder?).
-- `ambiguous` is a `Vec<(String, &'static str)>` of paths flagged by
-  `gix::status` (index-vs-worktree iter), each paired with its status string
-  (`"modified" | "added" | "deleted"`). The name keeps the (path, status)
-  tuple shape visible and names the actual source (gix status), not the
-  conceptual goal (which is "needs further disambiguation against main +
-  patches" — that's what the surrounding loop does *with* this list).
-- `main_files` shows up in four places, not the two originally flagged:
-  `validators/mod.rs:544` and `:682`, `cli/commands/validation.rs:479, 515`,
-  and three test fixtures in `cli/commands/tests/files.rs`. Rename all four
-  for consistency.
+### Why the `_full_scan` triples were inlined
 
-Reads as English at the call site:
-
-```rust
-let file_path_to_contents_map_in_main_branch =
-    read_main_branch_contents_filtered_by_path(&paths.bare_repo, |p| p == record_rel_path)?;
-let approved_object_at_path_if_any =
-    approved_object_for_path(&file_path_to_contents_map_in_main_branch, &accepted_patches, record_rel_path)?;
-```
-
-### Function renames
-
-#### `scratch-git-2/src/shared/review_ops.rs`
-
-| Current | Proposed |
-|---|---|
-| `read_main_tree_for_entry_point` | `read_main_branch_contents` |
-| `read_main_tree_for_entry_point_filtered` | `read_main_branch_contents_filtered_by_path` |
-| `read_materialized_repo` | `read_worktree_files_and_scratch_state` |
-| `read_dirty_disk` | `load_worktree_into_path_contents_map` |
-| `read_scratch_disk` | `load_connection_scratch_into_path_contents_map` |
-| `reject_field` | `revert_field_edit_to_approved_value` |
-| `discard_field` | `drop_approved_field_and_restore_to_main_value` |
-| `accept_field` | `accept_field_edit_into_patch_file` (optional — current name is OK on its own) |
-| `restore_deleted_record` | `restore_record_from_main_after_dropping_delete_patch` |
-| `discard_created_record` | `drop_create_patch_and_delete_working_file` |
-
-`load_worktree_into_path_contents_map` and `load_connection_scratch_into_path_contents_map`
-are NOT mergeable: different ignore rules (only the scratch walk currently
-allows `.publish-plans`), different key prefixes (worktree paths as-is vs
-`.scratch/<rel>`), and called as two distinct passes by
-`read_worktree_files_and_scratch_state`. Keep them as a symmetric pair.
-
-**Bundled cleanup: kill the `.publish-plans` exception.** The dotdir
-allow-list at `review_ops.rs:887` (`&& name_str != ".publish-plans"`) is the
-only runtime reference. Per `docs/REPO_STRUCTURES.md:42`, the
-`publish-from-git` job that wrote `.scratch/.publish-plans/` is dead-coded as
-of Phase 7a (no in-tree caller). The tests at
-`cli/commands/tests/files.rs:139, 148, 154, 168` only assert the exception
-still works — they're guarding dead behavior. Confirm Phase 7 server cleanup
-is done, then in the rename PR: drop the exception, delete the four test
-assertions, and `load_connection_scratch_into_path_contents_map` skips all
-dotdirs uniformly.
-
-The `reject_field` / `discard_field` distinction is the most worth renaming —
-the current names can't be told apart without reading REVIEW_MODEL.md, and
-they show up in the desktop's IPC surface (`rejectCellChange`,
-`undoApprovedCellChange`).
-
-#### `scratch-git-2/src/cli/commands/files.rs`
-
-| Current | Proposed |
-|---|---|
-| `read_main_tree` | `read_main_branch_contents` |
-| `read_main_tree_filtered` | `read_main_branch_contents_filtered_by_path` |
-| `read_folder_scoped_maps` | `read_main_local_and_approved_maps_scoped_to_folder` |
-| `read_materialized_repo` (CLI alias) | `read_worktree_files_and_scratch_state` |
-| `detect_unreviewed_fast` | `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main` |
-| `discard_paths_single_repo` | `discard_record_paths_in_connection_repo` |
-| `accept_all_single_repo` | `accept_all_unreviewed_changes_in_connection_repo` (inline `_full_scan` inner — see below) |
-| `reject_all_single_repo` / `reject_all_full_scan` | inline the `_full_scan` inner into `_single_repo`, then rename to `reject_all_unreviewed_changes_in_connection_repo` |
-| `discard_all_single_repo` / `discard_all_full_scan` | inline the `_full_scan` inner into `_single_repo`, then rename to `discard_all_unreviewed_changes_in_connection_repo` |
-| `restore_deleted_records_locally` | `restore_deleted_record_paths_from_main_branch` |
-| `discard_created_records_locally` | `drop_create_patches_and_delete_working_files_for_record_paths` |
-| `refresh_problem_record_index_for_ctx` | `revalidate_paths_for_connection_context` |
-| `unpushed_entries` | **delete** — one-line delegate to `unpublished_entries`, no other callers per `cli/commands/files.rs` grep |
-| `unpublished_entries` | `list_unpublished_accepted_patch_entries` |
-
-The `_full_scan` suffix is a historical scar. There used to be a
+The `_full_scan` suffix was a historical scar: there used to be a
 `_scoped_via_index` fast-path companion that no longer exists (sub-slice B
-decision, see comment at `files.rs:3580-3585`). The only remaining
-distinction between `accept_all_single_repo` and `accept_all_full_scan` is
-that the wrapper does `sync_schema_files_from_worktree` first. Inlining the
-inner (one line: the wrapper just calls schema-sync then `_full_scan`)
-collapses the pair into one truthful name and removes the misleading "scan
-vs not-scan" framing. Do this in the rename PR.
+decision). The only remaining distinction between `accept_all_single_repo`
+and `accept_all_full_scan` was that the wrapper did
+`sync_schema_files_from_worktree` first. The rename PR inlined the inner
+into the wrapper, collapsing each pair into one truthful name:
+`{accept,reject,discard}_all_unreviewed_changes_in_connection_repo`.
 
-The "Cell" → "Field" renames in the IPC layer (next section) imply renaming
-the `UnreviewedEntry` struct too. See "Type rename" below.
+### Why `UnreviewedEntry` became the neutral `RecordChangeEntry`
 
-### Type rename: `UnreviewedEntry` → `RecordChangeEntry`
-
-`UnreviewedEntry` at `files.rs:411` is used in three semantically different
-contexts that share only the JSON shape `(connection_name, path, status)`:
+The old type was used in three semantically different contexts that share
+only the JSON shape `(connection_name, path, status)`:
 
 | Caller | Semantic |
 |---|---|
-| `detect_unreviewed_fast` (populated at `files.rs:2947`) | Genuinely unreviewed — dirty bytes that haven't been accepted yet. |
-| `unpublished_entries` (`files.rs:3865`) | **Accepted but not yet published** — entries from `accepted-patches.json`. |
-| Diff helper at `files.rs:4087-4120`, `blocked` lists at `files.rs:537, 891, 2418` | Path-level change records, semantically neutral. |
+| `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main` | Genuinely unreviewed — dirty bytes that haven't been accepted yet. |
+| `list_unpublished_accepted_patch_entries` | **Accepted but not yet published** — entries from `accepted-patches.json`. |
+| Diff helper + `blocked` lists | Path-level change records, semantically neutral. |
 
-The name "Unreviewed" only fits one of the three uses; the other two borrow
-it for serialization convenience. Calling the second use's function
-something like "accepted patch entries as unreviewed entries" reads as a
-contradiction precisely because the type name is lying.
+The name "Unreviewed" only fit one of the three. Calling the second use's
+function "accepted patch entries as unreviewed entries" read as a
+contradiction precisely because the type name was lying. The neutral
+`RecordChangeEntry` lets each function returning `Vec<RecordChangeEntry>`
+have a name that truthfully describes which kind of change it returns.
 
-Rename the type to `RecordChangeEntry` (or `PathChangeEntry`) — a neutral
-shape name. Then each function returning `Vec<RecordChangeEntry>` can have a
-name that truthfully describes which kind of change it returns:
+### Why the worktree-vs-scratch reads stayed split
 
-- `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main` — dirty bytes.
-- `list_unpublished_accepted_patch_entries` — approved-but-not-published.
-- The diff helper — its own neutral name (TBD when it's renamed).
+`load_worktree_into_path_contents_map` and
+`load_connection_scratch_into_path_contents_map` are NOT mergeable:
+different ignore rules (only the scratch walk currently allows
+`.publish-plans`), different key prefixes (worktree paths as-is vs
+`.scratch/<rel>`), and called as two distinct passes by
+`read_worktree_files_and_scratch_state`. Kept as a symmetric pair.
 
-Land the type rename in the same mechanical PR as the function renames so
-the function-name table reads coherently on review.
+### Why the `reject_field` / `discard_field` rename was the highest-value
 
-The `_single_repo` / `_full_scan` / `_locally` suffixes carry no useful
-information from the caller's perspective and should be retired entirely or
-replaced with text that describes the actual scope.
-
-#### `scratch-desktop/src/renderer/src/pages/workspace/`
-
-| Current | Proposed |
-|---|---|
-| `applyAcceptedCellChange` (grid) | `applyAcceptedFieldChangeToFolderDiffData` |
-| `applyAcceptedFieldChangeToRecord` (record view) | `applyAcceptedFieldChangeToOpenRecordData` |
-| `onRecordChanged` | `onRecordStructurallyChangedRefetchAll` |
-| `onRecordFieldChanged` | `onSingleFieldAcceptedApplyOptimistically` |
-| `onDataRefresh` | `invalidateWorkspaceLevelData` |
-| `dataRefreshKey` | `workspaceLevelDataInvalidationCounter` |
-| `validationReloadKey` | `openRecordValidationReloadCounter` |
-| `handleAcceptCellChange` | `handleApproveFieldClick` |
-| `handleRejectUnreviewedCellChange` | `handleRejectUnreviewedFieldClick` |
-| `handleUndoApprovedCellChange` | `handleUndoApprovedFieldClick` |
-| `acceptCellChange` (IPC) | `acceptUnreviewedFieldEdit` |
-| `acceptCellInputText` (IPC) | `acceptFieldEditFromInputText` |
-| `rejectCellChange` (IPC) | `revertUnreviewedFieldEditToApproved` |
-| `undoApprovedCellChange` (IPC) | `dropApprovedFieldAndRestoreToMain` |
-
-The "Cell" / "Field" terminology split — grid views use "cell" (spreadsheet
-metaphor), record views use "field" (record metaphor) — is the single biggest
-source of paired-name confusion. Standardising on "field" everywhere is
-recommended; the grid IS a record table, the cells ARE fields.
-
-### Internal locals worth tightening
-
-Apply the same principle to the inner workings of the §1 functions. Examples
-from `review_ops::accept_field`:
-
-| Current | Proposed |
-|---|---|
-| `paths` (ConnectionPaths) | `connection_directory_paths` |
-| `working_path` | `working_file_path_on_disk` |
-| `working_bytes` | `working_file_contents_bytes` |
-| `working_obj` | `working_file_parsed_json_object` |
-| `local_value` | `field_value_in_working_file` |
-| `approved_value` | `field_value_in_approved_state` |
-| `approved_obj_opt` | `approved_object_at_path_if_any` |
-| `next_approved` | `approved_object_after_applying_field_edit` |
-| `main_parsed` | `record_parsed_from_main_branch_if_any` |
-| `next_approved_value` | `approved_object_after_apply_or_none_if_empty_with_no_main` |
-
-### Implementation note
-
-The rename pass is mechanical — no behaviour change — but it touches a lot of
-files. Easiest to:
-
-1. Land it as its own PR (no perf changes, no behaviour changes), so the
-   reviewer can confirm semantics by name-only.
-2. Then land the perf fixes against the renamed code, where the
-   `read_main_branch_contents_filtered_by_path` callsite makes the
-   improvement self-evident.
-
-This sequencing also means the audit's "Tier 1" fix can be reviewed against
-self-documenting code rather than the current tersely-named version.
+The names couldn't be told apart without reading REVIEW_MODEL.md, and they
+surfaced into the desktop's IPC layer as `rejectCellChange` /
+`undoApprovedCellChange`. They're now `revert_field_edit_to_approved_value`
+and `drop_approved_field_and_restore_to_main_value` in Rust, and the
+contextBridge surface is `revertUnreviewedFieldEditToApproved` /
+`dropApprovedFieldAndRestoreToMain` — three layers of self-describing names
+where before there were three layers of "wait, which one again?"
 
 ## Suggested implementation order
 
-0. **Vocabulary & renaming pass** — mechanical, no behaviour change. Land
-   first so every subsequent PR can be reviewed against self-documenting
-   identifiers. Doing this last would mean re-reviewing every changed line.
-1. **Section 1** (5 one-line changes in renamed `review_ops.rs`) + **Section
+0. ✅ **Vocabulary & renaming pass** — shipped as two PRs (`cfonger-81` for
+   Rust, `cfonger-83` for desktop TS). See "Implementation status" at the
+   top of this doc for landing details.
+1. ⏳ **Section 1** (5 one-line changes in renamed `review_ops.rs`) + **Section
    6.1 / 6.2** (drop the redundant invalidation from the per-field path).
    Together they ship the per-field approve performance fix end-to-end.
-2. **Section 4.1** — validators filter on partial revalidations.
-3. **Section 3** — refactor 3 functions onto
-   `read_main_local_and_approved_maps_scoped_to_folder`.
-4. **Section 2** — narrower path-list reads in the CLI.
+2. ⏳ **Section 4.1** — validators filter on partial revalidations.
+3. ⏳ **Section 3** — refactor 3 functions onto
+   `read_main_local_and_approved_maps_scoped_to_folder` (folder-scoped
+   maps). Optionally tighten further to gix-status-scoped maps with §5
+   (see §3 note).
+4. ⏳ **Section 2** — narrower path-list reads in the CLI.
+5. ⏳ **Section 5.1 / 5.2 / 5.3** (re-classified) — switch the bulk all-ops
+   to the gix-status + patch-file union pattern. Same shape across the three
+   (accept/reject/discard); share the candidate-set helper.

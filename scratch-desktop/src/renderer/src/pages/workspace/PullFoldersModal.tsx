@@ -56,7 +56,7 @@ interface PullFoldersModalProps {
   localPath: string | null;
   workspaceId: string;
   title: string;
-  onDataRefresh: () => void;
+  invalidateWorkspaceLevelData: () => void;
   dataFolderIds?: string[];
   emptyStateMessage?: string;
 }
@@ -67,7 +67,7 @@ export function PullFoldersModal({
   localPath,
   workspaceId,
   title,
-  onDataRefresh,
+  invalidateWorkspaceLevelData,
   dataFolderIds,
   emptyStateMessage = 'No linked tables found for this selection.',
 }: PullFoldersModalProps) {
@@ -196,19 +196,19 @@ export function PullFoldersModal({
       .then(() => {
         if (cancelled) return;
         setPhase('done');
-        onDataRefresh();
+        invalidateWorkspaceLevelData();
       })
       .catch((err) => {
         if (cancelled) return;
         console.debug('Post-pull download failed:', err);
         setPhase('done');
-        onDataRefresh();
+        invalidateWorkspaceLevelData();
       });
 
     return () => {
       cancelled = true;
     };
-  }, [localPath, onDataRefresh, phase]);
+  }, [localPath, invalidateWorkspaceLevelData, phase]);
 
   const allDone = jobs.length > 0 && jobs.every((job) => isTerminalState(job.state));
   const completedCount = jobs.filter((job) => job.state === 'completed').length;
