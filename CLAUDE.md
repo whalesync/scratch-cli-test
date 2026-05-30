@@ -86,6 +86,21 @@ yarn test:integration # Run integration tests across all packages
 - Files end with a newline
 - Use `assertUnreachable` in `default` cases of `switch` statements over union/enum types to ensure exhaustive handling at compile time (`client/src/utils/helpers.ts`, `server/src/utils/helpers.ts`)
 
+### Self-documenting names
+
+**Prefer maximum self-documenting names for variables and functions.** Long, fully explicit identifiers beat concise or idiomatic short ones — even when the longer form runs ~30–40 characters or causes lines to wrap.
+
+This matters more for AI-written code than for human-written code. Humans and AI agents often discuss this code in conversation, in audit docs, in review comments, and in plans — without anyone actually opening the file. A variable named `main_map` is meaningless when listed in isolation; `file_path_to_contents_map_in_main_branch` tells you exactly what it holds. The reader should be able to understand a name from the name alone, not from chasing types and call sites.
+
+Apply this everywhere:
+
+- **Variables**: `file_path_to_contents_map_in_main_branch` over `main_map`. `approved_object_at_path_if_any` over `approved_obj_opt`. `record_paths_with_byte_differences_against_main` over `ambiguous`.
+- **Functions**: avoid historical-scar suffixes (`_fast`, `_for_entry_point`, `_single_repo`, `_full_scan`, `_locally`) when they don't describe behaviour. Use the full action: `read_main_branch_contents_filtered_by_path` over `read_main_tree_for_entry_point_filtered`. `revert_field_edit_to_approved_value` over `reject_field` when the verb is ambiguous.
+- **Type-redundant suffixes are fine.** Keep `_map`, `_list`, `_set`, `_counter` when they help the call site read as English. The type signature already says it; the call site doesn't.
+- **Local variables** in non-trivial functions get the same treatment as struct fields and module-level identifiers. A 20-line function with terse locals is just as opaque as one with terse parameters.
+
+The cost — wrapped lines, more characters to read — is a real cost but a small one. The benefit — being able to discuss, review, audit, and refactor code without anyone needing to open the file first — compounds across every conversation and every PR.
+
 ### Client Conventions
 
 - Next.js **App Router** (not Pages Router)
