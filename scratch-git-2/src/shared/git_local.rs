@@ -22,9 +22,11 @@ use anyhow::Context;
 use crate::shared::git_exec::git_command;
 
 /// Map of repo-relative path → file content. Mirrors what `git ls-tree` /
-/// `git cat-file --batch` produces for a tree, and what `read_dirty_disk` /
-/// `read_scratch_disk` produce for the on-disk working tree. Re-exported by
-/// `shared::review_ops::FileMap` for back-compat with the existing callers.
+/// `git cat-file --batch` produces for a tree, and what
+/// `load_worktree_into_path_contents_map` /
+/// `load_connection_scratch_into_path_contents_map` produce for the on-disk
+/// working tree. Re-exported by `shared::review_ops::FileMap` for back-compat
+/// with the existing callers.
 pub type FileMap = HashMap<String, Vec<u8>>;
 
 pub fn open_bare_repo(bare_repo: &Path) -> anyhow::Result<gix::Repository> {

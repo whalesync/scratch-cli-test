@@ -213,8 +213,8 @@ fn accepted_patches_dir(ctx: &ConnectionContext) -> PathBuf {
     review_ops::accepted_patches_dir(&ctx.to_paths())
 }
 
-fn read_materialized_repo(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
-    review_ops::read_materialized_repo(&ctx.to_paths())
+fn read_worktree_files_and_scratch_state(ctx: &ConnectionContext) -> anyhow::Result<FileMap> {
+    review_ops::read_worktree_files_and_scratch_state(&ctx.to_paths())
 }
 
 fn write_or_remove_working_file(
@@ -227,14 +227,14 @@ fn write_or_remove_working_file(
 
 fn apply_changed_working_files(
     ctx: &ConnectionContext,
-    previous_local_map: &FileMap,
-    next_local_map: &FileMap,
+    previous_file_path_to_contents_map_in_worktree: &FileMap,
+    next_file_path_to_contents_map_in_worktree: &FileMap,
     repo_folder: &str,
 ) -> anyhow::Result<()> {
     review_ops::apply_changed_working_files(
         &ctx.to_paths(),
-        previous_local_map,
-        next_local_map,
+        previous_file_path_to_contents_map_in_worktree,
+        next_file_path_to_contents_map_in_worktree,
         repo_folder,
     )
 }
@@ -247,17 +247,17 @@ fn accept_field_in_folder(
     ctx: &ConnectionContext,
     repo_folder: &str,
     field: &str,
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &mut crate::shared::accepted_patches::AcceptedPatchesFile,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
 ) -> anyhow::Result<FieldCommandResult> {
     review_ops::accept_field_in_folder(
         &ctx.conn_dir_name,
         repo_folder,
         field,
-        main_map,
+        file_path_to_contents_map_in_main_branch,
         file,
-        local_map,
+        file_path_to_contents_map_in_worktree,
     )
 }
 
@@ -265,17 +265,17 @@ fn reject_field_in_folder(
     ctx: &ConnectionContext,
     repo_folder: &str,
     field: &str,
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &crate::shared::accepted_patches::AcceptedPatchesFile,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
 ) -> anyhow::Result<(FileMap, FieldCommandResult)> {
     review_ops::reject_field_in_folder(
         &ctx.conn_dir_name,
         repo_folder,
         field,
-        main_map,
+        file_path_to_contents_map_in_main_branch,
         file,
-        local_map,
+        file_path_to_contents_map_in_worktree,
     )
 }
 
@@ -283,17 +283,17 @@ fn discard_field_in_folder(
     ctx: &ConnectionContext,
     repo_folder: &str,
     field: &str,
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &mut crate::shared::accepted_patches::AcceptedPatchesFile,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
 ) -> anyhow::Result<(FileMap, FieldCommandResult)> {
     review_ops::discard_field_in_folder(
         &ctx.conn_dir_name,
         repo_folder,
         field,
-        main_map,
+        file_path_to_contents_map_in_main_branch,
         file,
-        local_map,
+        file_path_to_contents_map_in_worktree,
     )
 }
 
@@ -383,7 +383,7 @@ struct RemoteDiscardResult {
     remote_discarded_paths: Vec<String>,
 }
 
-fn refresh_problem_record_index_for_ctx(
+fn revalidate_paths_for_connection_context(
     ctx: &ConnectionContext,
     rel_paths: &[String],
     rebuild: bool,
@@ -408,7 +408,7 @@ fn refresh_problem_record_index_for_ctx(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-struct UnreviewedEntry {
+struct RecordChangeEntry {
     #[serde(rename = "connectionName")]
     connection_name: String,
     path: String,
@@ -534,9 +534,11 @@ async fn run_download(
     // dominate the pull time when nothing is actually unreviewed — which is
     // the common case, especially when the desktop's "Download and publish"
     // flow chained us straight out of an already-cleared publish modal.
-    let mut blocked: Vec<UnreviewedEntry> = Vec::new();
+    let mut blocked: Vec<RecordChangeEntry> = Vec::new();
     for ctx in &contexts {
-        blocked.extend(detect_unreviewed_fast(ctx, false)?);
+        blocked.extend(
+            list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?,
+        );
     }
     if !blocked.is_empty() {
         print_blocked_unreviewed_result(&blocked, started.elapsed().as_millis(), json)?;
@@ -888,9 +890,11 @@ async fn run_publish(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result
     // first — same model as pull's `blocked_unreviewed`, and the same
     // structured payload shape so the desktop modal can pattern-match. Uses
     // the gix::status-backed fast path (~210ms warm per connection).
-    let mut blocked: Vec<UnreviewedEntry> = Vec::new();
+    let mut blocked: Vec<RecordChangeEntry> = Vec::new();
     for ctx in &contexts {
-        blocked.extend(detect_unreviewed_fast(ctx, false)?);
+        blocked.extend(
+            list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?,
+        );
     }
     if !blocked.is_empty() {
         print_blocked_unreviewed_result(&blocked, started.elapsed().as_millis(), json)?;
@@ -1247,8 +1251,12 @@ fn run_discard_all(
     match folder {
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
-            let result = discard_all_single_repo(&ctx, &workspace_dir, Some(repo_folder.as_str()))?;
-            refresh_problem_record_index_for_ctx(&ctx, &result.discarded_paths, false)?;
+            let result = discard_all_unreviewed_changes_in_connection_repo(
+                &ctx,
+                &workspace_dir,
+                Some(repo_folder.as_str()),
+            )?;
+            revalidate_paths_for_connection_context(&ctx, &result.discarded_paths, false)?;
             total_discarded += result.files_discarded;
             skipped_any |= result.skipped_missing_main;
             for p in &result.discarded_paths {
@@ -1260,8 +1268,9 @@ fn run_discard_all(
                 if contexts.len() > 1 && !json {
                     println!("Discarding changes in {}...", ctx.conn_dir_name);
                 }
-                let result = discard_all_single_repo(ctx, &workspace_dir, None)?;
-                refresh_problem_record_index_for_ctx(ctx, &result.discarded_paths, false)?;
+                let result =
+                    discard_all_unreviewed_changes_in_connection_repo(ctx, &workspace_dir, None)?;
+                revalidate_paths_for_connection_context(ctx, &result.discarded_paths, false)?;
                 total_discarded += result.files_discarded;
                 skipped_any |= result.skipped_missing_main;
                 for p in &result.discarded_paths {
@@ -1330,8 +1339,12 @@ fn run_reject_all(
     match folder {
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
-            let result = reject_all_single_repo(&ctx, &workspace_dir, Some(repo_folder.as_str()))?;
-            refresh_problem_record_index_for_ctx(&ctx, &result.rejected_paths, false)?;
+            let result = reject_all_unreviewed_changes_in_connection_repo(
+                &ctx,
+                &workspace_dir,
+                Some(repo_folder.as_str()),
+            )?;
+            revalidate_paths_for_connection_context(&ctx, &result.rejected_paths, false)?;
             total_rejected += result.files_rejected;
             for p in &result.rejected_paths {
                 rejected_files.push(format!("{}/{}", ctx.conn_dir_name, p));
@@ -1342,8 +1355,9 @@ fn run_reject_all(
                 if contexts.len() > 1 && !json {
                     println!("Rejecting changes in {}...", ctx.conn_dir_name);
                 }
-                let result = reject_all_single_repo(ctx, &workspace_dir, None)?;
-                refresh_problem_record_index_for_ctx(ctx, &result.rejected_paths, false)?;
+                let result =
+                    reject_all_unreviewed_changes_in_connection_repo(ctx, &workspace_dir, None)?;
+                revalidate_paths_for_connection_context(ctx, &result.rejected_paths, false)?;
                 total_rejected += result.files_rejected;
                 for p in &result.rejected_paths {
                     rejected_files.push(format!("{}/{}", ctx.conn_dir_name, p));
@@ -1407,8 +1421,12 @@ fn run_accept_all(
     match folder {
         Some(folder) => {
             let (ctx, repo_folder, _) = resolve_folder_context(&workspace_dir, &contexts, folder)?;
-            let result = accept_all_single_repo(&ctx, &workspace_dir, Some(repo_folder.as_str()))?;
-            refresh_problem_record_index_for_ctx(&ctx, &result.accepted_paths, false)?;
+            let result = accept_all_unreviewed_changes_in_connection_repo(
+                &ctx,
+                &workspace_dir,
+                Some(repo_folder.as_str()),
+            )?;
+            revalidate_paths_for_connection_context(&ctx, &result.accepted_paths, false)?;
             total_accepted += result.files_accepted;
             for p in &result.accepted_paths {
                 accepted_files.push(format!("{}/{}", ctx.conn_dir_name, p));
@@ -1419,8 +1437,9 @@ fn run_accept_all(
                 if contexts.len() > 1 && !json {
                     println!("Accepting changes in {}...", ctx.conn_dir_name);
                 }
-                let result = accept_all_single_repo(ctx, &workspace_dir, None)?;
-                refresh_problem_record_index_for_ctx(ctx, &result.accepted_paths, false)?;
+                let result =
+                    accept_all_unreviewed_changes_in_connection_repo(ctx, &workspace_dir, None)?;
+                revalidate_paths_for_connection_context(ctx, &result.accepted_paths, false)?;
                 total_accepted += result.files_accepted;
                 for p in &result.accepted_paths {
                     accepted_files.push(format!("{}/{}", ctx.conn_dir_name, p));
@@ -1512,15 +1531,20 @@ fn run_accept(
     for (ctx_idx, path_pairs) in &by_conn {
         let ctx = &contexts[*ctx_idx];
 
-        let main_map = read_main_tree(&ctx.bare_repo)?;
+        let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
         sync_schema_files_from_worktree(ctx)?;
-        let local_map = read_materialized_repo(ctx)?;
+        let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-        let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+        let file_path_to_contents_map_for_approved_state =
+            compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
 
-        let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
+        let changes = compute_unreviewed_entries(
+            &ctx.conn_dir_name,
+            &file_path_to_contents_map_for_approved_state,
+            &file_path_to_contents_map_in_worktree,
+        );
         let changed_paths: std::collections::HashSet<&str> =
             changes.iter().map(|e| e.path.as_str()).collect();
 
@@ -1532,8 +1556,16 @@ fn run_accept(
         }
 
         for (_, rel_path) in path_pairs {
-            let snapshot = parse_json_value_at(&main_map, rel_path, "refs/heads/main")?;
-            let working = parse_json_value_at(&local_map, rel_path, "working tree")?;
+            let snapshot = parse_json_value_at(
+                &file_path_to_contents_map_in_main_branch,
+                rel_path,
+                "refs/heads/main",
+            )?;
+            let working = parse_json_value_at(
+                &file_path_to_contents_map_in_worktree,
+                rel_path,
+                "working tree",
+            )?;
             match crate::shared::re_anchor::compute_entry(
                 rel_path,
                 snapshot.as_ref(),
@@ -1553,7 +1585,7 @@ fn run_accept(
 
         crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
         let rel_paths: Vec<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
-        refresh_problem_record_index_for_ctx(ctx, &rel_paths, path_pairs.len() > 1)?;
+        revalidate_paths_for_connection_context(ctx, &rel_paths, path_pairs.len() > 1)?;
 
         all_accepted.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
@@ -1632,12 +1664,13 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
     for (ctx_idx, path_pairs) in &by_conn {
         let ctx = &contexts[*ctx_idx];
 
-        // Read only the main blobs we actually need. `read_main_tree_filtered`
+        // Read only the main blobs we actually need. `read_main_branch_contents_filtered_by_path`
         // still walks `ls-tree` (cheap metadata only) but `cat-file --batch`
         // is scoped to the rel_paths we're rejecting, so a single-record
         // reject pays O(1) blob reads instead of loading the whole connection.
         let wanted: HashSet<String> = path_pairs.iter().map(|(_, rel)| rel.clone()).collect();
-        let main_map = read_main_tree_filtered(&ctx.bare_repo, |p| wanted.contains(p))?;
+        let file_path_to_contents_map_in_main_branch =
+            read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| wanted.contains(p))?;
 
         let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
         let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
@@ -1646,7 +1679,11 @@ fn run_reject(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result<
         // this connection has unreviewed changes before writing anything.
         let mut resolved: Vec<(&str, Option<Vec<u8>>)> = Vec::with_capacity(path_pairs.len());
         for (input_path, rel_path) in path_pairs {
-            let approved_bytes = approved_bytes_for_path(&main_map, &accepted_file, rel_path)?;
+            let approved_bytes = approved_bytes_for_path(
+                &file_path_to_contents_map_in_main_branch,
+                &accepted_file,
+                rel_path,
+            )?;
             let working_bytes = match std::fs::read(ctx.worktree_dir.join(rel_path)) {
                 Ok(bytes) => Some(review_ops::normalize_crlf(bytes)),
                 Err(err) if err.kind() == io::ErrorKind::NotFound => None,
@@ -1747,12 +1784,16 @@ fn run_discard(cwd: &Path, input_paths: &[String], json: bool) -> anyhow::Result
             .map(|(input, rel)| (rel.as_str(), input.as_str()))
             .collect();
 
-        let result = discard_paths_single_repo(ctx, &rel_paths, &input_by_rel)?;
+        let result = discard_record_paths_in_connection_repo(ctx, &rel_paths, &input_by_rel)?;
         if result.skipped_missing_main {
             skipped_any = true;
             continue;
         }
-        refresh_problem_record_index_for_ctx(ctx, &result.discarded_paths, path_pairs.len() > 1)?;
+        revalidate_paths_for_connection_context(
+            ctx,
+            &result.discarded_paths,
+            path_pairs.len() > 1,
+        )?;
         for rel in &result.discarded_paths {
             if let Some(input) = input_by_rel.get(rel.as_str()) {
                 all_discarded.push((*input).to_string());
@@ -1819,18 +1860,18 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    let main_map = read_main_tree(&ctx.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
     sync_schema_files_from_worktree(&ctx)?;
-    let local_map = read_materialized_repo(&ctx)?;
+    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
     let result = accept_field_in_folder(
         &ctx,
         &repo_folder,
         field,
-        &main_map,
+        &file_path_to_contents_map_in_main_branch,
         &mut accepted_file,
-        &local_map,
+        &file_path_to_contents_map_in_worktree,
     )?;
     let elapsed_ms = started.elapsed().as_millis();
 
@@ -1861,7 +1902,7 @@ fn run_accept_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     if result.patches_changed {
         crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     }
-    refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    revalidate_paths_for_connection_context(&ctx, &result.changed_paths, true)?;
     // Folder_index reindex for the affected rows. changed_paths is repo-
     // relative; reindex_folder_index_for_changes wants workspace-relative.
     let workspace_relative_paths: Vec<String> = result
@@ -1913,18 +1954,18 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    let main_map = read_main_tree(&ctx.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
     sync_schema_files_from_worktree(&ctx)?;
-    let local_map = read_materialized_repo(&ctx)?;
+    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(&ctx)?;
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    let (next_local_map, result) = reject_field_in_folder(
+    let (next_file_path_to_contents_map_in_worktree, result) = reject_field_in_folder(
         &ctx,
         &repo_folder,
         field,
-        &main_map,
+        &file_path_to_contents_map_in_main_branch,
         &accepted_file,
-        &local_map,
+        &file_path_to_contents_map_in_worktree,
     )?;
     let elapsed_ms = started.elapsed().as_millis();
 
@@ -1952,8 +1993,13 @@ fn run_reject_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyho
         return Ok(());
     }
 
-    apply_changed_working_files(&ctx, &local_map, &next_local_map, &repo_folder)?;
-    refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    apply_changed_working_files(
+        &ctx,
+        &file_path_to_contents_map_in_worktree,
+        &next_file_path_to_contents_map_in_worktree,
+        &repo_folder,
+    )?;
+    revalidate_paths_for_connection_context(&ctx, &result.changed_paths, true)?;
     let workspace_relative_paths: Vec<String> = result
         .changed_paths
         .iter()
@@ -2003,18 +2049,18 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
     let layout = WorkspaceLayout::for_cli(&workspace_dir);
     let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
 
-    let main_map = read_main_tree(&ctx.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
     sync_schema_files_from_worktree(&ctx)?;
-    let local_map = read_materialized_repo(&ctx)?;
+    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(&ctx)?;
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    let (next_local_map, result) = discard_field_in_folder(
+    let (next_file_path_to_contents_map_in_worktree, result) = discard_field_in_folder(
         &ctx,
         &repo_folder,
         field,
-        &main_map,
+        &file_path_to_contents_map_in_main_branch,
         &mut accepted_file,
-        &local_map,
+        &file_path_to_contents_map_in_worktree,
     )?;
     let elapsed_ms = started.elapsed().as_millis();
 
@@ -2042,11 +2088,16 @@ fn run_discard_field(cwd: &Path, folder: &Path, field: &str, json: bool) -> anyh
         return Ok(());
     }
 
-    apply_changed_working_files(&ctx, &local_map, &next_local_map, &repo_folder)?;
+    apply_changed_working_files(
+        &ctx,
+        &file_path_to_contents_map_in_worktree,
+        &next_file_path_to_contents_map_in_worktree,
+        &repo_folder,
+    )?;
     if result.patches_changed {
         crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
     }
-    refresh_problem_record_index_for_ctx(&ctx, &result.changed_paths, true)?;
+    revalidate_paths_for_connection_context(&ctx, &result.changed_paths, true)?;
     let workspace_relative_paths: Vec<String> = result
         .changed_paths
         .iter()
@@ -2112,8 +2163,8 @@ fn run_restore_deleted_record(
             .iter()
             .map(|(_, rel_path)| rel_path.clone())
             .collect();
-        restore_deleted_records_locally(ctx, &rel_paths)?;
-        refresh_problem_record_index_for_ctx(ctx, &rel_paths, false)?;
+        restore_deleted_record_paths_from_main_branch(ctx, &rel_paths)?;
+        revalidate_paths_for_connection_context(ctx, &rel_paths, false)?;
         all_restored.extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
     }
 
@@ -2177,8 +2228,8 @@ async fn run_discard_created_record(
             .map(|(_, rel_path)| rel_path.clone())
             .collect();
 
-        discard_created_records_locally(ctx, &rel_paths)?;
-        refresh_problem_record_index_for_ctx(ctx, &rel_paths, false)?;
+        drop_create_patches_and_delete_working_files_for_record_paths(ctx, &rel_paths)?;
+        revalidate_paths_for_connection_context(ctx, &rel_paths, false)?;
         result
             .changed_paths
             .extend(path_pairs.iter().map(|(input_path, _)| input_path.clone()));
@@ -2241,7 +2292,9 @@ fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()
     // pay the multi-second tree-walk cost the old `unreviewed_entries` did.
     let mut entries = Vec::new();
     for ctx in &contexts {
-        entries.extend(detect_unreviewed_fast(ctx, false)?);
+        entries.extend(
+            list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?,
+        );
     }
     entries.sort_by(|left, right| {
         left.connection_name
@@ -2284,7 +2337,7 @@ fn run_unpublished(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<(
 
     let mut entries = Vec::new();
     for ctx in &contexts {
-        entries.extend(unpublished_entries(ctx)?);
+        entries.extend(list_unpublished_accepted_patch_entries(ctx)?);
     }
     entries.sort_by(|left, right| {
         left.connection_name
@@ -2327,7 +2380,7 @@ fn run_unpushed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
 
     let mut entries = Vec::new();
     for ctx in &contexts {
-        entries.extend(unpushed_entries(ctx)?);
+        entries.extend(list_unpublished_accepted_patch_entries(ctx)?);
     }
     entries.sort_by(|a, b| {
         a.connection_name
@@ -2359,15 +2412,6 @@ fn run_unpushed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> 
         );
     }
     Ok(())
-}
-
-/// Post-B "unpushed" and "unpublished" mean the same thing — both surface
-/// what's in `accepted-patches.json`. The two CLI commands are kept for
-/// back-compat with users / scripts that grew up around the pre-B layout
-/// (`unpushed` = local dirty vs local main, `unpublished` = local dirty vs
-/// remote main). Once the desktop migrates over, drop one of them.
-fn unpushed_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
-    unpublished_entries(ctx)
 }
 
 pub async fn download_workbook(
@@ -2415,9 +2459,11 @@ fn refresh_workbook_for_contexts(
     // connection warm) instead of the multi-second per-connection tree walks
     // the slow variant does. The linked-CLI refresh is invoked after every
     // server-side mutation, so the per-call cost is felt repeatedly.
-    let mut blocked: Vec<UnreviewedEntry> = Vec::new();
+    let mut blocked: Vec<RecordChangeEntry> = Vec::new();
     for ctx in contexts {
-        blocked.extend(detect_unreviewed_fast(ctx, false)?);
+        blocked.extend(
+            list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?,
+        );
     }
     if !blocked.is_empty() {
         let paths: Vec<String> = blocked
@@ -2650,13 +2696,13 @@ fn group_input_paths_by_connection(
 /// Undo an accepted delete. For each path: error if there's no `Delete` entry
 /// in `accepted-patches.json`; error if `refs/heads/main` doesn't have the
 /// path. Otherwise: drop the entry, write the main blob to the worktree.
-fn restore_deleted_records_locally(
+fn restore_deleted_record_paths_from_main_branch(
     ctx: &ConnectionContext,
     rel_paths: &[String],
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let main_map = read_main_tree(&ctx.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
 
     let mut to_restore: Vec<(String, Vec<u8>)> = Vec::with_capacity(rel_paths.len());
     for rel_path in rel_paths {
@@ -2668,7 +2714,8 @@ fn restore_deleted_records_locally(
         if entry.kind != crate::shared::re_anchor::PatchKind::Delete {
             anyhow::bail!("'{}' is not an approved deleted record.", display_path);
         }
-        let Some(main_content) = main_map.get(rel_path.as_str()) else {
+        let Some(main_content) = file_path_to_contents_map_in_main_branch.get(rel_path.as_str())
+        else {
             anyhow::bail!(
                 "'{}' does not exist on main and cannot be restored.",
                 display_path
@@ -2691,18 +2738,18 @@ fn restore_deleted_records_locally(
 ///
 /// The remote-cleanup hack (`discard_created_record_remotely`) is invoked by
 /// the caller and stays independent of this routine.
-fn discard_created_records_locally(
+fn drop_create_patches_and_delete_working_files_for_record_paths(
     ctx: &ConnectionContext,
     rel_paths: &[String],
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let main_map = read_main_tree(&ctx.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
 
     let mut to_discard: Vec<String> = Vec::with_capacity(rel_paths.len());
     for rel_path in rel_paths {
         let display_path = format!("{}/{}", ctx.conn_dir_name, rel_path);
-        if main_map.contains_key(rel_path.as_str()) {
+        if file_path_to_contents_map_in_main_branch.contains_key(rel_path.as_str()) {
             anyhow::bail!(
                 "'{}' exists on main and cannot be discarded as an approved create.",
                 display_path
@@ -2881,13 +2928,16 @@ fn detect_selected_connection(
 ///
 /// If `short_circuit` is true, returns as soon as the first truly-unreviewed
 /// path is found — for the "any?" check that gates the Publish action.
-fn detect_unreviewed_fast(
+fn list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(
     ctx: &ConnectionContext,
     short_circuit: bool,
-) -> anyhow::Result<Vec<UnreviewedEntry>> {
+) -> anyhow::Result<Vec<RecordChangeEntry>> {
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let patched_by_path: HashMap<&str, &crate::shared::re_anchor::AnchoredPatch> = accepted_file
+    let accepted_patch_entry_by_record_path: HashMap<
+        &str,
+        &crate::shared::re_anchor::AnchoredPatch,
+    > = accepted_file
         .patches
         .iter()
         .map(|p| (p.path.as_str(), p))
@@ -2898,7 +2948,7 @@ fn detect_unreviewed_fast(
     let platform = repo.status(gix::progress::Discard)?;
     let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
 
-    let mut ambiguous: Vec<(String, &'static str)> = Vec::new();
+    let mut gix_status_flagged_record_paths_and_status: Vec<(String, &'static str)> = Vec::new();
 
     use gix::status::index_worktree::iter::Summary;
     for item in iter {
@@ -2925,26 +2975,29 @@ fn detect_unreviewed_fast(
             continue;
         }
 
-        ambiguous.push((rel_path, status));
+        gix_status_flagged_record_paths_and_status.push((rel_path, status));
     }
 
-    let mut entries: Vec<UnreviewedEntry> = Vec::new();
-    if !ambiguous.is_empty() {
+    let mut entries: Vec<RecordChangeEntry> = Vec::new();
+    if !gix_status_flagged_record_paths_and_status.is_empty() {
         // Load the main tree once and resolve every byte-flagged path
         // semantically. The expected-content rule depends on whether the path
         // has an accepted patch (which makes `apply(main, patch)` the
         // user-intended state) or not (where `main` is the authoritative
         // state and any working-tree edit is unreviewed by definition).
-        let main_map = read_main_tree(&ctx.bare_repo)?;
-        for (rel_path, status) in ambiguous {
-            let main_blob = main_map.get(&rel_path).map(|v| v.as_slice());
-            let expected: Option<Vec<u8>> = match patched_by_path.get(rel_path.as_str()) {
-                Some(entry) => review_ops::apply_patch_entry_to_blob(main_blob, entry)?,
-                None => main_blob.map(|b| b.to_vec()),
-            };
+        let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
+        for (rel_path, status) in gix_status_flagged_record_paths_and_status {
+            let main_blob = file_path_to_contents_map_in_main_branch
+                .get(&rel_path)
+                .map(|v| v.as_slice());
+            let expected: Option<Vec<u8>> =
+                match accepted_patch_entry_by_record_path.get(rel_path.as_str()) {
+                    Some(entry) => review_ops::apply_patch_entry_to_blob(main_blob, entry)?,
+                    None => main_blob.map(|b| b.to_vec()),
+                };
             let actual = std::fs::read(ctx.worktree_dir.join(&rel_path)).ok();
             if json_content_differs(expected.as_deref(), actual.as_deref()) {
-                entries.push(UnreviewedEntry {
+                entries.push(RecordChangeEntry {
                     connection_name: ctx.conn_dir_name.clone(),
                     path: rel_path,
                     status: status.to_string(),
@@ -2963,7 +3016,7 @@ fn detect_unreviewed_fast(
 /// non-zero immediately after, so the desktop can pattern-match on the JSON
 /// payload while shell users see both the human output and an Error: line.
 fn print_blocked_unreviewed_result(
-    blocked: &[UnreviewedEntry],
+    blocked: &[RecordChangeEntry],
     elapsed_ms: u128,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -3055,19 +3108,22 @@ fn print_blocked_stale_result(
 
 /// Load the `refs/heads/main` tree as a `FileMap`. Empty map if the ref
 /// doesn't exist yet (fresh workspace, never published).
-fn read_main_tree(bare_repo: &Path) -> anyhow::Result<FileMap> {
+fn read_main_branch_contents(bare_repo: &Path) -> anyhow::Result<FileMap> {
     match git_rev_parse_optional(bare_repo, "refs/heads/main")? {
         Some(hash) => read_git_tree(bare_repo, &hash),
         None => Ok(FileMap::new()),
     }
 }
 
-/// Like [`read_main_tree`] but only reads blobs whose path matches `keep`.
+/// Like [`read_main_branch_contents`] but only reads blobs whose path matches `keep`.
 /// `ls-tree` still enumerates the whole tree (cheap — metadata only) but
 /// `cat-file --batch` only processes the matching subset. Per-path callers
 /// (e.g. `files reject <path>`) pass a path-set predicate to avoid loading a
 /// 500MB worktree into memory just to touch one record.
-fn read_main_tree_filtered<F>(bare_repo: &Path, keep: F) -> anyhow::Result<FileMap>
+fn read_main_branch_contents_filtered_by_path<F>(
+    bare_repo: &Path,
+    keep: F,
+) -> anyhow::Result<FileMap>
 where
     F: Fn(&str) -> bool,
 {
@@ -3080,55 +3136,74 @@ where
 /// Per-path equivalent of `compute_accepted_state`: returns the bytes that
 /// would appear at `path` in the synthetic approved tree (`main` overlaid with
 /// `accepted-patches.json`). `None` means the path is approved-deleted or
-/// simply doesn't exist. Caller must have read `main_map` with at least
+/// simply doesn't exist. Caller must have read `file_path_to_contents_map_in_main_branch` with at least
 /// `path` included.
 fn approved_bytes_for_path(
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &crate::shared::accepted_patches::AcceptedPatchesFile,
     path: &str,
 ) -> anyhow::Result<Option<Vec<u8>>> {
     if let Some(entry) = crate::shared::accepted_patches::get_entry(file, path) {
-        review_ops::apply_patch_entry_to_blob(main_map.get(path).map(|v| v.as_slice()), entry)
+        review_ops::apply_patch_entry_to_blob(
+            file_path_to_contents_map_in_main_branch
+                .get(path)
+                .map(|v| v.as_slice()),
+            entry,
+        )
     } else {
-        Ok(main_map.get(path).cloned())
+        Ok(file_path_to_contents_map_in_main_branch.get(path).cloned())
     }
 }
 
-/// Build `(main_map, approved_map, local_map)` scoped to a single folder for
-/// the `*-all --folder` commands. `main_map` is read via `cat-file --batch`
-/// filtered to the folder's blobs only; `local_map` walks just
-/// `<worktree>/<folder>`; `approved_map` is `main_map` overlaid with the
+/// Build `(file_path_to_contents_map_in_main_branch, file_path_to_contents_map_for_approved_state, file_path_to_contents_map_in_worktree)` scoped to a single folder for
+/// the `*-all --folder` commands. `file_path_to_contents_map_in_main_branch` is read via `cat-file --batch`
+/// filtered to the folder's blobs only; `file_path_to_contents_map_in_worktree` walks just
+/// `<worktree>/<folder>`; `file_path_to_contents_map_for_approved_state` is `file_path_to_contents_map_in_main_branch` overlaid with the
 /// in-folder subset of `accepted_file.patches`. Out-of-folder patches in
 /// `accepted_file` are intentionally not reflected here — callers that need
 /// to mutate the patch file still hold the full `accepted_file` and write
 /// it back unchanged outside the folder.
-fn read_folder_scoped_maps(
+fn read_main_local_and_approved_maps_scoped_to_folder(
     ctx: &ConnectionContext,
     folder: &str,
     accepted_file: &crate::shared::accepted_patches::AcceptedPatchesFile,
 ) -> anyhow::Result<(FileMap, FileMap, FileMap)> {
-    let main_map = read_main_tree_filtered(&ctx.bare_repo, |p| is_data_path_in_folder(p, folder))?;
-    let mut approved_map = main_map.clone();
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
+            is_data_path_in_folder(p, folder)
+        })?;
+    let mut file_path_to_contents_map_for_approved_state =
+        file_path_to_contents_map_in_main_branch.clone();
     for entry in &accepted_file.patches {
         if !is_data_path_in_folder(&entry.path, folder) {
             continue;
         }
         match review_ops::apply_patch_entry_to_blob(
-            main_map.get(entry.path.as_str()).map(|v| v.as_slice()),
+            file_path_to_contents_map_in_main_branch
+                .get(entry.path.as_str())
+                .map(|v| v.as_slice()),
             entry,
         )? {
             Some(bytes) => {
-                approved_map.insert(entry.path.clone(), bytes);
+                file_path_to_contents_map_for_approved_state.insert(entry.path.clone(), bytes);
             }
             None => {
-                approved_map.remove(entry.path.as_str());
+                file_path_to_contents_map_for_approved_state.remove(entry.path.as_str());
             }
         }
     }
     let folder_dir = ctx.worktree_dir.join(folder);
-    let mut local_map = FileMap::new();
-    review_ops::read_dirty_disk(&ctx.worktree_dir, &folder_dir, &mut local_map)?;
-    Ok((main_map, approved_map, local_map))
+    let mut file_path_to_contents_map_in_worktree = FileMap::new();
+    review_ops::load_worktree_into_path_contents_map(
+        &ctx.worktree_dir,
+        &folder_dir,
+        &mut file_path_to_contents_map_in_worktree,
+    )?;
+    Ok((
+        file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_for_approved_state,
+        file_path_to_contents_map_in_worktree,
+    ))
 }
 
 /// Resolve `<workspace>/.scratch/connections/<conn>` for a context.
@@ -3176,11 +3251,11 @@ fn reconcile_accepted_after_publish(
     crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
     let new_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?;
 
-    let main_map_old = match old_main_hash.as_deref() {
+    let file_path_to_contents_map_in_main_branch_before_publish = match old_main_hash.as_deref() {
         Some(h) => read_git_tree(&ctx.bare_repo, h)?,
         None => FileMap::new(),
     };
-    let main_map_new = match new_main_hash.as_deref() {
+    let file_path_to_contents_map_in_main_branch_after_publish = match new_main_hash.as_deref() {
         Some(h) => read_git_tree(&ctx.bare_repo, h)?,
         None => FileMap::new(),
     };
@@ -3190,10 +3265,16 @@ fn reconcile_accepted_after_publish(
 
     let re_anchored = crate::shared::re_anchor::re_anchor_patches(
         &accepted.patches,
-        |path| parse_json_value_at(&main_map_old, path, "refs/heads/main (pre-publish)"),
         |path| {
             parse_json_value_at(
-                &main_map_new,
+                &file_path_to_contents_map_in_main_branch_before_publish,
+                path,
+                "refs/heads/main (pre-publish)",
+            )
+        },
+        |path| {
+            parse_json_value_at(
+                &file_path_to_contents_map_in_main_branch_after_publish,
                 path,
                 "refs/remotes/origin/main (post-publish)",
             )
@@ -3229,9 +3310,16 @@ fn reconcile_accepted_after_publish(
     // when there is actually a worktree on disk; tests that exercise
     // reconcile against a bare-only fixture skip this branch.
     if ctx.worktree_dir.join(".git").exists() {
-        let approved_map_new = compute_accepted_state(&main_map_new, &new_accepted)?;
-        let local_map = read_materialized_repo(ctx)?;
-        materialize_local_repo(ctx, &approved_map_new, &local_map)?;
+        let file_path_to_contents_map_for_approved_state_after_publish = compute_accepted_state(
+            &file_path_to_contents_map_in_main_branch_after_publish,
+            &new_accepted,
+        )?;
+        let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
+        materialize_local_repo(
+            ctx,
+            &file_path_to_contents_map_for_approved_state_after_publish,
+            &file_path_to_contents_map_in_worktree,
+        )?;
     }
 
     crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
@@ -3239,7 +3327,7 @@ fn reconcile_accepted_after_publish(
     if let Some(hash) = new_main_hash.as_deref() {
         git_update_ref(&ctx.bare_repo, "refs/heads/main", hash)?;
         // Advancing the ref leaves the gix index pointing at the old main, so
-        // detect_unreviewed_fast would see modifications until we reset it.
+        // list_unreviewed_entries_using_gix_status_then_disambiguate_against_main would see modifications until we reset it.
         // The mixed reset is harmless when materialize has already aligned
         // the worktree (the next index/worktree diff is empty) and necessary
         // when there were no path-level changes for materialize to make.
@@ -3278,7 +3366,7 @@ fn download_single_repo(
 ) -> anyhow::Result<DownloadResult> {
     // Fetch first, then short-circuit if `main` didn't move. Connections that
     // haven't advanced server-side pay only the (incremental, ~50ms) fetch —
-    // not the multi-second `read_main_tree` + `read_materialized_repo` tree
+    // not the multi-second `read_main_branch_contents` + `read_worktree_files_and_scratch_state` tree
     // walks that the re-anchor path needs. In the common "1 of N connections
     // moved" case this is the difference between O(N × worktree) and
     // O(N × fetch + 1 × worktree).
@@ -3304,10 +3392,12 @@ fn download_single_repo(
     // the accepted patches + read both trees + the materialized worktree.
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let main_map_old = read_main_tree(&ctx.bare_repo)?;
-    let local_map = read_materialized_repo(ctx)?;
+    let file_path_to_contents_map_in_main_branch_before_publish =
+        read_main_branch_contents(&ctx.bare_repo)?;
+    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
 
-    let main_map_new = read_git_tree(&ctx.bare_repo, &new_main_hash)?;
+    let file_path_to_contents_map_in_main_branch_after_publish =
+        read_git_tree(&ctx.bare_repo, &new_main_hash)?;
 
     // Re-anchor preserves the user's RFC 7396 patch verbatim wherever
     // possible; only file-lifecycle changes (server deleted what user
@@ -3315,8 +3405,20 @@ fn download_single_repo(
     // `re_anchor.rs`.
     let re_anchored = crate::shared::re_anchor::re_anchor_patches(
         &accepted_file.patches,
-        |path| parse_json_value_at(&main_map_old, path, "refs/heads/main (pre-fetch)"),
-        |path| parse_json_value_at(&main_map_new, path, "refs/remotes/origin/main (post-fetch)"),
+        |path| {
+            parse_json_value_at(
+                &file_path_to_contents_map_in_main_branch_before_publish,
+                path,
+                "refs/heads/main (pre-fetch)",
+            )
+        },
+        |path| {
+            parse_json_value_at(
+                &file_path_to_contents_map_in_main_branch_after_publish,
+                path,
+                "refs/remotes/origin/main (post-fetch)",
+            )
+        },
     )?;
 
     // User-wins is the policy, so the patches are unchanged; the log
@@ -3340,12 +3442,19 @@ fn download_single_repo(
     let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
         patches: re_anchored.patches,
     };
-    let approved_map_new = compute_accepted_state(&main_map_new, &new_accepted)?;
+    let file_path_to_contents_map_for_approved_state_after_publish = compute_accepted_state(
+        &file_path_to_contents_map_in_main_branch_after_publish,
+        &new_accepted,
+    )?;
 
-    // local_map is the snapshot we read above; pass it so materialize can
+    // file_path_to_contents_map_in_worktree is the snapshot we read above; pass it so materialize can
     // skip rewriting files whose content didn't move (preserves mtimes so
     // find_stale_files doesn't see every file as stale next page load).
-    materialize_local_repo(ctx, &approved_map_new, &local_map)?;
+    materialize_local_repo(
+        ctx,
+        &file_path_to_contents_map_for_approved_state_after_publish,
+        &file_path_to_contents_map_in_worktree,
+    )?;
     reconcile_data_folder_dirs(&ctx.worktree_dir, data_folders)?;
 
     // Save BEFORE advancing main: a crash between these two steps leaves
@@ -3355,9 +3464,12 @@ fn download_single_repo(
     crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
     git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
 
-    // Summary counts come from the actual local_map → approved_map_new
+    // Summary counts come from the actual file_path_to_contents_map_in_worktree → file_path_to_contents_map_for_approved_state_after_publish
     // delta, so they match exactly what changed on disk for the user.
-    let changed_paths = file_map_changed_data_paths(&local_map, &approved_map_new);
+    let changed_paths = file_map_changed_data_paths(
+        &file_path_to_contents_map_in_worktree,
+        &file_path_to_contents_map_for_approved_state_after_publish,
+    );
     let mut result = DownloadResult {
         status: "downloaded".to_string(),
         conflicts_auto_resolved: re_anchored.conflicts.len() as i32,
@@ -3365,8 +3477,9 @@ fn download_single_repo(
         ..Default::default()
     };
     for path in &result.changed_paths {
-        let was_present = local_map.contains_key(path.as_str());
-        let now_present = approved_map_new.contains_key(path.as_str());
+        let was_present = file_path_to_contents_map_in_worktree.contains_key(path.as_str());
+        let now_present =
+            file_path_to_contents_map_for_approved_state_after_publish.contains_key(path.as_str());
         match (was_present, now_present) {
             (false, true) => result.files_created += 1,
             (true, true) => result.files_updated += 1,
@@ -3515,7 +3628,8 @@ async fn upload_single_repo_via_patches(
     // gix::status-backed fast path (~210ms warm) so the courtesy check
     // doesn't dominate the upload time.
     let mut messages = Vec::new();
-    let local_unreviewed = detect_unreviewed_fast(ctx, false)?;
+    let local_unreviewed =
+        list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?;
     if !local_unreviewed.is_empty() {
         messages.push(format!(
             "{} record(s) have unreviewed local changes and were not uploaded. Run `scratchmd files accept-all` first.",
@@ -3583,20 +3697,13 @@ fn short_sha(sha: &str) -> &str {
 /// connector — well below user-perceptible. Slice E reintroduces an
 /// index-aware path once `folder_index`'s `approvedChanges` /
 /// `unapprovedChanges` columns are populated from `accepted-patches.json`.
-fn discard_all_single_repo(
+fn discard_all_unreviewed_changes_in_connection_repo(
     ctx: &ConnectionContext,
     workspace_dir: &Path,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<DiscardAllResult> {
     let _ = workspace_dir; // retained for caller-site parity with accept_all/reject_all.
     sync_schema_files_from_worktree(ctx)?;
-    discard_all_full_scan(ctx, repo_folder)
-}
-
-fn discard_all_full_scan(
-    ctx: &ConnectionContext,
-    repo_folder: Option<&str>,
-) -> anyhow::Result<DiscardAllResult> {
     if git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?.is_none() {
         return Ok(DiscardAllResult {
             skipped_missing_main: true,
@@ -3607,18 +3714,34 @@ fn discard_all_full_scan(
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    // Folder-scoped reads when `--folder` is set; see `read_folder_scoped_maps`.
-    let (main_map, approved_map, local_map) = match repo_folder {
-        Some(folder) => read_folder_scoped_maps(ctx, folder, &accepted_file)?,
+    // Folder-scoped reads when `--folder` is set; see `read_main_local_and_approved_maps_scoped_to_folder`.
+    let (
+        file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_for_approved_state,
+        file_path_to_contents_map_in_worktree,
+    ) = match repo_folder {
+        Some(folder) => {
+            read_main_local_and_approved_maps_scoped_to_folder(ctx, folder, &accepted_file)?
+        }
         None => {
-            let main_map = read_main_tree(&ctx.bare_repo)?;
-            let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-            let local_map = read_materialized_repo(ctx)?;
-            (main_map, approved_map, local_map)
+            let file_path_to_contents_map_in_main_branch =
+                read_main_branch_contents(&ctx.bare_repo)?;
+            let file_path_to_contents_map_for_approved_state =
+                compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
+            let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
+            (
+                file_path_to_contents_map_in_main_branch,
+                file_path_to_contents_map_for_approved_state,
+                file_path_to_contents_map_in_worktree,
+            )
         }
     };
 
-    let unreviewed = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
+    let unreviewed = compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &file_path_to_contents_map_for_approved_state,
+        &file_path_to_contents_map_in_worktree,
+    );
 
     let path_in_scope = |path: &str| match repo_folder {
         Some(folder) => is_data_path_in_folder(path, folder),
@@ -3650,7 +3773,13 @@ fn discard_all_full_scan(
             crate::shared::accepted_patches::remove_entry(&mut accepted_file, path);
             patches_changed = true;
         }
-        write_or_remove_working_file(ctx, path, main_map.get(path.as_str()).map(|v| v.as_slice()))?;
+        write_or_remove_working_file(
+            ctx,
+            path,
+            file_path_to_contents_map_in_main_branch
+                .get(path.as_str())
+                .map(|v| v.as_slice()),
+        )?;
     }
 
     if patches_changed {
@@ -3668,7 +3797,7 @@ fn discard_all_full_scan(
 /// accepted-patches entry AND restore the working file to its
 /// `refs/heads/main` content. Paths that are at published state with no
 /// accepted entry and no unreviewed working edit cause an error.
-fn discard_paths_single_repo(
+fn discard_record_paths_in_connection_repo(
     ctx: &ConnectionContext,
     rel_paths: &[String],
     input_by_rel: &HashMap<&str, &str>,
@@ -3680,14 +3809,15 @@ fn discard_paths_single_repo(
             ..Default::default()
         });
     }
-    let main_map = read_main_tree(&ctx.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&ctx.bare_repo)?;
 
     sync_schema_files_from_worktree(ctx)?;
-    let local_map = read_materialized_repo(ctx)?;
+    let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
 
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
+    let file_path_to_contents_map_for_approved_state =
+        compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
 
     // A path is "discardable" if it has a patch entry (approved differs
     // from published) or an unreviewed edit (working differs from
@@ -3698,7 +3828,11 @@ fn discard_paths_single_repo(
         .iter()
         .map(|e| e.path.clone())
         .collect();
-    let unreviewed = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
+    let unreviewed = compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &file_path_to_contents_map_for_approved_state,
+        &file_path_to_contents_map_in_worktree,
+    );
     let unreviewed_paths: std::collections::HashSet<&str> =
         unreviewed.iter().map(|e| e.path.as_str()).collect();
 
@@ -3717,7 +3851,13 @@ fn discard_paths_single_repo(
 
     for rel in &targets {
         crate::shared::accepted_patches::remove_entry(&mut accepted_file, rel);
-        write_or_remove_working_file(ctx, rel, main_map.get(rel.as_str()).map(|v| v.as_slice()))?;
+        write_or_remove_working_file(
+            ctx,
+            rel,
+            file_path_to_contents_map_in_main_branch
+                .get(rel.as_str())
+                .map(|v| v.as_slice()),
+        )?;
     }
 
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
@@ -3741,46 +3881,63 @@ fn discard_paths_single_repo(
 /// full-scan version is the only path. See sub-slice E for the index-aware
 /// reintroduction once `folder_index`'s columns repopulate from
 /// `accepted-patches.json`.
-fn accept_all_single_repo(
+fn accept_all_unreviewed_changes_in_connection_repo(
     ctx: &ConnectionContext,
     workspace_dir: &Path,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<AcceptAllResult> {
     let _ = workspace_dir;
     sync_schema_files_from_worktree(ctx)?;
-    accept_all_full_scan(ctx, repo_folder)
-}
-
-fn accept_all_full_scan(
-    ctx: &ConnectionContext,
-    repo_folder: Option<&str>,
-) -> anyhow::Result<AcceptAllResult> {
     let connection_dir = accepted_patches_dir(ctx);
     let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
     // Folder-scoped reads when `--folder` is set: `cat-file --batch` only on
-    // that folder's main blobs, `read_dirty_disk` only on `<worktree>/<folder>`.
+    // that folder's main blobs, `load_worktree_into_path_contents_map` only on `<worktree>/<folder>`.
     // Out-of-folder paths in `accepted_file` are left untouched in the saved
     // file at the end (only in-folder entries get upserted/removed below).
-    let (main_map, approved_map, local_map) = match repo_folder {
-        Some(folder) => read_folder_scoped_maps(ctx, folder, &accepted_file)?,
+    let (
+        file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_for_approved_state,
+        file_path_to_contents_map_in_worktree,
+    ) = match repo_folder {
+        Some(folder) => {
+            read_main_local_and_approved_maps_scoped_to_folder(ctx, folder, &accepted_file)?
+        }
         None => {
-            let main_map = read_main_tree(&ctx.bare_repo)?;
-            let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-            let local_map = read_materialized_repo(ctx)?;
-            (main_map, approved_map, local_map)
+            let file_path_to_contents_map_in_main_branch =
+                read_main_branch_contents(&ctx.bare_repo)?;
+            let file_path_to_contents_map_for_approved_state =
+                compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
+            let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
+            (
+                file_path_to_contents_map_in_main_branch,
+                file_path_to_contents_map_for_approved_state,
+                file_path_to_contents_map_in_worktree,
+            )
         }
     };
 
-    let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
+    let changes = compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &file_path_to_contents_map_for_approved_state,
+        &file_path_to_contents_map_in_worktree,
+    );
 
     if changes.is_empty() {
         return Ok(AcceptAllResult::default());
     }
 
     for entry in &changes {
-        let snapshot = parse_json_value_at(&main_map, &entry.path, "refs/heads/main")?;
-        let working = parse_json_value_at(&local_map, &entry.path, "working tree")?;
+        let snapshot = parse_json_value_at(
+            &file_path_to_contents_map_in_main_branch,
+            &entry.path,
+            "refs/heads/main",
+        )?;
+        let working = parse_json_value_at(
+            &file_path_to_contents_map_in_worktree,
+            &entry.path,
+            "working tree",
+        )?;
         match crate::shared::re_anchor::compute_entry(
             &entry.path,
             snapshot.as_ref(),
@@ -3811,35 +3968,44 @@ fn accept_all_full_scan(
 /// worktree back to the approved state. The accepted-patches file is **not**
 /// touched (decision 35). No-op once a file is already approved — discard-all
 /// is the operation that rolls approved back to published.
-fn reject_all_single_repo(
+fn reject_all_unreviewed_changes_in_connection_repo(
     ctx: &ConnectionContext,
     workspace_dir: &Path,
     repo_folder: Option<&str>,
 ) -> anyhow::Result<RejectAllResult> {
     let _ = workspace_dir;
     sync_schema_files_from_worktree(ctx)?;
-    reject_all_full_scan(ctx, repo_folder)
-}
-
-fn reject_all_full_scan(
-    ctx: &ConnectionContext,
-    repo_folder: Option<&str>,
-) -> anyhow::Result<RejectAllResult> {
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    // Folder-scoped reads when `--folder` is set; see `read_folder_scoped_maps`.
-    let (_main_map, approved_map, local_map) = match repo_folder {
-        Some(folder) => read_folder_scoped_maps(ctx, folder, &accepted_file)?,
+    // Folder-scoped reads when `--folder` is set; see `read_main_local_and_approved_maps_scoped_to_folder`.
+    let (
+        _file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_for_approved_state,
+        file_path_to_contents_map_in_worktree,
+    ) = match repo_folder {
+        Some(folder) => {
+            read_main_local_and_approved_maps_scoped_to_folder(ctx, folder, &accepted_file)?
+        }
         None => {
-            let main_map = read_main_tree(&ctx.bare_repo)?;
-            let approved_map = compute_accepted_state(&main_map, &accepted_file)?;
-            let local_map = read_materialized_repo(ctx)?;
-            (main_map, approved_map, local_map)
+            let file_path_to_contents_map_in_main_branch =
+                read_main_branch_contents(&ctx.bare_repo)?;
+            let file_path_to_contents_map_for_approved_state =
+                compute_accepted_state(&file_path_to_contents_map_in_main_branch, &accepted_file)?;
+            let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
+            (
+                file_path_to_contents_map_in_main_branch,
+                file_path_to_contents_map_for_approved_state,
+                file_path_to_contents_map_in_worktree,
+            )
         }
     };
 
-    let changes = compute_unreviewed_entries(&ctx.conn_dir_name, &approved_map, &local_map);
+    let changes = compute_unreviewed_entries(
+        &ctx.conn_dir_name,
+        &file_path_to_contents_map_for_approved_state,
+        &file_path_to_contents_map_in_worktree,
+    );
 
     if changes.is_empty() {
         return Ok(RejectAllResult::default());
@@ -3849,7 +4015,9 @@ fn reject_all_full_scan(
         write_or_remove_working_file(
             ctx,
             &entry.path,
-            approved_map.get(entry.path.as_str()).map(|v| v.as_slice()),
+            file_path_to_contents_map_for_approved_state
+                .get(entry.path.as_str())
+                .map(|v| v.as_slice()),
         )?;
     }
 
@@ -3860,16 +4028,18 @@ fn reject_all_full_scan(
 }
 
 /// Files with an entry in `accepted-patches.json` — i.e. approved but not
-/// yet published. One UnreviewedEntry per patch entry; status comes from the
+/// yet published. One RecordChangeEntry per patch entry; status comes from the
 /// patch kind.
-fn unpublished_entries(ctx: &ConnectionContext) -> anyhow::Result<Vec<UnreviewedEntry>> {
+fn list_unpublished_accepted_patch_entries(
+    ctx: &ConnectionContext,
+) -> anyhow::Result<Vec<RecordChangeEntry>> {
     use crate::shared::re_anchor::PatchKind;
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
     Ok(accepted_file
         .patches
         .iter()
-        .map(|entry| UnreviewedEntry {
+        .map(|entry| RecordChangeEntry {
             connection_name: ctx.conn_dir_name.clone(),
             path: entry.path.clone(),
             status: match entry.kind {
@@ -3907,7 +4077,7 @@ fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
 /// — their mtime is preserved. Only paths whose content differs are
 /// rewritten; only paths present in `current_map` but missing from
 /// `target_map` are deleted. Anything outside `current_map` (hidden files,
-/// the `syncs/` subdir, anything `read_dirty_disk` / `read_scratch_disk`
+/// the `syncs/` subdir, anything `load_worktree_into_path_contents_map` / `load_connection_scratch_into_path_contents_map`
 /// chose to skip) is untouched.
 ///
 /// Why this matters: `folder_index::find_stale_files` flags a file as
@@ -3917,7 +4087,7 @@ fn read_git_tree(bare_repo: &Path, hash: &str) -> anyhow::Result<FileMap> {
 /// downstream.
 ///
 /// `current_map` is the snapshot the caller already obtained from
-/// `read_materialized_repo`. Passing it in avoids re-walking the
+/// `read_worktree_files_and_scratch_state`. Passing it in avoids re-walking the
 /// filesystem here.
 fn materialize_local_repo(
     ctx: &ConnectionContext,
@@ -4083,10 +4253,10 @@ fn json_content_differs(a: Option<&[u8]>, b: Option<&[u8]>) -> bool {
 fn compute_unreviewed_entries(
     connection_name: &str,
     base_map: &FileMap,
-    local_map: &FileMap,
-) -> Vec<UnreviewedEntry> {
+    file_path_to_contents_map_in_worktree: &FileMap,
+) -> Vec<RecordChangeEntry> {
     let base_data = data_only_map(base_map);
-    let local_data = data_only_map(local_map);
+    let local_data = data_only_map(file_path_to_contents_map_in_worktree);
     let mut all_paths: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
 
     for key in base_data.keys() {
@@ -4101,12 +4271,12 @@ fn compute_unreviewed_entries(
         let base = base_data.get(path);
         let local = local_data.get(path);
         match (base, local) {
-            (None, Some(_)) => entries.push(UnreviewedEntry {
+            (None, Some(_)) => entries.push(RecordChangeEntry {
                 connection_name: connection_name.to_string(),
                 path: path.to_string(),
                 status: "added".to_string(),
             }),
-            (Some(_), None) => entries.push(UnreviewedEntry {
+            (Some(_), None) => entries.push(RecordChangeEntry {
                 connection_name: connection_name.to_string(),
                 path: path.to_string(),
                 status: "deleted".to_string(),
@@ -4117,7 +4287,7 @@ fn compute_unreviewed_entries(
             (Some(base), Some(local))
                 if json_content_differs(Some(base.as_slice()), Some(local.as_slice())) =>
             {
-                entries.push(UnreviewedEntry {
+                entries.push(RecordChangeEntry {
                     connection_name: connection_name.to_string(),
                     path: path.to_string(),
                     status: "modified".to_string(),

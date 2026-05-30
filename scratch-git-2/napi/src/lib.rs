@@ -125,7 +125,7 @@ pub async fn reject_field(
     field: String,
 ) -> Result<ReviewOpResult> {
     napi::tokio::task::spawn_blocking(move || {
-        review_ops::reject_field(
+        review_ops::revert_field_edit_to_approved_value(
             &PathBuf::from(&workspace_dir),
             &connection_dir_name,
             &record_rel_path,
@@ -159,7 +159,7 @@ pub async fn discard_field(
     field: String,
 ) -> Result<ReviewOpResult> {
     napi::tokio::task::spawn_blocking(move || {
-        review_ops::discard_field(
+        review_ops::drop_approved_field_and_restore_to_main_value(
             &PathBuf::from(&workspace_dir),
             &connection_dir_name,
             &record_rel_path,

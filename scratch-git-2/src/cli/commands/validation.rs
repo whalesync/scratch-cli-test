@@ -476,7 +476,7 @@ pub fn dry_run_command(
         // repo at `refs/heads/main:<rel>`. Pre-slice-F this read from a
         // sparse `master` worktree on disk; that worktree no longer exists.
         // `--master` still wins when set; this is the on-disk fallback.
-        let main_files = if master_json.is_some() {
+        let file_path_to_contents_map_in_main_branch = if master_json.is_some() {
             crate::shared::git_local::FileMap::new()
         } else {
             let marker_path = crate::config::markers::marker_path(&workspace);
@@ -512,7 +512,7 @@ pub fn dry_run_command(
                 } else {
                     format!("{sub}/{file_name}")
                 };
-                main_files
+                file_path_to_contents_map_in_main_branch
                     .get(&key)
                     .and_then(|b| serde_json::from_slice(b).ok())
             } else {

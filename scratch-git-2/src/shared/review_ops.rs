@@ -10,8 +10,8 @@
 //!
 //! See `docs/plans/resolved/2026-05-20-slice-h-spec.md` for the slice H plan; this
 //! module is the "pure compute + FS" core. The I/O-bundling public entry
-//! points that call git on behalf of callers (`accept_field`, `discard_field`,
-//! `restore_deleted_record`, `discard_created_record` with `LockMode`) land in
+//! points that call git on behalf of callers (`accept_field`, `drop_approved_field_and_restore_to_main_value`,
+//! `restore_record_from_main_after_dropping_delete_patch`, `drop_create_patch_and_delete_working_file` with `LockMode`) land in
 //! slice H.2/H.3 once the napi crate is in place and we've decided where the
 //! git utility functions live.
 //!
@@ -219,12 +219,12 @@ pub fn is_data_path_in_folder(path: &str, repo_folder: &str) -> bool {
         && (repo_folder.is_empty() || path.starts_with(&format!("{repo_folder}/")))
 }
 
-/// Collect the union of data paths from `base_map`, `local_map`, and an
+/// Collect the union of data paths from `base_map`, `file_path_to_contents_map_in_worktree`, and an
 /// optional `master_map` that lie under `repo_folder`. Used to enumerate the
 /// set of files a folder-scoped operation needs to consider.
 pub fn iter_data_paths_in_folder(
     base_map: &FileMap,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
     master_map: Option<&FileMap>,
     repo_folder: &str,
 ) -> Vec<String> {
@@ -235,7 +235,7 @@ pub fn iter_data_paths_in_folder(
             paths.insert(key.clone());
         }
     }
-    for key in local_map.keys() {
+    for key in file_path_to_contents_map_in_worktree.keys() {
         if is_data_path_in_folder(key, repo_folder) {
             paths.insert(key.clone());
         }
@@ -416,18 +416,20 @@ pub fn apply_patch_entry_to_blob(
     }
 }
 
-/// Roll an entire accepted-patches file forward against `main_map`, producing
+/// Roll an entire accepted-patches file forward against `file_path_to_contents_map_in_main_branch`, producing
 /// the per-file "approved" view. Drives folder_index column compute and any
 /// caller that needs the synthetic approved tree (= what would land on `main`
 /// if all accepted edits were published).
 pub fn compute_accepted_state(
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &AcceptedPatchesFile,
 ) -> anyhow::Result<FileMap> {
-    let mut out = main_map.clone();
+    let mut out = file_path_to_contents_map_in_main_branch.clone();
     for entry in &file.patches {
         match apply_patch_entry_to_blob(
-            main_map.get(entry.path.as_str()).map(|b| b.as_slice()),
+            file_path_to_contents_map_in_main_branch
+                .get(entry.path.as_str())
+                .map(|b| b.as_slice()),
             entry,
         )? {
             Some(bytes) => {
@@ -445,16 +447,21 @@ pub fn compute_accepted_state(
 /// `apply(main_blob, patch_entry)` if an entry exists, else the parsed main
 /// blob, else `None` (path is approved-deleted or simply doesn't exist).
 pub fn approved_object_for_path(
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &AcceptedPatchesFile,
     path: &str,
 ) -> anyhow::Result<Option<JsonMap<String, JsonValue>>> {
     if let Some(entry) = accepted_patches::get_entry(file, path) {
-        match apply_patch_entry_to_blob(main_map.get(path).map(|v| v.as_slice()), entry)? {
+        match apply_patch_entry_to_blob(
+            file_path_to_contents_map_in_main_branch
+                .get(path)
+                .map(|v| v.as_slice()),
+            entry,
+        )? {
             Some(bytes) => Ok(Some(parse_json_object_bytes(&bytes, path)?)),
             None => Ok(None),
         }
-    } else if let Some(bytes) = main_map.get(path) {
+    } else if let Some(bytes) = file_path_to_contents_map_in_main_branch.get(path) {
         Ok(Some(parse_json_object_bytes(bytes, path)?))
     } else {
         Ok(None)
@@ -466,18 +473,18 @@ pub fn approved_object_for_path(
 /// the patch (locally deleted but with an accepted edit, say) still gets
 /// considered.
 pub fn field_paths_in_folder(
-    main_map: &FileMap,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
     file: &AcceptedPatchesFile,
     repo_folder: &str,
 ) -> Vec<String> {
     let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for key in main_map.keys() {
+    for key in file_path_to_contents_map_in_main_branch.keys() {
         if is_data_path_in_folder(key, repo_folder) {
             paths.insert(key.clone());
         }
     }
-    for key in local_map.keys() {
+    for key in file_path_to_contents_map_in_worktree.keys() {
         if is_data_path_in_folder(key, repo_folder) {
             paths.insert(key.clone());
         }
@@ -502,7 +509,7 @@ pub fn field_paths_in_folder(
 ///
 /// The approved state for a path is `apply(main_blob, patch_entry)` when an
 /// entry exists, else `main_blob` itself. The new patch entry comes from
-/// `re_anchor::compute_entry(path, main, next_approved)`, which produces the
+/// `re_anchor::compute_entry(path, main, approved_object_after_applying_field_edit)`, which produces the
 /// right `Create` / `Update` / `Delete` shape automatically.
 ///
 /// Whole-file deletes (`local` missing, anything in approved) are skipped —
@@ -511,47 +518,65 @@ pub fn accept_field_in_folder(
     conn_dir_name: &str,
     repo_folder: &str,
     field: &str,
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &mut AcceptedPatchesFile,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
 ) -> anyhow::Result<FieldCommandResult> {
     let mut result = FieldCommandResult::default();
-    let paths = field_paths_in_folder(main_map, local_map, file, repo_folder);
+    let paths = field_paths_in_folder(
+        file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_in_worktree,
+        file,
+        repo_folder,
+    );
 
     for path in paths {
-        let Some(local_content) = local_map.get(path.as_str()) else {
+        let Some(local_content) = file_path_to_contents_map_in_worktree.get(path.as_str()) else {
             // Locally deleted: whole-file delete is not a field-level target.
             continue;
         };
         let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
 
-        let approved_obj_opt = approved_object_for_path(main_map, file, &path)?;
-        let approved_value = approved_obj_opt
+        let approved_object_at_path_if_any =
+            approved_object_for_path(file_path_to_contents_map_in_main_branch, file, &path)?;
+        let field_value_in_approved_state = approved_object_at_path_if_any
             .as_ref()
             .and_then(|obj| read_nested_json_value(obj, field));
-        let local_value = read_nested_json_value(&local_obj, field);
+        let field_value_in_working_file = read_nested_json_value(&local_obj, field);
 
-        if local_value == approved_value {
+        if field_value_in_working_file == field_value_in_approved_state {
             continue;
         }
 
         // Compose the new approved object: existing approved (or empty if
-        // missing) with `field ← local_value` applied.
-        let mut next_approved = approved_obj_opt.unwrap_or_default();
-        apply_nested_json_value(&mut next_approved, field, local_value);
+        // missing) with `field ← field_value_in_working_file` applied.
+        let mut approved_object_after_applying_field_edit =
+            approved_object_at_path_if_any.unwrap_or_default();
+        apply_nested_json_value(
+            &mut approved_object_after_applying_field_edit,
+            field,
+            field_value_in_working_file,
+        );
 
-        let main_parsed = parse_json_value_at(main_map, path.as_str(), "refs/heads/main")?;
-        let next_approved_value = if next_approved.is_empty() && main_parsed.is_none() {
-            // Both ends agree the file shouldn't exist — drop any entry.
-            None
-        } else {
-            Some(JsonValue::Object(next_approved))
-        };
+        let record_parsed_from_main_branch_if_any = parse_json_value_at(
+            file_path_to_contents_map_in_main_branch,
+            path.as_str(),
+            "refs/heads/main",
+        )?;
+        let approved_object_after_apply_or_none_if_empty_with_no_main =
+            if approved_object_after_applying_field_edit.is_empty()
+                && record_parsed_from_main_branch_if_any.is_none()
+            {
+                // Both ends agree the file shouldn't exist — drop any entry.
+                None
+            } else {
+                Some(JsonValue::Object(approved_object_after_applying_field_edit))
+            };
 
         match crate::shared::re_anchor::compute_entry(
             path.as_str(),
-            main_parsed.as_ref(),
-            next_approved_value.as_ref(),
+            record_parsed_from_main_branch_if_any.as_ref(),
+            approved_object_after_apply_or_none_if_empty_with_no_main.as_ref(),
         ) {
             Some(new_entry) => {
                 accepted_patches::upsert_entry(file, new_entry);
@@ -575,7 +600,7 @@ pub fn accept_field_in_folder(
 /// approved value. The accepted-patches file is **not** touched — reject only
 /// undoes the unreviewed delta between working and approved (decision 35).
 ///
-/// Pre-B `reject_field` had a hybrid second branch that also rolled the dirty
+/// Pre-B `revert_field_edit_to_approved_value` had a hybrid second branch that also rolled the dirty
 /// branch back to master when a field was already approved. That behavior is
 /// now exclusively `discard_field_in_folder`'s job; reject is a no-op on an
 /// already-approved field.
@@ -583,39 +608,47 @@ pub fn reject_field_in_folder(
     conn_dir_name: &str,
     repo_folder: &str,
     field: &str,
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &AcceptedPatchesFile,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
 ) -> anyhow::Result<(FileMap, FieldCommandResult)> {
-    let mut next_local_map = local_map.clone();
+    let mut file_path_to_contents_map_in_worktree_after_applying_field_edit =
+        file_path_to_contents_map_in_worktree.clone();
     let mut result = FieldCommandResult::default();
-    let paths = field_paths_in_folder(main_map, local_map, file, repo_folder);
+    let paths = field_paths_in_folder(
+        file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_in_worktree,
+        file,
+        repo_folder,
+    );
 
     for path in paths {
-        let Some(local_content) = local_map.get(path.as_str()) else {
+        let Some(local_content) = file_path_to_contents_map_in_worktree.get(path.as_str()) else {
             // Locally deleted: field-level reject doesn't apply.
             continue;
         };
         let local_obj = parse_json_object_bytes(local_content, path.as_str())?;
 
-        let approved_obj_opt = approved_object_for_path(main_map, file, &path)?;
-        let approved_value = approved_obj_opt
+        let approved_object_at_path_if_any =
+            approved_object_for_path(file_path_to_contents_map_in_main_branch, file, &path)?;
+        let field_value_in_approved_state = approved_object_at_path_if_any
             .as_ref()
             .and_then(|obj| read_nested_json_value(obj, field));
-        let local_value = read_nested_json_value(&local_obj, field);
+        let field_value_in_working_file = read_nested_json_value(&local_obj, field);
 
-        if local_value == approved_value {
+        if field_value_in_working_file == field_value_in_approved_state {
             continue;
         }
 
         let mut next_local_obj = local_obj;
-        apply_nested_json_value(&mut next_local_obj, field, approved_value);
+        apply_nested_json_value(&mut next_local_obj, field, field_value_in_approved_state);
         if next_local_obj.is_empty() {
             // Restoring the only field of a created-only file to "approved =
             // doesn't exist" means the working file shouldn't exist either.
-            next_local_map.remove(path.as_str());
+            file_path_to_contents_map_in_worktree_after_applying_field_edit.remove(path.as_str());
         } else {
-            next_local_map.insert(path.clone(), json_object_to_bytes(&next_local_obj)?);
+            file_path_to_contents_map_in_worktree_after_applying_field_edit
+                .insert(path.clone(), json_object_to_bytes(&next_local_obj)?);
         }
 
         result
@@ -623,7 +656,10 @@ pub fn reject_field_in_folder(
             .push(format!("{}/{}", conn_dir_name, path));
     }
 
-    Ok((next_local_map, result))
+    Ok((
+        file_path_to_contents_map_in_worktree_after_applying_field_edit,
+        result,
+    ))
 }
 
 /// Folder-scoped, field-level discard. Per file in `repo_folder`, drop the
@@ -631,7 +667,7 @@ pub fn reject_field_in_folder(
 /// file's value for that field to whatever `refs/heads/main` says.
 ///
 /// Three outputs:
-///   - `next_local_map` — the working tree's content after the discard
+///   - `file_path_to_contents_map_in_worktree_after_applying_field_edit` — the working tree's content after the discard
 ///     (caller writes it back via [`apply_changed_working_files`]).
 ///   - `result.changed_paths` — workspace-prefixed paths the operation
 ///     touched (caller surfaces these and reindexes the folder index).
@@ -647,25 +683,31 @@ pub fn discard_field_in_folder(
     conn_dir_name: &str,
     repo_folder: &str,
     field: &str,
-    main_map: &FileMap,
+    file_path_to_contents_map_in_main_branch: &FileMap,
     file: &mut AcceptedPatchesFile,
-    local_map: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
 ) -> anyhow::Result<(FileMap, FieldCommandResult)> {
-    let mut next_local_map = local_map.clone();
+    let mut file_path_to_contents_map_in_worktree_after_applying_field_edit =
+        file_path_to_contents_map_in_worktree.clone();
     let mut result = FieldCommandResult::default();
     let mut entries_to_drop: Vec<String> = Vec::new();
 
-    let paths = field_paths_in_folder(main_map, local_map, file, repo_folder);
+    let paths = field_paths_in_folder(
+        file_path_to_contents_map_in_main_branch,
+        file_path_to_contents_map_in_worktree,
+        file,
+        repo_folder,
+    );
 
     for path in paths {
-        let published_value = match main_map.get(path.as_str()) {
+        let published_value = match file_path_to_contents_map_in_main_branch.get(path.as_str()) {
             Some(bytes) => {
                 let obj = parse_json_object_bytes(bytes, path.as_str())?;
                 read_nested_json_value(&obj, field)
             }
             None => None,
         };
-        let main_has_path = main_map.contains_key(path.as_str());
+        let main_has_path = file_path_to_contents_map_in_main_branch.contains_key(path.as_str());
 
         let mut patch_action = PatchAction::Untouched;
         if let Some(entry) = file.patches.iter_mut().find(|e| e.path == path) {
@@ -708,11 +750,12 @@ pub fn discard_field_in_folder(
         // should be removed from the worktree.
         let working_touched = match patch_action {
             PatchAction::DroppedCreate => {
-                next_local_map.remove(path.as_str());
+                file_path_to_contents_map_in_worktree_after_applying_field_edit
+                    .remove(path.as_str());
                 true
             }
             _ => {
-                let current = local_map.get(path.as_str());
+                let current = file_path_to_contents_map_in_worktree.get(path.as_str());
                 match current {
                     Some(bytes) => {
                         let mut obj = parse_json_object_bytes(bytes, path.as_str())?;
@@ -724,7 +767,8 @@ pub fn discard_field_in_folder(
                             false
                         } else {
                             apply_nested_json_value(&mut obj, field, published_value);
-                            next_local_map.insert(path.clone(), json_object_to_bytes(&obj)?);
+                            file_path_to_contents_map_in_worktree_after_applying_field_edit
+                                .insert(path.clone(), json_object_to_bytes(&obj)?);
                             true
                         }
                     }
@@ -733,10 +777,13 @@ pub fn discard_field_in_folder(
                         // (we just dropped an Update entry, say), the
                         // worktree should now mirror main for this path.
                         if main_has_path && !matches!(patch_action, PatchAction::Untouched) {
-                            if let Some(main_bytes) = main_map.get(path.as_str()) {
+                            if let Some(main_bytes) =
+                                file_path_to_contents_map_in_main_branch.get(path.as_str())
+                            {
                                 let mut obj = parse_json_object_bytes(main_bytes, path.as_str())?;
                                 apply_nested_json_value(&mut obj, field, published_value);
-                                next_local_map.insert(path.clone(), json_object_to_bytes(&obj)?);
+                                file_path_to_contents_map_in_worktree_after_applying_field_edit
+                                    .insert(path.clone(), json_object_to_bytes(&obj)?);
                                 true
                             } else {
                                 false
@@ -763,7 +810,10 @@ pub fn discard_field_in_folder(
         file.patches.retain(|e| e.path != path);
     }
 
-    Ok((next_local_map, result))
+    Ok((
+        file_path_to_contents_map_in_worktree_after_applying_field_edit,
+        result,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -791,18 +841,25 @@ pub fn write_or_remove_working_file(
     Ok(())
 }
 
-/// Write back changed working files from `next_local_map` to disk under
+/// Write back changed working files from `file_path_to_contents_map_in_worktree_after_applying_field_edit` to disk under
 /// `paths.worktree_dir`, scoped to `repo_folder`. Used by reject / discard after
 /// they compute the new desired working-tree shape.
 pub fn apply_changed_working_files(
     paths: &ConnectionPaths,
-    previous_local_map: &FileMap,
-    next_local_map: &FileMap,
+    file_path_to_contents_map_in_worktree_before_applying_field_edit: &FileMap,
+    file_path_to_contents_map_in_worktree_after_applying_field_edit: &FileMap,
     repo_folder: &str,
 ) -> anyhow::Result<()> {
-    for path in iter_data_paths_in_folder(previous_local_map, next_local_map, None, repo_folder) {
-        let before = previous_local_map.get(path.as_str());
-        let after = next_local_map.get(path.as_str());
+    for path in iter_data_paths_in_folder(
+        file_path_to_contents_map_in_worktree_before_applying_field_edit,
+        file_path_to_contents_map_in_worktree_after_applying_field_edit,
+        None,
+        repo_folder,
+    ) {
+        let before =
+            file_path_to_contents_map_in_worktree_before_applying_field_edit.get(path.as_str());
+        let after =
+            file_path_to_contents_map_in_worktree_after_applying_field_edit.get(path.as_str());
         if before == after {
             continue;
         }
@@ -836,15 +893,23 @@ pub fn write_file(path: &Path, content: &[u8]) -> anyhow::Result<()> {
 /// Read the user's editable directory + the per-connection `.scratch/` state
 /// into a single `FileMap`. Schema/validation/state files appear under
 /// `.scratch/<rel>` keys; record files appear under their normal repo-relative
-/// path. Mirrors what `read_main_tree` produces from git.
-pub fn read_materialized_repo(paths: &ConnectionPaths) -> anyhow::Result<FileMap> {
+/// path. Mirrors what `read_main_branch_contents` produces from git.
+pub fn read_worktree_files_and_scratch_state(paths: &ConnectionPaths) -> anyhow::Result<FileMap> {
     let mut map = FileMap::new();
-    read_dirty_disk(&paths.worktree_dir, &paths.worktree_dir, &mut map)?;
-    read_scratch_disk(&paths.scratch_dir, &paths.scratch_dir, &mut map)?;
+    load_worktree_into_path_contents_map(&paths.worktree_dir, &paths.worktree_dir, &mut map)?;
+    load_connection_scratch_into_path_contents_map(
+        &paths.scratch_dir,
+        &paths.scratch_dir,
+        &mut map,
+    )?;
     Ok(map)
 }
 
-pub fn read_dirty_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
+pub fn load_worktree_into_path_contents_map(
+    root: &Path,
+    dir: &Path,
+    map: &mut FileMap,
+) -> anyhow::Result<()> {
     if !dir.exists() {
         return Ok(());
     }
@@ -858,7 +923,7 @@ pub fn read_dirty_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Re
             match name_str.as_ref() {
                 "syncs" => continue,
                 value if value.starts_with('.') => continue,
-                _ => read_dirty_disk(root, &entry.path(), map)?,
+                _ => load_worktree_into_path_contents_map(root, &entry.path(), map)?,
             }
         } else if ft.is_file() {
             if name_str.starts_with('.') && !name_str.ends_with(".json") {
@@ -873,7 +938,11 @@ pub fn read_dirty_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Re
     Ok(())
 }
 
-pub fn read_scratch_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::Result<()> {
+pub fn load_connection_scratch_into_path_contents_map(
+    root: &Path,
+    dir: &Path,
+    map: &mut FileMap,
+) -> anyhow::Result<()> {
     if !dir.exists() {
         return Ok(());
     }
@@ -884,10 +953,15 @@ pub fn read_scratch_disk(root: &Path, dir: &Path, map: &mut FileMap) -> anyhow::
         let ft = entry.file_type()?;
 
         if ft.is_dir() {
+            // `.publish-plans/` exception kept: server still enqueues legacy
+            // publish-from-git jobs via POST /:id/publish-v2/run-from-git
+            // (`server/src/cli/cli-workbook.controller.ts`). Once that
+            // endpoint is removed (Phase 7), drop this `&& name_str !=
+            // ".publish-plans"` check.
             if name_str.starts_with('.') && name_str != ".publish-plans" {
                 continue;
             }
-            read_scratch_disk(root, &entry.path(), map)?;
+            load_connection_scratch_into_path_contents_map(root, &entry.path(), map)?;
         } else if ft.is_file() {
             if name_str.starts_with('.') {
                 continue;
@@ -1097,15 +1171,15 @@ fn acquire_lock(
     }
 }
 
-fn read_main_tree_for_entry_point(bare_repo: &Path) -> Result<FileMap, ReviewOpError> {
-    read_main_tree_for_entry_point_filtered(bare_repo, |_| true)
+fn read_main_branch_contents(bare_repo: &Path) -> Result<FileMap, ReviewOpError> {
+    read_main_branch_contents_filtered_by_path(bare_repo, |_| true)
 }
 
 /// Read `refs/heads/main` with a path-level filter applied at the
 /// `git ls-tree` stage so `cat-file --batch` only processes matching blobs.
 /// Lets paginated callers (e.g. [`read_folder_blobs_filtered`]) read only
 /// the records they need rather than the whole tree.
-fn read_main_tree_for_entry_point_filtered<F>(
+fn read_main_branch_contents_filtered_by_path<F>(
     bare_repo: &Path,
     keep: F,
 ) -> Result<FileMap, ReviewOpError>
@@ -1122,7 +1196,7 @@ where
 }
 
 /// Path-only walk of `refs/heads/main`. Same scope predicate plumbing as
-/// [`read_main_tree_for_entry_point_filtered`] but skips `cat-file` entirely.
+/// [`read_main_branch_contents_filtered_by_path`] but skips `cat-file` entirely.
 fn list_main_tree_paths_filtered<F>(bare_repo: &Path, keep: F) -> Result<Vec<String>, ReviewOpError>
 where
     F: Fn(&str) -> bool,
@@ -1153,7 +1227,7 @@ fn validate_record_path(
     Ok(())
 }
 
-/// Public entry point. Accept the user's `local_value` for `field` on
+/// Public entry point. Accept the user's `field_value_in_working_file` for `field` on
 /// `record_rel_path` under `connection_dir_name`. Reads the field's current
 /// value from the working file on disk and folds it into
 /// `accepted-patches.json` so the field's approved value matches what's on
@@ -1182,29 +1256,35 @@ pub fn accept_field(
     // Read the field's current value from the working file. This is the
     // single source of truth for "what value got accepted" — callers wrote
     // it to disk before invoking us.
-    let working_path = paths.worktree_dir.join(record_rel_path);
-    let working_bytes = match std::fs::read(&working_path) {
+    let working_file_path_on_disk = paths.worktree_dir.join(record_rel_path);
+    let working_file_contents_bytes = match std::fs::read(&working_file_path_on_disk) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Err(ReviewOpError::WorkingFileMissing(workspace_path));
         }
         Err(err) => return Err(ReviewOpError::Io(err)),
     };
-    let working_obj = parse_json_object_bytes(&working_bytes, record_rel_path)
-        .map_err(ReviewOpError::Internal)?;
-    let local_value = read_nested_json_value(&working_obj, field);
+    let working_file_parsed_json_object =
+        parse_json_object_bytes(&working_file_contents_bytes, record_rel_path)
+            .map_err(ReviewOpError::Internal)?;
+    let field_value_in_working_file =
+        read_nested_json_value(&working_file_parsed_json_object, field);
 
-    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
-    let approved_obj_opt = approved_object_for_path(&main_map, &file, record_rel_path)
-        .map_err(ReviewOpError::Internal)?;
-    let approved_value = approved_obj_opt
+    let approved_object_at_path_if_any = approved_object_for_path(
+        &file_path_to_contents_map_in_main_branch,
+        &file,
+        record_rel_path,
+    )
+    .map_err(ReviewOpError::Internal)?;
+    let field_value_in_approved_state = approved_object_at_path_if_any
         .as_ref()
         .and_then(|obj| read_nested_json_value(obj, field));
 
-    if local_value == approved_value {
+    if field_value_in_working_file == field_value_in_approved_state {
         return Ok(ReviewOpResult {
             workspace_path,
             patches_changed: false,
@@ -1217,23 +1297,35 @@ pub fn accept_field(
     // missing) with the field set to the working file's current value. Then
     // ask `compute_entry` to produce the right Create / Update / Delete
     // shape.
-    let mut next_approved = approved_obj_opt.unwrap_or_default();
-    apply_nested_json_value(&mut next_approved, field, local_value);
+    let mut approved_object_after_applying_field_edit =
+        approved_object_at_path_if_any.unwrap_or_default();
+    apply_nested_json_value(
+        &mut approved_object_after_applying_field_edit,
+        field,
+        field_value_in_working_file,
+    );
 
-    let main_parsed = parse_json_value_at(&main_map, record_rel_path, "refs/heads/main")
-        .map_err(ReviewOpError::Internal)?;
-    let next_approved_value = if next_approved.is_empty() && main_parsed.is_none() {
-        None
-    } else {
-        Some(JsonValue::Object(next_approved))
-    };
+    let record_parsed_from_main_branch_if_any = parse_json_value_at(
+        &file_path_to_contents_map_in_main_branch,
+        record_rel_path,
+        "refs/heads/main",
+    )
+    .map_err(ReviewOpError::Internal)?;
+    let approved_object_after_apply_or_none_if_empty_with_no_main =
+        if approved_object_after_applying_field_edit.is_empty()
+            && record_parsed_from_main_branch_if_any.is_none()
+        {
+            None
+        } else {
+            Some(JsonValue::Object(approved_object_after_applying_field_edit))
+        };
 
     let mut patches_changed = false;
     let mut effect = ReviewOpEffect::NoOp;
     match crate::shared::re_anchor::compute_entry(
         record_rel_path,
-        main_parsed.as_ref(),
-        next_approved_value.as_ref(),
+        record_parsed_from_main_branch_if_any.as_ref(),
+        approved_object_after_apply_or_none_if_empty_with_no_main.as_ref(),
     ) {
         Some(new_entry) => {
             accepted_patches::upsert_entry(&mut file, new_entry);
@@ -1266,12 +1358,12 @@ pub fn accept_field(
 /// value (the patch entry's value if present, else `refs/heads/main`'s value)
 /// WITHOUT mutating `accepted-patches.json`. This is the field-level analogue
 /// of `files reject` — the strict invariant is that Reject never touches the
-/// patch file. Use `discard_field` when the caller wants to also drop an
+/// patch file. Use `drop_approved_field_and_restore_to_main_value` when the caller wants to also drop an
 /// existing approved patch entry.
 ///
 /// NoOp when the working file already matches approved, or when there's no
 /// working file on disk (nothing to revert).
-pub fn reject_field(
+pub fn revert_field_edit_to_approved_value(
     workspace_dir: &Path,
     connection_dir_name: &str,
     record_rel_path: &str,
@@ -1284,18 +1376,22 @@ pub fn reject_field(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
     let connection_dir = accepted_patches_dir(&paths);
     let file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
-    let approved_obj_opt = approved_object_for_path(&main_map, &file, record_rel_path)
-        .map_err(ReviewOpError::Internal)?;
-    let approved_value = approved_obj_opt
+    let approved_object_at_path_if_any = approved_object_for_path(
+        &file_path_to_contents_map_in_main_branch,
+        &file,
+        record_rel_path,
+    )
+    .map_err(ReviewOpError::Internal)?;
+    let field_value_in_approved_state = approved_object_at_path_if_any
         .as_ref()
         .and_then(|obj| read_nested_json_value(obj, field));
 
     let disk_path = paths.worktree_dir.join(record_rel_path);
-    let working_bytes = match std::fs::read(&disk_path) {
+    let working_file_contents_bytes = match std::fs::read(&disk_path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ReviewOpResult {
@@ -1307,11 +1403,13 @@ pub fn reject_field(
         }
         Err(err) => return Err(ReviewOpError::Io(err)),
     };
-    let mut working_obj = parse_json_object_bytes(&working_bytes, record_rel_path)
-        .map_err(ReviewOpError::Internal)?;
-    let local_value = read_nested_json_value(&working_obj, field);
+    let mut working_file_parsed_json_object =
+        parse_json_object_bytes(&working_file_contents_bytes, record_rel_path)
+            .map_err(ReviewOpError::Internal)?;
+    let field_value_in_working_file =
+        read_nested_json_value(&working_file_parsed_json_object, field);
 
-    if local_value == approved_value {
+    if field_value_in_working_file == field_value_in_approved_state {
         return Ok(ReviewOpResult {
             workspace_path,
             patches_changed: false,
@@ -1320,15 +1418,20 @@ pub fn reject_field(
         });
     }
 
-    apply_nested_json_value(&mut working_obj, field, approved_value);
+    apply_nested_json_value(
+        &mut working_file_parsed_json_object,
+        field,
+        field_value_in_approved_state,
+    );
 
-    if working_obj.is_empty() && approved_obj_opt.is_none() {
+    if working_file_parsed_json_object.is_empty() && approved_object_at_path_if_any.is_none() {
         // Approved state says the file shouldn't exist AND the field was the
         // last one in working — remove the working file. Matches
         // `reject_field_in_folder`'s `next_local_obj.is_empty()` branch.
         std::fs::remove_file(&disk_path).map_err(ReviewOpError::Io)?;
     } else {
-        let new_bytes = json_object_to_bytes(&working_obj).map_err(ReviewOpError::Internal)?;
+        let new_bytes = json_object_to_bytes(&working_file_parsed_json_object)
+            .map_err(ReviewOpError::Internal)?;
         write_or_remove_working_file(&paths, record_rel_path, Some(&new_bytes))
             .map_err(ReviewOpError::Internal)?;
     }
@@ -1346,8 +1449,8 @@ pub fn reject_field(
 /// whatever `refs/heads/main` says. Stripping the last field from a `Create`
 /// entry drops the entry AND removes the working file (the record is being
 /// rolled back to "never existed"). `Delete` entries are no-ops at the
-/// field level — use `restore_deleted_record` to undo a whole-file delete.
-pub fn discard_field(
+/// field level — use `restore_record_from_main_after_dropping_delete_patch` to undo a whole-file delete.
+pub fn drop_approved_field_and_restore_to_main_value(
     workspace_dir: &Path,
     connection_dir_name: &str,
     record_rel_path: &str,
@@ -1360,11 +1463,11 @@ pub fn discard_field(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
-    let published_value = match main_map.get(record_rel_path) {
+    let published_value = match file_path_to_contents_map_in_main_branch.get(record_rel_path) {
         Some(bytes) => {
             let obj =
                 parse_json_object_bytes(bytes, record_rel_path).map_err(ReviewOpError::Internal)?;
@@ -1372,7 +1475,7 @@ pub fn discard_field(
         }
         None => None,
     };
-    let main_has_path = main_map.contains_key(record_rel_path);
+    let main_has_path = file_path_to_contents_map_in_main_branch.contains_key(record_rel_path);
 
     let mut patch_action = PatchAction::Untouched;
     if let Some(entry) = file.patches.iter_mut().find(|e| e.path == record_rel_path) {
@@ -1447,9 +1550,11 @@ pub fn discard_field(
         };
 
         if needs_write {
-            let base_bytes = current_bytes
-                .as_deref()
-                .or_else(|| main_map.get(record_rel_path).map(|v| v.as_slice()));
+            let base_bytes = current_bytes.as_deref().or_else(|| {
+                file_path_to_contents_map_in_main_branch
+                    .get(record_rel_path)
+                    .map(|v| v.as_slice())
+            });
             if let Some(bytes) = base_bytes {
                 let mut obj = parse_json_object_bytes(bytes, record_rel_path)
                     .map_err(ReviewOpError::Internal)?;
@@ -1496,7 +1601,7 @@ pub fn discard_field(
 /// when the path doesn't have a `Delete` entry in `accepted-patches.json` or
 /// when `refs/heads/main` doesn't have the path (we'd have nothing to
 /// restore from).
-pub fn restore_deleted_record(
+pub fn restore_record_from_main_after_dropping_delete_patch(
     workspace_dir: &Path,
     connection_dir_name: &str,
     record_rel_path: &str,
@@ -1508,7 +1613,7 @@ pub fn restore_deleted_record(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
@@ -1517,7 +1622,7 @@ pub fn restore_deleted_record(
     if entry.kind != PatchKind::Delete {
         return Err(ReviewOpError::NotAnApprovedDelete(workspace_path));
     }
-    let main_content = main_map
+    let main_content = file_path_to_contents_map_in_main_branch
         .get(record_rel_path)
         .cloned()
         .ok_or_else(|| ReviewOpError::RestoreSourceMissing(workspace_path.clone()))?;
@@ -1544,7 +1649,7 @@ pub fn restore_deleted_record(
 /// `run_discard_created_record` performs (calling
 /// `discard_remote_dirty_changes`); that's a CLI-only orchestration concern
 /// that stays in the CLI command wrapper.
-pub fn discard_created_record(
+pub fn drop_create_patch_and_delete_working_file(
     workspace_dir: &Path,
     connection_dir_name: &str,
     record_rel_path: &str,
@@ -1556,11 +1661,11 @@ pub fn discard_created_record(
 
     let _lock = acquire_lock(workspace_dir, lock_mode)?;
 
-    let main_map = read_main_tree_for_entry_point(&paths.bare_repo)?;
+    let file_path_to_contents_map_in_main_branch = read_main_branch_contents(&paths.bare_repo)?;
     let connection_dir = accepted_patches_dir(&paths);
     let mut file = accepted_patches::load(&connection_dir).map_err(ReviewOpError::Internal)?;
 
-    if main_map.contains_key(record_rel_path) {
+    if file_path_to_contents_map_in_main_branch.contains_key(record_rel_path) {
         return Err(ReviewOpError::CreateClashesWithMain(workspace_path));
     }
 
@@ -1769,7 +1874,7 @@ fn read_folder_blobs_inner(
 
     // Push the filter down to the git ls-tree → cat-file step so we don't
     // pull the whole folder's blobs when we only want a page's worth.
-    let main_map = {
+    let file_path_to_contents_map_in_main_branch = {
         let folder_prefix_for_keep = folder_prefix.clone();
         let folder_normalized_for_keep = folder_normalized.clone();
         let keep = |path: &str| -> bool {
@@ -1788,7 +1893,7 @@ fn read_folder_blobs_inner(
                 Some(f) => f.contains(rest),
             }
         };
-        read_main_tree_for_entry_point_filtered(&paths.bare_repo, keep)?
+        read_main_branch_contents_filtered_by_path(&paths.bare_repo, keep)?
     };
 
     // Union filenames from main + accepted-patches (each may have entries
@@ -1802,7 +1907,7 @@ fn read_folder_blobs_inner(
             Some(f) => f.contains(rest),
         }
     };
-    for path in main_map.keys() {
+    for path in file_path_to_contents_map_in_main_branch.keys() {
         if !in_folder(path) {
             continue;
         }
@@ -1831,7 +1936,9 @@ fn read_folder_blobs_inner(
     let mut out = Vec::with_capacity(filenames.len());
     for filename in filenames {
         let full_path = format!("{folder_prefix}{filename}");
-        let published = main_map.get(&full_path).cloned();
+        let published = file_path_to_contents_map_in_main_branch
+            .get(&full_path)
+            .cloned();
         let approved = match accepted_patches::get_entry(&accepted_file, &full_path) {
             Some(entry) => apply_patch_entry_to_blob(published.as_deref(), entry)
                 .map_err(ReviewOpError::Internal)?,
@@ -1885,7 +1992,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_accepted_state_with_empty_file_returns_main_map() {
+    fn compute_accepted_state_with_empty_file_returns_file_path_to_contents_map_in_main_branch() {
         let main = map_of(&[("Companies/rec_1.json", "{\"name\":\"Acme\"}")]);
         let file = AcceptedPatchesFile::default();
         let approved = compute_accepted_state(&main, &file).unwrap();

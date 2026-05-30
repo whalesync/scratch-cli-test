@@ -541,7 +541,7 @@ fn validate_records(
     // master worktree (the worktree no longer exists post-slice-F). On a
     // path that isn't a valid bare repo, the helper errs and we fall through
     // to an empty map — readonly checks then skip silently.
-    let main_files =
+    let file_path_to_contents_map_in_main_branch =
         crate::shared::git_local::read_tree_files(bare_repo, "refs/heads/main").unwrap_or_default();
 
     // Phase 1 (serial): enumerate work items, loading schema once per folder.
@@ -601,8 +601,11 @@ fn validate_records(
             let record: serde_json::Value = serde_json::from_slice(&bytes)
                 .with_context(|| format!("failed to parse JSON in {}", record_path.display()))?;
 
-            let master_record =
-                lookup_master_record(&main_files, &item.folder_path, &item.file_name);
+            let master_record = lookup_master_record(
+                &file_path_to_contents_map_in_main_branch,
+                &item.folder_path,
+                &item.file_name,
+            );
 
             let entries = configs
                 .get(&item.folder_path)
@@ -679,7 +682,7 @@ fn load_schema_for_folder(scratch_dir: &Path, folder_path: &str) -> Option<serde
 /// worktree no longer exists. The bare repo's `refs/heads/main` blob is now
 /// the canonical published state.
 fn lookup_master_record(
-    main_files: &crate::shared::git_local::FileMap,
+    file_path_to_contents_map_in_main_branch: &crate::shared::git_local::FileMap,
     folder_path: &str,
     file_name: &str,
 ) -> Option<serde_json::Value> {
@@ -688,7 +691,7 @@ fn lookup_master_record(
     } else {
         format!("{folder_path}/{file_name}")
     };
-    let bytes = main_files.get(&key)?;
+    let bytes = file_path_to_contents_map_in_main_branch.get(&key)?;
     match serde_json::from_slice(bytes) {
         Ok(v) => Some(v),
         Err(e) => {

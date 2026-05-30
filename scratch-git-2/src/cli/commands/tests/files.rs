@@ -147,7 +147,7 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
     .unwrap();
     std::fs::write(ctx.scratch_dir.join(".publish-plans/1/plan.json"), "{}").unwrap();
 
-    let map = read_materialized_repo(&ctx).unwrap();
+    let map = read_worktree_files_and_scratch_state(&ctx).unwrap();
     assert!(map.contains_key("posts/rec1.json"));
     assert!(map.contains_key(".scratch/posts/schema.json"));
     assert!(map.contains_key(".scratch/posts/publish-plan-1/create/rec2.json"));
@@ -187,7 +187,7 @@ fn materialize_local_repo_preserves_mtime_when_content_unchanged() {
     std::fs::write(&unchanged_path, b"{\"v\":1}").unwrap();
     std::fs::write(&changed_path, b"{\"v\":1}").unwrap();
 
-    let current = read_materialized_repo(&ctx).unwrap();
+    let current = read_worktree_files_and_scratch_state(&ctx).unwrap();
     let unchanged_mtime_before = std::fs::metadata(&unchanged_path)
         .unwrap()
         .modified()
@@ -271,7 +271,7 @@ fn sync_schema_files_from_worktree_restores_missing_schema() {
 // commits to or pushes.
 
 #[test]
-fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
+fn restore_deleted_record_paths_from_main_branch_drops_delete_entry_and_writes_main_blob() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -281,7 +281,7 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
     let bare_repo = tmp.path().join("repo.git");
     run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
 
-    let main_files = HashMap::from([(
+    let file_path_to_contents_map_in_main_branch = HashMap::from([(
         "posts/restore.json".to_string(),
         b"{\"id\":\"restore\",\"name\":\"from-main\"}".to_vec(),
     )]);
@@ -289,7 +289,7 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
         &bare_repo,
         "refs/heads/main",
         None,
-        &main_files,
+        &file_path_to_contents_map_in_main_branch,
         "main seed",
     )
     .unwrap();
@@ -326,7 +326,8 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
         .unwrap();
     }
 
-    restore_deleted_records_locally(&ctx, &["posts/restore.json".to_string()]).unwrap();
+    restore_deleted_record_paths_from_main_branch(&ctx, &["posts/restore.json".to_string()])
+        .unwrap();
 
     assert_eq!(
         std::fs::read_to_string(ctx.worktree_dir.join("posts/restore.json")).unwrap(),
@@ -340,11 +341,11 @@ fn restore_deleted_records_locally_drops_delete_entry_and_writes_main_blob() {
 }
 
 #[test]
-fn restore_deleted_records_locally_errors_when_entry_is_not_a_delete() {
+fn restore_deleted_record_paths_from_main_branch_errors_when_entry_is_not_a_delete() {
     let tmp = TempDir::new().unwrap();
     let bare_repo = tmp.path().join("repo.git");
     run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
-    let main_files = HashMap::from([(
+    let file_path_to_contents_map_in_main_branch = HashMap::from([(
         "posts/restore.json".to_string(),
         b"{\"id\":\"restore\"}".to_vec(),
     )]);
@@ -352,7 +353,7 @@ fn restore_deleted_records_locally_errors_when_entry_is_not_a_delete() {
         &bare_repo,
         "refs/heads/main",
         None,
-        &main_files,
+        &file_path_to_contents_map_in_main_branch,
         "main",
     )
     .unwrap();
@@ -377,12 +378,14 @@ fn restore_deleted_records_locally_errors_when_entry_is_not_a_delete() {
     }
 
     let err =
-        restore_deleted_records_locally(&ctx, &["posts/restore.json".to_string()]).unwrap_err();
+        restore_deleted_record_paths_from_main_branch(&ctx, &["posts/restore.json".to_string()])
+            .unwrap_err();
     assert!(err.to_string().contains("not an approved deleted record"));
 }
 
 #[test]
-fn discard_created_records_locally_drops_create_entry_and_removes_worktree_file() {
+fn drop_create_patches_and_delete_working_files_for_record_paths_drops_create_entry_and_removes_worktree_file(
+) {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -438,7 +441,11 @@ fn discard_created_records_locally_drops_create_entry_and_removes_worktree_file(
         .unwrap();
     }
 
-    discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap();
+    drop_create_patches_and_delete_working_files_for_record_paths(
+        &ctx,
+        &["posts/created.json".to_string()],
+    )
+    .unwrap();
 
     assert!(!ctx.worktree_dir.join("posts/created.json").exists());
     let file = load_accepted(&ctx);
@@ -449,12 +456,12 @@ fn discard_created_records_locally_drops_create_entry_and_removes_worktree_file(
 }
 
 #[test]
-fn discard_created_records_locally_errors_when_main_has_the_path() {
+fn drop_create_patches_and_delete_working_files_for_record_paths_errors_when_main_has_the_path() {
     let tmp = TempDir::new().unwrap();
     let bare_repo = tmp.path().join("repo.git");
     run_git(tmp.path(), &["init", "--bare", bare_repo.to_str().unwrap()]);
     // Main HAS the path — this is the "not a created record" failure case.
-    let main_files = HashMap::from([(
+    let file_path_to_contents_map_in_main_branch = HashMap::from([(
         "posts/created.json".to_string(),
         b"{\"id\":\"created\"}".to_vec(),
     )]);
@@ -462,7 +469,7 @@ fn discard_created_records_locally_errors_when_main_has_the_path() {
         &bare_repo,
         "refs/heads/main",
         None,
-        &main_files,
+        &file_path_to_contents_map_in_main_branch,
         "main",
     )
     .unwrap();
@@ -486,8 +493,11 @@ fn discard_created_records_locally_errors_when_main_has_the_path() {
         .unwrap();
     }
 
-    let err =
-        discard_created_records_locally(&ctx, &["posts/created.json".to_string()]).unwrap_err();
+    let err = drop_create_patches_and_delete_working_files_for_record_paths(
+        &ctx,
+        &["posts/created.json".to_string()],
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("exists on main"));
 }
 
@@ -1168,7 +1178,8 @@ fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
     use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
     use serde_json::Value as JsonValue;
 
-    let main_map = read_main_tree(&ctx.bare_repo).unwrap();
+    let file_path_to_contents_map_in_main_branch =
+        read_main_branch_contents(&ctx.bare_repo).unwrap();
     let dirty_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/dirty")
         .unwrap()
         .expect("fixture must have refs/heads/dirty");
@@ -1176,7 +1187,7 @@ fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
 
     let mut patches = Vec::new();
     let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for k in main_map.keys() {
+    for k in file_path_to_contents_map_in_main_branch.keys() {
         keys.insert(k.clone());
     }
     for k in dirty_map.keys() {
@@ -1186,7 +1197,7 @@ fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
         if !is_data_path_in_folder(&path, "") {
             continue;
         }
-        let m = main_map.get(&path);
+        let m = file_path_to_contents_map_in_main_branch.get(&path);
         let d = dirty_map.get(&path);
         let entry = match (m, d) {
             (Some(_), None) => AnchoredPatch {
@@ -1259,7 +1270,7 @@ fn create_multi_folder_fixture() -> (TempDir, ConnectionContext) {
     let ctx = make_connection_context(&root, &bare_repo);
     // Production creates worktree_dir as a sparse worktree (see
     // `materialize_dirty_checkout` in workspaces.rs); the reset-hard in
-    // discard_all_single_repo requires that. Mirror it here.
+    // discard_all_unreviewed_changes_in_connection_repo requires that. Mirror it here.
     crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.worktree_dir, "refs/heads/dirty")
         .unwrap();
 
@@ -1274,7 +1285,7 @@ fn load_accepted(ctx: &ConnectionContext) -> crate::shared::accepted_patches::Ac
 }
 
 #[test]
-fn accept_all_single_repo_folder_accepts_only_target_folder() {
+fn accept_all_unreviewed_changes_in_connection_repo_folder_accepts_only_target_folder() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1293,7 +1304,12 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
         "{\"v\":\"pending-a1\"}",
     );
 
-    let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
+    let result = accept_all_unreviewed_changes_in_connection_repo(
+        &ctx,
+        &ctx.workspace_dir.clone(),
+        Some("posts"),
+    )
+    .unwrap();
 
     assert_eq!(result.files_accepted, 1);
     assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
@@ -1330,7 +1346,7 @@ fn accept_all_single_repo_folder_accepts_only_target_folder() {
 }
 
 #[test]
-fn accept_all_single_repo_folder_noop_when_folder_has_no_changes() {
+fn accept_all_unreviewed_changes_in_connection_repo_folder_noop_when_folder_has_no_changes() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1348,7 +1364,12 @@ fn accept_all_single_repo_folder_noop_when_folder_has_no_changes() {
     );
 
     let pre = load_accepted(&ctx);
-    let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
+    let result = accept_all_unreviewed_changes_in_connection_repo(
+        &ctx,
+        &ctx.workspace_dir.clone(),
+        Some("posts"),
+    )
+    .unwrap();
 
     assert_eq!(result.files_accepted, 0);
     assert!(result.accepted_paths.is_empty());
@@ -1362,7 +1383,7 @@ fn accept_all_single_repo_folder_noop_when_folder_has_no_changes() {
 }
 
 #[test]
-fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
+fn accept_all_unreviewed_changes_in_connection_repo_folder_handles_deletion_inside_folder() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1374,7 +1395,12 @@ fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
     // Delete the scoped folder's file from the working tree.
     std::fs::remove_file(ctx.worktree_dir.join("posts/rec1.json")).unwrap();
 
-    let result = accept_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
+    let result = accept_all_unreviewed_changes_in_connection_repo(
+        &ctx,
+        &ctx.workspace_dir.clone(),
+        Some("posts"),
+    )
+    .unwrap();
 
     assert_eq!(result.files_accepted, 1);
     assert_eq!(result.accepted_paths, vec!["posts/rec1.json".to_string()]);
@@ -1393,7 +1419,7 @@ fn accept_all_single_repo_folder_handles_deletion_inside_folder() {
 }
 
 #[test]
-fn discard_all_single_repo_folder_reverts_only_target_folder() {
+fn discard_all_unreviewed_changes_in_connection_repo_folder_reverts_only_target_folder() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1412,7 +1438,12 @@ fn discard_all_single_repo_folder_reverts_only_target_folder() {
         "{\"v\":\"pending-a1\"}",
     );
 
-    let result = discard_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
+    let result = discard_all_unreviewed_changes_in_connection_repo(
+        &ctx,
+        &ctx.workspace_dir.clone(),
+        Some("posts"),
+    )
+    .unwrap();
 
     assert!(!result.skipped_missing_main);
     assert_eq!(result.files_discarded, 1);
@@ -1443,7 +1474,7 @@ fn discard_all_single_repo_folder_reverts_only_target_folder() {
 }
 
 #[test]
-fn discard_all_single_repo_folder_noop_when_folder_clean() {
+fn discard_all_unreviewed_changes_in_connection_repo_folder_noop_when_folder_clean() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1492,7 +1523,12 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
         "{\"v\":\"pending-a1\"}",
     );
 
-    let result = discard_all_single_repo(&ctx, &ctx.workspace_dir.clone(), Some("posts")).unwrap();
+    let result = discard_all_unreviewed_changes_in_connection_repo(
+        &ctx,
+        &ctx.workspace_dir.clone(),
+        Some("posts"),
+    )
+    .unwrap();
 
     assert!(!result.skipped_missing_main);
     assert_eq!(result.files_discarded, 0);
@@ -1509,7 +1545,7 @@ fn discard_all_single_repo_folder_noop_when_folder_clean() {
 }
 
 #[test]
-fn discard_paths_single_repo_reverts_only_listed_paths() {
+fn discard_record_paths_in_connection_repo_reverts_only_listed_paths() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1533,7 +1569,7 @@ fn discard_paths_single_repo_reverts_only_listed_paths() {
     let input_map: HashMap<&str, &str> =
         HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
 
-    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+    let result = discard_record_paths_in_connection_repo(&ctx, &rel, &input_map).unwrap();
 
     assert!(!result.skipped_missing_main);
     assert_eq!(result.files_discarded, 1);
@@ -1558,7 +1594,7 @@ fn discard_paths_single_repo_reverts_only_listed_paths() {
 }
 
 #[test]
-fn discard_paths_single_repo_reverts_path_with_only_unapproved_change() {
+fn discard_record_paths_in_connection_repo_reverts_path_with_only_unapproved_change() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1595,7 +1631,7 @@ fn discard_paths_single_repo_reverts_path_with_only_unapproved_change() {
     let input_map: HashMap<&str, &str> =
         HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
 
-    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+    let result = discard_record_paths_in_connection_repo(&ctx, &rel, &input_map).unwrap();
 
     assert_eq!(result.files_discarded, 1);
     assert_eq!(
@@ -1605,7 +1641,7 @@ fn discard_paths_single_repo_reverts_path_with_only_unapproved_change() {
 }
 
 #[test]
-fn discard_paths_single_repo_reverts_path_with_only_approved_change() {
+fn discard_record_paths_in_connection_repo_reverts_path_with_only_approved_change() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1620,7 +1656,7 @@ fn discard_paths_single_repo_reverts_path_with_only_approved_change() {
     let input_map: HashMap<&str, &str> =
         HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
 
-    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+    let result = discard_record_paths_in_connection_repo(&ctx, &rel, &input_map).unwrap();
 
     assert_eq!(result.files_discarded, 1);
     let connection_dir =
@@ -1637,7 +1673,7 @@ fn discard_paths_single_repo_reverts_path_with_only_approved_change() {
 }
 
 #[test]
-fn discard_paths_single_repo_errors_when_path_has_no_changes() {
+fn discard_record_paths_in_connection_repo_errors_when_path_has_no_changes() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1667,7 +1703,7 @@ fn discard_paths_single_repo_errors_when_path_has_no_changes() {
     let input_map: HashMap<&str, &str> =
         HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
 
-    let err = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap_err();
+    let err = discard_record_paths_in_connection_repo(&ctx, &rel, &input_map).unwrap_err();
     assert!(
         err.to_string().contains("No local changes to discard"),
         "unexpected error message: {err}"
@@ -1675,7 +1711,7 @@ fn discard_paths_single_repo_errors_when_path_has_no_changes() {
 }
 
 #[test]
-fn discard_paths_single_repo_skips_when_main_missing() {
+fn discard_record_paths_in_connection_repo_skips_when_main_missing() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -1709,7 +1745,7 @@ fn discard_paths_single_repo_skips_when_main_missing() {
     let input_map: HashMap<&str, &str> =
         HashMap::from([("posts/rec1.json", "Conn/posts/rec1.json")]);
 
-    let result = discard_paths_single_repo(&ctx, &rel, &input_map).unwrap();
+    let result = discard_record_paths_in_connection_repo(&ctx, &rel, &input_map).unwrap();
     assert!(result.skipped_missing_main);
     assert_eq!(result.files_discarded, 0);
 }
@@ -2229,7 +2265,7 @@ mod discard_field_helper {
     fn ctx_in(tmp: &TempDir) -> ConnectionContext {
         // discard_field_in_folder uses only conn_dir_name to build the
         // workspace-prefixed paths in its result; the worktree mutations
-        // happen via the returned next_local_map, not on disk.
+        // happen via the returned next_file_path_to_contents_map_in_worktree, not on disk.
         ConnectionContext {
             connection_id: "ca_test".into(),
             conn_dir_name: "HubSpot".into(),
@@ -2460,10 +2496,12 @@ mod discard_field_helper {
 
 // ---------------------------------------------------------------------------
 // Slice H.1.5 — public entry-point tests. Exercises the I/O-bundling
-// `accept_field` / `discard_field` / `restore_deleted_record` /
-// `discard_created_record` paths end-to-end against a real workspace + bare
-// repo. The folder-scoped helpers (`accept_field_in_folder` etc.) have their
-// own tests above; this block focuses on the per-record wrappers napi calls.
+// `accept_field` / `drop_approved_field_and_restore_to_main_value` /
+// `restore_record_from_main_after_dropping_delete_patch` /
+// `drop_create_patch_and_delete_working_file` paths end-to-end against a
+// real workspace + bare repo. The folder-scoped helpers
+// (`accept_field_in_folder` etc.) have their own tests above; this block
+// focuses on the per-record wrappers napi calls.
 // ---------------------------------------------------------------------------
 
 mod entry_points {
@@ -2472,8 +2510,10 @@ mod entry_points {
     use crate::shared::layout::WorkspaceLayout;
     use crate::shared::re_anchor::PatchKind;
     use crate::shared::review_ops::{
-        accept_field, discard_created_record, discard_field, restore_deleted_record, LockMode,
-        ReviewOpEffect, ReviewOpError,
+        accept_field, drop_approved_field_and_restore_to_main_value,
+        drop_create_patch_and_delete_working_file,
+        restore_record_from_main_after_dropping_delete_patch, LockMode, ReviewOpEffect,
+        ReviewOpError,
     };
     use serde_json::json;
     use std::io::Write;
@@ -2693,7 +2733,7 @@ mod entry_points {
 
         // Now discard that same field — entry should disappear since it
         // only held the one key.
-        let result = discard_field(
+        let result = drop_approved_field_and_restore_to_main_value(
             &fx.workspace_dir,
             CONN,
             "Companies/rec_acme.json",
@@ -2728,7 +2768,7 @@ mod entry_points {
         };
         crate::shared::accepted_patches::save_atomic(&fx.connection_dir, &file).unwrap();
 
-        let err = restore_deleted_record(
+        let err = restore_record_from_main_after_dropping_delete_patch(
             &fx.workspace_dir,
             CONN,
             "Companies/rec_acme.json",
@@ -2760,7 +2800,7 @@ mod entry_points {
         };
         crate::shared::accepted_patches::save_atomic(&fx.connection_dir, &file).unwrap();
 
-        let err = discard_created_record(
+        let err = drop_create_patch_and_delete_working_file(
             &fx.workspace_dir,
             CONN,
             "Companies/rec_acme.json",
@@ -2997,8 +3037,8 @@ mod workspace_layout_check {
 // unreviewed; otherwise advance local main + materialize blobs.
 //
 // Uses a custom inline fixture (rather than `create_bare_fixture`) because
-// the latter seeds `syncs/a.json` on main, which `read_dirty_disk` filters
-// out of worktree reads while `read_main_tree` includes it from git — a
+// the latter seeds `syncs/a.json` on main, which `load_worktree_into_path_contents_map` filters
+// out of worktree reads while `read_main_branch_contents` includes it from git — a
 // known asymmetry that would spuriously trip pre-flight here.
 // ---------------------------------------------------------------------------
 
@@ -3246,7 +3286,7 @@ mod publish_results_formatting {
 }
 
 // ---------------------------------------------------------------------------
-// DEV-10222 Bug A — `detect_unreviewed_fast` collapses byte-only diffs against
+// DEV-10222 Bug A — `list_unreviewed_entries_using_gix_status_then_disambiguate_against_main` collapses byte-only diffs against
 // the expected post-publish content. Whitespace / trailing-newline drift on a
 // path that has no entry in `accepted-patches.json` must not be reported as
 // unreviewed (previously fired immediately because the legacy branch flagged
@@ -3269,7 +3309,8 @@ fn setup_main_worktree_for_detector(
 }
 
 #[test]
-fn detect_unreviewed_fast_ignores_whitespace_only_diff_on_unpatched_path() {
+fn list_unreviewed_entries_using_gix_status_then_disambiguate_against_main_ignores_whitespace_only_diff_on_unpatched_path(
+) {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -3287,7 +3328,9 @@ fn detect_unreviewed_fast_ignores_whitespace_only_diff_on_unpatched_path() {
         "{\n  \"name\": \"Acme\"\n}",
     );
 
-    let entries = detect_unreviewed_fast(&ctx, false).unwrap();
+    let entries =
+        list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(&ctx, false)
+            .unwrap();
     assert!(
         entries.is_empty(),
         "whitespace-only diff on an unpatched path must not be flagged; got {:?}",
@@ -3296,7 +3339,8 @@ fn detect_unreviewed_fast_ignores_whitespace_only_diff_on_unpatched_path() {
 }
 
 #[test]
-fn detect_unreviewed_fast_flags_real_semantic_change_on_unpatched_path() {
+fn list_unreviewed_entries_using_gix_status_then_disambiguate_against_main_flags_real_semantic_change_on_unpatched_path(
+) {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");
         return;
@@ -3311,7 +3355,9 @@ fn detect_unreviewed_fast_flags_real_semantic_change_on_unpatched_path() {
         "{\n  \"name\": \"Globex\"\n}\n",
     );
 
-    let entries = detect_unreviewed_fast(&ctx, false).unwrap();
+    let entries =
+        list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(&ctx, false)
+            .unwrap();
     assert_eq!(
         entries.len(),
         1,

@@ -1034,8 +1034,12 @@ fn refresh_index(
     // are stored rows whose working file has vanished (possible delete OR
     // main-only row). All three cases need master content to decide
     // outcomes per file.
-    let master_blobs = read_main_blobs_for_folder(workspace, folder)?;
-    let master_files: HashSet<String> = master_blobs.keys().cloned().collect();
+    let file_name_to_contents_map_in_main_branch_for_folder =
+        read_main_blobs_for_folder(workspace, folder)?;
+    let master_files: HashSet<String> = file_name_to_contents_map_in_main_branch_for_folder
+        .keys()
+        .cloned()
+        .collect();
 
     let all_known: HashSet<String> = working_files
         .iter()
@@ -1106,7 +1110,7 @@ fn refresh_index(
             parse_error = Some(format!("working: {e}"));
         }
         let (_master_bytes, master_json, master_err) =
-            parse_blob_to_json(master_blobs.get(filename));
+            parse_blob_to_json(file_name_to_contents_map_in_main_branch_for_folder.get(filename));
         if let Some(e) = master_err {
             if parse_error.is_none() {
                 parse_error = Some(format!("master: {e}"));
@@ -1121,7 +1125,8 @@ fn refresh_index(
             working_json.as_ref(),
             master_json.as_ref(),
         );
-        let master_present_bit: i32 = i32::from(master_blobs.contains_key(filename));
+        let master_present_bit: i32 =
+            i32::from(file_name_to_contents_map_in_main_branch_for_folder.contains_key(filename));
         let accepted_kind_str: Option<&'static str> =
             patch_entry.map(|e| accepted_kind_sql(e.kind));
 
@@ -1751,7 +1756,8 @@ fn validate_page_records(
         let workspace_dir = resolve_workspace_dir(workspace);
         // Master content comes from refs/heads/main post-Slice-F. Load once
         // and reuse across the stale_filenames loop.
-        let master_blobs = read_main_blobs_for_folder(workspace, folder).unwrap_or_default();
+        let file_name_to_contents_map_in_main_branch_for_folder =
+            read_main_blobs_for_folder(workspace, folder).unwrap_or_default();
         let total = stale_filenames.len();
         let mut done = 0usize;
         let vr_tq = quote_ident(&validation_results_table());
@@ -1763,7 +1769,8 @@ fn validate_page_records(
             let working_stat = file_mtime_size(&working_path);
             // master_stat is None post-Slice-F; master_present comes from main_blobs.
             let master_stat: Option<(i64, i64)> = None;
-            let master_present = master_blobs.contains_key(filename);
+            let master_present =
+                file_name_to_contents_map_in_main_branch_for_folder.contains_key(filename);
 
             // Clear old errors for this record.
             tx.execute(
@@ -1807,7 +1814,7 @@ fn validate_page_records(
                 }
             };
             let master_json = if master_present {
-                master_blobs
+                file_name_to_contents_map_in_main_branch_for_folder
                     .get(filename)
                     .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
             } else {
@@ -1893,8 +1900,12 @@ fn count_stale(
     // Master files are sourced from refs/heads/main post-Slice-F (the on-disk
     // master tree at `.scratch/connections/master/<conn>` is dead). The dirty
     // tree at `.scratch/connections/dirty/<conn>` is also dead.
-    let master_blobs = read_main_blobs_for_folder(workspace, folder).unwrap_or_default();
-    let master_files: HashSet<String> = master_blobs.keys().cloned().collect();
+    let file_name_to_contents_map_in_main_branch_for_folder =
+        read_main_blobs_for_folder(workspace, folder).unwrap_or_default();
+    let master_files: HashSet<String> = file_name_to_contents_map_in_main_branch_for_folder
+        .keys()
+        .cloned()
+        .collect();
 
     let all_known: HashSet<String> = working_files
         .iter()
@@ -2647,7 +2658,8 @@ pub fn reindex_files(
     // costs ~1s on 9k records but contributes nothing when only 1 file is
     // stale (the desktop's hot path).
     let filename_filter: std::collections::HashSet<String> = filenames.iter().cloned().collect();
-    let master_blobs = read_main_blobs_for_folder_filtered(workspace, folder, &filename_filter)?;
+    let file_name_to_contents_map_in_main_branch_for_folder =
+        read_main_blobs_for_folder_filtered(workspace, folder, &filename_filter)?;
 
     let mut conn = open_conn(&db_path)?;
     ensure_schema(&conn, &table)?;
@@ -2684,7 +2696,8 @@ pub fn reindex_files(
             .map(|filename| {
                 let working_path = paths.working.join(filename);
                 let working_stat = file_mtime_size(&working_path);
-                let master_present = master_blobs.contains_key(filename);
+                let master_present =
+                    file_name_to_contents_map_in_main_branch_for_folder.contains_key(filename);
 
                 let mut parse_error: Option<String> = None;
                 let (_working_bytes, working_json, working_err) =
@@ -2692,8 +2705,9 @@ pub fn reindex_files(
                 if let Some(e) = working_err {
                     parse_error = Some(format!("working: {e}"));
                 }
-                let (_master_bytes, master_json, master_err) =
-                    parse_blob_to_json(master_blobs.get(filename));
+                let (_master_bytes, master_json, master_err) = parse_blob_to_json(
+                    file_name_to_contents_map_in_main_branch_for_folder.get(filename),
+                );
                 if let Some(e) = master_err {
                     if parse_error.is_none() {
                         parse_error = Some(format!("master: {e}"));
@@ -2746,7 +2760,7 @@ pub fn reindex_files(
         // Phase 2: serial SQLite writes inside one transaction.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         // master_stat is None post-Slice-F (no on-disk master tree); whether
-        // the file exists in main is derived from `master_blobs` presence.
+        // the file exists in main is derived from `file_name_to_contents_map_in_main_branch_for_folder` presence.
         let master_stat: Option<(i64, i64)> = None;
         for row in &parsed {
             if row.should_delete {
