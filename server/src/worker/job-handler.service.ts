@@ -13,7 +13,6 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { ApplyPatchesService } from 'src/publish-plan/apply-patches.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
-import { PublishFromGitService } from 'src/publish-plan/publish-from-git.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
@@ -26,7 +25,6 @@ import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { ApplyPatchesJobHandler } from './jobs/job-definitions/apply-patches.job';
 import { DeleteWorkbookJobHandler } from './jobs/job-definitions/delete-workbook.job';
-import { PublishFromGitJobHandler } from './jobs/job-definitions/publish-from-git.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
@@ -51,7 +49,6 @@ export class JobHandlerService {
     private readonly assetDownloadService: AssetDownloadService,
     private readonly pipelinePlanService: PublishPlanBuildService,
     private readonly pipelineRunService: PublishPlanRunService,
-    private readonly publishFromGitService: PublishFromGitService,
     private readonly applyPatchesService: ApplyPatchesService,
     private readonly dbService: DbService,
     private readonly postHogService: PostHogService,
@@ -116,12 +113,6 @@ export class JobHandlerService {
           prisma,
           this.assetDownloadService,
           this.workbookEventService,
-        ) as JobHandler<JobDefinition>;
-
-      case JobType.PublishFromGit:
-        return new PublishFromGitJobHandler(
-          this.publishFromGitService,
-          this.postHogService,
         ) as JobHandler<JobDefinition>;
 
       case JobType.ApplyPatches:

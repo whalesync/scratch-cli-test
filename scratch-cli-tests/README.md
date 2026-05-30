@@ -78,7 +78,7 @@ The connection/linked/files suites use two Postgres tables as test data:
 
 Tables are automatically created and populated in `beforeAll` and dropped in `afterAll`. The database must be accessible from the Scratch server (which runs the Postgres connector).
 
-The driver-based suite ([`tests/driver-publish.spec.ts`](tests/driver-publish.spec.ts)) uses its own per-run database with `authors(id, name, lastUpdated)` and `posts(id, name, ts, authorId, lastUpdated)`. It shells out to `scripts/driver-run.js` to run pull → local edit/create/delete → accept → upload → `publish-from-git` → re-download, can inject a concurrent dirty-branch edit, and verifies that the server-managed `lastUpdated` refresh is accepted back into remote and local state. See [`scripts/README.md`](scripts/README.md) for the driver schema and scenario details.
+The driver-based suite ([`tests/driver-publish.spec.ts`](tests/driver-publish.spec.ts)) uses its own per-run database with `authors(id, name, lastUpdated)` and `posts(id, name, ts, authorId, lastUpdated)`. It shells out to `scripts/driver-run.js` to run pull → local edit/create/delete → accept → upload → publish → re-download, can inject a concurrent dirty-branch edit, and verifies that the server-managed `lastUpdated` refresh is accepted back into remote and local state. See [`scripts/README.md`](scripts/README.md) for the driver schema and scenario details.
 
 ## Running Tests
 

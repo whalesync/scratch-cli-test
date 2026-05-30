@@ -25,7 +25,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
-import { PublishFromGitDto, PublishPlanBuildDto, PublishPlanRunDto } from 'src/publish-plan/dto/publish-v2.dto';
+import { PublishPlanBuildDto, PublishPlanRunDto } from 'src/publish-plan/dto/publish-v2.dto';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -423,47 +423,6 @@ export class CliWorkbookController {
       connectorAccounts,
       configGitUrl,
     };
-  }
-
-  // ── Publish from git ────────────────────────────────────────────────────────
-
-  /**
-   * Trigger a publish job from a local publish plan stored in the connector's git repo (dirty branch).
-   * The CLI calls this after `scratchmd2 files upload` has pushed the plan to the server.
-   */
-  @Post(':id/publish-v2/run-from-git')
-  async runPublishFromGit(
-    @Req() req: RequestWithUser,
-    @Param('id') id: string,
-    @Body() body: PublishFromGitDto,
-  ): Promise<{ jobId: string | number | undefined }> {
-    const actor = userToActor(req.user);
-    const workbook = await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
-
-    const job = await this.bullEnqueuerService.enqueuePublishFromGitJob(
-      id as WorkbookId,
-      req.user.id,
-      body.connectorAccountId,
-      body.planPath,
-    );
-
-    await this.auditLogService.logEvent({
-      actor,
-      eventType: 'publish',
-      message: `Queued legacy publish-from-git job for ${workbook.name ?? id}`,
-      entityId: id as WorkbookId,
-      organizationId: workbook.organizationId,
-      context: {
-        action: 'workbook.publish_v2.run_from_git',
-        workbookId: id,
-        connectorAccountId: body.connectorAccountId,
-        planPath: body.planPath,
-        jobId: job.id ? String(job.id) : null,
-        deprecated: true,
-      },
-    });
-
-    return { jobId: job.id };
   }
 
   /**

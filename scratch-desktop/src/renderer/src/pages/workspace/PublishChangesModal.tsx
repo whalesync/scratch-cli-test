@@ -151,7 +151,7 @@ function statusColor(state: JobStatus['state']): string {
   }
 }
 
-interface PublishFromGitProgress {
+interface PublishPipelineProgress {
   status?: string;
   processedCount?: number;
   totalCount?: number;
@@ -167,12 +167,12 @@ interface PublishFromGitProgress {
 }
 
 function hasPublishFailures(job: JobStatus | undefined): boolean {
-  const progress = job?.publicProgress as PublishFromGitProgress | undefined;
+  const progress = job?.publicProgress as PublishPipelineProgress | undefined;
   return (progress?.failedCount ?? 0) > 0;
 }
 
 function getPublishFailureMessage(job: JobStatus): string {
-  const progress = job.publicProgress as PublishFromGitProgress | undefined;
+  const progress = job.publicProgress as PublishPipelineProgress | undefined;
   const failedCount = progress?.failedCount ?? 0;
   const currentPhase = progress?.currentPhase;
 
@@ -199,7 +199,7 @@ const PHASE_LABELS: Record<Phase, string> = {
   rename: 'Renames',
 };
 
-const PHASE_PLANNED_KEY: Record<Phase, keyof PublishFromGitProgress> = {
+const PHASE_PLANNED_KEY: Record<Phase, keyof PublishPipelineProgress> = {
   edit: 'editsPlanned',
   create: 'createsPlanned',
   delete: 'deletesPlanned',
@@ -207,7 +207,7 @@ const PHASE_PLANNED_KEY: Record<Phase, keyof PublishFromGitProgress> = {
   rename: 'renameFilesPlanned',
 };
 
-function computePhaseRows(progress: PublishFromGitProgress) {
+function computePhaseRows(progress: PublishPipelineProgress) {
   const currentPhaseIdx = PHASE_ORDER.indexOf((progress.currentPhase ?? '') as Phase);
   let remaining = progress.processedCount ?? 0;
 
@@ -230,7 +230,7 @@ function computePhaseRows(progress: PublishFromGitProgress) {
 }
 
 function ConnectionPublishRow({ connection, job }: { connection: ConnectionPublishState; job: JobStatus | undefined }) {
-  const progress = job?.publicProgress as PublishFromGitProgress | undefined;
+  const progress = job?.publicProgress as PublishPipelineProgress | undefined;
   const total = progress?.totalCount ?? 0;
   const processed = progress?.processedCount ?? 0;
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
@@ -920,7 +920,7 @@ export function PublishChangesModal({
           if (localPath && !loggedCompleteJobIdsRef.current.has(jobId)) {
             loggedCompleteJobIdsRef.current.add(jobId);
             const failed = job.state !== 'completed' || hasPublishFailures(job);
-            const progress = job.publicProgress as PublishFromGitProgress | undefined;
+            const progress = job.publicProgress as PublishPipelineProgress | undefined;
             const summary = progress
               ? {
                   edit: progress.editsPlanned ?? 0,

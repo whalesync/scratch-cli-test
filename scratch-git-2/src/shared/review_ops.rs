@@ -953,12 +953,7 @@ pub fn load_connection_scratch_into_path_contents_map(
         let ft = entry.file_type()?;
 
         if ft.is_dir() {
-            // `.publish-plans/` exception kept: server still enqueues legacy
-            // publish-from-git jobs via POST /:id/publish-v2/run-from-git
-            // (`server/src/cli/cli-workbook.controller.ts`). Once that
-            // endpoint is removed (Phase 7), drop this `&& name_str !=
-            // ".publish-plans"` check.
-            if name_str.starts_with('.') && name_str != ".publish-plans" {
+            if name_str.starts_with('.') {
                 continue;
             }
             load_connection_scratch_into_path_contents_map(root, &entry.path(), map)?;

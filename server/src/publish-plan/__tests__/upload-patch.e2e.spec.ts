@@ -1,8 +1,8 @@
 /**
  * Permanent end-to-end smoke test for `/upload-patch` (plan T10).
  *
- * Survives Phase 7 (when the legacy `run-from-git` parity check is deleted)
- * as the integration regression backstop for the new publish flow.
+ * Integration regression backstop for the new publish flow now that Phase 7
+ * has removed the legacy `run-from-git` parity check.
  *
  * Scope intentionally narrowed: this test runs against a REAL PrismaClient
  * (so PublishPlan rows are written to Postgres) but uses in-memory boundary

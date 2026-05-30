@@ -11,20 +11,17 @@ import { waitForJob } from "../helpers/wait-for-job";
 
 /**
  * End-to-end smoke test for the `/upload-patch` publish flow — the CLI/desktop
- * path that replaced `publish-from-git` (see
+ * path now used by every caller (see
  * docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md, Phase 1).
  *
- * Mirrors `publish-from-git-happy-path.spec.ts` but drives the new wire shape:
- * `/upload-patch/init` → PUT to the presigned URL → `/upload-patch/commit` →
- * ApplyPatchesJob → `/publish-v2/plan-job` → `/publish-v2/run-job` → assert
- * fake-airtable state.
+ * Drives the wire shape: `/upload-patch/init` → PUT to the presigned URL →
+ * `/upload-patch/commit` → ApplyPatchesJob → `/publish-v2/plan-job` →
+ * `/publish-v2/run-job` → assert fake-airtable state.
  *
- * The test goes via raw HTTP — no `scratchmd` binary dependency, same pattern
- * as the publish-from-git smoke. Both `scratch-cli-tests/tests/publish.spec.ts`
- * (shells out to scratchmd against a local server) and the server-side
- * `apply-patches-vs-legacy-invariants.spec.ts` parity test cover the binary +
- * unit invariants; this fills the per-deploy Docker-isolated regression gap
- * (plan follow-up F13).
+ * The test goes via raw HTTP — no `scratchmd` binary dependency.
+ * `scratch-cli-tests/tests/publish.spec.ts` (shells out to scratchmd against a
+ * local server) covers the binary + unit invariants; this fills the per-deploy
+ * Docker-isolated regression gap (plan follow-up F13).
  *
  * ── GCS dependency ───────────────────────────────────────────────────────
  * The flow requires `GCS_PATCH_UPLOAD_BUCKET` set on the server. The

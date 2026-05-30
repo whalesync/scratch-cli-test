@@ -14,7 +14,6 @@ export const JobType = {
   PullLinkedFolderFiles: 'pull-linked-folder-files',
   RefreshRecords: 'refresh-records',
   Publish: 'publish',
-  PublishFromGit: 'publish-from-git',
   ApplyPatches: 'apply-patches',
   SyncDataFolders: 'sync-data-folders',
   RehostAssets: 'rehost-assets',

@@ -39,7 +39,7 @@ The local CLI no longer pushes to `dirty`. The user's accepted-but-not-published
     schema.json                   # Table schema + FK annotations
 ```
 
-The newer `/upload-patch` → `publish-v2/plan-job` → `publish-v2/run-job` flow does not write phase files into the repo. The legacy `publish-from-git` job did write `.scratch/{folder}/publish-plan-{ts}/` and `.scratch/.publish-plans/` directories inside the server-side bare repo; that job is dead-coded as of Phase 7a (no in-tree caller) and the server-side endpoint + worker will be removed in Phase 7 once older desktop installs roll forward.
+The `/upload-patch` → `publish-v2/plan-job` → `publish-v2/run-job` flow does not write phase files into the repo. The legacy `publish-from-git` job used to write `.scratch/{folder}/publish-plan-{ts}/` and `.scratch/.publish-plans/` directories inside the server-side bare repo; that job and its server-side endpoint + worker were removed in Phase 7.
 
 ## Workbook Config Repo (inside git)
 
@@ -238,4 +238,4 @@ Use this as a refactor acceptance test for layout-affecting changes:
 3. `scratchmd files accept <path>` — verify `<workspace>/.scratch/connections/<conn>/accepted-patches.json` is created with the expected `Update`/`Create`/`Delete` entry. See [REVIEW_MODEL.md](REVIEW_MODEL.md) for the accept/reject/discard semantics that get exercised here.
 4. `scratchmd files upload` — verify the patch file ships to the server (server's `dirty` branch advances).
 5. `scratchmd files publish` — verify the publish plan executes, local `refs/heads/main` advances, and patches that landed in `main` drop from `accepted-patches.json` (failed-connector patches survive). See [PULL_AFTER_PUBLISH.md](PULL_AFTER_PUBLISH.md) for the reconcile flow.
-6. Verify the git backend service still works with all server-side flows — UI/DB-based syncs and the legacy `publish-from-git` server path (no live CLI caller, but the endpoint stays alive for older desktop installs until Phase 7 removes it).
+6. Verify the git backend service still works with all server-side flows (UI/DB-based syncs and the publish-v2 plan-job/run-job path).

@@ -4,7 +4,7 @@ These scripts back the driver-based publish suite in `tests/driver-publish.spec.
 
 ## What the driver does
 
-`driver-run.js` creates a fresh Postgres database and workbook, seeds `authors` + `posts`, links both tables, pulls/downloads records, edits local JSON, accepts reviewed changes, uploads them, runs `publish-from-git`, downloads again, and verifies both the remote database and the local `master`, `dirty`, and working tree state.
+`driver-run.js` creates a fresh Postgres database and workbook, seeds `authors` + `posts`, links both tables, pulls/downloads records, edits local JSON, accepts reviewed changes, uploads them, runs `scratchmd files publish`, downloads again, and verifies both the remote database and the local `master`, `dirty`, and working tree state.
 
 It can also create and delete posts in the same cycle, leave some edits unreviewed, inject a concurrent edit into the remote `dirty` branch, and test FK backfill by writing `posts.authorId` as an `@/...` pseudo-reference to an author file. The current spec actively covers edit/create/delete flows; FK pseudo-ref cases are present but currently skipped.
 

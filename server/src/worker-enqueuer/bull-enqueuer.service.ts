@@ -11,7 +11,6 @@ import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { ApplyPatchesJobDefinition } from '../worker/jobs/job-definitions/apply-patches.job';
 import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
-import { PublishFromGitJobDefinition } from '../worker/jobs/job-definitions/publish-from-git.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
 import { PullFilesJobDefinition } from '../worker/jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from '../worker/jobs/job-definitions/pull-linked-folder-files.job';
@@ -292,33 +291,6 @@ export class BullEnqueuerService implements OnModuleDestroy {
     return await this.createAndEnqueue(
       {
         userId: actor.userId,
-        type: data.type,
-        data,
-        bullJobId: id,
-        workbookId,
-      },
-      data,
-      id,
-    );
-  }
-
-  async enqueuePublishFromGitJob(
-    workbookId: WorkbookId,
-    userId: string,
-    connectorAccountId: string,
-    planPath: string,
-  ): Promise<Job> {
-    const id = `publish-from-git-${workbookId}-${createPlainId()}`;
-    const data: PublishFromGitJobDefinition['data'] = {
-      type: JobType.PublishFromGit,
-      workbookId,
-      userId,
-      connectorAccountId,
-      planPath,
-    };
-    return await this.createAndEnqueue(
-      {
-        userId,
         type: data.type,
         data,
         bullJobId: id,

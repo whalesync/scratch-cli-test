@@ -20,7 +20,7 @@ Add to `ConnectorAccount` in `prisma/schema.prisma`:
 
 ```prisma
 repoLockAt     DateTime? // When the lock was last acquired or renewed
-repoLockReason String?   // Human-readable reason: 'pull', 'publish', 'publish-from-git', etc.
+repoLockReason String?   // Human-readable reason: 'pull', 'publish', etc.
 ```
 
 The timestamp doubles as both an acquisition time and a heartbeat — long-running jobs renew it
@@ -134,7 +134,6 @@ queueing work that will fail later.
 | `POST :id/pull-files` | `data-folder.controller.ts` | Pull individual files |
 | `pullAllFolders` / bulk pull | `workbook.service.ts` | Pull all folders in a workbook |
 | `POST /linked/download` | `cli-linked.controller.ts` | CLI-triggered pull |
-| `enqueuePublishFromGitJob` callers | `publish-plan.controller.ts` and others | CLI publish-from-git |
 
 For jobs that span multiple connections (`PublishDataFolderJob` with folders from different
 connections), acquire all connection locks upfront before enqueueing any of the BullMQ jobs. If any
@@ -159,7 +158,6 @@ Add a `repoLock.renew(connectorAccountId)` call inside the `checkpoint` wrapper 
 - `PullLinkedFolderFilesV2JobHandler` — same
 - `PullFilesJobHandler` — renew on checkpoint
 - `PublishDataFolderJobHandler` — renew on checkpoint per folder
-- `PublishFromGitJobHandler` — renew on progress callback
 
 The `REPO_LOCK_MAX_AGE` of 15 minutes gives comfortable headroom: a job that checkpoints every
 ~30 seconds only needs to renew 1 in 30 checkpoints to stay live, but renewing every checkpoint is
@@ -178,7 +176,6 @@ Release in every job handler in **both** the success and error paths — mirror 
 | `PullLinkedFolderFilesV2JobHandler` | `finally` block | Same `finally` |
 | `PullFilesJobHandler` | success + error paths | Same |
 | `PublishDataFolderJobHandler` | success + error per folder | Same |
-| `PublishFromGitJobHandler` | success + error | Same |
 
 For `PublishDataFolderJob` which can span multiple folders from different connections: release each
 connection's lock after that folder finishes (rather than holding all locks until the entire job

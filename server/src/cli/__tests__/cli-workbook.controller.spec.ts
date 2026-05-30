@@ -138,7 +138,6 @@ describe('CliWorkbookController', () => {
     } as unknown as jest.Mocked<WorkbookRepoService>;
 
     bullEnqueuerService = {
-      enqueuePublishFromGitJob: jest.fn().mockResolvedValue({ id: 'job_legacy' }),
       enqueuePlanPipelineJob: jest.fn().mockResolvedValue({ id: 'job_plan' }),
       enqueueRunPipelineJob: jest.fn().mockResolvedValue({ id: 'job_run' }),
     } as unknown as jest.Mocked<BullEnqueuerService>;

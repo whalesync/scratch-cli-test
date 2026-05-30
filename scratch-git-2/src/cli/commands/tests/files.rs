@@ -136,7 +136,6 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
 
     std::fs::create_dir_all(ctx.worktree_dir.join("posts")).unwrap();
     std::fs::create_dir_all(ctx.scratch_dir.join("posts/publish-plan-1/create")).unwrap();
-    std::fs::create_dir_all(ctx.scratch_dir.join(".publish-plans/1")).unwrap();
     std::fs::write(ctx.worktree_dir.join("posts/rec1.json"), "{}").unwrap();
     std::fs::write(ctx.scratch_dir.join("posts/schema.json"), "{}").unwrap();
     std::fs::write(
@@ -145,13 +144,11 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
         "{}",
     )
     .unwrap();
-    std::fs::write(ctx.scratch_dir.join(".publish-plans/1/plan.json"), "{}").unwrap();
 
     let map = read_worktree_files_and_scratch_state(&ctx).unwrap();
     assert!(map.contains_key("posts/rec1.json"));
     assert!(map.contains_key(".scratch/posts/schema.json"));
     assert!(map.contains_key(".scratch/posts/publish-plan-1/create/rec2.json"));
-    assert!(map.contains_key(".scratch/.publish-plans/1/plan.json"));
 
     let replacement = HashMap::from([
         ("posts/next.json".to_string(), b"{\"id\":\"next\"}".to_vec()),
@@ -165,7 +162,6 @@ fn read_and_materialize_repo_maps_split_scratch_content() {
     assert!(ctx.worktree_dir.join("posts/next.json").exists());
     assert!(!ctx.worktree_dir.join("posts/rec1.json").exists());
     assert!(ctx.scratch_dir.join("posts/schema.json").exists());
-    assert!(!ctx.scratch_dir.join(".publish-plans/1/plan.json").exists());
 }
 
 #[test]
