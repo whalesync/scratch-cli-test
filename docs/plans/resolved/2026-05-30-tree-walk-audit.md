@@ -31,12 +31,12 @@
   `Cell` naming to match the underlying library API. Only the audit's
   explicitly-enumerated identifiers were renamed.
 
-**Non-rename cleanup deferred:**
+**Non-rename cleanup completed:**
 - `.publish-plans` exception removal in
-  `load_connection_scratch_into_path_contents_map` — HELD pending server-side
-  Phase 7 cleanup of the `POST /:id/publish-v2/run-from-git` endpoint at
-  `server/src/cli/cli-workbook.controller.ts:434`. Inline comment at the gate
-  notes the condition.
+  `load_connection_scratch_into_path_contents_map` — shipped in `cfonger-85`
+  commit `8f658c73` as part of Phase 7 deletion of the server-side
+  `POST /:id/publish-v2/run-from-git` endpoint. No remaining `.publish-plans`
+  references in `review_ops.rs`.
 
 **Verification at landing:**
 - Rust: `cargo check --workspace --all-targets` + `cargo fmt` + `cargo test`
