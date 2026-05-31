@@ -264,6 +264,16 @@ function isAlwaysReadonlyProperty(propName: string): boolean {
   return false;
 }
 
+/**
+ * Properties that HubSpot types as 'number' but are really opaque object identifiers.
+ * Forcing them to 'string' avoids the grid's locale-aware thousands separators
+ * (e.g. "46,499,514,474" → "46499514474").
+ */
+function isOpaqueIdProperty(propName: string): boolean {
+  // hs_object_id and variants (e.g. hs_object_id_contact)
+  return propName.startsWith('hs_object_id');
+}
+
 /** Build a TableViewCol for a fixed top-level field. */
 function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): TableViewCol {
   const hidden = HIDDEN_FIXED_FIELDS.has(fieldId) || undefined;
@@ -291,11 +301,13 @@ function buildPropertyCol(propName: string, propSchema: TSchema | undefined): Ta
     isAlwaysReadonlyProperty(propName);
   const hidden = isHiddenProperty(propName) || undefined;
 
+  const type = isOpaqueIdProperty(propName) ? 'string' : mapPropertyType(connectorDataType);
+
   return {
     kind: 'col',
     path: `properties.${propName}`,
     name: propName,
-    type: mapPropertyType(connectorDataType),
+    type,
     readonly: isReadonly || undefined,
     hidden,
   };

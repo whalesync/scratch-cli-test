@@ -204,6 +204,13 @@ describe('buildHubspotDefaultView', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'properties.email') as TableViewCol;
       expect(col.type).toBeUndefined();
     });
+
+    it('should map hs_object_id to string type even though HubSpot types it as number', () => {
+      // hs_object_id is an opaque ID; the grid would otherwise format it with thousands separators.
+      const allCols = view.cols.flatMap((c) => (c.kind === 'banner-group' ? c.cols : [c]));
+      const col = allCols.find((c) => c.path === 'properties.hs_object_id') as TableViewCol;
+      expect(col.type).toBe('string');
+    });
   });
 
   describe('readonly', () => {
