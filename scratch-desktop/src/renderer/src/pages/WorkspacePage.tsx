@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular, TextMono12Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
+import { useReviewStats } from '../hooks/use-review-stats';
 import { useValidation } from '../hooks/use-validation';
 import { API_CONFIG } from '../lib/api';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
@@ -148,6 +149,7 @@ export function WorkspacePage() {
   const [workspaceLevelDataInvalidationCounter, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
   const validation = useValidation(localPath, workspaceLevelDataInvalidationCounter);
+  const reviewStats = useReviewStats(localPath, workspaceLevelDataInvalidationCounter);
   const [gridFilterActivation, setGridFilterActivation] = useState<{
     kind: 'has-problems';
     trigger: number;
@@ -710,6 +712,7 @@ export function WorkspacePage() {
         validationConfigs={validation.configs}
         validationConfigsLoading={validation.configsLoading}
         onRefreshValidationStats={validation.refreshStats}
+        reviewStats={reviewStats.stats}
       />
     </Box>
   );

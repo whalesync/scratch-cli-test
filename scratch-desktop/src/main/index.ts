@@ -43,12 +43,14 @@ import {
   setCurrentWorkspaceId,
   setWorkbookSetting,
 } from './preferences-store';
+import { reviewRefreshQueue } from './review-refresh-queue';
 import {
   acceptFieldChanges,
   clearFolderIndex,
   discardCreatedRecord as discardCreatedRecordViaCli,
   getFolderValidationResults,
   getFolderValidationSample,
+  getReviewStats,
   getValidationResults,
   getValidationStats,
   listUnpushedChanges,
@@ -83,6 +85,55 @@ let mainWindow: BrowserWindow | null = null;
 let pendingDeepLink: { route: string; query: string } | null = null;
 let updaterController: ReturnType<typeof initAutoUpdater> = null;
 const workspaceFileWatchService = new WorkspaceFileWatchService();
+
+/**
+ * Per-workspace cache of the workspace-relative folder names
+ * (`<connection>/<sub_path>`) that were enumerated at the last
+ * `watchWorkspaceFiles` call. Used by the accepted-patches handler below to
+ * fan out a refresh across every folder under a connection without
+ * re-walking the disk on each watcher burst.
+ */
+const folderRelPathsByWorkspace = new Map<string, string[]>();
+
+// Review-state dots: route every watcher burst (internal AND external) into
+// the refresh queue. External bursts (Claude/vim editing record files,
+// external `scratchmd` CLI runs) need a `refreshFolder` re-read because the
+// SQLite bits haven't observed the changes yet. Internal bursts (Scratch's
+// own accept/discard/reject/pull/publish IPCs) only need a notify — the CLI
+// already updated the bits before returning, so re-running `refreshFolder`
+// would be wasted work.
+workspaceFileWatchService.setMutationHandler((workspacePath, source, absoluteFolderPaths) => {
+  if (source === 'external') {
+    reviewRefreshQueue.enqueueAbsoluteFolderPaths(workspacePath, absoluteFolderPaths);
+  } else {
+    reviewRefreshQueue.notifyReviewStatsChanged(workspacePath);
+  }
+});
+
+// `accepted-patches.json` watcher: any change to a connection's patch file
+// could flip the `approvedChanges` AND `unapprovedChanges` bits for any
+// record under that connection, so we have to refresh every folder in the
+// connection. External bursts enqueue refreshes; internal bursts just
+// notify (the CLI's mutation path already updated the index).
+workspaceFileWatchService.setAcceptedPatchesHandler((workspacePath, source, connectionDirName) => {
+  if (source === 'internal') {
+    reviewRefreshQueue.notifyReviewStatsChanged(workspacePath);
+    return;
+  }
+  const cachedFolderRelPaths = folderRelPathsByWorkspace.get(workspacePath) ?? [];
+  const affected = cachedFolderRelPaths.filter(
+    (rel) => rel === connectionDirName || rel.startsWith(`${connectionDirName}/`),
+  );
+  if (affected.length > 0) {
+    reviewRefreshQueue.enqueueFolderRefresh(workspacePath, affected);
+  } else {
+    // Fallback when we haven't cached the folder list yet (e.g. an event
+    // racing the initial `watchWorkspaceFiles` call): a plain notify still
+    // re-reads the current SQL aggregate so stale dots clear at least once
+    // the next refresh cycle runs.
+    reviewRefreshQueue.notifyReviewStatsChanged(workspacePath);
+  }
+});
 
 function parseScratchDeepLink(url: string): { route: string; query: string } | null {
   try {
@@ -380,6 +431,10 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     void workspaceFileWatchService.clearWorkspaceFileWatch();
+    // Drop the now-destroyed WebContents subscriber and any queued work —
+    // see review-refresh-queue.ts module docstring.
+    reviewRefreshQueue.setSubscriber(null);
+    reviewRefreshQueue.clear();
     mainWindow = null;
   });
 
@@ -428,6 +483,10 @@ async function withWorkspaceInternalMutation<T>(workspacePath: string, action: (
   } finally {
     endInternalMutation();
   }
+  // Note: review-state dot refresh used to be triggered here. It now flows
+  // through `setMutationHandler` / `setAcceptedPatchesHandler` on the file
+  // watcher, which catches every relevant on-disk change — including ones
+  // produced by external `scratchmd` CLI runs from a terminal.
 }
 
 // Per-(workspace, connection) async queue for folder-index reads. The CLI stores one SQLite
@@ -763,10 +822,30 @@ ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string
 ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
   const folders = await listFolders(workspacePath);
   const folderPaths = folders.map((f) => f.path);
+  const folderRelPaths = folders.map((f) => f.name);
+  // Cache the folder list so the accepted-patches watcher can fan a refresh
+  // out to every folder under the affected connection without re-walking
+  // the disk.
+  folderRelPathsByWorkspace.set(workspacePath, folderRelPaths);
+  // Register the same renderer as the subscriber for review-stats notifications
+  // and kick off the cold-start sweep so dots fill in for any folder whose
+  // index is stale relative to the working tree.
+  reviewRefreshQueue.setSubscriber(event.sender);
+  reviewRefreshQueue.enqueueAllFolders(workspacePath, folderRelPaths);
   return workspaceFileWatchService.watchWorkspaceFiles(event.sender, workspacePath, folderPaths);
 });
-ipcMain.handle('scratch:clear-workspace-file-watch', () => {
+ipcMain.handle('scratch:clear-workspace-file-watch', (_, workspacePath?: string) => {
   workspaceFileWatchService.clearWorkspaceFileWatch();
+  reviewRefreshQueue.setSubscriber(null);
+  // Drop any queued Pass-A items for the workspace being closed/switched away
+  // from so they don't continue draining against a workspace the user has
+  // moved on from.
+  if (workspacePath) {
+    reviewRefreshQueue.cancelWorkspace(workspacePath);
+    folderRelPathsByWorkspace.delete(workspacePath);
+  } else {
+    folderRelPathsByWorkspace.clear();
+  }
 });
 ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {
   void shell.openPath(folderPath);
@@ -1077,6 +1156,7 @@ ipcMain.handle('files:get-folder-validation-results', async (_, workspacePath: s
   getFolderValidationResults(workspacePath, folderPath),
 );
 ipcMain.handle('files:get-validation-stats', async (_, workspacePath: string) => getValidationStats(workspacePath));
+ipcMain.handle('files:get-review-stats', async (_, workspacePath: string) => getReviewStats(workspacePath));
 ipcMain.handle('files:get-folder-validation-sample', async (_, workspacePath: string, folder: string) =>
   getFolderValidationSample(workspacePath, folder),
 );

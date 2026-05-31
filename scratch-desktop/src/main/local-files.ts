@@ -801,7 +801,14 @@ async function collectLeafFolders(root: string, dir: string, out: FolderEntry[])
   if (subdirs.length === 0) {
     if (dir !== root) {
       const fileCount = entries.filter((e) => e.isFile() && !e.name.startsWith(HIDDEN_PREFIX)).length;
-      const relativePath = dir.slice(root.length + 1);
+      // POSIX-normalise on Windows so the workspace-relative name matches the
+      // forward-slash shape the Rust side emits (and that consumers like the
+      // validation/review dot maps use as their `${connection}/${folder_path}`
+      // lookup key).
+      const relativePath = dir
+        .slice(root.length + 1)
+        .split(/[\\/]/)
+        .join('/');
       out.push({
         name: relativePath,
         path: dir,

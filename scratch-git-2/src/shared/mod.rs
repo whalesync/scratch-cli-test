@@ -10,5 +10,7 @@ pub mod merge;
 pub mod merge_patch;
 pub mod re_anchor;
 pub mod review_ops;
+pub mod review_stats;
+pub mod validation_stats;
 pub mod validators;
 pub mod workspace_lock;

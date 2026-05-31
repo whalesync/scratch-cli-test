@@ -17,8 +17,11 @@ import { randomUUID } from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import { join, relative, resolve } from 'path';
 import { performance } from 'perf_hooks';
+import type { ReviewStat } from '../shared/review-types';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
 import { WORKSPACE_NEEDS_REINIT_CHANNEL, type WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
+import type { RefreshFolderResult } from './native/scratchmd-native';
+import { nativeGetReviewStats, nativeGetValidationStats, refreshFolderViaNative } from './native/scratchmd-native';
 import { logCliCommand } from './workspace-logger';
 
 // ── Types ──
@@ -721,7 +724,9 @@ export async function restoreDeletedRecord(workspacePath: string, recordPath: st
   await runScratchmd(['files', 'restore-deleted-record', recordPath], workspacePath);
 }
 
+export type { ReviewStat } from '../shared/review-types';
 export type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
+export type { RefreshFolderResult } from './native/scratchmd-native';
 
 export async function getValidationResults(
   workspacePath: string,
@@ -775,12 +780,60 @@ export async function getFilenamesWithErrors(
   }
 }
 
+/**
+ * Workspace-wide per-folder validation counts.
+ *
+ * Migrated from `runScratchmdJson(['validation', 'get-stats'])` to a direct
+ * napi call (`nativeGetValidationStats`) — removes the ~10–20 ms spawn
+ * overhead per invocation, which matters because this is called on every
+ * workspace open, every publish-modal open, every drawer button click, and
+ * every `refreshKey` bump.
+ *
+ * Preserves the public contract intentionally:
+ *   - Signature: `(workspacePath) => Promise<ValidationStat[]>`.
+ *   - Snake_case keys on each entry (load-bearing for
+ *     `PublishChangesModal.handleViewProblems`, `ValidationStatsDrawer`, and
+ *     `WorkspaceSidebar`'s `${connection}/${folder_path}` Map key).
+ *   - Swallow-errors-as-`[]`: callers (including `ValidationStatsDrawer`,
+ *     which has no try/catch) assume this never throws.
+ */
 export async function getValidationStats(workspacePath: string): Promise<ValidationStat[]> {
   try {
-    return await runScratchmdJson<ValidationStat[]>(['validation', 'get-stats'], workspacePath);
+    return await nativeGetValidationStats(workspacePath);
   } catch {
     return [];
   }
+}
+
+/**
+ * Workspace-wide per-folder review-state counts. Powers the sidebar's blue
+ * "Needs review" and gray "Approved" folder-tree dots — see
+ * `docs/plans/2026-05-31-folder-tree-review-approved-dots.md`.
+ *
+ * Same swallow-errors-as-`[]` contract as `getValidationStats` so the dot
+ * subsystem degrades to "no dots" if the napi binding fails to load on a
+ * malformed workspace.
+ */
+export async function getReviewStats(workspacePath: string): Promise<ReviewStat[]> {
+  try {
+    return await nativeGetReviewStats(workspacePath);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Refresh one folder's index so the bits surfaced by `getReviewStats` are
+ * current. Used by `review-refresh-queue.ts` (cold-start sweep + watcher-
+ * driven per-folder refresh).
+ *
+ * `folder` is the workspace-relative `<connection>/<sub_path>` shape used by
+ * the Rust `folder_index` module (e.g. `"HubSpot/Posts"`). Errors are
+ * surfaced as thrown `Error` — the queue logs + retries; we deliberately do
+ * NOT swallow here because the queue needs to know about failures.
+ */
+export async function refreshFolderForReviewStats(workspacePath: string, folder: string): Promise<RefreshFolderResult> {
+  return refreshFolderViaNative(workspacePath, folder);
 }
 
 export async function getFolderValidationSample(workspacePath: string, folder: string): Promise<ValidationResultRow[]> {

@@ -145,6 +145,14 @@ pub enum FilesCommands {
     },
     /// List record changes that exist only in the working tree and have not been accepted locally
     Unreviewed,
+    /// Per-folder counts of unreviewed and approved-but-unpublished records across every connection in the workspace.
+    ///
+    /// Reads the persisted `approvedChanges` / `unapprovedChanges` bit columns from each folder's
+    /// SQLite index — no mtime walk, no JSON parse, no git. Folders that haven't been indexed
+    /// yet (or where both counts are zero) are omitted. Use `index refresh-folder` first if you
+    /// need fresh bits for folders that have changed since the last index update.
+    #[command(name = "get-review-stats")]
+    GetReviewStats,
     /// List entries in accepted-patches.json (accepted locally but not yet published)
     Unpublished,
     /// List entries in accepted-patches.json (alias of `unpublished`, kept for back-compat)
@@ -454,6 +462,7 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             run_discard_created_record(&cwd, server_url, &paths, json).await
         }
         FilesCommands::Unreviewed => run_unreviewed(&cwd, server_url, json),
+        FilesCommands::GetReviewStats => run_get_review_stats(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
         FilesCommands::Upload { skip_folder_index } => {
@@ -2355,6 +2364,35 @@ fn run_unreviewed(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()
         println!(
             "  [{}] {} — {}",
             entry.connection_name, entry.status, entry.path
+        );
+    }
+    Ok(())
+}
+
+fn run_get_review_stats(cwd: &Path, server_url: &str, json: bool) -> anyhow::Result<()> {
+    let (_, workspace_dir, _, _) = resolve_workspace_and_connections(cwd, server_url, json)?;
+    let stats = crate::shared::review_stats::collect_review_stats(&workspace_dir)?;
+
+    if json {
+        println!("{}", serde_json::to_string(&stats)?);
+        return Ok(());
+    }
+
+    if stats.is_empty() {
+        println!("No folders with pending review changes.");
+        return Ok(());
+    }
+
+    println!("{} folder(s) with pending review changes:", stats.len());
+    for entry in &stats {
+        let folder_label = if entry.folder_path.is_empty() {
+            entry.connection.clone()
+        } else {
+            format!("{}/{}", entry.connection, entry.folder_path)
+        };
+        println!(
+            "  {folder_label} — unreviewed={}, approved={}",
+            entry.unreviewed, entry.approved
         );
     }
     Ok(())

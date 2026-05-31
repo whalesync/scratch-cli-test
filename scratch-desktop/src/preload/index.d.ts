@@ -2,6 +2,8 @@ import { ElectronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
 import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
+import type { ReviewStatsMayHaveChangedEvent } from '../shared/review-stats-events';
+import type { ReviewStat } from '../shared/review-types';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
 import type {
@@ -201,6 +203,7 @@ interface ScratchDesktopAPI {
   clearWorkspaceFileWatch: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
   onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void) => () => void;
+  onReviewStatsMayHaveChanged: (callback: (event: ReviewStatsMayHaveChangedEvent) => void) => () => void;
   onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void) => () => void;
   onGridProgress: (callback: (line: string) => void) => () => void;
   onWorkspaceNeedsReinit: (callback: (event: WorkspaceNeedsReinitEvent) => void) => () => void;
@@ -404,6 +407,7 @@ interface ScratchFilesAPI {
   getValidationResults: (workspacePath: string, folderPath: string, filename: string) => Promise<ValidationResultRow[]>;
   getFolderValidationResults: (workspacePath: string, folderPath: string) => Promise<ValidationResultRow[]>;
   getValidationStats: (workspacePath: string) => Promise<ValidationStat[]>;
+  getReviewStats: (workspacePath: string) => Promise<ReviewStat[]>;
   getFolderValidationSample: (workspacePath: string, folder: string) => Promise<ValidationResultRow[]>;
   getValidationConfigs: (workspacePath: string) => Promise<ValidatorConfig[]>;
   writeValidationConfig: (

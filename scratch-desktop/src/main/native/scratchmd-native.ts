@@ -19,7 +19,13 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, relative, resolve } from 'node:path';
 
-import type { FolderBlob, ReviewOpResult } from '../../../../scratch-git-2/napi/index.d.ts';
+import type {
+  FolderBlob,
+  RefreshFolderResult,
+  ReviewOpResult,
+  ReviewStat,
+  ValidationStat,
+} from '../../../../scratch-git-2/napi/index.d.ts';
 
 const requireNative = createRequire(__filename);
 
@@ -72,6 +78,9 @@ interface NativeModule {
     filenames: string[],
   ): Promise<FolderBlob[]>;
   listFolderFilenames(workspaceDir: string, connectionDirName: string, folderRelPath: string): Promise<string[]>;
+  getReviewStats(workspaceDir: string): Promise<ReviewStat[]>;
+  getValidationStats(workspaceDir: string): Promise<ValidationStat[]>;
+  refreshFolder(workspaceDir: string, folder: string): Promise<RefreshFolderResult>;
 }
 
 function loadNative(): NativeModule {
@@ -321,4 +330,48 @@ export async function listFolderFilenames(
   return loadNative().listFolderFilenames(workspaceDir, connectionDirName, folderRelPath);
 }
 
-export type { FolderBlob, ReviewOpResult };
+/**
+ * Workspace-wide per-folder counts of `(unreviewed, approved)` records.
+ * Powers the sidebar's blue "Needs review" and gray "Approved" dots.
+ *
+ * Reads persisted bit columns from each folder's SQLite index — no mtime
+ * walk, no JSON parse. Folders that haven't been indexed yet are skipped.
+ * Call {@link refreshFolderViaNative} first if fresh bits are required.
+ *
+ * Failure surfaces as a thrown `Error` whose message is prefixed with
+ * `INTERNAL:`. Callers in `scratchmd.ts` swallow this into `[]` to preserve
+ * the long-standing render-empty-on-failure contract.
+ */
+export async function nativeGetReviewStats(workspaceDir: string): Promise<ReviewStat[]> {
+  return loadNative().getReviewStats(workspaceDir);
+}
+
+/**
+ * Workspace-wide per-folder validation counts. Drop-in replacement for the
+ * prior `runScratchmdJson(['validation', 'get-stats'])` shell-out — same TS
+ * shape (snake_case keys), same error-prefix convention (`INTERNAL:`).
+ *
+ * Callers in `scratchmd.ts` swallow errors into `[]` to preserve the prior
+ * shell-out's behaviour.
+ */
+export async function nativeGetValidationStats(workspaceDir: string): Promise<ValidationStat[]> {
+  return loadNative().getValidationStats(workspaceDir);
+}
+
+/**
+ * Refresh one folder's index so the bits surfaced by
+ * {@link nativeGetReviewStats} are current. Mtime-aware: only files whose
+ * working-tree timestamp changed are re-read.
+ *
+ * `folder` is the workspace-relative `<connection>/<sub_path>` shape used
+ * throughout the Rust `folder_index` module (e.g. `"HubSpot/Posts"`).
+ *
+ * Failure surfaces as a thrown `Error` whose message is prefixed with
+ * `INTERNAL:`. Used by the cold-start refresh queue
+ * (`review-refresh-queue.ts`) and the watcher-driven per-folder refresh.
+ */
+export async function refreshFolderViaNative(workspaceDir: string, folder: string): Promise<RefreshFolderResult> {
+  return loadNative().refreshFolder(workspaceDir, folder);
+}
+
+export type { FolderBlob, RefreshFolderResult, ReviewOpResult, ReviewStat, ValidationStat };

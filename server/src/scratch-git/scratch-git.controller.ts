@@ -310,7 +310,7 @@ export class ScratchGitController {
     return this.scratchGitService.deleteAllFilesInDataFolder(repoId, folderPath);
   }
 
-  @All(':id/git-service/:connectionId/*')
+  @All(':id/git-service/:connectionId/*path')
   async proxyToGitService(
     @Param('id') workbookId: WorkbookId,
     @Param('connectionId') connectorAccountId: string,

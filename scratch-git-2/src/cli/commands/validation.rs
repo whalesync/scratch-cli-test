@@ -153,103 +153,16 @@ pub fn get_files_with_problems_command(
     Ok(())
 }
 
-#[derive(Serialize)]
-struct FolderValidationStat {
-    connection: String,
-    folder_path: String,
-    errors: i64,
-    warnings: i64,
-    /// Number of distinct records (files) that have at least one violation.
-    records: i64,
-}
-
 /// `validation get-stats`: error/warning counts grouped by connection and folder
 /// across all connections. Reads from the folder-index SQLite databases populated
 /// by `paginate-records --validate` and `index refresh-folder --validate`.
+///
+/// Thin wrapper around [`crate::shared::validation_stats::collect_validation_stats`]
+/// so the same aggregation can be called from the `scratchmd-native` napi
+/// binding without spawning a CLI process.
 pub fn get_stats_command(workspace_start: &std::path::Path) -> anyhow::Result<()> {
     let workspace_dir = resolve_workspace(workspace_start)?;
-    let workspace_marker = super::index::read_workspace_marker(&workspace_dir)?;
-
-    let mut stats: Vec<FolderValidationStat> = Vec::new();
-
-    for connection in &workspace_marker.connections {
-        if connection.dir_name.is_empty() {
-            continue;
-        }
-        let db_path = workspace_dir
-            .join(".repos")
-            .join(format!("{}.db", &connection.dir_name));
-        if !db_path.exists() {
-            continue;
-        }
-        let conn = match rusqlite::Connection::open(&db_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let table = validation_results_table();
-        let mut folder_stmt = match conn.prepare(&format!(
-            "SELECT DISTINCT folder_path FROM {table} ORDER BY folder_path"
-        )) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let folder_paths: Vec<String> = folder_stmt
-            .query_map([], |row| row.get(0))
-            .map_err(|e| anyhow::anyhow!("failed to query validation_results: {e}"))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        for full_folder_path in folder_paths {
-            let records: i64 = conn
-                .query_row(
-                    &format!("SELECT COUNT(DISTINCT filename) FROM {table} WHERE folder_path = ?1"),
-                    rusqlite::params![full_folder_path],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
-
-            if records == 0 {
-                continue;
-            }
-
-            let errors: i64 = conn
-                .query_row(
-                    &format!(
-                        "SELECT COUNT(DISTINCT filename) FROM {table} \
-                         WHERE folder_path = ?1 AND level = 'error'"
-                    ),
-                    rusqlite::params![full_folder_path],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
-
-            let warnings: i64 = conn
-                .query_row(
-                    &format!(
-                        "SELECT COUNT(DISTINCT filename) FROM {table} \
-                         WHERE folder_path = ?1 AND level = 'warning'"
-                    ),
-                    rusqlite::params![full_folder_path],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
-
-            let sub_path = match full_folder_path.find('/') {
-                Some(idx) => full_folder_path[idx + 1..].to_string(),
-                None => String::new(),
-            };
-
-            stats.push(FolderValidationStat {
-                connection: connection.dir_name.clone(),
-                folder_path: sub_path,
-                errors,
-                warnings,
-                records,
-            });
-        }
-    }
-
+    let stats = crate::shared::validation_stats::collect_validation_stats(&workspace_dir)?;
     println!("{}", serde_json::to_string(&stats)?);
     Ok(())
 }

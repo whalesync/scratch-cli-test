@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { JSX, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { ReviewStat } from '../../../../shared/review-types';
 import type { ValidationStat } from '../../../../shared/validation-types';
 import { UserMenu } from '../../components/user-menu';
 import { useCurrentUser } from '../../hooks/use-current-user';
@@ -45,6 +46,7 @@ interface WorkspaceSidebarProps {
   onToggleValidationPanel?: () => void;
   validationPanelOpen?: boolean;
   validationStats?: ValidationStat[];
+  reviewStats?: ReviewStat[];
 }
 
 export function WorkspaceSidebar({
@@ -67,6 +69,7 @@ export function WorkspaceSidebar({
   onToggleValidationPanel,
   validationPanelOpen,
   validationStats,
+  reviewStats,
 }: WorkspaceSidebarProps) {
   const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
@@ -85,6 +88,20 @@ export function WorkspaceSidebar({
     }
     return map;
   }, [validationStats]);
+
+  // Parallel lookup map for review-state counts (powers the blue "Needs review"
+  // and gray "Approved" folder-tree dots). Same `connection/folder_path` key
+  // shape as `validationByFolder` so FolderTree can look both maps up with the
+  // same `node.folder.name` key.
+  const reviewByFolder = useMemo(() => {
+    const map = new Map<string, { unreviewed: number; approved: number }>();
+    if (reviewStats) {
+      for (const s of reviewStats) {
+        map.set(`${s.connection}/${s.folder_path}`, { unreviewed: s.unreviewed, approved: s.approved });
+      }
+    }
+    return map;
+  }, [reviewStats]);
 
   const totalErrors = validationStats?.reduce((sum, s) => sum + s.errors, 0) ?? 0;
   const totalWarnings = validationStats?.reduce((sum, s) => sum + s.warnings, 0) ?? 0;
@@ -144,6 +161,7 @@ export function WorkspaceSidebar({
               isDevToolsEnabled={isDevToolsEnabled}
               invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
               validationByFolder={validateEnabled ? validationByFolder : undefined}
+              reviewByFolder={reviewByFolder}
             />
           </>
         )}

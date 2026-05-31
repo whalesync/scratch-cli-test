@@ -377,6 +377,7 @@ Run `scratchmd <command> --help` for full flag details.
 | Command | Description |
 |---|---|
 | `files download` | Pull remote changes and three-way merge with local edits |
+| `files get-review-stats` | Per-folder counts of unreviewed and approved-but-unpublished records across every connection in the workspace |
 
 ## connections
 

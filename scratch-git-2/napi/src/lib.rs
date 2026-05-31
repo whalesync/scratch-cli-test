@@ -10,10 +10,13 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use scratch_git_2::shared::folder_index;
 use scratch_git_2::shared::review_ops::{
     self, FolderBlob as RustFolderBlob, LockMode, ReviewOpEffect, ReviewOpError,
     ReviewOpResult as RustReviewOpResult,
 };
+use scratch_git_2::shared::review_stats;
+use scratch_git_2::shared::validation_stats;
 use std::path::PathBuf;
 
 /// Result shape returned to JS. Mirrors `review_ops::ReviewOpResult` with
@@ -314,4 +317,109 @@ pub async fn list_folder_filenames(
     .await
     .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
     .map_err(map_err)
+}
+
+// ─── Stats + refresh — workspace-wide and per-folder index aggregation ──────
+//
+// Powers the desktop sidebar's "Needs review" (blue) and "Approved" (gray)
+// dots plus the existing validation dots, per
+// `docs/plans/2026-05-31-folder-tree-review-approved-dots.md`. These were
+// previously shelled out to the `scratchmd` CLI; moving them in-process
+// eliminates the ~10-20 ms spawn cost per invocation, which matters for the
+// cold-start refresh pass (sequential walk across every folder).
+//
+// All three return `serde_json::Value` so the snake_case Rust field names
+// (`folder_path`, `unreviewed`, `approved`, `errors`, `warnings`, `records`,
+// `base_refreshed`, `columns_refreshed`, `validated`) flow through unchanged
+// to JS — preserving the long-standing `ValidationStat` TS contract and the
+// matching new `ReviewStat` TS contract.
+//
+// Read-only ops (`getReviewStats`, `getValidationStats`) and
+// `refreshFolder` do not acquire the workspace lock; no `LOCK_BUSY` is
+// raised. Errors are surfaced with the prefix `INTERNAL:` (the underlying
+// `anyhow` chain doesn't currently classify between marker-missing and
+// other I/O — sufficient for the desktop's swallow-and-render-empty contract).
+
+/// Workspace-wide per-folder counts of `(unreviewed, approved)` records.
+///
+/// For every connection in `<workspaceDir>/.scratch/.scratchmd`, walks the
+/// on-disk data folder tree and reads each folder's persisted
+/// `approvedChanges` / `unapprovedChanges` bit columns from the per-folder
+/// SQLite index. Folders whose counts are both zero are omitted. Folders
+/// that haven't been indexed yet are skipped — caller should run
+/// `refreshFolder` first if fresh bits are required.
+///
+/// Returns an array of `{ connection, folder_path, unreviewed, approved }`.
+/// Field names are snake_case to mirror the existing `ValidationStat` TS
+/// contract. Empty array when the workspace has no folders with changes.
+///
+/// Error prefix: `INTERNAL:` (workspace marker missing/unreadable, SQLite
+/// failure, etc.). No `LOCK_BUSY` — reads don't acquire the workspace lock.
+#[napi]
+pub async fn get_review_stats(workspace_dir: String) -> Result<serde_json::Value> {
+    napi::tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+        let stats = review_stats::collect_review_stats(&PathBuf::from(&workspace_dir))?;
+        Ok(serde_json::to_value(stats)?)
+    })
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
+    .map_err(|err| Error::new(Status::GenericFailure, format!("INTERNAL: {err:#}")))
+}
+
+/// Workspace-wide per-folder counts of validation problems.
+///
+/// Reads from the shared `validation_results__vN` table in each connection's
+/// `.repos/<dirName>.db`, populated by `paginate-records --validate` and
+/// `index refresh-folder --validate`. Distinct-filename counts per severity.
+///
+/// Returns an array of `{ connection, folder_path, errors, warnings, records }`.
+/// Field names are snake_case — identical to the long-standing
+/// `ValidationStat` TS contract. Migrated from the
+/// `scratchmd validation get-stats` CLI shell-out.
+///
+/// Error prefix: `INTERNAL:`. No `LOCK_BUSY` — reads don't acquire the
+/// workspace lock.
+#[napi]
+pub async fn get_validation_stats(workspace_dir: String) -> Result<serde_json::Value> {
+    napi::tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+        let stats = validation_stats::collect_validation_stats(&PathBuf::from(&workspace_dir))?;
+        Ok(serde_json::to_value(stats)?)
+    })
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
+    .map_err(|err| Error::new(Status::GenericFailure, format!("INTERNAL: {err:#}")))
+}
+
+/// Refresh one folder's index so the bits surfaced by `getReviewStats` are
+/// current. Internally runs the mtime-aware
+/// `shared::folder_index::refresh_folder` with `validate=false`:
+///
+/// 1. `find_stale` walks the working tree's mtimes and classifies files into
+///    `base_stale` (working/dirty/master rebuild needed) and `column_stale`
+///    (only active field-column values stale).
+/// 2. `reindex_files` runs only on the stale set — proportional to the
+///    number of files that actually changed since the last refresh, not the
+///    folder size.
+///
+/// `folder` is the workspace-relative `<connection>/<sub_path>` shape used
+/// throughout `folder_index` (e.g. `"HubSpot/Posts"`).
+///
+/// Returns `{ base_refreshed, columns_refreshed, validated }` — counts of
+/// files actually re-read. A fully fresh folder returns zeros and finishes
+/// in a few ms (mtime walk only). `validated` is omitted (never set, since
+/// validate=false).
+///
+/// Error prefix: `INTERNAL:`. No `LOCK_BUSY` — this writes to the
+/// per-connection index DB under `<workspace>/.repos/`, which the workspace lock
+/// does not cover.
+#[napi]
+pub async fn refresh_folder(workspace_dir: String, folder: String) -> Result<serde_json::Value> {
+    napi::tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+        let result =
+            folder_index::refresh_folder(&PathBuf::from(&workspace_dir), &folder, false, false)?;
+        Ok(serde_json::to_value(result)?)
+    })
+    .await
+    .map_err(|join_err| Error::from_reason(format!("native worker panic: {join_err}")))?
+    .map_err(|err| Error::new(Status::GenericFailure, format!("INTERNAL: {err:#}")))
 }

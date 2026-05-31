@@ -2,6 +2,11 @@ import { electronAPI } from '@electron-toolkit/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
+import {
+  REVIEW_STATS_MAY_HAVE_CHANGED_CHANNEL,
+  type ReviewStatsMayHaveChangedEvent,
+} from '../shared/review-stats-events';
+import type { ReviewStat } from '../shared/review-types';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
 import type {
@@ -280,6 +285,15 @@ const scratchDesktop = {
       ipcRenderer.removeListener(WORKSPACE_FILE_WATCH_EVENT_CHANNEL, listener);
     };
   },
+  onReviewStatsMayHaveChanged: (callback: (event: ReviewStatsMayHaveChangedEvent) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: ReviewStatsMayHaveChangedEvent): void => {
+      callback(payload);
+    };
+    ipcRenderer.on(REVIEW_STATS_MAY_HAVE_CHANGED_CHANNEL, listener);
+    return () => {
+      ipcRenderer.removeListener(REVIEW_STATS_MAY_HAVE_CHANGED_CHANNEL, listener);
+    };
+  },
   onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: ConnectionFileChangedEvent): void => {
       callback(payload);
@@ -492,6 +506,7 @@ const scratchFiles = {
     invoke('files:get-folder-validation-results', workspacePath, folderPath),
   getValidationStats: (workspacePath: string): Promise<ValidationStat[]> =>
     invoke('files:get-validation-stats', workspacePath),
+  getReviewStats: (workspacePath: string): Promise<ReviewStat[]> => invoke('files:get-review-stats', workspacePath),
   getFolderValidationSample: (workspacePath: string, folder: string): Promise<ValidationResultRow[]> =>
     invoke('files:get-folder-validation-sample', workspacePath, folder),
   getValidationConfigs: (workspacePath: string): Promise<ValidatorConfig[]> =>

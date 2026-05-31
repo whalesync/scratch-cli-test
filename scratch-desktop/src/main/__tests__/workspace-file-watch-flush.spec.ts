@@ -94,4 +94,88 @@ describe('WorkspaceFileWatchService — flushPendingChanges payload', () => {
     flush();
     expect(received).toHaveLength(0);
   });
+
+  // ─── mutation handler hook ────────────────────────────────────────────────
+
+  it('invokes the mutation handler for external bursts with source="external"', () => {
+    const { service, addPaths, flush } = makeService();
+    const calls: { workspacePath: string; source: string; folderPaths: string[] }[] = [];
+    service.setMutationHandler((workspacePath, source, folderPaths) => {
+      calls.push({ workspacePath, source, folderPaths });
+    });
+    addPaths(['/workspace/conn-a/a.json', '/workspace/conn-b/b.json'], true);
+    flush();
+    expect(calls).toEqual([
+      {
+        workspacePath: '/workspace',
+        source: 'external',
+        folderPaths: ['/workspace/conn-a', '/workspace/conn-b'],
+      },
+    ]);
+  });
+
+  it('invokes the mutation handler for internal bursts with source="internal"', () => {
+    const { service, addPaths, flush } = makeService();
+    const calls: { source: string }[] = [];
+    service.setMutationHandler((_workspacePath, source) => {
+      calls.push({ source });
+    });
+    addPaths(['/workspace/conn/a.json'], false);
+    flush();
+    expect(calls).toEqual([{ source: 'internal' }]);
+  });
+
+  it('swallows mutation handler exceptions so the renderer IPC still fires', () => {
+    const { service, addPaths, flush, received } = makeService();
+    service.setMutationHandler(() => {
+      throw new Error('boom');
+    });
+    addPaths(['/workspace/conn/a.json'], true);
+    flush();
+    expect(received).toHaveLength(1);
+  });
+
+  // ─── accepted-patches handler hook ───────────────────────────────────────
+
+  it('fires the accepted-patches handler with source="external" per connection', () => {
+    const { service } = makeService();
+    const calls: { workspacePath: string; source: string; connectionDirName: string }[] = [];
+    service.setAcceptedPatchesHandler((workspacePath, source, connectionDirName) => {
+      calls.push({ workspacePath, source, connectionDirName });
+    });
+    // Simulate two external bursts: one connection per .scratchmd watch.
+    (service as any).pendingAcceptedPatchesConnections.set('conn-a', true);
+    (service as any).pendingAcceptedPatchesConnections.set('conn-b', true);
+    (service as any).flushAcceptedPatchesChanges();
+    expect(calls).toEqual([
+      { workspacePath: '/workspace', source: 'external', connectionDirName: 'conn-a' },
+      { workspacePath: '/workspace', source: 'external', connectionDirName: 'conn-b' },
+    ]);
+  });
+
+  it('fires the accepted-patches handler with source="internal" when no external event landed', () => {
+    const { service } = makeService();
+    const calls: { source: string }[] = [];
+    service.setAcceptedPatchesHandler((_w, source) => {
+      calls.push({ source });
+    });
+    (service as any).pendingAcceptedPatchesConnections.set('conn-a', false);
+    (service as any).flushAcceptedPatchesChanges();
+    expect(calls).toEqual([{ source: 'internal' }]);
+  });
+
+  it('keeps source="external" when even one event in the burst arrived outside the mutation guard', () => {
+    const { service } = makeService();
+    const calls: { source: string }[] = [];
+    service.setAcceptedPatchesHandler((_w, source) => {
+      calls.push({ source });
+    });
+    // First event = internal, second event = external; OR-merge into one
+    // external flush per connection.
+    const pending = (service as any).pendingAcceptedPatchesConnections as Map<string, boolean>;
+    pending.set('conn-a', false);
+    pending.set('conn-a', (pending.get('conn-a') ?? false) || true);
+    (service as any).flushAcceptedPatchesChanges();
+    expect(calls).toEqual([{ source: 'external' }]);
+  });
 });

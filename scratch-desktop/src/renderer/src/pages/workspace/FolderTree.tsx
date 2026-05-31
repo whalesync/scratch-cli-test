@@ -2,15 +2,7 @@ import { Text12Regular, Text13Regular } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { Box, Group, List, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import {
-  ChevronDown,
-  ChevronRight,
-  CircleXIcon,
-  EllipsisVertical,
-  Folder,
-  FolderLock,
-  TriangleAlertIcon,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, EllipsisVertical, Folder, FolderLock } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { useConfirmModal } from '../../components/ConfirmModal';
 import { trackPullTable, trackShowFolderInfo } from '../../lib/posthog';
@@ -130,6 +122,7 @@ interface FolderTreeNodeProps {
   onRequestPull: (request: PullRequest) => void;
   onShowFolderInfo: (request: FolderInfoRequest) => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
+  reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
 }
 
 function FolderTreeNodeRow({
@@ -146,6 +139,7 @@ function FolderTreeNodeRow({
   onRequestPull,
   onShowFolderInfo,
   validationByFolder,
+  reviewByFolder,
 }: FolderTreeNodeProps) {
   const hasChildren = node.children.size > 0;
   const [expanded, setExpanded] = useState(true);
@@ -300,32 +294,68 @@ function FolderTreeNodeRow({
 
         <Box component="span" style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
           {(() => {
-            const v = node.folder ? validationByFolder?.get(node.folder.name) : undefined;
-            const color =
-              v && v.errors > 0
-                ? 'var(--mantine-color-red-6)'
-                : v && v.warnings > 0
-                  ? 'var(--mantine-color-orange-6)'
-                  : null;
-            if (!color || !v) return null;
+            const validation = node.folder ? validationByFolder?.get(node.folder.name) : undefined;
+            const review = node.folder ? reviewByFolder?.get(node.folder.name) : undefined;
+
+            // Fixed left→right order. Each dot is only rendered when its
+            // count is positive; the container anchors at the right of the
+            // folder icon so the rightmost visible dot stays at a stable
+            // x-position regardless of which dots are present.
+            const dots: { key: string; color: string; count: number; label: string }[] = [];
+            if (validation && validation.errors > 0) {
+              dots.push({
+                key: 'errors',
+                color: 'var(--mantine-color-red-6)',
+                count: validation.errors,
+                label: `${validation.errors} validation error${validation.errors === 1 ? '' : 's'}`,
+              });
+            }
+            if (validation && validation.warnings > 0) {
+              dots.push({
+                key: 'warnings',
+                color: 'var(--mantine-color-orange-6)',
+                count: validation.warnings,
+                label: `${validation.warnings} validation warning${validation.warnings === 1 ? '' : 's'}`,
+              });
+            }
+            if (review && review.unreviewed > 0) {
+              dots.push({
+                key: 'unreviewed',
+                color: 'var(--modified-needs-review-stroke)',
+                count: review.unreviewed,
+                label: `${review.unreviewed} needs review`,
+              });
+            }
+            if (review && review.approved > 0) {
+              dots.push({
+                key: 'approved',
+                color: 'var(--modified-approved-stroke)',
+                count: review.approved,
+                label: `${review.approved} approved`,
+              });
+            }
+            if (dots.length === 0) return null;
+
             return (
               <Tooltip
                 label={
-                  <Group gap={6} wrap="nowrap">
-                    <span>Validation</span>
-                    {v.errors > 0 && (
-                      <Group gap={2} wrap="nowrap">
-                        <CircleXIcon size={12} color="var(--mantine-color-red-6)" strokeWidth={1.5} />
-                        <span>{v.errors}</span>
+                  <Stack gap={2}>
+                    {dots.map((dot) => (
+                      <Group key={dot.key} gap={6} wrap="nowrap">
+                        <Box
+                          component="span"
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            backgroundColor: dot.color,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span>{dot.label}</span>
                       </Group>
-                    )}
-                    {v.warnings > 0 && (
-                      <Group gap={2} wrap="nowrap">
-                        <TriangleAlertIcon size={12} color="var(--mantine-color-orange-6)" strokeWidth={1.5} />
-                        <span>{v.warnings}</span>
-                      </Group>
-                    )}
-                  </Group>
+                    ))}
+                  </Stack>
                 }
                 position="right"
                 withArrow
@@ -334,15 +364,33 @@ function FolderTreeNodeRow({
                   component="span"
                   style={{
                     position: 'absolute',
-                    left: -4,
+                    right: 'calc(100% + 4px)',
                     top: '50%',
-                    transform: 'translate(-100%, -50%)',
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    backgroundColor: color,
+                    transform: 'translateY(-50%)',
+                    display: 'inline-flex',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    // 5 px dots + 1 px gaps so the four-dot edge case (all of
+                    // errors + warnings + needs-review + approved) fits in
+                    // the gutter at depth 0 without clipping the row's left
+                    // padding. With these dimensions a 4-dot row is 23 px
+                    // wide, vs. 24 px of available headroom at depth 0.
+                    gap: 1,
                   }}
-                />
+                >
+                  {dots.map((dot) => (
+                    <Box
+                      key={dot.key}
+                      component="span"
+                      style={{
+                        width: 5,
+                        height: 5,
+                        borderRadius: '50%',
+                        backgroundColor: dot.color,
+                      }}
+                    />
+                  ))}
+                </Box>
               </Tooltip>
             );
           })()}
@@ -409,6 +457,7 @@ function FolderTreeNodeRow({
               onRequestPull={onRequestPull}
               onShowFolderInfo={onShowFolderInfo}
               validationByFolder={validationByFolder}
+              reviewByFolder={reviewByFolder}
             />
           ))}
         </>
@@ -430,6 +479,7 @@ interface FolderTreeProps {
   isDevToolsEnabled: boolean;
   invalidateWorkspaceLevelData: () => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
+  reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
 }
 
 export function FolderTree({
@@ -443,6 +493,7 @@ export function FolderTree({
   isDevToolsEnabled,
   invalidateWorkspaceLevelData,
   validationByFolder,
+  reviewByFolder,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildTree(localFolders), [localFolders]);
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
@@ -552,6 +603,7 @@ export function FolderTree({
           onRequestPull={handlePullRequest}
           onShowFolderInfo={handleShowFolderInfo}
           validationByFolder={validationByFolder}
+          reviewByFolder={reviewByFolder}
         />
       ))}
 

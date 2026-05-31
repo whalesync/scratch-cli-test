@@ -1,6 +1,7 @@
 import { Box } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import type { ReviewStat } from '../../../../shared/review-types';
 import type { ValidationStat, ValidatorConfig } from '../../../../shared/validation-types';
 import { trackOpenConnectionsDialog } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
@@ -39,6 +40,7 @@ interface WorkspaceContentProps {
   validationConfigs?: ValidatorConfig[];
   validationConfigsLoading?: boolean;
   onRefreshValidationStats?: () => void;
+  reviewStats?: ReviewStat[];
 }
 
 const MIN_SIDEBAR_WIDTH = 220;
@@ -63,6 +65,7 @@ export function WorkspaceContent({
   validationConfigs,
   validationConfigsLoading,
   onRefreshValidationStats,
+  reviewStats,
 }: WorkspaceContentProps) {
   const showConnectionsPanel = useWorkspaceUiStore((s) => s.showConnectionsPanel);
   const setShowConnectionsPanel = useWorkspaceUiStore((s) => s.setShowConnectionsPanel);
@@ -205,6 +208,7 @@ export function WorkspaceContent({
         onToggleValidationPanel={() => setShowValidationPanel(!showValidationPanel)}
         validationPanelOpen={showValidationPanel}
         validationStats={validationStats}
+        reviewStats={reviewStats}
       />
 
       {/* Resize Handle */}
