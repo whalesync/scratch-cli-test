@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Prisma, type Sync as PrismaSync } from '@prisma/client';
 import { TSchema } from '@sinclair/typebox';
 import type { Service } from '@spinner/shared-types';
@@ -387,14 +393,31 @@ export class SyncService {
       throw new NotFoundException('Workbook not found');
     }
 
-    // Existence check only — does not select mappings, so it sits outside the
-    // read choke point.
+    // Existence check plus the migration state of this row. Selecting only `id`
+    // and `mappingsV2` (not the v1 `mappings` content) keeps this outside the
+    // read choke point's parse contract while still surfacing whether the sync
+    // has crossed over to v2.
     const sync = await this.db.client.sync.findFirst({
       where: { id: syncId },
-      select: { id: true },
+      select: { id: true, mappingsV2: true },
     });
     if (!sync) {
       throw new NotFoundException('Sync not found');
+    }
+
+    // Once a sync has been migrated to v2 (`mappingsV2 IS NOT NULL`), reject any
+    // save whose body is still the v1 shape. A stale client that only knows v1
+    // would otherwise write to the frozen `mappings` column and have its edits
+    // silently shadowed by the authoritative `mappingsV2`. A 409 prompts the
+    // client to update to a v2-aware version.
+    // TODO(DEV-10008): remove this guard when the v1 column is dropped and all
+    // clients speak v2.
+    if (sync.mappingsV2 !== null && body.mappings.version === 1) {
+      throw new ConflictException({
+        error: 'SYNC_MAPPING_V1_WRITE_REJECTED',
+        message: 'This sync uses the latest mapping format. Update your client to the newest version to edit it.',
+        syncId,
+      });
     }
 
     const v2Mappings = normalizeSaveBodyMappings(body.mappings);

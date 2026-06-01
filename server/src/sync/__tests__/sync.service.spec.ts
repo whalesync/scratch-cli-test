@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import type { ColumnMapping, DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
@@ -62,7 +62,10 @@ function makeSaveSyncBody(overrides?: Partial<SaveSyncBody>): SaveSyncBody {
 }
 
 const MOCK_WORKBOOK = { id: WORKBOOK_ID, organizationId: 'org_xyz' } as unknown as WorkbookCluster.Workbook;
-const MOCK_SYNC = { id: SYNC_ID, displayName: 'Test Sync', mappings: {} };
+// `mappingsV2: null` mirrors what Prisma returns for a not-yet-migrated row
+// (`select: { id, mappingsV2 }`). The v1-write rejection guard in `updateSync`
+// keys off this — null means "still on v1", so a v1-shape save is allowed.
+const MOCK_SYNC = { id: SYNC_ID, displayName: 'Test Sync', mappings: {}, mappingsV2: null };
 /** Valid cron: every hour at minute 0 (meets min 1-min interval) */
 const CRON_HOURLY = '0 * * * *';
 const CRON_EVERY_TWO_HOURS = '0 */2 * * *';
@@ -478,6 +481,63 @@ describe('SyncService', () => {
       await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR)).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    // -- v1-write rejection guard (Phase 2): once a row has crossed to v2,
+    //    a stale v1-only client must not write to the frozen `mappings` column.
+    it('rejects a v1-shape save once the sync has migrated to v2', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      // Migrated row: mappingsV2 is populated.
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue({
+        ...MOCK_SYNC,
+        mappingsV2: { version: 2, tableMappings: [] },
+      });
+
+      // makeSaveSyncBody() is a v1 body (version: 1).
+      await expect(service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR)).rejects.toThrow(
+        ConflictException,
+      );
+      // The guard fires before any write path is touched.
+      expect(dbService.client.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('allows a v2-shape save on a migrated sync', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue({
+        ...MOCK_SYNC,
+        mappingsV2: { version: 2, tableMappings: [] },
+      });
+      const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
+      (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
+
+      const v2Body = makeSaveSyncBody({
+        mappings: {
+          version: 2,
+          tableMappings: [
+            {
+              sourceDataFolderId: SOURCE_FOLDER_ID,
+              destinationDataFolderId: DEST_FOLDER_ID,
+              columnMappings: [{ destinationColumnId: 'name', source: { kind: 'column', columnId: 'title' } }],
+            },
+          ],
+        },
+      });
+
+      const result = await service.updateSync(WORKBOOK_ID, SYNC_ID, v2Body, ACTOR);
+      expect(result).toEqual(updatedSync);
+      expect(dbService.client.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows a v1-shape save on a not-yet-migrated sync (mappingsV2 null)', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      // MOCK_SYNC carries mappingsV2: null — the pre-backfill state.
+      (dbService.client.sync.findFirst as jest.Mock).mockResolvedValue(MOCK_SYNC);
+      const updatedSync = { id: SYNC_ID, syncTablePairs: [] };
+      (dbService.client.$transaction as jest.Mock).mockResolvedValue(updatedSync);
+
+      const result = await service.updateSync(WORKBOOK_ID, SYNC_ID, makeSaveSyncBody(), ACTOR);
+      expect(result).toEqual(updatedSync);
+      expect(dbService.client.$transaction).toHaveBeenCalledTimes(1);
     });
 
     it('throws BadRequestException when record matching fields are not in column mappings', async () => {
@@ -968,6 +1028,7 @@ describe('transformRecordAsync', () => {
       }),
       lookupFieldFromFkRecord: jest.fn(),
       getOrCreateDestinationAssetMapping: jest.fn(),
+      matchDestinationAssetByHash: jest.fn(),
     };
 
     const syncContext = {

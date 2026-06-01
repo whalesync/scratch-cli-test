@@ -52,6 +52,13 @@ export enum CustomMetric {
   SYNC_UNMATCHED_WITH_KEY_COUNT = 'sync_unmatched_with_key_count',
   SYNC_UNMATCHED_WITHOUT_KEY_COUNT = 'sync_unmatched_without_key_count',
   SYNC_ARCHIVE_WRITES_TOTAL = 'sync_archive_writes_total',
+
+  // Sync-mapping v2 backfill (DEV-10008). `v1_remaining` is a gauge of syncs
+  // still on the frozen v1 column (mappingsV2 IS NULL) — the explicit signal
+  // for the Phase 4 drop of the v1 column once it holds at 0. `v2_transformed`
+  // counts rows migrated per backfill batch.
+  BACKFILL_SYNC_MAPPING_V1_REMAINING = 'backfill_sync_mapping_v1_remaining',
+  BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL = 'backfill_sync_mapping_v2_transformed_total',
 }
 
 export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDimension {
@@ -88,6 +95,8 @@ export function expectedDimensionForMetric(metric: CustomMetric): CustomMetricDi
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
+    case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
+    case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
       return CustomMetricDimension.NO_DIMENSION;
     case CustomMetric.API_REQUEST:
     case CustomMetric.API_RATE_LIMIT_EXCEEDED:
@@ -133,7 +142,12 @@ export function unitForMetric(metric: CustomMetric): CustomMetricUnit {
     case CustomMetric.SYNC_UNMATCHED_WITH_KEY_COUNT:
     case CustomMetric.SYNC_UNMATCHED_WITHOUT_KEY_COUNT:
     case CustomMetric.SYNC_ARCHIVE_WRITES_TOTAL:
+    case CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL:
       return CustomMetricUnit.EVENT_COUNT;
+    case CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING:
+      // A gauge: how many syncs remain on the frozen v1 column right now, not a
+      // per-event tally.
+      return CustomMetricUnit.INSTANTANEOUS_COUNT;
     default:
       return assertUnreachable(metric);
   }

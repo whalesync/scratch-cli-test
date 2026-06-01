@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
@@ -30,6 +32,7 @@ describe('CodeMigrationsController', () => {
   let credentialEncryptionService: jest.Mocked<CredentialEncryptionService>;
   let oauthService: jest.Mocked<OAuthService>;
   let auditLogService: jest.Mocked<AuditLogService>;
+  let metricsService: jest.Mocked<CustomMetricsService>;
 
   beforeEach(() => {
     dbService = {
@@ -45,6 +48,11 @@ describe('CodeMigrationsController', () => {
         },
         connectorAccount: {
           findUnique: jest.fn().mockResolvedValue(null),
+        },
+        sync: {
+          findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
       },
     } as unknown as jest.Mocked<DbService>;
@@ -65,12 +73,19 @@ describe('CodeMigrationsController', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditLogService>;
 
+    metricsService = {
+      logValue: jest.fn(),
+      withLoggedExecTime: jest.fn(),
+      withLoggedExecTimeForConnector: jest.fn(),
+    } as unknown as jest.Mocked<CustomMetricsService>;
+
     controller = new CodeMigrationsController(
       dbService,
       workbookRepoService,
       credentialEncryptionService,
       oauthService,
       auditLogService,
+      metricsService,
     );
   });
 
@@ -85,6 +100,13 @@ describe('CodeMigrationsController', () => {
     it('returns notion-data-source-backfill with a description', () => {
       const result = controller.getAvailableMigrations(makeReqWithUser());
       const descriptor = result.migrations.find((m) => m.name === 'notion-data-source-backfill');
+      expect(descriptor).toBeDefined();
+      expect(descriptor!.description.length).toBeGreaterThan(0);
+    });
+
+    it('returns sync-mapping-v2-backfill with a description', () => {
+      const result = controller.getAvailableMigrations(makeReqWithUser());
+      const descriptor = result.migrations.find((m) => m.name === 'sync-mapping-v2-backfill');
       expect(descriptor).toBeDefined();
       expect(descriptor!.description.length).toBeGreaterThan(0);
     });
@@ -324,6 +346,137 @@ describe('CodeMigrationsController', () => {
       });
 
       expect(result.remainingCount).toBe(2);
+    });
+  });
+
+  // The per-row transform/CAS/audit decisions are covered exhaustively in
+  // sync-mapping-v2-backfill.spec.ts. These tests cover only the orchestration
+  // layer: the candidate query shape, migratedIds composition, remainingCount,
+  // and metric emission.
+  describe('runMigration - sync-mapping-v2-backfill', () => {
+    function makeSyncRow(id: string) {
+      return {
+        id,
+        updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+        mappings: {
+          version: 1,
+          tableMappings: [
+            {
+              sourceDataFolderId: 'dfd_src',
+              destinationDataFolderId: 'dfd_dest',
+              columnMappings: [{ sourceColumnId: 'title', destinationColumnId: 'name' }],
+            },
+          ],
+        },
+        workbook: { organizationId: 'org_a' },
+      };
+    }
+
+    it('transforms syncs with mappingsV2 IS NULL and writes via compare-and-set (qty mode)', async () => {
+      dbService.client.sync.findMany = jest.fn().mockResolvedValue([makeSyncRow('syn_1'), makeSyncRow('syn_2')]);
+      dbService.client.sync.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      dbService.client.sync.count = jest.fn().mockResolvedValue(3);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'sync-mapping-v2-backfill',
+        qty: 5,
+      });
+
+      // Candidate query: un-migrated rows only, oldest-first, capped at qty.
+      expect(dbService.client.sync.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { mappingsV2: { equals: Prisma.DbNull } },
+          take: 5,
+          orderBy: { createdAt: 'asc' },
+        }),
+      );
+      // Compare-and-set write per row, guarded on id + updatedAt + mappingsV2 null.
+      expect(dbService.client.sync.updateMany).toHaveBeenCalledTimes(2);
+      expect(dbService.client.sync.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: 'syn_1',
+            updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+            mappingsV2: { equals: Prisma.DbNull },
+          },
+        }),
+      );
+      expect(result.migratedIds).toEqual(['syn_1', 'syn_2']);
+      expect(result.remainingCount).toBe(3);
+      expect(result.migrationName).toBe('sync-mapping-v2-backfill');
+      // One audit per migrated row.
+      expect(auditLogService.logEvent).toHaveBeenCalledTimes(2);
+      // Metrics: transformed count + remaining gauge.
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL, 2);
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING, 3);
+    });
+
+    it('targets specific sync ids (ids mode)', async () => {
+      dbService.client.sync.findMany = jest.fn().mockResolvedValue([makeSyncRow('syn_x')]);
+      dbService.client.sync.count = jest.fn().mockResolvedValue(0);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'sync-mapping-v2-backfill',
+        ids: ['syn_x'],
+      });
+
+      expect(dbService.client.sync.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: { in: ['syn_x'] }, mappingsV2: { equals: Prisma.DbNull } },
+        }),
+      );
+      expect(result.migratedIds).toEqual(['syn_x']);
+      expect(result.remainingCount).toBe(0);
+    });
+
+    it('does not count a row as migrated when the compare-and-set affects 0 rows', async () => {
+      dbService.client.sync.findMany = jest.fn().mockResolvedValue([makeSyncRow('syn_busy')]);
+      // A concurrent save / parallel batch populated mappingsV2 first.
+      dbService.client.sync.updateMany = jest.fn().mockResolvedValue({ count: 0 });
+      dbService.client.sync.count = jest.fn().mockResolvedValue(1);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'sync-mapping-v2-backfill',
+        qty: 1,
+      });
+
+      expect(result.migratedIds).toEqual([]);
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
+      expect(metricsService.logValue).toHaveBeenCalledWith(CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL, 0);
+    });
+
+    it('isolates a compare-and-set failure to its row and continues the batch', async () => {
+      dbService.client.sync.findMany = jest.fn().mockResolvedValue([makeSyncRow('syn_boom'), makeSyncRow('syn_ok')]);
+      // First row's write throws (e.g. a deadlock); second succeeds.
+      dbService.client.sync.updateMany = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('deadlock'))
+        .mockResolvedValueOnce({ count: 1 });
+      dbService.client.sync.count = jest.fn().mockResolvedValue(1);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'sync-mapping-v2-backfill',
+        qty: 5,
+      });
+
+      // The throw is caught and isolated to syn_boom; the batch still migrates syn_ok.
+      expect(dbService.client.sync.updateMany).toHaveBeenCalledTimes(2);
+      expect(result.migratedIds).toEqual(['syn_ok']);
+    });
+
+    it('migrates the row even if its audit-log write fails (audit is best-effort)', async () => {
+      dbService.client.sync.findMany = jest.fn().mockResolvedValue([makeSyncRow('syn_a')]);
+      dbService.client.sync.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+      dbService.client.sync.count = jest.fn().mockResolvedValue(0);
+      auditLogService.logEvent = jest.fn().mockRejectedValue(new Error('audit DB down'));
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'sync-mapping-v2-backfill',
+        qty: 1,
+      });
+
+      // The CAS write succeeded, so the row counts as migrated despite the audit failure.
+      expect(result.migratedIds).toEqual(['syn_a']);
     });
   });
 });

@@ -4,6 +4,7 @@ import {
   ClassSerializerInterceptor,
   Controller,
   Get,
+  Inject,
   Logger,
   Post,
   Req,
@@ -12,12 +13,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { Client } from '@notionhq/client';
-import { AuthType } from '@prisma/client';
+import { AuthType, Prisma } from '@prisma/client';
 import type {
   AvailableMigrationsResponse,
   MigrationDescriptor,
   MigrationResult,
   RunMigrationDto,
+  SyncId,
   ValidatedRunMigrationDto,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -25,6 +27,8 @@ import { type DataFolderId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { hasAdminToolsPermission } from 'src/auth/permissions';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
+import { CustomMetric } from 'src/metrics/custom-metrics';
+import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { SYSTEM_ACTOR } from 'src/users/types';
@@ -42,6 +46,13 @@ import {
   FolderToBackfill,
   NotionFetchOutcome,
 } from './notion-data-source-backfill';
+import {
+  accumulateSyncMappingV2Backfill,
+  backfillSyncMappingRow,
+  emptySyncMappingV2BackfillSummary,
+  SyncMappingV2BackfillDeps,
+  SyncMappingV2BackfillResult,
+} from './sync-mapping-v2-backfill';
 
 const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
   {
@@ -58,6 +69,16 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'and the change is transparent to the user. For databases with multiple data sources, the existing ' +
       'folder is pinned to the first source and one new folder is created per additional source. ' +
       'Idempotent — re-runs skip folders that already have a 2-element tableId.',
+  },
+  {
+    name: 'sync-mapping-v2-backfill',
+    description:
+      'Backfills the v2 mapping shape into Sync.mappingsV2 for syncs created before the dual-column ' +
+      'migration (rows where mappingsV2 IS NULL). Reads the frozen v1 mappings column, transforms it ' +
+      'in memory, and writes mappingsV2 via a compare-and-set guarded on updatedAt — a concurrent edit ' +
+      'or a parallel batch is a safe no-op. The frozen v1 column is never modified, so the migration is ' +
+      'non-destructive and reversible by clearing mappingsV2 back to NULL. Idempotent — re-runs and ' +
+      'parallel batches skip rows already at v2.',
   },
 ];
 
@@ -81,6 +102,7 @@ export class CodeMigrationsController {
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly oauthService: OAuthService,
     private readonly auditLogService: AuditLogService,
+    @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
   @Get('available')
@@ -113,6 +135,8 @@ export class CodeMigrationsController {
         return this.initWorkbookRepos(dto);
       case 'notion-data-source-backfill':
         return this.runNotionDataSourceBackfill(dto);
+      case 'sync-mapping-v2-backfill':
+        return this.runSyncMappingV2Backfill(dto);
       default:
         throw new BadRequestException(`Unknown migration: ${dto.migration}`);
     }
@@ -326,6 +350,142 @@ export class CodeMigrationsController {
           organizationId: entry.organizationId,
           context: entry.context,
         });
+      },
+    };
+  }
+
+  /**
+   * Phase 3 of the sync-mapping v1 → v2 dual-column migration (DEV-10008):
+   * populate `Sync.mappingsV2` for syncs created before the dual-column model
+   * (rows where `mappingsV2 IS NULL`).
+   *
+   * Per-row decision logic lives in
+   * [sync-mapping-v2-backfill.ts](./sync-mapping-v2-backfill.ts) and is
+   * dependency-injected so the orchestration here stays thin and the core is
+   * unit-testable without a database.
+   *
+   * Idempotent and parallel-safe: the candidate query filters `mappingsV2 IS
+   * NULL`, and each write is a compare-and-set, so re-runs and concurrent
+   * batches skip rows already migrated. The frozen v1 `mappings` column is
+   * never touched — non-destructive and reversible by clearing `mappingsV2`.
+   */
+  private async runSyncMappingV2Backfill(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    // Candidate rows: syncs still on the frozen v1 column (`mappingsV2 IS
+    // NULL`), targeted by id when `ids` is given, else oldest-first up to
+    // `qty`. The raw v1 `mappings` is read here pre-transform — the one read
+    // that must bypass the `parseStoredMappings` choke point (which prefers,
+    // then strips, `mappingsV2`). Hence the justified choke-point lint disable.
+    //
+    // Operational note: an errored row (malformed v1) stays `mappingsV2 IS
+    // NULL` and remains a candidate, so a persistently-malformed *oldest*
+    // prefix can stall qty-mode progress (and hold `remainingCount` above 0,
+    // delaying the Phase 4 drop trigger). The summary's `errors` list names the
+    // stuck ids; drain or repair them via an ids-mode run, or step past the bad
+    // prefix with a larger `qty`.
+    const targetingSpecificIds = dto.ids !== undefined && dto.ids.length > 0;
+    const candidateWhere: Prisma.SyncWhereInput = targetingSpecificIds
+      ? { id: { in: dto.ids }, mappingsV2: { equals: Prisma.DbNull } }
+      : { mappingsV2: { equals: Prisma.DbNull } };
+    // eslint-disable-next-line no-restricted-syntax -- backfill reads the raw pre-v2 `mappings` column; cannot route through parseStoredMappings
+    const candidateRows = await this.db.client.sync.findMany({
+      where: candidateWhere,
+      // `take`/`orderBy` only bound the qty sweep; for an explicit id set the
+      // `id: { in }` filter already bounds the result.
+      take: targetingSpecificIds ? undefined : dto.qty,
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, updatedAt: true, mappings: true, workbook: { select: { organizationId: true } } },
+    });
+
+    const deps = this.buildSyncMappingV2BackfillDeps();
+    const summary = emptySyncMappingV2BackfillSummary();
+    const migratedIds: string[] = [];
+
+    for (const row of candidateRows) {
+      let result: SyncMappingV2BackfillResult;
+      try {
+        result = await backfillSyncMappingRow(
+          {
+            id: row.id as SyncId,
+            organizationId: row.workbook?.organizationId ?? null,
+            updatedAt: row.updatedAt,
+            rawV1Mappings: row.mappings,
+          },
+          deps,
+        );
+      } catch (error) {
+        // A transient DB failure on the compare-and-set (deadlock, dropped
+        // connection) must not abort the whole batch. The row stays
+        // `mappingsV2 IS NULL`, so the next sweep retries it; the remaining
+        // candidates in this batch are still processed.
+        result = { kind: 'errored', error };
+      }
+      accumulateSyncMappingV2Backfill(summary, row.id, result);
+      if (result.kind === 'transformed') {
+        migratedIds.push(row.id);
+      } else if (result.kind === 'errored') {
+        this.logger.warn(`sync-mapping-v2-backfill: sync ${row.id} failed to migrate: ${String(result.error)}`);
+      }
+    }
+
+    // `remainingCount` = syncs still on v1 (`mappingsV2 IS NULL`) *after* this
+    // run, read against fresh DB state so it reflects rows this batch wrote.
+    // This is the Phase 4 drop trigger: when it holds at 0 through the soak
+    // window, the v1 column can be removed. (`count` is not a `find*`, so it is
+    // outside the choke-point lint rule.)
+    const remainingCount = await this.db.client.sync.count({
+      where: { mappingsV2: { equals: Prisma.DbNull } },
+    });
+
+    this.metricsService.logValue(CustomMetric.BACKFILL_SYNC_MAPPING_V2_TRANSFORMED_TOTAL, summary.transformed);
+    this.metricsService.logValue(CustomMetric.BACKFILL_SYNC_MAPPING_V1_REMAINING, remainingCount);
+
+    this.logger.log(`sync-mapping-v2-backfill complete: ${JSON.stringify(summary)}; remaining=${remainingCount}`);
+
+    return {
+      migratedIds,
+      remainingCount,
+      migrationName: 'sync-mapping-v2-backfill',
+    };
+  }
+
+  /**
+   * Wire the production Prisma + audit services into `SyncMappingV2BackfillDeps`.
+   * The compare-and-set write is the key piece: `updateMany` filtered on
+   * `(id, updatedAt unchanged, mappingsV2 IS NULL)` so a concurrent save or a
+   * parallel backfill batch that already populated `mappingsV2` leaves this a
+   * zero-row no-op rather than clobbering newer data.
+   */
+  private buildSyncMappingV2BackfillDeps(): SyncMappingV2BackfillDeps {
+    return {
+      dryRun: false,
+      writeMappingsV2IfUnchanged: async (syncId, previouslyReadUpdatedAt, mappingsV2) => {
+        const result = await this.db.client.sync.updateMany({
+          where: {
+            id: syncId,
+            updatedAt: previouslyReadUpdatedAt,
+            mappingsV2: { equals: Prisma.DbNull },
+          },
+          data: { mappingsV2: mappingsV2 as unknown as Prisma.InputJsonValue },
+        });
+        return result.count;
+      },
+      logAudit: async (entry) => {
+        // Audit is a best-effort side log: by the time we get here the row is
+        // already migrated, so an audit-write failure must not fail (or abort)
+        // the migration. Matches the sync-run audit convention (caught + warned,
+        // never blocks the write).
+        try {
+          await this.auditLogService.logEvent({
+            actor: SYSTEM_ACTOR,
+            eventType: 'update',
+            message: entry.message,
+            entityId: entry.entityId,
+            organizationId: entry.organizationId,
+            context: entry.context,
+          });
+        } catch (error) {
+          this.logger.warn(`sync-mapping-v2-backfill: audit log failed for sync ${entry.entityId}: ${String(error)}`);
+        }
       },
     };
   }
