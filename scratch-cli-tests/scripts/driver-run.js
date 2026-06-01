@@ -937,7 +937,10 @@ function verifyLocalLastUpdated(
     }
 
     let recordOk = true;
-    for (const location of ["master", "dirty", "working"]) {
+    // V2 workspaces don't materialize `master` / `dirty` branch checkouts on
+    // disk — only the user-facing working tree exists. The working file is
+    // the authoritative local state for `lastUpdated` correctness.
+    for (const location of ["working"]) {
       const targetFile =
         location === "working"
           ? file
@@ -1052,7 +1055,8 @@ function verifyLocalCreatedRows(
       continue;
     }
 
-    for (const location of ["master", "dirty", "working"]) {
+    // V2 workspaces only materialize the working tree on disk.
+    for (const location of ["working"]) {
       const targetFile =
         location === "working"
           ? file
@@ -1116,7 +1120,9 @@ function verifyLocalDeletedRows(workspaceDir, deletedEntries) {
 
   for (const entry of deletedEntries) {
     const locationsWithFile = [];
-    for (const location of ["master", "dirty", "working"]) {
+    // V2 workspaces only materialize the working tree on disk; `master` /
+    // `dirty` checkout dirs don't exist any more, so checking them is moot.
+    for (const location of ["working"]) {
       const targetFile =
         location === "working"
           ? entry.file
@@ -1185,20 +1191,17 @@ function listModifiedRecordPaths(workspaceDir) {
     .map((line) => line.slice(3));
 }
 
-function listReviewedDirtyPaths(workspaceDir) {
-  const bareRepo = findBareRepo(workspaceDir);
+function listReviewedDirtyPaths(workspaceDir, binary, serverUrl) {
+  // Architecture shift: the workspace no longer keeps a local mirror of the
+  // `dirty` branch, so `git diff main..dirty` doesn't work any more. The
+  // source of truth for "accepted but not yet published" is the local
+  // `accepted-patches.json`, which `scratchmd files unpublished --json`
+  // serializes. We filter to the posts table to mirror the original scope.
   const result = spawnSync(
-    "git",
-    [
-      "--git-dir",
-      bareRepo,
-      "diff",
-      "--name-only",
-      "main..dirty",
-      "--",
-      `public/${POSTS_TABLE_NAME}`,
-    ],
+    binary,
+    ["files", "unpublished", "--scratch-url", serverUrl, "--json"],
     {
+      cwd: workspaceDir,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30_000,
@@ -1210,13 +1213,21 @@ function listReviewedDirtyPaths(workspaceDir) {
   }
   if (typeof result.status === "number" && result.status !== 0) {
     const stderr = (result.stderr || "").trim();
-    throw new Error(stderr ? `git diff failed: ${stderr}` : "git diff failed");
+    throw new Error(
+      stderr ? `scratchmd files unpublished failed: ${stderr}` : "scratchmd files unpublished failed",
+    );
   }
 
-  return (result.stdout || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout || "{}");
+  } catch (err) {
+    throw new Error(`Failed to parse scratchmd files unpublished output: ${err.message}`);
+  }
+  const postsPrefix = `public/${POSTS_TABLE_NAME}/`;
+  return (parsed.entries || [])
+    .map((entry) => entry.path)
+    .filter((entryPath) => typeof entryPath === "string" && entryPath.startsWith(postsPrefix));
 }
 
 function findBareRepo(workspaceDir) {
@@ -1224,9 +1235,18 @@ function findBareRepo(workspaceDir) {
   if (!fs.existsSync(reposDir)) {
     throw new Error(`No .repos directory found in ${workspaceDir}`);
   }
-  const entries = fs.readdirSync(reposDir).filter((f) => f.endsWith(".git"));
+  // V2 layout has one `wkb_*.git` (workspace config) plus one
+  // `coa_*.git` per connector account. Records live in the connector
+  // repos, so exclude the workspace-level one. Sort what's left for
+  // deterministic single-connector behaviour.
+  const entries = fs
+    .readdirSync(reposDir)
+    .filter((f) => f.endsWith(".git") && !f.startsWith("wkb_"))
+    .sort();
   if (entries.length === 0) {
-    throw new Error(`No .git repos found in ${reposDir}`);
+    throw new Error(
+      `No connector .git repos found in ${reposDir} (expected at least one coa_*.git)`,
+    );
   }
   return path.join(reposDir, entries[0]);
 }
@@ -2187,7 +2207,7 @@ async function main() {
       expectedUnreviewedNames,
     );
     const modifiedPaths = listModifiedRecordPaths(state.workspaceDir);
-    const reviewedDirtyPaths = listReviewedDirtyPaths(state.workspaceDir);
+    const reviewedDirtyPaths = listReviewedDirtyPaths(state.workspaceDir, binary, serverUrl);
     const remainingPublishedFiles = acceptedFilesForPublish.filter((file) =>
       failedOrRemainingIds.has(acceptedIdsByFile.get(file)),
     );
