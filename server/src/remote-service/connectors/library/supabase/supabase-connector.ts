@@ -517,10 +517,11 @@ export class SupabaseConnector extends Connector {
         data: changedFields[i],
       }));
 
-      await client.updateMany(schema, tableName, pk, records);
-      // Step-1 placeholder: return the sent payload. Step 2 will plumb
-      // through `client.updateMany`'s `RETURNING *` rows here.
-      return files;
+      const persisted = await client.updateMany(schema, tableName, pk, records);
+      // See postgres-connector.ts for the rationale — `updateMany` does
+      // `UPDATE … RETURNING t.*` so we get the row Postgres actually
+      // stored. Fall back to sent payload only for rows that vanished.
+      return persisted.map((row, i) => (row === 'not_found' ? files[i] : (row as ConnectorFile)));
     }, resolved.connectionString);
   }
 

@@ -250,6 +250,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<ConnectorFile[]> {
     const parsed = parseAttioTableId(tableSpec.id);
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       // Prefer the sparse partial; only fall back to the full record when
       // `changedFields` isn't available (legacy publish paths). Tracked on DEV-10084.
@@ -258,22 +259,30 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
         case 'object': {
           const recordId = extractRecordId(files[i]);
           const values = toWriteValues((payload as { values?: unknown }).values);
-          if (Object.keys(values).length === 0) continue; // nothing changed under `values`
-          await this.client.updateRecord(parsed.objectSlug, recordId, values);
+          if (Object.keys(values).length === 0) {
+            results.push(files[i]);
+            continue;
+          }
+          const updated = await this.client.updateRecord(parsed.objectSlug, recordId, values);
+          results.push(updated as unknown as ConnectorFile);
           break;
         }
         case 'list': {
           const entryId = extractEntryId(files[i]);
           const entryValues = toWriteValues((payload as { entry_values?: unknown }).entry_values);
-          if (Object.keys(entryValues).length === 0) continue;
-          await this.client.updateListEntry(parsed.listSlug, entryId, entryValues);
+          if (Object.keys(entryValues).length === 0) {
+            results.push(files[i]);
+            continue;
+          }
+          const updated = await this.client.updateListEntry(parsed.listSlug, entryId, entryValues);
+          results.push(updated as unknown as ConnectorFile);
           break;
         }
         default:
           return assertUnreachable(parsed);
       }
     }
-    return files;
+    return results;
   }
 
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {

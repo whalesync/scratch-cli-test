@@ -6,6 +6,8 @@ import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { ParsedContent } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { DbService } from '../db/db.service';
+import { ExperimentsService } from '../experiments/experiments.service';
+import { UserFlag } from '../experiments/flags';
 import { Connector } from '../remote-service/connectors/connector';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
@@ -59,6 +61,7 @@ export class PublishPlanRunService {
     private readonly scratchGitService: ScratchGitService,
     private readonly schemaService: SchemaHelperService,
     private readonly refResolverService: RefResolverService,
+    private readonly experimentsService: ExperimentsService,
   ) {}
 
   async runPipeline(
@@ -89,6 +92,20 @@ export class PublishPlanRunService {
 
     // Resolve the correct git repo ID for this plan (V2 uses per-connection repos)
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(plan.connectorAccountId);
+
+    // Evaluate the `UPDATE_RECORDS_RETURNS_REMOTE_DATA` flag once per run
+    // (against the plan's user) and thread the boolean down through
+    // `processBatch` → `dispatchUpdateBatch`. When true, the persisted
+    // rows returned by `connector.updateRecords` drive the git commit on
+    // `main`; when false, the sent payload drives it (current behavior).
+    // See `docs/plans/2026-05-29-publish-pk-stringification-bug.md`.
+    const planUser = await this.db.client.user.findUnique({
+      where: { id: plan.userId },
+      select: { id: true, role: true },
+    });
+    const useRemoteReturnedRows = planUser
+      ? await this.experimentsService.getBooleanFlag(UserFlag.UPDATE_RECORDS_RETURNS_REMOTE_DATA, false, planUser)
+      : false;
 
     // Tag and persist the starting dirty + main commits on the first run (not on resume).
     // The primary diff shown in the publish history UI is
@@ -249,6 +266,7 @@ export class PublishPlanRunService {
               plan.workbookId,
               plan.id,
               repoId,
+              useRemoteReturnedRows,
             );
             if (batchHadError) {
               cumulativeErrorCount += 1;
@@ -334,6 +352,7 @@ export class PublishPlanRunService {
                 plan.workbookId,
                 plan.id,
                 repoId,
+                useRemoteReturnedRows,
               );
               if (batchHadError) {
                 cumulativeErrorCount += batch.length;
@@ -391,6 +410,7 @@ export class PublishPlanRunService {
               plan.workbookId,
               plan.id,
               repoId,
+              useRemoteReturnedRows,
             );
             if (retryHadError) {
               // Individual retry failed — this entry stays as failed-batch
@@ -580,6 +600,7 @@ export class PublishPlanRunService {
     workbookId: string,
     planId: string,
     repoId: string,
+    useRemoteReturnedRows: boolean,
   ): Promise<boolean> {
     try {
       switch (phase) {
@@ -596,6 +617,7 @@ export class PublishPlanRunService {
             workbookId,
             planId,
             repoId,
+            useRemoteReturnedRows,
           );
           break;
         case 'create':
@@ -695,6 +717,7 @@ export class PublishPlanRunService {
     workbookId: string,
     planId: string,
     repoId: string,
+    useRemoteReturnedRows: boolean,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId;
     const rawContents = entries.map((e) => e.content).filter(Boolean);
@@ -757,13 +780,71 @@ export class PublishPlanRunService {
 
     if (contents.length === 0) return;
 
-    await connector.updateRecords(tableSpec, contents, changedFieldsArray);
+    const persistedContents = await connector.updateRecords(tableSpec, contents, changedFieldsArray);
+
+    // Flag-gated swap: when `UPDATE_RECORDS_RETURNS_REMOTE_DATA` is on,
+    // use the row the connector actually persisted (DB triggers, server
+    // normalizers, computed columns, native PK types) instead of our
+    // sent payload. Falls back to sent payload when the connector returned
+    // a mismatched-length array (defensive — shouldn't happen, but
+    // protects us from misbehaving impls).
+    let useReturned =
+      useRemoteReturnedRows && Array.isArray(persistedContents) && persistedContents.length === entriesWithOps.length;
+
+    // Per-entry identity assertion. A connector that returns rows in a
+    // different order than the input (e.g. an ID-keyed lookup with a
+    // missing item that silently misaligns the array) would otherwise
+    // commit the wrong file's content under the wrong path. Compare each
+    // returned row's PK against the input row's PK at the same index;
+    // coerce both sides to string because the publish path mixes integer
+    // DB PKs (postgres `RETURNING *`) with stringified Prisma columns,
+    // and identity here is canonical-string identity. If any index
+    // mismatches, fall back to the sent payload wholesale — better to
+    // lose the connector-echoed values than to commit them under the
+    // wrong path.
+    if (useReturned && persistedContents) {
+      for (let i = 0; i < persistedContents.length; i++) {
+        const persistedId = (persistedContents[i] as Record<string, unknown> | undefined)?.[idField];
+        const inputId = (entriesWithOps[i].resolvedContent as Record<string, unknown>)[idField];
+        // Only compare when both sides have a primitive PK. `null`/`undefined`
+        // → skip (the connector didn't echo an id for this row, treat as
+        // benign). Anything that isn't string|number is a misuse — narrowing
+        // here also satisfies `no-base-to-string` for the String() calls below
+        // by ruling out objects that would stringify to `[object Object]`.
+        const persistedIdIsScalar = typeof persistedId === 'string' || typeof persistedId === 'number';
+        const inputIdIsScalar = typeof inputId === 'string' || typeof inputId === 'number';
+        if (!persistedIdIsScalar || !inputIdIsScalar) continue;
+        const persistedIdStr = String(persistedId);
+        const inputIdStr = String(inputId);
+        if (persistedIdStr !== inputIdStr) {
+          WSLogger.warn({
+            source: 'PublishPlanRunService.dispatchUpdateBatch',
+            message: 'Connector returned rows in a different order than input; falling back to sent payload for commit',
+            workbookId,
+            data: {
+              connectorService: connector.service,
+              index: i,
+              persistedId: persistedIdStr,
+              inputId: inputIdStr,
+              filePath: entriesWithOps[i].entry.filePath,
+              planId,
+            },
+          });
+          useReturned = false;
+          break;
+        }
+      }
+    }
+
+    const contentForCommit: ParsedContent[] = useReturned
+      ? (persistedContents as ParsedContent[])
+      : entriesWithOps.map((e) => e.resolvedContent);
 
     // Update Refs & Git
     // We can do this in parallel or sequentially. Sequential for safety.
-    const refUpdates = entriesWithOps.map(({ entry, resolvedContent: resolvedOp }) => ({
+    const refUpdates = entriesWithOps.map(({ entry }, i) => ({
       path: entry.filePath,
-      content: resolvedOp,
+      content: contentForCommit[i],
     }));
 
     await this.fileReferenceService.updateRefsForFiles(workbookId, 'main', refUpdates);
@@ -781,9 +862,9 @@ export class PublishPlanRunService {
     );
 
     // Git Commit (Dirty) — uses full content, not changedFields
-    const dirtySyncBatch = entriesWithOps.map(({ entry, resolvedContent: resolvedOp }) => ({
+    const dirtySyncBatch = entriesWithOps.map(({ entry }, i) => ({
       filePath: entry.filePath,
-      content: formatJsonWithPrettier(resolvedOp as Record<string, unknown>),
+      content: formatJsonWithPrettier(contentForCommit[i] as Record<string, unknown>),
     }));
     await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);
   }

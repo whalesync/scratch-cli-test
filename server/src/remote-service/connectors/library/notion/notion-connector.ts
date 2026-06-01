@@ -681,6 +681,36 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   /**
+   * Refetch a single page as a ConnectorFile in the same shape `pullRecordFiles`
+   * / `pullRecordFilesByIds` would produce: `pages.retrieve` for the page
+   * properties + `pollRecordPageContentChildren` for `page_content`. Used by
+   * `updateRecords` so the post-publish commit blob is byte-equal to what a
+   * fresh pull would return, sidestepping every shape-divergence class —
+   * properties Notion server-normalizes (date timezones, select option ids),
+   * `last_edited_time` / `last_edited_by` that change on write, FK relations
+   * Notion truncates to 25 on response, blocks the update API never touches.
+   */
+  private async refetchPageAsConnectorFile(pageId: string): Promise<ConnectorFile> {
+    const page = (await this.withRetry(() => this.client.pages.retrieve({ page_id: pageId }))) as PageObjectResponse;
+    const connectorFile = page as unknown as ConnectorFile;
+    try {
+      const childrenData = await this.pollRecordPageContentChildren(
+        page.id,
+        NotionConnector.PAGE_CONTENT_MAX_DEPTH,
+        page.id,
+      );
+      connectorFile['page_content'] = childrenData.children;
+    } catch (error) {
+      WSLogger.error({
+        source: 'NotionConnector',
+        message: `Failed to fetch content for page ${pageId} during post-update refetch`,
+        error,
+      });
+    }
+    return connectorFile;
+  }
+
+  /**
    * Update pages in Notion from raw JSON files.
    * Files should have an 'id' field and the properties to update.
    */
@@ -689,6 +719,14 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
+    const results: ConnectorFile[] = new Array<ConnectorFile>(files.length);
+    const updatedIndexes: number[] = [];
+
+    // Phase 1: write. Issue the PATCH for each file with writable changes.
+    // Files whose changedFields contain only read-only properties (rollup,
+    // formula, …) or transform to an empty update body skip the API call
+    // and pass through unchanged — they were no-ops, so the input file is
+    // already the canonical post-publish view.
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const changed = changedFields[i];
@@ -697,8 +735,6 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       const fileProperties = (file.properties as Record<string, unknown>) || {};
       const changedProperties = (changed.properties as Record<string, unknown>) || {};
 
-      // The sparse partial lacks each property's `type` wrapper, so we can't filter
-      // read-only props from `changedProperties` alone — look up types from the full file.
       const writableChangedProperties: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(changedProperties)) {
         const fileProp = fileProperties[key] as Record<string, unknown> | undefined;
@@ -707,7 +743,6 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         writableChangedProperties[key] = value;
       }
 
-      // Transform properties from read format to update format
       const properties = this.transformPropertiesForUpdate(writableChangedProperties);
 
       if (Object.keys(properties).length > 0) {
@@ -717,9 +752,22 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
             properties: properties as CreatePageParameters['properties'],
           }),
         );
+        updatedIndexes.push(i);
+      } else {
+        results[i] = file;
       }
     }
-    return files;
+
+    // Phase 2: refetch. For each file we actually wrote, GET the page back via
+    // the same path as `pullRecordFilesByIds` so the returned ConnectorFile is
+    // 100% byte-equal to a fresh pull. Refetch is per-page (Notion has no bulk
+    // endpoint) but only fires for indexes that had a real write.
+    for (const index of updatedIndexes) {
+      const pageId = files[index].id as string;
+      results[index] = await this.refetchPageAsConnectorFile(pageId);
+    }
+
+    return results;
   }
 
   /**

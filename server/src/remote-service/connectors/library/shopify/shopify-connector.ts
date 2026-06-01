@@ -422,12 +422,14 @@ export class ShopifyConnector extends Connector {
     const entityType = tableSpec.id.wsId as EntityType;
     this.assertWritable(entityType);
 
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const entityId = String(files[i].id);
       const input = this.stripReadOnlyFields(changedFields[i] as ConnectorFile, entityType, 'update');
-      await this.client.updateEntity(entityType, entityId, input);
+      const updated = await this.client.updateEntity(entityType, entityId, input);
+      results.push(updated as unknown as ConnectorFile);
     }
-    return files;
+    return results;
   }
 
   /**

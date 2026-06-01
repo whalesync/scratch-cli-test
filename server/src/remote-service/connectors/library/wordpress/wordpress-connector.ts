@@ -298,7 +298,17 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
 
     const batchResponse = await this.client.batchRequest(requests);
     this.assertBatchValidation(batchResponse, requests);
-    return files;
+    // After validation passes every `responses[i].body` is the persisted
+    // WordPressRecord (or an error wrapper for skipped rows). Map back
+    // parallel to `files`; fall back to the input file for any non-record
+    // body (defensive — shouldn't happen post-validation).
+    return batchResponse.responses.map((item, i) => {
+      const body = item?.body as Record<string, unknown> | undefined;
+      if (body && typeof body === 'object' && 'id' in body) {
+        return body as ConnectorFile;
+      }
+      return files[i];
+    });
   }
 
   /**

@@ -187,15 +187,17 @@ export class AudiencefulConnector extends Connector {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const changed = changedFields[i];
       // Email is the lookup key for updatePerson — always include it, even when unchanged.
       const payload: Record<string, unknown> = { ...changed, email: changed.email ?? file.email };
       const updateData = this.transformToUpdateRequest(payload);
-      await this.client.updatePerson(updateData);
+      const updated = await this.client.updatePerson(updateData);
+      results.push(updated as unknown as ConnectorFile);
     }
-    return files;
+    return results;
   }
 
   /**

@@ -292,8 +292,8 @@ export class AirtableConnector extends Connector {
       fields: this.processFieldDataWithSchema(changedFields[i] as ConnectorFile, tableSpec),
     }));
 
-    await this.client.updateRecords(baseId, tableId, airtableRecords);
-    return files;
+    const updated = await this.client.updateRecords(baseId, tableId, airtableRecords);
+    return updated.map((record) => record as unknown as ConnectorFile);
   }
 
   /**

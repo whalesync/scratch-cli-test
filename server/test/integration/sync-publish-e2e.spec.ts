@@ -21,6 +21,7 @@ import { AssetIndexService } from 'src/asset/asset-index.service';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { StubMetricsService } from 'src/metrics/stub-metrics.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexEntry, FileIndexService } from 'src/publish-plan/file-index.service';
@@ -77,6 +78,8 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     uploadFile: jest.Mock;
     resolveAssetReference: (asset: { remoteAssetId: string }) => string;
   };
+  // Per-test toggle for UPDATE_RECORDS_RETURNS_REMOTE_DATA. Default off.
+  let useRemoteReturnedRowsFlag: boolean;
 
   // Entity IDs
   let orgId: string;
@@ -238,7 +241,12 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
                 }
               }
             }
-            return Promise.resolve(undefined);
+            // Default echo behavior — connectors are expected to return
+            // ConnectorFile[] after the abstract signature change in
+            // `2026-05-29-publish-pk-stringification-bug.md` step 1.
+            // Individual tests override `.mockImplementationOnce` to
+            // simulate server-side rewrites under the flag.
+            return Promise.resolve(files);
           },
         ),
       deleteRecords: jest.fn().mockResolvedValue(undefined),
@@ -296,6 +304,10 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       credentialEncryptionService,
     );
 
+    // Per-test toggle for UPDATE_RECORDS_RETURNS_REMOTE_DATA. Defaults
+    // to false so existing assertions exercise the sent-payload path; the
+    // flag-on variant flips it to true before calling `runPipeline`.
+    useRemoteReturnedRowsFlag = false;
     publishRunService = new PublishPlanRunService(
       dbService,
       connectorsService,
@@ -305,6 +317,9 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       scratchGitService,
       publishSchemaService,
       publishRefResolverService,
+      {
+        getBooleanFlag: jest.fn().mockImplementation(() => Promise.resolve(useRemoteReturnedRowsFlag)),
+      } as unknown as ExperimentsService,
     );
 
     // ---- Create DB entities ----
@@ -1168,6 +1183,8 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     uploadFile: jest.Mock;
     resolveAssetReference: (asset: { remoteAssetId: string }) => string;
   };
+  // Per-test toggle for UPDATE_RECORDS_RETURNS_REMOTE_DATA. Default off.
+  let useRemoteReturnedRowsFlag: boolean;
 
   // Entity IDs
   let orgId: string;
@@ -1339,7 +1356,12 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
                 }
               }
             }
-            return Promise.resolve(undefined);
+            // Default echo behavior — connectors are expected to return
+            // ConnectorFile[] after the abstract signature change in
+            // `2026-05-29-publish-pk-stringification-bug.md` step 1.
+            // Individual tests override `.mockImplementationOnce` to
+            // simulate server-side rewrites under the flag.
+            return Promise.resolve(files);
           },
         ),
       deleteRecords: jest.fn().mockResolvedValue(undefined),
@@ -1397,6 +1419,10 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       credentialEncryptionService,
     );
 
+    // Per-test toggle for UPDATE_RECORDS_RETURNS_REMOTE_DATA. Defaults
+    // to false so existing assertions exercise the sent-payload path; the
+    // flag-on variant flips it to true before calling `runPipeline`.
+    useRemoteReturnedRowsFlag = false;
     publishRunService = new PublishPlanRunService(
       dbService,
       connectorsService,
@@ -1406,6 +1432,9 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       scratchGitService,
       publishSchemaService,
       publishRefResolverService,
+      {
+        getBooleanFlag: jest.fn().mockImplementation(() => Promise.resolve(useRemoteReturnedRowsFlag)),
+      } as unknown as ExperimentsService,
     );
 
     // ---- Create DB entities ----
@@ -1645,6 +1674,73 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     // rebaseDirty should have been called
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(scratchGitService.rebaseDirty).toHaveBeenCalled();
+  }, 60_000);
+
+  it('respects UPDATE_RECORDS_RETURNS_REMOTE_DATA: persists connector-returned row to main', async () => {
+    // Step 7 from `docs/plans/2026-05-29-publish-pk-stringification-bug.md`:
+    // when the flag is on, the git commit on `main` should reflect the
+    // row the connector says it actually persisted (carrying server-side
+    // rewrites — trigger-set timestamps, native PK types, normalized
+    // values), not the payload we sent.
+    useRemoteReturnedRowsFlag = true;
+
+    // Inject a `lastUpdated` field into every UPDATE response, mimicking a
+    // Postgres `BEFORE UPDATE` trigger that overwrites the column. Whatever
+    // we sent is irrelevant — the connector now returns this value.
+    const SERVER_SET_TIMESTAMP = '2099-01-01T00:00:00.000Z';
+    mockConnector.updateRecords.mockImplementationOnce((_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) =>
+      Promise.resolve(files.map((file) => ({ ...file, lastUpdated: SERVER_SET_TIMESTAMP }))),
+    );
+
+    // ---- Identical setup to the V2 baseline test above ----
+    const { sourceTags, destTags } = generateTagData();
+    const { sourcePosts, destPosts } = generatePostData();
+
+    vfs.seed(MAIN_BRANCH, destTags);
+    vfs.seed(MAIN_BRANCH, destPosts);
+    vfs.seed(DIRTY_BRANCH, destTags);
+    vfs.seed(DIRTY_BRANCH, destPosts);
+    vfs.seed(DIRTY_BRANCH, sourceTags);
+    vfs.seed(DIRTY_BRANCH, sourcePosts);
+
+    const destFileIndexEntries: FileIndexEntry[] = [];
+    for (let i = 0; i < MATCH_COUNT; i++) {
+      destFileIndexEntries.push({
+        workbookId,
+        folderPath: 'dest-tags',
+        recordId: `${100 + i}`,
+        filename: `tag-match-${i}.json`,
+      });
+    }
+    await fileIndexService.upsertBatch(destFileIndexEntries);
+
+    const tagsTableMapping: TableMapping = {
+      sourceDataFolderId: sourceTagsFolderId,
+      destinationDataFolderId: destTagsFolderId,
+      columnMappings: [
+        { sourceColumnId: 'fields.Name', destinationColumnId: 'name' },
+        { sourceColumnId: 'fields.Slug', destinationColumnId: 'slug' },
+      ] as ColumnMapping[],
+      recordMatching: { sourceColumnId: 'fields.Slug', destinationColumnId: 'slug' },
+    };
+    const tagsResult = await syncService.syncTableMapping(syncId, tagsTableMapping, workbookId, actor, 'DATA');
+    expect(tagsResult.errors).toEqual([]);
+    // Sync produced at least one match → an `edit` op will hit dispatchUpdateBatch.
+    expect(tagsResult.recordsUpdated).toBeGreaterThan(0);
+
+    const buildResult = await publishPlanService.buildPipeline(workbookId, userId, connectorAccountId);
+    expect(buildResult.status).toBe('planned');
+
+    const runResult = await publishRunService.runPipeline(buildResult.pipelineId);
+    expect(runResult.status).toBe('completed');
+    expect(mockConnector.updateRecords).toHaveBeenCalled();
+
+    // ---- Assert the connector-returned `lastUpdated` made it to `main`. ----
+    const mainFiles = vfs.getAllFiles(MAIN_BRANCH);
+    const editedTagOnMain = mainFiles.get('dest-tags/tag-match-0.json');
+    expect(editedTagOnMain).toBeDefined();
+    const editedTagParsed = JSON.parse(editedTagOnMain!) as ParsedRecord;
+    expect(editedTagParsed.lastUpdated).toBe(SERVER_SET_TIMESTAMP);
   }, 60_000);
 
   it('should use composite V2 repo IDs when checking for diffs without a connectorAccountId', async () => {

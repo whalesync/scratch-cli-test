@@ -435,10 +435,13 @@ export class PostgresConnector extends Connector {
         return { id: file[pk] as string | number, data };
       });
 
-      await client.updateMany(schema, tableName, pk, records);
-      // Step-1 placeholder: return the sent payload. Step 2 will plumb
-      // through `client.updateMany`'s `RETURNING *` rows here.
-      return files;
+      const persisted = await client.updateMany(schema, tableName, pk, records);
+      // `updateMany` runs `UPDATE … RETURNING t.*` so each entry is
+      // either the row Postgres actually stored (trigger-set timestamps,
+      // normalized values, native PK types) or 'not_found'. Map back to
+      // `ConnectorFile[]` parallel to `files`; fall back to the sent
+      // payload only when the row went missing mid-publish.
+      return persisted.map((row, i) => (row === 'not_found' ? files[i] : (row as ConnectorFile)));
     });
   }
 

@@ -157,18 +157,20 @@ export class MemberstackConnector extends Connector {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const memberId = files[i].id as string;
       const changed = changedFields[i];
-      await this.client.updateMember(memberId, {
+      const updated = await this.client.updateMember(memberId, {
         email: (changed.auth as { email?: string } | undefined)?.email,
         customFields: changed.customFields as Record<string, string> | undefined,
         metaData: changed.metaData as Record<string, unknown> | undefined,
         json: changed.json as Record<string, unknown> | undefined,
         loginRedirect: changed.loginRedirect as string | undefined,
       });
+      results.push(updated as unknown as ConnectorFile);
     }
-    return files;
+    return results;
   }
 
   async deleteRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {

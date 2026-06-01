@@ -252,6 +252,7 @@ export class LinearConnector extends Connector {
     const entityType = tableSpec.id.wsId as EntityType;
     this.assertWritable(entityType);
 
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const entityId = String(files[i].id);
       const input = this.stripReadOnlyFields(
@@ -259,9 +260,10 @@ export class LinearConnector extends Connector {
         entityType as WritableEntityType,
         'update',
       );
-      await this.updateEntity(entityType as WritableEntityType, entityId, input);
+      const updated = await this.updateEntity(entityType as WritableEntityType, entityId, input);
+      results.push(updated as unknown as ConnectorFile);
     }
-    return files;
+    return results;
   }
 
   /**
@@ -386,14 +388,12 @@ export class LinearConnector extends Connector {
     entityType: WritableEntityType,
     id: string,
     input: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<Record<string, unknown>> {
     switch (entityType) {
       case 'issues':
-        await this.client.updateIssue(id, input);
-        break;
+        return this.client.updateIssue(id, input);
       case 'projects':
-        await this.client.updateProject(id, input);
-        break;
+        return this.client.updateProject(id, input);
     }
   }
 

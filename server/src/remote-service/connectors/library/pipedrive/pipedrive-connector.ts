@@ -199,6 +199,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
     const customFieldKeys = await this.getCustomFieldKeys(entityType);
 
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const entityId = parseInt(String(file.id), 10);
@@ -206,9 +207,10 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
       const cf = changedFields?.[i];
       const data = cf ?? this.extractWritableData(file);
 
-      await this.client.updateEntity(entityType, entityId, data, customFieldKeys);
+      const updated = await this.client.updateEntity(entityType, entityId, data, customFieldKeys);
+      results.push(updated as unknown as ConnectorFile);
     }
-    return files;
+    return results;
   }
 
   /**

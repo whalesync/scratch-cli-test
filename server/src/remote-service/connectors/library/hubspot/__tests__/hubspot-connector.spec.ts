@@ -241,6 +241,62 @@ describe('HubspotConnector', () => {
     });
   });
 
+  describe('post-write refetch', () => {
+    it('returns the refetched record (not the input) when properties were updated', async () => {
+      const tableSpec = buildTableSpec(OBJECT_TYPE, { name: {}, email: {} });
+      const file = makeFile('77', { name: 'Old', email: 'old@b.com' });
+
+      // The refetch GET returns the server-canonical row — server-normalized
+      // values, default-set timestamps. updateRecords must surface this, not
+      // the input, so the post-publish commit is byte-equal to a fresh pull.
+      mockGetRecord.mockResolvedValueOnce({
+        id: '77',
+        properties: {
+          name: 'New from server',
+          email: 'old@b.com',
+          hs_lastmodifieddate: '2026-06-01T18:00:00Z',
+        },
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2026-06-01T18:00:00Z',
+        archived: false,
+      });
+
+      const [result] = await connector.updateRecords(tableSpec, [file], [{ properties: { name: true } }]);
+
+      expect(mockUpdateRecord).toHaveBeenCalledTimes(1);
+      expect(mockGetRecord).toHaveBeenCalledWith(OBJECT_TYPE, '77', expect.any(Array), expect.any(Array));
+      expect((result as { properties: Record<string, unknown> }).properties.name).toBe('New from server');
+      expect((result as { properties: Record<string, unknown> }).properties.hs_lastmodifieddate).toBe(
+        '2026-06-01T18:00:00Z',
+      );
+    });
+
+    it('returns the input verbatim when no write fired (empty changeset, no-op)', async () => {
+      const tableSpec = buildTableSpec(OBJECT_TYPE, { hs_object_id: { readonly: true } });
+      const file = makeFile('99', { hs_object_id: '99' });
+
+      const result = await connector.updateRecords(tableSpec, [file], [{ properties: { hs_object_id: true } }]);
+
+      expect(mockUpdateRecord).not.toHaveBeenCalled();
+      // No write → no refetch. The input file is already canonical.
+      expect(mockGetRecord).not.toHaveBeenCalled();
+      expect(result[0]).toBe(file);
+    });
+
+    it('falls back to the input file when the refetch GET returns undefined', async () => {
+      const tableSpec = buildTableSpec(OBJECT_TYPE, { name: {} });
+      const file = makeFile('42', { name: 'Acme' });
+
+      // Concurrent delete: write succeeds, refetch returns undefined.
+      mockGetRecord.mockResolvedValueOnce(undefined);
+
+      const [result] = await connector.updateRecords(tableSpec, [file], [{ properties: { name: true } }]);
+
+      expect(mockUpdateRecord).toHaveBeenCalledTimes(1);
+      expect(result).toBe(file);
+    });
+  });
+
   // Fixture-backed test using a realistic companies schema shape (raw JSON, the
   // form the spec takes once persisted). Exercises the full serialized schema
   // surface — anyOf: [string, null], x-scratch-readonly annotations on both

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
+import type { youtube_v3 } from '@googleapis/youtube';
 import { connectorMetadata } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -185,6 +186,7 @@ export class YouTubeConnector extends Connector {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const changed = changedFields[i];
@@ -197,8 +199,9 @@ export class YouTubeConnector extends Connector {
         tags: changed.tags,
       };
 
+      let persisted: youtube_v3.Schema$Video | undefined;
       if (Object.values(updateData).some((value) => value !== undefined)) {
-        await this.apiClient.updateVideo(videoId, updateData);
+        persisted = await this.apiClient.updateVideo(videoId, updateData);
       }
 
       // Transcript update is keyed by transcriptId from the full file; only push when the transcript text changed.
@@ -209,8 +212,13 @@ export class YouTubeConnector extends Connector {
           console.warn(`Failed to update transcript for video ${videoId}:`, error);
         }
       }
+
+      // Use the video snippet YouTube actually persisted (carries any
+      // server-side normalization); fall back to the input file when no
+      // metadata update fired or the response was missing.
+      results.push((persisted as unknown as ConnectorFile) ?? file);
     }
-    return files;
+    return results;
   }
 
   /**

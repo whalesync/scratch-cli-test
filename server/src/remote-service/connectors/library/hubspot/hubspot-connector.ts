@@ -243,12 +243,17 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     const propertyNames = await this.getPropertyNames(objectType);
     const associationTypes = this.getAssociationTypes(objectType);
 
+    const results: ConnectorFile[] = new Array<ConnectorFile>(files.length);
+    const writtenIndexes: number[] = [];
+
+    // Phase 1: writes. PATCH /properties and sync associations for side effects.
+    // Track which indexes actually had a write so Phase 2 only refetches those.
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const recordId = String(file.id);
       const cf = changedFields?.[i];
+      let wrote = false;
 
-      // Update properties if changed (or if changedFields not provided)
       const hasPropertyChanges = !cf || 'properties' in cf;
       if (hasPropertyChanges) {
         let properties: Record<string, unknown>;
@@ -267,10 +272,10 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
         }
         if (Object.keys(properties).length > 0) {
           await this.client.updateRecord(objectType, recordId, properties);
+          wrote = true;
         }
       }
 
-      // Sync associations if changed (or if changedFields not provided)
       const hasAssociationChanges = !cf || 'associations' in cf;
       if (hasAssociationChanges && associationTypes.length > 0) {
         // Fetch current remote state to compute the diff
@@ -279,10 +284,40 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
           const currentAssociations = currentRecord.associations ?? {};
           const desiredAssociations = (file as unknown as HubspotRecord).associations ?? {};
           await this.syncAssociations(objectType, recordId, currentAssociations, desiredAssociations);
+          // Conservative: mark as written even when syncAssociations was a
+          // no-op (desired == current). The cost is one extra GET in the
+          // refetch phase; the benefit is no need to plumb a "did anything
+          // actually change" signal through syncAssociations.
+          wrote = true;
         }
       }
+
+      if (wrote) {
+        writtenIndexes.push(i);
+      } else {
+        // No write fired for this row (empty changeset). Input is already
+        // canonical — same as what the next pull would return.
+        results[i] = file;
+      }
     }
-    return files;
+
+    // Phase 2: refetch. Mirror `pullRecordFilesByIds` (line 186) exactly so the
+    // returned ConnectorFile is byte-equal to a fresh pull — sidestepping every
+    // HubSpot-specific divergence: PATCH /properties returns only the default
+    // property set, never returns associations, and server-side property
+    // normalization (calculated fields, enum coercion) is only visible via GET.
+    // Per-record GET because HubSpot's batchReadRecords endpoint doesn't
+    // support `associations` (see hubspot-api-client.ts:172).
+    for (const index of writtenIndexes) {
+      const recordId = String(files[index].id);
+      const refetched = await this.client.getRecord(objectType, recordId, propertyNames, associationTypes);
+      // Record disappeared between write and refetch (e.g. concurrent delete).
+      // Fall back to input file; the dispatch-site identity assertion will
+      // catch any cross-row misalignment from a true mismatch.
+      results[index] = (refetched as unknown as ConnectorFile) ?? files[index];
+    }
+
+    return results;
   }
 
   /**

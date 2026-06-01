@@ -241,6 +241,11 @@ export class BrevoConnector extends Connector {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
+    const results: ConnectorFile[] = new Array<ConnectorFile>(files.length);
+
+    // Phase 1: writes. Brevo's update endpoints return 204 No Content (no
+    // echo), so the response carries no information — we just fire-and-await
+    // for side effects.
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const changed = changedFields[i];
@@ -267,7 +272,26 @@ export class BrevoConnector extends Connector {
         });
       }
     }
-    return files;
+
+    // Phase 2: refetch. Mirror `pullRecordFilesByIds` (line 178) so the
+    // returned ConnectorFile is byte-equal to a fresh pull — Brevo's update
+    // endpoints return no body, so the only way to know what was persisted
+    // is to GET it back. Per-record because Brevo has no bulk-read endpoint.
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      let refetched: unknown = null;
+      if (tableSpec.id.wsId === 'contacts') {
+        refetched = await this.client.getContact(file.id as number);
+      } else if (tableSpec.id.wsId === 'templates') {
+        refetched = await this.client.getTemplate(file.id as number);
+      }
+      // Record disappeared between write and refetch, or table type doesn't
+      // support refetch. Fall back to the input file; the dispatch-site
+      // identity assertion catches cross-row misalignment.
+      results[i] = (refetched as ConnectorFile | null) ?? file;
+    }
+
+    return results;
   }
 
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {

@@ -215,12 +215,14 @@ export class MocoConnector extends Connector {
   ): Promise<ConnectorFile[]> {
     const entityType = tableSpec.id.wsId as MocoEntityType;
 
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const entityId = parseInt(String(files[i].id), 10);
       const updateData = this.transformToUpdateRequest(entityType, changedFields[i]);
-      await this.client.updateEntity(entityType, entityId, updateData);
+      const updated = await this.client.updateEntity(entityType, entityId, updateData);
+      results.push(updated as unknown as ConnectorFile);
     }
-    return files;
+    return results;
   }
 
   /**

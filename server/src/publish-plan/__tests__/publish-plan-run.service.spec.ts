@@ -2,6 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CredentialEncryptionService } from '../../credential-encryption/credential-encryption.service';
 import { DbService } from '../../db/db.service';
+import { ExperimentsService } from '../../experiments/experiments.service';
 import { Connector } from '../../remote-service/connectors/connector';
 import { ConnectorsService } from '../../remote-service/connectors/connectors.service';
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
@@ -63,6 +64,13 @@ function makeDbMock() {
       },
       fileIndex: {
         deleteMany: jest.fn().mockResolvedValue({}),
+      },
+      user: {
+        // runPipeline looks up the plan's user to scope the
+        // UPDATE_RECORDS_RETURNS_REMOTE_DATA flag eval. Returning null is
+        // benign — the flag evaluates to false and the old (sent-payload)
+        // path is taken, which is what these tests assert against.
+        findUnique: jest.fn().mockResolvedValue(null),
       },
     },
   };
@@ -127,6 +135,12 @@ describe('PublishPlanRunService', () => {
       }),
     } as unknown as jest.Mocked<SchemaHelperService>;
 
+    const experimentsService = {
+      // Flag-off by default in these tests — they assert against the
+      // sent-payload commit path, not the connector-returned-rows path.
+      getBooleanFlag: jest.fn().mockResolvedValue(false),
+    } as unknown as jest.Mocked<ExperimentsService>;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PublishPlanRunService,
@@ -138,6 +152,7 @@ describe('PublishPlanRunService', () => {
         { provide: FileReferenceService, useValue: fileReferenceService },
         { provide: RefResolverService, useValue: refResolverService },
         { provide: SchemaHelperService, useValue: schemaService },
+        { provide: ExperimentsService, useValue: experimentsService },
       ],
     }).compile();
 

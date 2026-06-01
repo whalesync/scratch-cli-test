@@ -203,17 +203,22 @@ export class WixBlogConnector extends Connector {
    */
   async updateRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     // Wix doesn't support bulk update, so we update one at a time
+    const results: ConnectorFile[] = [];
     for (const file of files) {
       const postId = (file._id || file.id) as string;
       const postData = file as unknown as DraftPost;
 
-      await this.withRetry(() =>
+      const response = await this.withRetry(() =>
         this.wixClient.draftPosts.updateDraftPost(postId, postData, {
           fieldsets: ['RICH_CONTENT'],
         }),
       );
+      // `updateDraftPost` returns `UpdateDraftPostResponse { draftPost: DraftPost }`.
+      // Fall back to the input file when the response is missing `draftPost`.
+      const persisted = (response as { draftPost?: unknown })?.draftPost;
+      results.push((persisted as ConnectorFile) ?? file);
     }
-    return files;
+    return results;
   }
 
   /**

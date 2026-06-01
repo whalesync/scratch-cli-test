@@ -282,6 +282,7 @@ export class IntercomConnector extends Connector {
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
+    const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const changed = changedFields[i];
@@ -297,7 +298,8 @@ export class IntercomConnector extends Connector {
           parent_type: changed.parent_type as 'collection' | 'section' | undefined,
           translated_content: changed.translated_content as Record<string, unknown> | undefined,
         };
-        await this.client.updateArticle(articleId, data);
+        const updated = await this.client.updateArticle(articleId, data);
+        results.push(updated as unknown as ConnectorFile);
       } else if (tableSpec.id.wsId === 'collections') {
         const collectionId = file.id as string;
         const data: IntercomUpdateCollectionRequest = {
@@ -308,10 +310,13 @@ export class IntercomConnector extends Connector {
           parent_id: changed.parent_id as string | undefined,
           help_center_id: changed.help_center_id as number | undefined,
         };
-        await this.client.updateCollection(collectionId, data);
+        const updated = await this.client.updateCollection(collectionId, data);
+        results.push(updated as unknown as ConnectorFile);
+      } else {
+        results.push(file);
       }
     }
-    return files;
+    return results;
   }
 
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {

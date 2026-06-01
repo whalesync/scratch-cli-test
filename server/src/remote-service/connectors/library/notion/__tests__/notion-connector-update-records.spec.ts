@@ -7,10 +7,13 @@ jest.mock('../../../display-names', () => ({
 }));
 
 const mockPagesUpdate = jest.fn();
+const mockPagesRetrieve = jest.fn();
+const mockBlocksChildrenList = jest.fn();
 
 jest.mock('@notionhq/client', () => ({
   Client: jest.fn().mockImplementation(() => ({
-    pages: { update: mockPagesUpdate },
+    pages: { update: mockPagesUpdate, retrieve: mockPagesRetrieve },
+    blocks: { children: { list: mockBlocksChildrenList } },
   })),
   APIResponseError: class extends Error {},
   RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
@@ -44,6 +47,14 @@ describe('NotionConnector.updateRecords', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPagesUpdate.mockResolvedValue(undefined);
+    // updateRecords refetches via pages.retrieve + blocks.children.list after a
+    // successful write so the returned ConnectorFile is byte-equal to a fresh
+    // pull. Tests that don't care about the refetch shape just need both calls
+    // to resolve to something benign.
+    mockPagesRetrieve.mockImplementation(({ page_id }: { page_id: string }) =>
+      Promise.resolve({ object: 'page', id: page_id, properties: {} }),
+    );
+    mockBlocksChildrenList.mockResolvedValue({ results: [], has_more: false, next_cursor: null });
     connector = new NotionConnector('fake-key');
   });
 
@@ -95,8 +106,51 @@ describe('NotionConnector.updateRecords', () => {
       { properties: { Score: { formula: { type: 'number', number: 99 } } } },
     ];
 
-    await connector.updateRecords(buildTableSpec(), files, changedFields);
+    const result = await connector.updateRecords(buildTableSpec(), files, changedFields);
 
     expect(mockPagesUpdate).not.toHaveBeenCalled();
+    // No write → no refetch. Skipped rows pass the input file through verbatim.
+    expect(mockPagesRetrieve).not.toHaveBeenCalled();
+    expect(result[0]).toBe(files[0]);
+  });
+
+  it('returns the refetched page (not the input file) for rows that were actually updated', async () => {
+    const files: ConnectorFile[] = [
+      {
+        id: 'page_1',
+        properties: {
+          Title: { id: 'pid_a', type: 'title', title: [{ plain_text: 'Old' }] },
+        },
+        // page_content present on the input to simulate what pull would have written.
+        page_content: [{ id: 'block_stale', type: 'paragraph' }],
+      },
+    ];
+    const changedFields: Record<string, unknown>[] = [{ properties: { Title: { title: [{ plain_text: 'New' }] } } }];
+
+    // Refetch returns the server-canonical page (server-normalized Title, new
+    // last_edited_time, etc.) and refetched page_content. updateRecords must
+    // surface this — not the input file — so the post-publish commit is
+    // byte-equal to what a fresh pull would produce.
+    mockPagesRetrieve.mockResolvedValueOnce({
+      object: 'page',
+      id: 'page_1',
+      properties: {
+        Title: { id: 'pid_a', type: 'title', title: [{ plain_text: 'New', annotations: {} }] },
+      },
+      last_edited_time: '2026-06-01T18:00:00.000Z',
+    });
+    mockBlocksChildrenList.mockResolvedValueOnce({
+      results: [{ id: 'block_fresh', type: 'paragraph', has_children: false }],
+      has_more: false,
+      next_cursor: null,
+    });
+
+    const [result] = await connector.updateRecords(buildTableSpec(), files, changedFields);
+
+    expect(mockPagesUpdate).toHaveBeenCalledTimes(1);
+    expect(mockPagesRetrieve).toHaveBeenCalledWith({ page_id: 'page_1' });
+    expect(result).not.toBe(files[0]);
+    expect((result as { last_edited_time?: string }).last_edited_time).toBe('2026-06-01T18:00:00.000Z');
+    expect((result as { page_content?: { id: string }[] }).page_content?.[0]?.id).toBe('block_fresh');
   });
 });

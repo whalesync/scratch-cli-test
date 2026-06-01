@@ -564,6 +564,8 @@ describe('Fetch → Edit → Publish Integration', () => {
       mockScratchGitService,
       schemaHelperService,
       refResolverService,
+      // Flag always off → tests exercise the pre-existing sent-payload path.
+      { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
     );
   });
 

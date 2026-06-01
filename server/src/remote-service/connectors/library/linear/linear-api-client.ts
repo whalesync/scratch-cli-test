@@ -310,16 +310,19 @@ export class LinearApiClient {
   }
 
   /**
-   * Update an issue.
+   * Update an issue. Returns the persisted entity selected by the
+   * mutation (`issue { ${ISSUES_QUERY_FIELDS} }`) so the caller can write
+   * back the server-side state (computed/normalized fields, timestamps).
    */
-  async updateIssue(id: string, input: Record<string, unknown>): Promise<void> {
+  async updateIssue(id: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
     const data = await this.query<{
-      issueUpdate: { success: boolean };
+      issueUpdate: { success: boolean; issue: Record<string, unknown> | null };
     }>(ISSUES_UPDATE_MUTATION, { id, input });
 
-    if (!data.issueUpdate.success) {
+    if (!data.issueUpdate.success || !data.issueUpdate.issue) {
       throw new LinearError('Failed to update issue', 500);
     }
+    return data.issueUpdate.issue;
   }
 
   /**
@@ -351,16 +354,18 @@ export class LinearApiClient {
   }
 
   /**
-   * Update a project.
+   * Update a project. Returns the persisted entity selected by the
+   * mutation (`project { ${PROJECTS_QUERY_FIELDS} }`).
    */
-  async updateProject(id: string, input: Record<string, unknown>): Promise<void> {
+  async updateProject(id: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
     const data = await this.query<{
-      projectUpdate: { success: boolean };
+      projectUpdate: { success: boolean; project: Record<string, unknown> | null };
     }>(PROJECTS_UPDATE_MUTATION, { id, input });
 
-    if (!data.projectUpdate.success) {
+    if (!data.projectUpdate.success || !data.projectUpdate.project) {
       throw new LinearError('Failed to update project', 500);
     }
+    return data.projectUpdate.project;
   }
 
   /**

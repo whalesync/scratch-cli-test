@@ -16,30 +16,26 @@ import { runDriver } from "../src/driver";
 const postgresUrl = process.env.DATABASE_URL;
 const describeIfPostgres = postgresUrl ? describe : describe.skip;
 
-// All tests in this suite are skipped pending a driver-script rewrite for the
-// post-slice-F single-worktree layout. The driver verifies record state at
-// three on-disk locations — `.scratch/connections/master/<conn>/`,
-// `.scratch/connections/dirty/<conn>/`, and the working tree — but the first
-// two no longer exist after the simplification described in
-// docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md. Review state
-// is now held in `.scratch/connections/<conn>/accepted-patches.json` and the
-// "published" view comes from `refs/heads/main` in the bare repo, neither of
-// which the driver currently knows how to inspect.
+// The driver-script rewrite for the slice-F local-workspace layout landed on
+// 2026-05-29, so this suite is back online for the edit/create/delete cases.
 //
-// Restoring these tests requires reworking `scripts/driver-run.js` (the
-// master/dirty location helpers near getMasterConnectionDir/getDirtyConnectionDir
-// and the per-location verification loops) to read from the bare repo +
-// accepted-patches.json instead.
+// The two `pseudo-ref FK` cases remain `.skip`ped pending a fix for the
+// backfill / re-anchor bug documented in
+// docs/plans/2026-06-01-publish-backfill-reanchor-bug.md: after the
+// server-side publish-plan refactor, the CLI's `accepted-patches.json` is no
+// longer cleared for patches that contained an `@/...` pseudo-ref, so the
+// post-publish working tree silently un-resolves the FK. Un-skip once one of
+// the three remediation options in that plan ships.
 describeIfPostgres("driver: publish", () => {
-  it.skip("edit: updates a record end-to-end", () => {
+  it("edit: updates a record end-to-end", () => {
     runDriver({ count: 1 });
   });
 
-  it.skip("create: adds a new record end-to-end", () => {
+  it("create: adds a new record end-to-end", () => {
     runDriver({ count: 1, editCount: 0, createCount: 1 });
   });
 
-  it.skip("delete: removes a record end-to-end", () => {
+  it("delete: removes a record end-to-end", () => {
     runDriver({ count: 1, editCount: 0, deleteCount: 1 });
   });
 

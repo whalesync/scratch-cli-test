@@ -38,6 +38,29 @@ import { WEBFLOW_ECOMMERCE_COLLECTION_SLUGS } from './webflow-types';
 
 export const WEBFLOW_DEFAULT_BATCH_SIZE = 100;
 
+/**
+ * Normalize a Webflow page-metadata object into the ConnectorFile shape we
+ * commit to disk. Used by both `pullPages` and `updateRecords` (pages branch,
+ * applied to the post-write refetch result). Whitelists the same set of fields
+ * on both sides and converts `createdOn`/`lastUpdated` from `Date` to ISO
+ * strings so the post-publish git blob is byte-equal to a fresh pull.
+ */
+function normalizeWebflowPageForFile(page: Webflow.Page): ConnectorFile {
+  return {
+    id: page.id,
+    title: page.title,
+    slug: page.slug,
+    publishedPath: page.publishedPath,
+    parentId: page.parentId,
+    archived: page.archived,
+    draft: page.draft,
+    seo: page.seo,
+    openGraph: page.openGraph,
+    createdOn: page.createdOn instanceof Date ? page.createdOn.toISOString() : page.createdOn,
+    lastUpdated: page.lastUpdated instanceof Date ? page.lastUpdated.toISOString() : page.lastUpdated,
+  } as unknown as ConnectorFile;
+}
+
 const WEBFLOW_RETRY_OPTS: WithRetryOpts = {
   isRateLimited: (error) => error instanceof TooManyRequestsError,
   getRetryAfterS: (error) => {
@@ -352,22 +375,7 @@ export class WebflowConnector extends Connector {
         break;
       }
 
-      const files: ConnectorFile[] = pages.map(
-        (page) =>
-          ({
-            id: page.id,
-            title: page.title,
-            slug: page.slug,
-            publishedPath: page.publishedPath,
-            parentId: page.parentId,
-            archived: page.archived,
-            draft: page.draft,
-            seo: page.seo,
-            openGraph: page.openGraph,
-            createdOn: page.createdOn instanceof Date ? page.createdOn.toISOString() : page.createdOn,
-            lastUpdated: page.lastUpdated instanceof Date ? page.lastUpdated.toISOString() : page.lastUpdated,
-          }) as unknown as ConnectorFile,
-      );
+      const files: ConnectorFile[] = pages.map((page) => normalizeWebflowPageForFile(page));
 
       await callback({ files });
 
@@ -572,6 +580,7 @@ export class WebflowConnector extends Connector {
 
     // Handle pages table — update page settings one at a time
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
+      const pageResults: ConnectorFile[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const source = changedFields?.[i] ?? file;
@@ -585,9 +594,20 @@ export class WebflowConnector extends Connector {
 
         if (Object.keys(update).length > 0) {
           await this.withRetry(() => this.client.pages.updatePageSettings(pageId, update as Webflow.PageMetadataWrite));
+          // Refetch via getMetadata and route through the same normalizer as
+          // pullPages so the returned ConnectorFile is byte-equal to a fresh
+          // pull. updatePageSettings does return a `Webflow.Page` directly,
+          // but going through getMetadata + normalizeWebflowPageForFile keeps
+          // a single source of truth for the on-disk shape and matches the
+          // refetch pattern used by Notion + HubSpot updateRecords.
+          const refetched = await this.withRetry(() => this.client.pages.getMetadata(pageId));
+          pageResults.push(normalizeWebflowPageForFile(refetched));
+        } else {
+          // No write fired — input file is already canonical.
+          pageResults.push(file);
         }
       }
-      return files;
+      return pageResults;
     }
 
     const items: Webflow.CollectionItemWithIdInput[] = [];
@@ -604,10 +624,19 @@ export class WebflowConnector extends Connector {
       items.push(item);
     }
 
-    await this.withRetry(() =>
+    const response = await this.withRetry(() =>
       this.client.collections.items.updateItemsLive(collectionId, { skipInvalidFiles: false, items }),
     );
-    return files;
+    // `updateItemsLive` returns the persisted items as a list. Map them
+    // back to input order by id; missing rows fall back to the input file.
+    const responseItems = (response as { items?: unknown[] } | undefined)?.items;
+    if (!Array.isArray(responseItems)) return files;
+    const byId = new Map<string, ConnectorFile>();
+    for (const item of responseItems) {
+      const id = (item as { id?: unknown }).id;
+      if (typeof id === 'string') byId.set(id, item as ConnectorFile);
+    }
+    return files.map((file) => byId.get(file.id as string) ?? file);
   }
 
   /**

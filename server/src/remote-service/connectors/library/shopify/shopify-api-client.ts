@@ -648,23 +648,22 @@ export class ShopifyApiClient {
   /**
    * Update an entity.
    */
-  async updateEntity(entityType: EntityType, id: string, input: Record<string, unknown>): Promise<void> {
+  async updateEntity(
+    entityType: EntityType,
+    id: string,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     switch (entityType) {
       case 'products':
-        await this.updateProduct(id, input as ShopifyProductInput);
-        break;
+        return this.updateProduct(id, input as ShopifyProductInput);
       case 'collections':
-        await this.updateCollection(id, input as ShopifyCollectionInput);
-        break;
+        return this.updateCollection(id, input as ShopifyCollectionInput);
       case 'pages':
-        await this.updatePage(id, input as ShopifyPageInput);
-        break;
+        return this.updatePage(id, input as ShopifyPageInput);
       case 'blogs':
-        await this.updateBlog(id, input as ShopifyBlogInput);
-        break;
+        return this.updateBlog(id, input as ShopifyBlogInput);
       case 'articles':
-        await this.updateArticle(id, input as ShopifyArticleInput);
-        break;
+        return this.updateArticle(id, input as ShopifyArticleInput);
       default:
         throw new ShopifyError(`Update not supported for entity type: ${entityType}`, 400);
     }
@@ -712,13 +711,17 @@ export class ShopifyApiClient {
     return data.productCreate.product;
   }
 
-  private async updateProduct(id: string, input: ShopifyProductInput): Promise<void> {
+  private async updateProduct(id: string, input: ShopifyProductInput): Promise<Record<string, unknown>> {
     const mutationInput = this.transformCategoryInput(input);
     const data = await this.query<{
       productUpdate: { product: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(PRODUCTS_UPDATE_MUTATION, { product: { ...mutationInput, id } });
 
     this.throwOnUserErrors(data.productUpdate.userErrors);
+    if (!data.productUpdate.product) {
+      throw new ShopifyError('Failed to update product', 500);
+    }
+    return data.productUpdate.product;
   }
 
   private async deleteProduct(id: string): Promise<void> {
@@ -745,12 +748,16 @@ export class ShopifyApiClient {
     return data.collectionCreate.collection;
   }
 
-  private async updateCollection(id: string, input: ShopifyCollectionInput): Promise<void> {
+  private async updateCollection(id: string, input: ShopifyCollectionInput): Promise<Record<string, unknown>> {
     const data = await this.query<{
       collectionUpdate: { collection: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(COLLECTIONS_UPDATE_MUTATION, { input: { ...input, id } });
 
     this.throwOnUserErrors(data.collectionUpdate.userErrors);
+    if (!data.collectionUpdate.collection) {
+      throw new ShopifyError('Failed to update collection', 500);
+    }
+    return data.collectionUpdate.collection;
   }
 
   private async deleteCollection(id: string): Promise<void> {
@@ -778,13 +785,17 @@ export class ShopifyApiClient {
     return data.pageCreate.page;
   }
 
-  private async updatePage(id: string, input: ShopifyPageInput): Promise<void> {
+  private async updatePage(id: string, input: ShopifyPageInput): Promise<Record<string, unknown>> {
     const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       pageUpdate: { page: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(PAGES_UPDATE_MUTATION, { id, page: mutationInput });
 
     this.throwOnUserErrors(data.pageUpdate.userErrors);
+    if (!data.pageUpdate.page) {
+      throw new ShopifyError('Failed to update page', 500);
+    }
+    return data.pageUpdate.page;
   }
 
   private async deletePage(id: string): Promise<void> {
@@ -812,13 +823,17 @@ export class ShopifyApiClient {
     return data.blogCreate.blog;
   }
 
-  private async updateBlog(id: string, input: ShopifyBlogInput): Promise<void> {
+  private async updateBlog(id: string, input: ShopifyBlogInput): Promise<Record<string, unknown>> {
     const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       blogUpdate: { blog: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(BLOGS_UPDATE_MUTATION, { id, blog: mutationInput });
 
     this.throwOnUserErrors(data.blogUpdate.userErrors);
+    if (!data.blogUpdate.blog) {
+      throw new ShopifyError('Failed to update blog', 500);
+    }
+    return data.blogUpdate.blog;
   }
 
   private async deleteBlog(id: string): Promise<void> {
@@ -877,13 +892,17 @@ export class ShopifyApiClient {
     return data.articleCreate.article;
   }
 
-  private async updateArticle(id: string, input: ShopifyArticleInput): Promise<void> {
+  private async updateArticle(id: string, input: ShopifyArticleInput): Promise<Record<string, unknown>> {
     const mutationInput = extractSeoMetafields({ ...input });
     const data = await this.query<{
       articleUpdate: { article: Record<string, unknown> | null; userErrors: ShopifyUserError[] };
     }>(ARTICLES_UPDATE_MUTATION, { id, article: mutationInput });
 
     this.throwOnUserErrors(data.articleUpdate.userErrors);
+    if (!data.articleUpdate.article) {
+      throw new ShopifyError('Failed to update article', 500);
+    }
+    return data.articleUpdate.article;
   }
 
   private async deleteArticle(id: string): Promise<void> {
