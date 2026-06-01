@@ -1,5 +1,7 @@
 # Preflight Validation for Scratch
 
+> **Status: Cancelled (2026-05-31).** This plan was superseded by the newer validation design and will not be implemented as written. Preserved here for historical reference.
+
 ## Summary
 
 When customers publish data from Scratch, they have no way to know if their data will succeed or meet their quality standards until the publish actually runs. Failures leave them in partially-published states with cryptic errors, and unwanted content makes it all the way to production. We propose a **preflight validation system** — built-in connector rules that catch predictable API failures, plus user-defined rules for content quality standards — so customers can find and fix problems before they publish.
