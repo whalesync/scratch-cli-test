@@ -86,6 +86,10 @@ export interface PublishPlanRecordsResponse {
   total: number;
   page: number;
   pageSize: number;
+  /** Total unique records (filePaths) across the entire plan, ignoring filters. */
+  affectedRecords: number;
+  /** Total operation rows across the entire plan, ignoring filters. */
+  totalOperations: number;
   filters: {
     folders: { id: string; path: string; count: number }[];
     phases: { phase: string; count: number }[];

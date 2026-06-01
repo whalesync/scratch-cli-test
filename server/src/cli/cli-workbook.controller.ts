@@ -27,6 +27,7 @@ import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildDto, PublishPlanRunDto } from 'src/publish-plan/dto/publish-v2.dto';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { userToActor } from 'src/users/types';
@@ -64,6 +65,7 @@ export class CliWorkbookController {
     private readonly workbookRepoService: WorkbookRepoService,
     private readonly bullEnqueuerService: BullEnqueuerService,
     private readonly publishPlanBuildService: PublishPlanBuildService,
+    private readonly publishPlanCrudService: PublishPlanCrudService,
     private readonly auditLogService: AuditLogService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
@@ -536,6 +538,45 @@ export class CliWorkbookController {
     });
 
     return { jobId: job.id ?? null };
+  }
+
+  /**
+   * CLI shim — read-only fetch of a publish plan. Used by `scratchmd files
+   * revert-plan` to discover `preMainCommitSha` and `connectorAccountId`.
+   * Read-only; no audit log entry.
+   */
+  @Get(':id/publish-v2/:planId')
+  async getPublishPlan(@Req() req: RequestWithUser, @Param('id') id: string, @Param('planId') planId: string) {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    return this.publishPlanCrudService.getPublishPlanById(id, planId);
+  }
+
+  /**
+   * CLI shim — paginated records for a publish plan. Used by `scratchmd
+   * files revert-plan` to enumerate which files to roll back. Read-only;
+   * no audit log entry.
+   */
+  @Get(':id/publish-v2/:planId/records')
+  async getPublishPlanRecords(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Param('planId') planId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('dataFolderId') dataFolderId?: string,
+    @Query('phase') phase?: string,
+    @Query('filename') filename?: string,
+  ) {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    return this.publishPlanCrudService.listPublishPlanRecords(planId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      dataFolderId,
+      phase,
+      filename,
+    });
   }
 
   // ── Workbook repo endpoints ─────────────────────────────────────────────────

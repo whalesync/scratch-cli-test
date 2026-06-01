@@ -6,20 +6,36 @@ import {
   Loader,
   Modal,
   Popover,
+  Select,
   Stack,
-  Switch,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { PublishPlanRecordRow } from '@spinner/shared-types';
-import { AlertTriangleIcon, ChevronDownIcon, ChevronRightIcon, Maximize2Icon } from 'lucide-react';
+import { AlertTriangleIcon, ChevronDownIcon, ChevronRightIcon, Maximize2Icon, RotateCcwIcon } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
-import { Text12Medium, Text12Regular } from '../../components/base/text';
+import { Text12Book, Text12Medium, Text12Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
-import { PlanRecordDiffMode, usePublishPlanRecordDiff } from '../../hooks/use-publish-plan-record-diff';
+import {
+  PlanRecordDiffMode,
+  usePublishPlanPostDiffersFromCurrent,
+  usePublishPlanRecordDiff,
+} from '../../hooks/use-publish-plan-record-diff';
 import { PHASE_ICONS } from '../../lib/publish-plan-icons';
 import { SideBySideDiff } from './diff-renderers';
+
+const DIFF_MODE_LABELS: Record<PlanRecordDiffMode, { left: string; right: string }> = {
+  'before-vs-after': { left: 'Before Publish', right: 'After Publish' },
+  'after-vs-current': { left: 'After Publish', right: 'Current' },
+  'before-vs-approved': { left: 'Before Publish', right: 'Approved Changes' },
+};
+
+const DIFF_MODE_OPTIONS: { value: PlanRecordDiffMode; label: string }[] = [
+  { value: 'before-vs-after', label: 'Before / After Publish' },
+  { value: 'after-vs-current', label: 'After Publish / Current' },
+  { value: 'before-vs-approved', label: 'Before Publish / Approved' },
+];
 
 type RecordStatus = 'added' | 'modified' | 'deleted';
 
@@ -104,10 +120,47 @@ function NoManualEditsHelp() {
   );
 }
 
-function NoUserDiffBanner() {
+/** Column-label strip above a side-by-side diff. Matches the
+ * `SideBySideDiff` grid (`1fr 1px 1fr`). Optional `leftActions` slot
+ * hosts the Roll-back link in the full-diff modal. */
+function DiffColumnHeader({
+  leftLabel,
+  rightLabel,
+  isNoUserDiff,
+  leftActions,
+}: {
+  leftLabel: string;
+  rightLabel: string;
+  isNoUserDiff: boolean;
+  leftActions?: React.ReactNode;
+}) {
   return (
-    <Box px="sm" py={4} style={{ background: 'var(--bg-panel)', borderBottom: '0.5px solid var(--fg-divider)' }}>
-      <NoManualEditsHelp />
+    <Box
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1px 1fr',
+        background: 'var(--bg-panel)',
+        borderBottom: '0.5px solid var(--fg-divider)',
+      }}
+    >
+      <Group px="sm" py={4} wrap="nowrap" align="center" gap="xs">
+        <Text12Regular c="var(--fg-muted)" fw={500}>
+          {leftLabel}
+        </Text12Regular>
+        {leftActions && (
+          <>
+            <Text12Regular c="var(--fg-muted)">·</Text12Regular>
+            {leftActions}
+          </>
+        )}
+      </Group>
+      <Box style={{ backgroundColor: 'var(--fg-divider)' }} />
+      <Group px="sm" py={4} wrap="nowrap" align="center" gap="sm">
+        <Text12Regular c="var(--fg-muted)" fw={500}>
+          {rightLabel}
+        </Text12Regular>
+        {isNoUserDiff && <NoManualEditsHelp />}
+      </Group>
     </Box>
   );
 }
@@ -116,17 +169,17 @@ function DiffView({
   original,
   modified,
   isLoading,
-  hideNoUserDiffBanner = false,
 }: {
   original: string | null;
   modified: string | null;
   isLoading: boolean;
-  /** Suppress the inline "No manual edits" banner — the modal renders the
-   * same indicator in the column header instead so the banner would be
-   * redundant. */
-  hideNoUserDiffBanner?: boolean;
 }) {
-  if (isLoading) {
+  // Only show the centered loader on a cold start (no data at all yet).
+  // During mode switches with `keepPreviousData`, SWR flips `isLoading`
+  // true while still returning the previous response — falling back to
+  // the loader here would blank out a diff we could otherwise leave
+  // visible until the new data arrives.
+  if (isLoading && original === null && modified === null) {
     return (
       <Box p="sm" style={{ display: 'flex', justifyContent: 'center' }}>
         <Loader size={14} />
@@ -134,14 +187,11 @@ function DiffView({
     );
   }
 
-  const isNoUserDiff = original !== null && modified !== null && original === modified;
+  return <SideBySideDiff fromValue={original ?? ''} value={modified ?? ''} diffKind="unpublished" />;
+}
 
-  return (
-    <>
-      {isNoUserDiff && !hideNoUserDiffBanner && <NoUserDiffBanner />}
-      <SideBySideDiff fromValue={original ?? ''} value={modified ?? ''} diffKind="unpublished" />
-    </>
-  );
+function isNoUserDiff(original: string | null, modified: string | null): boolean {
+  return original !== null && modified !== null && original === modified;
 }
 
 interface RecordRowProps {
@@ -151,6 +201,9 @@ interface RecordRowProps {
   connectorAccountId: string | null;
   onClickPhase: (filePath: string, phase: string) => void;
   onOpenFullDiff: (filePath: string) => void;
+  /** If non-null, the inline expand shows a "Rollback this record" link
+   * in the Before-Publish column header that fires this callback. */
+  onRequestRollback: ((filePath: string) => void) | null;
 }
 
 const RecordRow = memo(function RecordRow({
@@ -160,6 +213,7 @@ const RecordRow = memo(function RecordRow({
   connectorAccountId,
   onClickPhase,
   onOpenFullDiff,
+  onRequestRollback,
 }: RecordRowProps) {
   const [expanded, setExpanded] = useState(false);
   // Inline expand always shows "main before publish → main after publish" — the
@@ -172,7 +226,7 @@ const RecordRow = memo(function RecordRow({
     connectorAccountId,
     record.filePath,
     expanded,
-    'old-vs-new',
+    'before-vs-after',
   );
 
   const status = deriveStatus(record.phases);
@@ -234,6 +288,30 @@ const RecordRow = memo(function RecordRow({
 
       {expanded && (
         <Box mx="md" mb={4} style={{ border: '0.5px solid var(--fg-divider)', borderRadius: 3, overflow: 'hidden' }}>
+          <DiffColumnHeader
+            leftLabel={DIFF_MODE_LABELS['before-vs-after'].left}
+            rightLabel={DIFF_MODE_LABELS['before-vs-after'].right}
+            isNoUserDiff={isNoUserDiff(original, modified)}
+            leftActions={
+              onRequestRollback &&
+              original !== null && (
+                <UnstyledButton
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRequestRollback(record.filePath);
+                  }}
+                  style={{ color: 'var(--mantine-color-red-7)' }}
+                >
+                  <Group gap={3} wrap="nowrap" align="center">
+                    <StyledLucideIcon Icon={RotateCcwIcon} size={11} c="var(--mantine-color-red-7)" />
+                    <Text12Book style={{ color: 'var(--mantine-color-red-7)', textDecoration: 'underline' }}>
+                      Rollback this record
+                    </Text12Book>
+                  </Group>
+                </UnstyledButton>
+              )
+            }
+          />
           <DiffView original={original} modified={modified} isLoading={isLoading} />
         </Box>
       )}
@@ -269,37 +347,42 @@ export function PublishPlanRecordsList({
   workspacePath,
 }: PublishPlanRecordsListProps) {
   const [fullDiffPath, setFullDiffPath] = useState<string | null>(null);
-  // Default diff is "main old → main new" (what the publish committed).
-  // The "Show Edited Value" switch flips the right side to the user's
-  // pre-publish dirty edits instead, for diagnosing publish transforms.
-  const [showEditedValue, setShowEditedValue] = useState(false);
-  const diffSource: PlanRecordDiffMode = showEditedValue ? 'old-vs-edits' : 'old-vs-new';
-  const [revertConfirmOpen, setRevertConfirmOpen] = useState(false);
-  const [reverting, setReverting] = useState(false);
+  // SegmentedControl on the operations row picks which two refs the
+  // modal diffs. Default is the canonical "what this publish committed"
+  // view; the other two are diagnostic.
+  const [diffMode, setDiffMode] = useState<PlanRecordDiffMode>('before-vs-after');
+  // Roll-back state: when non-null, the confirmation modal opens for
+  // this filePath. Triggered from both the full-diff modal AND the
+  // inline row expand.
+  const [rollbackPath, setRollbackPath] = useState<string | null>(null);
+  const [rollingBack, setRollingBack] = useState(false);
 
-  const handleRevert = async () => {
-    if (!workspacePath || !connectorAccountId || !fullDiffPath || original === null) return;
-    setReverting(true);
+  const handleRollback = async () => {
+    if (!workspacePath || !connectorAccountId || !rollbackPath) return;
+    setRollingBack(true);
     try {
-      // `record.filePath` is connection-relative (e.g. `/posts/post-102.json`);
-      // the main process resolves it against the connection's `dirName`
-      // from `.scratchmd` to get the absolute on-disk path.
-      const res = await window.scratchFiles.revertRecordFile(workspacePath, connectorAccountId, fullDiffPath, original);
+      // Same CLI path as the bulk roll back, scoped to one file. The CLI
+      // reads the pre-publish blob from the local bare repo (no per-record
+      // network call) and writes/re-anchors it.
+      const res = await window.scratchFiles.revertPlan(workspacePath, planId, { filePath: rollbackPath });
       if ('error' in res) throw new Error(res.error);
       notifications.show({
-        title: 'Reverted',
-        message: 'Local value reverted. Publish the record to apply the change.',
+        title: 'Rolled back',
+        message: 'Local value rolled back. Publish the record to apply the change.',
         color: 'green',
       });
-      setRevertConfirmOpen(false);
-      setFullDiffPath(null);
+      const wasFullDiff = rollbackPath === fullDiffPath;
+      setRollbackPath(null);
+      if (wasFullDiff) setFullDiffPath(null);
     } catch (err) {
-      console.debug('Revert failed', err);
-      notifications.show({ title: 'Revert failed', message: String(err), color: 'red' });
+      console.debug('Roll back failed', err);
+      notifications.show({ title: 'Roll back failed', message: String(err), color: 'red' });
     } finally {
-      setReverting(false);
+      setRollingBack(false);
     }
   };
+
+  const canRollback = !!workspacePath && !!connectorAccountId;
 
   const sortedRecords = useMemo(() => [...records].sort((a, b) => a.filePath.localeCompare(b.filePath)), [records]);
 
@@ -308,13 +391,28 @@ export function PublishPlanRecordsList({
     [fullDiffPath, sortedRecords],
   );
 
-  const { original, modified, isLoading } = usePublishPlanRecordDiff(
+  const { original, modified, isLoading, isValidating } = usePublishPlanRecordDiff(
     workspaceId,
     planId,
     connectorAccountId,
     fullDiffPath ?? undefined,
     !!fullDiffPath,
-    diffSource,
+    diffMode,
+  );
+  // Show a small spinner during refetches when we already have content
+  // visible (keepPreviousData). The cold-start case shows the centered
+  // loader inside DiffView and we don't want a redundant spinner there.
+  const showInlineDiffSpinner = isValidating && !!original;
+
+  // Only meaningful in the default mode — warns the user that the After
+  // Publish blob they're staring at is no longer the canonical value
+  // (the record has changed on main since this publish landed).
+  const { differs: postDiffersFromCurrent } = usePublishPlanPostDiffersFromCurrent(
+    workspaceId,
+    planId,
+    connectorAccountId,
+    fullDiffPath ?? undefined,
+    !!fullDiffPath && diffMode === 'before-vs-after',
   );
 
   if (records.length === 0) {
@@ -327,7 +425,7 @@ export function PublishPlanRecordsList({
 
   const fullDiffFilename = fullDiffPath ? splitPath(fullDiffPath).filename : '';
   const fullDiffFolder = fullDiffPath ? splitPath(fullDiffPath).folder : '';
-  const isFullDiffNoUserDiff = original !== null && modified !== null && original === modified;
+  const isFullDiffNoUserDiff = isNoUserDiff(original, modified);
 
   return (
     <>
@@ -341,6 +439,7 @@ export function PublishPlanRecordsList({
             connectorAccountId={connectorAccountId}
             onClickPhase={onClickPhase}
             onOpenFullDiff={(p) => setFullDiffPath(p)}
+            onRequestRollback={canRollback ? (p) => setRollbackPath(p) : null}
           />
         ))}
       </Box>
@@ -359,88 +458,116 @@ export function PublishPlanRecordsList({
         }
       >
         <Stack gap="sm">
-          <Group gap="xs" align="center" wrap="nowrap">
-            <Text12Regular fw={500}>Operations:</Text12Regular>
-            {fullDiffRecord && fullDiffRecord.phases.length > 0 && (
-              <PhaseBadges
-                phases={fullDiffRecord.phases}
-                onClickPhase={(p) => fullDiffPath && onClickPhase(fullDiffPath, p)}
+          <Group gap="sm" align="center" wrap="nowrap" justify="space-between">
+            <Group gap="xs" align="center" wrap="nowrap" style={{ minWidth: 0 }}>
+              <Text12Regular fw={500}>Operations:</Text12Regular>
+              {fullDiffRecord && fullDiffRecord.phases.length > 0 && (
+                <PhaseBadges
+                  phases={fullDiffRecord.phases}
+                  onClickPhase={(p) => fullDiffPath && onClickPhase(fullDiffPath, p)}
+                />
+              )}
+            </Group>
+            <Group gap={6} wrap="nowrap" align="center">
+              {showInlineDiffSpinner && <Loader size={12} />}
+              {/* Unstyled select: reads as plain text + chevron so it
+                  doesn't compete with the operations badges for attention.
+                  Diff mode is a power-user toggle, not the headline. */}
+              <Select
+                size="xs"
+                variant="unstyled"
+                allowDeselect={false}
+                withCheckIcon={false}
+                value={diffMode}
+                onChange={(v) => v && setDiffMode(v as PlanRecordDiffMode)}
+                data={DIFF_MODE_OPTIONS}
+                w={200}
+                styles={{
+                  input: {
+                    color: 'var(--fg-muted)',
+                    textAlign: 'right',
+                    paddingRight: 18,
+                    fontSize: 12,
+                  },
+                }}
               />
-            )}
+            </Group>
           </Group>
 
-          <Box style={{ border: '0.5px solid var(--fg-divider)', borderRadius: 3, overflow: 'hidden' }}>
-            {/* Column-label strip: matches the SideBySideDiff grid (1fr 1px 1fr).
-                Right column header hosts the Switch + the "No manual edits"
-                indicator so they share one row with the column label. */}
-            <Box
+          {diffMode === 'before-vs-after' && postDiffersFromCurrent === true && (
+            <Group
+              gap="xs"
+              align="center"
+              wrap="nowrap"
+              px="sm"
+              py={4}
               style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1px 1fr',
-                background: 'var(--bg-panel)',
-                borderBottom: '0.5px solid var(--fg-divider)',
+                border: '0.5px solid var(--mantine-color-yellow-4)',
+                background: 'var(--mantine-color-yellow-0)',
+                borderRadius: 3,
               }}
             >
-              <Group px="sm" py={4} justify="space-between" wrap="nowrap" align="center" gap="sm">
-                <Text12Regular c="var(--fg-muted)" fw={500}>
-                  Old value
-                </Text12Regular>
-                {workspacePath && connectorAccountId && original !== null && (
-                  <UnstyledButton
-                    onClick={() => setRevertConfirmOpen(true)}
-                    style={{
-                      color: 'var(--mantine-color-red-7)',
-                      textDecoration: 'underline',
-                      fontSize: 12,
-                    }}
-                  >
-                    Revert to this value
-                  </UnstyledButton>
-                )}
-              </Group>
-              <Box style={{ backgroundColor: 'var(--fg-divider)' }} />
-              <Group px="sm" py={4} justify="space-between" wrap="nowrap" align="center" gap="sm">
-                <Group gap="sm" wrap="nowrap" align="center">
-                  <Text12Regular c="var(--fg-muted)" fw={500}>
-                    New value
-                  </Text12Regular>
-                  {isFullDiffNoUserDiff && <NoManualEditsHelp />}
-                </Group>
-                <Switch
-                  size="xs"
-                  labelPosition="left"
-                  label="Show Edited Value"
-                  checked={showEditedValue}
-                  onChange={(e) => setShowEditedValue(e.currentTarget.checked)}
-                />
-              </Group>
-            </Box>
+              <StyledLucideIcon Icon={AlertTriangleIcon} size={12} c="var(--mantine-color-yellow-8)" />
+              <Text12Regular c="var(--mantine-color-yellow-8)">
+                The latest known value of this record is different.
+              </Text12Regular>
+            </Group>
+          )}
 
-            <DiffView original={original} modified={modified} isLoading={isLoading} hideNoUserDiffBanner />
+          <Box style={{ border: '0.5px solid var(--fg-divider)', borderRadius: 3, overflow: 'hidden' }}>
+            <DiffColumnHeader
+              leftLabel={DIFF_MODE_LABELS[diffMode].left}
+              rightLabel={DIFF_MODE_LABELS[diffMode].right}
+              isNoUserDiff={isFullDiffNoUserDiff}
+              leftActions={
+                canRollback &&
+                fullDiffPath &&
+                original !== null && (
+                  <UnstyledButton
+                    onClick={() => setRollbackPath(fullDiffPath)}
+                    style={{ color: 'var(--mantine-color-red-7)' }}
+                  >
+                    <Group gap={3} wrap="nowrap" align="center">
+                      <StyledLucideIcon Icon={RotateCcwIcon} size={11} c="var(--mantine-color-red-7)" />
+                      <Text12Book style={{ color: 'var(--mantine-color-red-7)', textDecoration: 'underline' }}>
+                        Rollback this record
+                      </Text12Book>
+                    </Group>
+                  </UnstyledButton>
+                )
+              }
+            />
+            <DiffView original={original} modified={modified} isLoading={isLoading} />
           </Box>
         </Stack>
       </Modal>
 
       <Modal
-        opened={revertConfirmOpen}
-        onClose={() => (reverting ? undefined : setRevertConfirmOpen(false))}
-        title={<Text12Medium>Revert local value</Text12Medium>}
+        opened={!!rollbackPath}
+        onClose={() => (rollingBack ? undefined : setRollbackPath(null))}
+        title={<Text12Medium>Roll back local value</Text12Medium>}
         size="md"
         zIndex={1100}
-        closeOnClickOutside={!reverting}
-        closeOnEscape={!reverting}
+        closeOnClickOutside={!rollingBack}
+        closeOnEscape={!rollingBack}
       >
         <Stack gap="md">
           <Text12Regular>
-            The local value of the record will revert to this value. You will need to publish the record for the change
-            to take effect.
+            The local value of the record will roll back to this value. You will need to publish the record for the
+            change to take effect.
           </Text12Regular>
           <Group justify="flex-end" gap="xs">
-            <Button size="xs" variant="default" onClick={() => setRevertConfirmOpen(false)} disabled={reverting}>
+            <Button size="xs" variant="default" onClick={() => setRollbackPath(null)} disabled={rollingBack}>
               Cancel
             </Button>
-            <Button size="xs" color="red" loading={reverting} onClick={() => void handleRevert()}>
-              Revert
+            <Button
+              size="xs"
+              color="red"
+              loading={rollingBack}
+              onClick={() => void handleRollback()}
+              leftSection={<StyledLucideIcon Icon={RotateCcwIcon} size={12} c="white" />}
+            >
+              Roll back
             </Button>
           </Group>
         </Stack>

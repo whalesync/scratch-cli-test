@@ -178,6 +178,38 @@ pub enum FilesCommands {
     /// changes — run `scratchmd files upload` first if you have unpublished
     /// local accepted edits.
     Publish,
+    /// Roll back records from a publish plan to their pre-publish values.
+    ///
+    /// Reads the pre-publish blobs **locally** from the workspace's bare
+    /// repo at `preMainCommitSha` (an ancestor of current main), writes
+    /// them to the working tree, and snapshots the result into
+    /// `accepted-patches.json` so the records surface as
+    /// approved-but-unpublished. Records that didn't exist pre-publish
+    /// (Creates) are reverted by deleting the working file.
+    ///
+    /// `--file-path` rolls back a single record; the filter flags
+    /// (`--data-folder-id` / `--phase` / `--filename`) operate on the
+    /// plan's full record list fetched fresh from the server. Without any
+    /// flags, the entire plan is rolled back.
+    #[command(name = "revert-plan")]
+    RevertPlan {
+        /// Publish plan id.
+        #[arg(long = "plan-id")]
+        plan_id: String,
+        /// Single-record mode: connection-relative path
+        /// (e.g. `/public/posts/post-102.json`).
+        #[arg(long = "file-path")]
+        file_path: Option<String>,
+        /// Data-folder filter (matches the records endpoint).
+        #[arg(long = "data-folder-id")]
+        data_folder_id: Option<String>,
+        /// Phase filter (`edit`, `create`, `delete`, …).
+        #[arg(long = "phase")]
+        phase: Option<String>,
+        /// Filename-substring filter, case-insensitive.
+        #[arg(long = "filename")]
+        filename: Option<String>,
+    },
 }
 
 #[derive(Clone)]
@@ -469,6 +501,25 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
             run_upload(&cwd, server_url, json, skip_folder_index).await
         }
         FilesCommands::Publish => run_publish(&cwd, server_url, json).await,
+        FilesCommands::RevertPlan {
+            plan_id,
+            file_path,
+            data_folder_id,
+            phase,
+            filename,
+        } => {
+            run_revert_plan(
+                &cwd,
+                server_url,
+                &plan_id,
+                file_path.as_deref(),
+                data_folder_id.as_deref(),
+                phase.as_deref(),
+                filename.as_deref(),
+                json,
+            )
+            .await
+        }
     }
 }
 
@@ -1054,6 +1105,220 @@ async fn publish_single_connection(
     }
 
     PublishConnectionOutcome::Published { name }
+}
+
+/// Roll records from a publish plan back to their pre-publish blob.
+///
+/// Reads `preMainCommitSha` (and the affected file list) from the server,
+/// then loads the pre-publish tree from the **local bare repo** at that
+/// commit — no per-record network call. `preMainCommitSha` is an ancestor
+/// of current `main`, so it's reachable locally as long as the workspace
+/// has been pulled since the publish landed.
+///
+/// `single_file_path` skips the records-list fetch entirely — used by the
+/// per-record desktop path so the same code drives both flows.
+///
+/// For each affected record: write the pre-publish blob to the working
+/// tree, or delete the working file when there was no blob (record didn't
+/// exist pre-publish = Create → reverted by deletion). Then re-snapshot
+/// via `re_anchor::compute_entry`. Single atomic write of the patch file
+/// at the end + folder-index refresh.
+async fn run_revert_plan(
+    cwd: &Path,
+    server_url: &str,
+    plan_id: &str,
+    single_file_path: Option<&str>,
+    data_folder_id: Option<&str>,
+    phase: Option<&str>,
+    filename: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    use std::collections::HashSet;
+    let started = std::time::Instant::now();
+    let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url, json)?;
+    let token = get_token(&workspace_server_url)?;
+    let workbook_id = workspace_marker.workbook.id.clone();
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    #[derive(serde::Deserialize)]
+    struct PlanMeta {
+        #[serde(rename = "connectorAccountId")]
+        connector_account_id: Option<String>,
+        #[serde(rename = "preMainCommitSha")]
+        pre_main_commit_sha: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RecordsPage {
+        data: Vec<RecordRow>,
+        total: usize,
+    }
+    #[derive(serde::Deserialize)]
+    struct RecordRow {
+        #[serde(rename = "filePath")]
+        file_path: String,
+    }
+
+    let client = crate::api::ApiClient::new(&workspace_server_url, token);
+
+    // 1. Plan metadata (one round trip): connector + the SHA we'll read
+    //    blobs at locally. Uses the CLI shim under `/cli/v1/workbooks/...`
+    //    (the API client prepends `/cli/v1`).
+    let plan_endpoint = format!("workbooks/{workbook_id}/publish-v2/{plan_id}");
+    let plan: PlanMeta = client.get(&plan_endpoint).await?;
+    let connector_account_id = plan.connector_account_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Plan {plan_id} has no connectorAccountId — cross-connection rollback is not supported. Use --file-path to roll back one record at a time."
+        )
+    })?;
+    let pre_main_sha = plan.pre_main_commit_sha.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Plan {plan_id} has no preMainCommitSha — it pre-dates the publish-history feature."
+        )
+    })?;
+
+    let ctx = contexts
+        .iter()
+        .find(|c| c.connection_id == connector_account_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Plan's connector account ({connector_account_id}) is not configured locally"
+            )
+        })?;
+
+    // 2. Affected paths. Single-file mode skips the records-list call.
+    let mut affected: Vec<String> = Vec::new();
+    if let Some(p) = single_file_path {
+        affected.push(p.to_string());
+    } else {
+        let records_endpoint = format!("workbooks/{workbook_id}/publish-v2/{plan_id}/records");
+        let page_size: usize = 200;
+        let mut page: usize = 1;
+        loop {
+            let mut q_parts: Vec<String> =
+                vec![format!("page={page}"), format!("pageSize={page_size}")];
+            if let Some(d) = data_folder_id {
+                q_parts.push(format!("dataFolderId={}", urlencoding::encode(d)));
+            }
+            if let Some(ph) = phase {
+                q_parts.push(format!("phase={}", urlencoding::encode(ph)));
+            }
+            if let Some(fname) = filename {
+                q_parts.push(format!("filename={}", urlencoding::encode(fname)));
+            }
+            let page_data: RecordsPage = client
+                .get_query(&records_endpoint, &q_parts.join("&"))
+                .await?;
+            let fetched = page_data.data.len();
+            for r in page_data.data {
+                affected.push(r.file_path);
+            }
+            if affected.len() >= page_data.total || fetched < page_size {
+                break;
+            }
+            page += 1;
+        }
+    }
+
+    // 3. Local read of the pre-publish tree at the recorded SHA.
+    let pre_main_map = read_git_tree(&ctx.bare_repo, &pre_main_sha).with_context(|| {
+        format!(
+            "reading pre-publish tree {pre_main_sha} from local bare repo — run `scratchmd files pull` if the workspace is stale"
+        )
+    })?;
+    let main_map = read_main_branch_contents(&ctx.bare_repo)?;
+    let layout = WorkspaceLayout::for_cli(&workspace_dir);
+    let connection_dir = layout.connection_root_path(&ctx.conn_dir_name);
+    let mut accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+
+    let mut written_count = 0usize;
+    let mut deleted_count = 0usize;
+    let mut reverted_paths: Vec<String> = Vec::new();
+    let mut affected_folders: HashSet<String> = HashSet::new();
+
+    for file_path in &affected {
+        let rel_path = file_path.trim_start_matches('/').to_string();
+        let abs_path = ctx.worktree_dir.join(&rel_path);
+
+        // 4a) Bring the working file to the pre-publish state.
+        let pre_blob = pre_main_map.get(rel_path.as_str()).cloned();
+        match &pre_blob {
+            Some(content) => {
+                if let Some(parent) = abs_path.parent() {
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!("creating parent dir for {}", abs_path.display())
+                    })?;
+                }
+                std::fs::write(&abs_path, content)
+                    .with_context(|| format!("writing {}", abs_path.display()))?;
+                written_count += 1;
+            }
+            None => {
+                if abs_path.exists() {
+                    std::fs::remove_file(&abs_path)
+                        .with_context(|| format!("deleting {}", abs_path.display()))?;
+                }
+                deleted_count += 1;
+            }
+        }
+
+        // 4b) Re-anchor: working vs current main → right approved entry.
+        let main_snapshot = parse_json_value_at(&main_map, &rel_path, "refs/heads/main")?;
+        let working = if abs_path.exists() {
+            let bytes = std::fs::read(&abs_path)
+                .with_context(|| format!("reading {}", abs_path.display()))?;
+            Some(
+                serde_json::from_slice::<JsonValue>(&bytes)
+                    .with_context(|| format!("parsing working tree blob at {rel_path}"))?,
+            )
+        } else {
+            None
+        };
+
+        match crate::shared::re_anchor::compute_entry(
+            &rel_path,
+            main_snapshot.as_ref(),
+            working.as_ref(),
+        ) {
+            Some(entry) => crate::shared::accepted_patches::upsert_entry(&mut accepted_file, entry),
+            None => crate::shared::accepted_patches::remove_entry(&mut accepted_file, &rel_path),
+        }
+
+        reverted_paths.push(format!("{}/{}", ctx.conn_dir_name, rel_path));
+        if let Some(folder) = std::path::Path::new(&rel_path)
+            .parent()
+            .and_then(|p| p.to_str())
+        {
+            if !folder.is_empty() {
+                affected_folders.insert(format!("{}/{}", ctx.conn_dir_name, folder));
+            }
+        }
+    }
+
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted_file)?;
+    reindex_folder_index_for_changes(&workspace_dir, &reverted_paths)?;
+
+    let elapsed_ms = started.elapsed().as_millis();
+    let total = affected.len();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "reverted",
+                "total": total,
+                "filesWritten": written_count,
+                "filesDeleted": deleted_count,
+                "affectedFolders": affected_folders.into_iter().collect::<Vec<_>>(),
+                "elapsedMs": elapsed_ms,
+            }))?
+        );
+    } else {
+        println!(
+            "Reverted {total} record(s) — {written_count} written, {deleted_count} deleted ({elapsed_ms}ms)"
+        );
+    }
+    Ok(())
 }
 
 /// Render the per-connection publish outcomes to stdout. JSON mode emits the

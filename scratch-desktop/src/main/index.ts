@@ -31,7 +31,6 @@ import {
   readGridData,
   readSchema,
   readWorkspaceConfig,
-  revertRecordFile,
   revertUnreviewedFieldEditToApproved,
   writeFileTextRaw,
   type DiffGridFilter,
@@ -1069,22 +1068,38 @@ ipcMain.handle('files:write-file-text-raw', async (_, filePath: string, contents
   }),
 );
 ipcMain.handle(
-  'files:revert-record-file',
-  async (_, workspacePath: string, connectorAccountId: string, filePath: string, contents: string) =>
-    // Whole-record overwrite that lands as an approved-but-unpublished
-    // change. `revertRecordFile` resolves the connection-relative file
-    // path against the marker's dirName, writes the file, then snapshots
-    // every affected top-level field into accepted-patches.json. Reindex
-    // afterwards so the grid picks up the new dirty + approved state.
+  'publish-plan:revert',
+  async (
+    _,
+    workspacePath: string,
+    planId: string,
+    filter?: { filePath?: string; dataFolderId?: string; phase?: string; filename?: string },
+  ) =>
+    // Single-record AND bulk go through the same CLI command. `--file-path`
+    // takes a single connection-relative path; the other filter flags work
+    // against the plan's full record list (fetched fresh server-side).
+    // Pre-publish blobs are read from the local bare repo at
+    // `preMainCommitSha`, so the only network calls are two metadata
+    // fetches (plan + records list).
     withWorkspaceInternalMutation(workspacePath, async () => {
-      const result = await revertRecordFile(workspacePath, connectorAccountId, filePath, contents);
-      if ('ok' in result) {
-        await reindexFiles(workspacePath, relative(workspacePath, result.folderPath), [result.filename], {
-          validate: true,
-        });
-        return { ok: true } as const;
+      const args = ['files', 'revert-plan', '--plan-id', planId, '--json'];
+      if (filter?.filePath) args.push('--file-path', filter.filePath);
+      if (filter?.dataFolderId) args.push('--data-folder-id', filter.dataFolderId);
+      if (filter?.phase) args.push('--phase', filter.phase);
+      if (filter?.filename) args.push('--filename', filter.filename);
+      try {
+        const { stdout } = await runScratchmd(args, workspacePath);
+        const parsed = JSON.parse(stdout) as {
+          total: number;
+          filesWritten: number;
+          filesDeleted: number;
+          elapsedMs: number;
+        };
+        return { ok: true as const, ...parsed };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { error: message };
       }
-      return result;
     }),
 );
 ipcMain.handle('files:read-batch', async (_, filePaths: string[], opts?: { maxSize?: number }) =>

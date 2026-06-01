@@ -1,9 +1,13 @@
 import { ActionIcon, Box, Group, Select, Stack } from '@mantine/core';
-import { ChevronLeftIcon, ScrollTextIcon } from 'lucide-react';
+import { ChevronLeftIcon, RefreshCwIcon, ScrollTextIcon } from 'lucide-react';
 import { useState } from 'react';
+import { ButtonSecondaryOutline } from '../../components/base/buttons';
 import { Text12Regular, Text16Medium } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { useConnectorAccounts } from '../../hooks/use-connector-accounts';
+import { usePublishPlan } from '../../hooks/use-publish-plan';
+import { usePublishPlans } from '../../hooks/use-publish-plans';
+import { absoluteDate } from '../../lib/date-format';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import { PublishPlanDetailContent } from './PublishPlanDetailContent';
 import { PublishPlansList } from './PublishPlansList';
@@ -29,6 +33,18 @@ export function PublishHistoryPanel({ workspaceId, workspacePath }: PublishHisto
   const setDetailPlanId = useWorkspaceUiStore((s) => s.setPublishHistoryDetailPlanId);
   const [connectionFilter, setConnectionFilter] = useState<string | null>(null);
   const { connectorAccounts } = useConnectorAccounts(workspaceId);
+  // SWR cache is shared with PublishPlansList — `refresh()` here triggers
+  // a re-fetch the list will read from. Only used to drive the header's
+  // Refresh button when on the list view.
+  const { isLoading: plansLoading, refresh: refreshPlans } = usePublishPlans(workspaceId);
+  // SWR dedupes with the detail content's fetch, so the breadcrumb pulls
+  // from cache once the detail page has loaded.
+  const { publishPlan: breadcrumbPlan } = usePublishPlan(workspaceId, detailPlanId ?? undefined);
+  const breadcrumbConnectionName =
+    breadcrumbPlan?.connectorAccount?.displayName ??
+    (breadcrumbPlan?.connectorAccountId
+      ? (connectorAccounts?.find((ca) => ca.id === breadcrumbPlan.connectorAccountId)?.displayName ?? null)
+      : null);
 
   return (
     <Stack
@@ -71,22 +87,39 @@ export function PublishHistoryPanel({ workspaceId, workspacePath }: PublishHisto
           {detailPlanId && (
             <>
               <Text12Regular c="var(--fg-muted)">/</Text12Regular>
-              <Text12Regular c="var(--fg-secondary)">{detailPlanId.substring(0, 8)}…</Text12Regular>
+              <Text12Regular c="var(--fg-secondary)" style={{ whiteSpace: 'nowrap' }}>
+                {breadcrumbPlan
+                  ? `${absoluteDate(breadcrumbPlan.createdAt)}${breadcrumbConnectionName ? ` — ${breadcrumbConnectionName}` : ''}`
+                  : '…'}
+              </Text12Regular>
             </>
           )}
         </Group>
-        {/* List-view-only filter: when drilled into a single plan, the
-            connection is fixed by the plan so the filter would be inert. */}
-        {!detailPlanId && (connectorAccounts?.length ?? 0) > 0 && (
-          <Select
-            size="xs"
-            placeholder="All connections"
-            clearable
-            value={connectionFilter}
-            onChange={setConnectionFilter}
-            data={(connectorAccounts ?? []).map((ca) => ({ value: ca.id, label: ca.displayName }))}
-            w={220}
-          />
+        {/* List-view-only controls: connection filter + refresh. When
+            drilled into a single plan, the connection is fixed and the
+            list isn't on screen, so neither makes sense. */}
+        {!detailPlanId && (
+          <Group gap="xs" wrap="nowrap">
+            {(connectorAccounts?.length ?? 0) > 0 && (
+              <Select
+                size="xs"
+                placeholder="All connections"
+                clearable
+                value={connectionFilter}
+                onChange={setConnectionFilter}
+                data={(connectorAccounts ?? []).map((ca) => ({ value: ca.id, label: ca.displayName }))}
+                w={220}
+              />
+            )}
+            <ButtonSecondaryOutline
+              size="xs"
+              leftSection={<StyledLucideIcon Icon={RefreshCwIcon} size={12} />}
+              loading={plansLoading}
+              onClick={() => void refreshPlans()}
+            >
+              Refresh
+            </ButtonSecondaryOutline>
+          </Group>
         )}
       </Group>
 

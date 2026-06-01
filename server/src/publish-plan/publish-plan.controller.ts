@@ -164,12 +164,14 @@ export class PublishPlanController {
     @Query('pageSize') pageSize?: string,
     @Query('dataFolderId') dataFolderId?: string,
     @Query('phase') phase?: string,
+    @Query('filename') filename?: string,
   ) {
     return this.publishAdminService.listPublishPlanRecords(pipelineId, {
       page: page ? parseInt(page, 10) : undefined,
       pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
       dataFolderId,
       phase,
+      filename,
     });
   }
 

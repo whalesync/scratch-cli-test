@@ -10,6 +10,7 @@ import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.service';
 import type { RepoId } from 'src/scratch-git/scratch-git.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
@@ -85,6 +86,7 @@ describe('CliWorkbookController', () => {
   let workbookRepoService: jest.Mocked<WorkbookRepoService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let publishPlanBuildService: jest.Mocked<PublishPlanBuildService>;
+  let publishPlanCrudService: jest.Mocked<PublishPlanCrudService>;
   let auditLogService: jest.Mocked<AuditLogService>;
 
   beforeEach(() => {
@@ -148,6 +150,11 @@ describe('CliWorkbookController', () => {
       setActiveJob: jest.fn(),
     } as unknown as jest.Mocked<PublishPlanBuildService>;
 
+    publishPlanCrudService = {
+      getPublishPlanById: jest.fn(),
+      listPublishPlanRecords: jest.fn(),
+    } as unknown as jest.Mocked<PublishPlanCrudService>;
+
     auditLogService = {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditLogService>;
@@ -161,6 +168,7 @@ describe('CliWorkbookController', () => {
       workbookRepoService,
       bullEnqueuerService,
       publishPlanBuildService,
+      publishPlanCrudService,
       auditLogService,
     );
   });

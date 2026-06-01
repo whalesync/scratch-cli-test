@@ -287,12 +287,13 @@ interface ScratchFilesAPI {
   >;
   readFileTextRaw: (filePath: string) => Promise<{ text: string } | { error: string }>;
   writeFileTextRaw: (filePath: string, contents: string) => Promise<{ ok: true } | { error: string }>;
-  revertRecordFile: (
+  revertPlan: (
     workspacePath: string,
-    connectorAccountId: string,
-    filePath: string,
-    contents: string,
-  ) => Promise<{ ok: true } | { error: string }>;
+    planId: string,
+    filter?: { filePath?: string; dataFolderId?: string; phase?: string; filename?: string },
+  ) => Promise<
+    { ok: true; total: number; filesWritten: number; filesDeleted: number; elapsedMs: number } | { error: string }
+  >;
   readBatch: (
     filePaths: string[],
     opts?: { maxSize?: number },

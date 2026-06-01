@@ -7,12 +7,10 @@ import {
   FilePenLineIcon,
   MoveIcon,
   PlusCircleIcon,
-  RefreshCwIcon,
   RepeatIcon,
   Trash2Icon,
 } from 'lucide-react';
 import { useState } from 'react';
-import { ButtonSecondaryOutline } from '../../components/base/buttons';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { useConnectorAccounts } from '../../hooks/use-connector-accounts';
@@ -40,7 +38,7 @@ interface PublishPlansListProps {
  * surrounding `PublishHistoryPanel` header.
  */
 export function PublishPlansList({ workspaceId, connectionFilter }: PublishPlansListProps) {
-  const { publishPlans, isLoading, refresh } = usePublishPlans(workspaceId);
+  const { publishPlans, refresh } = usePublishPlans(workspaceId);
   const { connectorAccounts } = useConnectorAccounts(workspaceId);
   const setDetailPlanId = useWorkspaceUiStore((s) => s.setPublishHistoryDetailPlanId);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -66,19 +64,8 @@ export function PublishPlansList({ workspaceId, connectionFilter }: PublishPlans
   };
 
   return (
-    <Stack p="md" gap="sm">
-      <Group justify="flex-end">
-        <ButtonSecondaryOutline
-          size="xs"
-          leftSection={<StyledLucideIcon Icon={RefreshCwIcon} size={12} />}
-          loading={isLoading}
-          onClick={() => void refresh()}
-        >
-          Refresh
-        </ButtonSecondaryOutline>
-      </Group>
-
-      <ScrollArea h={500}>
+    <Stack p={0} gap={0} style={{ height: '100%' }}>
+      <ScrollArea style={{ flex: 1, minHeight: 0 }}>
         <Table stickyHeader>
           <Table.Thead>
             <Table.Tr>

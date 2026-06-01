@@ -72,7 +72,7 @@ export const publishApi = {
   listPublishPlanRecords: async (
     workbookId: string,
     planId: string,
-    options?: { page?: number; pageSize?: number; dataFolderId?: string; phase?: string },
+    options?: { page?: number; pageSize?: number; dataFolderId?: string; phase?: string; filename?: string },
   ): Promise<PublishPlanRecordsResponse> => {
     const axios = API_CONFIG.getAxiosInstance();
     const res = await axios.get<PublishPlanRecordsResponse>(`/workbook/${workbookId}/publish-v2/${planId}/records`, {

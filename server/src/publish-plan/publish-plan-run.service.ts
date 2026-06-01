@@ -722,10 +722,23 @@ export class PublishPlanRunService {
       if (!remoteId) {
         throw new Error(`Could not resolve remote ID for entry: ${entry.filePath}`);
       }
-      resolvedContent = {
-        ...resolvedContent,
-        [idField]: remoteId,
-      } as ParsedContent;
+      // Only overwrite the PK when the content's existing value is
+      // either missing or a pending-publish sentinel (backfill case for
+      // newly-created records that haven't been re-pulled yet). For real
+      // edits the on-disk record already has the PK in its native type
+      // (e.g. integer for Postgres); `remoteId` is the Prisma `String`
+      // column, so a blind overwrite stringifies integer PKs and
+      // corrupts `main_plan_{planId}`. See
+      // `docs/publish-pk-stringification-bug.md` for the full write-up.
+      const recordObj = resolvedContent as Record<string, unknown>;
+      const existingId = recordObj[idField];
+      const needsIdFill =
+        existingId === undefined ||
+        existingId === null ||
+        (typeof existingId === 'string' && isScratchPendingPublishId(existingId));
+      if (needsIdFill) {
+        resolvedContent = { ...recordObj, [idField]: remoteId } as ParsedContent;
+      }
 
       // Skip no-op edits where changedFields is an empty object
       if (Object.keys(entry.changedFields).length === 0) {

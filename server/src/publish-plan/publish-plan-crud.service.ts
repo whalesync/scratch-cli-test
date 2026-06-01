@@ -159,7 +159,7 @@ export class PublishPlanCrudService {
    */
   async listPublishPlanRecords(
     pipelineId: string,
-    options?: { page?: number; pageSize?: number; dataFolderId?: string; phase?: string },
+    options?: { page?: number; pageSize?: number; dataFolderId?: string; phase?: string; filename?: string },
   ) {
     const page = options?.page ?? 1;
     const pageSize = Math.min(options?.pageSize ?? 50, 200);
@@ -207,6 +207,16 @@ export class PublishPlanCrudService {
       records = records.filter((r) => r.phases.includes(options.phase!));
     }
 
+    if (options?.filename) {
+      // Substring match on the filename only (no folder prefix), case-
+      // insensitive. The grouped filePath looks like `/folder/.../name.json`.
+      const needle = options.filename.toLowerCase();
+      records = records.filter((r) => {
+        const filename = r.filePath.substring(r.filePath.lastIndexOf('/') + 1).toLowerCase();
+        return filename.includes(needle);
+      });
+    }
+
     const total = records.length;
     const skip = (page - 1) * pageSize;
     const paged = records.slice(skip, skip + pageSize);
@@ -214,13 +224,15 @@ export class PublishPlanCrudService {
     // Build filter options across the full (unfiltered) operation set for this plan.
     const allOps = await this.db.client.publishPlanOperation.findMany({
       where: { planId: pipelineId },
-      select: { dataFolderId: true, phase: true },
+      select: { dataFolderId: true, phase: true, filePath: true },
     });
     const folderCounts = new Map<string, number>();
     const phaseCounts = new Map<string, number>();
+    const allFilePaths = new Set<string>();
     for (const op of allOps) {
       if (op.dataFolderId) folderCounts.set(op.dataFolderId, (folderCounts.get(op.dataFolderId) ?? 0) + 1);
       phaseCounts.set(op.phase, (phaseCounts.get(op.phase) ?? 0) + 1);
+      allFilePaths.add(op.filePath);
     }
     const dataFolderIds = Array.from(folderCounts.keys());
     const dataFolders = dataFolderIds.length
@@ -235,6 +247,10 @@ export class PublishPlanCrudService {
       total,
       page,
       pageSize,
+      /** Total unique records across the entire plan, ignoring filters. */
+      affectedRecords: allFilePaths.size,
+      /** Total operations across the entire plan, ignoring filters. */
+      totalOperations: allOps.length,
       filters: {
         folders: dataFolders
           .map((f) => ({ id: f.id, path: f.path ?? '', count: folderCounts.get(f.id) ?? 0 }))

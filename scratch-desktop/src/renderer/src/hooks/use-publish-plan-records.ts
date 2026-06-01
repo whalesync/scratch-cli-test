@@ -4,17 +4,25 @@ import { publishApi } from '../lib/publish-api';
 
 /**
  * Returns the records page for a publish plan, paginated server-side, filtered
- * by folder and/or phase. Includes the aggregate filter options the records
- * UI uses to populate its dropdowns.
+ * by folder, phase, and/or filename substring. Includes the aggregate filter
+ * options the records UI uses to populate its dropdowns.
  */
 export function usePublishPlanRecords(
   workbookId: string | undefined,
   planId: string | undefined,
-  options: { page: number; pageSize?: number; dataFolderId?: string; phase?: string },
+  options: { page: number; pageSize?: number; dataFolderId?: string; phase?: string; filename?: string },
 ) {
-  const { data, error, isLoading, mutate } = useSWR<PublishPlanRecordsResponse, Error>(
+  const { data, error, isLoading, isValidating, mutate } = useSWR<PublishPlanRecordsResponse, Error>(
     workbookId && planId
-      ? ['publish-plan-records', workbookId, planId, options.page, options.dataFolderId ?? '', options.phase ?? '']
+      ? [
+          'publish-plan-records',
+          workbookId,
+          planId,
+          options.page,
+          options.dataFolderId ?? '',
+          options.phase ?? '',
+          options.filename ?? '',
+        ]
       : null,
     () =>
       publishApi.listPublishPlanRecords(workbookId!, planId!, {
@@ -22,8 +30,15 @@ export function usePublishPlanRecords(
         pageSize: options.pageSize,
         dataFolderId: options.dataFolderId,
         phase: options.phase,
+        filename: options.filename,
       }),
+    {
+      // Keep the previous page's response visible during refetch so the
+      // left-panel summary (Affected Records, Total Operations, the
+      // breakdowns) doesn't flash to zero on every page/filter change.
+      keepPreviousData: true,
+    },
   );
 
-  return { records: data, error, isLoading, refresh: mutate };
+  return { records: data, error, isLoading, isValidating, refresh: mutate };
 }
