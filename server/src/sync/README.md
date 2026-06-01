@@ -12,19 +12,42 @@ The sync system copies data from a **source** DataFolder to a **destination** Da
 
 ## Data Model
 
-### SyncMapping (`@spinner/shared-types`)
+### Sync mappings (`@spinner/shared-types`)
 
-The core configuration for a sync, stored as JSON in the `Sync.mappings` column. See type definitions in [packages/shared-types/src/sync-mapping.ts](../../../packages/shared-types/src/sync-mapping.ts):
+The core configuration for a sync is a JSON document. Two on-disk shapes exist; see [packages/shared-types/src/sync-mapping.ts](../../../packages/shared-types/src/sync-mapping.ts).
 
-- `SyncMapping`: Top-level sync configuration with version and table mappings
-- `TableMapping`: Maps a source DataFolder to a destination DataFolder with column mappings and optional record matching
-- `ColumnMapping`: Direct field-to-field mapping with an optional `transformer` configuration
+**V1 (legacy, frozen):**
+
+- `SyncMappingV1`: top-level config with `version: 1` and table mappings.
+- `TableMappingV1`: maps a source DataFolder to a destination DataFolder with column mappings and optional record matching.
+- `ColumnMappingV1`: direct field-to-field mapping (`sourceColumnId` → `destinationColumnId`) with optional `transformer` / `transformers`.
+
+**V2 (unmatched-aware):**
+
+- `SyncMappingV2`: `version: 2` plus table mappings.
+- `TableMappingV2`: adds two optional policies — `unmatchedSourcePolicy` and `unmatchedDestinationPolicy` — describing what to do with records that have no counterpart on the other side (see [Unmatched-record policies](#unmatched-record-policies)).
+- `ColumnMappingV2`: lifts `when` (`'matched' | 'unmatched' | 'always'`, default `'matched'`) to the mapping and makes the value a discriminated `source`:
+  - `{ kind: 'column', columnId, transformer?, transformers? }` — copy from a source column.
+  - `{ kind: 'constant', value }` — write a literal JSON primitive (e.g. `archived: true`).
+
+`transformV1ToV2()` (in shared-types) is the pure shape transform. A transformed v1 mapping has no unmatched policies and every column defaults to `when: 'matched'`, so it behaves exactly like v1.
+
+### Storage: dual-column + single read choke point
+
+V2 lives in a **new column** alongside v1, not on top of it:
+
+- `Sync.mappings` (`Json`, non-null) — the v1 source of truth. **Frozen** from the moment `mappingsV2` is first written for a row.
+- `Sync.mappingsV2` (`Json?`, nullable) — the v2 shape. Writes target this column only; `mappings` is never mutated after first v2 write. The rollback story is `UPDATE Sync SET mappingsV2 = NULL` — v1 is always a safe harbor.
+
+All reads flow through **`SyncService.getSync()` / `getMappings()`**, which return a `StoredSyncMapping` discriminated union (`SyncMappingV1 | SyncMappingV2`) reflecting the on-disk shape — preferring `mappingsV2` when non-null, falling back to v1 `mappings`. Consumers narrow on `mapping.version`. An ESLint `no-restricted-syntax` rule blocks direct `prisma.sync.find*` calls outside `sync.service.ts` so the choke point can't be bypassed.
+
+> The executor and the editor transform v1 → v2 in memory at their entry points; the read path itself never normalizes. See [Sync Execution Flow](#sync-execution-flow).
 
 ### Database Tables
 
 | Table                  | Purpose                                                                                                          |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `Sync`                 | Stores sync configuration including name, mappings JSON, and `lastSyncTime`                                      |
+| `Sync`                 | Sync configuration: name, `mappings` (frozen v1) + `mappingsV2` (nullable v2), and `lastSyncTime`                |
 | `SyncTablePair`        | Links source/destination DataFolder pairs for a sync                                                             |
 | `SyncMatchKeys`        | Temporary table for matching records during sync execution                                                       |
 | `SyncRemoteIdMapping`  | Persists source→destination record ID mappings                                                                   |
@@ -32,39 +55,144 @@ The core configuration for a sync, stored as JSON in the `Sync.mappings` column.
 
 ## Sync Execution Flow
 
-When `POST /workbooks/:workbookId/syncs/:syncId/run` is called:
+When `POST /workbooks/:workbookId/syncs/:syncId/run` is called a background job is enqueued (BullMQ). The job calls `syncTableMapping(tableMapping, phase)` once per **phase**:
 
-### Phase 1: DATA
+- **`DATA`** — the main pass. Builds caches, writes matched/created records, and (v2 only) writes unmatched-destination records.
+- **`FOREIGN_KEY_MAPPING`** — a second pass that resolves `source_fk_to_dest_fk` columns now that destination records exist.
 
-For each table mapping:
+`syncTableMapping` operates on the **v2 shape internally**. At its entry point it transforms a v1 mapping in memory (`transformV1ToV2`). Because a transformed v1 mapping has no `unmatchedDestinationPolicy` and every column defaults to `when: 'matched'`, Pass 3 below is a no-op for v1 syncs — they behave exactly as before.
 
-1. **Job Queued**: A background job is enqueued via BullMQ
-2. **Clear Match Keys**: Previous match keys for this sync are deleted
-3. **Fetch Records**: Files are read from both source and destination DataFolders
-4. **Parse Records**: JSON files are parsed into `ConnectorRecord` objects
-5. **Fill Caches**: Insert match column values into `SyncMatchKeys` for both sides, then create `SyncRemoteIdMapping` entries for all source records (with null destination for unmatched records) via a SQL LEFT JOIN
-6. **Populate FK Record Cache**: For `lookup_field` transformers, fetch records from each referenced DataFolder and cache them in `SyncForeignKeyRecord`. Mappings are grouped by referenced folder to avoid duplicate fetches; all unique FK values across columns referencing the same folder are collected and stored once per `(dataFolderId, foreignKeyValue)` pair.
-7. **Get Mappings**: Look up the source→destination ID mappings from `SyncRemoteIdMapping`
-8. **Transform & Write**:
-   - Column mappings are applied via `transformRecordAsync`, which supports optional transformers on each mapping (see [Transformers](#transformers) below). In this phase, `source_fk_to_dest_fk` passes through raw values while `lookup_field` resolves values from the FK record cache.
-   - **New records**: A temporary ID is generated via `createScratchPendingPublishId()` and injected as the record's ID field. The filename is resolved using the destination schema's `slugColumnRemoteId` if available, falling back to the temp ID, and deduplicated against existing filenames. This temp ID allows subsequent syncs to match the record before it's published.
-   - **Existing records**: Existing destination fields are merged with the transformed source fields (source takes precedence), preserving destination fields not covered by column mappings. Written to the existing file path.
-   - Files are serialized as Prettier-formatted JSON.
-9. **Commit**: All file changes are committed to the `DIRTY_BRANCH` via git
+```
+syncTableMapping(tableMapping, phase)
+│
+├─ entry: mappings.version === 1 → transformV1ToV2()   (executor is v2-only internally)
+│
+├─ Pass 1 — build caches              [DATA phase only]
+│    walk source pages → SyncMatchKeys (source)
+│    walk dest pages   → SyncMatchKeys (dest) + destinationRecordsByPath
+│    LEFT JOIN         → SyncRemoteIdMapping (source→dest, null dest for unmatched)
+│    populateForeignKeyRecordCache    (for lookup_field transformers)
+│
+├─ Pass 2 — source-driven write
+│    for each source record:
+│      matched          → applyColumnMappings(bucket='matched') → merge into existing dest file
+│      unmatched-source → create new dest file       (skipped if unmatchedSourcePolicy = 'ignore')
+│
+├─ Pass 3 — unmatched-destination write   [DATA phase only; gated, see below]
+│    sourceMatchKeySet ← SELECT matchId FROM SyncMatchKeys WHERE dataFolderId = <source>
+│    for each (path, record) in destinationRecordsByPath:
+│      classifyDestinationRecord(record, sourceMatchKeySet, matchCol):
+│        matched                  → skip (Pass 2 handled it)
+│        unmatchedWithMatchKey    → if policy.withMatchKey === 'apply':
+│                                     applyColumnMappings(bucket='unmatched', sourceFields=null)
+│        unmatchedWithoutMatchKey → if policy.withoutMatchKey === 'apply': (same)
+│
+└─ commit Pass 2 + Pass 3 file changes to DIRTY_BRANCH (single batch, Prettier-formatted JSON)
+```
+
+### Pass 1: build caches
+
+Files are read and parsed from both source and destination DataFolders into `ConnectorRecord` objects. Match-column values are inserted into `SyncMatchKeys` for both sides; a SQL LEFT JOIN then creates `SyncRemoteIdMapping` entries for all source records (null destination for unmatched). For `lookup_field` transformers, records from each referenced DataFolder are fetched and cached in `SyncForeignKeyRecord` (grouped by referenced folder so each `(dataFolderId, foreignKeyValue)` pair is stored once). The destination records are also retained in an in-memory `destinationRecordsByPath` map for the lifetime of the call — Pass 3 reuses it with no extra query.
+
+### Pass 2: source-driven write
+
+Iterate source records:
+
+- **Matched record** → `applyColumnMappings({ bucket: 'matched', ... })` merges the transformed source fields into the existing destination file (source-mapped fields win; destination fields not covered by a matched/`always` mapping are preserved).
+- **Unmatched-source record** → a new destination file is created: a temporary ID is generated via `createScratchPendingPublishId()` and injected, the filename is resolved from the destination schema's `slugColumnRemoteId` (falling back to the temp ID, deduplicated), and the match key is auto-injected. Skipped entirely when `unmatchedSourcePolicy.type === 'ignore'`.
+
+In the `DATA` phase `source_fk_to_dest_fk` passes through raw values while `lookup_field` resolves from the FK cache (see [Transformers](#transformers)).
+
+### Pass 3: unmatched-destination write (v2)
+
+Pass 3 visits the **destination crescent** — records in the destination that have no source counterpart this run. It runs only when **all** of the following hold:
+
+- `phase === 'DATA'`
+- `onlySourceFilePath` is **not** set (the `syncOneRecord` single-record path skips Pass 3 — it can't enumerate the whole destination folder),
+- `recordMatching` is configured,
+- `unmatchedDestinationPolicy` has at least one `'apply'` value, **and**
+- the match-key column exists in the current destination schema (if missing, log a warning and skip — never crash).
+
+For each destination record, `classifyDestinationRecord(record, sourceMatchKeySet, matchCol)` returns one of:
+
+- **`matched`** — its match key is in the source set → skipped (Pass 2 already wrote it).
+- **`unmatchedWithMatchKey`** — match-key field populated but no source counterpart → typically a record this sync previously wrote whose source was deleted. Acted on when `policy.withMatchKey === 'apply'`.
+- **`unmatchedWithoutMatchKey`** — match-key field empty/null/whitespace (or a non-string/number value) → hand-authored or pre-existing content this sync never managed. Acted on when `policy.withoutMatchKey === 'apply'`.
+
+When acted on, `applyColumnMappings({ bucket: 'unmatched', sourceFields: null, ... })` applies the `when: 'unmatched'` / `when: 'always'` rules (the archive case writes `archived: true`). The `isEqual` no-op skip is inherited, so unchanged records produce no write. Pass 3 file changes are appended to the same batch as Pass 2 and committed together.
+
+**Defensive runtime behaviors:** if a `{ kind: 'constant' }` mapping somehow targets the match-key column (save-time validation already rejects this — see [Validation](#schema-validation)), the executor omits that write and warns rather than destroying the record's identifier.
 
 ### Phase 2: FOREIGN_KEY_MAPPING
 
-After all table mappings complete Phase 1, a second pass runs for any table mapping that has `source_fk_to_dest_fk` columns. This phase re-runs `syncTableMapping` with `phase = 'FOREIGN_KEY_MAPPING'`, which:
+After all table mappings complete the `DATA` phase, a second pass runs for any table mapping with `source_fk_to_dest_fk` columns. This re-runs `syncTableMapping` with `phase = 'FOREIGN_KEY_MAPPING'`, which:
 
-- Skips the FK record cache population (not needed)
-- Runs `source_fk_to_dest_fk` transformers, which resolve source FK values to destination IDs via `SyncRemoteIdMapping`
-- Skips `lookup_field` transformers (already resolved in Phase 1)
+- Skips Pass 1 FK-cache population and Pass 3 (both `DATA`-only),
+- Runs `source_fk_to_dest_fk` transformers, resolving source FK values to destination IDs via `SyncRemoteIdMapping`,
+- Skips `lookup_field` transformers (already resolved in the `DATA` phase).
 
-This two-phase approach is necessary because destination records must exist (created in Phase 1) before their IDs can be used to resolve foreign key references.
+This two-phase approach is necessary because destination records must exist (created in the `DATA` phase) before their IDs can be used to resolve foreign key references.
 
 ### Finalization
 
-10. **Update lastSyncTime**: On success, the `Sync` record's `lastSyncTime` is updated
+On success, the `Sync` record's `lastSyncTime` is updated. The worker emits a PostHog `sync_completed` event and, when Pass 3 acted on any unmatched-destination record, a single `AuditLog` entry with summary counts (`archived` / `unarchived` / `withMatchKey` / `withoutMatchKey`) and a SHA of the active v2 mappings, so a later reviewer can correlate an archive to the exact config that produced it.
+
+### Pure executor helpers
+
+The pass logic above leans on three pure, Nest-free helpers in [sync-execution.ts](sync-execution.ts) (easy to unit-test, no DB):
+
+- `transformV1ToV2(mapping)` — re-exported from shared-types; applied at the executor entry.
+- `classifyDestinationRecord(record, sourceMatchKeySet, matchCol)` — the three-way bucket classifier above.
+- `applyColumnMappings({ bucket, sourceFields, baseFields, mappings, ... })` — filters mappings to the bucket-applicable subset (`when` ∈ `{bucket, 'always'}`), dispatches `kind: 'column'` (via `transformRecordAsync`) vs `kind: 'constant'` (literal write), and returns the merged fields.
+
+## Unmatched-record policies
+
+A sync's Venn diagram has three buckets. V1 only ever touched the **matched** intersection and created records for the **unmatched-source** crescent. V2 adds first-class handling for both crescents:
+
+| Bucket                | Controlled by                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| Matched               | `columnMappings` with `when: 'matched'` (or omitted) / `'always'`                     |
+| Unmatched source      | `unmatchedSourcePolicy` (`{ type: 'create' }` default, or `{ type: 'ignore' }`)       |
+| Unmatched destination | `unmatchedDestinationPolicy` + `columnMappings` with `when: 'unmatched'` / `'always'` |
+
+`unmatchedDestinationPolicy` subdivides the destination crescent by match-key state — `withMatchKey` and `withoutMatchKey`, each `'ignore'` (default) or `'apply'`. This separates "synced records whose source was deleted" from "hand-authored content this sync never owned." Defaults (`create` + `ignore`/`ignore`) reproduce v1 behavior exactly.
+
+### Worked example: archive on disappear (DEV-10008)
+
+When a source Airtable record disappears, archive the corresponding Webflow record; when it returns, unarchive it. A single destination column carries two self-describing rules:
+
+```json
+{
+  "version": 2,
+  "tableMappings": [
+    {
+      "sourceDataFolderId": "datafolder_airtable_posts",
+      "destinationDataFolderId": "datafolder_webflow_posts",
+      "columnMappings": [
+        { "destinationColumnId": "name", "source": { "kind": "column", "columnId": "Title" } },
+        { "destinationColumnId": "post-body", "source": { "kind": "column", "columnId": "Body" } },
+        { "destinationColumnId": "archived", "when": "matched", "source": { "kind": "constant", "value": false } },
+        { "destinationColumnId": "archived", "when": "unmatched", "source": { "kind": "constant", "value": true } }
+      ],
+      "recordMatching": { "sourceColumnId": "id", "destinationColumnId": "airtable_id" },
+      "unmatchedDestinationPolicy": { "withMatchKey": "apply", "withoutMatchKey": "ignore" }
+    }
+  ]
+}
+```
+
+Reading the config tells you exactly what happens: matched records get `archived: false`; destination records whose source disappeared (and which carry the `airtable_id` match key) get `archived: true` in Pass 3; hand-authored Webflow content with no `airtable_id` is left untouched.
+
+`when: 'always'` is also available for fields written on every record the sync touches regardless of bucket.
+
+### Validation invariants (v2)
+
+Enforced at save time — most as zod refinements in `sync-mapping.schema.ts`, the type check in the service layer:
+
+- One mapping per `(destinationColumnId, when)` pair (two rules sharing a column with the same `when` collide; different `when` values are legal — that's the archive case).
+- `source.kind === 'column'` is only legal with `when: 'matched'` (or omitted) — there's no source value to copy for an unmatched destination record.
+- A `{ kind: 'constant' }` mapping may not target the `recordMatching.destinationColumnId` — overwriting the match key would destroy the identifier that classifies the record.
+- A `{ kind: 'constant' }` value's type must match its destination column type (gated by `validateMappings`); a mismatch throws `ConstantTypeMismatchError` → HTTP 400 `INVALID_CONSTANT_TYPE` (see [Schema Validation](#schema-validation)).
 
 ## API Endpoints
 
@@ -108,7 +236,12 @@ The API accepts a `SaveSyncBody` interface (defined in `@spinner/shared-types`):
 }
 ```
 
-The `mappings` field uses the `SyncMapping` type directly — there is no conversion layer between the API payload and the stored format. Validation is performed using zod schemas in `sync-mapping.schema.ts`.
+The `mappings` field accepts **either** a v1 or a v2 `StoredSyncMapping` (`saveSyncBodySchema` validates both via a discriminated union on `version`). Existing v1 clients (the scratchmd CLI, whalesync import, pre-update web client) keep working; the v2-aware editor sends v2 directly. Both shapes are normalized to v2 in memory and persisted:
+
+- `createSync` writes a sentinel-empty v1 (`{ version: 1, tableMappings: [] }`) to the frozen `mappings` column and the real v2 shape to `mappingsV2`.
+- `updateSync` writes only `mappingsV2`; `mappings` is left untouched. If a row already has `mappingsV2` populated and a stale v1-only client tries to overwrite it, the save is rejected with **HTTP 409 `SYNC_MAPPING_V1_WRITE_REJECTED`** (prompting the client to update) — otherwise the v1 write would be silently shadowed by the authoritative v2 column.
+
+Validation runs through zod schemas in `sync-mapping.schema.ts` plus the service-layer type checks described under [Schema Validation](#schema-validation).
 
 ## Examples
 
@@ -248,14 +381,22 @@ Without `recordMatching`, every source record creates a new destination record o
 
 ## Schema Validation
 
-The `validateSchemaMapping()` function in [schema-validator.ts](schema-validator.ts) ensures mapped fields have compatible types:
+When `validateMappings` is set on the save body, `createSync` / `updateSync` run two schema-aware checks (both skipped gracefully when a folder's schema is absent — e.g. scratch folders). Both live in [schema-validator.ts](schema-validator.ts):
 
-- Traverses TypeBox JSON schemas using dot-notation paths
-- Unwraps `Optional<T>` (union with null) to get base type
-- Compares base types (string, number, boolean, object)
-- Returns validation errors if types don't match
+- **`validateSchemaMapping()`** — for column-source mappings, traverses the TypeBox JSON schemas by dot-notation path, unwraps `Optional<T>` / nullable unions to the base type, and reports any source→destination type mismatch. (v2 column mappings are projected down to the v1 shape first; constants and unmatched-side rules have no source column to check and are dropped from this pass.)
+- **`findConstantTypeMismatches()`** — for `{ kind: 'constant' }` mappings, compares the literal's type against the destination column's type. `null` constants are always allowed; a numeric constant is accepted by both `number` and `integer` columns; columns with no resolvable type (`Type.Any()`) are skipped. The first mismatch throws `ConstantTypeMismatchError`.
 
-Validation always runs on create and update, but is skipped gracefully when either source or destination schema is absent (e.g., for scratch folders).
+### Typed sync-mapping errors → HTTP
+
+Errors raised while normalizing or validating mappings are mapped to stable, machine-readable HTTP responses by `SyncExceptionFilter` ([../exception-filters/sync.exception-filter.ts](../exception-filters/sync.exception-filter.ts), registered globally in `main.ts`):
+
+| Error (thrown from)                                | HTTP | Response `error` code           |
+| -------------------------------------------------- | ---- | ------------------------------- |
+| `SyncMappingNormalizeError` (`transformV1ToV2`)    | 500  | `SYNC_MAPPING_NORMALIZE_FAILED` |
+| `SyncMappingVersionError` (`transformV1ToV2`)      | 500  | `SYNC_MAPPING_UNKNOWN_VERSION`  |
+| `ConstantTypeMismatchError` (save-time validation) | 400  | `INVALID_CONSTANT_TYPE`         |
+
+The 500 responses include `syncId` (read from the route param when present) so ops can correlate a corrupt-mapping failure to a specific sync.
 
 ## Record Matching
 
@@ -336,12 +477,14 @@ See `transformers/implementations/` for the complete set of 24 transformers.
 
 ## Key Files
 
-| File                                                                                    | Description                                                     |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [sync.service.ts](sync.service.ts)                                                      | Core sync logic                                                 |
-| [sync.controller.ts](sync.controller.ts)                                                | REST API endpoints                                              |
-| [schema-validator.ts](schema-validator.ts)                                              | Schema compatibility checking                                   |
-| [sync-mapping.schema.ts](sync-mapping.schema.ts)                                        | Zod validation schemas for request bodies                       |
-| [transformers/](transformers/)                                                          | Transformer registry, types, `LookupTools`, and implementations |
-| [shared-types/.../sync-api.ts](../../../packages/shared-types/src/dto/sync/sync-api.ts) | API interface definitions                                       |
-| [shared-types/.../sync-mapping.ts](../../../packages/shared-types/src/sync-mapping.ts)  | SyncMapping type definitions                                    |
+| File                                                                                           | Description                                                                                  |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [sync.service.ts](sync.service.ts)                                                             | Core sync logic; read choke point (`getSync`/`getMappings`), save path                       |
+| [sync-execution.ts](sync-execution.ts)                                                         | Pure executor helpers: `transformV1ToV2`, `classifyDestinationRecord`, `applyColumnMappings` |
+| [sync.controller.ts](sync.controller.ts)                                                       | REST API endpoints                                                                           |
+| [schema-validator.ts](schema-validator.ts)                                                     | Source→dest type compatibility + constant-value type checking                                |
+| [sync-mapping.schema.ts](sync-mapping.schema.ts)                                               | Zod validation schemas (v1 + v2) for request bodies                                          |
+| [../exception-filters/sync.exception-filter.ts](../exception-filters/sync.exception-filter.ts) | Maps typed sync-mapping errors to stable HTTP responses                                      |
+| [transformers/](transformers/)                                                                 | Transformer registry, types, `LookupTools`, and implementations                              |
+| [shared-types/.../sync-api.ts](../../../packages/shared-types/src/dto/sync/sync-api.ts)        | API interface definitions                                                                    |
+| [shared-types/.../sync-mapping.ts](../../../packages/shared-types/src/sync-mapping.ts)         | v1 + v2 sync-mapping types, `transformV1ToV2`, typed errors                                  |

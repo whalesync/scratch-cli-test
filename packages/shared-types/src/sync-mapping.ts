@@ -205,6 +205,31 @@ export class SyncMappingVersionError extends Error {
 }
 
 /**
+ * Thrown at sync save time when a `{ kind: 'constant' }` column mapping's
+ * literal value does not match the declared type of its destination column —
+ * e.g. writing the string `"true"` into a boolean column. Mapped to HTTP 400
+ * `INVALID_CONSTANT_TYPE` by `SyncExceptionFilter`.
+ *
+ * `expected` and `got` use the destination-schema type vocabulary
+ * (`string` | `number` | `integer` | `boolean` | `object` | `array`).
+ */
+export class ConstantTypeMismatchError extends Error {
+  readonly destinationColumnId: string;
+  readonly expected: string;
+  readonly got: string;
+
+  constructor(destinationColumnId: string, expected: string, got: string) {
+    super(
+      `Constant value for destination column "${destinationColumnId}" has type "${got}" but the column expects "${expected}"`,
+    );
+    this.name = 'ConstantTypeMismatchError';
+    this.destinationColumnId = destinationColumnId;
+    this.expected = expected;
+    this.got = got;
+  }
+}
+
+/**
  * Pure shape transform from the v1 on-disk shape to the v2 in-memory shape.
  *
  * Not used by the read path — `SyncService.getMappings()` returns the on-disk

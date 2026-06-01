@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
-import { ColumnMapping } from '@spinner/shared-types';
-import { isTypeCompatible, validateSchemaMapping } from './schema-validator';
+import { ColumnMapping, ColumnMappingV2 } from '@spinner/shared-types';
+import { findConstantTypeMismatches, isTypeCompatible, validateSchemaMapping } from './schema-validator';
 
 describe('isTypeCompatible', () => {
   it('matches identical primitives', () => {
@@ -100,5 +100,86 @@ describe('validateSchemaMapping', () => {
     ];
     const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
     expect(errors).toHaveLength(0);
+  });
+});
+
+describe('findConstantTypeMismatches', () => {
+  const destSchema = Type.Object({
+    title: Type.String(),
+    amount: Type.Number(),
+    count: Type.Integer(),
+    archived: Type.Boolean(),
+    payload: Type.Object({ inner: Type.String() }),
+    nickname: Type.Union([Type.String(), Type.Null()]),
+    anything: Type.Any(),
+  });
+
+  const constant = (destinationColumnId: string, value: string | number | boolean | null): ColumnMappingV2 => ({
+    destinationColumnId,
+    when: 'unmatched',
+    source: { kind: 'constant', value },
+  });
+
+  it('accepts constants whose type matches the destination column', () => {
+    const mappings: ColumnMappingV2[] = [
+      constant('title', 'stale'),
+      constant('amount', 42),
+      constant('archived', true),
+    ];
+    expect(findConstantTypeMismatches(destSchema, mappings)).toEqual([]);
+  });
+
+  it('accepts a numeric constant for an integer column', () => {
+    expect(findConstantTypeMismatches(destSchema, [constant('count', 7)])).toEqual([]);
+  });
+
+  it('flags a string constant written to a boolean column', () => {
+    const mismatches = findConstantTypeMismatches(destSchema, [constant('archived', 'true')]);
+    expect(mismatches).toEqual([{ destinationColumnId: 'archived', expected: 'boolean', got: 'string' }]);
+  });
+
+  it('flags a numeric constant written to a string column', () => {
+    const mismatches = findConstantTypeMismatches(destSchema, [constant('title', 5)]);
+    expect(mismatches).toEqual([{ destinationColumnId: 'title', expected: 'string', got: 'number' }]);
+  });
+
+  it('flags a primitive constant written to an object column', () => {
+    const mismatches = findConstantTypeMismatches(destSchema, [constant('payload', 'oops')]);
+    expect(mismatches).toEqual([{ destinationColumnId: 'payload', expected: 'object', got: 'string' }]);
+  });
+
+  it('allows a null constant on any column (clears the field)', () => {
+    const mappings: ColumnMappingV2[] = [constant('archived', null), constant('amount', null)];
+    expect(findConstantTypeMismatches(destSchema, mappings)).toEqual([]);
+  });
+
+  it('unwraps a nullable column type before comparing', () => {
+    expect(findConstantTypeMismatches(destSchema, [constant('nickname', 'who')])).toEqual([]);
+    expect(findConstantTypeMismatches(destSchema, [constant('nickname', 3)])).toEqual([
+      { destinationColumnId: 'nickname', expected: 'string', got: 'number' },
+    ]);
+  });
+
+  it('skips constants whose destination column is unknown or untyped', () => {
+    const mappings: ColumnMappingV2[] = [
+      constant('doesNotExist', 'x'), // column not in schema
+      constant('anything', 5), // Type.Any() — no resolvable type
+    ];
+    expect(findConstantTypeMismatches(destSchema, mappings)).toEqual([]);
+  });
+
+  it('ignores column-source mappings (only constants are checked)', () => {
+    const mappings: ColumnMappingV2[] = [
+      { destinationColumnId: 'archived', source: { kind: 'column', columnId: 'someBool' } },
+      constant('title', 5), // the only mismatch
+    ];
+    expect(findConstantTypeMismatches(destSchema, mappings)).toEqual([
+      { destinationColumnId: 'title', expected: 'string', got: 'number' },
+    ]);
+  });
+
+  it('returns one entry per mismatching constant', () => {
+    const mappings: ColumnMappingV2[] = [constant('title', 5), constant('archived', 'nope')];
+    expect(findConstantTypeMismatches(destSchema, mappings)).toHaveLength(2);
   });
 });

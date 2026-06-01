@@ -12,6 +12,7 @@ import {
   AiContextResponse,
   ColumnMapping,
   ColumnMappingV2,
+  ConstantTypeMismatchError,
   createScratchPendingPublishId,
   createSyncId,
   DataFolderId,
@@ -46,7 +47,7 @@ import { Service as ServiceConst } from 'src/remote-service/connectors/service-c
 import { BaseJsonTableSpec, IdPath, idPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
-import { getSchemaAtPath, validateSchemaMapping } from 'src/sync/schema-validator';
+import { findConstantTypeMismatches, getSchemaAtPath, validateSchemaMapping } from 'src/sync/schema-validator';
 import {
   applyColumnMappings,
   classifyDestinationRecord,
@@ -328,6 +329,17 @@ export class SyncService {
             throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
           }
         }
+
+        // Constant column mappings have no source column for validateSchemaMapping
+        // to type-check; verify their literal values against the destination
+        // column type directly. Surfaced as HTTP 400 by SyncExceptionFilter.
+        if (destFolder?.schema) {
+          const constantMismatches = findConstantTypeMismatches(destFolder.schema, tableMapping.columnMappings);
+          if (constantMismatches.length > 0) {
+            const mismatch = constantMismatches[0];
+            throw new ConstantTypeMismatchError(mismatch.destinationColumnId, mismatch.expected, mismatch.got);
+          }
+        }
       }
     }
 
@@ -438,6 +450,17 @@ export class SyncService {
           const errors = validateSchemaMapping(sourceFolder.schema, destFolder.schema, v1Cols);
           if (errors.length > 0) {
             throw new BadRequestException(`Validation failed for folder mapping: ${errors.join('; ')}`);
+          }
+        }
+
+        // Constant column mappings have no source column for validateSchemaMapping
+        // to type-check; verify their literal values against the destination
+        // column type directly. Surfaced as HTTP 400 by SyncExceptionFilter.
+        if (destFolder?.schema) {
+          const constantMismatches = findConstantTypeMismatches(destFolder.schema, tableMapping.columnMappings);
+          if (constantMismatches.length > 0) {
+            const mismatch = constantMismatches[0];
+            throw new ConstantTypeMismatchError(mismatch.destinationColumnId, mismatch.expected, mismatch.got);
           }
         }
       }

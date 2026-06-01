@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import { ColumnMapping } from '@spinner/shared-types';
+import { ColumnMapping, ColumnMappingV2 } from '@spinner/shared-types';
 
 /**
  * Validates that the source and destination fields in a mapping are compatible.
@@ -39,6 +39,80 @@ export function validateSchemaMapping(
   }
 
   return errors;
+}
+
+export interface ConstantTypeMismatch {
+  destinationColumnId: string;
+  /** Destination-schema type vocabulary: string | number | integer | boolean | object | array. */
+  expected: string;
+  /** Constant value's type, in the same vocabulary. */
+  got: string;
+}
+
+/**
+ * Maps a constant literal value to the destination-schema type vocabulary used
+ * by `getSchemaType`. Returns null for `null` constants, which are assignable
+ * to any column (they clear the field).
+ */
+function constantValueType(value: string | number | boolean | null): 'string' | 'number' | 'boolean' | null {
+  if (value === null) return null;
+  switch (typeof value) {
+    case 'boolean':
+      return 'boolean';
+    case 'number':
+      return 'number';
+    default:
+      return 'string';
+  }
+}
+
+/** True when a constant of `constantType` may be written into a `expectedColumnType` column. */
+function isConstantTypeCompatible(constantType: 'string' | 'number' | 'boolean', expectedColumnType: string): boolean {
+  if (constantType === 'number') {
+    // JSON has a single number type; an `integer` column accepts a numeric constant.
+    return expectedColumnType === 'number' || expectedColumnType === 'integer';
+  }
+  return constantType === expectedColumnType;
+}
+
+/**
+ * Checks that every `{ kind: 'constant' }` column mapping writes a value whose
+ * type matches its destination column. Returns one entry per mismatch (empty
+ * when all constants are compatible).
+ *
+ * Skips constants whose destination column type cannot be resolved from the
+ * schema (column absent, or `Type.Any()`) — the same lenient stance as
+ * `validateSchemaMapping`, which only flags a conflict when both types are known.
+ * `null` constants are always allowed (they clear the field on any column).
+ */
+export function findConstantTypeMismatches(
+  destSchema: TSchema,
+  columnMappings: ColumnMappingV2[],
+): ConstantTypeMismatch[] {
+  const mismatches: ConstantTypeMismatch[] = [];
+
+  for (const mapping of columnMappings) {
+    if (mapping.source.kind !== 'constant') continue;
+
+    const constantType = constantValueType(mapping.source.value);
+    if (constantType === null) continue;
+
+    const destFieldSchema = getSchemaAtPath(destSchema, mapping.destinationColumnId);
+    if (!destFieldSchema) continue;
+
+    const expectedColumnType = getSchemaType(destFieldSchema);
+    if (!expectedColumnType) continue;
+
+    if (!isConstantTypeCompatible(constantType, expectedColumnType)) {
+      mismatches.push({
+        destinationColumnId: mapping.destinationColumnId,
+        expected: expectedColumnType,
+        got: constantType,
+      });
+    }
+  }
+
+  return mismatches;
 }
 
 /**

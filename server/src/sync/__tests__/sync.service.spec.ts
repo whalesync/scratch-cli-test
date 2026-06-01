@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import type { ColumnMapping, DataFolderId, SaveSyncBody, SyncId, WorkbookId } from '@spinner/shared-types';
+import { ConstantTypeMismatchError } from '@spinner/shared-types';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
@@ -25,11 +26,13 @@ import 'src/sync/transformers/implementations/source-fk-to-dest-fk.transformer';
 
 jest.mock('src/sync/schema-validator', () => ({
   validateSchemaMapping: jest.fn().mockReturnValue([]),
+  findConstantTypeMismatches: jest.fn().mockReturnValue([]),
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { validateSchemaMapping } = require('src/sync/schema-validator') as {
+const { validateSchemaMapping, findConstantTypeMismatches } = require('src/sync/schema-validator') as {
   validateSchemaMapping: jest.Mock;
+  findConstantTypeMismatches: jest.Mock;
 };
 
 // ---------------------------------------------------------------------------
@@ -243,6 +246,21 @@ describe('SyncService', () => {
       const body = makeSaveSyncBody({ validateMappings: true });
 
       await expect(service.createSync(WORKBOOK_ID, body, ACTOR)).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws ConstantTypeMismatchError when a constant value conflicts with its destination column type', async () => {
+      workbookService.findOne.mockResolvedValue(MOCK_WORKBOOK);
+      dataFolderService.fetchSchemaSpec.mockResolvedValue(MOCK_SCHEMA_SPEC);
+      validateSchemaMapping.mockReturnValue([]);
+      // mockReturnValueOnce so the override doesn't leak into later validating tests.
+      findConstantTypeMismatches.mockReturnValueOnce([
+        { destinationColumnId: 'archived', expected: 'boolean', got: 'string' },
+      ]);
+
+      const body = makeSaveSyncBody({ validateMappings: true });
+
+      await expect(service.createSync(WORKBOOK_ID, body, ACTOR)).rejects.toThrow(ConstantTypeMismatchError);
+      expect(dbService.client.sync.create).not.toHaveBeenCalled();
     });
 
     it('creates multiple syncTablePairs for multiple table mappings', async () => {

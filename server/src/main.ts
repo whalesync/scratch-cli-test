@@ -11,6 +11,7 @@ import {
   BadRequestExceptionFilter,
   NotFoundExceptionFilter,
 } from './exception-filters/generic-errors.exception-filter';
+import { SyncExceptionFilter } from './exception-filters/sync.exception-filter';
 import { LoggingInterceptor } from './interceptors/logging.interceptor';
 import { WSLogger, WSLoggerShim } from './logger';
 
@@ -67,6 +68,7 @@ async function bootstrap(): Promise<void> {
     new NotFoundExceptionFilter(),
     new ConnectorInstantiationErrorExceptionFilter(),
     new ConnectorAuthErrorExceptionFilter(),
+    new SyncExceptionFilter(),
   );
 
   app.useLogger(new WSLoggerShim());
