@@ -506,7 +506,7 @@ export class SupabaseConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
@@ -518,6 +518,9 @@ export class SupabaseConnector extends Connector {
       }));
 
       await client.updateMany(schema, tableName, pk, records);
+      // Step-1 placeholder: return the sent payload. Step 2 will plumb
+      // through `client.updateMany`'s `RETURNING *` rows here.
+      return files;
     }, resolved.connectionString);
   }
 

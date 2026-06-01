@@ -287,7 +287,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const [tableId] = tableSpec.id.remoteId;
 
     const requests: WordPressBatchRequestItem[] = files.map((file, i) => ({
@@ -298,6 +298,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
 
     const batchResponse = await this.client.batchRequest(requests);
     this.assertBatchValidation(batchResponse, requests);
+    return files;
   }
 
   /**

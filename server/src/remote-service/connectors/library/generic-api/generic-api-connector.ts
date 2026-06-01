@@ -129,7 +129,7 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
     return Promise.reject(new Error('Generic API connector is read-only (createRecords not supported)'));
   }
 
-  async updateRecords(): Promise<void> {
+  async updateRecords(): Promise<ConnectorFile[]> {
     return Promise.reject(new Error('Generic API connector is read-only (updateRecords not supported)'));
   }
 

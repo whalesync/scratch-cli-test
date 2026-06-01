@@ -284,7 +284,7 @@ export class AirtableConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const [baseId, tableId] = tableSpec.id.remoteId;
 
     const airtableRecords = files.map((file, i) => ({
@@ -293,6 +293,7 @@ export class AirtableConnector extends Connector {
     }));
 
     await this.client.updateRecords(baseId, tableId, airtableRecords);
+    return files;
   }
 
   /**

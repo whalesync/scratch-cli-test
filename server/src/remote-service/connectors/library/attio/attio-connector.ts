@@ -248,7 +248,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const parsed = parseAttioTableId(tableSpec.id);
     for (let i = 0; i < files.length; i++) {
       // Prefer the sparse partial; only fall back to the full record when
@@ -273,6 +273,7 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
           return assertUnreachable(parsed);
       }
     }
+    return files;
   }
 
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {

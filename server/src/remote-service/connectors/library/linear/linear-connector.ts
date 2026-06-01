@@ -248,7 +248,7 @@ export class LinearConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const entityType = tableSpec.id.wsId as EntityType;
     this.assertWritable(entityType);
 
@@ -261,6 +261,7 @@ export class LinearConnector extends Connector {
       );
       await this.updateEntity(entityType as WritableEntityType, entityId, input);
     }
+    return files;
   }
 
   /**

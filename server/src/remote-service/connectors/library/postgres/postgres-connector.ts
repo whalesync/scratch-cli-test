@@ -425,7 +425,7 @@ export class PostgresConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const [schema, tableName] = tableSpec.id.remoteId;
     return this.withPgClient(async (client) => {
       const pk = tableSpec.idColumnRemoteId;
@@ -436,6 +436,9 @@ export class PostgresConnector extends Connector {
       });
 
       await client.updateMany(schema, tableName, pk, records);
+      // Step-1 placeholder: return the sent payload. Step 2 will plumb
+      // through `client.updateMany`'s `RETURNING *` rows here.
+      return files;
     });
   }
 

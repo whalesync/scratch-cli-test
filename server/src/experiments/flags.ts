@@ -44,6 +44,19 @@ export enum UserFlag {
    * available to anyone with workbook access.
    */
   ENABLE_PUBLISH_HISTORY = 'ENABLE_PUBLISH_HISTORY',
+  /**
+   * Per-user gate for the new "use connector's returned row as the
+   * post-publish blob" path. When TRUE, the publish service uses the
+   * `ConnectorFile[]` returned by `Connector.updateRecords` to build the
+   * git commit on `main`, capturing trigger-set timestamps, normalized
+   * values, computed columns, and native PK types as Postgres/the
+   * connector actually persisted them. When FALSE (default), the
+   * pre-existing sent-payload behavior is preserved. Checked server-side
+   * only — not exposed to the client. See
+   * `docs/plans/2026-05-29-publish-pk-stringification-bug.md` for the
+   * broader fix plan.
+   */
+  UPDATE_RECORDS_RETURNS_REMOTE_DATA = 'UPDATE_RECORDS_RETURNS_REMOTE_DATA',
 }
 
 /**

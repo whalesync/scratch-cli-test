@@ -195,7 +195,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
     const customFieldKeys = await this.getCustomFieldKeys(entityType);
 
@@ -208,6 +208,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
 
       await this.client.updateEntity(entityType, entityId, data, customFieldKeys);
     }
+    return files;
   }
 
   /**

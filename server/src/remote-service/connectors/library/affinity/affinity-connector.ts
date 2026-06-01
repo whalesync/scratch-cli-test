@@ -372,7 +372,7 @@ export class AffinityConnector extends Connector<string, AffinityDownloadProgres
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
-  async updateRecords(): Promise<void> {
+  async updateRecords(): Promise<ConnectorFile[]> {
     throw new AffinityError(`${READ_ONLY_MESSAGE} Updating list entries is not supported.`);
   }
 

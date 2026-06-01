@@ -209,7 +209,7 @@ export class QuickBooksConnector extends Connector<string, QuickBooksDownloadPro
    * Not supported — this is a read-only connector.
    */
   // eslint-disable-next-line @typescript-eslint/require-await, @typescript-eslint/no-unused-vars
-  async updateRecords(_tableSpec: BaseJsonTableSpec, _files: ConnectorFile[]): Promise<void> {
+  async updateRecords(_tableSpec: BaseJsonTableSpec, _files: ConnectorFile[]): Promise<ConnectorFile[]> {
     throw new QuickBooksError(
       'QuickBooks Online connector is read-only. Update operations are not supported.',
       400,

@@ -184,7 +184,7 @@ export class YouTubeConnector extends Connector {
     _tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const changed = changedFields[i];
@@ -210,6 +210,7 @@ export class YouTubeConnector extends Connector {
         }
       }
     }
+    return files;
   }
 
   /**

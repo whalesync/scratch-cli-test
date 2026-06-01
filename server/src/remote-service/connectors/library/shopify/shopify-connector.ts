@@ -418,7 +418,7 @@ export class ShopifyConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const entityType = tableSpec.id.wsId as EntityType;
     this.assertWritable(entityType);
 
@@ -427,6 +427,7 @@ export class ShopifyConnector extends Connector {
       const input = this.stripReadOnlyFields(changedFields[i] as ConnectorFile, entityType, 'update');
       await this.client.updateEntity(entityType, entityId, input);
     }
+    return files;
   }
 
   /**

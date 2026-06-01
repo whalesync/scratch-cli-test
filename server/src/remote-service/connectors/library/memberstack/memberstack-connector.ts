@@ -156,7 +156,7 @@ export class MemberstackConnector extends Connector {
     _tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     for (let i = 0; i < files.length; i++) {
       const memberId = files[i].id as string;
       const changed = changedFields[i];
@@ -168,6 +168,7 @@ export class MemberstackConnector extends Connector {
         loginRedirect: changed.loginRedirect as string | undefined,
       });
     }
+    return files;
   }
 
   async deleteRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {

@@ -239,13 +239,20 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    *   containing only the fields that changed for files[i], with values already transformed
    *   (FK resolution, transformers, etc.). Connectors should send this as the partial
    *   payload so unchanged fields (especially computed/read-only ones) are not re-sent.
+   * @returns The persisted records as the remote service actually stored them — preserving
+   *   trigger-set timestamps, server-normalized values, computed columns, and native PK
+   *   types. Should be parallel to `files` with the same length and ordering when possible
+   *   (callers that pair results to inputs by index). Until the `UPDATE_RECORDS_RETURNS_REMOTE_DATA`
+   *   flag is wired through to the caller, connectors that don't yet have read-back support
+   *   are allowed to return `files` (the sent payload) as a placeholder — the caller still
+   *   uses the sent payload in that case.
    * @throws Error if there is a problem updating the records.
    */
   abstract updateRecords(
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void>;
+  ): Promise<ConnectorFile[]>;
 
   /**
    * Delete records from the data source

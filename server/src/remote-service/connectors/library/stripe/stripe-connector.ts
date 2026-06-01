@@ -220,7 +220,7 @@ export class StripeConnector extends Connector {
   /**
    * Stripe connector is read-only — updating records is not supported.
    */
-  updateRecords(_tableSpec: BaseJsonTableSpec, _files: ConnectorFile[]): Promise<void> {
+  updateRecords(_tableSpec: BaseJsonTableSpec, _files: ConnectorFile[]): Promise<ConnectorFile[]> {
     throw new Error('Stripe connector is read-only. Records cannot be updated through Scratch.');
   }
 

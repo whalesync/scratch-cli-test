@@ -567,7 +567,7 @@ export class WebflowConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const [, collectionId] = tableSpec.id.remoteId;
 
     // Handle pages table — update page settings one at a time
@@ -587,7 +587,7 @@ export class WebflowConnector extends Connector {
           await this.withRetry(() => this.client.pages.updatePageSettings(pageId, update as Webflow.PageMetadataWrite));
         }
       }
-      return;
+      return files;
     }
 
     const items: Webflow.CollectionItemWithIdInput[] = [];
@@ -607,6 +607,7 @@ export class WebflowConnector extends Connector {
     await this.withRetry(() =>
       this.client.collections.items.updateItemsLive(collectionId, { skipInvalidFiles: false, items }),
     );
+    return files;
   }
 
   /**

@@ -212,7 +212,7 @@ export class MocoConnector extends Connector {
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields: Record<string, unknown>[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const entityType = tableSpec.id.wsId as MocoEntityType;
 
     for (let i = 0; i < files.length; i++) {
@@ -220,6 +220,7 @@ export class MocoConnector extends Connector {
       const updateData = this.transformToUpdateRequest(entityType, changedFields[i]);
       await this.client.updateEntity(entityType, entityId, updateData);
     }
+    return files;
   }
 
   /**

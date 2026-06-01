@@ -238,7 +238,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     tableSpec: BaseJsonTableSpec,
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
-  ): Promise<void> {
+  ): Promise<ConnectorFile[]> {
     const objectType = tableSpec.id.remoteId[0];
     const propertyNames = await this.getPropertyNames(objectType);
     const associationTypes = this.getAssociationTypes(objectType);
@@ -282,6 +282,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
         }
       }
     }
+    return files;
   }
 
   /**

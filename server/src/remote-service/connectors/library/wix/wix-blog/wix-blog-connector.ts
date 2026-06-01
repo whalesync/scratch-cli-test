@@ -201,7 +201,7 @@ export class WixBlogConnector extends Connector {
    * Update draft posts in Wix from raw JSON files.
    * Files should have an '_id' field and the post data to update.
    */
-  async updateRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+  async updateRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     // Wix doesn't support bulk update, so we update one at a time
     for (const file of files) {
       const postId = (file._id || file.id) as string;
@@ -213,6 +213,7 @@ export class WixBlogConnector extends Connector {
         }),
       );
     }
+    return files;
   }
 
   /**
