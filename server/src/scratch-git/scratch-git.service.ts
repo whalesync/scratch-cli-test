@@ -254,8 +254,12 @@ export class ScratchGitService {
       const normalized = p.startsWith('/') ? p.slice(1) : p;
       const folder = normalized.includes('/') ? normalized.substring(0, normalized.lastIndexOf('/')) : '';
       const filename = normalized.includes('/') ? normalized.substring(normalized.lastIndexOf('/') + 1) : normalized;
-      if (!byFolder.has(folder)) byFolder.set(folder, []);
-      byFolder.get(folder)!.push(filename);
+      let filenames = byFolder.get(folder);
+      if (!filenames) {
+        filenames = [];
+        byFolder.set(folder, filenames);
+      }
+      filenames.push(filename);
     }
 
     const groups = await Promise.all(

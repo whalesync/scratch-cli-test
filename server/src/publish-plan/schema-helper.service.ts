@@ -129,7 +129,13 @@ export class SchemaHelperService {
       }
 
       const spec = await this.readSchemaFromGit(workbookId, dataFolder.connectorAccountId, dataFolder.path);
-      const result = { id: dataFolder.id, tableId: dataFolder.tableId, spec: spec! };
+      if (!spec) {
+        if (cache) {
+          cache.set(folderPath, null);
+        }
+        return null;
+      }
+      const result = { id: dataFolder.id, tableId: dataFolder.tableId, spec };
       if (cache) {
         cache.set(folderPath, result);
       }

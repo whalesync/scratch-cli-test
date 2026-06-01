@@ -870,9 +870,8 @@ function createNotionBlockDiffCore(
   };
 
   for (const newBlock of blocksWithIds) {
-    if (newBlock?.id && oldProcessed.blockMap.has(newBlock.id)) {
-      const oldBlock = oldProcessed.blockMap.get(newBlock.id)!;
-
+    const oldBlock = newBlock?.id ? oldProcessed.blockMap.get(newBlock.id) : undefined;
+    if (newBlock?.id && oldBlock) {
       // If block types are different, we need to delete the old block and create a new one
       // Notion API doesn't support changing block types via update
       if (oldBlock.type !== newBlock.type) {

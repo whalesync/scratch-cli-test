@@ -987,9 +987,12 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         expect(mockScratchGitService.listRepoFiles).toHaveBeenCalled();
         const updateData = findUpdateMatching((d) => d.lastFullPullAt instanceof Date);
         expect(updateData).not.toBeNull();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.lastFullPullAt).toBeInstanceOf(Date);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.lastIncrementalPullAt).toBeInstanceOf(Date);
         // Prisma.DbNull serializes to a sentinel object; assert deletion intent rather than the literal null.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.incrementalCursor).toBeDefined();
       });
 
@@ -1042,8 +1045,10 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         // lastIncrementalPullAt advanced to the connector-reported watermark.
         const updateData = findUpdateMatching((d) => d.lastIncrementalPullAt instanceof Date);
         expect(updateData).not.toBeNull();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.lastIncrementalPullAt).toEqual(reportedWatermark);
         // No lastFullPullAt write — this was an incremental, not a full.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.lastFullPullAt).toBeUndefined();
       });
 
@@ -1059,10 +1064,14 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         const updateData = findUpdateMatching((d) => d.lastFullPullAt instanceof Date);
         expect(updateData).not.toBeNull();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.lastFullPullAt).toBeInstanceOf(Date);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.lastIncrementalPullAt).toBeInstanceOf(Date);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.lastFullPullAt).toEqual(updateData!.lastIncrementalPullAt);
         // Prisma.DbNull sentinel, not the literal null — just assert "cleared".
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.incrementalCursor).toBeDefined();
       });
 

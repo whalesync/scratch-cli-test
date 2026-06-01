@@ -28,24 +28,28 @@ describe('pipedriveFieldToJsonSchema', () => {
   it('maps varchar to String | Null', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'varchar' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.anyOf).toHaveLength(2);
   });
 
   it('maps text to String | Null', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'text' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.anyOf).toHaveLength(2);
   });
 
   it('maps double to Number | Null', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'double' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.anyOf).toHaveLength(2);
   });
 
   it('maps date to String(format: date) | Null', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'date' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const stringType = schema!.anyOf?.find((s: { type?: string }) => s.type === 'string');
     expect(stringType?.format).toBe('date');
   });
@@ -53,21 +57,27 @@ describe('pipedriveFieldToJsonSchema', () => {
   it('maps phone to array with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'phone' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.type).toBe('array');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('phone');
   });
 
   it('maps monetary to object with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'monetary' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.type).toBe('object');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('monetary');
   });
 
   it('maps address to object with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'address' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.type).toBe('object');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('address');
   });
 
@@ -83,6 +93,7 @@ describe('pipedriveFieldToJsonSchema', () => {
     );
     expect(schema).toBeDefined();
     // Union of [Literal(1), Literal(2), Null]
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.anyOf).toHaveLength(3);
   });
 
@@ -97,36 +108,42 @@ describe('pipedriveFieldToJsonSchema', () => {
       }),
     );
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.type).toBe('array');
   });
 
   it('maps org to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'org' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'organizations' });
   });
 
   it('maps people to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'people' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'persons' });
   });
 
   it('maps deal to Number | Null with FOREIGN_KEY_OPTIONS', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'deal' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'deals' });
   });
 
   it('maps user to Number | Null with READONLY_FLAG', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'user' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_READONLY]).toBe(true);
   });
 
   it('maps varchar_auto to String | Null with READONLY_FLAG', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'varchar_auto' }));
     expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_READONLY]).toBe(true);
   });
 });

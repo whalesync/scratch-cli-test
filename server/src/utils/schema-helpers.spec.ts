@@ -105,6 +105,7 @@ describe('schema-helpers', () => {
         const titleField = fields.find((f) => f.path === 'title');
 
         expect(titleField).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(titleField!.type).toBe('string');
       });
 
@@ -117,6 +118,7 @@ describe('schema-helpers', () => {
         const itemsField = fields.find((f) => f.path === 'items');
 
         expect(itemsField).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(itemsField!.type).toBe('array');
       });
 
@@ -243,8 +245,11 @@ describe('schema-helpers', () => {
         const titleField = fields.find((f) => f.path === 'title');
 
         expect(titleField).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(titleField!.displayLabel).toBe('Page Title');
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(titleField!.type).toBe('string');
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(titleField!.suggestedTransformer).toEqual(virtualTransformer);
       });
 
@@ -268,6 +273,7 @@ describe('schema-helpers', () => {
         const dataField = fields.find((f) => f.path === 'data');
 
         // The original type was 'array' but virtual field overrides it to 'string'
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(dataField!.type).toBe('string');
       });
 
@@ -291,7 +297,9 @@ describe('schema-helpers', () => {
         const fields = extractSchemaFields(schema);
         const titleField = fields.find((f) => f.path === 'title');
 
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(titleField!.description).toBe('Original description');
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(titleField!.displayLabel).toBe('Title');
       });
 
@@ -319,6 +327,7 @@ describe('schema-helpers', () => {
         const field = fields.find((f) => f.path === 'field');
 
         // Virtual field transformer should win
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(field!.suggestedTransformer).toEqual(virtualTransformer);
       });
 
@@ -330,6 +339,7 @@ describe('schema-helpers', () => {
         const fields = extractSchemaFields(schema);
         const nameField = fields.find((f) => f.path === 'name');
 
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(nameField!.displayLabel).toBeUndefined();
       });
 
@@ -341,7 +351,9 @@ describe('schema-helpers', () => {
         const fields = extractSchemaFields(schema);
         const nameField = fields.find((f) => f.path === 'name');
 
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(nameField!.type).toBe('string');
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(nameField!.displayLabel).toBeUndefined();
       });
 
@@ -372,7 +384,9 @@ describe('schema-helpers', () => {
         const fields = extractSchemaFields(schema);
         const field = fields.find((f) => f.path === 'field');
 
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(field!.displayLabel).toBe('First');
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(field!.type).toBe('string');
       });
     });

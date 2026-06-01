@@ -84,6 +84,7 @@ describe('buildIntercomArticlesJsonTableSpec', () => {
   it('includes generatedAt timestamp', () => {
     const spec = buildIntercomArticlesJsonTableSpec(entityId);
     expect(spec.generatedAt).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(() => new Date(spec.generatedAt!)).not.toThrow();
   });
 });
@@ -154,6 +155,7 @@ describe('buildIntercomCollectionsJsonTableSpec', () => {
   it('includes generatedAt timestamp', () => {
     const spec = buildIntercomCollectionsJsonTableSpec(entityId);
     expect(spec.generatedAt).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(() => new Date(spec.generatedAt!)).not.toThrow();
   });
 });
@@ -244,6 +246,7 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
   it('includes generatedAt timestamp', () => {
     const spec = buildIntercomConversationsJsonTableSpec(entityId);
     expect(spec.generatedAt).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(() => new Date(spec.generatedAt!)).not.toThrow();
   });
 });

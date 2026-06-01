@@ -550,8 +550,11 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     const pageContent = response as unknown as ConvertedNotionBlock;
 
     if (_.has(response, 'has_children') && (response as BlockObjectResponse).has_children) {
+      if (!pageContent.id) {
+        throw new Error(`Notion block ${blockId} returned has_children=true but no id`);
+      }
       const childrenData = await this.pollRecordPageContentChildren(
-        pageContent.id!,
+        pageContent.id,
         NotionConnector.PAGE_CONTENT_MAX_DEPTH,
         blockId,
       );
@@ -622,7 +625,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         // Skip unsupported types if necessary
 
         if ((result as BlockObjectResponse).has_children) {
-          const childrenData = await this.pollRecordPageContentChildren(block.id!, depthLimit - 1, rootRecordId);
+          if (!block.id) {
+            throw new Error(`Notion block under ${rootRecordId} returned has_children=true but no id`);
+          }
+          const childrenData = await this.pollRecordPageContentChildren(block.id, depthLimit - 1, rootRecordId);
           block.children = childrenData.children;
           childMaxDepth = Math.max(childrenData.statistics.maxDepth, childMaxDepth);
           childMaxBreadth = Math.max(childrenData.statistics.maxBreadth, childMaxBreadth);

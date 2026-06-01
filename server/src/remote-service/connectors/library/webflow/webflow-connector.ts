@@ -759,15 +759,20 @@ export class WebflowConnector extends Connector {
       }),
     );
 
-    if (!uploadResult.id) {
+    const uploadedAssetId = uploadResult.id;
+    if (!uploadedAssetId) {
       throw new Error('Webflow asset upload succeeded but no asset ID was returned');
     }
 
     // Re-fetch the full asset record to get all metadata
-    const asset = await this.withRetry(() => this.client.assets.get(uploadResult.id!));
+    const asset = await this.withRetry(() => this.client.assets.get(uploadedAssetId));
+
+    if (!asset.id) {
+      throw new Error('Webflow asset fetch returned no asset ID');
+    }
 
     return {
-      remoteAssetId: asset.id!,
+      remoteAssetId: asset.id,
       url: asset.hostedUrl ?? undefined,
       filename: asset.originalFileName ?? undefined,
       mimeType: asset.contentType ?? undefined,

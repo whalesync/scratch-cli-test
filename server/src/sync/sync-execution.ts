@@ -71,14 +71,17 @@ export async function transformRecordAsync(
 
     const configs = getTransformerConfigs(mapping);
     if (configs.length > 0) {
+      if (!syncContext) {
+        throw new Error('transformRecordAsync requires syncContext when column mappings include transformers');
+      }
       const result = await applyTransformerPipeline(configs, sourceValue, {
         sourceRecord,
         sourceFieldPath: mapping.sourceColumnId,
         sourceTableSpec,
-        sourceService: syncContext!.sourceService,
+        sourceService: syncContext.sourceService,
         destinationFieldPath: mapping.destinationColumnId,
         destinationTableSpec,
-        destinationService: syncContext!.destinationService,
+        destinationService: syncContext.destinationService,
         lookupTools: lookupTools ?? {
           getDestinationMappingForSourceFk: () => Promise.resolve(null),
           lookupFieldFromFkRecord: () => Promise.resolve(null),

@@ -347,7 +347,9 @@ describe('SupabaseConnector incremental pulls', () => {
       expect((modifiedSinceDatetime as Date).getTime()).toBe(since.getTime() - PG_INCREMENTAL_CLOCK_SKEW_MS);
 
       expect(result.newWatermark).toBeInstanceOf(Date);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
     });
 

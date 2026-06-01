@@ -131,19 +131,22 @@ export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewCo
   }
 
   if (config.titleField && valueCols.length > 0 && valueCols[0].name === config.titleField) {
-    cols.push(valueCols.shift()!.col);
+    const titleEntry = valueCols.shift();
+    if (titleEntry) cols.push(titleEntry.col);
   }
 
   // 2. id fixed field right after title
-  if (fixedCols.has('id')) {
-    cols.push(fixedCols.get('id')!);
+  const idCol = fixedCols.get('id');
+  if (idCol) {
+    cols.push(idCol);
     fixedCols.delete('id');
   }
 
   // 3. Priority fields (already ordered at front after title was removed)
   const prioritySet = new Set(config.priorityFields ?? []);
   while (valueCols.length > 0 && prioritySet.has(valueCols[0].name)) {
-    cols.push(valueCols.shift()!.col);
+    const next = valueCols.shift();
+    if (next) cols.push(next.col);
   }
 
   // 4. Remaining value fields
@@ -154,8 +157,9 @@ export function buildAttioDefaultView(schema: TSchema, config: AttioObjectViewCo
   // 5. Remaining fixed fields in priority order: created_at, then the rest
   const remainingFixedOrder = ['created_at', 'web_url', 'parent_record_id', 'parent_object'];
   for (const fieldId of remainingFixedOrder) {
-    if (fixedCols.has(fieldId)) {
-      cols.push(fixedCols.get(fieldId)!);
+    const fixedCol = fixedCols.get(fieldId);
+    if (fixedCol) {
+      cols.push(fixedCol);
       fixedCols.delete(fieldId);
     }
   }

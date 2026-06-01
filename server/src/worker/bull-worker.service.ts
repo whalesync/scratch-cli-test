@@ -128,8 +128,19 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         message: 'Job stalled',
         jobId,
       });
+
+      const queue = this.queue;
+
+      if (!queue) {
+        WSLogger.error({
+          source: 'QueueService',
+          message: 'Queue is not initialized',
+          jobId,
+        });
+        return;
+      }
       // Fetch the job to determine its type for the metric
-      void Job.fromId(this.queue!, jobId)
+      void Job.fromId(queue, jobId)
         .then((job) => {
           const jobType = job ? (job.data as JobData)?.type : undefined;
           if (jobType && jobType in JOB_STALLED_METRIC) {

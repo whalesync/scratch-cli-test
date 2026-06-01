@@ -34,6 +34,7 @@ describe('buildWebflowPagesJsonTableSpec', () => {
 
   it('should include a default view', () => {
     expect(spec.defaultView).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(spec.defaultView!.name).toBe('Default');
   });
 

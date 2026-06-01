@@ -64,12 +64,14 @@ export class RedisPubSubService implements OnModuleInit, OnModuleDestroy {
       };
 
       // Register callback for this channel
-      if (!this.channelCallbacks.has(channel)) {
-        this.channelCallbacks.set(channel, new Set());
+      let callbacks = this.channelCallbacks.get(channel);
+      if (!callbacks) {
+        callbacks = new Set();
+        this.channelCallbacks.set(channel, callbacks);
         // Subscribe to the channel if this is the first subscription
         void this.subscriber?.subscribe(channel);
       }
-      this.channelCallbacks.get(channel)!.add(callback);
+      callbacks.add(callback);
 
       // Cleanup on unsubscribe
       return () => {

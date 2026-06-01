@@ -94,8 +94,8 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
     case 'enum': {
       if (field.options && field.options.length > 0) {
         const literals = field.options
-          .filter((opt) => opt.id !== undefined)
-          .map((opt) => Type.Literal(opt.id!, { title: opt.label ?? String(opt.id) }));
+          .filter((opt): opt is { id: number; label?: string } => opt.id !== undefined)
+          .map((opt) => Type.Literal(opt.id, { title: opt.label ?? String(opt.id) }));
         if (literals.length > 0) {
           return Type.Union([...literals, Type.Null()]);
         }
@@ -106,8 +106,8 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
     case 'set': {
       if (field.options && field.options.length > 0) {
         const literals = field.options
-          .filter((opt) => opt.id !== undefined)
-          .map((opt) => Type.Literal(opt.id!, { title: opt.label ?? String(opt.id) }));
+          .filter((opt): opt is { id: number; label?: string } => opt.id !== undefined)
+          .map((opt) => Type.Literal(opt.id, { title: opt.label ?? String(opt.id) }));
         if (literals.length > 0) {
           return Type.Array(Type.Union(literals));
         }

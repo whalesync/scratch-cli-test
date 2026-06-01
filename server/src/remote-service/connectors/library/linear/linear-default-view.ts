@@ -323,7 +323,7 @@ function sortFields(fieldIds: string[], priority: string[]): string[] {
     }
   }
 
-  inPriority.sort((a, b) => priorityIndex.get(a)! - priorityIndex.get(b)!);
+  inPriority.sort((a, b) => (priorityIndex.get(a) ?? 0) - (priorityIndex.get(b) ?? 0));
   // rest stays in original schema order
 
   return [...inPriority, ...rest];

@@ -355,27 +355,36 @@ describe('buildWebflowDefaultView — pages', () => {
   });
 
   it('should hide parentId', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const parentIdCol = findCol('parentId')!;
     expect(parentIdCol.hidden).toBe(true);
   });
 
   it('should mark readonly fields correctly', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('id')!.readonly).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('publishedPath')!.readonly).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('createdOn')!.readonly).toBe(true);
   });
 
   it('should not mark writable fields as readonly', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('title')!.readonly).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('slug')!.readonly).toBeUndefined();
   });
 
   it('should map date-time fields to date type', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('createdOn')!.type).toBe('date');
   });
 
   it('should map archived/draft to checkbox type', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('archived')!.type).toBe('checkbox');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(findCol('draft')!.type).toBe('checkbox');
   });
 
@@ -414,7 +423,9 @@ describe('buildWebflowDefaultView — pages', () => {
     });
 
     it('should map titleCopied/descriptionCopied to checkbox', () => {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const titleCopied = ogGroup.cols.find((c) => c.path === 'openGraph.titleCopied')!;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const descCopied = ogGroup.cols.find((c) => c.path === 'openGraph.descriptionCopied')!;
       expect(titleCopied.type).toBe('checkbox');
       expect(descCopied.type).toBe('checkbox');

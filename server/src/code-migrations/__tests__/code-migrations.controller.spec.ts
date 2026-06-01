@@ -94,6 +94,7 @@ describe('CodeMigrationsController', () => {
       const result = controller.getAvailableMigrations(makeReqWithUser());
       const descriptor = result.migrations.find((m) => m.name === 'init-workbook-repos');
       expect(descriptor).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(descriptor!.description.length).toBeGreaterThan(0);
     });
 
@@ -101,6 +102,7 @@ describe('CodeMigrationsController', () => {
       const result = controller.getAvailableMigrations(makeReqWithUser());
       const descriptor = result.migrations.find((m) => m.name === 'notion-data-source-backfill');
       expect(descriptor).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(descriptor!.description.length).toBeGreaterThan(0);
     });
 
@@ -108,6 +110,7 @@ describe('CodeMigrationsController', () => {
       const result = controller.getAvailableMigrations(makeReqWithUser());
       const descriptor = result.migrations.find((m) => m.name === 'sync-mapping-v2-backfill');
       expect(descriptor).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(descriptor!.description.length).toBeGreaterThan(0);
     });
 

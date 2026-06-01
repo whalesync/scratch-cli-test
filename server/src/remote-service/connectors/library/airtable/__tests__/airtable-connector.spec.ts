@@ -213,7 +213,9 @@ describe('AirtableConnector.pullRecordFiles (incremental)', () => {
     expect(listOptions.filterByFormula).toBe(`IS_AFTER({Last Modified Time}, '${expectedSince}')`);
 
     expect(result.newWatermark).toBeInstanceOf(Date);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
   });
 

@@ -131,6 +131,7 @@ describe('buildMocoDefaultView', () => {
     it('should add id subfield to user object', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'user') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('id');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -157,6 +158,7 @@ describe('buildMocoDefaultView', () => {
     it('should add id subfield to company object', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'company') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('id');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -196,6 +198,7 @@ describe('buildMocoDefaultView', () => {
     it('should add id subfield to leader object', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'leader') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('id');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -203,6 +206,7 @@ describe('buildMocoDefaultView', () => {
     it('should add id subfield to customer object', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'customer') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('id');
       expect(col.selectedSubfield).toBe(0);
     });

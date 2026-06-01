@@ -129,7 +129,7 @@ export const matchAssetByHashTransformer: FieldTransformer = {
     // Phase 2: Check if all elements match the existing destination
     let allMatch = destElements !== undefined && hashResults.length === destElements.length;
 
-    if (allMatch) {
+    if (allMatch && destElements !== undefined) {
       for (let i = 0; i < hashResults.length; i++) {
         const { matches } = hashResults[i];
         if (matches.length === 0) {
@@ -137,7 +137,7 @@ export const matchAssetByHashTransformer: FieldTransformer = {
           break;
         }
         // Extract the destination's current ID for comparison
-        const destEl = destElements![i];
+        const destEl = destElements[i];
         const destId: unknown =
           typedOptions.destinationIdPath && destEl ? get(destEl, typedOptions.destinationIdPath) : destEl;
         // Check if the destination's current ID is among the hash matches

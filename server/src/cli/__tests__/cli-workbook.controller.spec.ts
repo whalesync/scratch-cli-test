@@ -415,7 +415,9 @@ describe('CliWorkbookController', () => {
       const result = await controller.listWorkbooks(makeReqWithUser(), {});
 
       expect(result.workbooks).toHaveLength(2);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(result.workbooks![0].id).toBe(WORKBOOK_ID);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(result.workbooks![1].id).toBe(WORKBOOK_ID);
     });
   });

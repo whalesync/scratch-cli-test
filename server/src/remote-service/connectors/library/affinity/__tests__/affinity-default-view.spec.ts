@@ -271,9 +271,13 @@ describe('buildAffinityDefaultView — company list entry', () => {
       const col = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-1') as TableViewCol;
       expect(col.subfields).toBeDefined();
       expect(col.subfields).toHaveLength(4);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('value.data');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![1].relativePath).toBe('value.type');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![2].relativePath).toBe('type');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![3].relativePath).toBe('enrichmentSource');
     });
 
@@ -300,13 +304,17 @@ describe('buildAffinityDefaultView — company list entry', () => {
 
     it('should map data subfield type from connector data type', () => {
       const numCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-2') as TableViewCol;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(numCol.subfields![0].relativePath).toBe('value.data');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(numCol.subfields![0].type).toBe('number');
 
       const dateCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-3') as TableViewCol;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(dateCol.subfields![0].type).toBe('date');
 
       const dropCol = view.cols.find((c) => (c as TableViewCol).path === 'entity.fields.field-1') as TableViewCol;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(dropCol.subfields![0].type).toBe('object');
     });
   });
@@ -356,6 +364,7 @@ describe('buildAffinityDefaultView — tenant persons', () => {
     expect(col).toBeDefined();
     expect(col.name).toBe('Title');
     expect(col.subfields).toHaveLength(4);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(col.subfields![0].relativePath).toBe('value.data');
     expect(col.selectedSubfield).toBe(0);
   });
@@ -424,7 +433,9 @@ describe('buildAffinityDefaultView — notes', () => {
   it('should add subfields to content column', () => {
     const col = view.cols.find((c) => (c as TableViewCol).path === 'content') as TableViewCol;
     expect(col.subfields).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(col.subfields![0].relativePath).toBe('html');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(col.subfields![0].type).toBe('richtext');
     expect(col.selectedSubfield).toBe(0);
   });
@@ -432,6 +443,7 @@ describe('buildAffinityDefaultView — notes', () => {
   it('should add subfields to creator column', () => {
     const col = view.cols.find((c) => (c as TableViewCol).path === 'creator') as TableViewCol;
     expect(col.subfields).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(col.subfields![0].relativePath).toBe('firstName');
     expect(col.selectedSubfield).toBe(0);
   });

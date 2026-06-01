@@ -163,8 +163,8 @@ export const sourceAssetToDestAssetTransformer: FieldTransformer = {
       resolved.push(ref);
 
       // Check if the existing destination value already matches
-      if (allMatch) {
-        allMatch = doesElementMatch(destElements!, resolved.length - 1, ref, mapping);
+      if (allMatch && destElements !== undefined) {
+        allMatch = doesElementMatch(destElements, resolved.length - 1, ref, mapping);
       }
     }
 

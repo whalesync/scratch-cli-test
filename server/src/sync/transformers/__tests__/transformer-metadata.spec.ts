@@ -41,7 +41,9 @@ describe('transformer metadata', () => {
 
         if (field.widget === 'select') {
           expect(Array.isArray(field.selectOptions)).toBe(true);
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           expect(field.selectOptions!.length).toBeGreaterThan(0);
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           for (const opt of field.selectOptions!) {
             expect(typeof opt.value).toBe('string');
             expect(typeof opt.label).toBe('string');

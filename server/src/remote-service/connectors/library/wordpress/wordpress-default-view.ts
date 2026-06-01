@@ -115,7 +115,7 @@ function sortFields(fieldIds: string[]): string[] {
     }
   }
 
-  inPriority.sort((a, b) => priorityIndex.get(a)! - priorityIndex.get(b)!);
+  inPriority.sort((a, b) => (priorityIndex.get(a) ?? 0) - (priorityIndex.get(b) ?? 0));
   rest.sort((a, b) => a.localeCompare(b));
 
   return [...inPriority, ...rest];
@@ -201,10 +201,10 @@ function buildCol(fieldId: string, fieldSchema: TSchema): TableViewCol {
 
   // For rendered objects (title, content, excerpt, etc.), add raw/rendered subfields
   // and default to showing raw.
-  if (isRenderedObject(fieldSchema)) {
+  const rawProps = (fieldSchema as TSchema & { properties?: Record<string, TSchema> }).properties;
+  if (isRenderedObject(fieldSchema) && rawProps) {
     const isInline = dataType === WordPressDataType.RENDERED_INLINE;
     const rawType: TablePropertyType = isInline ? 'string' : 'richtext';
-    const rawProps = (fieldSchema as TSchema & { properties?: Record<string, TSchema> }).properties!;
     const rawReadonly = rawProps.raw?.[X_SCRATCH_READONLY] === true || undefined;
     const subfields: TableViewSubfield[] = [
       { relativePath: 'raw', name: 'Raw', type: rawType, readonly: rawReadonly },

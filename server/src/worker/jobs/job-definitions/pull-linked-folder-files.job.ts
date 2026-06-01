@@ -319,8 +319,11 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     };
 
     // Mark folders that failed during context loading
-    for (const folderId of failedFolderIds) {
-      jobProgress.folderFetchStatus![folderId] = 'failed';
+    const folderFetchStatus = jobProgress.folderFetchStatus;
+    if (folderFetchStatus) {
+      for (const folderId of failedFolderIds) {
+        folderFetchStatus[folderId] = 'failed';
+      }
     }
     const pullFailed = failedFolderIds.length > 0;
 
@@ -1283,10 +1286,10 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         builtFiles
           .map((f) => {
             const parts = f.path.split('/');
-            const filename = parts.pop()!;
+            const filename = parts.pop();
             const folderPath = parts.join('/').replace(/^\//, '');
 
-            if (!f.recordId) return null;
+            if (!f.recordId || filename === undefined) return null;
 
             return {
               workbookId: folderCtx.dataFolder.workbookId,

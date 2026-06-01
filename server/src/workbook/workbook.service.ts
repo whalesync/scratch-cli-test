@@ -580,10 +580,19 @@ export class WorkbookService {
       });
     });
 
-    // Group folders by connectorAccountId and enqueue one pull job per connection
+    // Group folders by connectorAccountId and enqueue one pull job per connection.
+    // The query above filters `connectorAccountId: { not: null }`, so any null here is unexpected.
     const foldersByConnection = new Map<string, typeof foldersToProcess>();
     for (const folder of foldersToProcess) {
-      const connKey = folder.connectorAccountId!;
+      const connKey = folder.connectorAccountId;
+      if (!connKey) {
+        WSLogger.error({
+          source: 'WorkbookService.pullFiles',
+          message: 'Folder has no connector account ID — skipping',
+          folderId: folder.id,
+        });
+        continue;
+      }
       const group = foldersByConnection.get(connKey) ?? [];
       group.push(folder);
       foldersByConnection.set(connKey, group);

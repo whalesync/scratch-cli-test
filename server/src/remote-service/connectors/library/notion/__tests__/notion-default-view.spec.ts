@@ -103,6 +103,7 @@ describe('buildNotionDefaultView', () => {
     it('should add id subfield to created_by', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'created_by') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('id');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -110,6 +111,7 @@ describe('buildNotionDefaultView', () => {
     it('should add id subfield to last_edited_by', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'last_edited_by') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('id');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -117,6 +119,7 @@ describe('buildNotionDefaultView', () => {
     it('should add database_id subfield to parent', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'parent') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('database_id');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -131,6 +134,7 @@ describe('buildNotionDefaultView', () => {
     it('should add name subfield to status properties', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'properties.Status') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('name');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -138,7 +142,9 @@ describe('buildNotionDefaultView', () => {
     it('should add start subfield to date properties', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'properties.Due Date') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('start');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].type).toBe('date');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -146,6 +152,7 @@ describe('buildNotionDefaultView', () => {
     it('should add id subfield to created_by property type', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'properties.Created By Prop') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('id');
       expect(col.selectedSubfield).toBe(0);
     });

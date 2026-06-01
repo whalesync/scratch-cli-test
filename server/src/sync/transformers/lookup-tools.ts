@@ -74,7 +74,8 @@ export function createLookupTools(
       // Lazy-load all mappings for this referenced folder on first access.
       // Subsequent calls for the same folder hit the in-memory Map (O(1) lookup)
       // instead of making a DB round-trip per FK element.
-      if (!fkMappingCache.has(referencedDataFolderId)) {
+      let folderMappings = fkMappingCache.get(referencedDataFolderId);
+      if (!folderMappings) {
         const rows = await db.client.syncRemoteIdMapping.findMany({
           where: {
             syncId,
@@ -83,19 +84,19 @@ export function createLookupTools(
           select: { sourceRemoteId: true, destinationFilePath: true, destinationRemoteId: true },
         });
 
-        const map = new Map<string, FkMappingResult>();
+        folderMappings = new Map<string, FkMappingResult>();
         for (const row of rows) {
           if (row.destinationFilePath) {
-            map.set(row.sourceRemoteId, {
+            folderMappings.set(row.sourceRemoteId, {
               destinationFilePath: row.destinationFilePath,
               destinationRemoteId: row.destinationRemoteId ?? null,
             });
           }
         }
-        fkMappingCache.set(referencedDataFolderId, map);
+        fkMappingCache.set(referencedDataFolderId, folderMappings);
       }
 
-      return fkMappingCache.get(referencedDataFolderId)!.get(sourceFkValue) ?? null;
+      return folderMappings.get(sourceFkValue) ?? null;
     },
 
     async lookupFieldFromFkRecord(
@@ -198,7 +199,8 @@ export function createLookupTools(
       const cacheKey = `${sourceDataFolderId}:${destinationDataFolderId}`;
 
       // Lazy-load the cache for this folder pair
-      if (!hashMatchCache.has(cacheKey)) {
+      let cache = hashMatchCache.get(cacheKey);
+      if (!cache) {
         // Load all source assets with hashes in one query
         const sourceAssets = await db.client.asset.findMany({
           where: { workbookId, dataFolderId: sourceDataFolderId, service: sourceService, contentHash: { not: null } },
@@ -228,10 +230,10 @@ export function createLookupTools(
           }
         }
 
-        hashMatchCache.set(cacheKey, { sourceHashByRemoteId, destRemoteIdsByHash });
+        cache = { sourceHashByRemoteId, destRemoteIdsByHash };
+        hashMatchCache.set(cacheKey, cache);
       }
 
-      const cache = hashMatchCache.get(cacheKey)!;
       const sourceHash = cache.sourceHashByRemoteId.get(sourceAssetRemoteId);
       if (!sourceHash) return [];
       return cache.destRemoteIdsByHash.get(sourceHash) ?? [];

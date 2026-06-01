@@ -471,16 +471,17 @@ export class SyncService {
     // already blocks constants from targeting the match-key column); only
     // `kind: 'column'` mappings with a matching source/destination pair count.
     for (const tableMapping of v2Mappings.tableMappings) {
-      if (tableMapping.recordMatching) {
+      const recordMatching = tableMapping.recordMatching;
+      if (recordMatching) {
         const hasMatchingColumn = tableMapping.columnMappings.some(
           (cm) =>
             cm.source.kind === 'column' &&
-            cm.source.columnId === tableMapping.recordMatching!.sourceColumnId &&
-            cm.destinationColumnId === tableMapping.recordMatching!.destinationColumnId,
+            cm.source.columnId === recordMatching.sourceColumnId &&
+            cm.destinationColumnId === recordMatching.destinationColumnId,
         );
         if (!hasMatchingColumn) {
           throw new BadRequestException(
-            `Record matching fields "${tableMapping.recordMatching.sourceColumnId}" -> "${tableMapping.recordMatching.destinationColumnId}" do not match any column mapping`,
+            `Record matching fields "${recordMatching.sourceColumnId}" -> "${recordMatching.destinationColumnId}" do not match any column mapping`,
           );
         }
       }
@@ -707,14 +708,16 @@ export class SyncService {
       const fields = schemaJson?.schema ? extractSchemaFields(schemaJson.schema) : [];
 
       const accountId = folder.connectorAccountId;
-      if (!connectorAccountGroups.has(accountId)) {
-        connectorAccountGroups.set(accountId, {
+      let group = connectorAccountGroups.get(accountId);
+      if (!group) {
+        group = {
           name: folder.connectorAccount.displayName,
           service,
           folders: [],
-        });
+        };
+        connectorAccountGroups.set(accountId, group);
       }
-      connectorAccountGroups.get(accountId)!.folders.push({
+      group.folders.push({
         id: folder.id,
         name: folder.name,
         fields,
@@ -1138,7 +1141,17 @@ export class SyncService {
         const record = parseFileToRecord(file, destinationIdColumn);
         batchRecords.push(record);
         destinationRecordsByPath.set(file.path, record);
-        usedDestFileNames.add(file.path.split('/').pop()!);
+        const filename = file.path.split('/').pop();
+        if (filename !== undefined) {
+          usedDestFileNames.add(filename);
+        } else {
+          WSLogger.error({
+            source: 'SyncService.syncTableMapping',
+            message: 'Destination file path is missing filename',
+            filePath: file.path,
+          });
+          continue;
+        }
       }
 
       WSLogger.info({
@@ -1705,10 +1718,11 @@ export class SyncService {
 
     let collectedCount = 0;
     for (const { mapping, opts } of lookupEntries) {
-      if (!fkValuesByFolder.has(opts.referencedDataFolderId)) {
-        fkValuesByFolder.set(opts.referencedDataFolderId, new Set());
+      let fkValues = fkValuesByFolder.get(opts.referencedDataFolderId);
+      if (!fkValues) {
+        fkValues = new Set();
+        fkValuesByFolder.set(opts.referencedDataFolderId, fkValues);
       }
-      const fkValues = fkValuesByFolder.get(opts.referencedDataFolderId)!;
       const sizeBefore = fkValues.size;
 
       for (const record of sourceRecords) {
@@ -2027,8 +2041,14 @@ export class SyncService {
     transformerConfigs: TransformerConfig[],
     ctx: MatchKeyTransformContext,
   ): Promise<void> {
-    const matchColumnId = tableMapping.recordMatching!.sourceColumnId;
-    const destColumnId = tableMapping.recordMatching!.destinationColumnId;
+    const recordMatching = tableMapping.recordMatching;
+    if (!recordMatching) {
+      throw new Error(
+        `insertTransformedMatchKeys called for table mapping (sync ${syncId}) without recordMatching configured`,
+      );
+    }
+    const matchColumnId = recordMatching.sourceColumnId;
+    const destColumnId = recordMatching.destinationColumnId;
 
     const noopLookupTools: LookupTools = {
       getDestinationMappingForSourceFk: () => Promise.resolve(null),
@@ -2256,16 +2276,16 @@ export class SyncService {
 
     // Validate record matching field if configured — use the transformed value to match sync behaviour
     let recordMatchingWarning: string | undefined;
-    if (body.recordMatching) {
+    const recordMatching = body.recordMatching;
+    if (recordMatching) {
       const matchField = fields.find(
         (f) =>
-          f.sourceField === body.recordMatching!.sourceColumnId &&
-          f.destinationField === body.recordMatching!.destinationColumnId,
+          f.sourceField === recordMatching.sourceColumnId && f.destinationField === recordMatching.destinationColumnId,
       );
       const sourceMatchValue = matchField
         ? matchField.transformedValue
-        : get(record.fields, body.recordMatching.sourceColumnId);
-      recordMatchingWarning = validateMatchFieldValue(sourceMatchValue, body.recordMatching.sourceColumnId, 'source');
+        : get(record.fields, recordMatching.sourceColumnId);
+      recordMatchingWarning = validateMatchFieldValue(sourceMatchValue, recordMatching.sourceColumnId, 'source');
     }
 
     return { recordId: record.id, fields, recordMatchingWarning };

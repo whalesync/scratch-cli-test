@@ -167,6 +167,7 @@ describe('convertWhalesyncExport', () => {
 
       const biCaveat = result.caveats.find((c) => c.message.includes('Bidirectional'));
       expect(biCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(biCaveat!.severity).toBe('warning');
     });
   });
@@ -330,6 +331,7 @@ describe('convertWhalesyncExport', () => {
 
       const errorCaveat = result.caveats.find((c) => c.severity === 'error');
       expect(errorCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(errorCaveat!.message).toContain('hubspot');
     });
   });
@@ -355,6 +357,7 @@ describe('convertWhalesyncExport', () => {
 
       const deleteCaveat = result.caveats.find((c) => c.message.includes('Delete syncing'));
       expect(deleteCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(deleteCaveat!.severity).toBe('warning');
     });
 
@@ -383,6 +386,7 @@ describe('convertWhalesyncExport', () => {
 
       const filterCaveat = result.caveats.find((c) => c.message.includes('Filter'));
       expect(filterCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(filterCaveat!.severity).toBe('warning');
     });
 
@@ -401,6 +405,7 @@ describe('convertWhalesyncExport', () => {
 
       const invalidCaveat = result.caveats.find((c) => c.message.includes('invalid sync direction'));
       expect(invalidCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(invalidCaveat!.severity).toBe('warning');
     });
 
@@ -433,6 +438,7 @@ describe('convertWhalesyncExport', () => {
 
       const transformCaveat = result.caveats.find((c) => c.message.includes('transforms'));
       expect(transformCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(transformCaveat!.severity).toBe('warning');
     });
 
@@ -489,6 +495,7 @@ describe('convertWhalesyncExport', () => {
 
       const readOnlyCaveat = result.caveats.find((c) => c.message.includes('read-only'));
       expect(readOnlyCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(readOnlyCaveat!.severity).toBe('info');
     });
   });
@@ -654,6 +661,7 @@ describe('convertWhalesyncExport', () => {
       // Warning generated
       const colCaveat = result.caveats.find((c) => c.message.includes('NonExistent'));
       expect(colCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(colCaveat!.severity).toBe('warning');
     });
   });
@@ -914,7 +922,9 @@ describe('convertWhalesyncExport', () => {
 
       const destCaveat = result.caveats.find((c) => c.message.includes('Destination column'));
       expect(destCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(destCaveat!.severity).toBe('warning');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(destCaveat!.message).toContain('nonexistent_field');
     });
 
@@ -1085,6 +1095,7 @@ describe('convertWhalesyncExport', () => {
 
       const continuousCaveat = result.caveats.find((c) => c.message.includes('Continuous'));
       expect(continuousCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(continuousCaveat!.severity).toBe('info');
     });
 
@@ -1122,7 +1133,9 @@ describe('convertWhalesyncExport', () => {
 
       const mergeCaveat = result.caveats.find((c) => c.message.includes('merge winner'));
       expect(mergeCaveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(mergeCaveat!.severity).toBe('info');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(mergeCaveat!.context).toContain('left');
     });
 
@@ -1291,6 +1304,7 @@ describe('convertWhalesyncExport', () => {
 
       const caveat = result.caveats.find((c) => c.message.includes('NoMatch'));
       expect(caveat).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(caveat!.severity).toBe('warning');
     });
 

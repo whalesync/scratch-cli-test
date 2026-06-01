@@ -24,7 +24,7 @@ export class AssetIndexService {
 
     for (const c of chunks) {
       // Filter to entries with a dataFolderId — required by the unique constraint
-      const valid = c.filter((e) => e.dataFolderId != null);
+      const valid = c.filter((e): e is AssetIndexEntry & { dataFolderId: string } => e.dataFolderId != null);
 
       await this.db.client.$transaction(
         valid.map((entry) =>
@@ -32,7 +32,7 @@ export class AssetIndexService {
             where: {
               workbookId_dataFolderId_remoteAssetId: {
                 workbookId: entry.workbookId,
-                dataFolderId: entry.dataFolderId!,
+                dataFolderId: entry.dataFolderId,
                 remoteAssetId: entry.remoteAssetId,
               },
             },

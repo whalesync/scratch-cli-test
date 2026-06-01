@@ -89,14 +89,17 @@ describe('NotionConnector.extractAssets (real page data)', () => {
   });
 
   it('should use stripped URL (no query string) as remoteAssetId for the property file', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const yesno = results.find((r) => r.filename === 'yesno.jpg')!;
     const expectedId = stripQueryParams(notionPage.properties['Files & media'].files[0].file.url);
     expect(yesno.remoteAssetId).toBe(expectedId);
   });
 
   it('should parse the expiry_time from the property file', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const yesno = results.find((r) => r.filename === 'yesno.jpg')!;
     expect(yesno.urlExpiresAt).toBeInstanceOf(Date);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(yesno.urlExpiresAt!.toISOString()).toBe('2026-03-11T19:14:12.210Z');
   });
 
@@ -109,14 +112,18 @@ describe('NotionConnector.extractAssets (real page data)', () => {
   });
 
   it('should use stripped URL (no query string) as remoteAssetId for the content block image', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const blockImage = results.find((r) => r.url?.includes('sample-08.png'))!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const expectedId = stripQueryParams(notionPage.page_content[0].image!.file.url);
     expect(blockImage.remoteAssetId).toBe(expectedId);
   });
 
   it('should parse the expiry_time from the content block image', () => {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const blockImage = results.find((r) => r.url?.includes('sample-08.png'))!;
     expect(blockImage.urlExpiresAt).toBeInstanceOf(Date);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(blockImage.urlExpiresAt!.toISOString()).toBe('2026-03-11T19:14:12.393Z');
   });
 

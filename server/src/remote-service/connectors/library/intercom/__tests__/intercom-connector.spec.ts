@@ -414,7 +414,9 @@ describe('IntercomConnector', () => {
       );
       expect(mockListConversations).not.toHaveBeenCalled();
       expect(result.newWatermark).toBeInstanceOf(Date);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
     });
 

@@ -52,6 +52,7 @@ describe('blockReasonForIp — IPv4', () => {
   ])('blocks %s (%s)', (ip, label) => {
     const reason = blockReasonForIp(ip);
     expect(reason).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(reason!.toLowerCase()).toContain(label.toLowerCase());
   });
 
@@ -82,6 +83,7 @@ describe('blockReasonForIp — IPv6', () => {
   ])('blocks %s (%s)', (ip, label) => {
     const reason = blockReasonForIp(ip);
     expect(reason).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(reason!.toLowerCase()).toContain(label.toLowerCase());
   });
 
@@ -393,6 +395,7 @@ describe('ssrfSafeFetch — pinned connect (DNS-rebinding TOCTOU fix)', () => {
 
     // all: true → cb gets a single addresses-array argument.
     await new Promise<void>((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       lookup!('api.example.com', { all: true }, (err: unknown, addresses: unknown) => {
         try {
           expect(err).toBeNull();
@@ -406,6 +409,7 @@ describe('ssrfSafeFetch — pinned connect (DNS-rebinding TOCTOU fix)', () => {
 
     // all: false → cb gets (err, address, family) tuple.
     await new Promise<void>((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       lookup!('api.example.com', { all: false }, (err: unknown, address: unknown, family: unknown) => {
         try {
           expect(err).toBeNull();

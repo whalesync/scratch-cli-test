@@ -28,7 +28,7 @@ export class OrganizationsService {
     let nextCursor: string | undefined;
     if (organizations.length === limit + 1) {
       const nextOrganization = organizations.pop();
-      nextCursor = nextOrganization!.id;
+      nextCursor = nextOrganization?.id;
     }
 
     return { organizations, nextCursor };

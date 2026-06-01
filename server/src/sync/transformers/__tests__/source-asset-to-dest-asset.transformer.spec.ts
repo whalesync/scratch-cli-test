@@ -231,6 +231,7 @@ describe('sourceAssetToDestAssetTransformer', () => {
       if (result.success) {
         expect(result.value).toBeNull();
         expect(result.warnings).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(result.warnings![0]).toContain('Source asset "missing" not found');
       }
     });
@@ -244,6 +245,7 @@ describe('sourceAssetToDestAssetTransformer', () => {
       if (result.success) {
         expect(result.value).toBeNull();
         expect(result.warnings).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(result.warnings![0]).toContain('is not rehosted');
       }
     });
@@ -261,6 +263,7 @@ describe('sourceAssetToDestAssetTransformer', () => {
       if (result.success) {
         expect(result.value).toEqual([`@asset/${dbId}`]);
         expect(result.warnings).toHaveLength(1);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(result.warnings![0]).toContain('Source asset "missing" not found');
       }
     });

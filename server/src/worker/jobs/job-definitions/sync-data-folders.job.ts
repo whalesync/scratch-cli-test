@@ -403,7 +403,10 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
               createRunContext('job', { runId: runId as RunId, parentJobId: jobId }),
             );
 
-            await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
+            if (job.id === undefined) {
+              throw new Error(`Plan-pipeline job for pipeline ${pipelineId} was enqueued without an id`);
+            }
+            await this.publishPlanBuildService.setActiveJob(pipelineId, job.id.toString());
 
             WSLogger.info({
               source: 'SyncDataFoldersJob',

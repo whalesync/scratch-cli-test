@@ -148,19 +148,22 @@ export function buildHubspotDefaultView(
 
   // 1. Title property (if present)
   if (titlePropName && regularProps.length > 0 && regularProps[0].name === titlePropName) {
-    cols.push(regularProps.shift()!.col);
+    const titleEntry = regularProps.shift();
+    if (titleEntry) cols.push(titleEntry.col);
   }
 
   // 2. id fixed field right after title
-  if (fixedCols.has('id')) {
-    cols.push(fixedCols.get('id')!);
+  const idCol = fixedCols.get('id');
+  if (idCol) {
+    cols.push(idCol);
     fixedCols.delete('id');
   }
 
   // 3. Priority properties (already ordered at front of regularProps after title was removed)
   const prioritySet = new Set(priorityFields ?? []);
   while (regularProps.length > 0 && prioritySet.has(regularProps[0].name)) {
-    cols.push(regularProps.shift()!.col);
+    const next = regularProps.shift();
+    if (next) cols.push(next.col);
   }
 
   // 4. Address banner group (near the front, after priority fields)
@@ -176,8 +179,9 @@ export function buildHubspotDefaultView(
   // 6. Remaining fixed fields in priority order: createdAt, updatedAt, archived, then the rest
   const remainingFixedOrder = ['createdAt', 'updatedAt', 'archived'];
   for (const fieldId of remainingFixedOrder) {
-    if (fixedCols.has(fieldId)) {
-      cols.push(fixedCols.get(fieldId)!);
+    const fixedCol = fixedCols.get(fieldId);
+    if (fixedCol) {
+      cols.push(fixedCol);
       fixedCols.delete(fieldId);
     }
   }

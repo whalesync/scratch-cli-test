@@ -118,33 +118,41 @@ describe('buildWordPressDefaultView', () => {
   it('should have subfields on rendered object columns (title, content, excerpt)', () => {
     const title = view.cols.find((c) => c.kind === 'col' && c.path === 'title');
     expect(title).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(title!.kind === 'col' && title!.subfields?.length).toBe(2);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(title!.kind === 'col' && title!.selectedSubfield).toBe(0);
 
     const content = view.cols.find((c) => c.kind === 'col' && c.path === 'content');
     expect(content).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(content!.kind === 'col' && content!.subfields?.length).toBe(2);
 
     const excerpt = view.cols.find((c) => c.kind === 'col' && c.path === 'excerpt');
     expect(excerpt).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(excerpt!.kind === 'col' && excerpt!.subfields?.length).toBe(2);
   });
 
   it('should mark the ID column as readonly', () => {
     const idCol = view.cols.find((c) => c.kind === 'col' && c.path === 'id');
     expect(idCol).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(idCol!.kind === 'col' && idCol!.readonly).toBe(true);
   });
 
   it('should hide less important fields by default', () => {
     const dateGmt = view.cols.find((c) => c.kind === 'col' && c.path === 'date_gmt');
     expect(dateGmt).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(dateGmt!.kind === 'col' && dateGmt!.hidden).toBe(true);
 
     const modified = view.cols.find((c) => c.kind === 'col' && c.path === 'modified');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(modified!.kind === 'col' && modified!.hidden).toBe(true);
 
     const guid = view.cols.find((c) => c.kind === 'col' && c.path === 'guid');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(guid!.kind === 'col' && guid!.hidden).toBe(true);
   });
 
@@ -169,27 +177,35 @@ describe('buildWordPressDefaultView', () => {
 
   it('should map types correctly', () => {
     const link = view.cols.find((c) => c.kind === 'col' && c.path === 'link');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(link!.kind === 'col' && link!.type).toBe('url');
 
     const date = view.cols.find((c) => c.kind === 'col' && c.path === 'date');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(date!.kind === 'col' && date!.type).toBe('date');
 
     const author = view.cols.find((c) => c.kind === 'col' && c.path === 'author');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(author!.kind === 'col' && author!.type).toBe('number');
 
     const status = view.cols.find((c) => c.kind === 'col' && c.path === 'status');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(status!.kind === 'col' && status!.type).toBe('string');
   });
 
   it('should use "string" type for inline rendered objects (title) and "richtext" for block rendered objects (content)', () => {
     const title = view.cols.find((c) => c.kind === 'col' && c.path === 'title');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(title!.kind === 'col' && title!.type).toBe('string');
     // Title raw subfield should be 'string'
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(title!.kind === 'col' && title!.subfields![0].type).toBe('string');
 
     const content = view.cols.find((c) => c.kind === 'col' && c.path === 'content');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(content!.kind === 'col' && content!.type).toBe('richtext');
     // Content raw subfield should be 'richtext'
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(content!.kind === 'col' && content!.subfields![0].type).toBe('richtext');
   });
 
@@ -198,11 +214,14 @@ describe('buildWordPressDefaultView', () => {
     const guid = view.cols.find((c) => c.kind === 'col' && c.path === 'guid') as TableViewCol;
     expect(guid).toBeDefined();
     expect(guid.subfields).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(guid.subfields![0].readonly).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(guid.subfields![1].readonly).toBe(true); // rendered is always readonly
 
     // title has rawReadonly=false, so its raw subfield should not be readonly
     const title = view.cols.find((c) => c.kind === 'col' && c.path === 'title') as TableViewCol;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(title.subfields![0].readonly).toBeUndefined();
   });
 

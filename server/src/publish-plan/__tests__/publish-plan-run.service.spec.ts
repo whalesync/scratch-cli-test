@@ -327,6 +327,7 @@ describe('PublishPlanRunService', () => {
       expect(commitCalls.length).toBeGreaterThan(0);
       const mainCommit = commitCalls.find(([, branch]) => branch === 'main');
       expect(mainCommit).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const gitContent = JSON.parse(mainCommit![2][0].content) as Record<string, unknown>;
       expect(gitContent).toMatchObject(fullContent);
     });

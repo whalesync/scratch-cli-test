@@ -303,13 +303,13 @@ export class DevToolsController {
   /* Admin job listing */
   @Get('jobs')
   async getAllJobs(
+    @Req() req: RequestWithUser,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
     @Query('statuses') statuses?: string,
     @Query('userId') userId?: string,
-    @Req() req?: RequestWithUser,
   ): Promise<GetAllJobsResponseDto> {
-    if (!hasAdminToolsPermission(req!.user)) {
+    if (!hasAdminToolsPermission(req.user)) {
       throw new UnauthorizedException('Only admins can list all jobs');
     }
 
@@ -351,14 +351,14 @@ export class DevToolsController {
   /* Admin workbooks listing (cross-org) */
   @Get('workbooks')
   async getAllWorkbooks(
+    @Req() req: RequestWithUser,
     @Query('search') search?: string,
     @Query('services') services?: string,
     @Query('serviceMode') serviceMode?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
-    @Req() req?: RequestWithUser,
   ): Promise<{ workbooks: AdminWorkbookDto[]; total: number }> {
-    if (!hasAdminToolsPermission(req!.user)) {
+    if (!hasAdminToolsPermission(req.user)) {
       throw new UnauthorizedException('Only admins can list all workbooks');
     }
 

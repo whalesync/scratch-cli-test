@@ -63,7 +63,7 @@ function sortFields(fieldIds: string[]): string[] {
     }
   }
 
-  inPriority.sort((a, b) => priorityIndex.get(a)! - priorityIndex.get(b)!);
+  inPriority.sort((a, b) => (priorityIndex.get(a) ?? 0) - (priorityIndex.get(b) ?? 0));
   // Keep non-priority fields in their original column order from the database
   return [...inPriority, ...rest];
 }

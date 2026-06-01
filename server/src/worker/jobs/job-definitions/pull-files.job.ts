@@ -270,10 +270,10 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
             builtFiles
               .map((f) => {
                 const parts = f.path.split('/');
-                const filename = parts.pop()!;
+                const filename = parts.pop();
                 const folderPath = parts.join('/').replace(/^\//, '');
 
-                if (!f.recordId) return null;
+                if (!f.recordId || filename === undefined) return null;
 
                 return {
                   workbookId: dataFolder.workbookId,

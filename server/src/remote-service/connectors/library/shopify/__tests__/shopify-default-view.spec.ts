@@ -212,7 +212,9 @@ describe('buildShopifyDefaultView', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'variantsCount') as TableViewCol;
       expect(col).toBeDefined();
       expect(col.subfields).toHaveLength(2);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0]).toEqual({ relativePath: 'count', name: 'Count', type: 'number' });
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![1]).toEqual({ relativePath: 'precision', name: 'Precision', type: 'string' });
     });
 
@@ -239,7 +241,9 @@ describe('buildShopifyDefaultView', () => {
       const col = shippingView.cols.find((c) => c.kind === 'col' && c.path === 'discountedPrice') as TableViewCol;
       expect(col).toBeDefined();
       expect(col.subfields).toHaveLength(2);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0]).toEqual({ relativePath: 'amount', name: 'Amount', type: 'number' });
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![1]).toEqual({ relativePath: 'currencyCode', name: 'Currency Code', type: 'string' });
     });
 

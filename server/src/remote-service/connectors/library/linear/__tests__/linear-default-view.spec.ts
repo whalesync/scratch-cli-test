@@ -137,6 +137,7 @@ describe('buildLinearDefaultView', () => {
     it('should add id subfields to team with selectedSubfield=0', () => {
       const teamCol = view.cols.find((c) => c.kind === 'col' && c.path === 'team') as TableViewCol;
       expect(teamCol.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(teamCol.subfields![0].relativePath).toBe('id');
       expect(teamCol.selectedSubfield).toBe(0);
     });
@@ -144,6 +145,7 @@ describe('buildLinearDefaultView', () => {
     it('should add id subfields to project with selectedSubfield=0', () => {
       const projectCol = view.cols.find((c) => c.kind === 'col' && c.path === 'project') as TableViewCol;
       expect(projectCol.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(projectCol.subfields![0].relativePath).toBe('id');
       expect(projectCol.selectedSubfield).toBe(0);
     });
@@ -151,6 +153,7 @@ describe('buildLinearDefaultView', () => {
     it('should add user subfields to assignee with name selected', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'assignee') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('name');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -158,6 +161,7 @@ describe('buildLinearDefaultView', () => {
     it('should add user subfields to creator with name selected', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'creator') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('name');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -165,6 +169,7 @@ describe('buildLinearDefaultView', () => {
     it('should add content subfields to documentContent', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'documentContent') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('content');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -269,6 +274,7 @@ describe('buildLinearDefaultView', () => {
     it('should add user subfields to lead', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'lead') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('name');
     });
   });

@@ -222,8 +222,11 @@ describe('buildQuickBooksDefaultView', () => {
     it('should add name subfield to CustomerRef', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'CustomerRef') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('name');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].name).toBe('Name');
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].type).toBe('string');
       expect(col.selectedSubfield).toBe(0);
     });

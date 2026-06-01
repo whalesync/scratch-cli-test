@@ -105,7 +105,9 @@ describe('WordPressConnector.pullRecordFiles (incremental)', () => {
 
     expect(lastPollCall()).toEqual(['posts', 0, WORDPRESS_POLLING_PAGE_SIZE, formatWordPressModifiedAfter(since, {})]);
     expect(result.newWatermark).toBeInstanceOf(Date);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
   });
 

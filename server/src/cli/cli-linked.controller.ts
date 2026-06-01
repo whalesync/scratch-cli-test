@@ -392,7 +392,10 @@ export class CliLinkedController {
       createRunContext('cli'),
     );
 
-    await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
+    if (job.id === undefined) {
+      throw new Error(`Plan-pipeline job for pipeline ${pipelineId} was enqueued without an id`);
+    }
+    await this.publishPlanBuildService.setActiveJob(pipelineId, job.id.toString());
 
     this.posthogService.trackPublishDataFromWorkbook(actor, workbook, { dataFolderCount: 1 });
 

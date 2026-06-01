@@ -80,8 +80,11 @@ export class RefCleanerService {
    */
   extractForeignKeyPaths(schema: Schema): Array<{ path: string[]; targetRemoteTableId: string; map?: string }> {
     const schemaId = schema.$id;
-    if (typeof schemaId === 'string' && this.fkPathsCache.has(schemaId)) {
-      return this.fkPathsCache.get(schemaId)!;
+    if (typeof schemaId === 'string') {
+      const cached = this.fkPathsCache.get(schemaId);
+      if (cached) {
+        return cached;
+      }
     }
 
     const results: Array<{ path: string[]; targetRemoteTableId: string; map?: string }> = [];

@@ -123,6 +123,7 @@ describe('Connector.extractAssets', () => {
 
       for (const entry of result) {
         expect(entry.urlExpiresAt).toBeInstanceOf(Date);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const diffMs = entry.urlExpiresAt!.getTime() - Date.now();
         expect(diffMs).toBeGreaterThan(1.5 * 60 * 60 * 1000);
         expect(diffMs).toBeLessThanOrEqual(2 * 60 * 60 * 1000);
@@ -287,6 +288,7 @@ describe('Connector.extractAssets', () => {
         filename: 'yesno.jpg',
         url: 'https://prod-files-secure.s3.us-west-2.amazonaws.com/3fd80bcf/yesno.jpg?X-Amz-Signature=abc',
       });
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(result[0].remoteAssetId).toBe(stripQueryParams(result[0].url!));
     });
 

@@ -475,7 +475,10 @@ export class CliWorkbookController {
       undefined,
       createRunContext('cli'),
     );
-    await this.publishPlanBuildService.setActiveJob(pipelineId, job.id!.toString());
+    if (job.id === undefined) {
+      throw new Error(`Plan-pipeline job for pipeline ${pipelineId} was enqueued without an id`);
+    }
+    await this.publishPlanBuildService.setActiveJob(pipelineId, job.id.toString());
 
     await this.auditLogService.logEvent({
       actor,
@@ -520,7 +523,10 @@ export class CliWorkbookController {
       undefined,
       createRunContext('cli'),
     );
-    await this.publishPlanBuildService.setActiveJob(body.pipelineId, job.id!.toString());
+    if (job.id === undefined) {
+      throw new Error(`Run-pipeline job for pipeline ${body.pipelineId} was enqueued without an id`);
+    }
+    await this.publishPlanBuildService.setActiveJob(body.pipelineId, job.id.toString());
 
     await this.auditLogService.logEvent({
       actor,

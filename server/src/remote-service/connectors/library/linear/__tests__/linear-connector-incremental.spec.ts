@@ -85,7 +85,9 @@ describe('LinearConnector.pullRecordFiles (incremental)', () => {
 
     expect(lastListEntitiesCall()).toEqual(['issues', 50, undefined, buildLinearUpdatedAtFilter(since)]);
     expect(result.newWatermark).toBeInstanceOf(Date);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
   });
 

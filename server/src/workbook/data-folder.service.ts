@@ -103,14 +103,16 @@ export class DataFolderService {
     for (const folder of dataFolders) {
       if (folder.connectorAccountId && folder.connectorAccount) {
         const accountId = folder.connectorAccountId;
-        if (!connectorAccountGroups.has(accountId)) {
-          connectorAccountGroups.set(accountId, {
+        let group = connectorAccountGroups.get(accountId);
+        if (!group) {
+          group = {
             name: folder.connectorAccount.displayName,
             connectorAccount: folder.connectorAccount,
             folders: [],
-          });
+          };
+          connectorAccountGroups.set(accountId, group);
         }
-        connectorAccountGroups.get(accountId)!.folders.push(folder);
+        group.folders.push(folder);
       }
     }
 
@@ -754,7 +756,7 @@ export class DataFolderService {
   async fetchSchemaSpec(id: DataFolderId, actor: Actor): Promise<BaseJsonTableSpec | null> {
     const folder = await this.findOne(id, actor);
 
-    if (!folder.connectorAccountId || !folder.tableId || folder.tableId.length === 0) {
+    if (!folder.connectorAccountId || !folder.tableId || folder.tableId.length === 0 || !folder.connectorService) {
       return null;
     }
 
@@ -764,7 +766,7 @@ export class DataFolderService {
     }
 
     const connector = await this.connectorService.getConnector({
-      service: folder.connectorService!,
+      service: folder.connectorService,
       connectorAccount: connectorAccount as ConnectorAccount,
       decryptedCredentials: connectorAccount as unknown as DecryptedCredentials,
     });
@@ -790,9 +792,17 @@ export class DataFolderService {
       // Write schema and default view to git repo
       try {
         const repoId = await this.scratchGitService.resolveConnectionRepoPath(folder.connectorAccountId);
-        await this.scratchGitService.writeSchemaToGit(repoId, folder.path!, tableSpec);
-        if (tableSpec.defaultView) {
-          await this.scratchGitService.writeViewToGit(repoId, folder.path!, 'default', tableSpec.defaultView);
+        if (folder.path) {
+          await this.scratchGitService.writeSchemaToGit(repoId, folder.path, tableSpec);
+          if (tableSpec.defaultView) {
+            await this.scratchGitService.writeViewToGit(repoId, folder.path, 'default', tableSpec.defaultView);
+          }
+        } else {
+          WSLogger.error({
+            source: 'DataFolderService.fetchSchemaSpec',
+            message: 'Folder path is missing — unable to write schema to git',
+            dataFolderId: id,
+          });
         }
       } catch (error) {
         WSLogger.error({

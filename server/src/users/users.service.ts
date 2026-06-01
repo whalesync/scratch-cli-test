@@ -153,7 +153,7 @@ export class UsersService {
           name: 'My Scratch workspace',
           version: 2,
           userId: newUser.id,
-          organizationId: newUser.organizationId!,
+          organizationId: newOrganizationId,
           workspacePermissions: {
             create: {
               id: createWorkspacePermissionId(),

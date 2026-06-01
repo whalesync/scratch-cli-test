@@ -78,7 +78,10 @@ export class PublishPlanController {
       initialProgress,
       createRunContext('web'),
     );
-    await this.publishPlanService.setActiveJob(pipelineId, job.id!.toString());
+    if (job.id === undefined) {
+      throw new Error(`Plan-pipeline job for pipeline ${pipelineId} was enqueued without an id`);
+    }
+    await this.publishPlanService.setActiveJob(pipelineId, job.id.toString());
     return { jobId: job.id, pipelineId };
   }
 
@@ -108,7 +111,10 @@ export class PublishPlanController {
       initialProgress,
       createRunContext('web'),
     );
-    await this.publishPlanService.setActiveJob(body.pipelineId, job.id!.toString());
+    if (job.id === undefined) {
+      throw new Error(`Run-pipeline job for pipeline ${body.pipelineId} was enqueued without an id`);
+    }
+    await this.publishPlanService.setActiveJob(body.pipelineId, job.id.toString());
     return { jobId: job.id };
   }
 

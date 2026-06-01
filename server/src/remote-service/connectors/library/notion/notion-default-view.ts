@@ -139,7 +139,7 @@ function sortFixedFields(fieldIds: string[]): string[] {
     }
   }
 
-  inPriority.sort((a, b) => priorityIndex.get(a)! - priorityIndex.get(b)!);
+  inPriority.sort((a, b) => (priorityIndex.get(a) ?? 0) - (priorityIndex.get(b) ?? 0));
   return [...inPriority, ...rest];
 }
 

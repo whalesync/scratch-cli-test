@@ -348,8 +348,8 @@ function ipv6ToBytes(ip: string): Uint8Array | null {
   // If the last hextet of the tail (or head, if no `::`) is dotted-quad v4,
   // expand it into two hextets so the rest of the parser is uniform.
   const lastSource = tailHextets.length > 0 ? tailHextets : headHextets;
-  if (lastSource.length > 0 && lastSource[lastSource.length - 1].includes('.')) {
-    const v4 = lastSource.pop()!;
+  const v4 = lastSource.length > 0 && lastSource[lastSource.length - 1].includes('.') ? lastSource.pop() : undefined;
+  if (v4 !== undefined) {
     const parts = v4.split('.').map((p) => Number(p));
     if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) {
       return null;

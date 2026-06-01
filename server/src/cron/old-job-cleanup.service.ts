@@ -44,7 +44,9 @@ export class OldJobCleanupService {
 
       let deletedInBatch = 0;
       for (const row of oldRuns) {
-        const runId = row.runId!;
+        const runId = row.runId;
+        // The query filters runId to non-null but Prisma's distinct narrowing doesn't carry through.
+        if (runId === null) continue;
 
         // Skip runs that still have recent or active jobs
         const hasActiveOrRecentJobs = await this.dbService.client.dbJob.count({

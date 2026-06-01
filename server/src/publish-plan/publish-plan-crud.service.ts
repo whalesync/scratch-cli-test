@@ -203,8 +203,9 @@ export class PublishPlanCrudService {
       hasError: r.hasError,
     }));
 
-    if (options?.phase) {
-      records = records.filter((r) => r.phases.includes(options.phase!));
+    const phase = options?.phase;
+    if (phase) {
+      records = records.filter((r) => r.phases.includes(phase));
     }
 
     if (options?.filename) {

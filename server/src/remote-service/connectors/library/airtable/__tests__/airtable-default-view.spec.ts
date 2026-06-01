@@ -188,6 +188,7 @@ describe('buildAirtableDefaultView', () => {
     it('should add subfields to singleCollaborator with email selected', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'fields.Assignee') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('email');
       expect(col.selectedSubfield).toBe(0);
     });
@@ -195,6 +196,7 @@ describe('buildAirtableDefaultView', () => {
     it('should add subfields to createdBy with email selected', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'fields.Created By') as TableViewCol;
       expect(col.subfields).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       expect(col.subfields![0].relativePath).toBe('email');
       expect(col.selectedSubfield).toBe(0);
     });
