@@ -14,6 +14,10 @@ const config: Config = {
   moduleNameMapper: {
     // Handle module aliases (if you have any in tsconfig.json)
     '^@/(.*)$': '<rootDir>/src/$1',
+    // `nanoid` ships ESM-only and `next/jest` doesn't transform it, which breaks
+    // tests importing `@spinner/shared-types` runtime values (its id helpers require
+    // nanoid). Map it to a deterministic CJS mock for the test environment.
+    '^nanoid$': '<rootDir>/__mocks__/nanoid.js',
   },
   testMatch: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
   testPathIgnorePatterns: [

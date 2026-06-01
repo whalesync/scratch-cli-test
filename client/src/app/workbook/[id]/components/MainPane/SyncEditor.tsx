@@ -1,8 +1,9 @@
 'use client';
 
-import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
-import { Text12Regular } from '@/app/components/base/text';
+import { ButtonSecondaryOutline, IconButtonGhost } from '@/app/components/base/buttons';
+import { Text12Regular, Text13Medium } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
+import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
 import { getHumanReadableErrorMessage } from '@/lib/api/error';
@@ -14,6 +15,7 @@ import { DocsUrls } from '@/utils/docs-urls';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
+  Accordion,
   ActionIcon,
   Alert,
   Anchor,
@@ -25,10 +27,14 @@ import {
   Flex,
   Group,
   Loader,
+  NumberInput,
   ScrollArea,
+  SegmentedControl,
   Select,
   Stack,
+  Switch,
   Text,
+  TextInput,
   Tooltip,
   useMantineColorScheme,
   type ComboboxLikeRenderOptionInput,
@@ -38,14 +44,12 @@ import { notifications } from '@mantine/notifications';
 import type {
   AutoConvertOptions,
   ColumnMapping,
-  DataFolder,
   DataFolderId,
   PreviewFieldResult,
   SaveSyncBody,
   SyncId,
-  SyncMapping,
+  SyncMappingV2,
   SyncTablePair,
-  TableMapping,
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -64,10 +68,29 @@ import {
   Search,
   Settings,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddFolderMappingModal } from './AddFolderMappingModal';
+import {
+  coerceUnknownToV2,
+  constantDefaultForType,
+  createFieldMapping,
+  createFolderPair,
+  findConflictingMappingIds,
+  folderPairsToV2,
+  groupByDestColumn,
+  isMatchedBucket,
+  isSimpleGroup,
+  resolveStoredMapping,
+  storedMappingToV2,
+  v2ToFolderPairs,
+  validateV2Semantics,
+  type ConstantValue,
+  type FieldMapping,
+  type FolderPair,
+} from './sync-editor-model';
 import { SyncJsonReferencePanel } from './SyncJsonReferencePanel';
 import { SyncToolbar } from './SyncToolbar';
 import { TablePairSelector } from './TablePairSelector';
@@ -78,121 +101,57 @@ interface SyncEditorProps {
   syncId: SyncId | 'new';
 }
 
-interface FieldMapping {
-  id: string;
-  sourceField: string;
-  destField: string;
-  /** Pipeline of transformers applied sequentially */
-  transformers: TransformerConfig[];
-}
-
-interface FolderPair {
-  id: string;
-  sourceId: string;
-  sourceFolderExists: boolean;
-  destId: string;
-  destFolderExists: boolean;
-  fieldMappings: FieldMapping[];
-  matchingDestinationField: string;
-  matchingSourceField: string;
-}
-
-// Helpers
-let mappingIdCounter = 0;
-const createMapping = (sourceField = '', destField = '', transformers: TransformerConfig[] = []): FieldMapping => ({
-  id: `mapping-${++mappingIdCounter}`,
-  sourceField,
-  destField,
-  transformers,
-});
-
-let pairIdCounter = 0;
-const createPair = (): FolderPair => ({
-  id: `pair-${++pairIdCounter}`,
-  sourceId: '',
-  sourceFolderExists: false,
-  destId: '',
-  destFolderExists: false,
-  fieldMappings: [createMapping()],
-  matchingDestinationField: '',
-  matchingSourceField: '',
-});
-
-const folderPairsToSyncMapping = (pairs: FolderPair[]): SyncMapping => {
-  const validPairs = pairs.filter((p) => {
-    const hasValidMappings = p.fieldMappings.some((m) => m.sourceField && m.destField);
-    return p.sourceId && p.destId && hasValidMappings;
-  });
-
-  return {
-    version: 1,
-    tableMappings: validPairs.map((pair) => {
-      const columnMappings = pair.fieldMappings
-        .filter((m) => m.sourceField && m.destField)
-        .map((m) => ({
-          sourceColumnId: m.sourceField,
-          destinationColumnId: m.destField,
-          ...(m.transformers.length > 0 ? { transformers: m.transformers } : {}),
-        }));
-
-      return {
-        sourceDataFolderId: pair.sourceId as DataFolderId,
-        destinationDataFolderId: pair.destId as DataFolderId,
-        columnMappings,
-        ...(pair.matchingSourceField && pair.matchingDestinationField
-          ? {
-              recordMatching: {
-                sourceColumnId: pair.matchingSourceField,
-                destinationColumnId: pair.matchingDestinationField,
-              },
-            }
-          : {}),
-      };
-    }),
-  };
-};
-
-const syncMappingToFolderPairs = (mapping: SyncMapping, allFolders: DataFolder[]): FolderPair[] => {
-  return mapping.tableMappings.map((tm) => {
-    const sourceFolder = allFolders.find((f) => f.id === tm.sourceDataFolderId);
-    const destFolder = allFolders.find((f) => f.id === tm.destinationDataFolderId);
-
-    const fieldMappings: FieldMapping[] = tm.columnMappings.map((cm) => ({
-      id: `mapping-${++mappingIdCounter}`,
-      sourceField: cm.sourceColumnId,
-      destField: cm.destinationColumnId,
-      transformers: cm.transformers ?? (cm.transformer ? [cm.transformer] : []),
-    }));
-
-    return {
-      id: `pair-${++pairIdCounter}`,
-      sourceId: tm.sourceDataFolderId,
-      sourceFolderExists: sourceFolder !== undefined,
-      destId: tm.destinationDataFolderId,
-      destFolderExists: destFolder !== undefined,
-      fieldMappings: fieldMappings.length ? fieldMappings : [createMapping()],
-      matchingDestinationField: tm.recordMatching?.destinationColumnId || '',
-      matchingSourceField: tm.recordMatching?.sourceColumnId || '',
-    };
-  });
-};
-
-const isSyncMapping = (obj: unknown): obj is SyncMapping => {
-  if (!obj || typeof obj !== 'object') return false;
-  const record = obj as Record<string, unknown>;
-  if (record.version !== 1) return false;
-  if (!Array.isArray(record.tableMappings)) return false;
-  for (const tm of record.tableMappings as Record<string, unknown>[]) {
-    if (typeof tm.sourceDataFolderId !== 'string') return false;
-    if (typeof tm.destinationDataFolderId !== 'string') return false;
-    if (!Array.isArray(tm.columnMappings)) return false;
-    for (const cm of tm.columnMappings as Record<string, unknown>[]) {
-      if (typeof cm.sourceColumnId !== 'string') return false;
-      if (typeof cm.destinationColumnId !== 'string') return false;
-    }
+/**
+ * Type-driven editor for a `kind: 'constant'` value. Dispatches on the destination
+ * column's schema type: boolean → Switch, number/integer → NumberInput, else TextInput.
+ */
+function ConstantValueEditor({
+  value,
+  destType,
+  onChange,
+  ariaLabel,
+}: {
+  value: ConstantValue;
+  destType: string | undefined;
+  onChange: (value: ConstantValue) => void;
+  ariaLabel: string;
+}) {
+  if (destType === 'boolean') {
+    return (
+      <Switch
+        size="sm"
+        checked={value === true}
+        onChange={(e) => onChange(e.currentTarget.checked)}
+        label={value === true ? 'true' : 'false'}
+        aria-label={ariaLabel}
+        style={{ flex: 1 }}
+      />
+    );
   }
-  return true;
-};
+  if (destType === 'number' || destType === 'integer') {
+    return (
+      <NumberInput
+        size="xs"
+        placeholder="Constant value"
+        value={typeof value === 'number' ? value : ''}
+        onChange={(val) => onChange(typeof val === 'number' ? val : null)}
+        allowDecimal={destType !== 'integer'}
+        aria-label={ariaLabel}
+        style={{ flex: 1 }}
+      />
+    );
+  }
+  return (
+    <TextInput
+      size="xs"
+      placeholder="Constant value"
+      value={value === null ? '' : String(value)}
+      onChange={(e) => onChange(e.currentTarget.value)}
+      aria-label={ariaLabel}
+      style={{ flex: 1 }}
+    />
+  );
+}
 
 const renderAutocompleteOption = ({ option }: ComboboxLikeRenderOptionInput<ComboboxStringItem>) => {
   const item = option as ComboboxStringItem & { type?: string; displayLabel?: string };
@@ -367,6 +326,12 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     mappingIndex: number;
   } | null>(null);
 
+  // Confirmation dialog for the first ignore→apply flip of an unmatched-destination
+  // policy on a sync that has already run (the destructive-safeguard, per client/CLAUDE.md).
+  const { open: openConfirmDialog, dialogProps: confirmDialogProps } = useConfirmDialog();
+  /** `${pairId}:${setting}` flips already confirmed this session — prompt only once each. */
+  const confirmedPolicyFlips = useRef<Set<string>>(new Set());
+
   // Preview & row interaction state
   const [hoveredMappingIndex, setHoveredMappingIndex] = useState<number | null>(null);
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<string | null>(null);
@@ -434,37 +399,40 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     if (newMode === editorMode) return;
 
     if (newMode === 'json') {
-      // Visual → JSON: always succeeds
-      const mapping = folderPairsToSyncMapping(folderPairs);
-      const hasContent = mapping.tableMappings.length > 0;
-      const jsonObj = hasContent ? mapping : { version: 1, tableMappings: [] };
+      // Visual → JSON: always succeeds. Serialize as the v2 shape.
+      const mapping = folderPairsToV2(folderPairs);
+      const jsonObj = mapping.tableMappings.length > 0 ? mapping : { version: 2, tableMappings: [] };
       setJsonContent(JSON.stringify(jsonObj, null, 2));
       setJsonError(null);
       setEditorMode('json');
     } else {
-      // JSON → Visual: parse and validate
+      // JSON → Visual: parse and accept v1 or v2 (v1 silently auto-upgrades to v2).
+      let parsed: unknown;
       try {
-        const parsed: unknown = JSON.parse(jsonContent);
-        if (!isSyncMapping(parsed)) {
-          setJsonError(
-            'Invalid SyncMapping structure. Must have version: 1, tableMappings array, and each table mapping needs sourceDataFolderId, destinationDataFolderId, and columnMappings.',
-          );
-          return;
-        }
-        const pairs = syncMappingToFolderPairs(parsed, allFolders);
-        setFolderPairs(pairs);
-        setSelectedPairIndex(0);
-        // Ensure schema paths for all referenced folders
-        const folderIds = new Set<string>();
-        parsed.tableMappings.forEach((tm: { sourceDataFolderId: string; destinationDataFolderId: string }) => {
-          folderIds.add(tm.sourceDataFolderId);
-          folderIds.add(tm.destinationDataFolderId);
-        });
-        folderIds.forEach((id) => ensureSchemaPaths(id));
-        setJsonError(null);
-        setEditorMode('visual');
+        parsed = JSON.parse(jsonContent);
       } catch {
         setJsonError('Invalid JSON. Please fix syntax errors before switching to Visual mode.');
+        return;
+      }
+      const result = coerceUnknownToV2(parsed);
+      if (!result.ok) {
+        setJsonError(result.error);
+        return;
+      }
+      const pairs = v2ToFolderPairs(result.mapping, allFolders);
+      setFolderPairs(pairs);
+      setSelectedPairIndex(0);
+      // Ensure schema paths for all referenced folders
+      const folderIds = new Set<string>();
+      result.mapping.tableMappings.forEach((tm) => {
+        folderIds.add(tm.sourceDataFolderId);
+        folderIds.add(tm.destinationDataFolderId);
+      });
+      folderIds.forEach((id) => ensureSchemaPaths(id));
+      setJsonError(null);
+      setEditorMode('visual');
+      if (result.upgradedFromV1) {
+        notifications.show({ message: 'Sync upgraded from v1 to v2 format', color: 'blue' });
       }
     }
   };
@@ -501,44 +469,38 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     setJsonContent('');
     setJsonError(null);
 
-    if (existingSync.mappings && existingSync.mappings.tableMappings) {
-      const uniqueFolderIds = new Set<string>();
-      const pairs: FolderPair[] = existingSync.mappings.tableMappings.map((tm: TableMapping) => {
-        uniqueFolderIds.add(tm.sourceDataFolderId);
-        uniqueFolderIds.add(tm.destinationDataFolderId);
+    // The list/get endpoints return the raw row with both columns; prefer the v2
+    // column when present, otherwise the frozen v1 `mappings`. Normalize v1 → v2 in
+    // memory so the editor only ever works on the v2 shape.
+    const stored = resolveStoredMapping(existingSync);
+    let normalizedV2: SyncMappingV2 = { version: 2, tableMappings: [] };
+    if (stored) {
+      try {
+        normalizedV2 = storedMappingToV2(stored);
+      } catch (err) {
+        console.debug('Failed to normalize sync mappings; starting from empty:', err);
+      }
+    }
 
-        const fieldMappings: FieldMapping[] = tm.columnMappings.map((cm) => ({
-          id: `mapping-${++mappingIdCounter}`,
-          sourceField: cm.sourceColumnId,
-          destField: cm.destinationColumnId,
-          transformers: cm.transformers ?? (cm.transformer ? [cm.transformer] : []),
-        }));
-
-        return {
-          id: `pair-${++pairIdCounter}`,
-          sourceId: tm.sourceDataFolderId,
-          sourceFolderExists: allFolders.find((f) => f.id === tm.sourceDataFolderId) !== undefined,
-          destId: tm.destinationDataFolderId,
-          destFolderExists: allFolders.find((f) => f.id === tm.destinationDataFolderId) !== undefined,
-          fieldMappings: fieldMappings.length ? fieldMappings : [createMapping()],
-          matchingDestinationField: tm.recordMatching?.destinationColumnId || '',
-          matchingSourceField: tm.recordMatching?.sourceColumnId || '',
-        };
-      });
+    if (normalizedV2.tableMappings.length > 0) {
+      const pairs = v2ToFolderPairs(normalizedV2, allFolders);
       setFolderPairs(pairs);
       setSelectedPairIndex(0);
+      const uniqueFolderIds = new Set<string>();
+      normalizedV2.tableMappings.forEach((tm) => {
+        uniqueFolderIds.add(tm.sourceDataFolderId);
+        uniqueFolderIds.add(tm.destinationDataFolderId);
+      });
       uniqueFolderIds.forEach((id) => ensureSchemaPaths(id));
-    } else if (existingSync.syncTablePairs) {
-      const pairs: FolderPair[] = existingSync.syncTablePairs.map((p: SyncTablePair) => ({
-        id: `pair-${++pairIdCounter}`,
-        sourceId: p.sourceDataFolderId,
-        sourceFolderExists: allFolders.find((f) => f.id === p.sourceDataFolderId) !== undefined,
-        destId: p.destinationDataFolderId,
-        destFolderExists: allFolders.find((f) => f.id === p.destinationDataFolderId) !== undefined,
-        fieldMappings: [createMapping()],
-        matchingDestinationField: '',
-        matchingSourceField: '',
-      }));
+    } else if (existingSync.syncTablePairs?.length) {
+      const pairs = existingSync.syncTablePairs.map((p: SyncTablePair) =>
+        createFolderPair({
+          sourceId: p.sourceDataFolderId,
+          sourceFolderExists: allFolders.some((f) => f.id === p.sourceDataFolderId),
+          destId: p.destinationDataFolderId,
+          destFolderExists: allFolders.some((f) => f.id === p.destinationDataFolderId),
+        }),
+      );
       setFolderPairs(pairs);
     } else {
       setFolderPairs([]);
@@ -583,11 +545,14 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     }
   }, [previewFileOptions, selectedPreviewFile]);
 
-  // Preview: debounced auto-run
+  // Preview: debounced auto-run. Only matched column-copy rules have a previewable
+  // source value; constants and unmatched-side rules are skipped.
   const previewMappingsFingerprint = JSON.stringify(activePair?.fieldMappings);
   const canPreview =
     !!activePair?.sourceId &&
-    activePair.fieldMappings.some((m) => m.sourceField && m.destField) &&
+    activePair.fieldMappings.some(
+      (m) => m.kind === 'column' && isMatchedBucket(m.when) && m.sourceField && m.destField,
+    ) &&
     !!selectedPreviewFile &&
     activePair.fieldMappings.every((m) => (m.transformers ?? []).every(isTransformerConfigComplete));
 
@@ -600,7 +565,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       setPreviewError(null);
       try {
         const columnMappings: ColumnMapping[] = capturedMappings
-          .filter((m) => m.sourceField && m.destField)
+          .filter((m) => m.kind === 'column' && isMatchedBucket(m.when) && m.sourceField && m.destField)
           .map((m) => ({
             sourceColumnId: m.sourceField,
             destinationColumnId: m.destField,
@@ -673,36 +638,51 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     return '';
   }, [folderPairs, allFolders]);
 
-  const validPairsCount = folderPairs.filter((p) => {
-    const hasValidMappings = p.fieldMappings.some((m) => m.sourceField && m.destField);
-    return p.sourceId && p.destId && hasValidMappings;
-  }).length;
+  // Single source of truth for "what would persist" — also used for save validity.
+  const validPairsCount = useMemo(() => folderPairsToV2(folderPairs).tableMappings.length, [folderPairs]);
+
+  // Rules colliding on (destinationColumnId, when) within the active pair, flagged inline.
+  const activePairConflictIds = useMemo(
+    () => (activePair ? findConflictingMappingIds(activePair.fieldMappings) : new Set<string>()),
+    [activePair],
+  );
 
   const handleSave = async () => {
     setSaving(true);
     setErrorBanner(null);
     try {
-      let mappings: SyncMapping;
+      let mappings: SyncMappingV2;
+      let upgradedFromV1 = false;
 
       if (editorMode === 'json') {
+        let parsed: unknown;
         try {
-          const parsed: unknown = JSON.parse(jsonContent);
-          if (!isSyncMapping(parsed)) {
-            setErrorBanner({
-              title: 'Invalid JSON structure',
-              body: 'Must have version: 1, tableMappings array, and each table mapping needs sourceDataFolderId, destinationDataFolderId, and columnMappings.',
-            });
-            setSaving(false);
-            return;
-          }
-          mappings = parsed;
+          parsed = JSON.parse(jsonContent);
         } catch {
           setErrorBanner({ title: 'Invalid JSON', body: 'Please fix syntax errors before saving.' });
           setSaving(false);
           return;
         }
+        const result = coerceUnknownToV2(parsed);
+        if (!result.ok) {
+          setErrorBanner({ title: 'Invalid JSON structure', body: result.error });
+          setSaving(false);
+          return;
+        }
+        mappings = result.mapping;
+        upgradedFromV1 = result.upgradedFromV1;
       } else {
-        mappings = folderPairsToSyncMapping(folderPairs);
+        mappings = folderPairsToV2(folderPairs);
+      }
+
+      // Mirror the server's v2 refinements (column-only-matched, no constant on the
+      // match key, one rule per (column, case)) so the user gets an inline message
+      // instead of a raw 400/500 at save. (JSON-mode coerce already ran this check.)
+      const semanticError = validateV2Semantics(mappings);
+      if (semanticError) {
+        setErrorBanner({ title: 'Invalid sync configuration', body: semanticError });
+        setSaving(false);
+        return;
       }
 
       const payload: SaveSyncBody = {
@@ -731,6 +711,9 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           message: 'Changes have been saved',
           color: 'green',
         });
+      }
+      if (upgradedFromV1) {
+        notifications.show({ message: 'Sync upgraded from v1 to v2 format', color: 'blue' });
       }
     } catch (error) {
       console.debug('Error saving sync:', error);
@@ -820,10 +803,14 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   };
 
   // -- Pair Logic -- //
+  // All folder-pair mutations are immutable (new pair/array/mapping objects) so the
+  // derived useMemos keyed on `activePair` / `folderPairs` recompute correctly.
+  const updateFolderPair = useCallback((pairIndex: number, updater: (pair: FolderPair) => FolderPair) => {
+    setFolderPairs((prev) => prev.map((p, i) => (i === pairIndex ? updater(p) : p)));
+  }, []);
+
   const updatePair = (index: number, changes: Partial<FolderPair>) => {
-    const next = [...folderPairs];
-    next[index] = { ...next[index], ...changes };
-    setFolderPairs(next);
+    updateFolderPair(index, (pair) => ({ ...pair, ...changes }));
   };
 
   const removePair = (index: number) => {
@@ -837,11 +824,13 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const addPair = () => setFolderMappingModalOpen(true);
 
   const handleFolderMappingConfirm = (sourceId: string, destId: string) => {
-    const newPair = createPair();
-    newPair.sourceId = sourceId;
-    newPair.sourceFolderExists = true; // assume the folder exists until we know otherwise
-    newPair.destId = destId;
-    newPair.destFolderExists = true; // assume the folder exists until we know otherwise
+    // Assume the folders exist until we know otherwise.
+    const newPair = createFolderPair({
+      sourceId,
+      sourceFolderExists: true,
+      destId,
+      destFolderExists: true,
+    });
     const newPairs = [...folderPairs, newPair];
     setFolderPairs(newPairs);
     setSelectedPairIndex(newPairs.length - 1);
@@ -849,10 +838,15 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     ensureSchemaPaths(destId);
   };
 
-  const addFieldMapping = (pairIndex: number) => {
-    const next = [...folderPairs];
-    next[pairIndex].fieldMappings.push(createMapping());
-    setFolderPairs(next);
+  const patchFieldMapping = (pairIndex: number, mappingIndex: number, changes: Partial<FieldMapping>) => {
+    updateFolderPair(pairIndex, (pair) => ({
+      ...pair,
+      fieldMappings: pair.fieldMappings.map((m, i) => (i === mappingIndex ? { ...m, ...changes } : m)),
+    }));
+  };
+
+  const addFieldMapping = (pairIndex: number, mapping: FieldMapping = createFieldMapping()) => {
+    updateFolderPair(pairIndex, (pair) => ({ ...pair, fieldMappings: [...pair.fieldMappings, mapping] }));
   };
 
   const updateFieldMapping = (
@@ -861,17 +855,15 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     field: 'sourceField' | 'destField',
     value: string,
   ) => {
-    const next = [...folderPairs];
-    next[pairIndex].fieldMappings[mappingIndex][field] = value;
-    setFolderPairs(next);
+    patchFieldMapping(pairIndex, mappingIndex, { [field]: value });
   };
 
   const removeFieldMapping = (pairIndex: number, mappingIndex: number) => {
-    const next = [...folderPairs];
-    if (next[pairIndex].fieldMappings.length > 1) {
-      next[pairIndex].fieldMappings = next[pairIndex].fieldMappings.filter((_, i) => i !== mappingIndex);
-      setFolderPairs(next);
-    }
+    updateFolderPair(pairIndex, (pair) => {
+      const fieldMappings = pair.fieldMappings.filter((_, i) => i !== mappingIndex);
+      // Never leave a pair with zero rows — reseed a blank matched column row.
+      return { ...pair, fieldMappings: fieldMappings.length > 0 ? fieldMappings : [createFieldMapping()] };
+    });
   };
 
   const updateFieldMappingTransformers = (
@@ -879,12 +871,79 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     mappingIndex: number,
     transformers: TransformerConfig[],
   ) => {
-    const next = [...folderPairs];
-    next[pairIndex].fieldMappings[mappingIndex] = {
-      ...next[pairIndex].fieldMappings[mappingIndex],
-      transformers,
-    };
-    setFolderPairs(next);
+    patchFieldMapping(pairIndex, mappingIndex, { transformers });
+  };
+
+  /** Switch a rule between copying a source column and writing a literal constant. */
+  const setFieldMappingKind = (pairIndex: number, mappingIndex: number, kind: FieldMapping['kind']) => {
+    const pair = folderPairs[pairIndex];
+    const mapping = pair?.fieldMappings[mappingIndex];
+    if (!mapping) return;
+    if (kind === 'constant') {
+      const destType = schemaCache[pair.destId]?.find((f) => f.path === mapping.destField)?.type;
+      patchFieldMapping(pairIndex, mappingIndex, {
+        kind: 'constant',
+        constantValue: constantDefaultForType(destType),
+        sourceField: '',
+        transformers: [],
+      });
+    } else {
+      patchFieldMapping(pairIndex, mappingIndex, { kind: 'column' });
+    }
+  };
+
+  /** Retarget every rule grouped under one destination column (the group header edit). */
+  const updateGroupDestField = (pairIndex: number, oldDest: string, newDest: string) => {
+    updateFolderPair(pairIndex, (pair) => ({
+      ...pair,
+      fieldMappings: pair.fieldMappings.map((m) => (m.destField === oldDest ? { ...m, destField: newDest } : m)),
+    }));
+  };
+
+  /** Add an unmatched-side constant rule to a destination column group. */
+  const addUnmatchedRule = (pairIndex: number, destField: string) => {
+    const destType = schemaCache[folderPairs[pairIndex]?.destId]?.find((f) => f.path === destField)?.type;
+    addFieldMapping(
+      pairIndex,
+      createFieldMapping({
+        destField,
+        when: 'unmatched',
+        kind: 'constant',
+        constantValue: constantDefaultForType(destType),
+      }),
+    );
+  };
+
+  /**
+   * Apply an unmatched-destination policy change. The first ignore→apply flip on a
+   * sync that has already run opens a ConfirmDialog before committing (the destructive
+   * safeguard); once confirmed for that setting it applies directly.
+   */
+  const handleDestinationPolicyChange = (
+    pairIndex: number,
+    setting: 'unmatchedWithMatchKey' | 'unmatchedWithoutMatchKey',
+    value: 'ignore' | 'apply',
+  ) => {
+    const pair = folderPairs[pairIndex];
+    if (!pair) return;
+    const isFirstEnable = value === 'apply' && pair[setting] === 'ignore' && !isNew && !!existingSync?.lastSyncTime;
+    const flipKey = `${pair.id}:${setting}`;
+    if (isFirstEnable && !confirmedPolicyFlips.current.has(flipKey)) {
+      openConfirmDialog({
+        title: 'Enable unmatched-destination handling?',
+        message:
+          'Saving with this setting means the next sync run will apply these rules to destination records that have no source counterpart. You can review and reject these changes in publish review before they go live.',
+        confirmLabel: 'Enable',
+        cancelLabel: 'Keep ignore',
+        variant: 'primary',
+        onConfirm: () => {
+          confirmedPolicyFlips.current.add(flipKey);
+          updatePair(pairIndex, { [setting]: value });
+        },
+      });
+      return;
+    }
+    updatePair(pairIndex, { [setting]: value });
   };
 
   const openTransformerModal = (pairIndex: number, mappingIndex: number) => {
@@ -1152,152 +1211,315 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                     </Box>
                     <Divider style={{ position: 'relative', zIndex: 1 }} />
 
-                    {/* Field mapping rows */}
-                    {activePair.fieldMappings.map((mapping, mIndex) => {
-                      const preview = getPreviewForMapping(mapping);
-                      const isHovered = hoveredMappingIndex === mIndex;
-                      return (
-                        <Box key={mapping.id}>
+                    {/* Field mapping rows, grouped by destination column. A plain matched
+                        column copy renders as a flat source→dest row; a destination column
+                        with constants or an unmatched-side rule renders as a stacked group. */}
+                    {(() => {
+                      const buildFieldOptions = (folderId: string) =>
+                        [...(schemaCache[folderId] || [])]
+                          .sort((a, b) => {
+                            if (a.displayLabel && !b.displayLabel) return -1;
+                            if (!a.displayLabel && b.displayLabel) return 1;
+                            return 0;
+                          })
+                          .map((f) =>
+                            typeof f === 'string'
+                              ? { value: f, label: f, type: 'unknown' }
+                              : { value: f.path, label: f.path, type: f.type, displayLabel: f.displayLabel },
+                          );
+                      const sourceOptions = buildFieldOptions(activePair.sourceId);
+                      const destOptions = buildFieldOptions(activePair.destId);
+                      const destTypeFor = (destField: string) =>
+                        schemaCache[activePair.destId]?.find((f) => f.path === destField)?.type;
+                      const policyAllowsApply =
+                        activePair.unmatchedWithMatchKey === 'apply' || activePair.unmatchedWithoutMatchKey === 'apply';
+                      const canRemove = activePair.fieldMappings.length > 1;
+                      const groups = groupByDestColumn(activePair.fieldMappings);
+
+                      const sourceFieldAutocomplete = (rule: { mapping: FieldMapping; index: number }) => (
+                        <Autocomplete
+                          placeholder="Source field"
+                          style={{ flex: 1 }}
+                          autoSelectOnBlur
+                          clearable
+                          value={rule.mapping.sourceField}
+                          onChange={(val) => {
+                            updateFieldMapping(activePairIndex, rule.index, 'sourceField', val);
+                            updateFieldMappingTransformers(
+                              activePairIndex,
+                              rule.index,
+                              computeAutoTransformers(activePairIndex, val, rule.mapping.destField),
+                            );
+                          }}
+                          data={sourceOptions}
+                          renderOption={renderAutocompleteOption}
+                          rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
+                        />
+                      );
+
+                      const transformerButton = (rule: { mapping: FieldMapping; index: number }) => (
+                        <Tooltip
+                          label={
+                            rule.mapping.transformers.length > 0
+                              ? rule.mapping.transformers.map((t) => getTransformerLabel(t.type)).join(' → ')
+                              : 'Transform'
+                          }
+                        >
+                          <ActionIcon
+                            variant="subtle"
+                            color={rule.mapping.transformers.length > 0 ? 'blue' : 'gray'}
+                            onClick={() => openTransformerModal(activePairIndex, rule.index)}
+                          >
+                            <Settings size={14} />
+                          </ActionIcon>
+                        </Tooltip>
+                      );
+
+                      const removeButton = (rule: { mapping: FieldMapping; index: number }) =>
+                        canRemove ? (
+                          <IconButtonGhost
+                            color="gray"
+                            aria-label={`Remove mapping for column ${rule.mapping.destField || 'new'}`}
+                            onClick={() => removeFieldMapping(activePairIndex, rule.index)}
+                          >
+                            <StyledLucideIcon Icon={X} size="sm" />
+                          </IconButtonGhost>
+                        ) : null;
+
+                      const conflictNote = (rule: { mapping: FieldMapping }) =>
+                        activePairConflictIds.has(rule.mapping.id) ? (
+                          <Text12Regular id={`conflict-${rule.mapping.id}`} c="var(--mantine-color-red-6)">
+                            Another rule already targets “{rule.mapping.destField}” for the same case. Only one rule per
+                            column per case is allowed.
+                          </Text12Regular>
+                        ) : null;
+
+                      // The right-hand preview cell, shown only for matched column copies.
+                      const previewCell = (rule: { mapping: FieldMapping; index: number }, isHovered: boolean) => {
+                        const preview =
+                          rule.mapping.kind === 'column' && isMatchedBucket(rule.mapping.when)
+                            ? getPreviewForMapping(rule.mapping)
+                            : null;
+                        return (
                           <Box
                             style={{
+                              width: '33.333%',
+                              padding: '8px 12px',
                               display: 'flex',
-                              width: '100%',
-                              position: 'relative',
-                              zIndex: 1,
-                              background: isHovered ? 'var(--mantine-color-gray-0)' : undefined,
-                              borderLeft: isHovered ? '3px solid var(--mantine-color-dark-7)' : '3px solid transparent',
+                              alignItems: 'center',
+                              background: isHovered ? 'var(--mantine-color-gray-1)' : undefined,
                             }}
-                            onMouseEnter={() => setHoveredMappingIndex(mIndex)}
-                            onMouseLeave={() => setHoveredMappingIndex(null)}
                           >
-                            {/* Left: mapping controls */}
-                            <Box
-                              style={{
-                                width: '66.666%',
-                                padding: '10px 16px 10px 13px',
-                                display: 'flex',
-                                alignItems: 'center',
-                              }}
-                            >
-                              <Stack gap={2} style={{ flex: 1 }}>
-                                <Group gap="xs" wrap="nowrap">
-                                  <Autocomplete
-                                    placeholder="Source field"
-                                    style={{ flex: 1 }}
-                                    autoSelectOnBlur
-                                    clearable
-                                    value={mapping.sourceField}
-                                    onChange={(val) => {
-                                      updateFieldMapping(activePairIndex, mIndex, 'sourceField', val);
-                                      const transformers = computeAutoTransformers(
-                                        activePairIndex,
-                                        val,
-                                        mapping.destField,
-                                      );
-                                      updateFieldMappingTransformers(activePairIndex, mIndex, transformers);
-                                    }}
-                                    data={[...(schemaCache[activePair.sourceId] || [])]
-                                      .sort((a, b) => {
-                                        if (a.displayLabel && !b.displayLabel) return -1;
-                                        if (!a.displayLabel && b.displayLabel) return 1;
-                                        return 0;
-                                      })
-                                      .map((f) => {
-                                        if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                                        return {
-                                          value: f.path,
-                                          label: f.path,
-                                          type: f.type,
-                                          displayLabel: f.displayLabel,
-                                        };
-                                      })}
-                                    renderOption={renderAutocompleteOption}
-                                    rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
-                                  />
-                                  <ArrowRight size={14} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
-                                  <Autocomplete
-                                    placeholder="Dest field"
-                                    style={{ flex: 1 }}
-                                    autoSelectOnBlur
-                                    clearable
-                                    value={mapping.destField}
-                                    onChange={(val) => {
-                                      updateFieldMapping(activePairIndex, mIndex, 'destField', val);
-                                      const transformers = computeAutoTransformers(
-                                        activePairIndex,
-                                        mapping.sourceField,
-                                        val,
-                                      );
-                                      updateFieldMappingTransformers(activePairIndex, mIndex, transformers);
-                                    }}
-                                    data={[...(schemaCache[activePair.destId] || [])]
-                                      .sort((a, b) => {
-                                        if (a.displayLabel && !b.displayLabel) return -1;
-                                        if (!a.displayLabel && b.displayLabel) return 1;
-                                        return 0;
-                                      })
-                                      .map((f) => {
-                                        if (typeof f === 'string') return { value: f, label: f, type: 'unknown' };
-                                        return {
-                                          value: f.path,
-                                          label: f.path,
-                                          type: f.type,
-                                          displayLabel: f.displayLabel,
-                                        };
-                                      })}
-                                    renderOption={renderAutocompleteOption}
-                                    rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
-                                  />
-                                  <Tooltip
-                                    label={
-                                      mapping.transformers.length > 0
-                                        ? mapping.transformers.map((t) => getTransformerLabel(t.type)).join(' → ')
-                                        : 'Transform'
-                                    }
-                                  >
-                                    <ActionIcon
-                                      variant="subtle"
-                                      color={mapping.transformers.length > 0 ? 'blue' : 'gray'}
-                                      onClick={() => openTransformerModal(activePairIndex, mIndex)}
-                                    >
-                                      <Settings size={14} />
-                                    </ActionIcon>
-                                  </Tooltip>
-                                  {activePair.fieldMappings.length > 1 && (
-                                    <ActionIcon
-                                      variant="subtle"
-                                      color="gray"
-                                      onClick={() => removeFieldMapping(activePairIndex, mIndex)}
-                                    >
-                                      <Trash2 size={14} />
-                                    </ActionIcon>
-                                  )}
-                                </Group>
-                              </Stack>
-                            </Box>
-                            {/* Right: preview values */}
-                            <Box
-                              style={{
-                                width: '33.333%',
-                                padding: '8px 12px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                background: isHovered ? 'var(--mantine-color-gray-1)' : undefined,
-                              }}
-                            >
-                              <Box style={{ width: '100%', visibility: preview ? 'visible' : 'hidden' }}>
-                                <PreviewValueBox
-                                  sourceValue={preview?.sourceValue}
-                                  transformedValue={preview?.transformedValue}
-                                  warning={preview?.warning}
-                                />
-                              </Box>
+                            <Box style={{ width: '100%', visibility: preview ? 'visible' : 'hidden' }}>
+                              <PreviewValueBox
+                                sourceValue={preview?.sourceValue}
+                                transformedValue={preview?.transformedValue}
+                                warning={preview?.warning}
+                              />
                             </Box>
                           </Box>
-                          <Divider />
-                        </Box>
-                      );
-                    })}
+                        );
+                      };
+
+                      const ruleRow = (
+                        rule: { mapping: FieldMapping; index: number },
+                        leftControls: ReactNode,
+                        opts: { accent?: string } = {},
+                      ) => {
+                        const isHovered = hoveredMappingIndex === rule.index;
+                        const conflicted = activePairConflictIds.has(rule.mapping.id);
+                        const accent = conflicted
+                          ? 'var(--mantine-color-red-6)'
+                          : isHovered
+                            ? 'var(--mantine-color-dark-7)'
+                            : (opts.accent ?? 'transparent');
+                        return (
+                          <Box key={rule.mapping.id}>
+                            <Box
+                              style={{
+                                display: 'flex',
+                                width: '100%',
+                                position: 'relative',
+                                zIndex: 1,
+                                background: isHovered ? 'var(--mantine-color-gray-0)' : undefined,
+                                borderLeft: `3px solid ${accent}`,
+                              }}
+                              onMouseEnter={() => setHoveredMappingIndex(rule.index)}
+                              onMouseLeave={() => setHoveredMappingIndex(null)}
+                            >
+                              <Box
+                                style={{
+                                  width: '66.666%',
+                                  padding: '10px 16px 10px 13px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Stack
+                                  gap={4}
+                                  style={{ flex: 1 }}
+                                  aria-describedby={conflicted ? `conflict-${rule.mapping.id}` : undefined}
+                                >
+                                  {leftControls}
+                                  {conflictNote(rule)}
+                                </Stack>
+                              </Box>
+                              {previewCell(rule, isHovered)}
+                            </Box>
+                            <Divider />
+                          </Box>
+                        );
+                      };
+
+                      return groups.map((group) => {
+                        // Flat row — a single matched column copy (today's look, no extra chrome).
+                        if (isSimpleGroup(group) || !group.destField) {
+                          const rule = group.rules[0];
+                          const flatControls = (
+                            <Group gap="xs" wrap="nowrap">
+                              {sourceFieldAutocomplete(rule)}
+                              <ArrowRight size={14} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
+                              <Autocomplete
+                                placeholder="Dest field"
+                                style={{ flex: 1 }}
+                                autoSelectOnBlur
+                                clearable
+                                value={rule.mapping.destField}
+                                onChange={(val) => {
+                                  updateFieldMapping(activePairIndex, rule.index, 'destField', val);
+                                  updateFieldMappingTransformers(
+                                    activePairIndex,
+                                    rule.index,
+                                    computeAutoTransformers(activePairIndex, rule.mapping.sourceField, val),
+                                  );
+                                }}
+                                data={destOptions}
+                                renderOption={renderAutocompleteOption}
+                                rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
+                              />
+                              {transformerButton(rule)}
+                              {removeButton(rule)}
+                            </Group>
+                          );
+                          return (
+                            <Fragment key={`simple-${rule.mapping.id}`}>
+                              {ruleRow(rule, flatControls)}
+                              {policyAllowsApply && group.destField && (
+                                <Box style={{ position: 'relative', zIndex: 1, padding: '4px 16px 8px 28px' }}>
+                                  <Button
+                                    variant="subtle"
+                                    color="gray"
+                                    size="compact-xs"
+                                    aria-label={`Add unmatched-side rule to column ${group.destField}`}
+                                    leftSection={<Plus size={14} />}
+                                    onClick={() => addUnmatchedRule(activePairIndex, group.destField)}
+                                  >
+                                    Add unmatched rule
+                                  </Button>
+                                </Box>
+                              )}
+                            </Fragment>
+                          );
+                        }
+
+                        // Stacked group — multiple rules and/or constants for one dest column.
+                        const groupDest = group.destField;
+                        return (
+                          <Box
+                            key={`dest-${groupDest}`}
+                            style={{ position: 'relative', zIndex: 1, borderLeft: '3px solid var(--fg-divider)' }}
+                          >
+                            {/* Group header: the destination column (editable). */}
+                            <Box style={{ display: 'flex', width: '100%' }}>
+                              <Group gap="xs" wrap="nowrap" style={{ width: '66.666%', padding: '8px 16px 4px 13px' }}>
+                                <Text12Regular c="dimmed" tt="uppercase" style={{ whiteSpace: 'nowrap' }}>
+                                  Dest
+                                </Text12Regular>
+                                <Autocomplete
+                                  placeholder="Dest field"
+                                  style={{ flex: 1 }}
+                                  autoSelectOnBlur
+                                  value={groupDest}
+                                  onChange={(val) => updateGroupDestField(activePairIndex, groupDest, val)}
+                                  data={destOptions}
+                                  renderOption={renderAutocompleteOption}
+                                  rightSection={<Search size={14} color="var(--mantine-color-dimmed)" />}
+                                />
+                              </Group>
+                              <Box style={{ width: '33.333%' }} />
+                            </Box>
+
+                            {group.rules.map((rule) => {
+                              const isUnmatched = !isMatchedBucket(rule.mapping.when);
+                              const destType = destTypeFor(rule.mapping.destField);
+                              const leftControls = (
+                                <Group gap="xs" wrap="nowrap" pl={isUnmatched ? 20 : 0}>
+                                  {isUnmatched ? (
+                                    <Text12Regular c="var(--fg-secondary)" style={{ whiteSpace: 'nowrap' }}>
+                                      on unmatched:
+                                    </Text12Regular>
+                                  ) : (
+                                    <Text12Regular c="var(--fg-secondary)" w={64} style={{ flexShrink: 0 }}>
+                                      Matched
+                                    </Text12Regular>
+                                  )}
+                                  {!isUnmatched && (
+                                    <Select
+                                      size="xs"
+                                      w={120}
+                                      aria-label="Value source"
+                                      allowDeselect={false}
+                                      data={[
+                                        { value: 'column', label: 'Source column' },
+                                        { value: 'constant', label: 'Constant' },
+                                      ]}
+                                      value={rule.mapping.kind}
+                                      onChange={(val) =>
+                                        val &&
+                                        setFieldMappingKind(activePairIndex, rule.index, val as FieldMapping['kind'])
+                                      }
+                                      style={{ flexShrink: 0 }}
+                                    />
+                                  )}
+                                  {!isUnmatched && rule.mapping.kind === 'column' ? (
+                                    <>
+                                      {sourceFieldAutocomplete(rule)}
+                                      {transformerButton(rule)}
+                                    </>
+                                  ) : (
+                                    <ConstantValueEditor
+                                      value={rule.mapping.constantValue}
+                                      destType={destType}
+                                      ariaLabel={`Constant value for ${rule.mapping.destField} (${rule.mapping.when})`}
+                                      onChange={(value) =>
+                                        patchFieldMapping(activePairIndex, rule.index, { constantValue: value })
+                                      }
+                                    />
+                                  )}
+                                  {removeButton(rule)}
+                                </Group>
+                              );
+                              return ruleRow(rule, leftControls, { accent: 'var(--fg-divider)' });
+                            })}
+
+                            {policyAllowsApply && (
+                              <Box style={{ padding: '4px 16px 8px 28px' }}>
+                                <Button
+                                  variant="subtle"
+                                  color="gray"
+                                  size="compact-xs"
+                                  aria-label={`Add unmatched-side rule to column ${groupDest}`}
+                                  leftSection={<Plus size={14} />}
+                                  onClick={() => addUnmatchedRule(activePairIndex, groupDest)}
+                                >
+                                  Add unmatched rule
+                                </Button>
+                              </Box>
+                            )}
+                          </Box>
+                        );
+                      });
+                    })()}
 
                     {/* Footer row */}
                     <Box style={{ display: 'flex', width: '100%', position: 'relative', zIndex: 1 }}>
@@ -1363,6 +1585,96 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                               </Alert>
                             )}
                           </Box>
+
+                          {/* Unmatched-record handling — advanced policies, collapsed by default. */}
+                          <Accordion variant="separated" chevronPosition="left" defaultValue={null}>
+                            <Accordion.Item value="unmatched-handling">
+                              <Accordion.Control>
+                                <Text13Medium>Unmatched record handling — advanced</Text13Medium>
+                              </Accordion.Control>
+                              <Accordion.Panel>
+                                <Stack gap="lg">
+                                  <Box>
+                                    <Text13Medium mb={6}>Source records with no destination match</Text13Medium>
+                                    <SegmentedControl
+                                      size="xs"
+                                      aria-label="Source records with no destination match"
+                                      value={activePair.unmatchedSourcePolicy}
+                                      onChange={(val) =>
+                                        updatePair(activePairIndex, {
+                                          unmatchedSourcePolicy: val as FolderPair['unmatchedSourcePolicy'],
+                                        })
+                                      }
+                                      data={[
+                                        { value: 'create', label: 'Create new destination records (default)' },
+                                        { value: 'ignore', label: "Ignore — don't create new records" },
+                                      ]}
+                                    />
+                                  </Box>
+
+                                  <Box>
+                                    <Text13Medium mb={6}>Destination records with no source match</Text13Medium>
+                                    <Stack gap="sm">
+                                      <Box>
+                                        <Text12Regular mb={4}>Synced records that lost their source</Text12Regular>
+                                        <SegmentedControl
+                                          size="xs"
+                                          aria-label="Synced records that lost their source"
+                                          value={activePair.unmatchedWithMatchKey}
+                                          onChange={(val) =>
+                                            handleDestinationPolicyChange(
+                                              activePairIndex,
+                                              'unmatchedWithMatchKey',
+                                              val as 'ignore' | 'apply',
+                                            )
+                                          }
+                                          data={[
+                                            { value: 'apply', label: 'Apply' },
+                                            { value: 'ignore', label: 'Ignore' },
+                                          ]}
+                                        />
+                                        <Text12Regular c="var(--fg-secondary)" fs="italic" mt={4}>
+                                          Records previously created by this sync whose source has been deleted.
+                                          Typically: yes, archive them.
+                                        </Text12Regular>
+                                      </Box>
+                                      <Box>
+                                        <Text12Regular mb={4}>Hand-authored or pre-existing records</Text12Regular>
+                                        <SegmentedControl
+                                          size="xs"
+                                          aria-label="Hand-authored or pre-existing records"
+                                          value={activePair.unmatchedWithoutMatchKey}
+                                          onChange={(val) =>
+                                            handleDestinationPolicyChange(
+                                              activePairIndex,
+                                              'unmatchedWithoutMatchKey',
+                                              val as 'ignore' | 'apply',
+                                            )
+                                          }
+                                          data={[
+                                            { value: 'apply', label: 'Apply' },
+                                            { value: 'ignore', label: 'Ignore' },
+                                          ]}
+                                        />
+                                        <Text12Regular c="var(--fg-secondary)" fs="italic" mt={4}>
+                                          Records that were never managed by this sync (hand-authored or pre-existing).
+                                          Typically: don&apos;t touch.
+                                        </Text12Regular>
+                                      </Box>
+                                    </Stack>
+                                    {(activePair.unmatchedWithMatchKey === 'apply' ||
+                                      activePair.unmatchedWithoutMatchKey === 'apply') &&
+                                      !(activePair.matchingSourceField && activePair.matchingDestinationField) && (
+                                        <Text12Regular c="var(--mantine-color-orange-7)" mt={6}>
+                                          Configure record matching above — unmatched-destination rules only run when a
+                                          match key is set.
+                                        </Text12Regular>
+                                      )}
+                                  </Box>
+                                </Stack>
+                              </Accordion.Panel>
+                            </Accordion.Item>
+                          </Accordion>
                         </Stack>
                       </Box>
                       <Box style={{ width: '33.333%' }} />
@@ -1412,6 +1724,9 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           />
         </Flex>
       )}
+
+      {/* Confirmation dialog for first ignore→apply of an unmatched-destination policy. */}
+      <ConfirmDialog {...confirmDialogProps} />
 
       {/* Add Folder Mapping Modal */}
       <AddFolderMappingModal
