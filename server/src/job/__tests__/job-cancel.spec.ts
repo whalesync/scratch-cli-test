@@ -250,7 +250,12 @@ describe('JobService.updateJobProgressAndCheckCancel', () => {
   it('returns false when cancelRequestedAt is null', async () => {
     mockUpdate.mockResolvedValue({ cancelRequestedAt: null });
 
-    const result = await service.updateJobProgressAndCheckCancel('job_1', { timestamp: Date.now() });
+    const result = await service.updateJobProgressAndCheckCancel('job_1', {
+      timestamp: Date.now(),
+      publicProgress: {},
+      jobProgress: {},
+      connectorProgress: {},
+    });
 
     expect(result).toBe(false);
   });
@@ -258,13 +263,23 @@ describe('JobService.updateJobProgressAndCheckCancel', () => {
   it('returns true when cancelRequestedAt is set', async () => {
     mockUpdate.mockResolvedValue({ cancelRequestedAt: new Date() });
 
-    const result = await service.updateJobProgressAndCheckCancel('job_1', { timestamp: Date.now() });
+    const result = await service.updateJobProgressAndCheckCancel('job_1', {
+      timestamp: Date.now(),
+      publicProgress: {},
+      jobProgress: {},
+      connectorProgress: {},
+    });
 
     expect(result).toBe(true);
   });
 
   it('writes progress in the same call', async () => {
-    const progress = { timestamp: Date.now(), publicProgress: { status: 'running' } };
+    const progress = {
+      timestamp: Date.now(),
+      publicProgress: { status: 'running' },
+      jobProgress: {},
+      connectorProgress: {},
+    };
     mockUpdate.mockResolvedValue({ cancelRequestedAt: null });
 
     await service.updateJobProgressAndCheckCancel('job_1', progress);

@@ -1,7 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
 import { IntercomConnector } from '../intercom-connector';
 import { buildIntercomUpdatedSinceQuery } from '../intercom-incremental';
 import { IntercomArticle, IntercomCollection, IntercomConversation } from '../intercom-types';
@@ -64,7 +64,7 @@ function buildTableSpec(tableType: string): BaseJsonTableSpec {
     slug: tableType,
     name: tableType,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
   };
 }
 
@@ -195,9 +195,9 @@ describe('IntercomConnector', () => {
 
   describe('getBatchSize', () => {
     it('returns 10', () => {
-      expect(connector.getBatchSize('create')).toBe(10);
-      expect(connector.getBatchSize('update')).toBe(10);
-      expect(connector.getBatchSize('delete')).toBe(10);
+      expect(connector.getBatchSize()).toBe(10);
+      expect(connector.getBatchSize()).toBe(10);
+      expect(connector.getBatchSize()).toBe(10);
     });
   });
 

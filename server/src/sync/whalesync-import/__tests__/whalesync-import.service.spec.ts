@@ -1,4 +1,4 @@
-import type { DataFolder, DataFolderId, Service } from '@spinner/shared-types';
+import type { ColumnMappingV1, DataFolder, DataFolderId, Service } from '@spinner/shared-types';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { convertWhalesyncExport } from '../whalesync-import.service';
 import {
@@ -503,7 +503,7 @@ describe('convertWhalesyncExport', () => {
 
       const tm = result.syncs[0].mappings.tableMappings[0];
       expect(tm.columnMappings).toHaveLength(1);
-      expect(tm.columnMappings[0].sourceColumnId).toBe('fields.Title');
+      expect((tm.columnMappings[0] as ColumnMappingV1).sourceColumnId).toBe('fields.Title');
       expect(tm.columnMappings[0].destinationColumnId).toBe('fieldData.name');
     });
 
@@ -582,7 +582,9 @@ describe('convertWhalesyncExport', () => {
 
       // Right→Left: only Price→slug (both) = 1 column
       expect(result.syncs[1].mappings.tableMappings[0].columnMappings).toHaveLength(1);
-      expect(result.syncs[1].mappings.tableMappings[0].columnMappings[0].sourceColumnId).toBe('fieldData.slug');
+      expect((result.syncs[1].mappings.tableMappings[0].columnMappings[0] as ColumnMappingV1).sourceColumnId).toBe(
+        'fieldData.slug',
+      );
     });
   });
 
@@ -983,7 +985,9 @@ describe('convertWhalesyncExport', () => {
 
       // Right→Left sync: 1 column
       expect(result.syncs[1].mappings.tableMappings[0].columnMappings).toHaveLength(1);
-      expect(result.syncs[1].mappings.tableMappings[0].columnMappings[0].sourceColumnId).toBe('fieldData.name');
+      expect((result.syncs[1].mappings.tableMappings[0].columnMappings[0] as ColumnMappingV1).sourceColumnId).toBe(
+        'fieldData.name',
+      );
       expect(result.syncs[1].mappings.tableMappings[0].columnMappings[0].destinationColumnId).toBe('fields.Title');
     });
 
@@ -1212,7 +1216,7 @@ describe('convertWhalesyncExport', () => {
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
-      expect(mappings[0].sourceColumnId).toBe('fields.Title');
+      expect((mappings[0] as ColumnMappingV1).sourceColumnId).toBe('fields.Title');
       expect(mappings[0].destinationColumnId).toBe('fieldData.name');
     });
 
@@ -1229,7 +1233,7 @@ describe('convertWhalesyncExport', () => {
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
-      expect(mappings[0].sourceColumnId).toBe('fields.Title');
+      expect((mappings[0] as ColumnMappingV1).sourceColumnId).toBe('fields.Title');
       expect(mappings[0].destinationColumnId).toBe('fieldData.name');
     });
 
@@ -1247,7 +1251,7 @@ describe('convertWhalesyncExport', () => {
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
-      expect(mappings[0].sourceColumnId).toBe('fields.Adoption Price');
+      expect((mappings[0] as ColumnMappingV1).sourceColumnId).toBe('fields.Adoption Price');
       expect(mappings[0].destinationColumnId).toBe('fieldData.adoption-price');
     });
 
@@ -1270,7 +1274,7 @@ describe('convertWhalesyncExport', () => {
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
       // Matched FieldB by remote ID, not FieldA by name
-      expect(mappings[0].sourceColumnId).toBe('fields.FieldB');
+      expect((mappings[0] as ColumnMappingV1).sourceColumnId).toBe('fields.FieldB');
     });
 
     it('skips column with caveat when no cascade level matches', () => {
@@ -1303,7 +1307,7 @@ describe('convertWhalesyncExport', () => {
 
       const mappings = result.syncs[0].mappings.tableMappings[0].columnMappings;
       expect(mappings).toHaveLength(1);
-      expect(mappings[0].sourceColumnId).toBe('fields.Title');
+      expect((mappings[0] as ColumnMappingV1).sourceColumnId).toBe('fields.Title');
       expect(mappings[0].destinationColumnId).toBe('fieldData.adoption-price');
     });
   });

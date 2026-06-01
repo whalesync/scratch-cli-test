@@ -14,6 +14,7 @@ function createLookupTools(
     }),
     lookupFieldFromFkRecord: jest.fn(),
     getOrCreateDestinationAssetMapping: jest.fn(),
+    matchDestinationAssetByHash: jest.fn().mockResolvedValue([]),
   };
 }
 

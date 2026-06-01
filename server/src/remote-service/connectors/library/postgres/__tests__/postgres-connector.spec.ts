@@ -5,7 +5,7 @@ import {
   X_SCRATCH_MAX_LENGTH,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, ConnectorFile, EntityId, PullRecordFilesOptions } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, EntityId, PullRecordFilesOptions, idPath } from '../../../types';
 import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
 import { PostgresConnector } from '../postgres-connector';
 
@@ -81,7 +81,7 @@ function buildTableSpec(): BaseJsonTableSpec {
       name: Type.String(),
       status: Type.String(),
     }),
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
   };
 }
 
@@ -397,7 +397,7 @@ function buildIncrementalTableSpec(): BaseJsonTableSpec {
       name: Type.String(),
       updated_at: Type.String(),
     }),
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
   };
 }
 

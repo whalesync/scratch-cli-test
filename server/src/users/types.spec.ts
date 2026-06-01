@@ -22,13 +22,16 @@ describe('User Type Utilities', () => {
         stripeCustomerId: 'stripe_123',
         settings: {},
         lastWorkbookId: null,
-        apiTokens: [],
+        waitlistApproved: false,
+        apiTokens: [] as UserCluster.User['apiTokens'],
+        workspacePermissions: [] as UserCluster.WorkspacePermission[],
         organization: {
           id: 'org_789',
           name: 'Test Organization',
           createdAt: new Date(),
           updatedAt: new Date(),
           clerkId: 'clerk_org_789',
+          deleted: false,
           subscriptions: [],
         },
       };
@@ -53,6 +56,7 @@ describe('User Type Utilities', () => {
           planType: 'FREE_PLAN',
           status: 'active',
         },
+        workspacePermissions: [],
       });
     });
 
@@ -72,7 +76,9 @@ describe('User Type Utilities', () => {
         stripeCustomerId: 'stripe_123',
         settings: {},
         lastWorkbookId: null,
-        apiTokens: [],
+        waitlistApproved: false,
+        apiTokens: [] as UserCluster.User['apiTokens'],
+        workspacePermissions: [] as UserCluster.WorkspacePermission[],
         organization: null,
       };
 

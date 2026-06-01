@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { TransformerTypes } from '@spinner/shared-types';
+import { TransformerTypes, type TransformerConfig } from '@spinner/shared-types';
 import '../index';
 import { validate } from '../type-validator';
 
@@ -55,7 +55,7 @@ describe('Type Validation Pipeline', () => {
             expectedType: 'number',
             onFailure: 'null',
           },
-        },
+        } as unknown as TransformerConfig,
       },
     ];
 
@@ -106,7 +106,7 @@ describe('Type Validation Pipeline', () => {
         transformer: {
           type: TransformerTypes.AutoConvert,
           options: { targetType: 'number' },
-        },
+        } as unknown as TransformerConfig,
       },
     ];
 

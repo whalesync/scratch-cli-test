@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { JobService } from 'src/job/job.service';
+import { Progress } from 'src/types/progress';
 import { JobCanceledError } from '../job-errors';
 
 /**
@@ -10,8 +11,6 @@ import { JobCanceledError } from '../job-errors';
  * logic and test it in isolation: given an AbortController and a mock JobService, verify that
  * checkpoint correctly throws JobCanceledError when DB-based cancellation is detected.
  */
-
-type Progress = Record<string, unknown> & { timestamp: number };
 
 /**
  * Replicates the checkpoint closure from bull-worker.service.ts.
@@ -44,6 +43,12 @@ function createCheckpoint(params: {
   return { checkpoint, getLatestProgress: () => latestProgress };
 }
 
+const RUNNING_PROGRESS: Omit<Progress, 'timestamp'> = {
+  publicProgress: { status: 'running' },
+  jobProgress: {},
+  connectorProgress: {},
+};
+
 describe('checkpoint cancellation via DB flag', () => {
   const DB_JOB_ID = 'job_1';
   const JOB_ID = 'publish-run-usr_1-wkb_1-abc';
@@ -71,20 +76,20 @@ describe('checkpoint cancellation via DB flag', () => {
   it('does not throw when cancelRequestedAt is null', async () => {
     mockUpdateProgressAndCheckCancel.mockResolvedValue(false);
 
-    await expect(checkpoint({ publicProgress: { status: 'running' } })).resolves.toBeUndefined();
+    await expect(checkpoint(RUNNING_PROGRESS)).resolves.toBeUndefined();
   });
 
   it('throws JobCanceledError when DB returns cancelRequested=true', async () => {
     mockUpdateProgressAndCheckCancel.mockResolvedValue(true);
 
-    await expect(checkpoint({ publicProgress: { status: 'running' } })).rejects.toThrow(JobCanceledError);
+    await expect(checkpoint(RUNNING_PROGRESS)).rejects.toThrow(JobCanceledError);
   });
 
   it('sets the AbortController signal when DB cancellation is detected', async () => {
     mockUpdateProgressAndCheckCancel.mockResolvedValue(true);
 
     try {
-      await checkpoint({ publicProgress: { status: 'running' } });
+      await checkpoint(RUNNING_PROGRESS);
     } catch {
       // expected
     }
@@ -97,13 +102,13 @@ describe('checkpoint cancellation via DB flag', () => {
     abortController.abort();
     mockUpdateProgressAndCheckCancel.mockResolvedValue(false); // DB hasn't caught up yet
 
-    await expect(checkpoint({ publicProgress: { status: 'running' } })).rejects.toThrow(JobCanceledError);
+    await expect(checkpoint(RUNNING_PROGRESS)).rejects.toThrow(JobCanceledError);
   });
 
   it('writes progress to both BullMQ and DB', async () => {
     mockUpdateProgressAndCheckCancel.mockResolvedValue(false);
 
-    await checkpoint({ publicProgress: { status: 'running' } });
+    await checkpoint(RUNNING_PROGRESS);
 
     expect(mockBullJobUpdateProgress).toHaveBeenCalledWith(
       expect.objectContaining({ publicProgress: { status: 'running' }, timestamp: expect.any(Number) }),

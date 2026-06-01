@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { WorkbookId } from '@spinner/shared-types';
+import { WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import { checkWorkspacePermissions, hasWorkspacePermissions } from './permissions';
 import { Actor } from './types';
 
@@ -18,7 +18,7 @@ describe('Permissions', () => {
     userId: 'user_editor',
     organizationId: 'org_1',
     isAdmin: false,
-    workspacePermissions: [{ workbookId, role: 'editor' }],
+    workspacePermissions: [{ id: 'perm_test_id' as WorkspacePermissionId, workbookId, role: 'editor' }],
   };
 
   const noPermissionsActor: Actor = {

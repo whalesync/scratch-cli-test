@@ -1,6 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
-import { BaseJsonTableSpec, ConnectorFile, PullRecordFilesOptions } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, PullRecordFilesOptions, idPath } from '../../../types';
 
 // Mock display-names to break circular import chain
 jest.mock('../../../display-names', () => ({
@@ -33,7 +33,7 @@ function buildTableSpec(): BaseJsonTableSpec {
     id: { wsId: 'table', remoteId: ['appXYZ', 'tblABC'] },
     slug: 'table',
     name: 'table',
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     schema: {
       properties: {
         fields: {
@@ -120,7 +120,7 @@ function buildPullTableSpec(fieldProps: Record<string, unknown> = {}): BaseJsonT
     id: { wsId: 'table', remoteId: ['appXYZ', 'tblABC'] },
     slug: 'table',
     name: 'table',
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     schema: { properties: { fields: { properties: fieldProps } } } as unknown as TSchema,
   };
 }

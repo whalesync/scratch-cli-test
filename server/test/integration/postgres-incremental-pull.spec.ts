@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/require-await */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Postgres incremental-pull integration test (full job pipeline).
  *
@@ -282,7 +281,7 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
 
     // ── Wire services (real connector + index; mocks elsewhere) ──────────────
     const dbService = makeDbService(prisma);
-    const realConnectorsService = new ConnectorsService({} as any);
+    const realConnectorsService = new ConnectorsService({} as any, {} as any, {} as any);
     const credentialEncryptionService = new CredentialEncryptionService();
     const fileIndexService = new FileIndexService(dbService);
     const refCleanerService = new RefCleanerService();

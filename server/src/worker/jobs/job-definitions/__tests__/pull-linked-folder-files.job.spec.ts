@@ -11,7 +11,7 @@ import { FileReferenceService } from '../../../../publish-plan/file-reference.se
 import { ConnectorAccountService } from '../../../../remote-service/connector-account/connector-account.service';
 import { connectorRegistry } from '../../../../remote-service/connectors/connector-registry';
 import { ConnectorsService } from '../../../../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, ConnectorFile } from '../../../../remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../../remote-service/connectors/types';
 import { ScratchGitService } from '../../../../scratch-git/scratch-git.service';
 import { JsonSafeObject } from '../../../../utils/objects';
 import { WorkbookEventService } from '../../../../workbook/workbook-event.service';
@@ -39,7 +39,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   let mockExperimentsService: jest.Mocked<ExperimentsService>;
 
   const defaultTableSpec: BaseJsonTableSpec = {
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     slugFieldPath: 'slug',
     titleColumnRemoteId: ['title'],
     id: { remoteId: ['tbl_abc'], wsId: 'tbl_abc' },
@@ -88,6 +88,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   const createMockParams = (overrides?: Partial<Record<string, unknown>>) => ({
     jobId: 'test-job-id',
     data: {
+      type: 'pull-linked-folder-files' as const,
       workbookId: 'wkb_123' as WorkbookId,
       dataFolderIds: ['dfld_123' as DataFolderId],
       userId: 'usr_123',
@@ -112,6 +113,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       },
       jobProgress: {},
       connectorProgress: {},
+      timestamp: Date.now(),
     },
     abortSignal: new AbortController().signal,
     checkpoint: jest.fn().mockResolvedValue(undefined),
@@ -601,6 +603,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         const params = createMockParams({
           data: {
+            type: 'pull-linked-folder-files' as const,
             workbookId: 'wkb_123' as WorkbookId,
             dataFolderIds: ['dfld_1' as DataFolderId, 'dfld_2' as DataFolderId],
             userId: 'usr_123',
@@ -698,6 +701,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         const params = createMockParams({
           data: {
+            type: 'pull-linked-folder-files' as const,
             workbookId: 'wkb_123' as WorkbookId,
             dataFolderIds: ['dfld_1' as DataFolderId, 'dfld_2' as DataFolderId],
             userId: 'usr_123',
@@ -864,6 +868,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
 
         const params = createMockParams({
           data: {
+            type: 'pull-linked-folder-files' as const,
             workbookId: 'wkb_123' as WorkbookId,
             dataFolderIds: ['dfld_1' as DataFolderId, 'dfld_2' as DataFolderId],
             userId: 'usr_123',

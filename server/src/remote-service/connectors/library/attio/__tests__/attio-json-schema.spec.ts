@@ -22,7 +22,7 @@ function makeAttribute(
   };
 }
 
-const mockEntityId = { wsId: 'test', remoteId: 'test-remote' };
+const mockEntityId = { wsId: 'test', remoteId: ['test-remote'] };
 
 const mockClient = {
   listObjectAttributes: jest.fn(),

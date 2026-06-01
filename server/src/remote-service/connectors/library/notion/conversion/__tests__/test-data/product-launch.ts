@@ -1,3 +1,5 @@
+import { ConvertedNotionBlock } from '../../notion-rich-text-push-types';
+
 export const PRODUCT_LAUNCH_BLOCKS = {
   children: [
     {
@@ -456,5 +458,5 @@ export const PRODUCT_LAUNCH_BLOCKS = {
         color: 'default',
       },
     },
-  ],
+  ] as ConvertedNotionBlock[],
 };

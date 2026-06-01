@@ -30,6 +30,7 @@ function createLookupTools(assetMapping: AssetMappingSpec = {}): LookupTools {
       }
       return Promise.resolve(spec.result);
     }),
+    matchDestinationAssetByHash: jest.fn().mockResolvedValue([]),
   };
 }
 

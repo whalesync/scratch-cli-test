@@ -115,6 +115,7 @@ build client docker image for production:
     - !reference [.use_nvm, script]
     - yarn prettier:check
     - yarn lint-strict
+    - yarn typecheck
     - yarn test --reporters=default --reporters=jest-junit
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
     - echo "export const BUILD_VERSION = '$BUILD_VERSION';" > src/version.ts

@@ -63,7 +63,7 @@ describe('buildAirtableDefaultView', () => {
     Notes: makeSchema(AirtableDataType.RICH_TEXT),
     Done: makeSchema(AirtableDataType.CHECKBOX),
     Score: makeSchema(AirtableDataType.NUMBER),
-    Attachments: makeAttachmentSchema(),
+    Attachments: makeAttachmentSchema() as unknown as ReturnType<typeof makeSchema>,
     Website: makeSchema(AirtableDataType.URL),
     Created: makeSchema(AirtableDataType.CREATED_TIME, { readonly: true }),
     Tags: makeSchema(AirtableDataType.MULTIPLE_SELECTS),

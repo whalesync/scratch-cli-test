@@ -1,3 +1,5 @@
+import { ConvertedNotionBlock } from '../../notion-rich-text-push-types';
+
 export const SOCIAL_STRATEGY_BLOCKS = {
   children: [
     {
@@ -446,5 +448,5 @@ export const SOCIAL_STRATEGY_BLOCKS = {
         color: 'default',
       },
     },
-  ],
+  ] as ConvertedNotionBlock[],
 };

@@ -20,6 +20,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\" --max-warnings=0",
     "lint-fix": "eslint \"src/**/*.ts\" --fix",
     "lint-strict": "eslint \"src/**/*.ts\" --max-warnings=0",

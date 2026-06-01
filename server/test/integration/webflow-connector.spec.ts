@@ -106,7 +106,7 @@ describeIfKey('WebflowConnector — live API', () => {
   describe('fetchJsonTableSpec — CMS collection', () => {
     it('builds a spec with the expected top-level structure', () => {
       expect(cmsSpec.id).toEqual(cmsTable.id);
-      const props = (cmsSpec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (cmsSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('fieldData');
       expect(props).toHaveProperty('isArchived');
@@ -117,7 +117,7 @@ describeIfKey('WebflowConnector — live API', () => {
       // Regression guard: these were marked X_SCRATCH_READONLY=true, which both
       // hid them from the sync editor and matched a connector that silently
       // dropped them. Both are now writable end-to-end.
-      const props = (cmsSpec.schema as { properties: Record<string, { [k: string]: unknown }> }).properties;
+      const props = (cmsSpec.schema as unknown as { properties: Record<string, { [k: string]: unknown }> }).properties;
       expect(props['isArchived'][X_SCRATCH_READONLY]).not.toBe(true);
       expect(props['isDraft'][X_SCRATCH_READONLY]).not.toBe(true);
     });

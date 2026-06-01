@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
-import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
 import { HubspotConnector } from '../hubspot-connector';
 import companiesSchemaFixture from './__fixtures__/companies-schema.fixture.json';
 
@@ -72,7 +72,7 @@ function buildTableSpec(objectType: string, propertyDefs: Record<string, { reado
     slug: objectType,
     name: objectType,
     schema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

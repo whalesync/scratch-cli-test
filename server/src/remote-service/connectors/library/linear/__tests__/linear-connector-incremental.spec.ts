@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import { BaseJsonTableSpec, PullRecordFilesOptions } from '../../../types';
+import { BaseJsonTableSpec, PullRecordFilesOptions, idPath } from '../../../types';
 
 // Break the connector-registry circular import chain (same shape as the
 // Notion incremental spec).
@@ -36,7 +36,7 @@ function buildTableSpec(): BaseJsonTableSpec {
     id: { wsId: 'issues', remoteId: ['issues'] },
     slug: 'issues',
     name: 'Issues',
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     schema: {} as unknown as TSchema,
   };
 }

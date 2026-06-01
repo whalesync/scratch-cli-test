@@ -1,6 +1,23 @@
 import { MarkdownToNotionConverter } from '../markdown-to-notion-converter';
 import type { ConvertedNotionBlock, RichTextItemWithResponseFields } from '../notion-rich-text-push-types';
 
+// Typed block shapes for test assertions — ConvertedNotionBlock uses [key: string]: unknown
+// so accessing type-specific properties requires a cast to a concrete shape.
+type RichTextBlock<TKey extends string> = ConvertedNotionBlock &
+  Record<TKey, { rich_text: RichTextItemWithResponseFields[] }>;
+type CodeBlock = ConvertedNotionBlock & { code: { language: string; rich_text: RichTextItemWithResponseFields[] } };
+type ToDoBlock = ConvertedNotionBlock & { to_do: { checked: boolean; rich_text: RichTextItemWithResponseFields[] } };
+type ImageBlock = ConvertedNotionBlock & {
+  image: { external: { url: string }; caption: RichTextItemWithResponseFields[] };
+};
+type VideoBlock = ConvertedNotionBlock & { video: { external: { url: string } } };
+type TableBlock = ConvertedNotionBlock & { table: { has_column_header: boolean; table_width: number } };
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function asRichTextBlock<TKey extends string>(block: ConvertedNotionBlock, _key: TKey): RichTextBlock<TKey> {
+  return block as unknown as RichTextBlock<TKey>;
+}
+
 describe('MarkdownToNotionConverter - Direct Markdown Input', () => {
   let converter: MarkdownToNotionConverter;
 
@@ -21,24 +38,21 @@ describe('MarkdownToNotionConverter - Direct Markdown Input', () => {
       const block0 = blocks[0];
       expect(block0?.type).toBe('heading_1');
       if (block0?.type === 'heading_1') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.heading_1.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'heading_1').heading_1.rich_text;
         expect(richText[0]?.plain_text).toBe('Heading 1');
       }
 
       const block1 = blocks[1];
       expect(block1?.type).toBe('heading_2');
       if (block1?.type === 'heading_2') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block1.heading_2.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block1, 'heading_2').heading_2.rich_text;
         expect(richText[0]?.plain_text).toBe('Heading 2');
       }
 
       const block2 = blocks[2];
       expect(block2?.type).toBe('heading_3');
       if (block2?.type === 'heading_3') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block2.heading_3.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block2, 'heading_3').heading_3.rich_text;
         expect(richText[0]?.plain_text).toBe('Heading 3');
       }
     });
@@ -68,16 +82,14 @@ Second paragraph.`;
       const block0 = blocks[0];
       expect(block0?.type).toBe('paragraph');
       if (block0?.type === 'paragraph') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.paragraph.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'paragraph').paragraph.rich_text;
         expect(richText[0]?.plain_text).toBe('First paragraph.');
       }
 
       const block1 = blocks[1];
       expect(block1?.type).toBe('paragraph');
       if (block1?.type === 'paragraph') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block1.paragraph.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block1, 'paragraph').paragraph.rich_text;
         expect(richText[0]?.plain_text).toBe('Second paragraph.');
       }
     });
@@ -92,8 +104,7 @@ Second paragraph.`;
       const block0 = blocks[0];
       expect(block0?.type).toBe('paragraph');
       if (block0?.type === 'paragraph') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.paragraph.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'paragraph').paragraph.rich_text;
 
         // Check for bold
         const boldItem: RichTextItemWithResponseFields | undefined = richText.find((item) => item.annotations?.bold);
@@ -131,24 +142,24 @@ Second paragraph.`;
       const block0 = blocks[0];
       expect(block0?.type).toBe('bulleted_list_item');
       if (block0?.type === 'bulleted_list_item') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.bulleted_list_item.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'bulleted_list_item')
+          .bulleted_list_item.rich_text;
         expect(richText[0]?.plain_text).toBe('Item 1');
       }
 
       const block1 = blocks[1];
       expect(block1?.type).toBe('bulleted_list_item');
       if (block1?.type === 'bulleted_list_item') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block1.bulleted_list_item.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block1, 'bulleted_list_item')
+          .bulleted_list_item.rich_text;
         expect(richText[0]?.plain_text).toBe('Item 2');
       }
 
       const block2 = blocks[2];
       expect(block2?.type).toBe('bulleted_list_item');
       if (block2?.type === 'bulleted_list_item') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block2.bulleted_list_item.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block2, 'bulleted_list_item')
+          .bulleted_list_item.rich_text;
         expect(richText[0]?.plain_text).toBe('Item 3');
       }
     });
@@ -165,24 +176,24 @@ Second paragraph.`;
       const block0 = blocks[0];
       expect(block0?.type).toBe('numbered_list_item');
       if (block0?.type === 'numbered_list_item') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.numbered_list_item.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'numbered_list_item')
+          .numbered_list_item.rich_text;
         expect(richText[0]?.plain_text).toBe('First');
       }
 
       const block1 = blocks[1];
       expect(block1?.type).toBe('numbered_list_item');
       if (block1?.type === 'numbered_list_item') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block1.numbered_list_item.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block1, 'numbered_list_item')
+          .numbered_list_item.rich_text;
         expect(richText[0]?.plain_text).toBe('Second');
       }
 
       const block2 = blocks[2];
       expect(block2?.type).toBe('numbered_list_item');
       if (block2?.type === 'numbered_list_item') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block2.numbered_list_item.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block2, 'numbered_list_item')
+          .numbered_list_item.rich_text;
         expect(richText[0]?.plain_text).toBe('Third');
       }
     });
@@ -213,9 +224,9 @@ Second paragraph.`;
       const block0 = blocks[0];
       expect(block0?.type).toBe('code');
       if (block0?.type === 'code') {
-        expect(block0.code.language).toBe('javascript');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.code.rich_text;
+        const typedBlock = block0 as unknown as CodeBlock;
+        expect(typedBlock.code.language).toBe('javascript');
+        const richText: RichTextItemWithResponseFields[] = typedBlock.code.rich_text;
         expect(richText[0]?.plain_text).toBe('const x = 42;\n');
       }
     });
@@ -228,7 +239,7 @@ Second paragraph.`;
       expect(blocks).toHaveLength(1);
       expect(blocks[0]?.type).toBe('code');
       if (blocks[0]?.type === 'code') {
-        expect(blocks[0].code.language).toBe('plain text');
+        expect((blocks[0] as unknown as CodeBlock).code.language).toBe('plain text');
       }
     });
   });
@@ -244,8 +255,7 @@ Second paragraph.`;
       const block0 = blocks[0];
       expect(block0?.type).toBe('quote');
       if (block0?.type === 'quote') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.quote.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'quote').quote.rich_text;
         expect(richText[0]?.plain_text).toContain('This is a quote.');
       }
     });
@@ -272,8 +282,8 @@ Second paragraph.`;
 
       expect(blocks).toHaveLength(1);
       expect(blocks[0].type).toBe('table');
-      expect(blocks[0].table?.has_column_header).toBe(true);
-      expect(blocks[0].table?.table_width).toBe(2);
+      expect((blocks[0] as unknown as TableBlock).table?.has_column_header).toBe(true);
+      expect((blocks[0] as unknown as TableBlock).table?.table_width).toBe(2);
       expect(blocks[0].children).toHaveLength(3); // Header + 2 data rows
     });
 
@@ -371,8 +381,7 @@ const x = 1;
       const block0 = blocks[0];
       expect(block0?.type).toBe('paragraph');
       if (block0?.type === 'paragraph') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.paragraph.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'paragraph').paragraph.rich_text;
         const strikeItem: RichTextItemWithResponseFields | undefined = richText.find(
           (item) => item.annotations?.strikethrough,
         );
@@ -393,18 +402,18 @@ const x = 1;
       const block0 = blocks[0];
       expect(block0?.type).toBe('to_do');
       if (block0?.type === 'to_do') {
-        expect(block0.to_do.checked).toBe(false);
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.to_do.rich_text;
+        const typedBlock0 = block0 as unknown as ToDoBlock;
+        expect(typedBlock0.to_do.checked).toBe(false);
+        const richText: RichTextItemWithResponseFields[] = typedBlock0.to_do.rich_text;
         expect(richText[0]?.plain_text).toBe('Unchecked todo');
       }
 
       const block1 = blocks[1];
       expect(block1?.type).toBe('to_do');
       if (block1?.type === 'to_do') {
-        expect(block1.to_do.checked).toBe(true);
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block1.to_do.rich_text;
+        const typedBlock1 = block1 as unknown as ToDoBlock;
+        expect(typedBlock1.to_do.checked).toBe(true);
+        const richText: RichTextItemWithResponseFields[] = typedBlock1.to_do.rich_text;
         expect(richText[0]?.plain_text).toBe('Checked todo');
       }
     });
@@ -424,8 +433,7 @@ This is callout text
       const block0 = blocks[0];
       expect(block0?.type).toBe('callout');
       if (block0?.type === 'callout') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const richText: RichTextItemWithResponseFields[] = block0.callout.rich_text;
+        const richText: RichTextItemWithResponseFields[] = asRichTextBlock(block0, 'callout').callout.rich_text;
         expect(richText[0]?.plain_text).toBe('This is callout text');
       }
     });
@@ -438,12 +446,9 @@ This is callout text
       expect(blocks).toHaveLength(1);
       expect(blocks[0]?.type).toBe('image');
       if (blocks[0]?.type === 'image') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const external = blocks[0].image.external;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        expect(external?.url).toBe('https://example.com/image.png');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const caption: RichTextItemWithResponseFields[] = blocks[0].image.caption;
+        const typedBlock = blocks[0] as unknown as ImageBlock;
+        expect(typedBlock.image.external?.url).toBe('https://example.com/image.png');
+        const caption: RichTextItemWithResponseFields[] = typedBlock.image.caption;
         expect(caption[0]?.plain_text).toBe('Test image');
       }
     });
@@ -456,12 +461,9 @@ This is callout text
       expect(blocks).toHaveLength(1);
       expect(blocks[0]?.type).toBe('image');
       if (blocks[0]?.type === 'image') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const external = blocks[0].image.external;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        expect(external?.url).toBe('https://example.com/image.png');
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const caption: RichTextItemWithResponseFields[] = blocks[0].image.caption;
+        const typedBlock = blocks[0] as unknown as ImageBlock;
+        expect(typedBlock.image.external?.url).toBe('https://example.com/image.png');
+        const caption: RichTextItemWithResponseFields[] = typedBlock.image.caption;
         expect(caption).toEqual([]);
       }
     });
@@ -496,7 +498,7 @@ This is callout text
       // Should still have no caption
       expect(blocks[0]?.type).toBe('image');
       if (blocks[0]?.type === 'image') {
-        expect(blocks[0].image.caption).toEqual([]);
+        expect((blocks[0] as unknown as ImageBlock).image.caption).toEqual([]);
       }
     });
 
@@ -509,10 +511,7 @@ This is callout text
       expect(blocks).toHaveLength(1);
       expect(blocks[0]?.type).toBe('video');
       if (blocks[0]?.type === 'video') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const external = blocks[0].video.external;
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        expect(external?.url).toBe('https://example.com/video.mp4');
+        expect((blocks[0] as unknown as VideoBlock).video.external?.url).toBe('https://example.com/video.mp4');
       }
     });
   });

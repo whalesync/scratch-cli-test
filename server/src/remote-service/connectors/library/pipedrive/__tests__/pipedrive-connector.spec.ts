@@ -1,6 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
 import { PipedriveConnector } from '../pipedrive-connector';
 
 // Mock display-names to break circular import chain
@@ -62,7 +62,7 @@ function buildTableSpec(entityType: string): BaseJsonTableSpec {
     slug: entityType,
     name: entityType,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
   };
 }
 
@@ -165,7 +165,7 @@ describe('PipedriveConnector', () => {
 
   describe('getBatchSize', () => {
     it('returns 1 since Pipedrive has no bulk API', () => {
-      expect(connector.getBatchSize('create')).toBe(1);
+      expect(connector.getBatchSize()).toBe(1);
     });
   });
 });

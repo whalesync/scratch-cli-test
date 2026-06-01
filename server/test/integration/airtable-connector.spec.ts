@@ -95,14 +95,14 @@ describeIfKey('AirtableConnector — live API', () => {
       expect(firstSpec.idColumnRemoteId).toBe('id');
       expect(firstSpec.schema).toBeDefined();
 
-      const props = (firstSpec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (firstSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('fields');
       expect(props).toHaveProperty('createdTime');
     });
 
     it('includes at least one field in the schema', () => {
-      const props = (firstSpec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (firstSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
       const fieldsProps = (props.fields as { properties: Record<string, unknown> }).properties;
       expect(Object.keys(fieldsProps).length).toBeGreaterThan(0);
     });
@@ -148,7 +148,7 @@ describeIfKey('AirtableConnector — live API', () => {
     let primaryFieldName: string;
 
     beforeAll(() => {
-      const props = (firstSpec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (firstSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
       const fieldsProps = (props.fields as { properties: Record<string, unknown> }).properties;
       // Use the first field name — it's typically the primary field
       primaryFieldName = Object.keys(fieldsProps)[0];

@@ -52,7 +52,7 @@ function convertBlocksToHtml(blocks: ConvertedNotionBlock[]): string {
 describe('Product Launch HTML Modification Tests', () => {
   test('detects update when paragraph content is modified', () => {
     // Start with original product launch blocks
-    const originalBlocks = PRODUCT_LAUNCH_BLOCKS.children as ConvertedNotionBlock[];
+    const originalBlocks = PRODUCT_LAUNCH_BLOCKS.children;
     const oldContent = createPageContent(originalBlocks);
 
     // Convert to HTML with block IDs preserved (fix: process each block individually)
@@ -87,7 +87,7 @@ describe('Product Launch HTML Modification Tests', () => {
 
   test('detects create when new paragraph is added at end to maintain order', () => {
     // Start with first 3 blocks of product launch
-    const originalBlocks = PRODUCT_LAUNCH_BLOCKS.children.slice(0, 3) as ConvertedNotionBlock[];
+    const originalBlocks = PRODUCT_LAUNCH_BLOCKS.children.slice(0, 3);
     const oldContent = createPageContent(originalBlocks);
 
     // Convert to HTML with block IDs preserved
@@ -129,8 +129,8 @@ describe('Product Launch HTML Modification Tests', () => {
 describe('Re order based tests', () => {
   test('detects a insertion of a block in between blocks', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
-    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 6) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
+    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 6);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -160,7 +160,7 @@ describe('Re order based tests', () => {
   });
   test('creates a new duplicate block that re orders the last block', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -186,7 +186,7 @@ describe('Re order based tests', () => {
 
   test('detects 2 blocks re order', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 6) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 6);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -216,7 +216,7 @@ describe('Re order based tests', () => {
 
   test('detects a re order of blocks', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -244,8 +244,8 @@ describe('Re order based tests', () => {
 
   test('detects a insertion of 2 blocks in between blocks and a block is moved', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
-    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 7) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
+    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 7);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -275,8 +275,8 @@ describe('Re order based tests', () => {
 
   test('detects a insertion of 2 blocks in between blocks different blocks', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
-    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 9) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
+    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 9);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -307,8 +307,8 @@ describe('Re order based tests', () => {
 
   test('detects a insertion of 2 blocks in between blocks', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
-    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 7) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
+    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 7);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -336,7 +336,7 @@ describe('Re order based tests', () => {
 
   test('even if its a real swap of blocks order, we have to re write everything below it', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -363,7 +363,7 @@ describe('Re order based tests', () => {
 
   test('swaps blocks in random orders', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -389,8 +389,8 @@ describe('Re order based tests', () => {
 
   test('when an insertion happens at the top we have to re write everything below it', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
-    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 6) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
+    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 6);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -421,8 +421,8 @@ describe('Re order based tests', () => {
 
   test('detects a insertion of a block in between blocks', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
-    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 6) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
+    const addedBlock = CONTENT_MARKETING_BLOCKS.children.slice(5, 6);
     const oldContent = createPageContent(originalBlocks);
 
     const modifiedBlocks = [
@@ -455,7 +455,7 @@ describe('Re order based tests', () => {
 describe('Content Marketing HTML Modification Tests', () => {
   test('handles mixed update and create when content is modified and extended', () => {
     // Start with first 4 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 4) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 4);
     const oldContent = createPageContent(originalBlocks);
 
     // Convert to HTML with block IDs preserved
@@ -511,7 +511,7 @@ describe('Content Marketing HTML Modification Tests', () => {
   });
   test('detects delete when sections are removed from HTML', () => {
     // Start with first 5 blocks
-    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5) as ConvertedNotionBlock[];
+    const originalBlocks = CONTENT_MARKETING_BLOCKS.children.slice(0, 5);
     const oldContent = createPageContent(originalBlocks);
 
     // Convert to HTML with block IDs preserved
@@ -534,7 +534,7 @@ describe('Content Marketing HTML Modification Tests', () => {
 describe('Social Strategy HTML Modification Tests', () => {
   test('batches consecutive creates when multiple paragraphs are appended at end', () => {
     // Start with first 2 blocks (header and main heading)
-    const originalBlocks = SOCIAL_STRATEGY_BLOCKS.children.slice(0, 2) as ConvertedNotionBlock[];
+    const originalBlocks = SOCIAL_STRATEGY_BLOCKS.children.slice(0, 2);
     const oldContent = createPageContent(originalBlocks);
 
     // Convert to HTML with block IDs preserved
@@ -579,7 +579,7 @@ describe('Social Strategy HTML Modification Tests', () => {
 
   test('creates blocks when adding appendix content at end', () => {
     // Start with first 2 blocks
-    const originalBlocks = SOCIAL_STRATEGY_BLOCKS.children.slice(0, 2) as ConvertedNotionBlock[];
+    const originalBlocks = SOCIAL_STRATEGY_BLOCKS.children.slice(0, 2);
     const oldContent = createPageContent(originalBlocks);
 
     // Convert to HTML with block IDs preserved
@@ -747,7 +747,7 @@ describe('Block Type Change Scenarios', () => {
 
 test('handles complete content rewrite with mixed operations', () => {
   // Use social strategy first 4 blocks
-  const originalBlocks = SOCIAL_STRATEGY_BLOCKS.children.slice(0, 4) as ConvertedNotionBlock[];
+  const originalBlocks = SOCIAL_STRATEGY_BLOCKS.children.slice(0, 4);
   const oldContent = createPageContent(originalBlocks);
 
   // Convert to HTML with block IDs preserved
@@ -794,7 +794,7 @@ test('handles complete content rewrite with mixed operations', () => {
 });
 
 test('handles no changes - identical content after HTML round-trip', () => {
-  const originalBlocks = PRODUCT_LAUNCH_BLOCKS.children.slice(0, 3) as ConvertedNotionBlock[];
+  const originalBlocks = PRODUCT_LAUNCH_BLOCKS.children.slice(0, 3);
   const oldContent = createPageContent(originalBlocks);
 
   // Convert to HTML and back without modifications

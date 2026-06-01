@@ -12,7 +12,7 @@ function buildDestinationSchema(options: { title: string; id: string }[]): BaseJ
 
   return {
     schema: Type.Object({ region: regionSchema }),
-  } as BaseJsonTableSpec;
+  } as unknown as BaseJsonTableSpec;
 }
 
 const DEFAULT_OPTIONS = [

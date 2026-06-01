@@ -38,7 +38,7 @@ describe('buildWebflowPagesJsonTableSpec', () => {
   });
 
   describe('schema properties', () => {
-    const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+    const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
 
     it('should include id field', () => {
       expect(props.id).toBeDefined();

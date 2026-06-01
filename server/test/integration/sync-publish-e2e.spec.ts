@@ -18,6 +18,7 @@ import {
 import axios from 'axios';
 import { SchemaHelperService } from 'server/src/publish-plan/schema-helper.service';
 import { AssetIndexService } from 'src/asset/asset-index.service';
+import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { StubMetricsService } from 'src/metrics/stub-metrics.service';
@@ -74,6 +75,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     updateRecords: jest.Mock;
     deleteRecords: jest.Mock;
     uploadFile: jest.Mock;
+    resolveAssetReference: (asset: { remoteAssetId: string }) => string;
   };
 
   // Entity IDs
@@ -904,6 +906,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       publishPlanService,
       { trackSyncCompleted: jest.fn() } as unknown as PostHogService,
       new StubMetricsService(),
+      { log: jest.fn() } as unknown as AuditLogService,
     );
 
     const noopCheckpoint = jest.fn().mockResolvedValue(undefined);
@@ -1163,6 +1166,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     updateRecords: jest.Mock;
     deleteRecords: jest.Mock;
     uploadFile: jest.Mock;
+    resolveAssetReference: (asset: { remoteAssetId: string }) => string;
   };
 
   // Entity IDs

@@ -67,10 +67,10 @@ describe('inferJsonSchema', () => {
 
   it('unions array item types when an array has mixed primitives', () => {
     const s = inferJsonSchema([{ tags: ['admin', 1, true] }]);
-    const tags = s.properties.tags;
+    const tags = s.properties.tags as { type?: string; items?: unknown };
     expect(tags.type).toBe('array');
     if (tags.type === 'array' && tags.items) {
-      expect('anyOf' in tags.items).toBe(true);
+      expect('anyOf' in (tags.items as Record<string, unknown>)).toBe(true);
     }
   });
 

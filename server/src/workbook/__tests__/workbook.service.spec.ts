@@ -18,7 +18,6 @@ const WORKBOOK_ID = 'wkb_test' as WorkbookId;
 const ACTOR: Actor = {
   userId: 'usr_test',
   organizationId: 'org_test',
-  authType: 'jwt',
   authSource: 'user',
 };
 
@@ -307,7 +306,10 @@ describe('WorkbookService', () => {
       ];
       (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue(folders);
 
-      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_1', 'dfd_2'], { source: 'web' });
+      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_1', 'dfd_2'], {
+        runId: 'run_test',
+        trigger: 'web',
+      });
 
       expect(bullEnqueuerService.enqueueRehostAssetsJob).toHaveBeenCalledTimes(2);
       expect(result.jobIds).toEqual(['job_dfd_1', 'job_dfd_2']);
@@ -316,7 +318,10 @@ describe('WorkbookService', () => {
     it('returns a warning when no matching folders are found', async () => {
       (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([]);
 
-      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_nonexistent'], { source: 'web' });
+      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_nonexistent'], {
+        runId: 'run_test',
+        trigger: 'web',
+      });
 
       expect(bullEnqueuerService.enqueueRehostAssetsJob).not.toHaveBeenCalled();
       expect(result.warning).toBeDefined();
@@ -326,7 +331,10 @@ describe('WorkbookService', () => {
       const folders = [{ id: 'dfd_1', name: 'Brands', workbookId: WORKBOOK_ID }];
       (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue(folders);
 
-      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_1', 'dfd_missing'], { source: 'web' });
+      const result = await service.pullAssets(WORKBOOK_ID, ACTOR, ['dfd_1', 'dfd_missing'], {
+        runId: 'run_test',
+        trigger: 'web',
+      });
 
       expect(bullEnqueuerService.enqueueRehostAssetsJob).toHaveBeenCalledTimes(1);
       expect(result.jobIds).toHaveLength(1);

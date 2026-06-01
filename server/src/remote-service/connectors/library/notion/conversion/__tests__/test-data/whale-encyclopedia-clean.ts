@@ -1,3 +1,5 @@
+import { ConvertedNotionBlock } from '../../notion-rich-text-push-types';
+
 export const WHALE_ENCYCLOPEDIA_BLOCKS = {
   children: [
     {
@@ -3696,5 +3698,5 @@ export const WHALE_ENCYCLOPEDIA_BLOCKS = {
         },
       ],
     },
-  ],
+  ] as ConvertedNotionBlock[],
 };

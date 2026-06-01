@@ -151,7 +151,7 @@ describeIfKey('StripeConnector — live API', () => {
     });
 
     it('throws on updateRecords', () => {
-      expect(() => connector.updateRecords(customersSpec, [{ id: 'cus_123' }], [{}])).toThrow('read-only');
+      expect(() => connector.updateRecords(customersSpec, [{ id: 'cus_123' }])).toThrow('read-only');
     });
 
     it('throws on deleteRecords', () => {

@@ -5,6 +5,7 @@ import type { ConnectorAccountId, WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -18,7 +19,6 @@ const ACCOUNT_ID = 'ca_test' as ConnectorAccountId;
 const ACTOR: Actor = {
   userId: 'usr_test',
   organizationId: 'org_test',
-  authType: 'jwt',
   authSource: 'user',
 };
 
@@ -52,6 +52,7 @@ describe('ConnectorAccountService', () => {
   let auditLogService: jest.Mocked<AuditLogService>;
   let credentialEncryptionService: jest.Mocked<CredentialEncryptionService>;
   let workbookEventService: jest.Mocked<WorkbookEventService>;
+  let experimentsService: jest.Mocked<ExperimentsService>;
 
   beforeEach(() => {
     dbService = {
@@ -102,6 +103,8 @@ describe('ConnectorAccountService', () => {
     } as unknown as jest.Mocked<ConnectorsService>;
     const oauthService = {} as jest.Mocked<OAuthService>;
 
+    experimentsService = {} as jest.Mocked<ExperimentsService>;
+
     service = new ConnectorAccountService(
       dbService,
       connectorsService,
@@ -111,6 +114,7 @@ describe('ConnectorAccountService', () => {
       credentialEncryptionService,
       scratchGitService,
       workbookEventService,
+      experimentsService,
     );
   });
 

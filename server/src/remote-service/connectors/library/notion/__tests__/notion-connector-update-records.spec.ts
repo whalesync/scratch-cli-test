@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
 
 // Mock display-names to break circular import chain
 jest.mock('../../../display-names', () => ({
@@ -31,7 +31,7 @@ function buildTableSpec(): BaseJsonTableSpec {
     id: { wsId: 'db', remoteId: ['db_123'] },
     slug: 'db',
     name: 'db',
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     schema: {} as unknown as TSchema,
   };
 }

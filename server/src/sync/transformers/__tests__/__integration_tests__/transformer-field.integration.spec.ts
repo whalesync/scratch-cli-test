@@ -6,7 +6,8 @@
  */
 import { TSchema, Type } from '@sinclair/typebox';
 import { ColumnMapping, TransformerConfig, TransformerTypes } from '@spinner/shared-types';
-import { BaseJsonTableSpec } from 'src/remote-service/connectors/types';
+import { Service } from 'src/remote-service/connectors/service-constants';
+import { BaseJsonTableSpec, idPath } from 'src/remote-service/connectors/types';
 import { applyTransformerPipeline, getTransformerConfigs } from '../../transformer-pipeline';
 import { LookupTools, SyncRecord } from '../../transformer.types';
 
@@ -18,6 +19,10 @@ import '../../implementations/jsonpath.transformer';
 const mockLookupTools: LookupTools = {
   getDestinationMappingForSourceFk: jest.fn(),
   lookupFieldFromFkRecord: jest.fn(),
+  getOrCreateDestinationAssetMapping: jest
+    .fn()
+    .mockResolvedValue({ destinationFilePath: '/test', destinationRemoteId: 'dest_id' }),
+  matchDestinationAssetByHash: jest.fn().mockResolvedValue([]),
 };
 
 function makeTableSpec(schema: TSchema): BaseJsonTableSpec {
@@ -25,7 +30,7 @@ function makeTableSpec(schema: TSchema): BaseJsonTableSpec {
     id: { wsId: 'table', remoteId: ['table'] },
     slug: 'table',
     name: 'Table',
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     schema: Type.Object({ a: schema }),
   };
 }
@@ -44,10 +49,14 @@ async function runTransform(
   const ctx = {
     sourceRecord,
     sourceFieldPath: 'a',
+    sourceValue,
     sourceTableSpec: makeTableSpec(sourceSchema),
+    sourceService: Service.AIRTABLE,
     destinationFieldPath: 'a',
     destinationTableSpec: makeTableSpec(destSchema),
+    destinationService: Service.WEBFLOW,
     lookupTools: mockLookupTools,
+    options: {},
     phase: 'DATA' as const,
   };
 

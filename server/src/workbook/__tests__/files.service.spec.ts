@@ -17,7 +17,6 @@ const FOLDER_ID = 'df_test' as DataFolderId;
 const ACTOR: Actor = {
   userId: 'usr_test',
   organizationId: 'org_test',
-  authType: 'jwt',
   authSource: 'user',
 };
 

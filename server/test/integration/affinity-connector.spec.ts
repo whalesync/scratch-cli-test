@@ -111,7 +111,7 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(listSpec.name).toBe(listTables[0].displayName);
       expect(listSpec.idColumnRemoteId).toBe('id');
 
-      const props = (listSpec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (listSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('type');
       expect(props).toHaveProperty('listId');
@@ -127,8 +127,9 @@ describeIfKey('AffinityConnector — live API', () => {
     });
 
     it('mounts list-specific fields under entity.fields keyed by remote id', () => {
-      const entitySchema = (listSpec.schema as { properties: { entity: { properties: Record<string, unknown> } } })
-        .properties.entity;
+      const entitySchema = (
+        listSpec.schema as unknown as { properties: { entity: { properties: Record<string, unknown> } } }
+      ).properties.entity;
       expect(entitySchema.properties).toHaveProperty('fields');
 
       const fieldsSchema = entitySchema.properties.fields as { properties?: Record<string, unknown>; type: string };
@@ -149,7 +150,7 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(spec.name).toBe('Companies');
       expect(spec.idColumnRemoteId).toBe('id');
 
-      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('name');
     });
@@ -161,7 +162,7 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(spec.name).toBe('People');
       expect(spec.idColumnRemoteId).toBe('id');
 
-      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('firstName');
       expect(props).toHaveProperty('lastName');
@@ -174,7 +175,7 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(spec.name).toBe('Opportunities');
       expect(spec.idColumnRemoteId).toBe('id');
 
-      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('name');
     });
@@ -408,7 +409,7 @@ describeIfKey('AffinityConnector — v2 inline-fields verification', () => {
       expect(totalRequests).toBeLessThan(chosenRecords.length);
 
       const fieldsSchema = (
-        chosenSpec.schema as {
+        chosenSpec.schema as unknown as {
           properties: { entity: { properties: { fields?: { properties?: Record<string, unknown> } } } };
         }
       ).properties.entity.properties.fields;

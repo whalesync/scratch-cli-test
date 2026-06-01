@@ -120,7 +120,7 @@ describeIfKey('AttioConnector — live API', () => {
       expect(spec.idColumnRemoteId).toBe('id.record_id');
       expect(spec.titleColumnRemoteId).toEqual(['values', 'name']);
 
-      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('created_at');
       expect(props).toHaveProperty('values');
@@ -149,7 +149,7 @@ describeIfKey('AttioConnector — live API', () => {
       expect(spec.idColumnRemoteId).toBe('id.entry_id');
       expect(spec.titleColumnRemoteId).toEqual(['parent_record_id']);
 
-      const props = (spec.schema as { properties: Record<string, unknown> }).properties;
+      const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(props).toHaveProperty('parent_record_id');
       expect(props).toHaveProperty('parent_object');

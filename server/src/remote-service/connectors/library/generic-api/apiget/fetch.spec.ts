@@ -241,7 +241,10 @@ describe('apigetStream — link-header pagination (NEW in TS port)', () => {
               link: `<https://api.github.com/x?page=${page + 1}>; rel="next", <https://api.github.com/x?page=3>; rel="last"`,
             }
           : {}; // no Link header on the last page
-      return jsonResponse([{ id: `p${page}-r1` }, { id: `p${page}-r2` }], { ...JSON_HEADERS, ...link });
+      return jsonResponse([{ id: `p${page}-r1` }, { id: `p${page}-r2` }], { ...JSON_HEADERS, ...link } as Record<
+        string,
+        string
+      >);
     });
 
     const pages = [];

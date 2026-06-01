@@ -1,7 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorFile } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
 import { StripeConnector } from '../stripe-connector';
 import { StripeEntityType } from '../stripe-types';
 
@@ -45,7 +45,7 @@ function buildTableSpec(tableType: string): BaseJsonTableSpec {
     slug: tableType,
     name: tableType,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
   };
 }
 
@@ -77,9 +77,9 @@ describe('StripeConnector', () => {
 
   describe('getBatchSize', () => {
     it('returns 100', () => {
-      expect(connector.getBatchSize('create')).toBe(100);
-      expect(connector.getBatchSize('update')).toBe(100);
-      expect(connector.getBatchSize('delete')).toBe(100);
+      expect(connector.getBatchSize()).toBe(100);
+      expect(connector.getBatchSize()).toBe(100);
+      expect(connector.getBatchSize()).toBe(100);
     });
   });
 

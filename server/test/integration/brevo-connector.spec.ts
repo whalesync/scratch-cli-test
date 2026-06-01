@@ -55,334 +55,329 @@ const describeIfKey = API_KEY ? describe : describe.skip;
 // Tests
 // ---------------------------------------------------------------------------
 
-describeIfKey(
-  'BrevoConnector — live API',
-  () => {
-    let connector: BrevoConnector;
+describeIfKey('BrevoConnector — live API', () => {
+  let connector: BrevoConnector;
 
-    beforeAll(() => {
-      connector = createConnector();
-    });
+  beforeAll(() => {
+    connector = createConnector();
+  });
 
-    // Track IDs for cleanup
-    let createdContactId: number | undefined;
-    let createdTemplateId: number | undefined;
+  // Track IDs for cleanup
+  let createdContactId: number | undefined;
+  let createdTemplateId: number | undefined;
 
-    afterAll(async () => {
-      // Best-effort cleanup of test data
-      const cleanupConnector = createConnector();
-      try {
-        if (createdContactId) {
-          const spec = await cleanupConnector.fetchJsonTableSpec(CONTACTS_ID);
-          await cleanupConnector.deleteRecords(spec, [{ id: createdContactId } as ConnectorFile]);
-        }
-      } catch {
-        // Ignore cleanup errors
+  afterAll(async () => {
+    // Best-effort cleanup of test data
+    const cleanupConnector = createConnector();
+    try {
+      if (createdContactId) {
+        const spec = await cleanupConnector.fetchJsonTableSpec(CONTACTS_ID);
+        await cleanupConnector.deleteRecords(spec, [{ id: createdContactId } as ConnectorFile]);
       }
-      try {
-        if (createdTemplateId) {
-          const spec = await cleanupConnector.fetchJsonTableSpec(TEMPLATES_ID);
-          // Templates must be inactive to delete — try to deactivate first
-          try {
-            await (
-              cleanupConnector as unknown as {
-                client: { updateTemplate: (id: number, data: unknown) => Promise<void> };
-              }
-            ).client.updateTemplate(createdTemplateId, { isActive: false });
-          } catch {
-            // May already be inactive
-          }
-          await cleanupConnector.deleteRecords(spec, [{ id: createdTemplateId } as ConnectorFile]);
+    } catch {
+      // Ignore cleanup errors
+    }
+    try {
+      if (createdTemplateId) {
+        const spec = await cleanupConnector.fetchJsonTableSpec(TEMPLATES_ID);
+        // Templates must be inactive to delete — try to deactivate first
+        try {
+          await (
+            cleanupConnector as unknown as {
+              client: { updateTemplate: (id: number, data: unknown) => Promise<void> };
+            }
+          ).client.updateTemplate(createdTemplateId, { isActive: false });
+        } catch {
+          // May already be inactive
         }
-      } catch {
-        // Ignore cleanup errors
+        await cleanupConnector.deleteRecords(spec, [{ id: createdTemplateId } as ConnectorFile]);
       }
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Connection
+  // -------------------------------------------------------------------------
+
+  describe('testConnection', () => {
+    it('validates credentials against the live API', async () => {
+      await expect(connector.testConnection()).resolves.toBeUndefined();
     });
 
-    // -------------------------------------------------------------------------
-    // Connection
-    // -------------------------------------------------------------------------
+    it('rejects invalid credentials', async () => {
+      const badConnector = new BrevoConnector('xkeysib-invalid-key');
+      await expect(badConnector.testConnection()).rejects.toThrow();
+    });
+  });
 
-    describe('testConnection', () => {
-      it('validates credentials against the live API', async () => {
-        await expect(connector.testConnection()).resolves.toBeUndefined();
-      });
+  // -------------------------------------------------------------------------
+  // Table discovery
+  // -------------------------------------------------------------------------
 
-      it('rejects invalid credentials', async () => {
-        const badConnector = new BrevoConnector('xkeysib-invalid-key');
-        await expect(badConnector.testConnection()).rejects.toThrow();
-      });
+  describe('listTables', () => {
+    it('returns contacts, templates, and mailing lists', async () => {
+      const tables = await connector.listTables();
+      const ids = tables.map((t) => t.id.wsId);
+      expect(ids).toContain('contacts');
+      expect(ids).toContain('templates');
+      expect(ids).toContain('mailing_lists');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Contacts
+  // -------------------------------------------------------------------------
+
+  describe('contacts', () => {
+    let contactsSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      contactsSpec = await connector.fetchJsonTableSpec(CONTACTS_ID);
     });
 
-    // -------------------------------------------------------------------------
-    // Table discovery
-    // -------------------------------------------------------------------------
-
-    describe('listTables', () => {
-      it('returns contacts, templates, and mailing lists', async () => {
-        const tables = await connector.listTables();
-        const ids = tables.map((t) => t.id.wsId);
-        expect(ids).toContain('contacts');
-        expect(ids).toContain('templates');
-        expect(ids).toContain('mailing_lists');
-      });
+    it('builds a dynamic schema with system fields and attributes', () => {
+      expect(contactsSpec.name).toBe('Contacts');
+      expect(contactsSpec.idColumnRemoteId).toBe('id');
+      expect(contactsSpec.schema.properties).toHaveProperty('id');
+      expect(contactsSpec.schema.properties).toHaveProperty('email');
+      expect(contactsSpec.schema.properties).toHaveProperty('attributes');
     });
 
-    // -------------------------------------------------------------------------
-    // Contacts
-    // -------------------------------------------------------------------------
+    it('creates a test contact', async () => {
+      const files: ConnectorFile[] = [
+        {
+          email: TEST_EMAIL,
+          attributes: { FIRSTNAME: 'Scratch', LASTNAME: TEST_SUFFIX },
+        } as unknown as ConnectorFile,
+      ];
 
-    describe('contacts', () => {
-      let contactsSpec: BaseJsonTableSpec;
+      const created = await connector.createRecords(contactsSpec, files);
 
-      beforeAll(async () => {
-        contactsSpec = await connector.fetchJsonTableSpec(CONTACTS_ID);
-      });
-
-      it('builds a dynamic schema with system fields and attributes', () => {
-        expect(contactsSpec.name).toBe('Contacts');
-        expect(contactsSpec.idColumnRemoteId).toBe('id');
-        expect(contactsSpec.schema.properties).toHaveProperty('id');
-        expect(contactsSpec.schema.properties).toHaveProperty('email');
-        expect(contactsSpec.schema.properties).toHaveProperty('attributes');
-      });
-
-      it('creates a test contact', async () => {
-        const files: ConnectorFile[] = [
-          {
-            email: TEST_EMAIL,
-            attributes: { FIRSTNAME: 'Scratch', LASTNAME: TEST_SUFFIX },
-          } as unknown as ConnectorFile,
-        ];
-
-        const created = await connector.createRecords(contactsSpec, files);
-
-        expect(created).toHaveLength(1);
-        const contact = created[0] as unknown as { id: number; email: string };
-        expect(contact.id).toBeDefined();
-        expect(contact.email).toBe(TEST_EMAIL);
-        createdContactId = contact.id;
-      });
-
-      it('pulls contacts and finds the created one', async () => {
-        expect(createdContactId).toBeDefined();
-
-        const files = await collectPulledFiles(connector, contactsSpec);
-        const found = files.find((f) => (f as unknown as { email: string }).email === TEST_EMAIL);
-        expect(found).toBeDefined();
-      });
-
-      it('fetches the contact by ID', async () => {
-        expect(createdContactId).toBeDefined();
-
-        const files: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(contactsSpec, [String(createdContactId)], async ({ files: batch }) => {
-          files.push(...batch);
-        });
-
-        expect(files).toHaveLength(1);
-        expect((files[0] as unknown as { email: string }).email).toBe(TEST_EMAIL);
-      });
-
-      it('updates the test contact', async () => {
-        expect(createdContactId).toBeDefined();
-
-        const files: ConnectorFile[] = [
-          {
-            id: createdContactId,
-            attributes: { FIRSTNAME: 'Updated' },
-          } as unknown as ConnectorFile,
-        ];
-
-        await expect(
-          connector.updateRecords(contactsSpec, files, [{ attributes: { FIRSTNAME: 'Updated' } }]),
-        ).resolves.toBeUndefined();
-
-        // Verify the update by fetching
-        const fetched: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(contactsSpec, [String(createdContactId)], async ({ files: batch }) => {
-          fetched.push(...batch);
-        });
-
-        const attrs = (fetched[0] as unknown as { attributes: Record<string, unknown> }).attributes;
-        expect(attrs.FIRSTNAME).toBe('Updated');
-      });
-
-      it('deletes the test contact', async () => {
-        expect(createdContactId).toBeDefined();
-
-        await expect(
-          connector.deleteRecords(contactsSpec, [{ id: createdContactId } as ConnectorFile]),
-        ).resolves.toBeUndefined();
-
-        // Verify deletion — fetch should return empty
-        const fetched: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(contactsSpec, [String(createdContactId)], async ({ files: batch }) => {
-          fetched.push(...batch);
-        });
-        expect(fetched).toHaveLength(0);
-
-        // Clear so afterAll doesn't try to double-delete
-        createdContactId = undefined;
-      });
-
-      it('handles deleting a non-existent contact gracefully', async () => {
-        await expect(
-          connector.deleteRecords(contactsSpec, [{ id: 999999999 } as ConnectorFile]),
-        ).resolves.toBeUndefined();
-      });
+      expect(created).toHaveLength(1);
+      const contact = created[0] as unknown as { id: number; email: string };
+      expect(contact.id).toBeDefined();
+      expect(contact.email).toBe(TEST_EMAIL);
+      createdContactId = contact.id;
     });
 
-    // -------------------------------------------------------------------------
-    // Templates
-    // -------------------------------------------------------------------------
+    it('pulls contacts and finds the created one', async () => {
+      expect(createdContactId).toBeDefined();
 
-    describe('templates', () => {
-      let templatesSpec: BaseJsonTableSpec;
-
-      beforeAll(async () => {
-        templatesSpec = await connector.fetchJsonTableSpec(TEMPLATES_ID);
-      });
-
-      it('builds a static schema with all template fields', () => {
-        expect(templatesSpec.name).toBe('Email Templates');
-        expect(templatesSpec.schema.properties).toHaveProperty('name');
-        expect(templatesSpec.schema.properties).toHaveProperty('subject');
-        expect(templatesSpec.schema.properties).toHaveProperty('htmlContent');
-        expect(templatesSpec.schema.properties).toHaveProperty('sender');
-      });
-
-      it('creates a test template', async () => {
-        const files: ConnectorFile[] = [
-          {
-            name: `Test Template ${TEST_SUFFIX}`,
-            subject: 'Integration Test',
-            sender: { email: 'testing@whalesync.com', name: 'Whalesync' },
-            htmlContent: `<html><body><h1>Hello from ${TEST_SUFFIX}</h1></body></html>`,
-            isActive: false, // Create as inactive so we can delete it
-          } as unknown as ConnectorFile,
-        ];
-
-        const created = await connector.createRecords(templatesSpec, files);
-
-        expect(created).toHaveLength(1);
-        const template = created[0] as unknown as { id: number; name: string };
-        expect(template.id).toBeDefined();
-        expect(template.name).toBe(`Test Template ${TEST_SUFFIX}`);
-        createdTemplateId = template.id;
-      });
-
-      it('pulls templates and finds the created one', async () => {
-        expect(createdTemplateId).toBeDefined();
-
-        const files = await collectPulledFiles(connector, templatesSpec);
-        const found = files.find((f) => (f as unknown as { name: string }).name === `Test Template ${TEST_SUFFIX}`);
-        expect(found).toBeDefined();
-        // Verify htmlContent is included (fetched individually)
-        expect((found as unknown as { htmlContent: string }).htmlContent).toContain(TEST_SUFFIX);
-      });
-
-      it('fetches the template by ID', async () => {
-        expect(createdTemplateId).toBeDefined();
-
-        const files: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(templatesSpec, [String(createdTemplateId)], async ({ files: batch }) => {
-          files.push(...batch);
-        });
-
-        expect(files).toHaveLength(1);
-        expect((files[0] as unknown as { htmlContent: string }).htmlContent).toContain(TEST_SUFFIX);
-      });
-
-      it('updates the test template', async () => {
-        expect(createdTemplateId).toBeDefined();
-
-        const files: ConnectorFile[] = [
-          {
-            id: createdTemplateId,
-            name: `Updated Template ${TEST_SUFFIX}`,
-            subject: 'Updated Subject',
-          } as unknown as ConnectorFile,
-        ];
-
-        await expect(
-          connector.updateRecords(templatesSpec, files, [
-            { name: `Updated Template ${TEST_SUFFIX}`, subject: 'Updated Subject' },
-          ]),
-        ).resolves.toBeUndefined();
-
-        // Verify by fetching
-        const fetched: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(templatesSpec, [String(createdTemplateId)], async ({ files: batch }) => {
-          fetched.push(...batch);
-        });
-        expect((fetched[0] as unknown as { name: string }).name).toBe(`Updated Template ${TEST_SUFFIX}`);
-      });
-
-      it('deletes the test template', async () => {
-        expect(createdTemplateId).toBeDefined();
-
-        await expect(
-          connector.deleteRecords(templatesSpec, [{ id: createdTemplateId } as ConnectorFile]),
-        ).resolves.toBeUndefined();
-
-        // Verify deletion
-        const fetched: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(templatesSpec, [String(createdTemplateId)], async ({ files: batch }) => {
-          fetched.push(...batch);
-        });
-        expect(fetched).toHaveLength(0);
-
-        createdTemplateId = undefined;
-      });
+      const files = await collectPulledFiles(connector, contactsSpec);
+      const found = files.find((f) => (f as unknown as { email: string }).email === TEST_EMAIL);
+      expect(found).toBeDefined();
     });
 
-    // -------------------------------------------------------------------------
-    // Mailing Lists (read-only)
-    // -------------------------------------------------------------------------
+    it('fetches the contact by ID', async () => {
+      expect(createdContactId).toBeDefined();
 
-    describe('mailing lists', () => {
-      let mailingListsSpec: BaseJsonTableSpec;
-
-      beforeAll(async () => {
-        mailingListsSpec = await connector.fetchJsonTableSpec(MAILING_LISTS_ID);
+      const files: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(contactsSpec, [String(createdContactId)], async ({ files: batch }) => {
+        files.push(...batch);
       });
 
-      it('builds a schema with all mailing list fields marked readonly', () => {
-        expect(mailingListsSpec.name).toBe('Mailing Lists');
-        expect(mailingListsSpec.schema.properties).toHaveProperty('id');
-        expect(mailingListsSpec.schema.properties).toHaveProperty('name');
-        expect(mailingListsSpec.schema.properties).toHaveProperty('totalSubscribers');
-      });
-
-      it('pulls mailing lists from the live API', async () => {
-        const files = await collectPulledFiles(connector, mailingListsSpec);
-
-        // The test Brevo account has at least one list ("Your first list")
-        expect(files.length).toBeGreaterThanOrEqual(1);
-
-        const first = files[0] as unknown as { id: number; name: string };
-        expect(first.id).toBeDefined();
-        expect(first.name).toBeDefined();
-      });
-
-      it('fetches a mailing list by ID', async () => {
-        // Pull to get a real list ID
-        const allLists = await collectPulledFiles(connector, mailingListsSpec);
-        expect(allLists.length).toBeGreaterThanOrEqual(1);
-
-        const listId = String((allLists[0] as unknown as { id: number }).id);
-
-        const fetched: ConnectorFile[] = [];
-        await connector.pullRecordFilesByIds(mailingListsSpec, [listId], async ({ files: batch }) => {
-          fetched.push(...batch);
-        });
-
-        expect(fetched).toHaveLength(1);
-        expect((fetched[0] as unknown as { id: number }).id).toBe(Number(listId));
-      });
+      expect(files).toHaveLength(1);
+      expect((files[0] as unknown as { email: string }).email).toBe(TEST_EMAIL);
     });
-  },
-  60_000, // TODO: This timeout argument is silently ignored — describe() doesn't accept a timeout.
-  // Use jest.setTimeout() at the top of the file instead (see stripe-connector.spec.ts).
-);
+
+    it('updates the test contact', async () => {
+      expect(createdContactId).toBeDefined();
+
+      const files: ConnectorFile[] = [
+        {
+          id: createdContactId,
+          attributes: { FIRSTNAME: 'Updated' },
+        } as unknown as ConnectorFile,
+      ];
+
+      await expect(
+        connector.updateRecords(contactsSpec, files, [{ attributes: { FIRSTNAME: 'Updated' } }]),
+      ).resolves.toBeUndefined();
+
+      // Verify the update by fetching
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(contactsSpec, [String(createdContactId)], async ({ files: batch }) => {
+        fetched.push(...batch);
+      });
+
+      const attrs = (fetched[0] as unknown as { attributes: Record<string, unknown> }).attributes;
+      expect(attrs.FIRSTNAME).toBe('Updated');
+    });
+
+    it('deletes the test contact', async () => {
+      expect(createdContactId).toBeDefined();
+
+      await expect(
+        connector.deleteRecords(contactsSpec, [{ id: createdContactId } as ConnectorFile]),
+      ).resolves.toBeUndefined();
+
+      // Verify deletion — fetch should return empty
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(contactsSpec, [String(createdContactId)], async ({ files: batch }) => {
+        fetched.push(...batch);
+      });
+      expect(fetched).toHaveLength(0);
+
+      // Clear so afterAll doesn't try to double-delete
+      createdContactId = undefined;
+    });
+
+    it('handles deleting a non-existent contact gracefully', async () => {
+      await expect(
+        connector.deleteRecords(contactsSpec, [{ id: 999999999 } as ConnectorFile]),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Templates
+  // -------------------------------------------------------------------------
+
+  describe('templates', () => {
+    let templatesSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      templatesSpec = await connector.fetchJsonTableSpec(TEMPLATES_ID);
+    });
+
+    it('builds a static schema with all template fields', () => {
+      expect(templatesSpec.name).toBe('Email Templates');
+      expect(templatesSpec.schema.properties).toHaveProperty('name');
+      expect(templatesSpec.schema.properties).toHaveProperty('subject');
+      expect(templatesSpec.schema.properties).toHaveProperty('htmlContent');
+      expect(templatesSpec.schema.properties).toHaveProperty('sender');
+    });
+
+    it('creates a test template', async () => {
+      const files: ConnectorFile[] = [
+        {
+          name: `Test Template ${TEST_SUFFIX}`,
+          subject: 'Integration Test',
+          sender: { email: 'testing@whalesync.com', name: 'Whalesync' },
+          htmlContent: `<html><body><h1>Hello from ${TEST_SUFFIX}</h1></body></html>`,
+          isActive: false, // Create as inactive so we can delete it
+        } as unknown as ConnectorFile,
+      ];
+
+      const created = await connector.createRecords(templatesSpec, files);
+
+      expect(created).toHaveLength(1);
+      const template = created[0] as unknown as { id: number; name: string };
+      expect(template.id).toBeDefined();
+      expect(template.name).toBe(`Test Template ${TEST_SUFFIX}`);
+      createdTemplateId = template.id;
+    });
+
+    it('pulls templates and finds the created one', async () => {
+      expect(createdTemplateId).toBeDefined();
+
+      const files = await collectPulledFiles(connector, templatesSpec);
+      const found = files.find((f) => (f as unknown as { name: string }).name === `Test Template ${TEST_SUFFIX}`);
+      expect(found).toBeDefined();
+      // Verify htmlContent is included (fetched individually)
+      expect((found as unknown as { htmlContent: string }).htmlContent).toContain(TEST_SUFFIX);
+    });
+
+    it('fetches the template by ID', async () => {
+      expect(createdTemplateId).toBeDefined();
+
+      const files: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(templatesSpec, [String(createdTemplateId)], async ({ files: batch }) => {
+        files.push(...batch);
+      });
+
+      expect(files).toHaveLength(1);
+      expect((files[0] as unknown as { htmlContent: string }).htmlContent).toContain(TEST_SUFFIX);
+    });
+
+    it('updates the test template', async () => {
+      expect(createdTemplateId).toBeDefined();
+
+      const files: ConnectorFile[] = [
+        {
+          id: createdTemplateId,
+          name: `Updated Template ${TEST_SUFFIX}`,
+          subject: 'Updated Subject',
+        } as unknown as ConnectorFile,
+      ];
+
+      await expect(
+        connector.updateRecords(templatesSpec, files, [
+          { name: `Updated Template ${TEST_SUFFIX}`, subject: 'Updated Subject' },
+        ]),
+      ).resolves.toBeUndefined();
+
+      // Verify by fetching
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(templatesSpec, [String(createdTemplateId)], async ({ files: batch }) => {
+        fetched.push(...batch);
+      });
+      expect((fetched[0] as unknown as { name: string }).name).toBe(`Updated Template ${TEST_SUFFIX}`);
+    });
+
+    it('deletes the test template', async () => {
+      expect(createdTemplateId).toBeDefined();
+
+      await expect(
+        connector.deleteRecords(templatesSpec, [{ id: createdTemplateId } as ConnectorFile]),
+      ).resolves.toBeUndefined();
+
+      // Verify deletion
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(templatesSpec, [String(createdTemplateId)], async ({ files: batch }) => {
+        fetched.push(...batch);
+      });
+      expect(fetched).toHaveLength(0);
+
+      createdTemplateId = undefined;
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Mailing Lists (read-only)
+  // -------------------------------------------------------------------------
+
+  describe('mailing lists', () => {
+    let mailingListsSpec: BaseJsonTableSpec;
+
+    beforeAll(async () => {
+      mailingListsSpec = await connector.fetchJsonTableSpec(MAILING_LISTS_ID);
+    });
+
+    it('builds a schema with all mailing list fields marked readonly', () => {
+      expect(mailingListsSpec.name).toBe('Mailing Lists');
+      expect(mailingListsSpec.schema.properties).toHaveProperty('id');
+      expect(mailingListsSpec.schema.properties).toHaveProperty('name');
+      expect(mailingListsSpec.schema.properties).toHaveProperty('totalSubscribers');
+    });
+
+    it('pulls mailing lists from the live API', async () => {
+      const files = await collectPulledFiles(connector, mailingListsSpec);
+
+      // The test Brevo account has at least one list ("Your first list")
+      expect(files.length).toBeGreaterThanOrEqual(1);
+
+      const first = files[0] as unknown as { id: number; name: string };
+      expect(first.id).toBeDefined();
+      expect(first.name).toBeDefined();
+    });
+
+    it('fetches a mailing list by ID', async () => {
+      // Pull to get a real list ID
+      const allLists = await collectPulledFiles(connector, mailingListsSpec);
+      expect(allLists.length).toBeGreaterThanOrEqual(1);
+
+      const listId = String((allLists[0] as unknown as { id: number }).id);
+
+      const fetched: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(mailingListsSpec, [listId], async ({ files: batch }) => {
+        fetched.push(...batch);
+      });
+
+      expect(fetched).toHaveLength(1);
+      expect((fetched[0] as unknown as { id: number }).id).toBe(Number(listId));
+    });
+  });
+});

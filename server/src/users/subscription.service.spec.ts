@@ -32,27 +32,31 @@ describe('SubscriptionService', () => {
       const mockSubscriptions: Subscription[] = [
         {
           id: 'sub_1' as SubscriptionId,
+          version: 1,
           userId,
           organizationId: 'org_1',
+          planType: 'FREE_PLAN',
           stripeSubscriptionId: 'stripe_sub_1',
-          stripePriceId: 'price_1',
-          status: 'active',
-          currentPeriodEnd: new Date('2025-12-31'),
-          cancelAtPeriodEnd: false,
-          metadata: null,
+          expiration: new Date('2025-12-31'),
+          priceInDollars: 0,
+          stripeStatus: 'active',
+          cancelAt: null,
+          lastInvoicePaid: null,
           createdAt: new Date('2025-01-01'),
           updatedAt: new Date('2025-01-01'),
         },
         {
           id: 'sub_2' as SubscriptionId,
+          version: 1,
           userId,
           organizationId: 'org_1',
+          planType: 'FREE_PLAN',
           stripeSubscriptionId: 'stripe_sub_2',
-          stripePriceId: 'price_2',
-          status: 'active',
-          currentPeriodEnd: new Date('2025-12-31'),
-          cancelAtPeriodEnd: false,
-          metadata: null,
+          expiration: new Date('2025-12-31'),
+          priceInDollars: 0,
+          stripeStatus: 'active',
+          cancelAt: null,
+          lastInvoicePaid: null,
           createdAt: new Date('2025-01-01'),
           updatedAt: new Date('2025-01-01'),
         },
@@ -104,27 +108,31 @@ describe('SubscriptionService', () => {
       const mockSubscriptions: Subscription[] = [
         {
           id: 'sub_active' as SubscriptionId,
+          version: 1,
           userId,
           organizationId: 'org_1',
+          planType: 'FREE_PLAN',
           stripeSubscriptionId: 'stripe_sub_1',
-          stripePriceId: 'price_1',
-          status: 'active',
-          currentPeriodEnd: new Date('2025-12-31'),
-          cancelAtPeriodEnd: false,
-          metadata: null,
+          expiration: new Date('2025-12-31'),
+          priceInDollars: 0,
+          stripeStatus: 'active',
+          cancelAt: null,
+          lastInvoicePaid: null,
           createdAt: new Date('2025-01-01'),
           updatedAt: new Date('2025-01-01'),
         },
         {
           id: 'sub_canceled' as SubscriptionId,
+          version: 1,
           userId,
           organizationId: 'org_1',
+          planType: 'FREE_PLAN',
           stripeSubscriptionId: 'stripe_sub_2',
-          stripePriceId: 'price_2',
-          status: 'canceled',
-          currentPeriodEnd: new Date('2025-06-30'),
-          cancelAtPeriodEnd: true,
-          metadata: null,
+          expiration: new Date('2025-06-30'),
+          priceInDollars: 0,
+          stripeStatus: 'canceled',
+          cancelAt: new Date('2025-06-30'),
+          lastInvoicePaid: false,
           createdAt: new Date('2025-01-01'),
           updatedAt: new Date('2025-01-01'),
         },
@@ -135,8 +143,8 @@ describe('SubscriptionService', () => {
       const result = await service.findForUser(userId);
 
       expect(result).toHaveLength(2);
-      expect(result[0].status).toBe('active');
-      expect(result[1].status).toBe('canceled');
+      expect(result[0].stripeStatus).toBe('active');
+      expect(result[1].stripeStatus).toBe('canceled');
     });
   });
 

@@ -129,7 +129,7 @@ describe('WhalesyncImportApiService', () => {
       // Mock readSchema to return schemas from git
       const airtableSpec = { schema: makeAirtableSchema(['Title']) } as unknown;
       const webflowSpec = { schema: makeWebflowSchema(['name']) } as unknown;
-      (dataFolderService as { readSchema: jest.Mock }).readSchema
+      (dataFolderService as unknown as { readSchema: jest.Mock }).readSchema
         .mockResolvedValueOnce(airtableSpec)
         .mockResolvedValueOnce(webflowSpec);
 
@@ -196,7 +196,7 @@ describe('WhalesyncImportApiService', () => {
       const { service, dataFolderService } = buildService();
       await service.previewImport(WORKBOOK_ID, VALID_BODY, ACTOR);
 
-      expect((dataFolderService as { listAll: jest.Mock }).listAll).toHaveBeenCalledWith(WORKBOOK_ID, ACTOR);
+      expect((dataFolderService as unknown as { listAll: jest.Mock }).listAll).toHaveBeenCalledWith(WORKBOOK_ID, ACTOR);
     });
 
     it('should use configService.getWhalesyncApiUrl for the base URL', async () => {
@@ -204,7 +204,7 @@ describe('WhalesyncImportApiService', () => {
       mockedAxios.get.mockResolvedValue({ data: wsExport });
 
       const { service, configService } = buildService();
-      (configService as { getWhalesyncApiUrl: jest.Mock }).getWhalesyncApiUrl.mockReturnValue(
+      (configService as unknown as { getWhalesyncApiUrl: jest.Mock }).getWhalesyncApiUrl.mockReturnValue(
         'https://custom.example.com',
       );
       await service.previewImport(WORKBOOK_ID, VALID_BODY, ACTOR);
@@ -247,7 +247,7 @@ describe('WhalesyncImportApiService', () => {
 
       // First folder's schema fails, second succeeds
       const webflowSpec = { schema: makeWebflowSchema(['name']) } as unknown;
-      (dataFolderService as { readSchema: jest.Mock }).readSchema
+      (dataFolderService as unknown as { readSchema: jest.Mock }).readSchema
         .mockRejectedValueOnce(new Error('git error'))
         .mockResolvedValueOnce(webflowSpec);
 

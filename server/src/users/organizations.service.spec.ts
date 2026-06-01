@@ -12,7 +12,7 @@ describe('OrganizationsService', () => {
     id: 'org_123' as OrganizationId,
     name: 'Test Organization',
     clerkId: 'clerk_org_123',
-    metadata: null,
+    deleted: false,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
   };
@@ -133,7 +133,7 @@ describe('OrganizationsService', () => {
       id: id as OrganizationId,
       name,
       clerkId: `clerk_${id}`,
-      metadata: null,
+      deleted: false,
       createdAt: new Date('2025-01-01'),
       updatedAt: new Date('2025-01-01'),
     });
@@ -147,7 +147,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue(mockOrganizations);
 
-      const result = await service.list();
+      const result = await service.list(undefined, undefined);
 
       expect(result.organizations).toEqual(mockOrganizations);
       expect(result.nextCursor).toBeUndefined();
@@ -166,7 +166,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue(mockOrganizations);
 
-      const result = await service.list(5);
+      const result = await service.list(5, undefined);
 
       expect(result.organizations).toEqual(mockOrganizations);
       expect(result.nextCursor).toBeUndefined();
@@ -187,7 +187,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue(mockOrganizations);
 
-      const result = await service.list(2);
+      const result = await service.list(2, undefined);
 
       expect(result.organizations).toHaveLength(2);
       expect(result.nextCursor).toBe('org_3');
@@ -217,7 +217,7 @@ describe('OrganizationsService', () => {
     it('should return empty array when no organizations exist', async () => {
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue([]);
 
-      const result = await service.list();
+      const result = await service.list(undefined, undefined);
 
       expect(result.organizations).toEqual([]);
       expect(result.nextCursor).toBeUndefined();
@@ -231,7 +231,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue(mockOrganizations);
 
-      const result = await service.list(2);
+      const result = await service.list(2, undefined);
 
       expect(result.organizations).toHaveLength(2);
       expect(result.nextCursor).toBeUndefined();
@@ -245,7 +245,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue(mockOrganizations);
 
-      await service.list();
+      await service.list(undefined, undefined);
 
       expect(dbService.client.organization.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -259,7 +259,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockRejectedValue(dbError);
 
-      await expect(service.list()).rejects.toThrow('Database connection lost');
+      await expect(service.list(undefined, undefined)).rejects.toThrow('Database connection lost');
     });
 
     it('should handle limit of 1 correctly', async () => {
@@ -270,7 +270,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue(mockOrganizations);
 
-      const result = await service.list(1);
+      const result = await service.list(1, undefined);
 
       expect(result.organizations).toHaveLength(1);
       expect(result.nextCursor).toBe('org_2');
@@ -289,7 +289,7 @@ describe('OrganizationsService', () => {
 
       (dbService.client.organization.findMany as jest.Mock).mockResolvedValue(mockOrganizations);
 
-      const result = await service.list(1000);
+      const result = await service.list(1000, undefined);
 
       expect(result.organizations).toHaveLength(2);
       expect(result.nextCursor).toBeUndefined();

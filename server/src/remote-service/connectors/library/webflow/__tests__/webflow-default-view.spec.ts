@@ -27,13 +27,26 @@ function makeCollectionItemSchema() {
       name: field(Type.String(), { connectorDataType: 'PlainText' }),
       slug: field(Type.String(), { connectorDataType: 'PlainText' }),
       heroImage: Type.Optional(
-        field(Type.Object({ url: Type.String({ format: 'uri' }), alt: Type.Optional(Type.String()) })),
+        field(
+          Type.Object({
+            url: Type.String({ format: 'uri' }),
+            alt: Type.Optional(Type.String()),
+          }) as unknown as ReturnType<typeof Type.String>,
+        ),
       ),
-      rating: Type.Optional(field(Type.Number(), { connectorDataType: 'Number' })),
-      published: Type.Optional(field(Type.Boolean(), { connectorDataType: 'Switch' })),
+      rating: Type.Optional(
+        field(Type.Number() as unknown as ReturnType<typeof Type.String>, { connectorDataType: 'Number' }),
+      ),
+      published: Type.Optional(
+        field(Type.Boolean() as unknown as ReturnType<typeof Type.String>, { connectorDataType: 'Switch' }),
+      ),
       websiteUrl: Type.Optional(field(Type.String({ format: 'uri' }), { connectorDataType: 'Link' })),
       publishDate: Type.Optional(field(Type.String({ format: 'date-time' }), { connectorDataType: 'DateTime' })),
-      tags: Type.Optional(field(Type.Array(Type.String()), { connectorDataType: 'MultiReference' })),
+      tags: Type.Optional(
+        field(Type.Array(Type.String()) as unknown as ReturnType<typeof Type.String>, {
+          connectorDataType: 'MultiReference',
+        }),
+      ),
       readonlyField: Type.Optional(field(Type.String(), { readonly: true })),
     }),
   });

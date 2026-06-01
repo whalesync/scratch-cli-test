@@ -44,6 +44,7 @@ describe('PullFilesJobHandler', () => {
   const createMockParams = (overrides?: Partial<Record<string, unknown>>) => ({
     jobId: 'test-job-id',
     data: {
+      type: 'refresh-records' as const,
       workbookId: WORKBOOK_ID,
       dataFolderId: DATA_FOLDER_ID,
       userId: 'usr_123',
@@ -51,9 +52,18 @@ describe('PullFilesJobHandler', () => {
       filePaths: ['/test-folder/file1.json'],
     },
     progress: {
-      publicProgress: null,
+      publicProgress: {
+        status: 'pending' as const,
+        folderId: DATA_FOLDER_ID,
+        folderName: 'Test Folder',
+        connector: 'airtable',
+        totalRequested: 0,
+        createdPaths: [],
+        updatedPaths: [],
+      },
       jobProgress: {},
       connectorProgress: {},
+      timestamp: Date.now(),
     },
     abortSignal: new AbortController().signal,
     checkpoint: jest.fn(),

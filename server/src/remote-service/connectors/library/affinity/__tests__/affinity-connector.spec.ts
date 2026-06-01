@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import { BaseJsonTableSpec, ConnectorFile, EntityId } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, EntityId, idPath } from '../../../types';
 import { AffinityConnector, parseAffinityTableId } from '../affinity-connector';
 import {
   AffinityCompany,
@@ -154,7 +154,7 @@ function buildTableSpec(remoteId: string): BaseJsonTableSpec {
     slug: remoteId,
     name: remoteId,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
   };
 }
 

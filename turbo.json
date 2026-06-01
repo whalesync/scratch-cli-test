@@ -18,6 +18,10 @@
       "persistent": true,
       "cache": false
     },
+    "typecheck": {
+      "inputs": ["src/**", "tsconfig*.json"],
+      "dependsOn": ["^build"]
+    },
     "lint": {
       "inputs": ["src/**"],
       "dependsOn": ["^build"]

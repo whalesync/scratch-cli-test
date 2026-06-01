@@ -1,3 +1,5 @@
+import { ConvertedNotionBlock } from '../../notion-rich-text-push-types';
+
 export const CONTENT_MARKETING_BLOCKS = {
   children: [
     {
@@ -1187,5 +1189,5 @@ export const CONTENT_MARKETING_BLOCKS = {
         color: 'default',
       },
     },
-  ],
+  ] as ConvertedNotionBlock[],
 };

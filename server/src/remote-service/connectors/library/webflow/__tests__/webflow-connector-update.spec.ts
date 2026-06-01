@@ -50,7 +50,7 @@ function buildTableSpec(fieldProperties: Record<string, unknown>): BaseJsonTable
         ),
       ),
     }),
-  } as BaseJsonTableSpec;
+  } as unknown as BaseJsonTableSpec;
 }
 
 describe('WebflowConnector.updateRecords', () => {

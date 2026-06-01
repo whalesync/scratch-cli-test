@@ -31,6 +31,9 @@ function makeAsset(overrides: Partial<Asset> = {}): Asset {
     lastSeenAt: new Date(),
     rehostedUrl: null,
     rehostedAt: null,
+    contentHash: null,
+    uploadedAt: null,
+    sourceAssetId: null,
     ...overrides,
   };
 }

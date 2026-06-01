@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import type { TSchema } from '@sinclair/typebox';
-import type { DataFolderId, WorkbookId } from '@spinner/shared-types';
+import type { DataFolderId, WorkbookId, WorkspacePermissionId } from '@spinner/shared-types';
 import type { AuditLogService } from 'src/audit/audit-log.service';
 import type { ScratchConfigService } from 'src/config/scratch-config.service';
 import type { DbService } from 'src/db/db.service';
@@ -10,10 +10,10 @@ import type { FileReferenceService } from 'src/publish-plan/file-reference.servi
 import type { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import type { ScratchGitService } from 'src/scratch-git/scratch-git.service';
-import type { Actor } from 'src/users/types';
+import type { Actor, WorkspacePermissionRole } from 'src/users/types';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import type { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec, idPath } from '../remote-service/connectors/types';
 import { DataFolderService } from './data-folder.service';
 import type { FilesService } from './files.service';
 import type { WorkbookEventService } from './workbook-event.service';
@@ -28,11 +28,11 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
   });
 
   const makeTableSpec = (overrides: Partial<BaseJsonTableSpec> = {}): BaseJsonTableSpec => ({
-    id: 'table-1',
+    id: { wsId: 'table-1', remoteId: ['table-1'] },
     slug: 'table-slug',
     name: 'My Table',
     schema: {} as TSchema,
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     ...overrides,
   });
 
@@ -237,7 +237,7 @@ describe('DataFolderService.ensureUniquePath', () => {
 describe('DataFolderService dotfile filtering', () => {
   const WORKBOOK_ID = 'wkb_test' as WorkbookId;
   const FOLDER_ID = 'df_test' as DataFolderId;
-  const ACTOR: Actor = { userId: 'usr_test', organizationId: 'org_test', authType: 'jwt', authSource: 'user' };
+  const ACTOR: Actor = { userId: 'usr_test', organizationId: 'org_test', authSource: 'user' };
 
   let service: DataFolderService;
   let mockDb: jest.Mocked<DbService>;
@@ -298,6 +298,8 @@ describe('DataFolderService dotfile filtering', () => {
       mockScratchGitService,
       stub as FilesService,
       stub as WorkbookEventService,
+      stub as FileIndexService,
+      stub as FileReferenceService,
     );
   });
 
@@ -365,7 +367,9 @@ describe('DataFolderService.deleteFolder', () => {
   const ACTOR: Actor = {
     userId: 'usr_test',
     organizationId: ORG_ID,
-    workspacePermissions: [{ workbookId: WORKBOOK_ID, role: 'editor' }],
+    workspacePermissions: [
+      { id: 'perm_test' as WorkspacePermissionId, workbookId: WORKBOOK_ID, role: 'editor' as WorkspacePermissionRole },
+    ],
   };
 
   let service: DataFolderService;

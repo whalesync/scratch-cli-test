@@ -16,7 +16,7 @@ function specWithSchema(schema: unknown): BaseJsonTableSpec {
     id: { wsId: 't', remoteId: ['t'] },
     slug: 't',
     name: 't',
-    idColumnRemoteId: 'id',
+    idColumnRemoteId: idPath('id'),
     schema: schema as TSchema,
   };
 }

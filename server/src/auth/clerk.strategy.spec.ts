@@ -31,16 +31,16 @@ describe('ClerkStrategy', () => {
     primaryEmail: 'john@example.com',
   };
 
-  const mockUser: UserCluster.User = {
+  const mockUser = {
     id: 'user_123',
     clerkId: 'clerk_user_123',
     name: 'John Doe',
     email: 'john@example.com',
     organizationId: 'org_456',
-    hasBoarded: true,
-    customSettings: {},
     apiTokens: [],
-  };
+    workspacePermissions: [],
+    organization: null,
+  } as unknown as UserCluster.User;
 
   beforeEach(async () => {
     const mockUsersService = {
@@ -283,19 +283,17 @@ describe('ClerkStrategy', () => {
         },
       } as Request;
 
-      const userWithCustomSettings: UserCluster.User = {
+      const userWithAlternateOrg = {
         ...mockUser,
-        hasBoarded: false,
-        customSettings: { theme: 'dark', notifications: true },
-      };
+        organizationId: 'org_alternate',
+      } as unknown as UserCluster.User;
 
       (verifyToken as jest.Mock).mockResolvedValue(mockJwtPayload);
-      usersService.getOrCreateUserFromClerk.mockResolvedValue(userWithCustomSettings);
+      usersService.getOrCreateUserFromClerk.mockResolvedValue(userWithAlternateOrg);
 
       const result = await strategy.validate(mockRequest);
 
-      expect(result.hasBoarded).toBe(false);
-      expect(result.customSettings).toEqual({ theme: 'dark', notifications: true });
+      expect(result.organizationId).toBe('org_alternate');
       expect(result.authType).toBe('jwt');
       expect(result.authSource).toBe('user');
     });
