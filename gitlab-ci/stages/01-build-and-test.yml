@@ -170,6 +170,26 @@ integration test server:
       changes: !reference [.changes, server]
     - !reference [.rules, on_merge_to_master]
 
+# Green-light gate (DEV-10008 sync-mapping v1 → v2 migration). Runs ONLY the
+# v1-compat regression spec, which proves that existing v1 `Sync.mappings` run
+# byte-for-byte identically through the v2-internal executor (Pass 3 is a no-op
+# for v1 syncs). A green run here is the explicit precondition for proceeding
+# with the v1 → v2 rollout — keeping the signal isolated from the broader
+# integration suite so a v1-compat regression is unambiguous and fast to spot.
+sync_v1_compat:
+  extends: .integration-test-server
+  script:
+    - !reference [.build_shared_types, script]
+    - cd server
+    - !reference [.use_nvm, script]
+    - yarn run migrate
+    - yarn run test:integration sync-mapping-v1-compat --verbose --reporters=default --reporters=jest-junit
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.changes, server]
+    - !reference [.rules, on_merge_to_master]
+
 .build-server-docker-image:
   stage: build and test
   extends:

@@ -7,7 +7,7 @@ Instructions for Claude Code when working in this repository. Subdirectory CLAUD
 - **Always use `yarn`**, never `npm`. This applies to installs, running scripts, and adding dependencies.
 - **Run `nvm use` only if you hit a Node.js version error.** Do NOT prefix every command with `nvm use`.
 - **Always run commands from the repo root** using Turborepo (see [Development Commands](#development-commands)).
-- **Always run `yarn build` and `yarn lint` from the repo root** after completing a series of code changes to verify nothing is broken. Do NOT run `yarn format` — formatting is handled automatically by a pre-commit hook.
+- **Always run `yarn build` and `yarn lint` from the repo root** after completing a series of code changes to verify nothing is broken. Format your changes before committing (e.g. `yarn prettier:check` / `--write` in the affected package) — CI runs `prettier:check` and there is no pre-commit hook to do it for you.
 - **Do not ignore pre-existing test or lint errors.** If `yarn test` or `yarn lint` fails on code you did not change, stop and ask the user how to proceed rather than silently ignoring the failures.
 - Look for **Skills** to help with specific tasks in the `.claude/skills` folder
 
