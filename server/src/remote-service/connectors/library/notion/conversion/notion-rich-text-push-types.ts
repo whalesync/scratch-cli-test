@@ -1,4 +1,4 @@
-import type { RichTextItemResponse } from '@notionhq/client/build/src/api-endpoints';
+import type { RichTextItemResponse } from '@notionhq/client';
 
 /**
  * Rich text item that includes both request fields and response-only fields for round-trip compatibility

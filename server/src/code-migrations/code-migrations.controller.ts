@@ -12,7 +12,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { Client } from '@notionhq/client';
+import { Client, isFullDatabase } from '@notionhq/client';
 import { AuthType, Prisma } from '@prisma/client';
 import type {
   AvailableMigrationsResponse,
@@ -84,9 +84,8 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
 
 /**
  * Notion API version that exposes `data_sources` on the `databases.retrieve`
- * response. See the 2025-09-03 upgrade guide. The production NotionConnector
- * still uses the SDK default — Phase 3 of the upgrade will bump it in lockstep
- * with the `fetchJsonTableSpec` migration to `dataSources.retrieve`.
+ * response. Matches the v5 SDK's default; pinned here so the backfill stays
+ * usable even if a future SDK bump moves the default forward.
  */
 const NOTION_API_VERSION_FOR_BACKFILL = '2025-09-03';
 
@@ -312,12 +311,11 @@ export class CodeMigrationsController {
         const client = await getClient(connectorAccountId);
         if (client === 'no_token') return { kind: 'unauthorized' };
         try {
-          // The 2025-09-03 response carries `data_sources: Array<{ id, name }>`
-          // which is not in the v3 SDK's typed `DatabaseObjectResponse`.
-          const response = (await client.databases.retrieve({ database_id: databaseId })) as unknown as {
-            data_sources?: Array<{ id: string; name: string }>;
-          };
-          return { kind: 'ok', dataSources: response.data_sources ?? [] };
+          const response = await client.databases.retrieve({ database_id: databaseId });
+          if (!isFullDatabase(response)) {
+            return { kind: 'error', error: new Error(`partial database response for ${databaseId}`) };
+          }
+          return { kind: 'ok', dataSources: response.data_sources };
         } catch (error) {
           const e = error as { code?: string; status?: number };
           if (e.code === 'object_not_found' || e.status === 404) return { kind: 'not_found' };

@@ -1,5 +1,4 @@
-import { Client } from '@notionhq/client';
-import type { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
+import { type BlockObjectRequest, Client } from '@notionhq/client';
 import { NotionBlockOperation } from './notion-block-diff';
 import { ConvertedNotionBlock } from './notion-rich-text-push-types';
 

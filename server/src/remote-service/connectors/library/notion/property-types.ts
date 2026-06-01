@@ -1,17 +1,17 @@
-import { DatabaseObjectResponse, PageObjectResponse } from '@notionhq/client';
+import { type DataSourceObjectResponse, type PageObjectResponse } from '@notionhq/client';
 
 /**
- * These are properties not supported in @notionhq/client:3.1.3
- * Drop file this when we upgrade to 4.x.x or 5.x.x
+ * @notionhq/client@5.x covers the 2025-09-03 / 2026-03-11 property types
+ * including `unique_id`. The legacy 3.1.3-era shim for `place` and `button`
+ * is kept (still not in the SDK union) but reduced to those two only.
  */
 
-export type NewNotionProperties = ({ type: 'place' } | { type: 'unique_id' } | { type: 'button' }) &
-  NotionPropertyFields;
+export type NewNotionProperties = ({ type: 'place' } | { type: 'button' }) & NotionPropertyFields;
 export type NotionPropertyFields = {
   id: string;
   name: string;
 };
-export type SupportedNotionProperties = DatabaseObjectResponse['properties'][string];
+export type SupportedNotionProperties = DataSourceObjectResponse['properties'][string];
 export type NotionProperty = SupportedNotionProperties | NewNotionProperties;
 
 export type SupportedPageResponseTypes = PageObjectResponse['properties'][string];

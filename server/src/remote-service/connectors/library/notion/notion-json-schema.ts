@@ -1,4 +1,4 @@
-import { DatabaseObjectResponse } from '@notionhq/client';
+import { type DataSourceObjectResponse } from '@notionhq/client';
 import { Type, type TSchema } from '@sinclair/typebox';
 import {
   AssetFieldOptions,
@@ -14,7 +14,7 @@ import {
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
-import { getDataSourceDisplayName, NotionDataSourceObjectResponse } from './notion-data-source-types';
+import { getDataSourceDisplayName } from './notion-data-source-types';
 import { buildNotionDefaultView } from './notion-default-view';
 
 /**
@@ -40,7 +40,7 @@ export const NOTION_READ_ONLY_PROPERTY_TYPES = new Set([
  * shapes themselves are unchanged, so {@link notionPropertyToJsonSchema}
  * still reads them via the SDK v3 `DatabaseObjectResponse['properties']` type.
  */
-export function buildNotionJsonTableSpec(id: EntityId, dataSource: NotionDataSourceObjectResponse): BaseJsonTableSpec {
+export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObjectResponse): BaseJsonTableSpec {
   const [databaseId] = id.remoteId;
 
   const propertySchemas: Record<string, TSchema> = {};
@@ -168,7 +168,7 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: NotionDataSou
 /**
  * Convert a Notion database property to a TypeBox JSON Schema.
  */
-export function notionPropertyToJsonSchema(property: DatabaseObjectResponse['properties'][string]): TSchema {
+export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['properties'][string]): TSchema {
   const description = property.name;
   let schema: TSchema;
 

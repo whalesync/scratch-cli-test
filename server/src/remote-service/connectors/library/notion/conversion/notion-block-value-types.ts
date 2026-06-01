@@ -4,7 +4,7 @@
  * containing only the fields we need for conversion.
  */
 
-import { RichTextItemResponse } from '@notionhq/client/build/src/api-endpoints';
+import { type RichTextItemResponse } from '@notionhq/client';
 
 export interface NotionColor {
   color?: string;

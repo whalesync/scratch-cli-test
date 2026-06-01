@@ -1,8 +1,8 @@
+import { type DataSourceObjectResponse } from '@notionhq/client';
 import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
-import { NotionDataSourceObjectResponse } from '../notion-data-source-types';
 import { buildNotionJsonTableSpec } from '../notion-json-schema';
 
-function buildDataSource(): NotionDataSourceObjectResponse {
+function buildDataSource(): DataSourceObjectResponse {
   return {
     object: 'data_source',
     id: 'ds_123',
@@ -10,7 +10,7 @@ function buildDataSource(): NotionDataSourceObjectResponse {
     properties: {
       Name: { id: 'title', name: 'Name', type: 'title' },
     },
-  } as unknown as NotionDataSourceObjectResponse;
+  } as unknown as DataSourceObjectResponse;
 }
 
 describe('buildNotionJsonTableSpec last-modified annotation', () => {

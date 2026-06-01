@@ -1,4 +1,4 @@
-import type { TextRichTextItemResponse } from '@notionhq/client/build/src/api-endpoints';
+import type { RichTextItemResponse } from '@notionhq/client';
 import * as cheerio from 'cheerio';
 import { ElementType } from 'domelementtype';
 import { ChildNode, DataNode, Element } from 'domhandler';
@@ -7,9 +7,12 @@ import { cssColorsToNotionColors } from './notion-rich-text-conversion';
 import { ConvertedNotionBlock, RichTextItemWithResponseFields } from './notion-rich-text-push-types';
 
 /**
- * Annotation structure for rich text formatting
+ * Annotation structure for rich text formatting.
+ * In `@notionhq/client@5.x`, `annotations` lives on the shared
+ * `RichTextItemResponseCommon` (mixed into the response union), so the type
+ * is derived from the union root rather than the per-type variant.
  */
-type NotionAnnotations = TextRichTextItemResponse['annotations'];
+type NotionAnnotations = RichTextItemResponse['annotations'];
 
 /**
  * Color type for Notion blocks and rich text

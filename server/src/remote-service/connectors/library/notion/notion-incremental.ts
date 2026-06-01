@@ -1,9 +1,10 @@
 /**
- * Helpers for building the Notion `databases.query` filter used by incremental
- * pulls. Mirrors the shape of `airtable/airtable-incremental.ts` so the
- * per-connector code reads the same, even though Notion's modified-since
- * mechanism is a server-side JSON filter on the system `last_edited_time`
- * timestamp rather than an Airtable formula or a SQL `WHERE`.
+ * Helpers for building the Notion `dataSources.query` filter used by
+ * incremental pulls. Mirrors the shape of `airtable/airtable-incremental.ts`
+ * so the per-connector code reads the same, even though Notion's
+ * modified-since mechanism is a server-side JSON filter on the system
+ * `last_edited_time` timestamp rather than an Airtable formula or a SQL
+ * `WHERE`.
  *
  * The connector composes two pieces:
  *   1. The user's pre-existing parsed `options.filter` (if any).
@@ -12,10 +13,10 @@
  * Combined with `{ and: [...] }` when both are present — subject to Notion's
  * single-level compound-nesting limit (see `combineNotionFilters`).
  */
-import type { QueryDatabaseParameters } from '@notionhq/client/build/src/api-endpoints';
+import type { QueryDataSourceParameters } from '@notionhq/client';
 
-/** Non-nullable Notion `databases.query` filter. */
-export type NotionFilter = NonNullable<QueryDatabaseParameters['filter']>;
+/** Non-nullable Notion `dataSources.query` filter. */
+export type NotionFilter = NonNullable<QueryDataSourceParameters['filter']>;
 
 /** The two top-level compound members (`{ and: [...] }` / `{ or: [...] }`). */
 export type NotionCompoundFilter = Extract<NotionFilter, { and: unknown } | { or: unknown }>;

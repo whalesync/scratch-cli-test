@@ -1,8 +1,4 @@
-import type {
-  BlockObjectResponse,
-  RichTextItemResponse,
-  TextRichTextItemResponse,
-} from '@notionhq/client/build/src/api-endpoints';
+import type { BlockObjectResponse, RichTextItemResponse } from '@notionhq/client';
 import * as cheerio from 'cheerio';
 import { ElementType } from 'domelementtype';
 import { ChildNode } from 'domhandler';
@@ -13,9 +9,14 @@ import { escapeHtmlAndSpaces, isHtmlBlockLevelTag, unescapeSafeSpacesInHtml } fr
 import type { ConvertedNotionBlock } from './notion-rich-text-push-types';
 
 /**
- * Annotation structure for rich text formatting
+ * Annotation structure for rich text formatting.
+ *
+ * In `@notionhq/client@5.x`, `annotations` lives on the shared
+ * `RichTextItemResponseCommon` (mixed into the response union), not on each
+ * per-type variant such as `TextRichTextItemResponse`. Derive from the union
+ * root so the alias is correct under both shapes.
  */
-type NotionAnnotations = TextRichTextItemResponse['annotations'];
+type NotionAnnotations = RichTextItemResponse['annotations'];
 
 /**
  * Value structure for media blocks (image, video, audio).

@@ -15,6 +15,8 @@ jest.mock('@notionhq/client', () => ({
   APIResponseError: class extends Error {},
   RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
   APIErrorCode: {},
+  isFullDatabase: jest.fn(() => true),
+  isFullDataSource: jest.fn(() => true),
 }));
 
 jest.mock('turndown', () =>

@@ -16,6 +16,12 @@ describe('NotionBlockDiffExecutor', () => {
           append: jest.fn() as jest.MockedFunction<Client['blocks']['children']['append']>,
           list: jest.fn() as jest.MockedFunction<Client['blocks']['children']['list']>,
         },
+        // `meetingNotes.query` was added to the v5 SDK's `blocks` shape for the
+        // 2026-03-11 meeting-notes API. The executor never touches it, but the
+        // `Pick<Client, 'blocks'>` mock must satisfy the full subtree.
+        meetingNotes: {
+          query: jest.fn() as jest.MockedFunction<Client['blocks']['meetingNotes']['query']>,
+        },
         retrieve: jest.fn() as jest.MockedFunction<Client['blocks']['retrieve']>,
         update: jest.fn() as jest.MockedFunction<Client['blocks']['update']>,
         delete: jest.fn() as jest.MockedFunction<Client['blocks']['delete']>,

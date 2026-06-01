@@ -6,15 +6,17 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Notion'),
 }));
 
-const mockClientRequest = jest.fn();
+const mockDataSourcesQuery = jest.fn();
 
 jest.mock('@notionhq/client', () => ({
   Client: jest.fn().mockImplementation(() => ({
-    request: mockClientRequest,
+    dataSources: { query: mockDataSourcesQuery },
   })),
   APIResponseError: class extends Error {},
   RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
   APIErrorCode: {},
+  isFullDatabase: jest.fn(() => true),
+  isFullDataSource: jest.fn(() => true),
 }));
 
 jest.mock('turndown', () =>
@@ -41,13 +43,13 @@ function buildTableSpec(): BaseJsonTableSpec {
 }
 
 function lastQueryFilter(): unknown {
-  const [args] = mockClientRequest.mock.calls[0] as [{ body?: { filter?: unknown } }];
-  return args.body?.filter;
+  const [args] = mockDataSourcesQuery.mock.calls[0] as [{ filter?: unknown }];
+  return args.filter;
 }
 
-function lastQueryPath(): string {
-  const [args] = mockClientRequest.mock.calls[0] as [{ path: string }];
-  return args.path;
+function lastQueryDataSourceId(): string {
+  const [args] = mockDataSourcesQuery.mock.calls[0] as [{ data_source_id: string }];
+  return args.data_source_id;
 }
 
 describe('NotionConnector.supportsIncrementalPull', () => {
@@ -63,7 +65,7 @@ describe('NotionConnector.pullRecordFiles (incremental)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockClientRequest.mockResolvedValue({
+    mockDataSourcesQuery.mockResolvedValue({
       results: [{ object: 'page', id: 'page_1', last_edited_time: '2026-05-14T13:00:00.000Z' }],
       has_more: false,
       next_cursor: null,
@@ -79,7 +81,7 @@ describe('NotionConnector.pullRecordFiles (incremental)', () => {
 
     expect(result).toEqual({});
     expect(lastQueryFilter()).toBeUndefined();
-    expect(lastQueryPath()).toBe('data_sources/ds_123/query');
+    expect(lastQueryDataSourceId()).toBe('ds_123');
   });
 
   it('injects the last_edited_time filter and returns a newWatermark when incremental', async () => {

@@ -1,9 +1,9 @@
 import {
-  BlockObjectResponse,
-  RichTextItemResponse,
-  TableBlockObjectResponse,
-  TableRowBlockObjectResponse,
-} from '@notionhq/client/build/src/api-endpoints';
+  type BlockObjectResponse,
+  type RichTextItemResponse,
+  type TableBlockObjectResponse,
+  type TableRowBlockObjectResponse,
+} from '@notionhq/client';
 import { Type } from '@sinclair/typebox';
 import { TransformerTypes } from '@spinner/shared-types';
 import { registerTransformer } from '../transformer-registry';
