@@ -538,7 +538,9 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
 
     // Build a `changedFields` bag that ONLY mutates read-only props. The
     // connector should resolve to a no-op call and not throw a 400 from
-    // Notion.
+    // Notion. `updateRecords` returns `ConnectorFile[]` (currently the input
+    // files, per commit 072bb2c2's placeholder return) — the assertion is on
+    // "resolves successfully", not on the returned shape.
     const readOnlyChange = {
       properties: {
         Score: { formula: { type: 'number', number: 999 } }, // formula — read-only
@@ -547,7 +549,7 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     };
     await expect(
       connector.updateRecords(tableSpec, [{ ...(fullPage as Record<string, unknown>) }], [readOnlyChange]),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeDefined();
   });
 });
 
