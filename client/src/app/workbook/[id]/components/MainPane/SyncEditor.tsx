@@ -557,7 +557,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     activePair.fieldMappings.every((m) => (m.transformers ?? []).every(isTransformerConfigComplete));
 
   useEffect(() => {
-    if (!canPreview || !activePair) return;
+    if (!canPreview || !activePair || !selectedPreviewFile) return;
     const abortController = new AbortController();
     const capturedMappings = JSON.parse(previewMappingsFingerprint) as FieldMapping[];
     const timer = setTimeout(async () => {
@@ -582,7 +582,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
           workbookId,
           activePair.sourceId as DataFolderId,
           activePair.destId as DataFolderId,
-          selectedPreviewFile!,
+          selectedPreviewFile,
           columnMappings,
           recordMatching,
         );

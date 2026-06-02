@@ -42,7 +42,12 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const { data, error, isLoading, mutate } = useSWR<Workbook, Error>(
     id ? SWR_KEYS.workbook.detail(id) : null,
-    () => workbookApi.detail(id!),
+    () => {
+      if (!id) {
+        throw new Error('Workbook ID is required');
+      }
+      return workbookApi.detail(id);
+    },
     {
       revalidateOnFocus: false,
     },

@@ -167,7 +167,8 @@ async function notifyCompletedJobs(workbookId: string, disappearedIds: string[])
 
     if (job.state === 'completed') {
       const progress = job.publicProgress as Record<string, unknown> | undefined;
-      const tables = Array.isArray(progress?.tables) ? (progress!.tables as Array<{ warnings?: unknown[] }>) : [];
+      const progressTables = progress?.tables;
+      const tables = Array.isArray(progressTables) ? (progressTables as Array<{ warnings?: unknown[] }>) : [];
       const hasWarnings = tables.some((t) => t.warnings && t.warnings.length > 0);
 
       if (hasWarnings) {

@@ -21,9 +21,12 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
     error,
     isLoading,
     mutate: mutateConnectorAccounts,
-  } = useSWR<ConnectorAccount[], Error>(workbookId ? SWR_KEYS.connectorAccounts.list(workbookId) : null, () =>
-    connectorAccountsApi.list(workbookId!),
-  );
+  } = useSWR<ConnectorAccount[], Error>(workbookId ? SWR_KEYS.connectorAccounts.list(workbookId) : null, () => {
+    if (!workbookId) {
+      throw new Error('workbookId is required');
+    }
+    return connectorAccountsApi.list(workbookId);
+  });
 
   const createConnectorAccount = async (dto: CreateConnectorAccountDto): Promise<ConnectorAccount> => {
     if (!workbookId) {
@@ -106,7 +109,12 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
 export const useConnectorAccount = (workbookId: string | undefined, id?: string) => {
   const { data, error, isLoading } = useSWR<ConnectorAccount, Error>(
     workbookId && id ? SWR_KEYS.connectorAccounts.detail(workbookId, id) : null,
-    () => connectorAccountsApi.detail(workbookId!, id!),
+    () => {
+      if (!workbookId || !id) {
+        throw new Error('workbookId and id are required');
+      }
+      return connectorAccountsApi.detail(workbookId, id);
+    },
   );
 
   return {

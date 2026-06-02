@@ -367,7 +367,7 @@ export function RunsView() {
                     onToggle={() => toggleExpanded(getJobKey(job))}
                     isDevToolsEnabled={isDevToolsEnabled}
                     isCanceling={job.bullJobId ? cancelingJobIds.has(job.bullJobId) : false}
-                    onCancel={job.bullJobId ? () => handleCancelJob(job.bullJobId!) : undefined}
+                    onCancel={job.bullJobId ? () => job.bullJobId && handleCancelJob(job.bullJobId) : undefined}
                   />
                 ))}
               </Table.Tbody>
@@ -691,7 +691,7 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity;
   const isJobActive = ACTIVE_STATES.has(job.state);
   const { data: publishPlan, isLoading: loading } = useSWR(
     job.bullJobId ? ['publish-plan', workbookId, job.bullJobId] : null,
-    () => workbookApi.getPublishPlanByJobId(workbookId, job.bullJobId!),
+    () => (job.bullJobId ? workbookApi.getPublishPlanByJobId(workbookId, job.bullJobId) : undefined),
     { refreshInterval: isJobActive ? 2000 : 0 },
   );
   const [operationsModalPublishPlanId, setOperationsModalPublishPlanId] = useState<string | null>(null);

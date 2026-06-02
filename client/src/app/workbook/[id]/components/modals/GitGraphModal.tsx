@@ -271,7 +271,8 @@ const GitGraphRenderer = ({ data }: { data: GraphData }) => {
               // Always pick the oldest available commit to keep chronological order
               queue.sort((a, b) => a.timestamp - b.timestamp);
 
-              const current = queue.shift()!;
+              const current = queue.shift();
+              if (!current) break;
               sortedCommits.push(current);
 
               const children = childrenMap.get(current.oid) || [];
@@ -280,8 +281,8 @@ const GitGraphRenderer = ({ data }: { data: GraphData }) => {
                 inDegree.set(childOid, currentInDegree);
 
                 if (currentInDegree === 0) {
-                  const child = commitMap.get(childOid)!;
-                  queue.push(child);
+                  const child = commitMap.get(childOid);
+                  if (child) queue.push(child);
                 }
               }
             }

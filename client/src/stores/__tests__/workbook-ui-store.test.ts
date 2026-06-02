@@ -40,6 +40,7 @@ describe('toggleHiddenFiles', () => {
     // Verify localStorage contains the value
     const stored = localStorage.getItem('workbook-ui-store');
     expect(stored).toBeTruthy();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const parsed = JSON.parse(stored!) as { state: { showHiddenConnections: string[] } };
     expect(parsed.state.showHiddenConnections).toContain('conn-1');
   });

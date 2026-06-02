@@ -6,7 +6,12 @@ import useSWR from 'swr';
 export function usePublishPlan(workbookId: WorkbookId | undefined, planId: string | undefined) {
   const { data, error, isLoading, mutate } = useSWR<PublishPlanEntity | null, Error>(
     workbookId && planId ? SWR_KEYS.publishPlans.detail(workbookId, planId) : null,
-    () => workbookApi.getPublishPlan(workbookId!, planId!),
+    () => {
+      if (!workbookId || !planId) {
+        throw new Error('workbookId and planId are required');
+      }
+      return workbookApi.getPublishPlan(workbookId, planId);
+    },
   );
 
   return { publishPlan: data ?? null, error, isLoading, refresh: mutate };

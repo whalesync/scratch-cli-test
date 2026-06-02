@@ -76,11 +76,11 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
   // Fetch resolved FK references for both branches
   const { data: mainRefs } = useSWR(
     showReferences && filePath ? SWR_KEYS.files.resolveReferences(workbookId, filePath, 'main') : null,
-    () => filesApi.resolveReferences(workbookId, filePath!, 'main').then((r) => r.references),
+    () => (filePath ? filesApi.resolveReferences(workbookId, filePath, 'main').then((r) => r.references) : undefined),
   );
   const { data: dirtyRefs } = useSWR(
     showReferences && filePath ? SWR_KEYS.files.resolveReferences(workbookId, filePath, 'dirty') : null,
-    () => filesApi.resolveReferences(workbookId, filePath!, 'dirty').then((r) => r.references),
+    () => (filePath ? filesApi.resolveReferences(workbookId, filePath, 'dirty').then((r) => r.references) : undefined),
   );
 
   // Confirm dialog

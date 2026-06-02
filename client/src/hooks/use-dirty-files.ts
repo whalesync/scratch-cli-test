@@ -13,7 +13,12 @@ export interface UseDirtyFilesReturn {
 export const useDirtyFiles = (workbookId: WorkbookId | null): UseDirtyFilesReturn => {
   const { data, error, isLoading, mutate } = useSWR<DirtyFile[], Error>(
     workbookId ? SWR_KEYS.dirtyFiles.list(workbookId) : null,
-    () => workbookApi.getStatus(workbookId!),
+    () => {
+      if (!workbookId) {
+        throw new Error('workbookId is required');
+      }
+      return workbookApi.getStatus(workbookId);
+    },
     {
       revalidateOnFocus: false,
     },

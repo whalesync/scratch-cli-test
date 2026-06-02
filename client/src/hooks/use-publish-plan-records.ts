@@ -12,13 +12,17 @@ export function usePublishPlanRecords(
     workbookId && planId
       ? SWR_KEYS.publishPlans.records(workbookId, planId, options.page, options.dataFolderId, options.phase)
       : null,
-    () =>
-      workbookApi.listPublishPlanRecords(workbookId!, planId!, {
+    () => {
+      if (!workbookId || !planId) {
+        throw new Error('workbookId and planId are required');
+      }
+      return workbookApi.listPublishPlanRecords(workbookId, planId, {
         page: options.page,
         pageSize: options.pageSize,
         dataFolderId: options.dataFolderId,
         phase: options.phase,
-      }),
+      });
+    },
   );
 
   return { records: data, error, isLoading, refresh: mutate };

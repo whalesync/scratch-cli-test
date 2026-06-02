@@ -24,11 +24,14 @@ export const useConnectionQuota = (
   connectionId: string | null | undefined,
   enabled: boolean,
 ): UseConnectionQuotaReturn => {
-  const shouldFetch = enabled && Boolean(workbookId) && Boolean(connectionId);
-
   const { data, error, isLoading, mutate } = useSWR<ApiQuotaResponse, Error>(
-    shouldFetch ? SWR_KEYS.connectorAccounts.quota(workbookId!, connectionId!) : null,
-    () => connectorAccountsApi.getQuota(workbookId!, connectionId!),
+    enabled && workbookId && connectionId ? SWR_KEYS.connectorAccounts.quota(workbookId, connectionId) : null,
+    () => {
+      if (!workbookId || !connectionId) {
+        throw new Error('workbookId and connectionId are required');
+      }
+      return connectorAccountsApi.getQuota(workbookId, connectionId);
+    },
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,

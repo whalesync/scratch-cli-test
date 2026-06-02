@@ -635,7 +635,7 @@ export function TransformerConfigModal({
                   <TransformerStepFormGeneric
                     allMetadata={transformerMetadata ?? []}
                     config={currentConfigs[editIndex]}
-                    onChange={(c) => updateAt(editIndex!, c)}
+                    onChange={(c) => editIndex != null && updateAt(editIndex, c)}
                     allFolders={allFolders}
                   />
                 </>

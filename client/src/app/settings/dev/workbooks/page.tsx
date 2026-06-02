@@ -55,7 +55,7 @@ function ConnectionRowActions({
     id: connection.id,
     displayName: connection.displayName,
     service: connection.service,
-    repoPath: connection.repoPath!,
+    repoPath: connection.repoPath ?? '',
     // authType is not available on AdminWorkbookConnectionDto, so reconnection will not be shown in admin view.
     // This is intentional as admins don't typically reauthorize connections.
   };

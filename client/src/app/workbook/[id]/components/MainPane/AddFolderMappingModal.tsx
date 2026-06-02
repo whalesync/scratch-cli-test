@@ -72,6 +72,9 @@ export function AddFolderMappingModal({ opened, onClose, onConfirm, allFolders }
 
   const getConnectorService = (id: string | null) => allFolders.find((f) => f.id === id)?.connectorService ?? null;
 
+  const sourceConnectorService = getConnectorService(sourceId);
+  const destConnectorService = getConnectorService(destId);
+
   const handleConfirm = () => {
     if (sourceId && destId) {
       onConfirm(sourceId, destId);
@@ -92,9 +95,7 @@ export function AddFolderMappingModal({ opened, onClose, onConfirm, allFolders }
             onChange={setSourceId}
             renderOption={renderFolderOption}
             leftSection={
-              getConnectorService(sourceId) ? (
-                <ConnectorIcon connector={getConnectorService(sourceId)!} size={16} p={0} />
-              ) : undefined
+              sourceConnectorService ? <ConnectorIcon connector={sourceConnectorService} size={16} p={0} /> : undefined
             }
             searchable
           />
@@ -108,9 +109,7 @@ export function AddFolderMappingModal({ opened, onClose, onConfirm, allFolders }
             onChange={setDestId}
             renderOption={renderFolderOption}
             leftSection={
-              getConnectorService(destId) ? (
-                <ConnectorIcon connector={getConnectorService(destId)!} size={16} p={0} />
-              ) : undefined
+              destConnectorService ? <ConnectorIcon connector={destConnectorService} size={16} p={0} /> : undefined
             }
             searchable
           />

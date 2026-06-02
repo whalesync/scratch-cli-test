@@ -23,7 +23,12 @@ export const useFolderFileList = (
 ): UseFolderFileListReturn => {
   const { data, error, isLoading, mutate } = useSWR<ListFilesResponseDto, Error>(
     workbookId && folderId ? SWR_KEYS.files.listByFolder(workbookId, folderId) : null,
-    () => filesApi.listFilesByFolder(workbookId!, folderId!),
+    () => {
+      if (!workbookId || !folderId) {
+        throw new Error('workbookId and folderId are required');
+      }
+      return filesApi.listFilesByFolder(workbookId, folderId);
+    },
     {
       revalidateOnFocus: false,
     },

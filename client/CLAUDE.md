@@ -1,5 +1,9 @@
 # Client-Specific Rules
 
+## Code style
+
+- Do not use non-null assertions (`x!`) in production code — the `@typescript-eslint/no-non-null-assertion` rule is enabled and will fail lint. Use a real guard (`if (!x) throw …` / early return), narrow with a type predicate, or restructure to capture the value during the existence check. Non-null assertions are only permitted in unit/integration test files, and even there must be paired with an `// eslint-disable-next-line @typescript-eslint/no-non-null-assertion` comment.
+
 ## UI Component System
 
 **CRITICAL**: Before writing ANY UI code, you MUST read the UI system documentation.

@@ -22,8 +22,9 @@ export function usePersistedSort<T>(
   const sortedItems = useMemo(() => {
     if (!items) return [];
     return [...items].sort((a, b) => {
-      const aValue = getters?.[sort.field] ? getters[sort.field]!(a) : a[sort.field];
-      const bValue = getters?.[sort.field] ? getters[sort.field]!(b) : b[sort.field];
+      const getterForSortField = getters?.[sort.field];
+      const aValue = getterForSortField ? getterForSortField(a) : a[sort.field];
+      const bValue = getterForSortField ? getterForSortField(b) : b[sort.field];
 
       if (aValue == null && bValue == null) return 0;
       if (aValue == null) return 1;

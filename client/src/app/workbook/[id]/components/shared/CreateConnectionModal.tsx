@@ -418,13 +418,17 @@ export const CreateConnectionModal = (props: CreateConnectionModalProps) => {
             </>
           )}
           {/* Setup guide link from connector metadata */}
-          {newService && metadata?.[newService]?.setupGuide && (
-            <Alert color="blue" title="Setup Guide">
-              <Anchor href={metadata[newService].setupGuide!.url} target="_blank" rel="noreferrer">
-                {metadata[newService].setupGuide!.label}
-              </Anchor>
-            </Alert>
-          )}
+          {(() => {
+            const setupGuide = newService ? metadata?.[newService]?.setupGuide : undefined;
+            if (!setupGuide) return null;
+            return (
+              <Alert color="blue" title="Setup Guide">
+                <Anchor href={setupGuide.url} target="_blank" rel="noreferrer">
+                  {setupGuide.label}
+                </Anchor>
+              </Alert>
+            );
+          })()}
           {/* Data-driven credential fields for the current auth method */}
           {currentFields.length > 0 && <Stack>{currentFields.map((field) => renderField(field))}</Stack>}
         </Stack>

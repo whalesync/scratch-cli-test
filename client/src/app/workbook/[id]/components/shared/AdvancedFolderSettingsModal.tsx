@@ -156,7 +156,12 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
     opened && workbookId && folder.connectorAccountId
       ? SWR_KEYS.connectorAccounts.tables(workbookId, folder.connectorAccountId)
       : null,
-    () => connectorAccountsApi.listTables(workbookId!, folder.connectorAccountId!),
+    () => {
+      if (!workbookId || !folder.connectorAccountId) {
+        throw new Error('listTables fetcher requires a workbookId and connectorAccountId');
+      }
+      return connectorAccountsApi.listTables(workbookId, folder.connectorAccountId);
+    },
     { revalidateOnFocus: false },
   );
 

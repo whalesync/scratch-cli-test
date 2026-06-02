@@ -401,7 +401,7 @@ export function PublishPlansList({
                                     maxWidth: '200px',
                                   }}
                                 >
-                                  {(p.job.progress as { publicProgress?: { step?: string } }).publicProgress!.step}
+                                  {(p.job.progress as { publicProgress?: { step?: string } }).publicProgress?.step}
                                 </Text>
                               )}
                             {adminMode && p.bullJob && (

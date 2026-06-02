@@ -28,11 +28,14 @@ export function usePublishPlanRecordDiff(
   const { data, error, isLoading } = useSWR<{ original: string | null; modified: string | null }, Error>(
     canFetch ? ['publish-plan-record-diff', workbookId, planId, connectorAccountId, filePath, mode] : null,
     async () => {
-      const originalRef = `main_pre_plan_${planId!}`;
-      const modifiedRef = mode === 'old-vs-new' ? `main_plan_${planId!}` : `dirty_plan_${planId!}`;
+      if (!workbookId || !planId || !filePath || !connectorAccountId) {
+        throw new Error('workbookId, planId, filePath, and connectorAccountId are required');
+      }
+      const originalRef = `main_pre_plan_${planId}`;
+      const modifiedRef = mode === 'old-vs-new' ? `main_plan_${planId}` : `dirty_plan_${planId}`;
       const [originalRes, modifiedRes] = await Promise.allSettled([
-        workbookApi.getRepoFile(workbookId!, filePath!, originalRef, connectorAccountId!),
-        workbookApi.getRepoFile(workbookId!, filePath!, modifiedRef, connectorAccountId!),
+        workbookApi.getRepoFile(workbookId, filePath, originalRef, connectorAccountId),
+        workbookApi.getRepoFile(workbookId, filePath, modifiedRef, connectorAccountId),
       ]);
       return {
         original: originalRes.status === 'fulfilled' ? (originalRes.value?.content ?? null) : null,

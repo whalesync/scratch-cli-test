@@ -314,10 +314,11 @@ function ReviewTableNode({ folder, workbookId, connectorAccountId, dirtyFilePath
 
   // Build file list directly from dirtyFilePaths — no API call
   const dirtyFiles = useMemo(() => {
-    if (!folder.path) return [];
+    const folderPath = folder.path;
+    if (!folderPath) return [];
     const files: { path: string; name: string; status: FileDiffStatus }[] = [];
     dirtyFilePaths.forEach((status, dirtyPath) => {
-      if (fileMatchesFolder(folder.path!, dirtyPath)) {
+      if (fileMatchesFolder(folderPath, dirtyPath)) {
         const parts = dirtyPath.split('/');
         files.push({ path: dirtyPath, name: parts[parts.length - 1], status });
       }

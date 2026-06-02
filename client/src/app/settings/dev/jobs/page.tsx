@@ -121,10 +121,14 @@ function buildJobTree(jobs: Job[]): TreeNode[] {
   for (const job of jobs) {
     const parentId = job.runContext?.parentJobId;
     const key = job.dbJobId ?? '';
-    const node = nodeMap.get(key)!;
+    const node = nodeMap.get(key);
+    if (!node) {
+      throw new Error(`Job tree node missing for key: ${key}`);
+    }
 
-    if (parentId && nodeMap.has(parentId)) {
-      nodeMap.get(parentId)!.children.push(node);
+    const parentNode = parentId ? nodeMap.get(parentId) : undefined;
+    if (parentNode) {
+      parentNode.children.push(node);
     } else {
       roots.push(node);
     }
@@ -146,10 +150,12 @@ function groupJobsByRunId(jobs: Job[]): RunGroup[] {
 
   for (const job of jobs) {
     const key = job.runId ?? job.dbJobId ?? 'unknown';
-    if (!groupMap.has(key)) {
-      groupMap.set(key, []);
+    let jobsForRun = groupMap.get(key);
+    if (!jobsForRun) {
+      jobsForRun = [];
+      groupMap.set(key, jobsForRun);
     }
-    groupMap.get(key)!.push(job);
+    jobsForRun.push(job);
   }
 
   const groups: RunGroup[] = [];
@@ -522,7 +528,7 @@ function JobTreeRows({
                   variant="subtle"
                   color="red"
                   disabled={cancelingJobIds.has(job.bullJobId)}
-                  onClick={() => onCancelJob(job.bullJobId!)}
+                  onClick={() => job.bullJobId && onCancelJob(job.bullJobId)}
                 >
                   <SquareIcon size={16} />
                 </ActionIcon>
@@ -546,7 +552,9 @@ function JobTreeRows({
 }
 
 function JobRawModal({ jobId, onClose }: { jobId: string | null; onClose: () => void }) {
-  const { data, isLoading } = useSWR(jobId ? SWR_KEYS.jobs.raw(jobId) : null, () => jobApi.getJobRaw(jobId!));
+  const { data, isLoading } = useSWR(jobId ? SWR_KEYS.jobs.raw(jobId) : null, () =>
+    jobId ? jobApi.getJobRaw(jobId) : null,
+  );
 
   return (
     <Modal opened={!!jobId} onClose={onClose} title="Raw Job Data" size="xl">

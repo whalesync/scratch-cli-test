@@ -157,10 +157,17 @@ function groupTables(tables: TablePreview[]): TableGroup[] | null {
     const group = parts[0] || '';
     const subGroup = parts.length > 1 ? parts.slice(1).join('/') : '';
 
-    if (!groupMap.has(group)) groupMap.set(group, new Map());
-    const subMap = groupMap.get(group)!;
-    if (!subMap.has(subGroup)) subMap.set(subGroup, []);
-    subMap.get(subGroup)!.push(table);
+    let subMap = groupMap.get(group);
+    if (!subMap) {
+      subMap = new Map();
+      groupMap.set(group, subMap);
+    }
+    let tablesInSubGroup = subMap.get(subGroup);
+    if (!tablesInSubGroup) {
+      tablesInSubGroup = [];
+      subMap.set(subGroup, tablesInSubGroup);
+    }
+    tablesInSubGroup.push(table);
   }
 
   const sorted = Array.from(groupMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));

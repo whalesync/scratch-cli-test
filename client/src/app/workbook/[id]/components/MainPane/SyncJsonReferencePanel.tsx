@@ -33,12 +33,14 @@ export function SyncJsonReferencePanel({
         if (typeof tm.destinationDataFolderId === 'string') folderIds.add(tm.destinationDataFolderId);
       }
 
-      return Array.from(folderIds)
-        .map((id) => {
-          const folder = allFolders.find((f) => f.id === id);
-          return { id, folder };
-        })
-        .filter((entry) => entry.folder);
+      const resolvedFolders: { id: string; folder: DataFolder }[] = [];
+      for (const id of folderIds) {
+        const folder = allFolders.find((f) => f.id === id);
+        if (folder) {
+          resolvedFolders.push({ id, folder });
+        }
+      }
+      return resolvedFolders;
     } catch {
       return [];
     }
@@ -83,10 +85,10 @@ export function SyncJsonReferencePanel({
             <Stack gap="xs">
               {referencedFolders.map(({ id, folder }) => (
                 <Group key={id} gap="xs" wrap="nowrap">
-                  <ConnectorIcon connector={folder!.connectorService} size={16} p={0} style={{ flexShrink: 0 }} />
+                  <ConnectorIcon connector={folder.connectorService} size={16} p={0} style={{ flexShrink: 0 }} />
                   <Box style={{ minWidth: 0 }}>
                     <Text size="xs" truncate>
-                      {folder!.name}
+                      {folder.name}
                     </Text>
                     <Text size="xs" c="dimmed" ff="monospace" truncate>
                       {id}

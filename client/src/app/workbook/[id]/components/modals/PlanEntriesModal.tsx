@@ -224,76 +224,83 @@ export function PlanEntriesModal({
                       </Table.Td>
                     </Table.Tr>
                   ) : (
-                    operations.map((operation) => (
-                      <Table.Tr key={operation.id}>
-                        <Table.Td>
-                          <Badge color={PHASE_COLOR[operation.phase] ?? 'gray'} size="sm">
-                            {PHASE_LABEL[operation.phase] ?? operation.phase}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          {operation.phase === 'asset-upload' &&
-                          (operation.content as { rehostedUrl?: string })?.rehostedUrl ? (
-                            <Text
-                              size="xs"
-                              ff="monospace"
-                              c="blue"
-                              component="a"
-                              href={(operation.content as { rehostedUrl: string }).rehostedUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ textDecoration: 'underline' }}
+                    operations.map((operation) => {
+                      const operationError = operation.error;
+                      return (
+                        <Table.Tr key={operation.id}>
+                          <Table.Td>
+                            <Badge color={PHASE_COLOR[operation.phase] ?? 'gray'} size="sm">
+                              {PHASE_LABEL[operation.phase] ?? operation.phase}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            {operation.phase === 'asset-upload' &&
+                            (operation.content as { rehostedUrl?: string })?.rehostedUrl ? (
+                              <Text
+                                size="xs"
+                                ff="monospace"
+                                c="blue"
+                                component="a"
+                                href={(operation.content as { rehostedUrl: string }).rehostedUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ textDecoration: 'underline' }}
+                              >
+                                {operation.filePath} <ExternalLinkIcon size={10} style={{ display: 'inline' }} />
+                              </Text>
+                            ) : (
+                              <Text
+                                size="xs"
+                                ff="monospace"
+                                c="blue"
+                                style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                                onClick={() => setViewingRecordPath(operation.filePath)}
+                              >
+                                {operation.filePath}
+                              </Text>
+                            )}
+                          </Table.Td>
+                          <Table.Td>
+                            <Badge
+                              color={
+                                operation.status === 'success'
+                                  ? 'green'
+                                  : operation.status === 'failed'
+                                    ? 'red'
+                                    : 'gray'
+                              }
+                              variant="outline"
+                              size="sm"
                             >
-                              {operation.filePath} <ExternalLinkIcon size={10} style={{ display: 'inline' }} />
-                            </Text>
-                          ) : (
-                            <Text
-                              size="xs"
-                              ff="monospace"
-                              c="blue"
-                              style={{ cursor: 'pointer', textDecoration: 'underline' }}
-                              onClick={() => setViewingRecordPath(operation.filePath)}
-                            >
-                              {operation.filePath}
-                            </Text>
-                          )}
-                        </Table.Td>
-                        <Table.Td>
-                          <Badge
-                            color={
-                              operation.status === 'success' ? 'green' : operation.status === 'failed' ? 'red' : 'gray'
-                            }
-                            variant="outline"
-                            size="sm"
-                          >
-                            {operation.status}
-                          </Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          {operation.error && (
+                              {operation.status}
+                            </Badge>
+                          </Table.Td>
+                          <Table.Td>
+                            {operationError && (
+                              <Button
+                                size="xs"
+                                variant="subtle"
+                                color="red"
+                                leftSection={<AlertTriangleIcon size={12} />}
+                                onClick={() => setViewingError(operationError)}
+                              >
+                                View Error
+                              </Button>
+                            )}
+                          </Table.Td>
+                          <Table.Td>
                             <Button
                               size="xs"
                               variant="subtle"
-                              color="red"
-                              leftSection={<AlertTriangleIcon size={12} />}
-                              onClick={() => setViewingError(operation.error!)}
+                              leftSection={<CodeIcon size={12} />}
+                              onClick={() => setViewingOperation(operation)}
                             >
-                              View Error
+                              View JSON
                             </Button>
-                          )}
-                        </Table.Td>
-                        <Table.Td>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            leftSection={<CodeIcon size={12} />}
-                            onClick={() => setViewingOperation(operation)}
-                          >
-                            View JSON
-                          </Button>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })
                   )}
                 </Table.Tbody>
               </Table>

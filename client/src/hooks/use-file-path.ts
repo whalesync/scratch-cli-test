@@ -24,7 +24,12 @@ export const useFileByPath = (workbookId: WorkbookId | null, path: string | null
 
   const { data, error, isLoading, mutate } = useSWR<FileDetailsResponseDto, Error>(
     workbookId && path ? SWR_KEYS.files.detail(workbookId, path) : null,
-    () => filesApi.getFileByPath(workbookId!, path!),
+    () => {
+      if (!workbookId || !path) {
+        throw new Error('workbookId and path are required');
+      }
+      return filesApi.getFileByPath(workbookId, path);
+    },
     {
       revalidateOnFocus: false,
       keepPreviousData: true,

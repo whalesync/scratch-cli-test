@@ -14,12 +14,19 @@ export function usePublishPlanOperation(
   filePath: string | undefined,
   phase: string | undefined,
 ) {
-  const enabled = !!workbookId && !!planId && !!filePath && !!phase;
   const { data, error, isLoading } = useSWR<
     { data: PublishPlanOperationEntity[]; total: number; page: number; pageSize: number },
     Error
-  >(enabled ? SWR_KEYS.publishPlans.operation(workbookId!, planId!, filePath!, phase!) : null, () =>
-    workbookApi.listPublishPlanOperations(workbookId!, planId!, { filePath, phase, pageSize: 1 }),
+  >(
+    workbookId && planId && filePath && phase
+      ? SWR_KEYS.publishPlans.operation(workbookId, planId, filePath, phase)
+      : null,
+    () => {
+      if (!workbookId || !planId || !filePath || !phase) {
+        throw new Error('workbookId, planId, filePath, and phase are required');
+      }
+      return workbookApi.listPublishPlanOperations(workbookId, planId, { filePath, phase, pageSize: 1 });
+    },
   );
 
   return { operation: data?.data?.[0] ?? null, error, isLoading };

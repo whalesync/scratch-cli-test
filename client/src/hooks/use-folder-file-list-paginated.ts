@@ -36,8 +36,11 @@ export const useFolderFileListPaginated = (
 
   const fetcher = useCallback(
     (key: readonly string[]) => {
+      if (!workbookId || !folderId) {
+        throw new Error('workbookId and folderId are required');
+      }
       const cursor = key[key.length - 1] || undefined;
-      return filesApi.listFilesByFolder(workbookId!, folderId!, { cursor, limit: pageSize });
+      return filesApi.listFilesByFolder(workbookId, folderId, { cursor, limit: pageSize });
     },
     [workbookId, folderId, pageSize],
   );

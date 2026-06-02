@@ -19,7 +19,12 @@ export interface UseDataFolderReturn {
 export const useDataFolder = (dataFolderId: DataFolderId | null): UseDataFolderReturn => {
   const { data, error, isLoading, mutate } = useSWR<DataFolder, Error>(
     dataFolderId ? SWR_KEYS.dataFolders.detail(dataFolderId) : null,
-    () => dataFolderApi.findOne(dataFolderId!),
+    () => {
+      if (!dataFolderId) {
+        throw new Error('dataFolderId is required');
+      }
+      return dataFolderApi.findOne(dataFolderId);
+    },
     {
       revalidateOnFocus: false,
     },

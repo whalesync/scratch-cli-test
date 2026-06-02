@@ -31,9 +31,10 @@ export function getDirtyDataFolderIds(dirtyFiles: DirtyFile[], dataFolderGroups:
   const dataFolderIds: DataFolderId[] = [];
   dataFolderGroups.forEach((group) => {
     group.dataFolders.forEach((folder) => {
-      if (!folder.path) return;
+      const folderPath = folder.path;
+      if (!folderPath) return;
       const hit = dirtyFiles.some(
-        (file) => file.connectorAccountId === folder.connectorAccountId && fileMatchesFolder(folder.path!, file.path),
+        (file) => file.connectorAccountId === folder.connectorAccountId && fileMatchesFolder(folderPath, file.path),
       );
       if (hit) dataFolderIds.push(folder.id);
     });
