@@ -170,6 +170,7 @@ Redis pub/sub → WebSocket gateway → connected clients. Multiple server insta
 - React Strict Mode runs components twice in dev (affects debugging)
 - Feature flags: OpenFeature + PostHog — do NOT enable "Persist flag across authentication steps" (causes errors)
 - Connection credentials are encrypted with `ENCRYPTION_MASTER_KEY`
+- **Inspecting a live database (read-only):** It is OK to connect to the prod (or test/staging) database to debug user issues or investigate live data using `terraform/tools/connect_to_gcp_db_readonly.sh <env>` (`env` = `test`|`staging`|`production`). It opens an IAP SSH tunnel and connects as the `readonly` Postgres user against the `scratchpad` database with read-only guardrails (`default_transaction_read_only=on`, `statement_timeout=30s`). Pass a SQL string as the second argument for a one-shot query, or omit it for an interactive `psql` shell. Requires an authenticated `gcloud` CLI. This is read-only only — never use a read-write DB connection against prod.
 - Project management: [Linear](https://linear.app/whalesync/team/DEV)
 - When adding new data resources to a Workbook (database tables, git repos, files on disk, etc.), ensure they are cleaned up in `WorkbookService.delete` (`server/src/workbook/workbook.service.ts`). If the new table has a foreign key to Workbook with `onDelete: Cascade`, Prisma handles it automatically. Otherwise, add explicit deletion before the workbook record is deleted.
 
