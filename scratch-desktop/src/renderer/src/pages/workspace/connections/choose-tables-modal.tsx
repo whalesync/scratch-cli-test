@@ -89,10 +89,17 @@ function groupTables(tables: TablePreview[]): TableGroup[] | null {
     const parts = (table.parentPath || '').split('/');
     const group = parts[0] || '';
     const subGroup = parts.length > 1 ? parts.slice(1).join('/') : '';
-    if (!groupMap.has(group)) groupMap.set(group, new Map());
-    const subMap = groupMap.get(group)!;
-    if (!subMap.has(subGroup)) subMap.set(subGroup, []);
-    subMap.get(subGroup)!.push(table);
+    let subMap = groupMap.get(group);
+    if (!subMap) {
+      subMap = new Map();
+      groupMap.set(group, subMap);
+    }
+    let tablesForSubGroup = subMap.get(subGroup);
+    if (!tablesForSubGroup) {
+      tablesForSubGroup = [];
+      subMap.set(subGroup, tablesForSubGroup);
+    }
+    tablesForSubGroup.push(table);
   }
   return Array.from(groupMap.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))

@@ -142,6 +142,7 @@ describe('initAutoUpdater event forwarding', () => {
     expect(controller).not.toBeNull();
 
     // Manual check cycle: events should carry manual:true until terminal event.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     void controller!.checkForUpdates();
     eventHandlers.get('checking-for-update')?.();
     eventHandlers.get('update-not-available')?.({ version: '1.0.0' });

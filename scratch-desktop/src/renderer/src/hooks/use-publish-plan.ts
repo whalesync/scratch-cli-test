@@ -9,7 +9,12 @@ import { publishApi } from '../lib/publish-api';
 export function usePublishPlan(workbookId: string | undefined, planId: string | undefined) {
   const { data, error, isLoading, mutate } = useSWR<PublishPlanEntity | null, Error>(
     workbookId && planId ? ['publish-plan', workbookId, planId] : null,
-    () => publishApi.getPublishPlan(workbookId!, planId!),
+    () => {
+      if (!workbookId || !planId) {
+        throw new Error('workbookId and planId are required');
+      }
+      return publishApi.getPublishPlan(workbookId, planId);
+    },
   );
 
   return { publishPlan: data ?? null, error, isLoading, refresh: mutate };

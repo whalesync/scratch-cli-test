@@ -8,7 +8,10 @@ const SWR_KEY_PREFIX = 'connector-accounts';
 export function useConnectorAccounts(workbookId: string | undefined) {
   const { data, error, isLoading, mutate } = useSWR<ConnectorAccount[], Error>(
     workbookId ? [SWR_KEY_PREFIX, workbookId] : null,
-    () => connectorAccountsApi.list(workbookId!),
+    () => {
+      if (!workbookId) throw new Error('workbookId is required');
+      return connectorAccountsApi.list(workbookId);
+    },
     { revalidateOnFocus: false },
   );
 

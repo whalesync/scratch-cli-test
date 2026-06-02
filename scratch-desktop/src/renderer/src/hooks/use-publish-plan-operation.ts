@@ -18,9 +18,12 @@ export function usePublishPlanOperation(
   const { data, error, isLoading } = useSWR<
     { data: PublishPlanOperationEntity[]; total: number; page: number; pageSize: number },
     Error
-  >(canFetch ? ['publish-plan-operation', workbookId, planId, filePath, phase] : null, () =>
-    publishApi.listPublishPlanOperations(workbookId!, planId!, { filePath, phase, pageSize: 1 }),
-  );
+  >(canFetch ? ['publish-plan-operation', workbookId, planId, filePath, phase] : null, () => {
+    if (!workbookId || !planId) {
+      throw new Error('workbookId and planId are required');
+    }
+    return publishApi.listPublishPlanOperations(workbookId, planId, { filePath, phase, pageSize: 1 });
+  });
 
   return { operation: data?.data?.[0] ?? null, error, isLoading };
 }

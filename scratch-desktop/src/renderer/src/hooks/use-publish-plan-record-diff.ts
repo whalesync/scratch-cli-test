@@ -40,10 +40,13 @@ export function usePublishPlanRecordDiff(
   const { data, error, isLoading, isValidating } = useSWR<{ original: string | null; modified: string | null }, Error>(
     canFetch ? ['publish-plan-record-diff', workbookId, planId, connectorAccountId, filePath, mode] : null,
     async () => {
-      const refs = refsForMode(mode, planId!);
+      if (!workbookId || !planId || !filePath || !connectorAccountId) {
+        throw new Error('workbookId, planId, filePath, and connectorAccountId are required');
+      }
+      const refs = refsForMode(mode, planId);
       const [originalRes, modifiedRes] = await Promise.allSettled([
-        publishApi.getRepoFile(workbookId!, filePath!, refs.original, connectorAccountId!),
-        publishApi.getRepoFile(workbookId!, filePath!, refs.modified, connectorAccountId!),
+        publishApi.getRepoFile(workbookId, filePath, refs.original, connectorAccountId),
+        publishApi.getRepoFile(workbookId, filePath, refs.modified, connectorAccountId),
       ]);
       return {
         original: originalRes.status === 'fulfilled' ? (originalRes.value?.content ?? null) : null,
@@ -84,9 +87,12 @@ export function usePublishPlanPostDiffersFromCurrent(
   const { data, isLoading } = useSWR<{ differs: boolean | null }, Error>(
     canFetch ? ['publish-plan-post-vs-current', workbookId, planId, connectorAccountId, filePath] : null,
     async () => {
+      if (!workbookId || !planId || !filePath || !connectorAccountId) {
+        throw new Error('workbookId, planId, filePath, and connectorAccountId are required');
+      }
       const [postRes, currentRes] = await Promise.allSettled([
-        publishApi.getRepoFile(workbookId!, filePath!, `main_plan_${planId!}`, connectorAccountId!),
-        publishApi.getRepoFile(workbookId!, filePath!, 'main', connectorAccountId!),
+        publishApi.getRepoFile(workbookId, filePath, `main_plan_${planId}`, connectorAccountId),
+        publishApi.getRepoFile(workbookId, filePath, 'main', connectorAccountId),
       ]);
       const post = postRes.status === 'fulfilled' ? (postRes.value?.content ?? null) : null;
       const current = currentRes.status === 'fulfilled' ? (currentRes.value?.content ?? null) : null;

@@ -315,7 +315,7 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {rows!.map(({ phase, label, planned, done }) => {
+              {rows?.map(({ phase, label, planned, done }) => {
                 const isActive = phase === progress?.currentPhase;
                 const isComplete = done > 0 && done >= planned && planned > 0;
                 return (

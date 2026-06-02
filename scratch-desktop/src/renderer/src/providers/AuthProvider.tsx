@@ -177,7 +177,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const cliAuthorizeUrl = `${initResp.verificationUrl}?code=${initResp.userCode}&client=desktop`;
+      const userCode = initResp.userCode;
+      const cliAuthorizeUrl = `${initResp.verificationUrl}?code=${userCode}&client=desktop`;
       let verificationUrlWithCode: string;
       if (opts?.signUp) {
         const webUrl = (import.meta.env.VITE_SCRATCH_WEB_URL as string) || 'http://localhost:3000';
@@ -187,7 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setAuthFlow((prev) => ({
         ...prev,
-        userCode: initResp.userCode!,
+        userCode,
         verificationUrl: verificationUrlWithCode,
       }));
 

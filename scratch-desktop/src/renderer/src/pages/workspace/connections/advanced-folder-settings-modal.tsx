@@ -61,7 +61,10 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder, workbookI
 
   const { data: tableList, isLoading: isLoadingMetadata } = useSWR<TableList>(
     opened && folder.connectorAccountId ? ['tables', workbookId, folder.connectorAccountId] : null,
-    () => connectorAccountsApi.listTables(workbookId, folder.connectorAccountId!),
+    () => {
+      if (!folder.connectorAccountId) throw new Error('connectorAccountId is required');
+      return connectorAccountsApi.listTables(workbookId, folder.connectorAccountId);
+    },
     { revalidateOnFocus: false },
   );
 

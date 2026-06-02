@@ -27,9 +27,13 @@ describe('parseWorkspaceNeedsReinitPayload', () => {
     });
     const parsed = parseWorkspaceNeedsReinitPayload(stdout);
     expect(parsed).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.status).toBe('workspace_needs_reinit');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.affectedConnections).toEqual(['HubSpot', 'Stripe']);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.connectionsWithMasterWorktree).toEqual(['HubSpot']);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.connectionsWithSparseCheckout).toEqual(['Stripe']);
   });
 
@@ -38,6 +42,7 @@ describe('parseWorkspaceNeedsReinitPayload', () => {
     const stderr = 'Error: This workspace was created on an older version of Scratch and needs to be reinitialized.\n';
     const parsed = parseWorkspaceNeedsReinitPayload(stdout, stderr);
     expect(parsed).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.affectedConnections).toEqual([]);
   });
 

@@ -24,14 +24,18 @@ export function usePublishPlanRecords(
           options.filename ?? '',
         ]
       : null,
-    () =>
-      publishApi.listPublishPlanRecords(workbookId!, planId!, {
+    () => {
+      if (!workbookId || !planId) {
+        throw new Error('workbookId and planId are required');
+      }
+      return publishApi.listPublishPlanRecords(workbookId, planId, {
         page: options.page,
         pageSize: options.pageSize,
         dataFolderId: options.dataFolderId,
         phase: options.phase,
         filename: options.filename,
-      }),
+      });
+    },
     {
       // Keep the previous page's response visible during refetch so the
       // left-panel summary (Affected Records, Total Operations, the

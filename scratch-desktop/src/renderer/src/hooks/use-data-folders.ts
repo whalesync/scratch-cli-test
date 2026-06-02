@@ -8,7 +8,10 @@ const SWR_KEY_PREFIX = 'data-folders';
 export function useDataFolders(workbookId: string | undefined) {
   const { data, error, isLoading, mutate } = useSWR<DataFolderGroup[], Error>(
     workbookId ? [SWR_KEY_PREFIX, workbookId] : null,
-    () => dataFoldersApi.list(workbookId!),
+    () => {
+      if (!workbookId) throw new Error('workbookId is required');
+      return dataFoldersApi.list(workbookId);
+    },
     { revalidateOnFocus: false },
   );
 

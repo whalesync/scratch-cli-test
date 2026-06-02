@@ -179,7 +179,8 @@ class ReviewRefreshQueue {
     this.draining = true;
     try {
       while (this.pending.length > 0) {
-        const item = this.pending.shift()!;
+        const item = this.pending.shift();
+        if (!item) break;
         const key = this.itemKey(item.workspacePath, item.folderRelPath);
         // Drop from pendingMembership *before* the run so a new enqueue for
         // the same key while we're in flight goes through the in-flight

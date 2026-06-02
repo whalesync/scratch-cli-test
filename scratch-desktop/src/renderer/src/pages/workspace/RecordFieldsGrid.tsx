@@ -238,7 +238,7 @@ function InlineValueCell({ row, mode = 'source' }: { row: RecordFieldRow; mode?:
         onKeyDown: (e: React.KeyboardEvent) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            row.onClick!();
+            row.onClick?.();
           }
         },
         style: { cursor: 'text' as const },
@@ -669,7 +669,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                     ? (e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          focusedRow.onClick!();
+                          focusedRow.onClick?.();
                         }
                       }
                     : undefined
@@ -705,7 +705,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
                     ? (e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          focusedRow.onClick!();
+                          focusedRow.onClick?.();
                         }
                       }
                     : undefined
@@ -932,7 +932,7 @@ function SideBySideValueCells({ row, mode = 'source' }: { row: RecordFieldRow; m
         onKeyDown: (e: React.KeyboardEvent) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            row.onClick!();
+            row.onClick?.();
           }
         },
         style: { cursor: 'text' as const },

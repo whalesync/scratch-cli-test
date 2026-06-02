@@ -61,6 +61,8 @@ Before implementing or modifying any React UI in the renderer, read [`UI_SYSTEM.
 - **React Fast Refresh**: a `.tsx` module that exports a component must not also export non-components (constants, plain functions, etc.) — ESLint enforces this via `react-refresh/only-export-components`. Put shared helpers, hooks, and values in a sibling `.ts` file (or a module that only exports non-components) and import them where needed.
 - Do not use `as any` — use proper type assertions (`as string`, etc.)
 - Use `console.debug` for development logging, not `console.log`
+- Do not use non-null assertions (`x!`) in production code — the `@typescript-eslint/no-non-null-assertion` rule is enabled and will fail lint. Use a real guard (`if (!x) throw …` / early return), narrow with a type predicate, or restructure to capture the value during the existence check. Non-null assertions are only permitted in unit/integration test files, and even there must be paired with an `// eslint-disable-next-line @typescript-eslint/no-non-null-assertion` comment.
+
 
 ## State Management
 

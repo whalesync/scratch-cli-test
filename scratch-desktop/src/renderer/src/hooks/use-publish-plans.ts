@@ -10,7 +10,10 @@ import { publishApi } from '../lib/publish-api';
 export function usePublishPlans(workbookId: string | undefined, options?: { refreshInterval?: number }) {
   const { data, error, isLoading, mutate } = useSWR<PublishPlanEntity[], Error>(
     workbookId ? ['publish-plans', workbookId] : null,
-    () => publishApi.listPublishPlans(workbookId!),
+    () => {
+      if (!workbookId) throw new Error('workbookId is required');
+      return publishApi.listPublishPlans(workbookId);
+    },
     { refreshInterval: options?.refreshInterval ?? 2000 },
   );
 

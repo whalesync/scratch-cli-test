@@ -256,8 +256,9 @@ function ProblemsTab({
                             size="sm"
                             color="gray"
                             onClick={() => {
+                              if (!row.file_name) return;
                               const folderPath = `${workspacePath}/${selectedFolder.connection}/${selectedFolder.folder_path}`;
-                              onNavigateToField(folderPath, row.file_name!, row.field_path);
+                              onNavigateToField(folderPath, row.file_name, row.field_path);
                             }}
                           >
                             <ExternalLinkIcon size={14} />

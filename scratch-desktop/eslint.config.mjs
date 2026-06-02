@@ -33,6 +33,7 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unsafe-argument': 'error',
       '@typescript-eslint/no-unsafe-assignment': 'error',
+      '@typescript-eslint/no-non-null-assertion': 'error',
 
       // React hooks
       ...reactHooks.configs.recommended.rules,

@@ -30,9 +30,13 @@ describe('parseBlockedStalePayload', () => {
     });
     const parsed = parseBlockedStalePayload(stdout);
     expect(parsed).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.status).toBe('blocked_stale');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.blockedCount).toBe(1);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.connections[0].connectionName).toBe('HubSpot');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(parsed!.connections[0].currentRemoteHead).toBe('b'.repeat(40));
   });
 

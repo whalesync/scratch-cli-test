@@ -1841,6 +1841,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   }, [selectedFolderPath, validationByCell, workspacePath]);
 
   const filterCounts = diffData?.filterCounts;
+  const unreviewedRecordCount = filterCounts?.unreviewed ?? 0;
+  const totalProblemsStaleCount = diffData?.totalProblemsStaleCount ?? 0;
 
   const activeColumnFilters = useMemo(
     () =>
@@ -2845,10 +2847,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
               />
             )}
           </Group>
-          {validate && (diffData?.totalProblemsStaleCount ?? 0) > 0 && (
+          {validate && totalProblemsStaleCount > 0 && (
             <Text12Regular c="var(--fg-muted)">
-              {diffData!.totalProblemsStaleCount} record{diffData!.totalProblemsStaleCount === 1 ? '' : 's'} need
-              validation
+              {totalProblemsStaleCount} record{totalProblemsStaleCount === 1 ? '' : 's'} need validation
             </Text12Regular>
           )}
           {activeColumnFilters.map((filter) => (
@@ -2861,21 +2862,21 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
           <Box flex={1} />
 
-          {(filterCounts?.unreviewed ?? 0) > 0 && detailRowIndex === null && (
+          {unreviewedRecordCount > 0 && detailRowIndex === null && (
             <>
               <Divider orientation="vertical" />
               <Group gap="xs">
                 <UnstyledButton onClick={() => handleGlobalFilterToggle('unreviewed')} style={{ whiteSpace: 'nowrap' }}>
                   <Text12Regular c="var(--fg-link)" style={{ textDecoration: 'underline' }}>
-                    {filterCounts!.unreviewed} record{filterCounts!.unreviewed === 1 ? '' : 's'} need
-                    {filterCounts!.unreviewed === 1 ? 's' : ''} review
+                    {unreviewedRecordCount} record{unreviewedRecordCount === 1 ? '' : 's'} need
+                    {unreviewedRecordCount === 1 ? 's' : ''} review
                   </Text12Regular>
                 </UnstyledButton>
                 <ButtonSecondaryGhost size="compact-xs" c="green.8" onClick={() => setBulkActionConfirm('approve')}>
-                  {filterCounts!.unreviewed === 1 ? 'Approve' : 'Approve all'}
+                  {unreviewedRecordCount === 1 ? 'Approve' : 'Approve all'}
                 </ButtonSecondaryGhost>
                 <ButtonSecondaryGhost size="compact-xs" c="red.8" onClick={() => setBulkActionConfirm('reject')}>
-                  {filterCounts!.unreviewed === 1 ? 'Reject' : 'Reject all'}
+                  {unreviewedRecordCount === 1 ? 'Reject' : 'Reject all'}
                 </ButtonSecondaryGhost>
               </Group>
             </>
