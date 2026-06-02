@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -32,6 +32,39 @@ interface AirtablePullOptions extends PullRecordFilesOptions {
   filter?: string | undefined;
   // A view ID to pull records from. If not provided, all records will be pulled.
   view?: string | undefined;
+}
+
+/**
+ * Resolve the field name to use for the modified-since filter, preferring an
+ * explicit user setting over the schema-annotated auto-detection. Pure (no
+ * `this`) so both the connector instance and the REST-layer capability resolver
+ * can call it. A `null` tableSpec means no schema is on hand, so only an
+ * explicit `options.modifiedAtField` can resolve.
+ */
+export function resolveAirtableModifiedAtField(
+  options: PullRecordFilesOptions,
+  tableSpec: BaseJsonTableSpec | null,
+): string | undefined {
+  if (typeof options.modifiedAtField === 'string' && options.modifiedAtField.trim() !== '') {
+    return options.modifiedAtField.trim();
+  }
+  return tableSpec ? findLastModifiedFieldName(tableSpec) : undefined;
+}
+
+/**
+ * Three-state incremental-pull capability for Airtable. Airtable can always do
+ * incremental pulls once a last-modified field is known, so the only two
+ * outcomes are `SUPPORTED` (an explicit or auto-detected field exists) and
+ * `NEEDS_CONFIGURATION` (neither — the user must pick a field, or the table has
+ * no `lastModifiedTime` column to auto-detect).
+ */
+export function airtableIncrementalPullSupport(
+  options: PullRecordFilesOptions,
+  tableSpec: BaseJsonTableSpec | null,
+): IncrementalPullSupport {
+  return resolveAirtableModifiedAtField(options, tableSpec) !== undefined
+    ? IncrementalPullSupport.SUPPORTED
+    : IncrementalPullSupport.NEEDS_CONFIGURATION;
 }
 
 export class AirtableConnector extends Connector {
@@ -177,19 +210,11 @@ export class AirtableConnector extends Connector {
    * Without either, we can't build the `IS_AFTER` filter, so we report no
    * support and the job demotes the run to a full scan.
    */
-  override supportsIncrementalPull(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
-    return this.resolveModifiedAtField(options, tableSpec) !== undefined;
-  }
-
-  /**
-   * Resolve the field name to use for the modified-since filter, preferring an
-   * explicit user setting over the schema-annotated auto-detection.
-   */
-  private resolveModifiedAtField(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): string | undefined {
-    if (typeof options.modifiedAtField === 'string' && options.modifiedAtField.trim() !== '') {
-      return options.modifiedAtField.trim();
-    }
-    return findLastModifiedFieldName(tableSpec);
+  override incrementalPullSupport(
+    options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    return airtableIncrementalPullSupport(options, tableSpec);
   }
 
   async pullRecordFiles(
@@ -200,7 +225,7 @@ export class AirtableConnector extends Connector {
   ): Promise<PullRecordFilesResult> {
     const [baseId, tableId] = tableSpec.id.remoteId;
 
-    const modifiedAtField = this.resolveModifiedAtField(options, tableSpec);
+    const modifiedAtField = resolveAirtableModifiedAtField(options, tableSpec);
     const isIncremental =
       options.pullMode === 'incremental' && modifiedAtField !== undefined && options.since instanceof Date;
 
@@ -369,6 +394,8 @@ connectorRegistry.register({
   advancedSettings: AirtableConnector.advancedSettings,
   supportedAuthMethods: ['oauth', 'user_provided_params'],
   rateLimiterSpec: { points: 5, duration: 1 },
+  resolveIncrementalPullSupport: ({ options, tableSpec }) => airtableIncrementalPullSupport(options, tableSpec),
+  incrementalPullAutoDetectsFromSchema: true,
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Airtable', Service.AIRTABLE);

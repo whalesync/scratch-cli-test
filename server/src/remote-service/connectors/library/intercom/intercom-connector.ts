@@ -1,4 +1,4 @@
-import { connectorMetadata, ConnectorSettingDefinition } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
@@ -44,6 +44,19 @@ interface IntercomPullOptions extends PullRecordFilesOptions {
  *
  * API docs: https://developers.intercom.com/docs/references/rest-api/api.intercom.io/
  */
+/**
+ * Three-state incremental-pull capability for Intercom, keyed on the table.
+ * Only Conversations supports a server-side incremental pull
+ * (`POST /conversations/search` filters on `updated_at`); Articles and
+ * Collections have no modified-since filter, and there is no per-folder config
+ * that would change that — so they are `NOT_SUPPORTED` (never
+ * `NEEDS_CONFIGURATION`). `tableKey` is the table's wsId (equivalently
+ * `DataFolder.tableId[0]`).
+ */
+export function intercomIncrementalPullSupport(tableKey: string): IncrementalPullSupport {
+  return tableKey === 'conversations' ? IncrementalPullSupport.SUPPORTED : IncrementalPullSupport.NOT_SUPPORTED;
+}
+
 export class IntercomConnector extends Connector {
   readonly service = Service.INTERCOM;
   static readonly displayName = 'Intercom';
@@ -136,8 +149,11 @@ export class IntercomConnector extends Connector {
    * itself — `updated_at` is a fixed conversations system field, not
    * user-selectable, so there is no per-folder config to inspect.
    */
-  override supportsIncrementalPull(_options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
-    return tableSpec.id.wsId === 'conversations';
+  override incrementalPullSupport(
+    _options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    return tableSpec ? intercomIncrementalPullSupport(tableSpec.id.wsId) : IncrementalPullSupport.NOT_SUPPORTED;
   }
 
   async pullRecordFiles(
@@ -381,6 +397,7 @@ connectorRegistry.register({
   advancedSettings: IntercomConnector.advancedSettings,
   supportedAuthMethods: ['user_provided_params'],
   rateLimiterSpec: { points: 150, duration: 1 },
+  resolveIncrementalPullSupport: ({ tableId }) => intercomIncrementalPullSupport(tableId[0] ?? ''),
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

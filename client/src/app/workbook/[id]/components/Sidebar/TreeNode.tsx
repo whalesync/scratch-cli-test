@@ -21,6 +21,7 @@ import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@ma
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
+  IncrementalPullSupport,
   type ConnectorAccount,
   type DataFolder,
   type DataFolderGroup,
@@ -65,7 +66,7 @@ import { TestTransformerModal } from '../modals/TestTransformerModal';
 import { AdvancedFolderSettingsModal } from '../shared/AdvancedFolderSettingsModal';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { ConnectionContextMenu } from '../shared/ConnectionContextMenu';
-import { ContextMenu } from '../shared/ContextMenu';
+import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import { DataFolderInfoModal } from '../shared/DataFolderInfoModal';
 import { DataFolderSchemaModal } from '../shared/DataFolderSchemaModal';
 import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
@@ -80,6 +81,29 @@ import { ActiveDataFolderJobIndicator } from './ActiveDataFolderJobIndicator';
 const SCRATCH_GROUP_NAME = 'Scratch';
 const FILE_LIMIT = 200;
 const INDENT_PX = 10;
+
+/**
+ * Builds the "Pull this table - Incremental" context-menu item for a folder based on its
+ * server-computed {@link IncrementalPullSupport}, matching the desktop app's three-state behavior.
+ * The item is enabled and clickable only when incremental pulls are fully SUPPORTED;
+ * NEEDS_CONFIGURATION and NOT_SUPPORTED render as disabled items with distinct suffixes so the
+ * user knows whether configuring a last-modified field would unlock incremental pulls.
+ */
+function buildIncrementalPullTableMenuItem(
+  incrementalPullSupport: IncrementalPullSupport,
+  icon: ContextMenuItem['icon'],
+  onClick: () => void,
+): ContextMenuItem {
+  switch (incrementalPullSupport) {
+    case IncrementalPullSupport.SUPPORTED:
+      return { label: 'Pull this table - Incremental', icon, onClick };
+    case IncrementalPullSupport.NEEDS_CONFIGURATION:
+      return { label: 'Pull this table - Incremental (Needs Configuration)', icon, disabled: true };
+    case IncrementalPullSupport.NOT_SUPPORTED:
+    default:
+      return { label: 'Pull this table - Incremental (Not Supported)', icon, disabled: true };
+  }
+}
 
 // ============================================================================
 // Intermediate folder helpers
@@ -559,12 +583,11 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const { pullFolders, pullAssets } = useActiveWorkbook();
   const { isDevToolsEnabled } = useDevTools();
-  const { metadata } = useConnectorsMetadata();
   const { user } = useScratchPadUser();
-  const supportsIncrementalPull =
-    isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user) && folder.connectorService
-      ? Boolean(metadata?.[folder.connectorService]?.incrementalPull)
-      : false;
+  // Whether to surface the incremental-pull menu item at all. The three-state availability
+  // (supported / needs configuration / not supported) is then driven by the server-computed
+  // `folder.incrementalPullSupport`, matching the desktop app.
+  const incrementalPullExperimentEnabled = isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user);
 
   const nodeId = `table-${folder.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -848,13 +871,13 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
           position={contextMenu}
           items={[
             { label: 'Pull this table', icon: CloudDownloadIcon, onClick: handlePullTable },
-            ...(supportsIncrementalPull
+            ...(incrementalPullExperimentEnabled
               ? [
-                  {
-                    label: 'Pull this table (Incremental)',
-                    icon: CloudDownloadIcon,
-                    onClick: handlePullTableIncremental,
-                  },
+                  buildIncrementalPullTableMenuItem(
+                    folder.incrementalPullSupport,
+                    CloudDownloadIcon,
+                    handlePullTableIncremental,
+                  ),
                 ]
               : []),
             { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },

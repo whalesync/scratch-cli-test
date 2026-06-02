@@ -16,6 +16,7 @@ export {
   PG_INCREMENTAL_CLOCK_SKEW_MS,
   applyPgClockSkew,
   assertModifiedAtColumnExists,
+  pgIncrementalPullSupport,
   resolvePgModifiedAtField,
 } from './pg-incremental';
 export {

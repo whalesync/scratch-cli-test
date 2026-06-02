@@ -9,6 +9,7 @@
  * no schema annotation to auto-detect. Incremental support is gated entirely on
  * the user declaring `modifiedAtField` in the folder's advanced settings.
  */
+import { IncrementalPullSupport } from '@spinner/shared-types';
 import type { PullRecordFilesOptions } from '../../types';
 import { KnexPGClientError } from './knex-pg-client';
 
@@ -35,6 +36,19 @@ export function resolvePgModifiedAtField(options: PullRecordFilesOptions): strin
     return options.modifiedAtField.trim();
   }
   return undefined;
+}
+
+/**
+ * Three-state incremental-pull capability for the Knex-based PostgreSQL
+ * connectors. SQL has no last-modified convention, so support hinges entirely
+ * on the user declaring `modifiedAtField`: declared → `SUPPORTED`, otherwise
+ * `NEEDS_CONFIGURATION` (never `NOT_SUPPORTED` — any PG table can do incremental
+ * once a column is chosen). Shared by Postgres and Supabase.
+ */
+export function pgIncrementalPullSupport(options: PullRecordFilesOptions): IncrementalPullSupport {
+  return resolvePgModifiedAtField(options) !== undefined
+    ? IncrementalPullSupport.SUPPORTED
+    : IncrementalPullSupport.NEEDS_CONFIGURATION;
 }
 
 /**

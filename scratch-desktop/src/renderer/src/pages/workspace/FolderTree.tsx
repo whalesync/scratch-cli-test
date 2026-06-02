@@ -7,7 +7,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useConfirmModal } from '../../components/ConfirmModal';
 import { trackPullTable, trackShowFolderInfo } from '../../lib/posthog';
 import type { WorkspaceConnection } from '../../types/local-files';
-import { DataFolder } from '../../types/workspace';
+import { DataFolder, IncrementalPullSupport } from '../../types/workspace';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
 import { DataFolderInfoModal } from './DataFolderInfoModal';
 import classes from './FolderTree.module.css';
@@ -31,6 +31,7 @@ interface PullRequest {
   title: string;
   dataFolderIds: string[];
   emptyStateMessage: string;
+  mode?: 'full' | 'incremental';
 }
 
 /** Walk a node to find any descendant leaf and return its filesystem path. */
@@ -94,6 +95,29 @@ function buildTree(folders: LocalFolder[]): TreeNode {
 
 function normalizeFolderPath(path: string): string {
   return path.startsWith('/') ? path.slice(1) : path;
+}
+
+/**
+ * Build the "Pull This Table - Incremental" context-menu item for a folder
+ * based on its server-computed {@link IncrementalPullSupport}. It is enabled
+ * only when incremental pulls are fully SUPPORTED; NEEDS_CONFIGURATION and
+ * NOT_SUPPORTED are both disabled but carry distinct suffixes so the user knows
+ * whether configuring a last-modified field would unlock it.
+ */
+function buildIncrementalPullMenuItem(support: IncrementalPullSupport): {
+  id: string;
+  label: string;
+  enabled: boolean;
+} {
+  switch (support) {
+    case IncrementalPullSupport.SUPPORTED:
+      return { id: 'pull-incremental', label: 'Pull This Table - Incremental', enabled: true };
+    case IncrementalPullSupport.NEEDS_CONFIGURATION:
+      return { id: 'pull-incremental', label: 'Pull This Table - Incremental (Needs Configuration)', enabled: false };
+    case IncrementalPullSupport.NOT_SUPPORTED:
+    default:
+      return { id: 'pull-incremental', label: 'Pull This Table - Incremental (Not Supported)', enabled: false };
+  }
 }
 
 // ── Components ──
@@ -162,11 +186,15 @@ function FolderTreeNodeRow({
         id: string;
         label: string;
         type?: 'separator';
+        enabled?: boolean;
         submenu?: Array<{ id: string; label: string }>;
       }> = [];
 
       if (mappedFolder || (depth === 0 && connectionFolders.length > 0)) {
         items.push({ id: 'pull', label: mappedFolder ? 'Pull This Table' : 'Pull All Tables' });
+        if (mappedFolder) {
+          items.push(buildIncrementalPullMenuItem(mappedFolder.incrementalPullSupport));
+        }
         items.push({ id: 'pull-sep', label: '', type: 'separator' });
       }
 
@@ -199,6 +227,14 @@ function FolderTreeNodeRow({
             title: `Pull Table — ${node.name}`,
             dataFolderIds: [mappedFolder.id],
             emptyStateMessage: 'No linked table found for this local folder.',
+          });
+        }
+        if (id === 'pull-incremental' && mappedFolder) {
+          onRequestPull({
+            title: `Pull Table (Incremental) — ${node.name}`,
+            dataFolderIds: [mappedFolder.id],
+            emptyStateMessage: 'No linked table found for this local folder.',
+            mode: 'incremental',
           });
         }
         if (id === 'pull' && !mappedFolder && depth === 0 && connectionFolders.length > 0) {
@@ -544,7 +580,7 @@ export function FolderTree({
     (request: PullRequest) => {
       // Single-folder pull = the "Pull This Table" context-menu action.
       if (request.dataFolderIds.length === 1) {
-        void trackPullTable(workspaceId, request.dataFolderIds[0]);
+        void trackPullTable(workspaceId, request.dataFolderIds[0], request.mode ?? 'full');
       }
       setPullRequest(request);
     },
@@ -624,6 +660,7 @@ export function FolderTree({
           title={pullRequest.title}
           dataFolderIds={pullRequest.dataFolderIds}
           emptyStateMessage={pullRequest.emptyStateMessage}
+          pullMode={pullRequest.mode}
           invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
         />
       )}

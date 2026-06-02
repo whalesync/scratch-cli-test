@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { ConnectorSettingDefinition, DataFolderOptions, TableDiscoveryMode } from '@spinner/shared-types';
+import {
+  ConnectorSettingDefinition,
+  DataFolderOptions,
+  IncrementalPullSupport,
+  TableDiscoveryMode,
+} from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -137,7 +142,25 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * connectors that return `false` are silently demoted to a full scan.
    */
   supportsIncrementalPull(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
-    return false;
+    return this.incrementalPullSupport(options, tableSpec) === IncrementalPullSupport.SUPPORTED;
+  }
+
+  /**
+   * The three-state version of {@link supportsIncrementalPull} — distinguishes a
+   * connector/table that fundamentally can't do incremental pulls
+   * (`NOT_SUPPORTED`) from one that could once the user configures a
+   * last-modified field (`NEEDS_CONFIGURATION`). This is the single source of
+   * truth: `supportsIncrementalPull` is derived from it.
+   *
+   * The default returns `NOT_SUPPORTED`. Connectors that implement the
+   * incremental-pull contract override this. `tableSpec` may be `null` when the
+   * caller has no schema on hand (e.g. the REST layer computing the value for a
+   * folder that has never been pulled); connectors that auto-detect a
+   * last-modified field from the schema should treat a `null` spec as
+   * "not configured yet" and return `NEEDS_CONFIGURATION`.
+   */
+  incrementalPullSupport(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec | null): IncrementalPullSupport {
+    return IncrementalPullSupport.NOT_SUPPORTED;
   }
 
   /**

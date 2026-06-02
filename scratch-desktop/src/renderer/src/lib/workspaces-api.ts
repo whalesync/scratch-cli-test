@@ -19,12 +19,14 @@ export const workspacesApi = {
   pullFiles: async (
     id: string,
     dataFolderIds?: string[],
+    mode?: 'full' | 'incremental',
   ): Promise<{ jobId?: string; jobIds?: string[]; warning?: string }> => {
     const axios = API_CONFIG.getAxiosInstance();
     const res = await axios.post<{ jobId?: string; jobIds?: string[]; warning?: string }>(
       `/workbook/${id}/pull-files`,
       {
         dataFolderIds,
+        mode,
       },
     );
     return res.data;

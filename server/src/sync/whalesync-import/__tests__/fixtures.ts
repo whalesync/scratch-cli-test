@@ -10,6 +10,7 @@ import type {
   WhalesyncSyncExport,
   WorkbookId,
 } from '@spinner/shared-types';
+import { IncrementalPullSupport } from '@spinner/shared-types';
 import { Service } from 'src/remote-service/connectors/service-constants';
 
 // ---------------------------------------------------------------------------
@@ -213,6 +214,7 @@ export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
     schedules: [],
     lastFullPullAt: null,
     lastIncrementalPullAt: null,
+    incrementalPullSupport: IncrementalPullSupport.NOT_SUPPORTED,
     ...overrides,
   };
 }

@@ -29,7 +29,12 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
 }));
 
 import { NotionConnector } from 'src/remote-service/connectors/library/notion/notion-connector';
-import { BaseJsonTableSpec, ConnectorFile, TablePreview } from 'src/remote-service/connectors/types';
+import {
+  BaseJsonTableSpec,
+  ConnectorFile,
+  PullRecordFilesOptions,
+  TablePreview,
+} from 'src/remote-service/connectors/types';
 
 // Notion is slower than most APIs (3 req/s integration limit + recursive block
 // fetches per page) — give the suite a generous budget.
@@ -440,7 +445,7 @@ describeIfKey('NotionConnector — live API', () => {
     });
 
     it('supportsIncrementalPull returns true', () => {
-      expect(connector.supportsIncrementalPull()).toBe(true);
+      expect(connector.supportsIncrementalPull({} as PullRecordFilesOptions, primarySpec)).toBe(true);
     });
 
     it('getBatchSize returns 1', () => {

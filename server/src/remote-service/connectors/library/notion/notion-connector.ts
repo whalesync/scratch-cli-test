@@ -10,7 +10,12 @@ import {
   type QueryDataSourceParameters,
   RequestTimeoutError,
 } from '@notionhq/client';
-import { connectorMetadata, ConnectorSettingDefinition, TableDiscoveryMode } from '@spinner/shared-types';
+import {
+  connectorMetadata,
+  ConnectorSettingDefinition,
+  IncrementalPullSupport,
+  TableDiscoveryMode,
+} from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
@@ -347,8 +352,8 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * full at pull time if the user's own filter is a compound `and`/`or`
    * (Notion's single-level nesting limit — see `pullRecordFiles`).
    */
-  override supportsIncrementalPull(): boolean {
-    return true;
+  override incrementalPullSupport(): IncrementalPullSupport {
+    return IncrementalPullSupport.SUPPORTED;
   }
 
   async pullRecordFiles(

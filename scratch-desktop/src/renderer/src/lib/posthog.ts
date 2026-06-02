@@ -132,8 +132,12 @@ export async function trackPullAll(workspaceId: string): Promise<void> {
   await captureEvent(PostHogEvents.PULL_ALL, { workspaceId });
 }
 
-export async function trackPullTable(workspaceId: string, dataFolderId: string): Promise<void> {
-  await captureEvent(PostHogEvents.PULL_TABLE, { workspaceId, dataFolderId });
+export async function trackPullTable(
+  workspaceId: string,
+  dataFolderId: string,
+  mode: 'full' | 'incremental' = 'full',
+): Promise<void> {
+  await captureEvent(PostHogEvents.PULL_TABLE, { workspaceId, dataFolderId, mode });
 }
 
 export async function trackPublishAll(workspaceId: string): Promise<void> {

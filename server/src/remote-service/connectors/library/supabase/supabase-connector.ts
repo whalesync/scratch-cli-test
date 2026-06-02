@@ -12,6 +12,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import {
   connectorMetadata,
   ConnectorSettingDefinition,
+  IncrementalPullSupport,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
@@ -40,6 +41,7 @@ import {
   KnexPGClient,
   KnexPGClientError,
   mapPgType,
+  pgIncrementalPullSupport,
   resolvePgModifiedAtField,
   SUPABASE_SYSTEM_SCHEMA_PATTERNS,
   SUPABASE_SYSTEM_SCHEMAS,
@@ -375,9 +377,12 @@ export class SupabaseConnector extends Connector {
    * convention, so there is no schema-annotated auto-detection — without an
    * explicit `modifiedAtField` the job demotes the run to a full scan.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  override supportsIncrementalPull(options: PullRecordFilesOptions, _tableSpec: BaseJsonTableSpec): boolean {
-    return this.resolveModifiedAtField(options) !== undefined;
+  override incrementalPullSupport(
+    options: PullRecordFilesOptions,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    return pgIncrementalPullSupport(options);
   }
 
   /**
@@ -662,6 +667,7 @@ connectorRegistry.register({
   metadata: SupabaseConnector.metadata,
   advancedSettings: SupabaseConnector.advancedSettings,
   supportedAuthMethods: ['oauth', 'user_provided_params'],
+  resolveIncrementalPullSupport: ({ options }) => pgIncrementalPullSupport(options),
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Supabase', Service.SUPABASE);

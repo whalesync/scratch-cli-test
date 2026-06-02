@@ -1,5 +1,13 @@
 import { Prisma, Schedule as PrismaSchedule } from '@prisma/client';
-import { DataFolder, DataFolderGroup, DataFolderId, Schedule, Service, WorkbookId } from '@spinner/shared-types';
+import {
+  DataFolder,
+  DataFolderGroup,
+  DataFolderId,
+  IncrementalPullSupport,
+  Schedule,
+  Service,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { DataFolderCluster } from '../../db/cluster-types';
 import { ScheduleEntity } from '../../schedule/entities/schedule.entity';
 
@@ -27,8 +35,13 @@ export class DataFolderEntity implements DataFolder {
   schedules: Schedule[];
   lastFullPullAt: string | null;
   lastIncrementalPullAt: string | null;
+  incrementalPullSupport: IncrementalPullSupport;
 
-  constructor(dataFolder: DataFolderCluster.DataFolder, schedules: PrismaSchedule[] = []) {
+  constructor(
+    dataFolder: DataFolderCluster.DataFolder,
+    schedules: PrismaSchedule[] = [],
+    incrementalPullSupport: IncrementalPullSupport = IncrementalPullSupport.NOT_SUPPORTED,
+  ) {
     this.id = dataFolder.id as DataFolderId;
     this.workbookId = dataFolder.workbookId as WorkbookId;
     this.name = dataFolder.name;
@@ -50,6 +63,7 @@ export class DataFolderEntity implements DataFolder {
     this.lastIncrementalPullAt = dataFolder.lastIncrementalPullAt
       ? dataFolder.lastIncrementalPullAt.toISOString()
       : null;
+    this.incrementalPullSupport = incrementalPullSupport;
   }
 }
 

@@ -1,5 +1,5 @@
 import { TObject } from '@sinclair/typebox';
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import TurndownService from 'turndown';
@@ -45,6 +45,42 @@ import {
   WordPressDownloadProgress,
   WordPressRecord,
 } from './wordpress-types';
+
+/**
+ * Resolve the field name used for the `modified_after` filter, preferring an
+ * explicit user setting over the schema-annotated auto-detection. Pure (no
+ * `this`) so both the connector instance and the REST-layer capability resolver
+ * can call it. A `null` tableSpec means no schema is on hand, so only an
+ * explicit `options.modifiedAtField` can resolve.
+ */
+export function resolveWordPressModifiedAtField(
+  options: PullRecordFilesOptions,
+  tableSpec: BaseJsonTableSpec | null,
+): string | undefined {
+  if (typeof options.modifiedAtField === 'string' && options.modifiedAtField.trim() !== '') {
+    return options.modifiedAtField.trim();
+  }
+  return tableSpec ? findLastModifiedFieldName(tableSpec) : undefined;
+}
+
+/**
+ * Three-state incremental-pull capability for WordPress. Post-type and media
+ * collections expose an auto-detectable `modified` field (`SUPPORTED`); taxonomy
+ * collections (categories/tags/terms) have neither a modified field nor a
+ * `modified_after` param and can never run incremental (`NOT_SUPPORTED`) — there
+ * is no user configuration that would change that, so this never returns
+ * `NEEDS_CONFIGURATION`. With a `null` tableSpec the field can't be auto-detected
+ * yet; the REST layer reads the schema and re-resolves whenever the answer isn't
+ * already `SUPPORTED`.
+ */
+export function wordPressIncrementalPullSupport(
+  options: PullRecordFilesOptions,
+  tableSpec: BaseJsonTableSpec | null,
+): IncrementalPullSupport {
+  return resolveWordPressModifiedAtField(options, tableSpec) !== undefined
+    ? IncrementalPullSupport.SUPPORTED
+    : IncrementalPullSupport.NOT_SUPPORTED;
+}
 
 export class WordPressConnector extends Connector<string, WordPressDownloadProgress> {
   readonly service = Service.WORDPRESS;
@@ -148,21 +184,11 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
    * a full scan. Resolution order: explicit `options.modifiedAtField` →
    * schema-annotated auto-detect.
    */
-  override supportsIncrementalPull(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): boolean {
-    return this.resolveModifiedAtField(options, tableSpec) !== undefined;
-  }
-
-  /**
-   * Resolve the field name used for the `modified_after` filter, preferring an
-   * explicit user setting over the schema-annotated auto-detection. The field
-   * is effectively always `modified` when present; the override exists only for
-   * an unusual CPT that exposes a differently named modified column.
-   */
-  private resolveModifiedAtField(options: PullRecordFilesOptions, tableSpec: BaseJsonTableSpec): string | undefined {
-    if (typeof options.modifiedAtField === 'string' && options.modifiedAtField.trim() !== '') {
-      return options.modifiedAtField.trim();
-    }
-    return findLastModifiedFieldName(tableSpec);
+  override incrementalPullSupport(
+    options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    return wordPressIncrementalPullSupport(options, tableSpec);
   }
 
   /**
@@ -198,7 +224,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     const incremental =
       options.pullMode === 'incremental' &&
       options.since instanceof Date &&
-      this.resolveModifiedAtField(options, tableSpec) !== undefined;
+      resolveWordPressModifiedAtField(options, tableSpec) !== undefined;
     if (incremental && options.since) {
       newWatermark = new Date();
       const siteTimezone = await this.client.getSiteTimezone();
@@ -469,6 +495,8 @@ connectorRegistry.register({
   metadata: WordPressConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
+  resolveIncrementalPullSupport: ({ options, tableSpec }) => wordPressIncrementalPullSupport(options, tableSpec),
+  incrementalPullAutoDetectsFromSchema: true,
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

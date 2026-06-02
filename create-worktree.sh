@@ -50,6 +50,7 @@ ENV_FILES=(
   "server/.env"
   "server/.env.integration"
   "smoke-tests/.env.integration"
+  "scratch-desktop/.env"
 )
 
 MAIN_WORKTREE=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
@@ -80,5 +81,4 @@ echo "Done. Worktree created at $WORKTREE_PATH on branch $BRANCH_NAME with $copi
 echo ""
 echo "Next steps:"
 echo "  cd $WORKTREE_PATH"
-echo "  cd client && yarn install && cd .."
-echo "  cd server && yarn install && cd .."
+echo "  yarn install"

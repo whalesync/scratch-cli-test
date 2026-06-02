@@ -59,6 +59,26 @@ export enum TableDiscoveryMode {
   SEARCH = 'SEARCH',
 }
 
+/**
+ * Per-folder incremental-pull capability, computed by the server REST API for
+ * each DataFolder. NOT a Prisma enum — this is a derived value, distinct from
+ * the static per-connector `ConnectorMetadata.incrementalPull` flag (which only
+ * says whether the connector TYPE can ever do incremental pulls).
+ *
+ * - SUPPORTED: the connector supports incremental pulls and this folder is
+ *   ready to run one (a last-modified field is explicitly configured or
+ *   auto-detected from the table schema).
+ * - NEEDS_CONFIGURATION: the connector supports incremental pulls but this
+ *   folder is missing the required configuration (e.g. no `modifiedAtField` set
+ *   and none detectable in the schema). Configuring it would unlock incremental.
+ * - NOT_SUPPORTED: this connector/table cannot do incremental pulls at all.
+ */
+export enum IncrementalPullSupport {
+  SUPPORTED = 'SUPPORTED',
+  NOT_SUPPORTED = 'NOT_SUPPORTED',
+  NEEDS_CONFIGURATION = 'NEEDS_CONFIGURATION',
+}
+
 export enum PublishPlanStatus {
   Planning = 'planning',
   Planned = 'planned',

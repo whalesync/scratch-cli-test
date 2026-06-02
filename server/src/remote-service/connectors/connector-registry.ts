@@ -1,9 +1,16 @@
-import { AuthMethod, ConnectorMetadata, ConnectorSettingDefinition, DataFolderOptions } from '@spinner/shared-types';
+import {
+  AuthMethod,
+  ConnectorMetadata,
+  ConnectorSettingDefinition,
+  DataFolderOptions,
+  IncrementalPullSupport,
+} from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { RateLimiter } from '../../rate-limiter/rate-limiter';
 import { RateLimiterSpec } from '../../rate-limiter/rate-limiter.types';
 import { DecryptedCredentials } from '../connector-account/types/encrypted-credentials.interface';
 import { AuthParser, Connector } from './connector';
+import type { BaseJsonTableSpec } from './types';
 
 export interface ConnectorAccountRef {
   id: string;
@@ -54,6 +61,29 @@ export interface ConnectorRegistration {
   createConnector: (ctx: ConnectorFactoryContext) => Promise<Connector<string, JsonSafeObject>>;
   /** Factory that creates an auth parser (for user-provided-params connectors) */
   createAuthParser?: () => AuthParser<string>;
+  /**
+   * Pure (no credentials, no network) resolver for this folder's
+   * incremental-pull capability, used by the REST layer to populate
+   * `DataFolder.incrementalPullSupport`. Mirrors the connector instance's
+   * `incrementalPullSupport`, but callable without instantiating the connector.
+   *
+   * Omit it for connectors that are unconditionally supported once
+   * `metadata.incrementalPull` is true (e.g. Notion, Linear) — the registry
+   * helper defaults those to `SUPPORTED`.
+   */
+  resolveIncrementalPullSupport?: (params: {
+    options: DataFolderOptions;
+    tableSpec: BaseJsonTableSpec | null;
+    tableId: string[];
+  }) => IncrementalPullSupport;
+  /**
+   * True when this connector can auto-detect its last-modified field from the
+   * table schema (Airtable, WordPress). The REST layer uses this to decide
+   * whether reading the folder's schema from git could upgrade a
+   * `NEEDS_CONFIGURATION` answer to `SUPPORTED` — so it only pays for the schema
+   * read when it might change the result.
+   */
+  incrementalPullAutoDetectsFromSchema?: boolean;
 }
 
 class ConnectorRegistry {
@@ -77,3 +107,34 @@ class ConnectorRegistry {
 
 /** Singleton connector registry — connectors register themselves at import time. */
 export const connectorRegistry = new ConnectorRegistry();
+
+/**
+ * Resolve a folder's {@link IncrementalPullSupport} from its connector service,
+ * persisted options, table id, and (optionally) its table schema — without
+ * instantiating the connector or hitting any remote API.
+ *
+ * Returns `NOT_SUPPORTED` for unknown services and for connectors whose static
+ * `metadata.incrementalPull` flag is false. Otherwise it delegates to the
+ * connector's registered `resolveIncrementalPullSupport`, defaulting to
+ * `SUPPORTED` when the connector registered no resolver (i.e. it is
+ * unconditionally supported).
+ */
+export function resolveIncrementalPullSupportForService(params: {
+  service: string;
+  options: DataFolderOptions;
+  tableSpec: BaseJsonTableSpec | null;
+  tableId: string[];
+}): IncrementalPullSupport {
+  const registration = connectorRegistry.get(params.service);
+  if (!registration || !registration.metadata.incrementalPull) {
+    return IncrementalPullSupport.NOT_SUPPORTED;
+  }
+  if (registration.resolveIncrementalPullSupport) {
+    return registration.resolveIncrementalPullSupport({
+      options: params.options,
+      tableSpec: params.tableSpec,
+      tableId: params.tableId,
+    });
+  }
+  return IncrementalPullSupport.SUPPORTED;
+}

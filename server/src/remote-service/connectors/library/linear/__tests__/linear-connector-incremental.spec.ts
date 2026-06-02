@@ -48,7 +48,7 @@ function lastListEntitiesCall(): unknown[] {
 describe('LinearConnector.supportsIncrementalPull', () => {
   it('is always true — every Linear entity has a server-side updatedAt', () => {
     const connector = new LinearConnector({ accessToken: 'fake' });
-    expect(connector.supportsIncrementalPull()).toBe(true);
+    expect(connector.supportsIncrementalPull({} as PullRecordFilesOptions, buildTableSpec())).toBe(true);
   });
 });
 

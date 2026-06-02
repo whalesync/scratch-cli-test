@@ -55,7 +55,7 @@ function lastQueryDataSourceId(): string {
 describe('NotionConnector.supportsIncrementalPull', () => {
   it('is always true — every Notion page has a server-side last_edited_time', () => {
     const connector = new NotionConnector('fake-key');
-    expect(connector.supportsIncrementalPull()).toBe(true);
+    expect(connector.supportsIncrementalPull({} as PullRecordFilesOptions, buildTableSpec())).toBe(true);
   });
 });
 

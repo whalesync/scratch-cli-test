@@ -5,6 +5,7 @@ import {
   DataFolderGroup,
   DataFolderId,
   DataFolderOptions,
+  IncrementalPullSupport,
   Service,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
@@ -29,6 +30,10 @@ import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { RunContext } from 'src/worker/jobs/base-types';
+import {
+  connectorRegistry,
+  resolveIncrementalPullSupportForService,
+} from '../remote-service/connectors/connector-registry';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, idPath } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
@@ -58,6 +63,75 @@ export class DataFolderService {
   ) {}
 
   /**
+   * Compute a folder's {@link IncrementalPullSupport} for the REST API, without
+   * instantiating the connector or hitting any remote API. The connector
+   * registry answers from the persisted `options` + `tableId` alone for most
+   * connectors; only those that auto-detect their last-modified field from the
+   * table schema (Airtable, WordPress) need the schema, which we read locally
+   * from git — and only when the schemaless answer isn't already SUPPORTED, so a
+   * folder with an explicit `modifiedAtField` (or a non-incremental connector)
+   * never pays for a git read.
+   */
+  private async computeIncrementalPullSupport(folder: {
+    connectorService: string | null;
+    connectorAccountId: string | null;
+    workbookId: string;
+    path: string | null;
+    tableId: string[];
+    options: Prisma.JsonValue | null;
+  }): Promise<IncrementalPullSupport> {
+    const service = folder.connectorService;
+    if (!service) return IncrementalPullSupport.NOT_SUPPORTED;
+
+    const registration = connectorRegistry.get(service);
+    if (!registration || !registration.metadata.incrementalPull) {
+      return IncrementalPullSupport.NOT_SUPPORTED;
+    }
+
+    const options = (folder.options ?? {}) as unknown as DataFolderOptions;
+    let support = resolveIncrementalPullSupportForService({
+      service,
+      options,
+      tableSpec: null,
+      tableId: folder.tableId,
+    });
+
+    if (support !== IncrementalPullSupport.SUPPORTED && registration.incrementalPullAutoDetectsFromSchema) {
+      const tableSpec = await this.readSchema(folder.workbookId as WorkbookId, folder.connectorAccountId, folder.path);
+      if (tableSpec) {
+        support = resolveIncrementalPullSupportForService({ service, options, tableSpec, tableId: folder.tableId });
+      }
+    }
+
+    return support;
+  }
+
+  /**
+   * Computes {@link IncrementalPullSupport} for many folders at once, returning a
+   * map keyed by data folder id. Used when embedding data folders in workbook
+   * listings so the client can decide whether incremental pull is available for
+   * each folder without a follow-up request. Each folder is resolved in parallel
+   * via {@link computeIncrementalPullSupport}.
+   */
+  async computeIncrementalPullSupportByDataFolderId(
+    folders: ReadonlyArray<{
+      id: string;
+      connectorService: string | null;
+      connectorAccountId: string | null;
+      workbookId: string;
+      path: string | null;
+      tableId: string[];
+      options: Prisma.JsonValue | null;
+    }>,
+  ): Promise<Map<string, IncrementalPullSupport>> {
+    return new Map(
+      await Promise.all(
+        folders.map(async (folder) => [folder.id, await this.computeIncrementalPullSupport(folder)] as const),
+      ),
+    );
+  }
+
+  /**
    * Lists all data folders in a workbook as a flat list.
    */
   async listAll(workbookId: WorkbookId, actor: Actor): Promise<DataFolderEntity[]> {
@@ -70,7 +144,12 @@ export class DataFolderService {
     });
 
     const schedulesByEntityId = await this.workbookService.fetchSchedulesByEntityId(workbookId);
-    return dataFolders.map((f) => new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? []));
+    return Promise.all(
+      dataFolders.map(
+        async (f) =>
+          new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? [], await this.computeIncrementalPullSupport(f)),
+      ),
+    );
   }
 
   async listGroupedByConnectorBases(workbookId: WorkbookId, actor: Actor): Promise<DataFolderGroup[]> {
@@ -89,6 +168,14 @@ export class DataFolderService {
     });
 
     const schedulesByEntityId = await this.workbookService.fetchSchedulesByEntityId(workbookId);
+
+    // Compute incremental-pull support up front (in parallel) so the synchronous
+    // group-building below can look each folder's value up by id.
+    const incrementalPullSupportByFolderId = new Map<string, IncrementalPullSupport>(
+      await Promise.all(
+        dataFolders.map(async (folder) => [folder.id, await this.computeIncrementalPullSupport(folder)] as const),
+      ),
+    );
 
     // Group data folders by connector account
     const connectorAccountGroups = new Map<
@@ -125,7 +212,14 @@ export class DataFolderService {
         new DataFolderGroupEntity(
           group.name,
           group.connectorAccount,
-          group.folders.map((f) => new DataFolderEntity(f, schedulesByEntityId.get(f.id) ?? [])),
+          group.folders.map(
+            (f) =>
+              new DataFolderEntity(
+                f,
+                schedulesByEntityId.get(f.id) ?? [],
+                incrementalPullSupportByFolderId.get(f.id) ?? IncrementalPullSupport.NOT_SUPPORTED,
+              ),
+          ),
         ),
       );
     }
@@ -147,7 +241,7 @@ export class DataFolderService {
     await this.workbookService.assertReadableWorkbook(actor, dataFolder.workbookId as WorkbookId);
 
     const schedules = await this.db.client.schedule.findMany({ where: { entityId: id } });
-    return new DataFolderEntity(dataFolder, schedules);
+    return new DataFolderEntity(dataFolder, schedules, await this.computeIncrementalPullSupport(dataFolder));
   }
 
   async createFolder(
@@ -366,7 +460,7 @@ export class DataFolderService {
     });
 
     this.posthogService.trackAddDataFolder(actor, createdDataFolder);
-    return new DataFolderEntity(createdDataFolder);
+    return new DataFolderEntity(createdDataFolder, [], await this.computeIncrementalPullSupport(createdDataFolder));
   }
 
   async deleteFolder(id: DataFolderId, actor: Actor): Promise<void> {
@@ -485,7 +579,7 @@ export class DataFolderService {
       include: DataFolderCluster._validator.include,
     });
 
-    return new DataFolderEntity(updatedDataFolder);
+    return new DataFolderEntity(updatedDataFolder, [], await this.computeIncrementalPullSupport(updatedDataFolder));
   }
 
   /**

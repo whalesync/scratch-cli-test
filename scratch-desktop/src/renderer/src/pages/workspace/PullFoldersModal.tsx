@@ -59,6 +59,7 @@ interface PullFoldersModalProps {
   invalidateWorkspaceLevelData: () => void;
   dataFolderIds?: string[];
   emptyStateMessage?: string;
+  pullMode?: 'full' | 'incremental';
 }
 
 export function PullFoldersModal({
@@ -70,6 +71,7 @@ export function PullFoldersModal({
   invalidateWorkspaceLevelData,
   dataFolderIds,
   emptyStateMessage = 'No linked tables found for this selection.',
+  pullMode,
 }: PullFoldersModalProps) {
   const { user } = useCurrentUser();
   const [phase, setPhase] = useState<'starting' | 'polling' | 'downloading' | 'done' | 'error'>('starting');
@@ -111,7 +113,7 @@ export function PullFoldersModal({
     let cancelled = false;
 
     workspacesApi
-      .pullFiles(workspaceId, dataFolderIds)
+      .pullFiles(workspaceId, dataFolderIds, pullMode)
       .then((result) => {
         if (cancelled) return;
 
@@ -134,7 +136,7 @@ export function PullFoldersModal({
     return () => {
       cancelled = true;
     };
-  }, [dataFolderIds, emptyStateMessage, localPath, opened, reset, workspaceId]);
+  }, [dataFolderIds, emptyStateMessage, localPath, opened, pullMode, reset, workspaceId]);
 
   useEffect(() => {
     if (phase !== 'polling' || jobIds.length === 0) {

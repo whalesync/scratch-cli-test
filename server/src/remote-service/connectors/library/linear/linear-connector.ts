@@ -5,7 +5,7 @@
  * Supports CRUD for Issues and Projects; read-only for Teams, Users, Labels, and Cycles.
  */
 
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { WSLogger } from 'src/logger';
@@ -137,8 +137,8 @@ export class LinearConnector extends Connector {
    * `updatedAt` filter comparator. The field is fixed (not user-selectable), so
    * there is no per-folder config to inspect — this always returns `true`.
    */
-  override supportsIncrementalPull(): boolean {
-    return true;
+  override incrementalPullSupport(): IncrementalPullSupport {
+    return IncrementalPullSupport.SUPPORTED;
   }
 
   /**

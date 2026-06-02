@@ -9,6 +9,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import {
   connectorMetadata,
   ConnectorSettingDefinition,
+  IncrementalPullSupport,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
 } from '@spinner/shared-types';
@@ -36,6 +37,7 @@ import {
   KnexPGClientError,
   mapPgType,
   PG_TEXT_TYPES,
+  pgIncrementalPullSupport,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   POSTGRES_SYSTEM_SCHEMAS,
   resolvePgModifiedAtField,
@@ -301,9 +303,12 @@ export class PostgresConnector extends Connector {
    * convention, so there is no schema-annotated auto-detection — without an
    * explicit `modifiedAtField` the job demotes the run to a full scan.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  override supportsIncrementalPull(options: PullRecordFilesOptions, _tableSpec: BaseJsonTableSpec): boolean {
-    return this.resolveModifiedAtField(options) !== undefined;
+  override incrementalPullSupport(
+    options: PullRecordFilesOptions,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    return pgIncrementalPullSupport(options);
   }
 
   /**
@@ -559,6 +564,7 @@ connectorRegistry.register({
   metadata: PostgresConnector.metadata,
   advancedSettings: PostgresConnector.advancedSettings,
   supportedAuthMethods: ['user_provided_params'],
+  resolveIncrementalPullSupport: ({ options }) => pgIncrementalPullSupport(options),
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {

@@ -10,6 +10,16 @@ export interface Workspace {
   dataFolders?: DataFolder[];
 }
 
+/**
+ * Per-folder incremental-pull capability returned by the server REST API.
+ * Mirrors the server's `IncrementalPullSupport` enum (@spinner/shared-types).
+ */
+export enum IncrementalPullSupport {
+  SUPPORTED = 'SUPPORTED',
+  NOT_SUPPORTED = 'NOT_SUPPORTED',
+  NEEDS_CONFIGURATION = 'NEEDS_CONFIGURATION',
+}
+
 export interface DataFolder {
   id: string;
   name: string;
@@ -24,4 +34,5 @@ export interface DataFolder {
   isAssetTable: boolean;
   lastFullPullAt: string | null;
   lastIncrementalPullAt: string | null;
+  incrementalPullSupport: IncrementalPullSupport;
 }

@@ -90,7 +90,18 @@ export class WorkbookController {
 
     const workbookIds = workbooks.map((s) => s.id as WorkbookId);
     const allSchedules = await this.service.fetchSchedulesByWorkbookIds(workbookIds);
-    return workbooks.map((s) => new Workbook(s, allSchedules.get(s.id as WorkbookId)));
+
+    // Resolve incremental-pull support for every embedded data folder across all workbooks in
+    // one pass so the client can decide per folder whether incremental pull is available without
+    // a follow-up request. Without this the embedded DataFolderEntity would default to NOT_SUPPORTED.
+    const incrementalPullSupportByDataFolderId =
+      await this.dataFolderService.computeIncrementalPullSupportByDataFolderId(
+        workbooks.flatMap((workbook) => workbook.dataFolders),
+      );
+
+    return workbooks.map(
+      (s) => new Workbook(s, allSchedules.get(s.id as WorkbookId), incrementalPullSupportByDataFolderId),
+    );
   }
 
   @Get(':id')
@@ -98,7 +109,9 @@ export class WorkbookController {
     const actor = userToActor(req.user);
     const workbook = await this.service.assertReadableWorkbook(actor, id);
     const schedulesByEntityId = await this.service.fetchSchedulesByEntityId(workbook.id as WorkbookId);
-    return new Workbook(workbook, schedulesByEntityId);
+    const incrementalPullSupportByDataFolderId =
+      await this.dataFolderService.computeIncrementalPullSupportByDataFolderId(workbook.dataFolders);
+    return new Workbook(workbook, schedulesByEntityId, incrementalPullSupportByDataFolderId);
   }
 
   @Patch(':id')

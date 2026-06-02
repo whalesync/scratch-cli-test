@@ -1,4 +1,4 @@
-import { Service } from '../enums/enums';
+import { IncrementalPullSupport, Service } from '../enums/enums';
 import { DataFolderId, WorkbookId } from '../ids';
 import { Schedule } from './schedule';
 
@@ -26,11 +26,17 @@ export interface DataFolder {
   schedules: Schedule[];
   lastFullPullAt: string | null;
   lastIncrementalPullAt: string | null;
-}
 
-///
-/// End "keep in sync" section
-///
+  ///
+  /// End "keep in sync" section
+  ///
+
+  /**
+   * Computed by the REST API (NOT a persisted column): whether this folder can
+   * currently run an incremental pull. See {@link IncrementalPullSupport}.
+   */
+  incrementalPullSupport: IncrementalPullSupport;
+}
 
 export interface DataFolderGroup {
   name: string;
