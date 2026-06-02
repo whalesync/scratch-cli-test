@@ -3,9 +3,7 @@
 import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { Text13Medium, TextMono9Regular } from '@/app/components/base/text';
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useSyncStore } from '@/stores/sync-store';
-import { isExperimentEnabled } from '@/types/server-entities/users';
 import { Badge, Group, Modal, Stack } from '@mantine/core';
 import type { DataFolder } from '@spinner/shared-types';
 
@@ -38,11 +36,9 @@ function relativeTime(iso: string): string {
 
 export function DataFolderInfoModal({ opened, onClose, folder }: DataFolderInfoModalProps) {
   const { metadata } = useConnectorsMetadata();
-  const { user } = useScratchPadUser();
-  const supportsIncrementalPull =
-    isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user) && folder.connectorService
-      ? Boolean(metadata?.[folder.connectorService]?.incrementalPull)
-      : false;
+  const supportsIncrementalPull = folder.connectorService
+    ? Boolean(metadata?.[folder.connectorService]?.incrementalPull)
+    : false;
 
   const syncs = useSyncStore((state) => state.syncs);
   const syncCount = syncs.filter((sync) =>

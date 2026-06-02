@@ -27,7 +27,6 @@ export interface UserExperimentFlags {
   DEV_TOOLBOX: boolean;
   ENABLE_CREATE_BUG_REPORT: boolean;
   SHOW_OPEN_IN_DESKTOP: boolean;
-  INCREMENTAL_POLLING_ENABLED: boolean;
   ENABLE_GENERIC_CONNECTOR: boolean;
   ENABLE_PUBLISH_HISTORY: boolean;
 }

@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient, UserRole } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   DataFolderId,
   type DataFolderOptions,
@@ -8,7 +8,6 @@ import {
   type WorkbookId,
 } from '@spinner/shared-types';
 import type { ExperimentsService } from '../../../experiments/experiments.service';
-import { UserFlag } from '../../../experiments/flags';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import {
   type BaseJsonTableSpec,
@@ -192,24 +191,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     }
     const folderCount = data.dataFolderIds.length;
 
-    // Kill switch: incremental polling is gated behind a per-user feature flag.
-    // When the flag is off, force the requested mode to 'full' before any
-    // per-folder resolution. Role is unused by PostHog flag evaluation — the
-    // dummy value is just to satisfy the PartialUser shape on `getBooleanFlag`.
-    const incrementalEnabled = await this.experimentsService.getBooleanFlag(
-      UserFlag.INCREMENTAL_POLLING_ENABLED,
-      false,
-      { id: data.userId, role: UserRole.USER },
-    );
-    const requestedMode: 'full' | 'incremental' = incrementalEnabled ? (data.pullMode ?? 'full') : 'full';
-    if (!incrementalEnabled && data.pullMode === 'incremental') {
-      WSLogger.info({
-        source: LOG_SOURCE,
-        message: 'Incremental polling kill switch is off — forcing full pull',
-        workbookId: data.workbookId,
-        userId: data.userId,
-      });
-    }
+    // The job's requested pull mode. Per-folder demotions (capability check,
+    // bootstrap) apply on top of this during folder resolution.
+    const requestedMode: 'full' | 'incremental' = data.pullMode ?? 'full';
 
     // Fetch all folders upfront to validate they share the same connection
     const folders = await this.prisma.dataFolder.findMany({
@@ -545,9 +529,8 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     data: PullLinkedFolderFilesJobDefinition['data'];
     jobId: string;
     /**
-     * Pull mode requested for this job, already gated by the
-     * `INCREMENTAL_POLLING_ENABLED` feature flag at the top of `run()`. Per-folder
-     * demotions (capability, bootstrap) apply on top of this.
+     * Pull mode requested for this job. Per-folder demotions (capability,
+     * bootstrap) apply on top of this.
      */
     requestedMode: 'full' | 'incremental';
   }): Promise<FolderContext> {

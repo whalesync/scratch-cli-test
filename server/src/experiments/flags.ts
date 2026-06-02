@@ -20,14 +20,6 @@ export enum UserFlag {
   ENABLE_CREATE_BUG_REPORT = 'ENABLE_CREATE_BUG_REPORT',
   SHOW_OPEN_IN_DESKTOP = 'SHOW_OPEN_IN_DESKTOP',
   /**
-   * Kill switch for incremental polling. When false, the pull job forces every
-   * folder to a full pull regardless of `data.pullMode`. When true, the
-   * standard per-folder resolution applies (capability check, bootstrap).
-   * Checked server-side only — not exposed to the client via
-   * `ClientUserFlags`.
-   */
-  INCREMENTAL_POLLING_ENABLED = 'INCREMENTAL_POLLING_ENABLED',
-  /**
    * Per-user gate for the GENERIC_API connector. When TRUE for a user:
    *   - the "Bring your own API" entry point is shown in the create-connection modal,
    *   - creating a new GENERIC_API connector account succeeds,
@@ -78,7 +70,6 @@ export const ClientUserFlags: Partial<Record<UserFlag, FlagDataType>> = {
   // User-scoped feature flags
   [UserFlag.ENABLE_CREATE_BUG_REPORT]: 'boolean',
   [UserFlag.SHOW_OPEN_IN_DESKTOP]: 'boolean',
-  [UserFlag.INCREMENTAL_POLLING_ENABLED]: 'boolean',
   [UserFlag.ENABLE_GENERIC_CONNECTOR]: 'boolean',
   [UserFlag.ENABLE_PUBLISH_HISTORY]: 'boolean',
 };

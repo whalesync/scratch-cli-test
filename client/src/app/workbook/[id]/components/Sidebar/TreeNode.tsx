@@ -9,14 +9,12 @@ import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { filesApi } from '@/lib/api/files';
 import { workbookApi } from '@/lib/api/workbook';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { selectJobsForConnector, useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { isExperimentEnabled } from '@/types/server-entities/users';
 import { Badge, Box, Collapse, Group, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
@@ -301,14 +299,10 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { workbook, pullFolders, pullAssets } = useActiveWorkbook();
   const { metadata } = useConnectorsMetadata();
-  const { user } = useScratchPadUser();
   const [isReauthorizing, setIsReauthorizing] = useState(false);
 
   const incrementalService = connectorAccount?.service ?? group.service ?? undefined;
-  const supportsIncrementalPull =
-    isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user) && incrementalService
-      ? Boolean(metadata?.[incrementalService]?.incrementalPull)
-      : false;
+  const supportsIncrementalPull = incrementalService ? Boolean(metadata?.[incrementalService]?.incrementalPull) : false;
 
   // Targeted Zustand selector — only re-renders when THIS connector's jobs change
   const connectorJobsSelector = useCallback(
@@ -583,11 +577,6 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const { pullFolders, pullAssets } = useActiveWorkbook();
   const { isDevToolsEnabled } = useDevTools();
-  const { user } = useScratchPadUser();
-  // Whether to surface the incremental-pull menu item at all. The three-state availability
-  // (supported / needs configuration / not supported) is then driven by the server-computed
-  // `folder.incrementalPullSupport`, matching the desktop app.
-  const incrementalPullExperimentEnabled = isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user);
 
   const nodeId = `table-${folder.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -871,15 +860,11 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
           position={contextMenu}
           items={[
             { label: 'Pull this table', icon: CloudDownloadIcon, onClick: handlePullTable },
-            ...(incrementalPullExperimentEnabled
-              ? [
-                  buildIncrementalPullTableMenuItem(
-                    folder.incrementalPullSupport,
-                    CloudDownloadIcon,
-                    handlePullTableIncremental,
-                  ),
-                ]
-              : []),
+            buildIncrementalPullTableMenuItem(
+              folder.incrementalPullSupport,
+              CloudDownloadIcon,
+              handlePullTableIncremental,
+            ),
             { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },
             {
               label: 'New File',

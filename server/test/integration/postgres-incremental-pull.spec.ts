@@ -23,8 +23,7 @@
  *
  * It mirrors the fetch-edit-publish harness: real pg.Pool source DB, real
  * Prisma (scratchpad), real services, in-memory VirtualGitFs for the Rust git
- * service, and a mocked ExperimentsService so the INCREMENTAL_POLLING_ENABLED
- * kill switch is on without a PostHog dependency.
+ * service, and a mocked ExperimentsService without a PostHog dependency.
  *
  * Run via: cd server && yarn test:integration -- postgres-incremental-pull
  */
@@ -311,10 +310,8 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
     } as unknown as AssetIndexService;
     const mockPostHogService = { trackPullCompleted: jest.fn() } as unknown as PostHogService;
 
-    // The kill switch: force INCREMENTAL_POLLING_ENABLED on so an
-    // `incremental` request is not demoted to full in run().
     const mockExperimentsService = {
-      getBooleanFlag: jest.fn().mockResolvedValue(true),
+      isGenericConnectorEnabledForUser: jest.fn().mockResolvedValue(true),
     } as unknown as ExperimentsService;
 
     pullHandler = new PullLinkedFolderFilesJobHandler(

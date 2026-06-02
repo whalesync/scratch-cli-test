@@ -5,13 +5,11 @@ import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { isTableFullyLocked, TableList } from '@/types/server-entities/table-list';
-import { isExperimentEnabled } from '@/types/server-entities/users';
 import {
   Autocomplete,
   Checkbox,
@@ -146,7 +144,6 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   const workbookId = useWorkbookUIStore((state) => state.workbookId);
   const { refresh: refreshDataFolders } = useDataFolders();
   const { metadata } = useConnectorsMetadata();
-  const { user } = useScratchPadUser();
   const [filter, setFilter] = useState('');
   const [readOnly, setReadOnly] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -169,11 +166,11 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   const advancedSettings = useMemo(() => tableList?.advancedSettings ?? [], [tableList?.advancedSettings]);
 
   // Incremental controls (the `field-select` last-modified-field picker) are
-  // gated on the kill-switch flag AND the connector's static incremental
-  // capability — same rule as the sidebar menu items and schedule modal.
-  const incrementalEnabled =
-    isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user) &&
-    (folder.connectorService ? Boolean(metadata?.[folder.connectorService]?.incrementalPull) : false);
+  // gated on the connector's static incremental capability — same rule as the
+  // sidebar menu items and schedule modal.
+  const incrementalEnabled = folder.connectorService
+    ? Boolean(metadata?.[folder.connectorService]?.incrementalPull)
+    : false;
 
   // Hide `field-select` settings when incremental is disabled. Filtered only
   // for rendering / the schema fetch — buildOptions and the init effect still

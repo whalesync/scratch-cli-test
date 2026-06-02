@@ -180,10 +180,8 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       trackPullCompleted: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
-    // Default: kill switch ON (flag enabled), so existing tests exercising
-    // pullMode='incremental' continue to hit the incremental code path.
     mockExperimentsService = {
-      getBooleanFlag: jest.fn().mockResolvedValue(true),
+      isGenericConnectorEnabledForUser: jest.fn().mockResolvedValue(true),
     } as unknown as jest.Mocked<ExperimentsService>;
 
     handler = new PullLinkedFolderFilesJobHandler(
@@ -1073,50 +1071,6 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         // Prisma.DbNull sentinel, not the literal null — just assert "cleared".
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(updateData!.incrementalCursor).toBeDefined();
-      });
-
-      // Kill switch: when the INCREMENTAL_POLLING_ENABLED flag is off for the
-      // job's user, an incremental request is silently forced to full before
-      // any per-folder resolution.
-      it('forces full when the INCREMENTAL_POLLING_ENABLED feature flag is off', async () => {
-        const { dataFolder, mockConnector, params } = setupStandardMocks();
-        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
-        mockConnector.supportsIncrementalPull.mockReturnValue(true);
-        mockConnector.pullRecordFiles.mockResolvedValue({});
-        stubEmptyPhase2();
-        mockExperimentsService.getBooleanFlag.mockResolvedValue(false);
-
-        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
-
-        // Connector still saw 'full' — the kill switch short-circuits before
-        // the per-folder capability check is even consulted.
-        expect(lastConnectorCallOptions(mockConnector).pullMode).toBe('full');
-        expect(mockConnector.supportsIncrementalPull).not.toHaveBeenCalled();
-      });
-
-      // (f) INCREMENTAL_POLLING_ENABLED feature flag is off → kill switch
-      // forces full pull even when the caller requested incremental.
-      it('forces full when the INCREMENTAL_POLLING_ENABLED kill switch is off', async () => {
-        const { dataFolder, mockConnector, params } = setupStandardMocks();
-        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
-        mockConnector.supportsIncrementalPull.mockReturnValue(true);
-        mockConnector.pullRecordFiles.mockResolvedValue({});
-        stubEmptyPhase2();
-
-        // Kill switch OFF: flag returns false.
-        (mockExperimentsService.getBooleanFlag as jest.Mock).mockResolvedValue(false);
-
-        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
-
-        expect(lastConnectorCallOptions(mockConnector).pullMode).toBe('full');
-        // The capability check never runs when the kill switch already forced full.
-        expect(mockConnector.supportsIncrementalPull).not.toHaveBeenCalled();
-        // Verify the flag was actually consulted for this userId.
-        expect(mockExperimentsService.getBooleanFlag).toHaveBeenCalledWith(
-          'INCREMENTAL_POLLING_ENABLED',
-          false,
-          expect.objectContaining({ id: 'usr_123' }),
-        );
       });
     });
   });

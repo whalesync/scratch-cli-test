@@ -7,9 +7,7 @@ import { ScratchpadNotifications } from '@/app/components/ScratchpadNotification
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { scheduleApi } from '@/lib/api/schedule';
-import { isExperimentEnabled } from '@/types/server-entities/users';
 import { Select, Stack } from '@mantine/core';
 import type { DataFolder, Schedule } from '@spinner/shared-types';
 import { ScheduleAction } from '@spinner/shared-types';
@@ -38,15 +36,13 @@ export function PullScheduleModal({ opened, onClose, folder }: PullScheduleModal
   const { refresh: refreshDataFolders } = useDataFolders();
   const { isDevToolsEnabled } = useDevTools();
   const { metadata } = useConnectorsMetadata();
-  const { user } = useScratchPadUser();
   const [loading, setLoading] = useState(false);
   const [fullValue, setFullValue] = useState<string>(MANUAL_ONLY);
   const [incrementalValue, setIncrementalValue] = useState<string>(MANUAL_ONLY);
 
-  const supportsIncrementalPull =
-    isExperimentEnabled('INCREMENTAL_POLLING_ENABLED', user) && folder.connectorService
-      ? Boolean(metadata?.[folder.connectorService]?.incrementalPull)
-      : false;
+  const supportsIncrementalPull = folder.connectorService
+    ? Boolean(metadata?.[folder.connectorService]?.incrementalPull)
+    : false;
 
   const scheduleOptions = useMemo(
     () => (isDevToolsEnabled ? [...PULL_SCHEDULE_OPTIONS, DEV_ONLY_OPTION] : PULL_SCHEDULE_OPTIONS),

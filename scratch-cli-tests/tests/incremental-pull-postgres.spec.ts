@@ -119,8 +119,7 @@ describeIfPostgres(
         `/workbook/${workspaceId}/pull-files`,
         { dataFolderIds: [linkedFolderId], mode },
       );
-      const jobIds =
-        resp.jobIds ?? (resp.jobId ? [resp.jobId] : []);
+      const jobIds = resp.jobIds ?? (resp.jobId ? [resp.jobId] : []);
       expect(jobIds.length).toBeGreaterThan(0);
 
       const job = await waitForJob(jobIds[0]);
@@ -235,10 +234,9 @@ describeIfPostgres(
         // (see the mode assertion below) and advances the watermark, which the
         // edit/re-pull steps below build on.
         const baselineIncremental = await triggerPull("incremental");
-        // If incremental support is gated off (the INCREMENTAL_POLLING_ENABLED
-        // feature flag must be enabled for the test user, and modifiedAtField
-        // must resolve), the job silently demotes to a full scan. Fail loudly
-        // with the cause rather than as a confusing count mismatch.
+        // If incremental support is gated off (modifiedAtField must resolve),
+        // the job silently demotes to a full scan. Fail loudly with the cause
+        // rather than as a confusing count mismatch.
         expect(baselineIncremental.mode).toBe("incremental");
         expect(baselineIncremental.totalFiles).toBe(0);
 
