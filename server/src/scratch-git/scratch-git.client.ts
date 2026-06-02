@@ -21,6 +21,17 @@ export class ScratchGitNotFoundError extends Error {
   }
 }
 
+/** Thrown when scratch-git returns a 409 — the operation conflicts with one already in progress (e.g. GC). */
+export class ScratchGitConflictError extends Error {
+  constructor(
+    public readonly endpoint: string,
+    public readonly responseBody: string,
+  ) {
+    super(`scratch-git 409: ${endpoint}`);
+    this.name = 'ScratchGitConflictError';
+  }
+}
+
 export interface RepoFileRef {
   name: string;
   path: string;
@@ -95,6 +106,11 @@ export class ScratchGitClient {
       // 404s are expected control flow (repo/branch/file doesn't exist) — don't log, throw typed error
       if (response.status === 404) {
         throw new ScratchGitNotFoundError(endpoint, responseBody);
+      }
+
+      // 409s are expected control flow (operation already in progress, e.g. GC) — don't log, throw typed error
+      if (response.status === 409) {
+        throw new ScratchGitConflictError(endpoint, responseBody);
       }
 
       const error = new Error(`Received error code from scratch-git API: ${endpoint}: HTTP ${response.status}`);

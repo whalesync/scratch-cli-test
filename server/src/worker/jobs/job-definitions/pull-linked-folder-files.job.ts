@@ -29,7 +29,7 @@ import { ConnectorAccountService } from 'src/remote-service/connector-account/co
 import type { Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
-import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
+import { ScratchGitConflictError, ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { extractApiDomain } from 'src/utils/urls';
 import { JobCanceledError } from 'src/worker/job-errors';
@@ -477,18 +477,26 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       });
     }
 
-    // TODO(https://linear.app/whalesync/issue/DEV-9980): When a stalled job is retried by BullMQ,
-    // the previous run's GC may still be in progress, causing a 409 conflict here.
-    // We should either wait for the existing GC to finish or skip gracefully.
     try {
       await this.scratchGitService.runGitGc(repoId);
     } catch (err) {
-      WSLogger.warn({
-        source: LOG_SOURCE,
-        message: 'Failed to run Git GC',
-        workbookId: data.workbookId,
-        error: err,
-      });
+      if (err instanceof ScratchGitConflictError) {
+        // A GC from a prior run of this job (e.g. one that stalled and was retried by BullMQ) is still
+        // in progress on scratch-git. GC is idempotent maintenance, so skipping this run is harmless —
+        // the next pull will GC again. See https://linear.app/whalesync/issue/DEV-9980.
+        WSLogger.debug({
+          source: LOG_SOURCE,
+          message: 'Git GC already in progress, skipping',
+          workbookId: data.workbookId,
+        });
+      } else {
+        WSLogger.warn({
+          source: LOG_SOURCE,
+          message: 'Failed to run Git GC',
+          workbookId: data.workbookId,
+          error: err,
+        });
+      }
     }
 
     // Rebuild the index once after all folders are done
