@@ -49,7 +49,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
-import { createFallbackTableView, getByPath } from '../../../../shared/schema-columns';
+import { createFallbackTableView, getByPath, resolveDisplayString } from '../../../../shared/schema-columns';
 // ValidationResultRow is no longer used — validation data comes from diffData.validationByCell
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
@@ -2184,7 +2184,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         };
       }
       const raw = toDisplayString(val);
-      const display = formatFieldDisplay(raw, colType);
+      // A column may carry a declarative displayTransformer (set server-side,
+      // e.g. flatten a Notion rich-text array to plain_text). resolveDisplayString
+      // runs it through the generic fail-closed applier and falls back to raw on
+      // failure — the renderer needs no connector-specific knowledge. `data` and
+      // `copyData` stay the raw value so editing and copy operate on the verbatim
+      // value.
+      const display = viewCol?.displayTransformer
+        ? resolveDisplayString(val, viewCol)
+        : formatFieldDisplay(raw, colType);
       return {
         kind: GridCellKind.Text as const,
         data: raw,

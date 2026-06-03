@@ -1,7 +1,7 @@
 # Notion JSON Schema — describe the on-disk envelope
 
 - **Created:** 2026-06-02
-- **Status:** Planned
+- **Status:** Resolved
 - **Author:** Curtis Fonger
 - **Linear:** _not yet filed_ — related: [DEV-10308](https://linear.app/whalesync/issue/DEV-10308) (schema-free field writes; separate, complementary)
 - **Reviewed:** eng review complete (4 decisions locked, outside-voice pass, 1 P1 caught)

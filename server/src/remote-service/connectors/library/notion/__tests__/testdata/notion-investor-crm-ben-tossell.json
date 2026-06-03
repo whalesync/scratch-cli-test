@@ -1,0 +1,170 @@
+{
+  "object": "page",
+  "id": "a390403e-fed1-453e-aa3d-fdac479f4a0a",
+  "created_time": "2023-10-24T16:55:00.000Z",
+  "last_edited_time": "2023-10-24T16:55:00.000Z",
+  "created_by": {
+    "object": "user",
+    "id": "65ed3ef4-c422-46cb-aa00-a9755db0411f"
+  },
+  "last_edited_by": {
+    "object": "user",
+    "id": "65ed3ef4-c422-46cb-aa00-a9755db0411f"
+  },
+  "cover": null,
+  "icon": null,
+  "parent": {
+    "type": "data_source_id",
+    "data_source_id": "dd6e0932-fe89-46fc-abde-fa909ee236ed",
+    "database_id": "ab085eca-cbe6-46e7-80c1-81c32bb17e11"
+  },
+  "in_trash": false,
+  "is_archived": false,
+  "is_locked": false,
+  "properties": {
+    "Amount Invested": {
+      "id": "%40Ku%60",
+      "type": "number",
+      "number": null
+    },
+    "Status": {
+      "id": "%40%5Ebf",
+      "type": "multi_select",
+      "multi_select": [
+        {
+          "id": "81d4f366-bc7e-4e45-91b0-b0cf1fadee2f",
+          "name": "08 - Invested",
+          "color": "yellow"
+        }
+      ]
+    },
+    "Typical Check Size": {
+      "id": "AF%3CM",
+      "type": "number",
+      "number": 25000
+    },
+    "Fund Site": {
+      "id": "EQ~n",
+      "type": "url",
+      "url": "https://angel.co/v/back/ben-tossell"
+    },
+    "Investor In": {
+      "id": "LK%5EO",
+      "type": "rich_text",
+      "rich_text": [
+        {
+          "type": "text",
+          "text": {
+            "content": "Flutterflow",
+            "link": null
+          },
+          "annotations": {
+            "bold": false,
+            "italic": false,
+            "strikethrough": false,
+            "underline": false,
+            "code": false,
+            "color": "default"
+          },
+          "plain_text": "Flutterflow",
+          "href": null
+        }
+      ]
+    },
+    "LinkedIn": {
+      "id": "YGkZ",
+      "type": "url",
+      "url": "https://www.linkedin.com/in/ben-tossell-70453537/?originalSubdomain=uk"
+    },
+    "Email": {
+      "id": "%5DBMA",
+      "type": "email",
+      "email": "ben@tossell.com"
+    },
+    "Fund": {
+      "id": "aJVg",
+      "type": "rich_text",
+      "rich_text": [
+        {
+          "type": "text",
+          "text": {
+            "content": "Ben Tossell's Rolling Fund",
+            "link": null
+          },
+          "annotations": {
+            "bold": false,
+            "italic": false,
+            "strikethrough": false,
+            "underline": false,
+            "code": false,
+            "color": "default"
+          },
+          "plain_text": "Ben Tossell's Rolling Fund",
+          "href": null
+        }
+      ]
+    },
+    "Fund Type": {
+      "id": "hjW%3C",
+      "type": "multi_select",
+      "multi_select": [
+        {
+          "id": "I{~[",
+          "name": "Angel",
+          "color": "yellow"
+        }
+      ]
+    },
+    "Asked for Intro?": {
+      "id": "mJE%3C",
+      "type": "checkbox",
+      "checkbox": false
+    },
+    "Connection": {
+      "id": "vU%3Aj",
+      "type": "rich_text",
+      "rich_text": []
+    },
+    "Strategic Value": {
+      "id": "zY%3FR",
+      "type": "select",
+      "select": {
+        "id": "wXQz",
+        "name": "High",
+        "color": "default"
+      }
+    },
+    "Notes": {
+      "id": "%7BrUh",
+      "type": "rich_text",
+      "rich_text": []
+    },
+    "Name": {
+      "id": "title",
+      "type": "title",
+      "title": [
+        {
+          "type": "text",
+          "text": {
+            "content": "Ben Tossell",
+            "link": null
+          },
+          "annotations": {
+            "bold": false,
+            "italic": false,
+            "strikethrough": false,
+            "underline": false,
+            "code": false,
+            "color": "default"
+          },
+          "plain_text": "Ben Tossell",
+          "href": null
+        }
+      ]
+    }
+  },
+  "url": "https://www.notion.so/Ben-Tossell-a390403efed1453eaa3dfdac479f4a0a",
+  "public_url": null,
+  "archived": false,
+  "page_content": []
+}

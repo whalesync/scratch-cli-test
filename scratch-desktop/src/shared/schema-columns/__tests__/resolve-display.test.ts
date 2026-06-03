@@ -1,0 +1,52 @@
+import type { TableViewCol } from '@spinner/shared-types';
+import { describe, expect, it } from 'vitest';
+import { resolveDisplayString } from '../resolve-display';
+
+/** A Notion rich-text column: drilled to the span array + the flatten transformer. */
+const richTextCol: Pick<TableViewCol, 'displayTransformer'> = {
+  displayTransformer: { type: 'jsonpath', options: { expression: '$[*].plain_text', arrayHandling: 'concat' } },
+};
+
+const spanArray = [
+  { type: 'text', plain_text: 'Ben ', href: null },
+  { type: 'text', plain_text: 'Tossell', href: null },
+];
+
+describe('resolveDisplayString', () => {
+  it('flattens a rich-text span array via the column transformer', () => {
+    expect(resolveDisplayString(spanArray, richTextCol)).toBe('Ben Tossell');
+  });
+
+  it('falls back to the generic stringifier when the column has no transformer', () => {
+    expect(resolveDisplayString(spanArray, {})).toBe(JSON.stringify(spanArray));
+    expect(resolveDisplayString(spanArray, undefined)).toBe(JSON.stringify(spanArray));
+  });
+
+  it('falls back to raw JSON when the transformer fails closed (malformed span)', () => {
+    const malformed = [{ plain_text: null }];
+    // applyDisplayTransformer returns {ok:false} -> raw JSON, never "null"
+    expect(resolveDisplayString(malformed, richTextCol)).toBe(JSON.stringify(malformed));
+  });
+
+  it('falls back to raw JSON when a span is missing plain_text (no silent drop)', () => {
+    const partial = [{ plain_text: 'kept' }, { type: 'mention' }];
+    expect(resolveDisplayString(partial, richTextCol)).toBe(JSON.stringify(partial));
+  });
+
+  it('renders an empty rich-text array as blank', () => {
+    expect(resolveDisplayString([], richTextCol)).toBe('');
+  });
+
+  it('passes scalar values straight through the fallback stringifier', () => {
+    expect(resolveDisplayString('hello', {})).toBe('hello');
+    expect(resolveDisplayString(42, {})).toBe('42');
+    expect(resolveDisplayString(null, richTextCol)).toBe(''); // null -> {ok:false} -> formatCellForGrid(null) = ''
+  });
+
+  it('does not mutate the input value', () => {
+    const input = [{ plain_text: 'x' }];
+    const snapshot = JSON.stringify(input);
+    resolveDisplayString(input, richTextCol);
+    expect(JSON.stringify(input)).toBe(snapshot);
+  });
+});

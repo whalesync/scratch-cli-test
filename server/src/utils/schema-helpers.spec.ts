@@ -1,6 +1,7 @@
-import { Type } from '@sinclair/typebox';
+import { TSchema, Type } from '@sinclair/typebox';
 import {
   TransformerTypes,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
@@ -8,6 +9,12 @@ import {
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
 import { extractSchemaFields, extractSchemaPaths } from './schema-helpers';
+
+/** Set an x-scratch annotation on a TypeBox schema node (mirrors the connector generators). */
+function annotate(schema: TSchema, key: string, value: unknown): TSchema {
+  (schema as unknown as Record<string, unknown>)[key] = value;
+  return schema;
+}
 
 describe('schema-helpers', () => {
   describe('extractSchemaPaths', () => {
@@ -388,6 +395,111 @@ describe('schema-helpers', () => {
         expect(field!.displayLabel).toBe('First');
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(field!.type).toBe('string');
+      });
+    });
+
+    // D4: an object that carries x-scratch metadata (a Notion property envelope
+    // `{ id, type, <typeKey>: value }`) is a single leaf — extractSchemaFields
+    // must NOT recurse into its id/type/value sub-properties. Plain wrappers that
+    // carry no x-scratch metadata (HubSpot `properties`, Airtable `fields`) must
+    // still expand. Mirrors the desktop build-column-definitions guard.
+    describe('x-scratch envelope leaf guard (D4)', () => {
+      /** A Notion-style email property envelope tagged with connector metadata. */
+      function emailEnvelope(): TSchema {
+        const envelope = Type.Object({
+          id: Type.String(),
+          type: Type.Literal('email'),
+          email: Type.Union([Type.String(), Type.Null()]),
+        });
+        annotate(envelope, X_SCRATCH_CONNECTOR_DATA_TYPE, 'email');
+        annotate(envelope, X_SCRATCH_REMOTE_FIELD_ID, 'e1');
+        return envelope;
+      }
+
+      it('yields exactly ONE field for an enveloped property, not its sub-fields', () => {
+        const schema = Type.Object({ properties: Type.Object({ Email: emailEnvelope() }) });
+
+        const fields = extractSchemaFields(schema);
+        const paths = fields.map((f) => f.path);
+
+        expect(paths).toContain('properties.Email');
+        expect(paths).not.toContain('properties.Email.id');
+        expect(paths).not.toContain('properties.Email.type');
+        expect(paths).not.toContain('properties.Email.email');
+
+        const emailField = fields.find((f) => f.path === 'properties.Email');
+        expect(emailField?.remoteFieldId).toBe('e1');
+      });
+
+      it('applies the envelope virtual field as the single leaf type (title → string)', () => {
+        const titleEnvelope = Type.Object({
+          id: Type.String(),
+          type: Type.Literal('title'),
+          title: Type.Array(Type.Object({ plain_text: Type.String() })),
+        });
+        annotate(titleEnvelope, X_SCRATCH_CONNECTOR_DATA_TYPE, 'title');
+        annotate(titleEnvelope, X_SCRATCH_VIRTUAL_FIELDS, [
+          {
+            displayLabel: 'Name',
+            type: 'string',
+            suggestedTransformer: {
+              type: TransformerTypes.JSONPath,
+              options: { expression: '$.title[*].plain_text', arrayHandling: 'concat' as const },
+            },
+          },
+        ]);
+
+        const schema = Type.Object({ properties: Type.Object({ Name: titleEnvelope }) });
+        const fields = extractSchemaFields(schema);
+        const nameField = fields.find((f) => f.path === 'properties.Name');
+
+        expect(nameField?.type).toBe('string');
+        expect(nameField?.displayLabel).toBe('Name');
+        expect(fields.map((f) => f.path)).not.toContain('properties.Name.title');
+      });
+
+      it('keeps the relation FK field path at properties.<rel> (not properties.<rel>.relation)', () => {
+        const relationEnvelope = Type.Object({
+          id: Type.String(),
+          type: Type.Literal('relation'),
+          relation: Type.Array(Type.Object({ id: Type.String() })),
+          has_more: Type.Optional(Type.Boolean()),
+        });
+        annotate(relationEnvelope, X_SCRATCH_CONNECTOR_DATA_TYPE, 'relation');
+        annotate(relationEnvelope, X_SCRATCH_FOREIGN_KEY_OPTIONS, { linkedTableId: 'db_linked', map: 'id' });
+
+        const schema = Type.Object({ properties: Type.Object({ Linked: relationEnvelope }) });
+        const fields = extractSchemaFields(schema);
+
+        const linked = fields.find((f) => f.path === 'properties.Linked');
+        expect(linked?.foreignKey).toEqual({ linkedTableId: 'db_linked' });
+        expect(fields.map((f) => f.path)).not.toContain('properties.Linked.relation');
+      });
+
+      it('still expands a HubSpot-style `properties` wrapper (no x-scratch on the wrapper)', () => {
+        const schema = Type.Object({
+          properties: Type.Object({
+            firstname: Type.String({ [X_SCRATCH_REMOTE_FIELD_ID]: 'firstname' }),
+            lastname: Type.String(),
+          }),
+        });
+
+        const paths = extractSchemaFields(schema).map((f) => f.path);
+        expect(paths).toContain('properties.firstname');
+        expect(paths).toContain('properties.lastname');
+      });
+
+      it('still expands an Airtable-style `fields` wrapper (no x-scratch on the wrapper)', () => {
+        const schema = Type.Object({
+          fields: Type.Object({
+            Name: Type.String(),
+            Count: Type.Number(),
+          }),
+        });
+
+        const paths = extractSchemaFields(schema).map((f) => f.path);
+        expect(paths).toContain('fields.Name');
+        expect(paths).toContain('fields.Count');
       });
     });
   });

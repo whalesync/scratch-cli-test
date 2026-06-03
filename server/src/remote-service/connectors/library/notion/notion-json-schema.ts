@@ -11,6 +11,7 @@ import {
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
+  type VirtualFieldDef,
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
@@ -166,108 +167,138 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
 }
 
 /**
+ * Build the rich-text span object schema shared by `title` and `rich_text`
+ * property inner values (a Notion rich-text array element).
+ */
+function notionRichTextSpanSchema(): TSchema {
+  return Type.Object({
+    type: Type.String(),
+    text: Type.Optional(Type.Object({ content: Type.String(), link: Type.Optional(Type.Unknown()) })),
+    plain_text: Type.String(),
+    href: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  });
+}
+
+/**
+ * Build the Notion user object schema (`{ object: 'user', id, ... }`) used as
+ * the inner value of `created_by` / `last_edited_by` properties.
+ */
+function notionUserObjectSchema(): TSchema {
+  return Type.Object({
+    object: Type.Literal('user'),
+    id: Type.String(),
+    name: Type.Optional(Type.String()),
+    avatar_url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  });
+}
+
+/**
+ * Wrap an inner property value in the raw Notion property envelope that the pull
+ * path persists verbatim on disk: `{ id, type: <typeKey>, <typeKey>: value, ...extras }`.
+ *
+ * `typeKey` is the Notion property type string, which is also the key the value
+ * lives under in every Notion property object — e.g. an email property is stored
+ * as `{ id, type: 'email', email: '...' }`, a multi_select as
+ * `{ id, type: 'multi_select', multi_select: [...] }`. Modeling this envelope —
+ * rather than the bare inner value — is what makes the generated schema match the
+ * verbatim API response, per the *Preserve external data fidelity* product
+ * principle. See docs/plans/2026-06-02-notion-schema-envelope-fix.md.
+ *
+ * The envelope is intentionally faithful-where-it-matters, not exhaustive: it
+ * models the structural extras real data carries (e.g. `relation.has_more`) but
+ * leaves rarely-needed keys off. TypeBox omits `additionalProperties`, so any
+ * extra keys on a real record (rich-text `annotations`, page `parent.database_id`)
+ * still validate.
+ */
+function wrapInNotionPropertyEnvelope(
+  typeKey: string,
+  innerValueSchema: TSchema,
+  description: string,
+  extraEnvelopeKeys?: Record<string, TSchema>,
+): TSchema {
+  return Type.Object(
+    {
+      id: Type.String(),
+      type: Type.Literal(typeKey),
+      [typeKey]: innerValueSchema,
+      ...(extraEnvelopeKeys ?? {}),
+    },
+    { description },
+  );
+}
+
+/**
  * Convert a Notion database property to a TypeBox JSON Schema.
+ *
+ * Returns the raw on-disk **envelope** `{ id, type, <typeKey>: value }` (see
+ * {@link wrapInNotionPropertyEnvelope}), with all `x-scratch-*` annotations on
+ * the outer envelope object. Placing the annotations on the outer object keeps
+ * each property a single leaf for diff/column granularity (see
+ * `build-column-definitions.ts` and the `extractSchemaFields` leaf guard in
+ * `server/src/utils/schema-helpers.ts`).
  */
 export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['properties'][string]): TSchema {
   const description = property.name;
-  let schema: TSchema;
+
+  // Inner value schema (the unwrapped per-property value) plus any annotations
+  // that belong on the outer envelope. `extraEnvelopeKeys` carries structural
+  // envelope siblings beyond `{ id, type, <typeKey> }` (e.g. relation.has_more).
+  let innerValueSchema: TSchema;
+  let extraEnvelopeKeys: Record<string, TSchema> | undefined;
+  let virtualFields: VirtualFieldDef[] | undefined;
+  let assetFieldOptions: AssetFieldOptions | undefined;
+  let foreignKeyOptions: { linkedTableId: string; map: string } | undefined;
 
   switch (property.type) {
     case 'title':
-      schema = Type.Array(
-        Type.Object({
-          type: Type.String(),
-          text: Type.Optional(Type.Object({ content: Type.String(), link: Type.Optional(Type.Unknown()) })),
-          plain_text: Type.String(),
-          href: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
+      innerValueSchema = Type.Array(notionRichTextSpanSchema());
+      // JSONPath is envelope-relative: `$.title` resolves against the property
+      // envelope `{ id, type: 'title', title: [...] }` we now describe.
+      virtualFields = [
         {
-          description,
-          [X_SCRATCH_VIRTUAL_FIELDS]: [
-            {
-              displayLabel: description,
-              type: 'string',
-              suggestedTransformer: {
-                type: TransformerTypes.JSONPath,
-                options: { expression: '$.title[*].plain_text', arrayHandling: 'concat' },
-              },
-            },
-          ],
+          displayLabel: description,
+          type: 'string',
+          suggestedTransformer: {
+            type: TransformerTypes.JSONPath,
+            options: { expression: '$.title[*].plain_text', arrayHandling: 'concat' },
+          },
         },
-      );
+      ];
       break;
 
     case 'rich_text':
-      schema = Type.Array(
-        Type.Object({
-          type: Type.String(),
-          text: Type.Optional(Type.Object({ content: Type.String(), link: Type.Optional(Type.Unknown()) })),
-          plain_text: Type.String(),
-          href: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        }),
-        { description },
-      );
+      innerValueSchema = Type.Array(notionRichTextSpanSchema());
       break;
 
     case 'number':
-      schema = Type.Union([Type.Number(), Type.Null()], { description });
+      innerValueSchema = Type.Union([Type.Number(), Type.Null()]);
       break;
 
     case 'select':
-      schema = Type.Union(
-        [
-          Type.Object({
-            id: Type.String(),
-            name: Type.String(),
-            color: Type.String(),
-          }),
-          Type.Null(),
-        ],
-        { description },
-      );
+    case 'status':
+      innerValueSchema = Type.Union([
+        Type.Object({ id: Type.String(), name: Type.String(), color: Type.String() }),
+        Type.Null(),
+      ]);
       break;
 
     case 'multi_select':
-      schema = Type.Array(
-        Type.Object({
-          id: Type.String(),
-          name: Type.String(),
-          color: Type.String(),
-        }),
-        { description },
-      );
-      break;
-
-    case 'status':
-      schema = Type.Union(
-        [
-          Type.Object({
-            id: Type.String(),
-            name: Type.String(),
-            color: Type.String(),
-          }),
-          Type.Null(),
-        ],
-        { description },
-      );
+      innerValueSchema = Type.Array(Type.Object({ id: Type.String(), name: Type.String(), color: Type.String() }));
       break;
 
     case 'date':
-      schema = Type.Union(
-        [
-          Type.Object({
-            start: Type.String({ format: 'date-time' }),
-            end: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
-            time_zone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          }),
-          Type.Null(),
-        ],
-        { description },
-      );
+      innerValueSchema = Type.Union([
+        Type.Object({
+          start: Type.String({ format: 'date-time' }),
+          end: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          time_zone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Null(),
+      ]);
       break;
 
     case 'people':
-      schema = Type.Array(
+      innerValueSchema = Type.Array(
         Type.Object({
           object: Type.Literal('user'),
           id: Type.String(),
@@ -276,12 +307,11 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
           type: Type.Optional(Type.String()),
           person: Type.Optional(Type.Object({ email: Type.Optional(Type.String()) })),
         }),
-        { description },
       );
       break;
 
     case 'files':
-      schema = Type.Array(
+      innerValueSchema = Type.Array(
         Type.Union([
           Type.Object({
             name: Type.String(),
@@ -294,120 +324,98 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
             file: Type.Object({ url: Type.String({ format: 'uri' }), expiry_time: Type.String() }),
           }),
         ]),
-        {
-          description,
-          [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions,
-          [X_SCRATCH_VIRTUAL_FIELDS]: [
-            {
-              displayLabel: description,
-              type: 'string',
-              suggestedTransformer: {
-                type: TransformerTypes.NotionFileUrl,
-                options: { arrayHandling: 'array' },
-              },
-            },
-          ],
-        },
       );
+      assetFieldOptions = { idPath: null, urlExpires: true };
+      // NotionFileUrl reads the envelope and digs into `.files` itself.
+      virtualFields = [
+        {
+          displayLabel: description,
+          type: 'string',
+          suggestedTransformer: {
+            type: TransformerTypes.NotionFileUrl,
+            options: { arrayHandling: 'array' },
+          },
+        },
+      ];
       break;
 
     case 'checkbox':
-      schema = Type.Boolean({ description });
+      innerValueSchema = Type.Boolean();
       break;
 
     case 'url':
-      schema = Type.Union([Type.String({ format: 'uri' }), Type.Null()], { description });
+      innerValueSchema = Type.Union([Type.String({ format: 'uri' }), Type.Null()]);
       break;
 
     case 'email':
-      schema = Type.Union([Type.String({ format: 'email' }), Type.Null()], { description });
+      innerValueSchema = Type.Union([Type.String({ format: 'email' }), Type.Null()]);
       break;
 
     case 'phone_number':
-      schema = Type.Union([Type.String(), Type.Null()], { description });
+      innerValueSchema = Type.Union([Type.String(), Type.Null()]);
       break;
 
     case 'formula':
-      schema = Type.Union(
-        [
-          Type.Object({ type: Type.Literal('string'), string: Type.Union([Type.String(), Type.Null()]) }),
-          Type.Object({ type: Type.Literal('number'), number: Type.Union([Type.Number(), Type.Null()]) }),
-          Type.Object({ type: Type.Literal('boolean'), boolean: Type.Boolean() }),
-          Type.Object({
-            type: Type.Literal('date'),
-            date: Type.Union([Type.Object({ start: Type.String(), end: Type.Optional(Type.String()) }), Type.Null()]),
-          }),
-        ],
-        { description },
-      );
+      // Doubly nested: the envelope `formula` value is itself a tagged result
+      // object `{ type, <result> }`. The default view shows this inner object;
+      // we model both nesting levels rather than guessing the result key.
+      innerValueSchema = Type.Union([
+        Type.Object({ type: Type.Literal('string'), string: Type.Union([Type.String(), Type.Null()]) }),
+        Type.Object({ type: Type.Literal('number'), number: Type.Union([Type.Number(), Type.Null()]) }),
+        Type.Object({ type: Type.Literal('boolean'), boolean: Type.Boolean() }),
+        Type.Object({
+          type: Type.Literal('date'),
+          date: Type.Union([Type.Object({ start: Type.String(), end: Type.Optional(Type.String()) }), Type.Null()]),
+        }),
+      ]);
       break;
 
     case 'relation':
-      schema = Type.Object(
-        {
-          id: Type.String(),
-          relation: Type.Array(Type.Object({ id: Type.String() }), {
-            [X_SCRATCH_FOREIGN_KEY_OPTIONS]: property.relation.database_id
-              ? { linkedTableId: property.relation.database_id, map: 'id' }
-              : undefined,
-          }),
-        },
-        { description },
-      );
+      innerValueSchema = Type.Array(Type.Object({ id: Type.String() }));
+      // Real relation data carries a sibling `has_more` flag (Notion truncates
+      // the relation array to 25 on response).
+      extraEnvelopeKeys = { has_more: Type.Optional(Type.Boolean()) };
+      foreignKeyOptions = property.relation.database_id
+        ? { linkedTableId: property.relation.database_id, map: 'id' }
+        : undefined;
       break;
 
     case 'rollup':
-      schema = Type.Object(
-        {
-          type: Type.String(),
-          function: Type.String(),
-          number: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
-          date: Type.Optional(Type.Unknown()),
-          array: Type.Optional(Type.Array(Type.Unknown())),
-        },
-        { description },
-      );
+      // Doubly nested: the envelope `rollup` value is itself an object carrying
+      // `function`/`type` plus the result key. Shown as its inner object.
+      innerValueSchema = Type.Object({
+        type: Type.String(),
+        function: Type.String(),
+        number: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+        date: Type.Optional(Type.Unknown()),
+        array: Type.Optional(Type.Array(Type.Unknown())),
+      });
       break;
 
     case 'created_time':
-      schema = Type.String({ description, format: 'date-time' });
+    case 'last_edited_time':
+      innerValueSchema = Type.String({ format: 'date-time' });
       break;
 
     case 'created_by':
-      schema = Type.Object(
-        {
-          object: Type.Literal('user'),
-          id: Type.String(),
-          name: Type.Optional(Type.String()),
-          avatar_url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        },
-        { description },
-      );
-      break;
-
-    case 'last_edited_time':
-      schema = Type.String({ description, format: 'date-time' });
-      break;
-
     case 'last_edited_by':
-      schema = Type.Object(
-        {
-          object: Type.Literal('user'),
-          id: Type.String(),
-          name: Type.Optional(Type.String()),
-          avatar_url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        },
-        { description },
-      );
+      innerValueSchema = notionUserObjectSchema();
       break;
 
     default:
-      schema = Type.Unknown({ description });
+      // Unknown / future Notion type: keep the envelope shape with an opaque
+      // inner value. Renders as JSON; never silently mistyped.
+      innerValueSchema = Type.Unknown();
       break;
   }
+
+  const schema = wrapInNotionPropertyEnvelope(property.type, innerValueSchema, description, extraEnvelopeKeys);
 
   schema[X_SCRATCH_CONNECTOR_DATA_TYPE] = property.type;
   schema[X_SCRATCH_READONLY] = NOTION_READ_ONLY_PROPERTY_TYPES.has(property.type) ? true : undefined;
   schema[X_SCRATCH_REMOTE_FIELD_ID] = property.id;
+  if (virtualFields) schema[X_SCRATCH_VIRTUAL_FIELDS] = virtualFields;
+  if (assetFieldOptions) schema[X_SCRATCH_ASSET_FIELD] = assetFieldOptions;
+  if (foreignKeyOptions) schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] = foreignKeyOptions;
   return schema;
 }

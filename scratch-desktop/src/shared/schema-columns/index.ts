@@ -2,4 +2,5 @@ export { buildColumnDefinitions } from './build-column-definitions';
 export { createFallbackTableView } from './create-fallback-view';
 export { formatCellForGrid } from './format-cell';
 export { getByPath } from './project-record';
+export { resolveDisplayString } from './resolve-display';
 export type { ColumnAttributes, ColumnDataType, ColumnDefinition, NormalizedRecordRow } from './types';

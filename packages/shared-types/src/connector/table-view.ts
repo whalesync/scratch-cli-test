@@ -1,3 +1,9 @@
+// Type-only import: erased at compile time, so it creates NO runtime edge from
+// the package barrel to the transform module. The runtime applier (and its
+// jsonpath-rfc9535 dependency) stays behind the `@spinner/shared-types/transform`
+// subpath; only the config *type* is referenced here.
+import type { DisplayTransformerConfig } from '../transform/apply-display';
+
 /**
  * A UI configuration that describes how to map a JSON record to a set of columns that are visible in a grid.
  * Some information in this is redundant with the Schema. This is deliberate; this should be the source of truth for rendering decisions
@@ -45,6 +51,14 @@ export type TableViewCol = {
   // Hint to the renderer on how to format.
   type?: TablePropertyType;
   readonly?: boolean;
+
+  // Optional declarative instruction for deriving this column's DISPLAY string
+  // from its raw value (e.g. flatten a Notion rich-text array to plain_text).
+  // The renderer runs it through the generic, fail-closed applier in
+  // `@spinner/shared-types/transform` and falls back to the raw value if it
+  // returns `{ok:false}`. Display-only: never applied to the edit/copy/persisted
+  // value. The connector (server) sets this; the renderer stays connector-agnostic.
+  displayTransformer?: DisplayTransformerConfig;
 
   // When the field is an object, we may want to define a few subfields for the user to pick between, for
   // ergonomics. To the user, a complex object might only have one interesting field, which accurately represents it. For example,

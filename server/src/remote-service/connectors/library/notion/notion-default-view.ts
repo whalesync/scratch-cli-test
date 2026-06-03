@@ -4,6 +4,7 @@ import {
   TableView,
   TableViewCol,
   TableViewSubfield,
+  TransformerTypes,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
@@ -39,36 +40,18 @@ const USER_SUBFIELDS: TableViewSubfield[] = [{ relativePath: 'id', name: 'Id', t
 
 const PARENT_SUBFIELDS: TableViewSubfield[] = [{ relativePath: 'database_id', name: 'Database Id', type: 'string' }];
 
-// ── Notion property type mapping ──
-
-const NOTION_TYPE_MAP: Partial<Record<string, TablePropertyType>> = {
-  number: 'number',
-  checkbox: 'checkbox',
-  url: 'url',
-  email: 'string',
-  phone_number: 'string',
-  created_time: 'date',
-  last_edited_time: 'date',
-  date: 'object',
-  title: 'object',
-  rich_text: 'object',
-  select: 'object',
-  status: 'object',
-  multi_select: 'object',
-  people: 'object',
-  files: 'object',
-  formula: 'object',
-  relation: 'object',
-  rollup: 'object',
-  created_by: 'object',
-  last_edited_by: 'object',
-  unique_id: 'object',
-  verification: 'object',
-};
+// ── Notion property subfield mapping ──
 
 // Property types that should get a subfield for the human-readable value.
 const SELECT_TYPES = new Set(['select', 'status']);
 const USER_PROPERTY_TYPES = new Set(['created_by', 'last_edited_by']);
+
+// Property types whose inner value is a Notion rich-text array. These columns
+// carry a declarative `displayTransformer` (JSONPath `$[*].plain_text`, concat)
+// that the renderer runs to flatten the spans to plain text. The `type:
+// 'richtext'` we set is now only a cosmetic hint — flattening is driven by the
+// transformer, not the type. The stored value stays the verbatim array.
+const RICH_TEXT_TYPES = new Set(['title', 'rich_text']);
 
 /**
  * Build a default TableView for a Notion database.
@@ -113,8 +96,9 @@ export function buildNotionDefaultView(schema: TSchema): TableView {
 function orderProperties(propertyFields: Record<string, TSchema>): [string, TSchema][] {
   const entries = Object.entries(propertyFields);
   const titleIdx = entries.findIndex(([name, schema]) => {
-    const inner = unwrapOptional(schema);
-    const dataType = inner?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
+    // The envelope object carries the annotation directly; TypeBox's Optional
+    // modifier is transparent (no anyOf wrapper), so we read it off the schema.
+    const dataType = schema[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
     if (dataType === 'title') return true;
     const lowerName = name.toLowerCase();
     return lowerName === 'name' || lowerName === 'title';
@@ -190,30 +174,66 @@ function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): Table
   return col;
 }
 
-/** Build a TableViewCol for a Notion database property (under properties.*). */
+/**
+ * Build a TableViewCol for a Notion database property.
+ *
+ * Each property is stored on disk as the raw Notion envelope
+ * `{ id, type: <typeKey>, <typeKey>: value, ... }`. The column path drills
+ * exactly one level past the envelope to `properties.<name>.<typeKey>` so the
+ * grid renders the inner value (the email string, the multi_select array, the
+ * formula/rollup inner object) instead of the envelope JSON. Subfields are
+ * re-anchored relative to that drilled path. The annotations live on the outer
+ * envelope object, which TypeBox's transparent Optional modifier preserves, so
+ * we read them directly off `propSchema`.
+ */
 function buildPropertyCol(propName: string, propSchema: TSchema | undefined): TableViewCol {
-  // Unwrap Optional wrapper
-  const inner = unwrapOptional(propSchema);
-  const connectorDataType = inner?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
-  const isReadonly = inner?.[X_SCRATCH_READONLY] === true;
-  const type = connectorDataType ? (NOTION_TYPE_MAP[connectorDataType] ?? 'object') : undefined;
+  const connectorDataType = propSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
+  const isReadonly = propSchema?.[X_SCRATCH_READONLY] === true;
+
+  // Missing-type guard: without a connector data type we can't know the envelope
+  // key to drill into, so fall back to the whole envelope (renders as JSON)
+  // rather than emitting `properties.<name>.undefined` (a silent blank cell).
+  if (!connectorDataType) {
+    return {
+      kind: 'col',
+      path: `properties.${propName}`,
+      name: propName,
+      type: resolveInnerValueTablePropertyType(propSchema),
+      readonly: isReadonly || undefined,
+    };
+  }
+
+  // Inner value schema lives under the envelope key (== connector data type).
+  const innerValueSchema = (propSchema?.properties as Record<string, TSchema> | undefined)?.[connectorDataType];
 
   const col: TableViewCol = {
     kind: 'col',
-    path: `properties.${propName}`,
+    path: `properties.${propName}.${connectorDataType}`,
     name: propName,
-    type,
+    type: RICH_TEXT_TYPES.has(connectorDataType) ? 'richtext' : resolveInnerValueTablePropertyType(innerValueSchema),
     readonly: isReadonly || undefined,
   };
 
-  // Select/status: show the name
-  if (SELECT_TYPES.has(connectorDataType ?? '')) {
+  // Rich-text inner value is a Notion span array. Attach a declarative display
+  // transformer so the renderer flattens it to plain_text without any
+  // Notion-specific knowledge of its own. The column path is already drilled to
+  // the array (properties.<name>.<typeKey>), so the expression is array-relative.
+  if (RICH_TEXT_TYPES.has(connectorDataType)) {
+    col.displayTransformer = {
+      type: TransformerTypes.JSONPath,
+      options: { expression: '$[*].plain_text', arrayHandling: 'concat' },
+    };
+  }
+
+  // Select/status: the inner value is `{ id, name, color } | null` — show the name.
+  if (SELECT_TYPES.has(connectorDataType)) {
     col.subfields = [{ relativePath: 'name', name: 'Name', type: 'string' }];
     col.selectedSubfield = 0;
   }
 
-  // User property types (created_by, last_edited_by on properties): show id
-  if (USER_PROPERTY_TYPES.has(connectorDataType ?? '')) {
+  // User property types (created_by, last_edited_by): inner value is the user
+  // object — show id (with name as an alternative).
+  if (USER_PROPERTY_TYPES.has(connectorDataType)) {
     col.subfields = [
       { relativePath: 'id', name: 'Id', type: 'string' },
       { relativePath: 'name', name: 'Name', type: 'string' },
@@ -221,7 +241,7 @@ function buildPropertyCol(propName: string, propSchema: TSchema | undefined): Ta
     col.selectedSubfield = 0;
   }
 
-  // Date properties: show start
+  // Date properties: inner value is `{ start, end?, time_zone? } | null` — show start.
   if (connectorDataType === 'date') {
     col.subfields = [{ relativePath: 'start', name: 'Start', type: 'date' }];
     col.selectedSubfield = 0;
@@ -230,14 +250,27 @@ function buildPropertyCol(propName: string, propSchema: TSchema | undefined): Ta
   return col;
 }
 
-/** Unwrap TypeBox Optional to get the inner schema. */
-function unwrapOptional(schema: TSchema | undefined): TSchema | undefined {
+/**
+ * Map a Notion property's inner value schema (the value under the envelope's
+ * type key, e.g. the `email` value in `{ id, type, email }`) to a renderer
+ * TablePropertyType. Resolves nullable unions to their non-null member so
+ * scalar inner values (`email`, `number`, `url`) map to scalar types rather
+ * than 'object'. Objects, arrays, and unknown inner values render as JSON.
+ */
+function resolveInnerValueTablePropertyType(schema: TSchema | undefined): TablePropertyType | undefined {
   if (!schema) return undefined;
-  // TypeBox Optional wraps with anyOf or stores inner schema directly
-  // In practice the annotation keys are on the inner schema for Notion properties
-  const anyOf = (schema as TSchema & { anyOf?: TSchema[] }).anyOf;
-  if (anyOf) {
-    return anyOf.find((s) => s[Kind] !== 'Null') ?? schema;
+  const format = (schema as TSchema & { format?: string }).format;
+  if (format === 'date-time') return 'date';
+  if (format === 'uri') return 'url';
+
+  const kind = schema[Kind] as string | undefined;
+  if (kind === 'Boolean') return 'checkbox';
+  if (kind === 'Number' || kind === 'Integer') return 'number';
+  if (kind === 'String') return 'string';
+  if (kind === 'Union') {
+    const anyOf = (schema as TSchema & { anyOf?: TSchema[] }).anyOf;
+    const nonNull = anyOf?.find((s) => s[Kind] !== 'Null');
+    return nonNull ? resolveInnerValueTablePropertyType(nonNull) : 'object';
   }
-  return schema;
+  return 'object';
 }

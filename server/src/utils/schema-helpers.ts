@@ -3,11 +3,30 @@ import type { ForeignKeyOptionSchema, VirtualFieldDef } from '@spinner/shared-ty
 import {
   TransformerConfig,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_PREFIX,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
+
+/**
+ * True if the schema node carries any `x-scratch-*` metadata key.
+ *
+ * Used as a leaf guard: a connector-annotated object (e.g. a Notion property
+ * envelope `{ id, type, <typeKey>: value }` tagged with
+ * `x-scratch-connector-data-type`) is a single field, not a container to
+ * recurse into. Mirrors the desktop `build-column-definitions.ts` guard so the
+ * server and desktop agree on leaf granularity. Plain wrapper objects that carry
+ * no x-scratch metadata (Airtable `fields`, HubSpot `properties`) are not
+ * matched and still expand into per-field leaves.
+ */
+function hasXScratchExtension(schema: TSchema): boolean {
+  for (const key of Object.keys(schema)) {
+    if (key.startsWith(X_SCRATCH_PREFIX)) return true;
+  }
+  return false;
+}
 
 /**
  * Extracts all possible dot-notation paths from a JSON Schema.
@@ -116,8 +135,12 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     }
   }
 
-  // Object Traverse
-  if (schema.type === 'object' && schema.properties) {
+  // Object Traverse — but treat a connector-annotated object as a single leaf.
+  // A Notion property envelope `{ id, type, <typeKey>: value }` tagged with
+  // `x-scratch-*` metadata would otherwise explode into `properties.X.id`,
+  // `.type`, `.value` sub-fields and flip the field type to `object`, polluting
+  // sync LLM mapping context, import matching, and the MCP folder-schema tool.
+  if (schema.type === 'object' && schema.properties && !hasXScratchExtension(schema)) {
     for (const [key, propSchema] of Object.entries(schema.properties as Record<string, TSchema>)) {
       const currentPath = parentPath ? `${parentPath}.${key}` : key;
       const subFields = extractSchemaFields(propSchema, currentPath);

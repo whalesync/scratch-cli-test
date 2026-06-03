@@ -3,6 +3,11 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import { resolve } from 'path';
 
 const sharedTypesSrc = resolve('../packages/shared-types/src/index.ts');
+// The `@spinner/shared-types/transform` subpath (display transformer applier +
+// its jsonpath-rfc9535 dep) is intentionally NOT in the barrel, so it needs its
+// own source alias. Must be registered BEFORE the barrel alias so the more
+// specific `/transform` import matches first.
+const sharedTypesTransformSrc = resolve('../packages/shared-types/src/transform/index.ts');
 
 // TODO: Remove this useless comment.
 export default defineConfig({
@@ -10,6 +15,7 @@ export default defineConfig({
     resolve: {
       alias: {
         // Same as renderer: bundle from source so main never requires node_modules/@spinner/shared-types/dist.
+        '@spinner/shared-types/transform': sharedTypesTransformSrc,
         '@spinner/shared-types': sharedTypesSrc,
       },
     },
@@ -31,6 +37,7 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve('src/renderer/src'),
+        '@spinner/shared-types/transform': sharedTypesTransformSrc,
         '@spinner/shared-types': sharedTypesSrc,
       },
     },

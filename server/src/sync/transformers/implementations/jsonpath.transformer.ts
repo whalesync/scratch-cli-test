@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { JSONPathOptions, TransformerTypes } from '@spinner/shared-types';
-import { JsonValue, query } from 'jsonpath-rfc9535';
+import { applyJsonPath } from '@spinner/shared-types/transform';
 import { registerTransformer } from '../transformer-registry';
 import { FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
 
@@ -46,18 +46,21 @@ export const jsonpathTransformer: FieldTransformer = {
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue, options } = ctx;
-    const { arrayHandling = 'first' } = options as JSONPathOptions;
-    let { expression } = options as JSONPathOptions;
+    const { arrayHandling = 'first', expression } = options as JSONPathOptions;
 
     if (sourceValue === null || sourceValue === undefined) {
       return { success: true, value: null };
     }
 
-    let document: JsonValue = sourceValue as JsonValue;
-
+    // Sync-pipeline adapter (NOT shared with the display path): parse a string
+    // source as JSON, then map the pure evaluation onto the sync TransformResult
+    // with `useOriginal: false`. The RFC-9535 query + arrayHandling reduction is
+    // the shared pure core (`applyJsonPath`); display intentionally reuses only
+    // that and applies its own fail-closed policy instead of this one.
+    let document: unknown = sourceValue;
     if (typeof sourceValue === 'string') {
       try {
-        document = JSON.parse(sourceValue) as JsonValue;
+        document = JSON.parse(sourceValue);
       } catch {
         return {
           success: false,
@@ -67,41 +70,11 @@ export const jsonpathTransformer: FieldTransformer = {
       }
     }
 
-    // Ensure expression starts with '$' (required by RFC 9535)
-    if (!expression.startsWith('$')) {
-      expression = `$.${expression}`;
+    const result = applyJsonPath(document, expression, arrayHandling);
+    if (!result.ok) {
+      return { success: false, error: result.reason, useOriginal: false };
     }
-
-    try {
-      const results = query(document, expression);
-
-      switch (arrayHandling) {
-        case 'array':
-          return { success: true, value: results };
-        case 'join_space':
-        case 'join_comma':
-        case 'concat': {
-          if (results.some((r) => typeof r === 'object' && r !== null)) {
-            return {
-              success: false,
-              error: `JSONPath results contain objects that cannot be joined into a string`,
-              useOriginal: false,
-            };
-          }
-          const delimiter = arrayHandling === 'join_space' ? ' ' : arrayHandling === 'join_comma' ? ', ' : '';
-          return { success: true, value: results.map(String).join(delimiter) };
-        }
-        case 'first':
-        default:
-          return { success: true, value: results[0] };
-      }
-    } catch (err) {
-      return {
-        success: false,
-        error: `Invalid JSONPath expression: ${err instanceof Error ? err.message : String(err)}`,
-        useOriginal: false,
-      };
-    }
+    return { success: true, value: result.value };
   },
 };
 
