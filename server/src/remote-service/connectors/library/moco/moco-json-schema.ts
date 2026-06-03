@@ -1,5 +1,9 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
+  X_SCRATCH_READONLY,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { buildMocoDefaultView } from './moco-default-view';
 import { MocoEntityType } from './moco-types';
@@ -145,6 +149,12 @@ function buildCompanySchema(): TSchema {
         description: 'Updated timestamp (read-only)',
         format: 'date-time',
         [X_SCRATCH_READONLY]: true,
+        // Annotated for the UI's last-modified-field picker. Moco's connector
+        // hardcodes `updated_at` for incremental pulls (it is a fixed system
+        // field on every entity), but the annotation keeps the picker and the
+        // auto-detect path (findLastModifiedFieldName) consistent with the
+        // other connectors. Mirrors how Linear annotates `updatedAt`.
+        [X_SCRATCH_LAST_MODIFIED_FIELD]: true,
       }),
     },
     { $id: 'moco/companies', title: 'Companies' },
@@ -221,6 +231,12 @@ function buildContactSchema(): TSchema {
         description: 'Updated timestamp (read-only)',
         format: 'date-time',
         [X_SCRATCH_READONLY]: true,
+        // Annotated for the UI's last-modified-field picker. Moco's connector
+        // hardcodes `updated_at` for incremental pulls (it is a fixed system
+        // field on every entity), but the annotation keeps the picker and the
+        // auto-detect path (findLastModifiedFieldName) consistent with the
+        // other connectors. Mirrors how Linear annotates `updatedAt`.
+        [X_SCRATCH_LAST_MODIFIED_FIELD]: true,
       }),
     },
     { $id: 'moco/contacts', title: 'Contacts' },
@@ -405,6 +421,12 @@ function buildProjectSchema(): TSchema {
         description: 'Updated timestamp (read-only)',
         format: 'date-time',
         [X_SCRATCH_READONLY]: true,
+        // Annotated for the UI's last-modified-field picker. Moco's connector
+        // hardcodes `updated_at` for incremental pulls (it is a fixed system
+        // field on every entity), but the annotation keeps the picker and the
+        // auto-detect path (findLastModifiedFieldName) consistent with the
+        // other connectors. Mirrors how Linear annotates `updatedAt`.
+        [X_SCRATCH_LAST_MODIFIED_FIELD]: true,
       }),
     },
     { $id: 'moco/projects', title: 'Projects' },

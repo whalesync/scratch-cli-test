@@ -340,7 +340,7 @@ The job demotes an incremental run to a full scan whenever `supportsIncrementalP
    `findLastModifiedFieldName` understands the three record-schema shapes connectors use (first match wins), so a connector's `resolveModifiedAtField`/auto-detect path and the client's annotation walk stay identical regardless of shape:
 
    1. **Airtable-nested** — `{ properties: { fields: { properties: { <name> } } } }` (the original Airtable record shape).
-   2. **Flat top-level** — `{ properties: { <name> } }` — one static schema per entity type (WordPress, **Linear**, Shopify, Intercom). Note Intercom gates incremental on the *table*, not on this helper — the annotation is only for the UI picker.
+   2. **Flat top-level** — `{ properties: { <name> } }` — one static schema per entity type (WordPress, **Linear**, **Moco**, Shopify, Intercom). Note Intercom gates incremental on the *table*, not on this helper — the annotation is only for the UI picker.
    3. **HubSpot-nested** — `{ properties: { properties: { properties: { <name> } } } }`, where CRM properties live under a nested `properties` object.
 3. **`supportsIncrementalPull`** — usually `return this.resolveModifiedAtField(...) !== undefined`. Connectors with a guaranteed system field (e.g. Notion's `last_edited_time`) return `true` unconditionally.
 4. **`advancedSettings`** — expose `modifiedAtField` as a `field-select` setting so users can override/declare the column, unless the field is fixed and not user-selectable.
@@ -355,165 +355,19 @@ Pick the one matching the remote API:
 - **Client-side filter during pagination** (Webflow — no `modified_since` param): page through everything and drop records older than the cutoff before the callback. You cannot early-terminate unless the API guarantees modified-time sort order, so the win is skipping git writes for unchanged records, not API quota.
 - **Opaque cursor / change feed**: persist `newCursor` instead of `newWatermark` and resume from it. None implemented yet.
 
-##### Worked example — server-side predicate (SQL: Postgres / Supabase)
+##### Per-connector techniques
 
-SQL has no last-modified convention, so there is **no schema annotation**: incremental support is gated entirely on the user declaring `modifiedAtField`. Both PG connectors share `pg-common/pg-incremental.ts` (`PG_INCREMENTAL_CLOCK_SKEW_MS = 60_000`, `resolvePgModifiedAtField`, `applyPgClockSkew`, `assertModifiedAtColumnExists`) and the shared `KnexPGClient.selectAll`, which appends a **parameterized** predicate when given a modified-since column + datetime:
+Each connector builds its predicate in its own `*-incremental.ts` helper (a clock-skew constant + a filter/param builder). **Reuse the module _shape_, not one shared helper** — the predicate syntaxes (Airtable formula, SQL `WHERE`, Notion JSON, Linear GraphQL filter, REST query params, Intercom Search clause) have nothing in common. Each summary below links to that connector's helper + connector for the full code.
 
-```typescript
-if (modifiedSinceColumn && modifiedSinceDatetime) {
-  // knex.ref() quotes the identifier; the Date binds as a parameter.
-  // Never string-interpolate a user-supplied column or value into SQL.
-  query = query.where(this.knex.ref(modifiedSinceColumn), '>', modifiedSinceDatetime);
-}
-```
+- **Airtable** (annotation-gated + user override) — auto-detects the last-modified field via `X_SCRATCH_LAST_MODIFIED_FIELD` (or an explicit `modifiedAtField`), builds a server-side `filterByFormula` predicate, and AND-combines it with any user `options.filter`. 60s clock-skew. → [airtable-incremental.ts](library/airtable/airtable-incremental.ts), [airtable-connector.ts](library/airtable/airtable-connector.ts)
+- **Postgres / Supabase** (user-declared field) — SQL has no last-modified convention, so incremental is gated entirely on the user setting `modifiedAtField` (no annotation, no auto-detect). `KnexPGClient.selectAll` appends a **parameterized** `WHERE ref(col) > since` (never string-interpolated), and `assertModifiedAtColumnExists` rejects a typo up front. 60s clock-skew. → [pg-incremental.ts](library/pg-common/pg-incremental.ts), [postgres-connector.ts](library/postgres/postgres-connector.ts), [supabase-connector.ts](library/supabase/supabase-connector.ts)
+- **Notion** (fixed system field) — every page has `last_edited_time`, so support is unconditional; `databases.query` filters with **inclusive** `on_or_after`, so the clock-skew is `0`. A user filter that is itself a top-level compound would exceed Notion's one-level nesting limit, so that run demotes to a full scan. → [notion-incremental.ts](library/notion/notion-incremental.ts), [notion-connector.ts](library/notion/notion-connector.ts)
+- **Linear** (fixed system field) — every entity has `updatedAt`; support is unconditional. GraphQL `filter: { updatedAt: { gt } }` with a per-entity `FILTER_TYPE_MAP` (`issues → IssueFilter`, …); `gt` is **exclusive** → 60s clock-skew. → [linear-incremental.ts](library/linear/linear-incremental.ts), [linear-connector.ts](library/linear/linear-connector.ts)
+- **WordPress** (annotation-gated by collection) — REST `?modified_after=` on post/media collections (taxonomy has no `modified`, so it demotes to full). The watermark must be rendered in the **site's timezone** (resolved from the memoized REST-index lookup), not UTC, or the offset silently drops records; the 60s skew then only covers residual drift. → [wordpress-incremental.ts](library/wordpress/wordpress-incremental.ts), [wordpress-connector.ts](library/wordpress/wordpress-connector.ts)
+- **Intercom** (capability-gated by table) — Conversations only, via `POST /conversations/search` (articles/collections demote to full). Timestamps are **Unix seconds** and `>` is exclusive → 60s clock-skew; the search sorts `updated_at` ascending so a record touched mid-pagination lands at the tail (a possible duplicate, never a miss). → [intercom-incremental.ts](library/intercom/intercom-incremental.ts), [intercom-connector.ts](library/intercom/intercom-connector.ts)
+- **Moco** (fixed system field) — every entity has `updated_at`; support is unconditional. REST `?updated_after=` in **ISO-8601 UTC at seconds precision** (`YYYY-MM-DDTHH:mm:ssZ` — Moco 400s on the fractional seconds `toISOString()` emits; no timezone conversion, unlike WordPress) threaded through each list endpoint; `>` is exclusive → 60s clock-skew. Deletions are reconciled by the periodic `FULL_PULL`. → [moco-incremental.ts](library/moco/moco-incremental.ts), [moco-connector.ts](library/moco/moco-connector.ts)
 
-```typescript
-override supportsIncrementalPull(options: PullRecordFilesOptions): boolean {
-  return this.resolveModifiedAtField(options) !== undefined; // explicit only — no SQL auto-detect
-}
-
-async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecordFilesResult> {
-  const modifiedAtField = this.resolveModifiedAtField(options);
-  const isIncremental =
-    options.pullMode === 'incremental' && modifiedAtField !== undefined && options.since instanceof Date;
-
-  let newWatermark: Date | undefined;
-  let modifiedSinceColumn: string | undefined;
-  let modifiedSinceDatetime: Date | undefined;
-  if (isIncremental && options.since && modifiedAtField) {
-    // The column comes from user options — reject a typo up front against the
-    // schema (built from information_schema.columns) so it fails fast with a
-    // clear message instead of an opaque mid-pull SQL error.
-    assertModifiedAtColumnExists(tableSpec.schema, tableSpec.name, modifiedAtField);
-    newWatermark = new Date();                          // BEFORE the first query
-    modifiedSinceColumn = modifiedAtField;
-    modifiedSinceDatetime = applyPgClockSkew(options.since); // since - 60s
-  }
-  // ...paginate via selectAll(..., rawFilter, modifiedSinceColumn, modifiedSinceDatetime)...
-  return newWatermark ? { newWatermark } : {};
-}
-```
-
-##### Worked example — server-side predicate (Notion: fixed system field + nesting-limit demotion)
-
-Notion is the simplest variant: every database page carries a server-side `last_edited_time` system field, and `databases.query` filters on it. There is **no `resolveModifiedAtField` / `modifiedAtField` setting** — the field is fixed and not user-selectable — so `supportsIncrementalPull()` returns `true` unconditionally and `incrementalPull: true` is set in `connectorMetadata({ ... })`. The schema builder still annotates the top-level `last_edited_time` with `X_SCRATCH_LAST_MODIFIED_FIELD` so the UI's last-modified-field picker can surface it.
-
-The timestamp filter uses `on_or_after`, which is **inclusive** and compares two server-side timestamps, so `NOTION_INCREMENTAL_CLOCK_SKEW_MS = 0`: the boundary record is re-pulled each run and absorbed by idempotent commits — no margin needed.
-
-```typescript
-override supportsIncrementalPull(): boolean {
-  return true; // last_edited_time is guaranteed on every Notion page
-}
-
-async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecordFilesResult> {
-  let notionFilter = parseUserFilter(options.filter); // existing behavior
-  let newWatermark: Date | undefined;
-
-  if (options.pullMode === 'incremental' && options.since instanceof Date) {
-    const tsFilter = buildNotionLastEditedFilter(options.since); // { timestamp: 'last_edited_time', last_edited_time: { on_or_after } }
-    const combined = combineNotionFilters(notionFilter, tsFilter);
-    if (combined.demoteToFull) {
-      WSLogger.warn({ ... }); // compound user filter — see nesting limit below
-    } else {
-      newWatermark = new Date();        // BEFORE the first databases.query
-      notionFilter = combined.filter;   // { and: [userFilter, tsFilter] } or tsFilter alone
-    }
-  }
-  // ...cursor-paginate databases.query with `filter: notionFilter` (constant across pages)...
-  return newWatermark ? { newWatermark } : {};
-}
-```
-
-**Nesting-limit demotion (Notion-specific edge case):** Notion compound filters allow only **one level** of `and`/`or` nesting. The timestamp filter is non-compound, so wrapping a _simple_ user filter as `{ and: [userFilter, tsFilter] }` is fine. But if the user's own `options.filter` is itself a top-level compound (`{ and: [...] }` / `{ or: [...] }`), wrapping it in another `and` exceeds the limit and Notion 400s. `combineNotionFilters` detects a top-level compound user filter and returns `demoteToFull`; the connector then logs a warning, **skips the incremental filter (keeping the user filter)**, full-scans, and returns `{}` (no watermark). This is a connector-side demotion analogous to the job-level one — the next incremental run retries from the same prior watermark.
-
-##### Worked example — server-side predicate (Linear: fixed system field + per-entity filter-input-type map)
-
-Linear is the GraphQL counterpart to the Notion variant: every entity type (Issue, Project, Team, User, IssueLabel, Cycle) has a guaranteed server-side `updatedAt`, and every list connection accepts a typed `filter` input exposing an `updatedAt: DateComparator` comparator. The field is fixed and not user-selectable, so there is **no `resolveModifiedAtField` / `modifiedAtField` setting** — `supportsIncrementalPull()` returns `true` unconditionally, `incrementalPull: true` is set in `connectorMetadata({ ... })`, and `advancedSettings` stays `[]`. The schema builder still annotates the flat top-level `updatedAt` with `X_SCRATCH_LAST_MODIFIED_FIELD` (applied in the non-generated `linear-json-schema.ts`, not the do-not-edit generated schema files) so the UI's last-modified-field picker can surface it — exactly as Notion annotates `last_edited_time`.
-
-Unlike Notion's inclusive `on_or_after`, Linear's `gt` is **exclusive** and the watermark is captured client-side, so `LINEAR_INCREMENTAL_CLOCK_SKEW_MS = 60_000`: the helper subtracts the margin from `since` so a boundary record on a skewed clock isn't missed; idempotent commits absorb the small re-pulled window.
-
-The one Linear-specific wrinkle is that the GraphQL filter **input type name differs per entity** (`issues → IssueFilter`, `projects → ProjectFilter`, `teams → TeamFilter`, `users → UserFilter`, `labels → IssueLabelFilter`, `cycles → CycleFilter` — verified against `@linear/sdk`'s generated documents). The API client carries a `FILTER_TYPE_MAP` alongside `ROOT_FIELD_MAP`; when a filter is supplied it declares a typed `$filter: <EntityFilter>` variable and threads it onto the root connection. When absent, the query is emitted unchanged — a full scan with zero behavior change. Linear has no user `options.filter` today, so there is no filter-combiner (the `linear-incremental.ts` helper is just the clock-skew constant + `buildLinearUpdatedAtFilter`).
-
-```typescript
-override supportsIncrementalPull(): boolean {
-  return true; // updatedAt is guaranteed on every Linear entity type
-}
-
-async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecordFilesResult> {
-  let newWatermark: Date | undefined;
-  let filter: LinearUpdatedAtFilter | undefined;
-  if (options.pullMode === 'incremental' && options.since instanceof Date) {
-    newWatermark = new Date();                          // BEFORE the first listEntities
-    filter = buildLinearUpdatedAtFilter(options.since); // { updatedAt: { gt: (since - 60s).toISOString() } }
-  }
-  // listEntities builds `query List…($first,$after[,$filter:<EntityFilter>])`,
-  // passing `filter` (constant across pages) only when supplied.
-  for await (const batch of this.client.listEntities(entityType, 50, resumeCursor, filter)) { ... }
-  return newWatermark ? { newWatermark } : {};
-}
-```
-
-##### Worked example — server-side predicate (WordPress: REST `modified_after`, annotation-gated by collection type)
-
-WordPress's REST list endpoint accepts a server-side `?modified_after=<ISO8601>` query param for **post-type and media** collections, which expose a `modified` column. **Taxonomy** collections (categories/tags/terms) have neither a `modified` field nor a `modified_after` param, so WordPress is _annotation-gated_ rather than unconditional: the schema builder annotates the flat top-level `modified` with `X_SCRATCH_LAST_MODIFIED_FIELD` **only when the collection exposes it**, so post/media folders auto-detect with zero config while taxonomy folders resolve to `undefined` and the job demotes them to a full scan. `incrementalPull: true` is set in `connectorMetadata({ ... })`; `advancedSettings` stays `[]` (`modified` is fixed, not user-selectable — auto-detection covers it). It still uses the Airtable-style `resolveModifiedAtField` (explicit `options.modifiedAtField` → annotated field) so an unusual CPT with a differently named modified column can be overridden without code.
-
-`modified_after` is effectively **exclusive**, and — the WordPress-specific wrinkle — WordPress filters it against `post_modified` in the **site's timezone**, not GMT, while our watermark is a UTC instant. Sending the raw UTC string would shift the comparison by the site's whole offset (potentially many hours, far past the skew margin) and silently drop records. So `formatWordPressModifiedAfter` resolves the site timezone from the REST API index (`timezone_string` / `gmt_offset`, fetched once via `WordPressHttpClient.getSiteTimezone()` and memoized per client instance) and renders the clock-skewed watermark as the site's **local wall-clock time** — IANA `timezone_string` when present (DST resolved for that instant via `Intl.DateTimeFormat`), else the fixed `gmt_offset`, else UTC — emitted **without a timezone designator** so WordPress's `WP_Date_Query` compares it directly against the site-local `post_modified`. If the REST index can't be read it degrades to UTC (the periodic `FULL_PULL` reconciles any gap). `WORDPRESS_INCREMENTAL_CLOCK_SKEW_MS = 60_000` then only has to cover residual clock drift, not the systematic offset. There is still no predicate/JSON to build and no user `options.filter`, so `wordpress-incremental.ts` is just the clock-skew constant + the watermark formatter.
-
-```typescript
-override supportsIncrementalPull(options, tableSpec): boolean {
-  return this.resolveModifiedAtField(options, tableSpec) !== undefined; // post/media → modified; taxonomy → undefined
-}
-
-async pullRecordFiles(tableSpec, callback, progress, options): Promise<PullRecordFilesResult> {
-  let newWatermark: Date | undefined;
-  let modifiedAfter: string | undefined;
-  const incremental =
-    options.pullMode === 'incremental' &&
-    options.since instanceof Date &&
-    this.resolveModifiedAtField(options, tableSpec) !== undefined;
-  if (incremental && options.since) {
-    newWatermark = new Date();                       // BEFORE the first pollRecords
-    const tz = await this.client.getSiteTimezone();  // memoized REST-index lookup
-    modifiedAfter = formatWordPressModifiedAfter(options.since, tz); // (since - 60s) as site-local wall clock
-  }
-  // pollRecords adds `modified_after=<site-local datetime>` only when supplied;
-  // offset pagination + status=any/context=edit unchanged.
-  while (hasMore) { const page = await this.client.pollRecords(tableId, offset, PAGE, modifiedAfter); ... }
-  return newWatermark ? { newWatermark } : {};
-}
-```
-
-##### Worked example — server-side predicate (Intercom: Search API, capability-gated by table)
-
-Intercom exposes three tables but only **Conversations** supports server-side incremental: `POST /conversations/search` filters on `updated_at` and cursor-paginates. `GET /articles` / `GET /help_center/collections` have no modified-since filter, so those tables stay full. `updated_at` is a fixed conversations system field (not user-selectable), so there is **no `resolveModifiedAtField` / `modifiedAtField` setting** — `supportsIncrementalPull` gates on the *table* (`tableSpec.id.wsId === 'conversations'`), the Shopify-style capability gate but keyed by table rather than entity type. `incrementalPull: true` is set in `connectorMetadata({ ... })`; the conversations schema annotates `updated_at` with `X_SCRATCH_LAST_MODIFIED_FIELD` for the UI picker (the articles/collections schemas are *not* annotated, mirroring WordPress not annotating taxonomy). `advancedSettings` keeps its existing `excludeConversationParts` entry; no `modifiedAtField` is added.
-
-The predicate is a Search-API body filter. **Intercom timestamps are Unix seconds**, so the helper floors `(since − 60s)` to seconds: `INTERCOM_INCREMENTAL_CLOCK_SKEW_MS = 60_000`, `buildIntercomUpdatedSinceQuery(since)` → `{ field: 'updated_at', operator: '>', value: Math.floor((since − skew)/1000) }`. Search `>` is **exclusive** and the watermark is client-side, so the 60s margin matters; idempotent commits absorb the re-pulled window. The search request sorts **ascending** by `updated_at` — Intercom's cursor pagination is documented as stateless, and ascending-sorted `> since` pushes a record updated mid-pagination to the tail (a possible duplicate, never a miss). Incremental is also the big win here: a full conversations pull hydrates one `GET /conversations/{id}` per conversation; filtering to the changed set cuts the dominant cost (and `updated_at` bumps on new replies, so reply activity is still captured).
-
-```typescript
-override supportsIncrementalPull(_options, tableSpec): boolean {
-  return tableSpec.id.wsId === 'conversations'; // articles/collections → demoted to full
-}
-
-// pullRecordFiles, INSIDE the `conversations` case (so a stray incremental
-// request for articles/collections still returns {}):
-let newWatermark: Date | undefined;
-let updatedSinceQuery: IntercomUpdatedSinceQuery | undefined;
-if (options.pullMode === 'incremental' && options.since instanceof Date) {
-  newWatermark = new Date();                              // BEFORE the first call
-  updatedSinceQuery = buildIntercomUpdatedSinceQuery(options.since);
-}
-const pages = updatedSinceQuery
-  ? this.client.searchConversationsUpdatedSince(updatedSinceQuery, 20, hydrate, resumeAfter) // POST /conversations/search
-  : this.client.listConversations(20, hydrate, resumeAfter);                                 // GET /conversations
-for await (const conversations of pages) { await callback({ ... }); }
-return newWatermark ? { newWatermark } : {};
-```
-
-The API client factors the existing hydrate + cursor loop into a private `paginateConversations(fetchPage, hydrate, resumeAfter)` shared by `listConversations` (unchanged `GET`) and `searchConversationsUpdatedSince` (`POST` with `{ query, sort: { field: 'updated_at', order: 'ascending' }, pagination }`).
-
-(None of the part-3 server-side-predicate connectors needed the **client-side-filter** archetype — it stays documented-but-unimplemented; the deferred Webflow design remains its future template.)
-
-Reuse the helper-module _shape_ but **not one shared helper across connector families** — predicate syntaxes (Airtable formula, SQL, Notion JSON, Linear GraphQL filter input, WordPress REST query param, Intercom Search-API clause) have nothing in common; only the code shape is shared. See `airtable/airtable-incremental.ts` for the formula-based variant, `notion/notion-incremental.ts` for the Notion JSON-filter variant, `linear/linear-incremental.ts` for the GraphQL typed-filter variant, `wordpress/wordpress-incremental.ts` for the bare REST-param variant (no predicate to build — clock-skew + a site-timezone watermark renderer), and `intercom/intercom-incremental.ts` for the Search-API Unix-seconds clause variant.
+(None of these needed the **client-side-filter** archetype — it stays documented-but-unimplemented; the deferred Webflow design remains its future template.)
 
 ### Hydration
 

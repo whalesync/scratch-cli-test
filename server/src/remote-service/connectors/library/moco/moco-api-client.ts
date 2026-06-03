@@ -111,15 +111,18 @@ export class MocoApiClient {
   /**
    * List companies with pagination.
    * Returns an async generator that yields pages of companies.
+   *
+   * When `updatedAfter` (ISO-8601 UTC) is provided, Moco filters server-side to
+   * companies whose `updated_at` is after that instant — the incremental-pull path.
    */
-  async *listCompanies(perPage = 100, startPage = 1): AsyncGenerator<MocoCompany[], void> {
+  async *listCompanies(perPage = 100, startPage = 1, updatedAfter?: string): AsyncGenerator<MocoCompany[], void> {
     let page = startPage;
     let hasMore = true;
 
     while (hasMore) {
       const response = await this.withRetry(() =>
         this.client.get<MocoCompany[]>('/companies', {
-          params: { page, per_page: perPage },
+          params: { page, per_page: perPage, ...(updatedAfter ? { updated_after: updatedAfter } : {}) },
         }),
       );
 
@@ -173,15 +176,18 @@ export class MocoApiClient {
   /**
    * List contacts with pagination.
    * Returns an async generator that yields pages of contacts.
+   *
+   * When `updatedAfter` (ISO-8601 UTC) is provided, Moco filters server-side to
+   * contacts whose `updated_at` is after that instant — the incremental-pull path.
    */
-  async *listContacts(perPage = 100, startPage = 1): AsyncGenerator<MocoContact[], void> {
+  async *listContacts(perPage = 100, startPage = 1, updatedAfter?: string): AsyncGenerator<MocoContact[], void> {
     let page = startPage;
     let hasMore = true;
 
     while (hasMore) {
       const response = await this.withRetry(() =>
         this.client.get<MocoContact[]>('/contacts/people', {
-          params: { page, per_page: perPage },
+          params: { page, per_page: perPage, ...(updatedAfter ? { updated_after: updatedAfter } : {}) },
         }),
       );
 
@@ -235,15 +241,18 @@ export class MocoApiClient {
   /**
    * List projects with pagination.
    * Returns an async generator that yields pages of projects.
+   *
+   * When `updatedAfter` (ISO-8601 UTC) is provided, Moco filters server-side to
+   * projects whose `updated_at` is after that instant — the incremental-pull path.
    */
-  async *listProjects(perPage = 100, startPage = 1): AsyncGenerator<MocoProject[], void> {
+  async *listProjects(perPage = 100, startPage = 1, updatedAfter?: string): AsyncGenerator<MocoProject[], void> {
     let page = startPage;
     let hasMore = true;
 
     while (hasMore) {
       const response = await this.withRetry(() =>
         this.client.get<MocoProject[]>('/projects', {
-          params: { page, per_page: perPage },
+          params: { page, per_page: perPage, ...(updatedAfter ? { updated_after: updatedAfter } : {}) },
         }),
       );
 
@@ -297,25 +306,30 @@ export class MocoApiClient {
   /**
    * List entities by type with pagination.
    * Returns an async generator that yields pages of entities.
+   *
+   * When `updatedAfter` (ISO-8601 UTC) is provided, the server-side
+   * `updated_after` filter restricts the result to records modified after that
+   * instant — the incremental-pull path. Omitted ⇒ full scan (unchanged).
    */
   async *listEntities(
     entityType: MocoEntityType,
     perPage = 100,
     startPage = 1,
+    updatedAfter?: string,
   ): AsyncGenerator<Record<string, unknown>[], void> {
     switch (entityType) {
       case 'companies':
-        for await (const page of this.listCompanies(perPage, startPage)) {
+        for await (const page of this.listCompanies(perPage, startPage, updatedAfter)) {
           yield page as unknown as Record<string, unknown>[];
         }
         break;
       case 'contacts':
-        for await (const page of this.listContacts(perPage, startPage)) {
+        for await (const page of this.listContacts(perPage, startPage, updatedAfter)) {
           yield page as unknown as Record<string, unknown>[];
         }
         break;
       case 'projects':
-        for await (const page of this.listProjects(perPage, startPage)) {
+        for await (const page of this.listProjects(perPage, startPage, updatedAfter)) {
           yield page as unknown as Record<string, unknown>[];
         }
         break;

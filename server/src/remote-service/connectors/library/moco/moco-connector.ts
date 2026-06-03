@@ -1,4 +1,4 @@
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -21,6 +21,7 @@ import {
   TablePreview,
 } from '../../types';
 import { MocoApiClient, MocoError } from './moco-api-client';
+import { buildMocoUpdatedAfter } from './moco-incremental';
 import { buildMocoJsonTableSpec } from './moco-json-schema';
 import { MocoCredentials, MocoEntityType } from './moco-types';
 
@@ -56,6 +57,12 @@ export class MocoConnector extends Connector {
     base: 'account',
     bases: 'accounts',
     logo: 'https://static.scratch.md/connector-icons/moco.svg',
+    incrementalPull: true,
+    // No user-facing caveats: `updated_at` is a fixed system field on every Moco
+    // entity and `updated_after` is unconditional, so there are no notes to show
+    // (same as Linear). Set explicitly per the field's "always provide a value"
+    // convention rather than relying on the default.
+    incrementalPullInstructions: null,
     credentialFields: {
       user_provided_params: [
         {
@@ -126,23 +133,50 @@ export class MocoConnector extends Connector {
   }
 
   /**
-   * Download all entities as JSON files.
+   * Moco supports incremental pulls unconditionally: every entity type
+   * (companies, contacts, projects) has a guaranteed server-side `updated_at`
+   * system field and Moco accepts the `updated_after` filter on each list
+   * endpoint. The field is fixed (not user-selectable), so there is no
+   * per-folder config to inspect — this always returns `SUPPORTED`.
+   */
+  override incrementalPullSupport(): IncrementalPullSupport {
+    return IncrementalPullSupport.SUPPORTED;
+  }
+
+  /**
+   * Download entities as JSON files.
+   *
+   * Full pull (default): scan every entity. Incremental pull: filter each list
+   * endpoint by `updated_after` (the clock-skewed watermark) and return the new
+   * watermark for the job to persist.
    */
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: PullRecordFilesOptions,
+    options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as MocoEntityType;
     let page = (progress as { nextPage?: number })?.nextPage ?? 1;
 
-    for await (const entities of this.client.listEntities(entityType, 100, page)) {
+    // Capture the watermark BEFORE the first API call so records changed
+    // mid-pull aren't lost on the next run. Moco's `updated_after` filter is
+    // boundary-exclusive and `updated_at` is server-side while the watermark is
+    // client-side, so the helper subtracts a clock-skew margin; idempotent
+    // commits absorb the small re-pulled window. Moco has no user
+    // `options.filter` today — nothing to combine.
+    let newWatermark: Date | undefined;
+    let updatedAfter: string | undefined;
+    if (options.pullMode === 'incremental' && options.since instanceof Date) {
+      newWatermark = new Date();
+      updatedAfter = buildMocoUpdatedAfter(options.since);
+    }
+
+    for await (const entities of this.client.listEntities(entityType, 100, page, updatedAfter)) {
       page++;
       await callback({ files: entities as unknown as ConnectorFile[], connectorProgress: { nextPage: page } });
     }
-    return {};
+    return newWatermark ? { newWatermark } : {};
   }
 
   async pullRecordFilesByIds(
