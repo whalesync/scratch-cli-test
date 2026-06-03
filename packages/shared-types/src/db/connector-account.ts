@@ -19,6 +19,7 @@ export interface ConnectorAccount {
   healthStatusMessage: string | null; // Message if health status is not OK
   modifier: string | null; // ID of the custom connector or other modifier entity
   extras: Record<string, unknown> | null; // Additional service-specific configuration
+  version: number; // Connector code version snapshotted at creation (DEV-10302)
   authType: AuthType;
   repoPath: string | null;
 }

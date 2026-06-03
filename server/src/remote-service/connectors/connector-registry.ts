@@ -16,6 +16,7 @@ export interface ConnectorAccountRef {
   id: string;
   authType: string;
   extras: Record<string, unknown> | null;
+  version: number; // Stored snapshot from ConnectorAccount.version (DEV-10302)
 }
 
 /**
@@ -49,6 +50,14 @@ export interface ConnectorFactoryContext {
 export interface ConnectorRegistration {
   /** The service slug, e.g. 'AIRTABLE' */
   service: string;
+  /**
+   * Monotonic integer version of this connector's *code*, hand-bumped when a
+   * breaking change is introduced. Snapshotted onto ConnectorAccount.version at
+   * account-creation time so existing accounts stay pinned to old behavior.
+   * Omit to default to 1; bump (e.g. `version: 2`) the first time this connector
+   * makes a breaking change. (DEV-10302)
+   */
+  version?: number;
   /** Display metadata (name, logo, terminology) */
   metadata: ConnectorMetadata;
   /** Per-folder advanced settings exposed by this connector */

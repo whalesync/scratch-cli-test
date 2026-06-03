@@ -250,6 +250,14 @@ export function useConnectionMenu(
       ? [
           { label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection },
           { label: 'Break glass', icon: KeyRoundIcon, devtool: true, onClick: openBreakGlass },
+          // Connector code version snapshotted onto this account at creation (DEV-10302).
+          // Dev-tools-only, non-interactive footer label — a generic scalar, no connector branching.
+          ...(fullConnectorAccount
+            ? [
+                { type: 'divider' as const },
+                { type: 'label' as const, label: `Connector version: ${fullConnectorAccount.version}` },
+              ]
+            : []),
         ]
       : []),
   ];

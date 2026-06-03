@@ -31,6 +31,17 @@ export function getServiceMetadata(service: Service): ConnectorMetadata {
 }
 
 /**
+ * Maps a Service value to its connector's current *code* version, read straight
+ * from the registry without instantiating the connector (instantiation needs
+ * decrypted credentials we deliberately don't have at account-creation time).
+ * Defaults to 1 for connectors that register no version (i.e. every connector
+ * today) and for unregistered services. (DEV-10302)
+ */
+export function getConnectorCurrentVersion(service: string): number {
+  return connectorRegistry.get(service)?.version ?? 1;
+}
+
+/**
  * Returns connector metadata for all registered services, with supportedAuthMethods from registrations.
  */
 export function getAllConnectorMetadata(): Record<string, ConnectorMetadata> {

@@ -36,7 +36,11 @@ import { EncryptedData } from '../../utils/encryption';
 import { WorkbookEventService } from '../../workbook/workbook-event.service';
 import { Connector } from '../connectors/connector';
 import { ConnectorsService } from '../connectors/connectors.service';
-import { getServiceAdvancedSettings, getServiceDisplayName } from '../connectors/display-names';
+import {
+  getConnectorCurrentVersion,
+  getServiceAdvancedSettings,
+  getServiceDisplayName,
+} from '../connectors/display-names';
 import { ConnectorAuthError, exceptionForConnectorError, isUserFriendlyError } from '../connectors/error';
 import { probeAuthOnly } from '../connectors/library/generic-api/generic-api-probe';
 import { ApiQuotaResponse } from './entities/api-quota.entity';
@@ -220,6 +224,7 @@ export class ConnectorAccountService {
         encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue,
         modifier: createDto.modifier,
         extras: extras as Prisma.InputJsonValue,
+        version: getConnectorCurrentVersion(createDto.service),
       },
     });
 

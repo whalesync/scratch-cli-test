@@ -45,6 +45,7 @@ export class ConnectorsService {
             id: connectorAccount.id,
             authType: connectorAccount.authType,
             extras: connectorAccount.extras as Record<string, unknown> | null,
+            version: connectorAccount.version,
           }
         : null,
       decryptedCredentials,

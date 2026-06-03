@@ -49,6 +49,9 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    */
   static readonly displayName: string;
 
+  /** Current connector code version. See ConnectorRegistration.version (DEV-10302). */
+  static readonly version: number = 1;
+
   /**
    * Advanced settings that this connector exposes for per-folder configuration.
    * Connectors with custom pull options should override this with their setting definitions.

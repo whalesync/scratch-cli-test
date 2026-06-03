@@ -17,6 +17,7 @@ export type ConnectorAccount = Pick<
   | 'healthStatusMessage'
   | 'modifier'
   | 'extras'
+  | 'version'
 >;
 
 export type ConnectorAccountWithCredentials = ConnectorAccount & DecryptedCredentials;

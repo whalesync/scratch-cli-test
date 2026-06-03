@@ -6,7 +6,7 @@ import { ChevronRightIcon } from 'lucide-react';
 import { isValidElement, useRef, useState } from 'react';
 
 export interface ContextMenuItem {
-  type?: 'item' | 'divider' | 'submenu';
+  type?: 'item' | 'divider' | 'submenu' | 'label';
   label?: string;
   onClick?: () => void;
   color?: string;
@@ -134,6 +134,9 @@ function ContextMenuItems({ items, onClose }: { items: ContextMenuItem[]; onClos
         if (item.type === 'divider') {
           return <Menu.Divider key={index} />;
         }
+        if (item.type === 'label') {
+          return <Menu.Label key={index}>{item.label}</Menu.Label>;
+        }
         if (item.type === 'submenu' && item.children) {
           return <SubmenuItem key={index} item={item} onClose={onClose} />;
         }
@@ -188,6 +191,7 @@ export function ContextMenu({ opened, onClose, position, items }: ContextMenuPro
 export function renderMenuItems(items: ContextMenuItem[], onItemClick: () => void) {
   return items.map((item, index) => {
     if (item.type === 'divider') return <Menu.Divider key={index} />;
+    if (item.type === 'label') return <Menu.Label key={index}>{item.label}</Menu.Label>;
     if (item.type === 'submenu' && item.children) {
       return (
         <span key={index}>

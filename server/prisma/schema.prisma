@@ -140,6 +140,7 @@ model ConnectorAccount {
   healthStatusMessage       String? // Message if health status is not OK
   modifier                  String? // ID of the custom connector or other modifier entity
   extras                    Json? // Additional service-specific configuration
+  version                   Int                    @default(1) // Connector code version snapshotted at creation (DEV-10302)
   dataFolders               DataFolder[]
   publishPlans              PublishPlan[]
 
