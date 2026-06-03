@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { type UploadPatchPayload, type WorkbookId } from '@spinner/shared-types';
+import { formatRecordJson, type UploadPatchPayload, type WorkbookId } from '@spinner/shared-types';
 import { ObjectStorageService } from 'src/asset/object-storage.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
-import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { validateRecordPath } from 'src/utils/path-validation';
 
 /** GCS key derived from an uploadId. Used by both the controller (PUT) and worker (stream). */
@@ -84,7 +83,7 @@ export class ApplyPatchesService {
       }
       filesToCommit.push({
         path: entry.path,
-        content: formatJsonWithPrettier(next as Record<string, unknown>),
+        content: formatRecordJson(next as Record<string, unknown>),
       });
     }
 

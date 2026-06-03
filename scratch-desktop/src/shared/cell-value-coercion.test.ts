@@ -1,55 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { CellInputCoercionError, coerceCellInputText, coerceCellInputTextWithSchema } from './cell-value-coercion';
+import {
+  coerceCellInputText,
+  coerceCellInputTextAgainstExistingValueOrSchema,
+  resolveSchemaLeafHint,
+  type SchemaLeafHint,
+} from './cell-value-coercion';
 
-const folderSchema = {
-  schema: {
-    type: 'object',
-    properties: {
-      title: { type: 'string' },
-      count: { type: 'number' },
-      wholeCount: { type: 'integer' },
-      enabled: { type: 'boolean' },
-      emptyValue: { type: 'null' },
-      metadata: {
-        type: 'object',
-        properties: {
-          city: { type: 'string' },
-        },
-      },
-      profile: {
-        type: 'object',
-        properties: {
-          company: {
-            type: 'object',
-            properties: {
-              address: {
-                type: 'object',
-                properties: {
-                  city: { type: 'string' },
-                },
-              },
-            },
-          },
-        },
-      },
-      tags: {
-        type: 'array',
-        items: { type: 'string' },
-      },
-      maybeTitle: {
-        type: ['string', 'null'],
-      },
-      maybeCount: {
-        anyOf: [{ type: 'number' }, { type: 'null' }],
-      },
-      maybeEnabled: {
-        anyOf: [{ type: 'boolean' }, { type: 'null' }],
-      },
-      unresolved: {},
-    },
-  },
-} satisfies Record<string, unknown>;
+const stringHint: SchemaLeafHint = { scalarType: 'string', nullable: false };
+const numberHint: SchemaLeafHint = { scalarType: 'number', nullable: false };
+const nullableNumberHint: SchemaLeafHint = { scalarType: 'number', nullable: true };
+const booleanHint: SchemaLeafHint = { scalarType: 'boolean', nullable: false };
+const nullableStringHint: SchemaLeafHint = { scalarType: 'string', nullable: true };
 
 describe('coerceCellInputText', () => {
   it('preserves the old JSON.parse-or-string behavior', () => {
@@ -60,62 +22,124 @@ describe('coerceCellInputText', () => {
   });
 });
 
-describe('coerceCellInputTextWithSchema', () => {
-  it('preserves exact text for string fields', () => {
-    expect(coerceCellInputTextWithSchema(folderSchema, 'title', '"hello"')).toBe('"hello"');
-    expect(coerceCellInputTextWithSchema(folderSchema, 'title', ' 123 ')).toBe(' 123 ');
-    expect(coerceCellInputTextWithSchema(folderSchema, 'metadata.city', 'Sofia')).toBe('Sofia');
-    expect(coerceCellInputTextWithSchema(folderSchema, 'profile.company.address.city', 'Plovdiv')).toBe('Plovdiv');
+describe('coerceCellInputTextAgainstExistingValueOrSchema', () => {
+  describe('existing value present — its own JSON type wins, schema ignored', () => {
+    it('keeps a string leaf verbatim even when the schema disagrees', () => {
+      // A numeric-looking string (SKU, phone) stays a string; a wrong number
+      // schema cannot retype it.
+      expect(coerceCellInputTextAgainstExistingValueOrSchema('25000', numberHint, '30000')).toBe('30000');
+      expect(coerceCellInputTextAgainstExistingValueOrSchema('old', null, 'true')).toBe('true');
+      expect(coerceCellInputTextAgainstExistingValueOrSchema('old', null, '{"a":1}')).toBe('{"a":1}');
+    });
+
+    it('JSON-parses a non-string leaf (scalars and raw-JSON envelopes)', () => {
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(25000, stringHint, '30000')).toBe(30000);
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(true, null, 'false')).toBe(false);
+      // Editing the raw JSON of a Notion envelope round-trips the whole object.
+      expect(
+        coerceCellInputTextAgainstExistingValueOrSchema(
+          { id: 'AF<M', type: 'number', number: 25000 },
+          null,
+          '{"id":"AF<M","type":"number","number":30000}',
+        ),
+      ).toEqual({ id: 'AF<M', type: 'number', number: 30000 });
+    });
   });
 
-  it('parses numbers and integers by schema', () => {
-    expect(coerceCellInputTextWithSchema(folderSchema, 'count', '123')).toBe(123);
-    expect(coerceCellInputTextWithSchema(folderSchema, 'count', '1.5')).toBe(1.5);
-    expect(coerceCellInputTextWithSchema(folderSchema, 'wholeCount', '123')).toBe(123);
-    expect(() => coerceCellInputTextWithSchema(folderSchema, 'wholeCount', '1.5')).toThrow(
-      new CellInputCoercionError('Field "wholeCount" expects an integer.'),
-    );
+  describe('empty leaf — schema scalar type hint decides', () => {
+    it('uses the scalar type for a null/absent leaf', () => {
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, numberHint, '30000')).toBe(30000);
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, stringHint, '30000')).toBe('30000');
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(undefined, numberHint, '30000')).toBe(30000);
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(undefined, stringHint, '30000')).toBe('30000');
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, booleanHint, 'true')).toBe(true);
+    });
+
+    it('falls back to a verbatim string when the text does not fit the hint (never throws)', () => {
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, numberHint, 'abc')).toBe('abc');
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, booleanHint, 'yes')).toBe('yes');
+    });
+
+    it('treats an integer hint like a number (no integer enforcement on write)', () => {
+      const integerHint: SchemaLeafHint = { scalarType: 'integer', nullable: false };
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, integerHint, '1.5')).toBe(1.5);
+    });
+
+    it('JSON-parses-with-string fallback when there is no schema hint', () => {
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, null, '30000')).toBe(30000);
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, null, 'hello')).toBe('hello');
+    });
   });
 
-  it('parses booleans and nullables by schema', () => {
-    expect(coerceCellInputTextWithSchema(folderSchema, 'enabled', 'true')).toBe(true);
-    expect(coerceCellInputTextWithSchema(folderSchema, 'enabled', 'false')).toBe(false);
-    expect(coerceCellInputTextWithSchema(folderSchema, 'emptyValue', 'null')).toBeNull();
-    expect(coerceCellInputTextWithSchema(folderSchema, 'emptyValue', '')).toBeNull();
-    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeTitle', 'null')).toBeNull();
-    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeTitle', '')).toBe('');
-    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeCount', '')).toBeNull();
-    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeTitle', 'hello')).toBe('hello');
-    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeEnabled', 'null')).toBeNull();
-    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeEnabled', '')).toBeNull();
-    expect(coerceCellInputTextWithSchema(folderSchema, 'maybeEnabled', 'true')).toBe(true);
+  describe('clearing (empty input)', () => {
+    it('writes null for a nullable leaf and an empty string for a non-nullable one', () => {
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(25000, nullableNumberHint, '')).toBeNull();
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(25000, numberHint, '')).toBe('');
+      expect(coerceCellInputTextAgainstExistingValueOrSchema('text', nullableStringHint, '   ')).toBeNull();
+      expect(coerceCellInputTextAgainstExistingValueOrSchema('text', stringHint, '')).toBe('');
+    });
+
+    it('mirrors the leaf type when no schema is available', () => {
+      expect(coerceCellInputTextAgainstExistingValueOrSchema('text', null, '')).toBe('');
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(25000, null, '')).toBeNull();
+      expect(coerceCellInputTextAgainstExistingValueOrSchema(null, null, '')).toBeNull();
+    });
+  });
+});
+
+describe('resolveSchemaLeafHint', () => {
+  const folderSchema = {
+    schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        count: { type: 'number' },
+        wholeCount: { type: 'integer' },
+        enabled: { type: 'boolean' },
+        maybeTitle: { type: ['string', 'null'] },
+        maybeCount: { anyOf: [{ type: 'number' }, { type: 'null' }] },
+        metadata: { type: 'object', properties: { city: { type: 'string' } } },
+        // A Notion-style envelope: the schema describes the wrapper, the inner
+        // leaf carries the real scalar type.
+        properties: {
+          type: 'object',
+          properties: {
+            'Typical Check Size': {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                type: { type: 'string' },
+                number: { type: ['number', 'null'] },
+              },
+            },
+          },
+        },
+      },
+    },
+  } satisfies Record<string, unknown>;
+
+  it('resolves scalar type and nullability for scalar leaves', () => {
+    expect(resolveSchemaLeafHint(folderSchema, 'title')).toEqual({ scalarType: 'string', nullable: false });
+    expect(resolveSchemaLeafHint(folderSchema, 'count')).toEqual({ scalarType: 'number', nullable: false });
+    expect(resolveSchemaLeafHint(folderSchema, 'wholeCount')).toEqual({ scalarType: 'integer', nullable: false });
+    expect(resolveSchemaLeafHint(folderSchema, 'enabled')).toEqual({ scalarType: 'boolean', nullable: false });
   });
 
-  it('parses objects and arrays by schema', () => {
-    expect(coerceCellInputTextWithSchema(folderSchema, 'metadata', '{"city":"Sofia"}')).toEqual({ city: 'Sofia' });
-    expect(coerceCellInputTextWithSchema(folderSchema, 'tags', '["a","b"]')).toEqual(['a', 'b']);
-    expect(() => coerceCellInputTextWithSchema(folderSchema, 'metadata', '["not","an","object"]')).toThrow(
-      new CellInputCoercionError('Field "metadata" expects a JSON object.'),
-    );
-    expect(() => coerceCellInputTextWithSchema(folderSchema, 'tags', '{"not":"an array"}')).toThrow(
-      new CellInputCoercionError('Field "tags" expects a JSON array.'),
-    );
+  it('detects nullability from type arrays and anyOf unions', () => {
+    expect(resolveSchemaLeafHint(folderSchema, 'maybeTitle')).toEqual({ scalarType: 'string', nullable: true });
+    expect(resolveSchemaLeafHint(folderSchema, 'maybeCount')).toEqual({ scalarType: 'number', nullable: true });
   });
 
-  it('rejects invalid scalar input', () => {
-    expect(() => coerceCellInputTextWithSchema(folderSchema, 'count', 'abc')).toThrow(
-      new CellInputCoercionError('Field "count" expects a number.'),
-    );
-    expect(() => coerceCellInputTextWithSchema(folderSchema, 'enabled', 'yes')).toThrow(
-      new CellInputCoercionError('Field "enabled" expects "true" or "false".'),
-    );
-    expect(() => coerceCellInputTextWithSchema(folderSchema, 'count', '')).toThrow(
-      new CellInputCoercionError('Field "count" expects a number.'),
-    );
+  it('resolves the inner leaf of an enveloped (nested) property', () => {
+    expect(resolveSchemaLeafHint(folderSchema, 'properties.Typical Check Size.number')).toEqual({
+      scalarType: 'number',
+      nullable: true,
+    });
   });
 
-  it('falls back to exact text when the field schema is missing or unknown', () => {
-    expect(coerceCellInputTextWithSchema(folderSchema, 'doesNotExist', '{"city":"Sofia"}')).toBe('{"city":"Sofia"}');
-    expect(coerceCellInputTextWithSchema(folderSchema, 'unresolved', '123')).toBe('123');
+  it('returns null when the schema is missing, the path is unknown, or the leaf has no scalar', () => {
+    expect(resolveSchemaLeafHint(null, 'title')).toBeNull();
+    expect(resolveSchemaLeafHint(folderSchema, 'doesNotExist')).toBeNull();
+    expect(resolveSchemaLeafHint(folderSchema, 'metadata')).toBeNull();
   });
 });

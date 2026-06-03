@@ -8,14 +8,18 @@ const sharedTypesSrc = resolve('../packages/shared-types/src/index.ts');
 // own source alias. Must be registered BEFORE the barrel alias so the more
 // specific `/transform` import matches first.
 const sharedTypesTransformSrc = resolve('../packages/shared-types/src/transform/index.ts');
+// The `@spinner/shared-types/format` subpath (canonical record-JSON serializer)
+// is its own lean module so the main process can import it without bundling the
+// rest of the barrel. Like `/transform`, register it BEFORE the barrel alias.
+const sharedTypesFormatSrc = resolve('../packages/shared-types/src/format/index.ts');
 
-// TODO: Remove this useless comment.
 export default defineConfig({
   main: {
     resolve: {
       alias: {
         // Same as renderer: bundle from source so main never requires node_modules/@spinner/shared-types/dist.
         '@spinner/shared-types/transform': sharedTypesTransformSrc,
+        '@spinner/shared-types/format': sharedTypesFormatSrc,
         '@spinner/shared-types': sharedTypesSrc,
       },
     },
@@ -38,6 +42,7 @@ export default defineConfig({
       alias: {
         '@': resolve('src/renderer/src'),
         '@spinner/shared-types/transform': sharedTypesTransformSrc,
+        '@spinner/shared-types/format': sharedTypesFormatSrc,
         '@spinner/shared-types': sharedTypesSrc,
       },
     },

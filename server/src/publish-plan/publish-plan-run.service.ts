@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
+  formatRecordJson,
   isScratchPendingPublishId,
   isScratchPendingRecreateId,
   parseScratchPendingRecreateId,
 } from '@spinner/shared-types';
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
-import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { ParsedContent } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { DbService } from '../db/db.service';
@@ -1092,7 +1092,7 @@ export class PublishPlanRunService {
     // Git Commit (Main) — always commit full content
     const gitFiles = refUpdates.map((u) => ({
       path: u.path,
-      content: formatJsonWithPrettier(u.content as Record<string, unknown>),
+      content: formatRecordJson(u.content as Record<string, unknown>),
     }));
     await this.scratchGitService.commitFilesToBranch(
       repoId,
@@ -1104,7 +1104,7 @@ export class PublishPlanRunService {
     // Git Commit (Dirty) — uses full content, not changedFields
     const dirtySyncBatch = entriesWithOps.map(({ entry }, i) => ({
       filePath: entry.filePath,
-      content: formatJsonWithPrettier(contentForCommit[i] as Record<string, unknown>),
+      content: formatRecordJson(contentForCommit[i] as Record<string, unknown>),
     }));
     await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);
   }
@@ -1228,7 +1228,7 @@ export class PublishPlanRunService {
       refUpdates.push({ path: entry.filePath, content: returned as ParsedContent });
 
       // Git
-      gitFiles.push({ path: entry.filePath, content: formatJsonWithPrettier(returned as Record<string, unknown>) });
+      gitFiles.push({ path: entry.filePath, content: formatRecordJson(returned as Record<string, unknown>) });
     }
 
     if (fileIndexUpdates.length > 0) {
@@ -1249,7 +1249,7 @@ export class PublishPlanRunService {
       const returned = returnedRecords[i] || resolvedOp;
       return {
         filePath: entry.filePath,
-        content: formatJsonWithPrettier(returned as Record<string, unknown>),
+        content: formatRecordJson(returned as Record<string, unknown>),
       };
     });
     await this.syncBatchToDirtyIfFinal(workbookId, planId, phase, dirtySyncBatch, repoId);

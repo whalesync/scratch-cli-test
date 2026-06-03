@@ -1989,6 +1989,21 @@ mod tests {
     }
 
     #[test]
+    fn json_object_to_bytes_matches_canonical_record_format() {
+        // Contract: 2-space indentation + a single trailing newline, byte-identical
+        // to the TypeScript `formatRecordJson` used by the server and desktop app
+        // (see scratch-desktop record-json-format.test.ts). Keeping these in lockstep
+        // is what makes an edit round-trip byte-identical to a fresh pull. DEV-10308.
+        let value = json!({ "a": 1, "b": "two" });
+        let object = value.as_object().unwrap();
+        let bytes = json_object_to_bytes(object).unwrap();
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            "{\n  \"a\": 1,\n  \"b\": \"two\"\n}\n"
+        );
+    }
+
+    #[test]
     fn compute_accepted_state_with_empty_file_returns_file_path_to_contents_map_in_main_branch() {
         let main = map_of(&[("Companies/rec_1.json", "{\"name\":\"Acme\"}")]);
         let file = AcceptedPatchesFile::default();

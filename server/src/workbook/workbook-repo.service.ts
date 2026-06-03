@@ -1,10 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { TableMappingV1, WorkbookId } from '@spinner/shared-types';
+import { formatRecordJson, TableMappingV1, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { ScratchGitClient } from 'src/scratch-git/scratch-git.client';
 import { parseStoredMappings } from 'src/sync/sync-mapping.schema';
 import { Actor } from 'src/users/types';
-import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 
 /** Repo ID for the workbook repo: same pattern as connector repos but uses workbookId twice. */
 export function getWorkbookRepoPath(orgId: string, workbookId: WorkbookId): string {
@@ -124,7 +123,7 @@ export class WorkbookRepoService {
 
         files.push({
           path: `syncs/${slug}.json`,
-          content: formatJsonWithPrettier(config as unknown as Record<string, unknown>),
+          content: formatRecordJson(config as unknown as Record<string, unknown>),
         });
       }
     }

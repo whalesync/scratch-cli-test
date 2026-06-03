@@ -12,9 +12,14 @@ import { basename, dirname, extname, join, relative, sep } from 'path';
 import { parse } from 'yaml';
 
 import type { TableView } from '@spinner/shared-types';
-import { coerceCellInputText, coerceCellInputTextWithSchema } from '../shared/cell-value-coercion';
+import { formatRecordJson } from '@spinner/shared-types/format';
+import {
+  coerceCellInputTextAgainstExistingValueOrSchema,
+  resolveSchemaLeafHint,
+  type SchemaLeafHint,
+} from '../shared/cell-value-coercion';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
-import { buildColumnDefinitions, createFallbackTableView } from '../shared/schema-columns';
+import { buildColumnDefinitions, createFallbackTableView, tableViewColumnPaths } from '../shared/schema-columns';
 import {
   acceptCellField,
   discardCellField,
@@ -1252,8 +1257,19 @@ export async function readDiffGridDataPage(
   );
   const schema = await readConnectionSchema(workspacePath, cliFolder);
 
+  // Key the diff at the SAME granularity as the rendered columns. The active
+  // view drills enveloped (Notion-style) properties to their value leaf — e.g.
+  // `properties."Asked for Intro?".checkbox` rather than the whole envelope
+  // `properties."Asked for Intro?"` — so sourcing the diff's leaf paths from the
+  // view keeps __changedFields / __unpublishedFields / focusColumnIds aligned
+  // with the grid column ids. Otherwise enveloped columns never match the diff
+  // and so are never auto-focused by review filters nor diff-highlighted.
+  // Fall back to the schema's own column definitions when there is no stored
+  // view — that mirrors the renderer's `createFallbackTableView` fallback.
   const schemaColumns = schema ? buildColumnDefinitions(schema) : [];
-  const leafPaths = new Set(schemaColumns.map((c) => c.id));
+  const view = await readConnectionView(workspacePath, cliFolder);
+  const diffColumnIds = view ? tableViewColumnPaths(view) : schemaColumns.map((c) => c.id);
+  const leafPaths = new Set(diffColumnIds);
 
   const workingPath = folderPath;
 
@@ -1312,10 +1328,14 @@ export async function readDiffGridDataPage(
 
   let columns: ColumnDefinition[];
   if (schema) {
-    const schemaCols = buildColumnDefinitions(schema);
-    const schemaIdSet = new Set(schemaCols.map((c) => c.id));
+    // The leaf flatten above keys fields by the view's drilled paths, so treat
+    // the view column ids as "known" too — otherwise every enveloped leaf
+    // (properties.X.checkbox, .id, .type) would surface as a spurious extra
+    // column. Genuine schema-drift fields (in the data, in neither the schema
+    // nor the view) still come through.
+    const knownIdSet = new Set<string>([...schemaColumns.map((c) => c.id), ...diffColumnIds]);
     const extraIds = Array.from(columnSet)
-      .filter((id) => !schemaIdSet.has(id))
+      .filter((id) => !knownIdSet.has(id))
       .sort((a, b) => a.localeCompare(b));
     const extraCols: ColumnDefinition[] = extraIds.map((id) => ({
       id,
@@ -1323,7 +1343,7 @@ export async function readDiffGridDataPage(
       dataType: 'unknown' as const,
       attributes: { readOnly: false, required: false, nested: id.includes('.') },
     }));
-    columns = [...schemaCols, ...extraCols];
+    columns = [...schemaColumns, ...extraCols];
   } else {
     const sortedIds = Array.from(columnSet).sort((a, b) => a.localeCompare(b));
     columns = sortedIds.map((id) => ({
@@ -1336,7 +1356,9 @@ export async function readDiffGridDataPage(
 
   const focusFilters = (opts.filters ?? []).filter((filter) => filter.scope !== 'global');
   const focusRows = applyDiffGridFilters(filteredRows, focusFilters, errorFilenames);
-  const focusColumnIds = collectFocusColumnIds(focusRows, columns, errorFieldPaths);
+  // Focus columns are matched against the leaf diff paths, so order them by the
+  // leaf column ids (the view's drilled paths), not the envelope schema columns.
+  const focusColumnIds = collectFocusColumnIds(focusRows, diffColumnIds, errorFieldPaths);
 
   const invalidJsonFiles = buildInvalidJsonFileEntries(workingPath, rows);
 
@@ -1438,7 +1460,7 @@ function applyDiffGridFilters(
 
 function collectFocusColumnIds(
   rows: DiffRow[],
-  columns: ColumnDefinition[],
+  orderedColumnIds: string[],
   errorFieldPaths: string[],
 ): DiffGridResult['focusColumnIds'] {
   const unreviewed = new Set<string>();
@@ -1453,7 +1475,7 @@ function collectFocusColumnIds(
     }
   }
 
-  const orderedIds = columns.map((column) => column.id);
+  const orderedIds = orderedColumnIds;
   const errorFieldSet = new Set(errorFieldPaths);
 
   return {
@@ -1572,9 +1594,14 @@ export async function readDiffRecordData(
 }
 
 /**
- * Legacy string round-trip save path used by older UI flows that still pass
- * display strings rather than raw typed values. Dot-separated fieldName paths
- * address nested fields.
+ * Promotes an unreviewed working-tree field edit to approved. Used by the detail
+ * view's per-field "Approve" button, which passes the field's current display
+ * string. This shares the exact schema-free, existing-value-aware write as
+ * {@link acceptFieldEditFromInputText} (interpreting the text against the value
+ * already on disk) so that approving a field can never retype a leaf on its way
+ * into the approved set — e.g. a numeric-looking string leaf stays a string
+ * rather than being JSON-parsed to a number. See DEV-10308. Dot-separated
+ * `fieldName` paths address nested fields.
  */
 export async function acceptUnreviewedFieldEdit(
   folderPath: string,
@@ -1583,21 +1610,16 @@ export async function acceptUnreviewedFieldEdit(
   fieldName: string,
   value: string,
 ): Promise<{ value: unknown }> {
-  const parsed = coerceCellInputText(value);
-  // Single source of truth: write the user's typed value to the working
-  // file first, then ask the napi binding to snapshot the field's current
-  // disk value into `accepted-patches.json`. The order matters — accept
-  // reads from disk.
-  await writeWorkingFileField(join(folderPath, filename), fieldName, parsed);
-  await acceptCellField({ workspacePath, folderPath, filename, fieldName });
-  return { value: parsed };
+  return acceptFieldEditFromInputText(folderPath, workspacePath, filename, fieldName, value);
 }
 
 /**
- * Applies direct user-entered cell text using the folder schema to determine
- * how that text should be stored on disk. Coercion stays in TS because it
- * reads the on-disk schema files; the result is written to the working file,
- * then the napi binding snapshots that disk state into
+ * Applies direct user-entered cell text. The text is interpreted against the
+ * value currently stored at that leaf on disk; the connector JSON schema only
+ * contributes a scalar type hint for empty leaves and clear semantics, never the
+ * structure written (see `coerceCellInputTextAgainstExistingValueOrSchema` /
+ * DEV-10308). Just that one leaf is replaced and the rest of the record stays
+ * byte-identical. Then the napi binding snapshots the disk state into
  * `accepted-patches.json`.
  */
 export async function acceptFieldEditFromInputText(
@@ -1608,45 +1630,85 @@ export async function acceptFieldEditFromInputText(
   value: string,
 ): Promise<{ value: unknown }> {
   const relPath = relative(workspacePath, folderPath);
-  const schema = await readConnectionSchema(workspacePath, relPath);
-  const parsed = coerceCellInputTextWithSchema(schema, fieldName, value);
-  await writeWorkingFileField(join(folderPath, filename), fieldName, parsed);
+  const folderSchema = await readConnectionSchema(workspacePath, relPath);
+  const schemaHint = resolveSchemaLeafHint(folderSchema, fieldName);
+  const { value: parsed } = await writeWorkingFileFieldFromInputText(
+    join(folderPath, filename),
+    fieldName,
+    value,
+    schemaHint,
+  );
   await acceptCellField({ workspacePath, folderPath, filename, fieldName });
   return { value: parsed };
 }
 
-/**
- * Set a nested field on the JSON object at `filePath`. Dot-separated
- * `fieldName` drills into nested objects. Used by the cell-edit handlers to
- * keep the on-disk working file in sync with the value the user just
- * accepted (the napi binding only writes `accepted-patches.json`, not the
- * worktree).
- */
-async function writeWorkingFileField(filePath: string, fieldName: string, value: unknown): Promise<void> {
-  let obj: Record<string, unknown> = {};
+/** Reads `filePath` as a JSON object. Returns `{}` when the file is missing or is not a JSON object. */
+async function readWorkingFileObject(filePath: string): Promise<Record<string, unknown>> {
   try {
     const content = await readFile(filePath, 'utf-8');
     const parsed: unknown = JSON.parse(content);
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      obj = parsed as Record<string, unknown>;
+      return parsed as Record<string, unknown>;
     }
   } catch (err) {
     if (!isFileNotFoundError(err)) throw err;
   }
+  return {};
+}
 
+/**
+ * Walks `obj` to the parent object of the dot-separated `fieldName` leaf,
+ * creating intermediate objects as needed, and returns that parent plus the
+ * final leaf key so the caller can read or replace just that leaf.
+ */
+function navigateToLeafParentCreatingIntermediates(
+  obj: Record<string, unknown>,
+  fieldName: string,
+): { leafParentObject: Record<string, unknown>; leafKey: string } {
   const parts = fieldName.split('.');
-  let cur: Record<string, unknown> = obj;
+  let leafParentObject: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i];
-    if (typeof cur[part] !== 'object' || cur[part] === null || Array.isArray(cur[part])) {
-      cur[part] = {};
+    if (
+      typeof leafParentObject[part] !== 'object' ||
+      leafParentObject[part] === null ||
+      Array.isArray(leafParentObject[part])
+    ) {
+      leafParentObject[part] = {};
     }
-    cur = cur[part] as Record<string, unknown>;
+    leafParentObject = leafParentObject[part] as Record<string, unknown>;
   }
-  cur[parts[parts.length - 1]] = value;
+  return { leafParentObject, leafKey: parts[parts.length - 1] };
+}
 
+async function persistWorkingFileObject(filePath: string, obj: Record<string, unknown>): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(obj, null, 2));
+  // `formatRecordJson` is the one canonical serializer shared with the server's
+  // git commits (2-space JSON + trailing newline), so an edit stays byte-identical
+  // to a fresh pull except for the changed leaf.
+  await writeFile(filePath, formatRecordJson(obj));
+}
+
+/**
+ * Reads the value currently stored at `fieldName`, interprets the user's typed
+ * `inputText` against that existing leaf's JSON type (with `schemaHint` only
+ * contributing a scalar hint for empty leaves — see
+ * `coerceCellInputTextAgainstExistingValueOrSchema`), surgically replaces just
+ * that leaf, and writes the file back. Returns the parsed value so callers can
+ * mirror it into their optimistic UI state.
+ */
+async function writeWorkingFileFieldFromInputText(
+  filePath: string,
+  fieldName: string,
+  inputText: string,
+  schemaHint: SchemaLeafHint | null,
+): Promise<{ value: unknown }> {
+  const obj = await readWorkingFileObject(filePath);
+  const { leafParentObject, leafKey } = navigateToLeafParentCreatingIntermediates(obj, fieldName);
+  const parsed = coerceCellInputTextAgainstExistingValueOrSchema(leafParentObject[leafKey], schemaHint, inputText);
+  leafParentObject[leafKey] = parsed;
+  await persistWorkingFileObject(filePath, obj);
+  return { value: parsed };
 }
 
 /**

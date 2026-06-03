@@ -17,6 +17,7 @@ import {
   createSyncId,
   DataFolderId,
   ExportSyncConfig,
+  formatRecordJson,
   LookupFieldOptions,
   PreviewFieldResult,
   PreviewRecordBody,
@@ -73,7 +74,6 @@ import {
 } from 'src/sync/transformers';
 import { MappingTypeTrace, traceMappingType } from 'src/sync/transformers/type-validator';
 import { Actor } from 'src/users/types';
-import { formatJsonWithPrettier } from 'src/utils/json-formatter';
 import { extractSchemaFields, SchemaField } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { deduplicateFileName, resolveBaseFileName } from 'src/workbook/util';
@@ -2507,7 +2507,7 @@ export type { TransformRecordResult } from 'src/sync/sync-execution';
  * @returns JSON string formatted with Prettier
  */
 function serializeRecord(fields: Record<string, unknown>): string {
-  return formatJsonWithPrettier(fields);
+  return formatRecordJson(fields);
 }
 
 /**

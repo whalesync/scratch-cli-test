@@ -47,9 +47,17 @@ import {
   Trash2,
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
+import {
+  coerceCellInputTextAgainstExistingValueOrSchema,
+  resolveSchemaLeafHint,
+} from '../../../../shared/cell-value-coercion';
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
-import { createFallbackTableView, getByPath, resolveDisplayString } from '../../../../shared/schema-columns';
+import {
+  createFallbackTableView,
+  flattenTableViewColumns,
+  getByPath,
+  resolveDisplayString,
+} from '../../../../shared/schema-columns';
 // ValidationResultRow is no longer used — validation data comes from diffData.validationByCell
 import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
@@ -1477,7 +1485,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   /** Flatten view cols (handle banner groups) into a single ordered list. */
   const flatViewCols: TableViewCol[] = useMemo(() => {
     if (!tableView) return [];
-    return tableView.cols.flatMap((item) => (item.kind === 'banner-group' ? item.cols : [item]));
+    return flattenTableViewColumns(tableView);
   }, [tableView]);
 
   /** Build a lookup from path → TableViewCol for rendering. */
@@ -1883,26 +1891,26 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
       // Apply optimistically before awaiting the IPC so the grid canvas never
       // repaints the pre-edit value in the gap between the overlay closing
-      // and the backend write completing. We reuse the same shared coercion
-      // helper as the main-process save path so the optimistic value matches
-      // the value that will be written on disk. On failure we trigger a full
-      // refresh to resync the grid with the authoritative on-disk state rather
-      // than trying to surgically revert — any intervening edits on other
-      // cells are preserved that way.
-      let parsedValue: unknown;
-      try {
-        parsedValue = coerceCellInputTextWithSchema(schema, fieldName, nextValue);
-      } catch (err) {
-        notifications.show({
-          color: 'red',
-          title: 'Invalid value',
-          message: err instanceof Error ? err.message : 'The value does not match the field schema.',
-        });
-        return;
-      }
-      setDiffData((prev) =>
-        prev ? applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, parsedValue) : prev,
-      );
+      // and the backend write completing. We interpret the typed text the same
+      // way the main-process save path does (existing on-disk leaf wins, with
+      // the JSON schema only hinting the scalar type of an empty leaf — see
+      // coerceCellInputTextAgainstExistingValueOrSchema), so the optimistic value
+      // matches what gets written to disk. On failure we trigger a full refresh
+      // to resync the grid with the authoritative on-disk state rather than
+      // trying to surgically revert — any intervening edits on other cells are
+      // preserved that way.
+      const schemaHint = resolveSchemaLeafHint(schema, fieldName);
+      setDiffData((prev) => {
+        if (!prev) return prev;
+        const rowBeforeEdit = prev.rows.find((r) => r.__filename === filename);
+        const existingValueAtFieldPath = rowBeforeEdit ? getByPath(rowBeforeEdit.__raw, fieldName) : undefined;
+        const parsedValue = coerceCellInputTextAgainstExistingValueOrSchema(
+          existingValueAtFieldPath,
+          schemaHint,
+          nextValue,
+        );
+        return applyAcceptedFieldChangeToFolderDiffData(prev, filename, fieldName, parsedValue);
+      });
 
       void window.scratchFiles
         .acceptFieldEditFromInputText(selectedFolderPath, workspacePath, filename, fieldName, nextValue)

@@ -15,7 +15,6 @@ import {
   X,
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { coerceCellInputTextWithSchema } from '../../../../shared/cell-value-coercion';
 import { getByPath } from '../../../../shared/schema-columns';
 import type { ValidationEntry, ValidationResultRow } from '../../../../shared/validation-types';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
@@ -656,19 +655,12 @@ export const RecordDetailView = memo(function RecordDetailView({
         return;
       }
 
-      try {
-        coerceCellInputTextWithSchema(schema, fieldName, nextValue);
-      } catch (err) {
-        notifications.show({
-          color: 'red',
-          title: 'Invalid value',
-          message: err instanceof Error ? err.message : 'The value does not match the field schema.',
-        });
-        return;
-      }
-
       clearFieldEdit();
 
+      // The typed text is interpreted schema-free in the main process (against
+      // the current on-disk leaf) and the parsed value comes back as
+      // `result.value` — we mirror that into the optimistic UI state rather than
+      // re-deriving it here. See DEV-10308.
       void window.scratchFiles
         .acceptFieldEditFromInputText(folderPath, workspacePath, filename, fieldName, nextValue)
         .then((result) => {
@@ -687,7 +679,7 @@ export const RecordDetailView = memo(function RecordDetailView({
           });
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onSingleFieldAcceptedApplyOptimistically, schema],
+    [clearFieldEdit, folderPath, workspacePath, onSingleFieldAcceptedApplyOptimistically],
   );
 
   const validationWarnings = useMemo(() => {

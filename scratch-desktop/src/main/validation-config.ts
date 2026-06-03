@@ -1,3 +1,4 @@
+import { formatRecordJson } from '@spinner/shared-types/format';
 import { mkdir, readFile, readdir, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 import type { ValidatorConfig, ValidatorConfigEntry } from '../shared/validation-types';
@@ -93,5 +94,5 @@ export async function writeValidationConfig(
   }
 
   const filePath = join(dir, VALIDATION_FILENAME);
-  await writeFile(filePath, JSON.stringify(entries, null, 2) + '\n', 'utf8');
+  await writeFile(filePath, formatRecordJson(entries), 'utf8');
 }

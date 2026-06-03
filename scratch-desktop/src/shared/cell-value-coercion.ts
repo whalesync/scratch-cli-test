@@ -1,11 +1,47 @@
+/**
+ * Shared cell-input coercion for saved field edits.
+ *
+ * Saving an edited field round-trips the user's input as faithfully as possible —
+ * like editing a value in a text file. The connector JSON schema never decides
+ * the *structure* written to disk (schema-driven structural coercion is what
+ * clobbered Notion's `{id,type,<type>}` envelopes — see DEV-10308); it only
+ * contributes a scalar *type hint* for the one thing the data itself can't
+ * answer: how to interpret text typed into an empty leaf.
+ *
+ * Precedence when interpreting typed text for a leaf:
+ *  1. The leaf already holds a value → use that value's own JSON type, schema
+ *     ignored. A string leaf stays a string (numeric-looking text can't silently
+ *     become a number); a number/boolean/object/array leaf is JSON-parsed, so
+ *     raw-JSON edits of an envelope round-trip as the same object.
+ *  2. The leaf is empty (`null` / missing) → use the schema's scalar type hint
+ *     (string → verbatim text; number/integer/boolean → parse; else JSON-parse).
+ *  3. No usable schema hint → JSON-parse-with-string fallback.
+ *
+ * Clearing a cell (empty input) writes `null` when the schema marks the leaf
+ * nullable, otherwise an empty string (falling back to the leaf's own type when
+ * no schema is available). Coercion never throws: text that doesn't fit the hint
+ * is written verbatim as a string and surfaced by the separate validators — we
+ * prefer flexibility over rejecting the edit, since the schema may itself be wrong.
+ *
+ * Full rule, worked examples, and rationale: ../../docs/cell-edit-save-coercion.md
+ */
+
 type JsonSchemaRecord = Record<string, unknown>;
 
-export type CellInputSchemaKind = 'string' | 'number' | 'integer' | 'boolean' | 'null' | 'object' | 'array' | 'unknown';
+export type CellScalarType = 'string' | 'number' | 'integer' | 'boolean';
+
+export interface SchemaLeafHint {
+  /** First non-null scalar type the schema allows for this leaf, if any. */
+  scalarType: CellScalarType | null;
+  /** Whether the schema permits `null` at this leaf. */
+  nullable: boolean;
+}
 
 /**
- * Shared legacy cell-input coercion used by older string round-trip flows.
- * This intentionally preserves the pre-schema behavior exactly: trim before
- * parsing, try JSON.parse, and fall back to the original string.
+ * Legacy primitive: trim, try `JSON.parse`, and fall back to the original
+ * (untrimmed) string. The structural-interpretation step used by
+ * {@link coerceCellInputTextAgainstExistingValueOrSchema} when neither the
+ * existing value nor the schema constrains the result.
  */
 export function coerceCellInputText(input: string): unknown {
   const trimmed = input.trim();
@@ -16,178 +52,84 @@ export function coerceCellInputText(input: string): unknown {
   }
 }
 
-export class CellInputCoercionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CellInputCoercionError';
-  }
-}
-
-export function coerceCellInputTextWithSchema(
-  folderSchema: JsonSchemaRecord | null,
-  fieldPath: string,
+/**
+ * Interprets the user's typed text for a saved field edit. The caller surgically
+ * replaces just this leaf with the returned value, leaving the rest of the
+ * record byte-identical. Follows the existing-value-then-schema precedence
+ * documented at the top of this file. See DEV-10308.
+ */
+export function coerceCellInputTextAgainstExistingValueOrSchema(
+  existingValue: unknown,
+  schemaHint: SchemaLeafHint | null,
   input: string,
 ): unknown {
-  const fieldSchema = resolveFieldSchema(folderSchema, fieldPath);
-  if (!fieldSchema) {
-    return input;
+  // Clearing the cell: schema nullability decides whether "empty" means `null`
+  // or an empty string; with no schema, mirror the leaf's own type.
+  if (input.trim() === '') {
+    if (schemaHint) {
+      return schemaHint.nullable ? null : '';
+    }
+    return typeof existingValue === 'string' ? '' : null;
   }
 
-  const kinds = resolveSchemaKinds(fieldSchema);
-  return coerceByKinds(fieldPath, kinds, input);
+  // The leaf already has a value → its own JSON type wins and the schema is
+  // ignored, so a wrong/normalized schema can never retype or restructure
+  // already-stored data.
+  if (typeof existingValue === 'string') {
+    return input;
+  }
+  if (existingValue !== null && existingValue !== undefined) {
+    return coerceCellInputText(input);
+  }
+
+  // Empty leaf → fall back to the schema's scalar type hint.
+  if (schemaHint?.scalarType) {
+    return coerceByScalarType(schemaHint.scalarType, input);
+  }
+  return coerceCellInputText(input);
 }
 
-function coerceByKinds(fieldPath: string, kinds: CellInputSchemaKind[], input: string): unknown {
-  const normalizedKinds = normalizeKinds(kinds);
-  const nonNullKinds = normalizedKinds.filter((kind) => kind !== 'null');
-  const trimmed = input.trim();
-
-  if (normalizedKinds.length === 0 || normalizedKinds.includes('unknown')) {
-    return input;
-  }
-
-  if (trimmed === '') {
-    if (normalizedKinds.includes('string')) {
-      return input;
-    }
-    if (normalizedKinds.includes('null')) {
-      return null;
-    }
-  }
-
-  if (trimmed === 'null' && normalizedKinds.includes('null')) {
-    return null;
-  }
-
-  if (nonNullKinds.length === 0) {
-    throw new CellInputCoercionError(`Field "${fieldPath}" expects null.`);
-  }
-
-  if (nonNullKinds.includes('string')) {
-    if (nonNullKinds.length === 1) {
-      return input;
-    }
-
-    // For unions like string | null, prefer the exact text unless the user
-    // explicitly typed `null`.
-    return input;
-  }
-
-  if (nonNullKinds.length === 1) {
-    return coerceSingleKind(fieldPath, nonNullKinds[0], trimmed);
-  }
-
-  const onlyNumericKinds = nonNullKinds.every((kind) => kind === 'integer' || kind === 'number');
-  if (onlyNumericKinds) {
-    const parsed = parseJsonValue(fieldPath, trimmed, describeKinds(normalizedKinds));
-    if (typeof parsed !== 'number') {
-      throw new CellInputCoercionError(`Field "${fieldPath}" expects ${describeKinds(normalizedKinds)}.`);
-    }
-    if (!nonNullKinds.includes('number') && !Number.isInteger(parsed)) {
-      throw new CellInputCoercionError(`Field "${fieldPath}" expects an integer.`);
-    }
-    return parsed;
-  }
-
-  const parsed = parseJsonValue(fieldPath, trimmed, describeKinds(normalizedKinds));
-  const parsedKind = getRuntimeKind(parsed);
-
-  if (parsedKind === 'number') {
-    const allowsNumber = nonNullKinds.includes('number');
-    const allowsInteger = nonNullKinds.includes('integer');
-    if (allowsNumber) return parsed;
-    if (allowsInteger && Number.isInteger(parsed)) return parsed;
-    throw new CellInputCoercionError(`Field "${fieldPath}" expects ${describeKinds(normalizedKinds)}.`);
-  }
-
-  if (parsedKind !== 'null' && nonNullKinds.includes(parsedKind)) {
-    return parsed;
-  }
-
-  throw new CellInputCoercionError(`Field "${fieldPath}" expects ${describeKinds(normalizedKinds)}.`);
-}
-
-function coerceSingleKind(fieldPath: string, kind: CellInputSchemaKind, trimmed: string): unknown {
-  switch (kind) {
+function coerceByScalarType(scalarType: CellScalarType, input: string): unknown {
+  switch (scalarType) {
     case 'string':
-      return trimmed;
-    case 'number': {
-      const parsed = parseJsonValue(fieldPath, trimmed, 'a number');
-      if (typeof parsed === 'number') return parsed;
-      break;
-    }
+      return input;
+    case 'number':
     case 'integer': {
-      const parsed = parseJsonValue(fieldPath, trimmed, 'an integer');
-      if (typeof parsed === 'number' && Number.isInteger(parsed)) return parsed;
-      break;
+      const parsed = tryParseJson(input);
+      return parsed.ok && typeof parsed.value === 'number' ? parsed.value : input;
     }
     case 'boolean': {
-      const parsed = parseJsonValue(fieldPath, trimmed, '"true" or "false"');
-      if (typeof parsed === 'boolean') return parsed;
-      break;
+      const parsed = tryParseJson(input);
+      return parsed.ok && typeof parsed.value === 'boolean' ? parsed.value : input;
     }
-    case 'null':
-      break;
-    case 'object': {
-      const parsed = parseJsonValue(fieldPath, trimmed, 'a JSON object');
-      if (getRuntimeKind(parsed) === 'object') return parsed;
-      break;
-    }
-    case 'array': {
-      const parsed = parseJsonValue(fieldPath, trimmed, 'a JSON array');
-      if (Array.isArray(parsed)) return parsed;
-      break;
-    }
-    case 'unknown':
-      return trimmed;
   }
-
-  throw new CellInputCoercionError(`Field "${fieldPath}" expects ${describeKinds([kind])}.`);
 }
 
-function parseJsonValue(fieldPath: string, trimmed: string, expected: string): unknown {
+function tryParseJson(input: string): { ok: true; value: unknown } | { ok: false } {
   try {
-    return JSON.parse(trimmed);
+    return { ok: true, value: JSON.parse(input.trim()) };
   } catch {
-    throw new CellInputCoercionError(`Field "${fieldPath}" expects ${expected}.`);
+    return { ok: false };
   }
 }
 
-function normalizeKinds(kinds: CellInputSchemaKind[]): CellInputSchemaKind[] {
-  const unique = Array.from(new Set(kinds));
-  if (unique.length > 1) {
-    return unique.filter((kind) => kind !== 'unknown');
+/**
+ * Resolves the scalar-type + nullability hint for the leaf at `fieldPath` from
+ * the folder JSON schema. Returns `null` when the schema is missing or the path
+ * can't be resolved to a scalar/nullable leaf — callers then rely on the
+ * existing value / JSON-parse fallback. Used only as a hint for empty leaves and
+ * for clear semantics; never to reshape what's written.
+ */
+export function resolveSchemaLeafHint(folderSchema: JsonSchemaRecord | null, fieldPath: string): SchemaLeafHint | null {
+  const fieldSchema = resolveFieldSchema(folderSchema, fieldPath);
+  if (!fieldSchema) {
+    return null;
   }
-  return unique;
-}
-
-function describeKinds(kinds: CellInputSchemaKind[]): string {
-  const normalized = normalizeKinds(kinds);
-  const labels = normalized.map((kind) => {
-    switch (kind) {
-      case 'string':
-        return 'text';
-      case 'number':
-        return 'a number';
-      case 'integer':
-        return 'an integer';
-      case 'boolean':
-        return '"true" or "false"';
-      case 'null':
-        return 'null';
-      case 'object':
-        return 'a JSON object';
-      case 'array':
-        return 'a JSON array';
-      case 'unknown':
-        return 'text';
-    }
-  });
-
-  if (labels.length === 0) return 'text';
-  if (labels.length === 1) return labels[0];
-  if (labels.length === 2) return `${labels[0]} or ${labels[1]}`;
-  return `${labels.slice(0, -1).join(', ')}, or ${labels[labels.length - 1]}`;
+  const { scalarType, nullable } = collectScalarTypeAndNullability(fieldSchema);
+  if (!scalarType && !nullable) {
+    return null;
+  }
+  return { scalarType, nullable };
 }
 
 function resolveFieldSchema(folderSchema: JsonSchemaRecord | null, fieldPath: string): JsonSchemaRecord | null {
@@ -199,17 +141,14 @@ function resolveFieldSchema(folderSchema: JsonSchemaRecord | null, fieldPath: st
     if (!objectSchema) {
       return null;
     }
-
     const properties = objectSchema.properties;
     if (!isRecord(properties)) {
       return null;
     }
-
     const next = properties[part];
     if (!isRecord(next)) {
       return null;
     }
-
     current = next;
   }
 
@@ -220,12 +159,10 @@ function unwrapFolderSchema(folderSchema: JsonSchemaRecord | null): JsonSchemaRe
   if (!isRecord(folderSchema)) {
     return null;
   }
-
   const nested = folderSchema.schema;
   if (isRecord(nested)) {
     return nested;
   }
-
   return folderSchema;
 }
 
@@ -233,7 +170,6 @@ function pickObjectSchema(schema: JsonSchemaRecord | null): JsonSchemaRecord | n
   if (!isRecord(schema)) {
     return null;
   }
-
   if (
     schema.type === 'object' ||
     (Array.isArray(schema.type) && schema.type.includes('object')) ||
@@ -241,13 +177,11 @@ function pickObjectSchema(schema: JsonSchemaRecord | null): JsonSchemaRecord | n
   ) {
     return schema;
   }
-
   for (const unionKey of ['anyOf', 'oneOf', 'allOf'] as const) {
     const variants = schema[unionKey];
     if (!Array.isArray(variants)) {
       continue;
     }
-
     for (const variant of variants) {
       const objectVariant = pickObjectSchema(isRecord(variant) ? variant : null);
       if (objectVariant) {
@@ -255,44 +189,44 @@ function pickObjectSchema(schema: JsonSchemaRecord | null): JsonSchemaRecord | n
       }
     }
   }
-
   return null;
 }
 
-function resolveSchemaKinds(schema: JsonSchemaRecord): CellInputSchemaKind[] {
-  const kinds = new Set<CellInputSchemaKind>();
-  collectSchemaKinds(schema, kinds);
-  return kinds.size > 0 ? Array.from(kinds) : ['unknown'];
+function collectScalarTypeAndNullability(schema: JsonSchemaRecord): {
+  scalarType: CellScalarType | null;
+  nullable: boolean;
+} {
+  const typeNames = new Set<string>();
+  collectSchemaTypeNames(schema, typeNames);
+  // Prefer 'string' so an ambiguous string|number leaf keeps text verbatim.
+  const scalarPriority: CellScalarType[] = ['string', 'number', 'integer', 'boolean'];
+  const scalarType = scalarPriority.find((candidate) => typeNames.has(candidate)) ?? null;
+  return { scalarType, nullable: typeNames.has('null') };
 }
 
-function collectSchemaKinds(schema: JsonSchemaRecord | null, kinds: Set<CellInputSchemaKind>): void {
+function collectSchemaTypeNames(schema: JsonSchemaRecord | null, out: Set<string>): void {
   if (!isRecord(schema)) {
     return;
   }
-
   const schemaType = schema.type;
   if (typeof schemaType === 'string') {
-    kinds.add(mapSchemaType(schemaType));
+    out.add(schemaType);
   } else if (Array.isArray(schemaType)) {
     for (const typeValue of schemaType) {
       if (typeof typeValue === 'string') {
-        kinds.add(mapSchemaType(typeValue));
+        out.add(typeValue);
       }
     }
   }
-
   if ('const' in schema) {
-    kinds.add(getRuntimeKind(schema.const));
+    out.add(runtimeTypeName(schema.const));
   }
-
   if (isRecord(schema.properties)) {
-    kinds.add('object');
+    out.add('object');
   }
-
   if ('items' in schema) {
-    kinds.add('array');
+    out.add('array');
   }
-
   for (const unionKey of ['anyOf', 'oneOf', 'allOf'] as const) {
     const variants = schema[unionKey];
     if (!Array.isArray(variants)) {
@@ -300,42 +234,16 @@ function collectSchemaKinds(schema: JsonSchemaRecord | null, kinds: Set<CellInpu
     }
     for (const variant of variants) {
       if (isRecord(variant)) {
-        collectSchemaKinds(variant, kinds);
+        collectSchemaTypeNames(variant, out);
       }
     }
   }
 }
 
-function mapSchemaType(type: string): CellInputSchemaKind {
-  switch (type) {
-    case 'string':
-    case 'number':
-    case 'integer':
-    case 'boolean':
-    case 'null':
-    case 'object':
-    case 'array':
-      return type;
-    default:
-      return 'unknown';
-  }
-}
-
-function getRuntimeKind(value: unknown): CellInputSchemaKind {
+function runtimeTypeName(value: unknown): string {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'array';
-  switch (typeof value) {
-    case 'string':
-      return 'string';
-    case 'number':
-      return 'number';
-    case 'boolean':
-      return 'boolean';
-    case 'object':
-      return 'object';
-    default:
-      return 'unknown';
-  }
+  return typeof value;
 }
 
 function isRecord(value: unknown): value is JsonSchemaRecord {

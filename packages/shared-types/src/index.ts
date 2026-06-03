@@ -12,6 +12,10 @@ export * from './db';
 
 export * from './connector';
 export * from './file-types';
+// Canonical on-disk JSON serializer (2-space + trailing newline). Also available
+// via the lean `@spinner/shared-types/format` subpath for bundlers that want it
+// without the rest of the barrel.
+export * from './format';
 export * from './ids';
 export * from './job-types';
 export * from './subscription';
