@@ -7,6 +7,7 @@ export interface ConnectorMetadataEntry {
   logo: string;
   visible: boolean;
   incrementalPull: boolean;
+  incrementalPullInstructions: string | null;
   supportedAuthMethods: AuthMethod[];
   defaultAuthMethod: AuthMethod;
   oauth?: { label: string; privateLabel?: string };

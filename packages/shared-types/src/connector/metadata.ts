@@ -21,6 +21,17 @@ export interface ConnectorMetadata {
    * decides whether a given folder's run actually goes incremental.
    */
   incrementalPull: boolean;
+  /**
+   * User-facing notes explaining this connector's incremental-pull behavior,
+   * surfaced in the web client near the incremental pull controls. Use it to
+   * explain why a connector may not support incremental pull, the limitations
+   * of incremental pull for this connector, and any special actions the user
+   * must take to enable it (e.g. adding a "Last Modified" field to the table).
+   *
+   * `null` or empty string means "no notes to show". Always provide a value
+   * (never `undefined`) so every connector's metadata is explicit about this.
+   */
+  incrementalPullInstructions: string | null;
   pushOperationName: string;
   pullOperationName: string;
   supportedAuthMethods: AuthMethod[];
@@ -46,6 +57,7 @@ const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {
   bases: null,
   visible: true,
   incrementalPull: false,
+  incrementalPullInstructions: null,
   pushOperationName: 'Publish',
   pullOperationName: 'Download',
   supportedAuthMethods: [],

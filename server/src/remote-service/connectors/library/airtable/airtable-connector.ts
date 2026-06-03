@@ -76,6 +76,8 @@ export class AirtableConnector extends Connector {
     bases: 'bases',
     logo: 'https://static.scratch.md/connector-icons/airtable.svg',
     incrementalPull: true,
+    incrementalPullInstructions:
+      'To enable incremental pulls, this table must contain a timestamp column that tracks when a row was last changed (e.g. updated_at).',
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
@@ -95,9 +97,13 @@ export class AirtableConnector extends Connector {
       key: 'modifiedAtField',
       type: 'field-select',
       label: 'Last modified time field',
-      description:
-        'Name of a Last Modified Time field on this table. Enables incremental pulls — when set, scheduled INCREMENTAL_PULL runs fetch only records modified since the previous run. Leave empty to always do full pulls.',
+      description: 'Select a Last Modified Time field on this table to enable incremental pulls.',
       placeholder: 'e.g. Last Modified Time',
+      // Incremental pull needs a full timestamp watermark, so only date-time
+      // fields qualify (a date-only field lacks the time precision). Airtable
+      // maps Last Modified Time (and Created Time / Date-time) to JSON Schema
+      // `format: 'date-time'`, so the picker offers only those.
+      fieldSelectFormats: ['date-time'],
     },
   ];
 

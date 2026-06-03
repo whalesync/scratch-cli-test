@@ -93,6 +93,8 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     records: 'posts',
     logo: 'https://static.scratch.md/connector-icons/wordpress.svg',
     incrementalPull: true,
+    incrementalPullInstructions:
+      'Incremental pull only downloads content changed since the last pull, based on the modified date of each item. Posts and media support this automatically. Taxonomy tables such as categories and tags cannot be filtered by modified date, so they always re-download in full.',
     credentialFields: {
       user_provided_params: [
         {

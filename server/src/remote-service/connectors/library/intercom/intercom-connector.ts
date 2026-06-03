@@ -68,6 +68,8 @@ export class IntercomConnector extends Connector {
     records: 'records',
     logo: 'https://static.scratch.md/connector-icons/intercom.svg',
     incrementalPull: true,
+    incrementalPullInstructions:
+      'Incremental pull only downloads records changed since the last pull. Only Conversations support this, because Intercom can filter conversations by their updated-at time. Articles and Collections do not support incremental pull and always re-download in full.',
     credentialFields: {
       user_provided_params: [
         {

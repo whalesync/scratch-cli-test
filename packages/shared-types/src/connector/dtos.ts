@@ -28,4 +28,14 @@ export interface ConnectorSettingDefinition {
   min?: number;
   max?: number;
   required?: boolean;
+  /**
+   * `field-select` only: restricts the picker to the folder's schema fields
+   * whose JSON Schema `format` is one of these values — e.g. `['date-time']` to
+   * offer only timestamp columns for a last-modified-field picker. A nullable
+   * column whose `format` lives inside an `anyOf`/`oneOf` union is matched on
+   * its non-null member. When omitted, every field is offered. The client
+   * applies this generically by reading each field's schema `format`; it needs
+   * no connector-specific knowledge.
+   */
+  fieldSelectFormats?: string[];
 }

@@ -69,6 +69,7 @@ export class LinearConnector extends Connector {
     records: 'items',
     logo: 'https://static.scratch.md/connector-icons/linear.svg',
     incrementalPull: true,
+    incrementalPullInstructions: null,
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [

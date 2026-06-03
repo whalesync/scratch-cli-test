@@ -113,6 +113,8 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     records: 'pages',
     logo: 'https://static.scratch.md/connector-icons/notion.svg',
     incrementalPull: true,
+    incrementalPullInstructions:
+      'Incremental pull only downloads pages changed since the last pull, using the Notion last-edited time. This works automatically for every database. If you set a filter that combines multiple conditions with and/or, Notion cannot also apply the last-edited filter, so that pull falls back to a full re-download.',
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
