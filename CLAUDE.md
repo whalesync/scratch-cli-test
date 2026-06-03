@@ -15,6 +15,42 @@ Instructions for Claude Code when working in this repository. Subdirectory CLAUD
 
 **Scratch** (codename: "Spinner") is a content management system that syncs data between external services (e.g. Airtable, Webflow) and a git-based storage layer. It provides knowledge workers a VS Code-like workspace for managing content across services.
 
+## Product Principles
+
+Foundational invariants of the product. Hold to these unless a maintainer explicitly says otherwise.
+
+### Preserve external data fidelity
+
+Records are stored as the **verbatim response from the external service** — we never reshape, rename, or normalize the data on the way in. The only edits are stripping transport wrappers (pagination cursors, `hasMore` flags, page counts) and hydrating nested stub references in place; the record's own structure stays exactly as the API returned it. This is what gives us round-trip fidelity — what we publish back is the shape the service expects — and keeps debugging honest. If the raw shape is awkward to display or edit, **adapt the view/schema layer to the data — never transform the data to fit the UI.** Full rules and exceptions: [Connector Development Guide → Store Raw API Responses](/server/src/remote-service/connectors/CONNECTOR_GUIDE.md).
+
+### Prefer files for user data
+
+User data lives as **files in a git repository**, not as rows in a database. Each record is a JSON file, and the metadata that describes it — the table's schema — sits alongside it as a file too. Reach for the filesystem first; keep the database for things that aren't user content (job state, indexes, audit logs, encrypted credentials). Storing data this way is what gives us two properties the product leans on: a **clean round-trip between a user's local machine and the web** — they can `git clone` a workbook, edit it locally, and push it back through the same standard git plumbing the app itself uses — and **full version history**, so every record and schema change is diffable, attributable, and revertible through git.
+
+### Discover schemas dynamically; don't hardcode
+
+Read field definitions from the service's own metadata endpoints instead of baking them into connector code. When a user adds a column in Airtable or a property in Notion, it should **appear in Scratch automatically, with no connector change**. Hardcode a schema only when the API offers no introspection at all (e.g. WordPress post types). The same instinct applies beyond connectors: derive structure from the data and the service rather than encoding assumptions we then have to maintain by hand.
+
+### Build operations as composable, independent systems
+
+Each operation in the data pipeline — **pulling** records from a service, **syncing** records (copying and transforming values from one folder to another), **publishing** records back, **building a publish plan**, running **validators**, and the like — is a self-contained system with explicit inputs and outputs. Any one of them can be run and verified on its own, without standing up the rest of the pipeline around it. Operations **compose** into larger flows but stay decoupled: a step reads well-defined state and writes well-defined state, so it can be exercised, tested, and debugged in isolation. When adding or changing behavior, **keep the new logic inside the operation it belongs to (or a new operation) rather than threading it across steps** — and preserve the property that the operation stays runnable and checkable by itself.
+
+### Make operations idempotent and resumable
+
+Every long-running operation — a pull, a sync, a publish — must be safe to run again. Re-running **converges to the same result** instead of duplicating or corrupting data: pull commits are idempotent, incremental watermarks are captured _before_ the first API call so anything modified mid-run is simply re-pulled next time, and jobs checkpoint their progress so a stalled run resumes where it stopped rather than starting over. Assume any job can crash and restart at any point, and design so that restart is always correct and never destructive.
+
+### Keep the user in control of what gets published
+
+Edits never reach the external service on their own. Every record field moves through three explicit states — **published** (what's live in the service), **approved** (staged for publish), and **local** (the working edit on disk) — and only a deliberate `accept` promotes a local edit to approved, only `publish` ships approved changes live. `reject` and `discard` walk an edit back down that same ladder. **Nothing is published that the user didn't explicitly approve**, and every approval stays reversible until it ships. When you add a review-style action, respect the ladder — e.g. a "reject" may touch only the working tree, never the approved set.
+
+### Default to non-destructive, reversible actions
+
+Prefer operations that can be undone and that never throw away data the user didn't choose to lose. Walking back a review step restores a saved value rather than guessing; an accepted delete or create can be reverted; and when an operation hits an ambiguous state, it **warns and skips rather than destroying** the record (e.g. it never overwrites the match key that identifies a synced record). Writes are atomic — temp file → fsync → rename — so a crash mid-write can't leave a half-written record.
+
+### Surface failures; never silently succeed
+
+When something can't be done, say so — don't drop the work and report success. We **don't silently strip a user's edits** to read-only fields and pretend the write happened; we send the data and let the service reject it so the user understands what occurred. We **fail fast at the boundary** with a clear message (e.g. validating a user-supplied column against the schema up front) rather than letting an opaque error surface deep inside a job. Graceful degradation means _warn and skip_, never _swallow and lie_.
+
 ## Monorepo Structure
 
 This is a Yarn workspaces monorepo managed by Turborepo.
