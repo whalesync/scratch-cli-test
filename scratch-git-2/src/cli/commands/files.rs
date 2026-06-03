@@ -1240,9 +1240,60 @@ async fn run_revert_plan(
         let rel_path = file_path.trim_start_matches('/').to_string();
         let abs_path = ctx.worktree_dir.join(&rel_path);
 
+        // Decide whether this iteration is a revert-delete (revive). True when
+        // the path existed in pre-publish main but no longer exists in current
+        // main — i.e., the plan being reverted included a delete for this
+        // path. The PK carried by the pre-publish blob is stale (the row is
+        // gone; the connector will assign a fresh id on the re-create) and
+        // must be stripped from BOTH the worktree file and the resulting
+        // Create patch. Two reasons:
+        //   1. Patch side — without the strip, post-publish re-anchor would
+        //      convert the Create → Update with the old id baked in, and the
+        //      no-op check (`apply(new_main, patch) == new_main`) would fail
+        //      because `id: 9` clobbers `id: 11`. The patch then lingers
+        //      forever and the worktree replay perpetually rewrites the file
+        //      with the stale id.
+        //   2. Worktree side — if the worktree carries the stale id but the
+        //      patch doesn't, the desktop UI's "unreviewed" diff
+        //      (working tree vs main+accepted-patch) surfaces a phantom
+        //      "needs review" change for the id field, even though there's
+        //      nothing the user should review. Stripping the id from the
+        //      worktree too aligns the two sides so the UI just shows the
+        //      Create patch with the correct field set.
+        let pre_blob_raw = pre_main_map.get(rel_path.as_str()).cloned();
+        let main_snapshot = parse_json_value_at(&main_map, &rel_path, "refs/heads/main")?;
+        let is_revert_delete = pre_blob_raw.is_some() && main_snapshot.is_none();
+
+        // For revert-delete, parse + rewrite the PK to a
+        // `scratch_pending_recreate_<old_id>` sentinel + re-serialize via the
+        // canonical formatter. Both the worktree file and the eventual Create
+        // patch carry the same sentinel, so the desktop UI's
+        // worktree-vs-patch diff stays clean. Server parses the sentinel at
+        // publish time to (a) strip from connector payload, (b) write the
+        // (priorRemoteId → newRemoteId) row to RecreatedIdMap after the
+        // connector assigns a new id.
+        let pre_blob_for_worktree: Option<Vec<u8>> = if is_revert_delete {
+            if let Some(raw) = &pre_blob_raw {
+                let parsed = serde_json::from_slice::<JsonValue>(raw).with_context(|| {
+                    format!("parsing pre-publish blob at {rel_path} for revert-delete recreate sentinel")
+                })?;
+                let id_path = load_id_column_remote_id_for_folder(&main_map, &rel_path);
+                let with_sentinel = replace_pk_with_recreate_sentinel(&parsed, &id_path);
+                let object = with_sentinel.as_object().cloned().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "pre-publish blob at {rel_path} is not a JSON object — cannot apply recreate sentinel"
+                    )
+                })?;
+                Some(crate::shared::review_ops::json_object_to_bytes(&object)?)
+            } else {
+                None
+            }
+        } else {
+            pre_blob_raw.clone()
+        };
+
         // 4a) Bring the working file to the pre-publish state.
-        let pre_blob = pre_main_map.get(rel_path.as_str()).cloned();
-        match &pre_blob {
+        match &pre_blob_for_worktree {
             Some(content) => {
                 if let Some(parent) = abs_path.parent() {
                     std::fs::create_dir_all(parent).with_context(|| {
@@ -1262,8 +1313,11 @@ async fn run_revert_plan(
             }
         }
 
-        // 4b) Re-anchor: working vs current main → right approved entry.
-        let main_snapshot = parse_json_value_at(&main_map, &rel_path, "refs/heads/main")?;
+        // 4b) Re-anchor: working vs current main → right approved entry. Since
+        // the worktree was written with the PK already stripped (when
+        // applicable), parsing it back here gives us the same field set the
+        // patch will hold — the desktop UI's working-tree-vs-patch diff is
+        // clean.
         let working = if abs_path.exists() {
             let bytes = std::fs::read(&abs_path)
                 .with_context(|| format!("reading {}", abs_path.display()))?;
@@ -1280,7 +1334,16 @@ async fn run_revert_plan(
             main_snapshot.as_ref(),
             working.as_ref(),
         ) {
-            Some(entry) => crate::shared::accepted_patches::upsert_entry(&mut accepted_file, entry),
+            Some(mut entry) => {
+                // Mark revert-delete entries so the publish-time recreate
+                // sentinel handling + RecreatedIdMap write fires server-side,
+                // and so re-anchor (post-publish) drops the patch
+                // unconditionally once the path lands on new main.
+                if is_revert_delete {
+                    entry.revert = true;
+                }
+                crate::shared::accepted_patches::upsert_entry(&mut accepted_file, entry);
+            }
             None => crate::shared::accepted_patches::remove_entry(&mut accepted_file, &rel_path),
         }
 
@@ -3463,6 +3526,74 @@ fn print_blocked_stale_result(
     Ok(())
 }
 
+/// Resolve the connector's `idColumnRemoteId` (dot path into a record file)
+/// for the folder that owns `rel_path`. Reads `.scratch/<folder>/schema.json`
+/// from the given on-disk tree map. Returns [`json_path::DEFAULT_ID_PATH`]
+/// when the schema is missing or doesn't declare an id column — same fallback
+/// as the index builder.
+fn load_id_column_remote_id_for_folder(tree_map: &FileMap, rel_path: &str) -> String {
+    let folder = std::path::Path::new(rel_path)
+        .parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or("");
+    let schema_rel_path = if folder.is_empty() {
+        ".scratch/schema.json".to_string()
+    } else {
+        format!(".scratch/{}/schema.json", folder)
+    };
+    let Some(schema_bytes) = tree_map.get(schema_rel_path.as_str()) else {
+        return crate::shared::json_path::DEFAULT_ID_PATH.to_string();
+    };
+    let Ok(schema_value) = serde_json::from_slice::<JsonValue>(schema_bytes) else {
+        return crate::shared::json_path::DEFAULT_ID_PATH.to_string();
+    };
+    crate::shared::index::extract_id_path(&schema_value)
+        .unwrap_or_else(|| crate::shared::json_path::DEFAULT_ID_PATH.to_string())
+}
+
+/// Sentinel prefix written into the PK field of revert-create patches. Server
+/// recognizes the prefix in the publish job's create dispatch, parses the
+/// trailing `<old_id>`, strips the sentinel before sending to the connector,
+/// captures the connector-assigned new id after success, and writes
+/// `(folder, prior_remote_id=<old_id>, new_remote_id=<connector id>)` to
+/// `RecreatedIdMap`. The map is then consulted at publish time to rewrite FK
+/// fields of sibling revert-create records that reference `<old_id>`.
+pub const RECREATE_SENTINEL_PREFIX: &str = "scratch_pending_recreate_";
+
+/// Replace the top-level field that owns the PK with the recreate sentinel
+/// carrying the prior remote id. For a flat id path (`"id"`) this rewrites the
+/// `id` value. For a nested id path (`"id.record_id"`, Attio's id triple) this
+/// replaces the entire `id` object with the sentinel string — the triple is
+/// server-generated so we can't faithfully preserve its inner shape, and the
+/// server's create dispatch handles the sentinel-as-id-object case the same
+/// way (parse the trailing old id, strip from outgoing payload).
+///
+/// Returns the value unchanged if it isn't a JSON object or if the PK field is
+/// missing / not a scalar — defensive against malformed pre-publish blobs.
+fn replace_pk_with_recreate_sentinel(value: &JsonValue, id_path: &str) -> JsonValue {
+    let root = crate::shared::json_path::id_path_root(id_path);
+    let JsonValue::Object(map) = value else {
+        return value.clone();
+    };
+    // Use `read_record_id_as_string` which traverses the dot path properly
+    // (including nested ids like `id.record_id`) and coerces string|number to
+    // a canonical string. Skip the sentinel rewrite if the PK is absent or
+    // non-scalar — caller falls through to writing the raw pre-publish blob.
+    if !map.contains_key(root) {
+        return value.clone();
+    }
+    let Some(prior_id_str) = crate::shared::json_path::read_record_id_as_string(value, id_path)
+    else {
+        return value.clone();
+    };
+    let mut out = map.clone();
+    out.insert(
+        root.to_string(),
+        JsonValue::String(format!("{RECREATE_SENTINEL_PREFIX}{prior_id_str}")),
+    );
+    JsonValue::Object(out)
+}
+
 /// Load the `refs/heads/main` tree as a `FileMap`. Empty map if the ref
 /// doesn't exist yet (fresh workspace, never published).
 fn read_main_branch_contents(bare_repo: &Path) -> anyhow::Result<FileMap> {
@@ -4061,7 +4192,10 @@ async fn upload_single_repo_via_patches(
         .collect();
 
     // `accepted-patches.json` IS the wire format (minus the local `kind`
-    // tag, which the server infers from the patch shape). Ship it verbatim.
+    // tag, which the server infers from the patch shape). Ship it verbatim,
+    // including the per-entry `revert` flag so the server can persist it to
+    // `UploadPatchMeta` and the plan-build pass4 step can route FK fields
+    // through the BACKFILL phase for revert-creates.
     let payload = crate::api::UploadPatchPayload {
         patches: accepted_file
             .patches
@@ -4069,6 +4203,7 @@ async fn upload_single_repo_via_patches(
             .map(|p| crate::api::UploadPatchEntry {
                 path: p.path.clone(),
                 patch: p.patch.clone(),
+                revert: p.revert,
             })
             .collect(),
     };

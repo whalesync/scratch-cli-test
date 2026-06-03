@@ -7,6 +7,7 @@ import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
+import { RecreatedIdMapService } from 'src/publish-plan/recreated-id-map.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -45,6 +46,7 @@ describe('WorkbookService', () => {
   let auditLogService: jest.Mocked<AuditLogService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let workbookRepoService: jest.Mocked<WorkbookRepoService>;
+  let recreatedIdMapService: jest.Mocked<RecreatedIdMapService>;
 
   beforeEach(() => {
     dbService = {
@@ -71,6 +73,12 @@ describe('WorkbookService', () => {
         },
         schedule: {
           findMany: jest.fn().mockResolvedValue([]),
+        },
+        // workbook hard-delete clears UploadPatchMeta for the workbook so
+        // residual revert flags don't leak into a future workbook with the
+        // same id.
+        uploadPatchMeta: {
+          deleteMany: jest.fn().mockResolvedValue({}),
         },
       },
     } as unknown as jest.Mocked<DbService>;
@@ -109,6 +117,10 @@ describe('WorkbookService', () => {
       deleteWorkbookRepo: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<WorkbookRepoService>;
 
+    recreatedIdMapService = {
+      deleteForWorkbook: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<RecreatedIdMapService>;
+
     service = new WorkbookService(
       dbService,
       configService,
@@ -119,6 +131,7 @@ describe('WorkbookService', () => {
       scratchGitService,
       fileIndexService,
       fileReferenceService,
+      recreatedIdMapService,
       workbookRepoService,
     );
   });

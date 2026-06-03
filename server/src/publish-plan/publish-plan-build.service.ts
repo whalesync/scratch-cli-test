@@ -35,6 +35,33 @@ export class PublishPlanBuildService {
     private readonly credentialEncryptionService: CredentialEncryptionService,
   ) {}
 
+  /**
+   * Look up which of `filePaths` are flagged `revert: true` in UploadPatchMeta
+   * for the given (workbookId, connectorAccountId). Returns the subset as a
+   * Set for O(1) `has` checks at insert time. Empty set when
+   * `connectorAccountId` is undefined (the cross-connector plan-build path
+   * doesn't carry an account scope; we conservatively skip the flag — those
+   * plans can't be revert-originated anyway since revert-plan always targets
+   * one connector).
+   */
+  private async lookupRevertPaths(
+    workbookId: WorkbookId,
+    connectorAccountId: string | undefined,
+    filePaths: string[],
+  ): Promise<Set<string>> {
+    if (!connectorAccountId || filePaths.length === 0) return new Set();
+    const rows = await this.db.client.uploadPatchMeta.findMany({
+      where: {
+        workbookId,
+        connectorAccountId,
+        filePath: { in: filePaths },
+        revert: true,
+      },
+      select: { filePath: true },
+    });
+    return new Set(rows.map((r) => r.filePath));
+  }
+
   /** Returns all relevant repo IDs for a workbook. When connectorAccountId is provided, returns just that one. */
   private async resolveAllRepoIds(workbookId: WorkbookId, connectorAccountId?: string): Promise<string[]> {
     if (connectorAccountId) {
@@ -232,6 +259,20 @@ export class PublishPlanBuildService {
     const addedFiles = changes.filter((c) => c.status === 'added');
     const deletedFiles = changes.filter((c) => c.status === 'deleted');
 
+    // Bulk-load the set of paths flagged `revert: true` on the upload-patch
+    // DTO (persisted to UploadPatchMeta by ApplyPatchesService). Used both
+    // by the strip pipeline (pass4 nullifies FK fields on revert ops so the
+    // CREATE/EDIT payload doesn't carry stale FK literals; the backfill op
+    // gets them and resolves them via RecreatedIdMap after the create phase
+    // lands) and by the emit step (sets PublishPlanOperation.isRecreate so
+    // dispatch knows to consult RecreatedIdMap).
+    const allChangedPaths = [
+      ...modifiedFiles.map((c) => c.path),
+      ...addedFiles.map((c) => c.path),
+      ...deletedFiles.map((c) => c.path),
+    ];
+    const revertPaths = await this.lookupRevertPaths(wkbId, connectorAccountId, allChangedPaths);
+
     // Cache table specs to avoid repeated reads
     // Cache table specs to avoid repeated reads
     const dataFolderCache = new Map<string, { id: string; tableId: string[]; spec: BaseJsonTableSpec } | null>();
@@ -302,6 +343,7 @@ export class PublishPlanBuildService {
           remoteRecordId?: string | null;
           dataFolderId?: string | null;
           status: string;
+          isRecreate?: boolean;
         }
       | {
           phase: Exclude<PublishPlanPhase, PhaseRequiringChangedFields>;
@@ -310,6 +352,7 @@ export class PublishPlanBuildService {
           remoteRecordId?: string | null;
           dataFolderId?: string | null;
           status: string;
+          isRecreate?: boolean;
         };
     const planOperations: PlanOperation[] = [];
 
@@ -326,6 +369,7 @@ export class PublishPlanBuildService {
           remoteRecordId: e.remoteRecordId ?? null,
           dataFolderId: e.dataFolderId ?? null,
           status: e.status,
+          isRecreate: e.isRecreate ?? false,
         })),
       });
       planOperations.length = 0;
@@ -455,37 +499,62 @@ export class PublishPlanBuildService {
           const pass3ContentObj = this.refCleanerService.stripAssetPseudoRefs(pass2ContentObj);
           const pass3ContentStr = JSON.stringify(pass3ContentObj, null, 2);
 
+          // Pass 4: Strip ALL literal FK fields for revert-edits. The
+          // backfill phase reattaches them via RecreatedIdMap once every
+          // co-reverted parent's new id is known. For non-revert edits this
+          // is the identity (pass4 = pass3); the strip is gated on the
+          // path's presence in `revertPaths` (UploadPatchMeta.revert=true).
+          const isRecreatePath = revertPaths.has(filePath);
+          const pass4ContentObj = isRecreatePath
+            ? this.refCleanerService.nullifyAllForeignKeyFields(pass3ContentObj, schema)
+            : pass3ContentObj;
+          const pass4ContentStr = isRecreatePath ? JSON.stringify(pass4ContentObj, null, 2) : pass3ContentStr;
+
           // Determine Edit Operation
           const originalContentStr = JSON.stringify(contentObj, null, 2);
           const isUserModified = modifiedFiles.some((m) => m.path === filePath);
           const isRefCleared = pass1ContentStr !== originalContentStr;
           const isPseudoStripped = pass2ContentStr !== pass1ContentStr;
           const isAssetStripped = pass3ContentStr !== pass2ContentStr;
+          const isRevertFkStripped = pass4ContentStr !== pass3ContentStr;
 
-          if (isUserModified || isRefCleared || isPseudoStripped || isAssetStripped) {
+          if (isUserModified || isRefCleared || isPseudoStripped || isAssetStripped || isRevertFkStripped) {
             // Compute changedFields by diffing main vs dirty (after stripping)
             const mainRaw = mainMap.get(filePath);
             const mainObj = mainRaw ? (JSON.parse(mainRaw) as Record<string, unknown>) : null;
             const changed = mainObj
-              ? computeChangedFields(mainObj, pass3ContentObj as Record<string, unknown>)
-              : (pass3ContentObj as Record<string, unknown>);
+              ? computeChangedFields(mainObj, pass4ContentObj as Record<string, unknown>)
+              : (pass4ContentObj as Record<string, unknown>);
 
-            planOperations.push({
-              filePath,
-              phase: 'edit',
-              content: pass3ContentObj,
-              changedFields: changed,
-              dataFolderId: dataFolderId || null,
-              status: 'pending',
-            });
-            editCount++;
-            liveCounts.editsPlanned++;
+            // For revert-edits whose ONLY changes were FK fields (all
+            // stripped by pass4 → moved to backfill), the resulting edit
+            // changedFields collapses to {}. Skip emission in that case —
+            // the backfill op below carries the real work and an empty
+            // edit op would be a wasted no-op connector call. For non-
+            // revert edits we preserve the existing behavior of emitting
+            // even when changedFields is {} (downstream uses the op as a
+            // "this file was touched" signal regardless of diff content).
+            const skipEmptyRevertEdit = isRecreatePath && Object.keys(changed).length === 0;
+            if (!skipEmptyRevertEdit) {
+              planOperations.push({
+                filePath,
+                phase: 'edit',
+                content: pass4ContentObj,
+                changedFields: changed,
+                dataFolderId: dataFolderId || null,
+                status: 'pending',
+                isRecreate: isRecreatePath,
+              });
+              editCount++;
+              liveCounts.editsPlanned++;
+            }
 
-            // Backfill Logic — backfill if pseudo-refs or asset-refs were stripped
-            if (pass3ContentStr !== pass1ContentStr) {
-              // changedFields for backfill: diff between fully-stripped (pass3) and pre-pseudo (pass1)
+            // Backfill Logic — backfill if pseudo-refs, asset-refs, OR revert
+            // FK literals were stripped. `pass4 !== pass1` covers all three.
+            if (pass4ContentStr !== pass1ContentStr) {
+              // changedFields for backfill: diff between fully-stripped (pass4) and pre-pseudo (pass1)
               const backfillChanged = computeChangedFields(
-                pass3ContentObj as Record<string, unknown>,
+                pass4ContentObj as Record<string, unknown>,
                 pass1ContentObj as Record<string, unknown>,
               );
 
@@ -496,6 +565,7 @@ export class PublishPlanBuildService {
                 changedFields: backfillChanged,
                 dataFolderId: dataFolderId || null,
                 status: 'pending',
+                isRecreate: isRecreatePath,
               });
               liveCounts.backfillsPlanned++;
             }
@@ -581,12 +651,25 @@ export class PublishPlanBuildService {
           const pass3ContentObj = this.refCleanerService.stripAssetPseudoRefs(pass2ContentObj);
           const pass3ContentStr = JSON.stringify(pass3ContentObj, null, 2);
 
+          // Pass 4: Strip ALL literal FK fields for revert-creates. The
+          // CREATE op is dispatched without FK fields (so the connector's FK
+          // constraint can't trip on a parent whose new id is still pending
+          // from a sibling revert in the same plan); the backfill op below
+          // carries the literal prior ids that get resolved against
+          // RecreatedIdMap after every create lands.
+          const isRecreatePath = revertPaths.has(add.path);
+          const pass4ContentObj = isRecreatePath
+            ? this.refCleanerService.nullifyAllForeignKeyFields(pass3ContentObj, schema)
+            : pass3ContentObj;
+          const pass4ContentStr = isRecreatePath ? JSON.stringify(pass4ContentObj, null, 2) : pass3ContentStr;
+
           planOperations.push({
             filePath: add.path,
             phase: 'create',
-            content: pass3ContentObj,
+            content: pass4ContentObj,
             dataFolderId: dataFolderId || null,
             status: 'pending',
+            isRecreate: isRecreatePath,
           });
           createCount++;
           liveCounts.createsPlanned++;
@@ -602,21 +685,31 @@ export class PublishPlanBuildService {
             liveCounts.renameFilesPlanned++;
           }
 
-          if (pass3ContentStr !== pass1ContentStr) {
-            // The create above sent pass3 (refs stripped). Anything that differs in
-            // pass1 is a ref that got stripped and now needs to be written back once
-            // the create has resolved IDs — that's exactly what this backfill is for.
-            // The diff (pass3 vs pass1) gives us the keys that were stripped, which is
-            // the sparse partial the connector should PATCH.
+          if (pass4ContentStr !== pass1ContentStr) {
+            // The create above sent pass4 (all deferred refs + revert-FK
+            // literals stripped). Anything that differs in pass1 is a ref
+            // that got stripped and now needs to be written back once the
+            // create phase has run — that's exactly what this backfill is
+            // for. The diff (pass4 vs pass1) gives us the keys that were
+            // stripped, which is the sparse partial the connector should
+            // PATCH.
             //
-            // Example: user creates a new article that references a co-pending author.
+            // Three categories of fields can show up here:
+            //   - pseudo-refs (`@/path.json`) → resolved at dispatch via
+            //     file_index after the referenced create lands
+            //   - asset-refs (`@asset/<id>`) → resolved via Asset table
+            //   - literal FK ids on revert-creates → resolved via
+            //     RecreatedIdMap (only fires when isRecreate=true)
+            //
+            // Example (forward case): user creates an article referencing
+            // a co-pending author.
             //   pass1: { title: 'Hi', authorId: '@/people/jane.json', cover: '@asset/x' }
-            //   pass3: { title: 'Hi', authorId: null,                 cover: null       }
-            //   create posts pass3 (Jane's id and the asset id aren't known yet).
-            //   diff(pass3, pass1) => { authorId: '@/people/jane.json', cover: '@asset/x' }
+            //   pass4: { title: 'Hi', authorId: null,                 cover: null       }
+            //   create posts pass4 (Jane's id and the asset id aren't known yet).
+            //   diff(pass4, pass1) => { authorId: '@/people/jane.json', cover: '@asset/x' }
             //   the publish runner later resolves those refs and PATCHes the new record.
             const backfillChanged = computeChangedFields(
-              pass3ContentObj as Record<string, unknown>,
+              pass4ContentObj as Record<string, unknown>,
               pass1ContentObj as Record<string, unknown>,
             );
             planOperations.push({
@@ -626,6 +719,7 @@ export class PublishPlanBuildService {
               changedFields: backfillChanged,
               dataFolderId: dataFolderId || null,
               status: 'pending',
+              isRecreate: isRecreatePath,
             });
             liveCounts.backfillsPlanned++;
           }

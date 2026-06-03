@@ -30,6 +30,7 @@ export enum IdPrefixes {
   SYNC_TABLE_PAIR = 'stp_', // Pair of source=>destination tables in a Sync
   SCHEDULE = 'sch_', // Schedule
   SCRATCH_PENDING_PUBLISH = 'scratch_pending_publish_', // Temporary ID for sync-created records before publishing
+  SCRATCH_PENDING_RECREATE = 'scratch_pending_recreate_', // Sentinel for revert-create patches: encodes the prior remote id of a record being revived from a previously-published delete. Parsed server-side at publish time to populate RecreatedIdMap after the connector assigns a fresh id.
   RUN = 'run_', // Run
   WORKSPACE_PERMISSION = 'wpe_', // Workspace permission
   WORKSPACE_INVITE = 'win_', // Workspace invite
@@ -244,6 +245,34 @@ export function isScratchPendingPublishId(id: unknown): id is ScratchPendingPubl
 
 export function createScratchPendingPublishId(): ScratchPendingPublishId {
   return createId(IdPrefixes.SCRATCH_PENDING_PUBLISH) as ScratchPendingPublishId;
+}
+
+// ------- Scratch Pending Recreate -------
+// Sentinel id stamped into revert-create patches by `scratchmd files
+// revert-plan`. Format: `scratch_pending_recreate_<old_id>` — the prior remote
+// id (the id the record had before the delete that's being reverted) is
+// encoded verbatim after the prefix. Server's publish job:
+//   1. detects the sentinel in a create payload's PK field,
+//   2. parses the prior id via `parseScratchPendingRecreateId`,
+//   3. strips the sentinel before sending to the connector,
+//   4. captures the connector-assigned new id after success,
+//   5. upserts `(folder, priorRemoteId, newRemoteId)` into `RecreatedIdMap`.
+// FK fields on the create payload that reference a prior id in the map are
+// rewritten to the new id at publish time, so sibling reverts of related
+// records (parent + children) relink to the freshly-assigned ids automatically.
+export function isScratchPendingRecreateId(id: unknown): id is string {
+  return typeof id === 'string' && id.startsWith(IdPrefixes.SCRATCH_PENDING_RECREATE);
+}
+
+/**
+ * Extract the prior remote id from a `scratch_pending_recreate_<old_id>`
+ * sentinel. Returns `null` if the value isn't a sentinel or has an empty
+ * suffix (defensive — shouldn't fire if the CLI wrote it correctly).
+ */
+export function parseScratchPendingRecreateId(id: unknown): string | null {
+  if (!isScratchPendingRecreateId(id)) return null;
+  const suffix = id.slice(IdPrefixes.SCRATCH_PENDING_RECREATE.length);
+  return suffix.length > 0 ? suffix : null;
 }
 
 // ------- Run -------

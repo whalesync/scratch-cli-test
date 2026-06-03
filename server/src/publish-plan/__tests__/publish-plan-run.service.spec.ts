@@ -9,6 +9,8 @@ import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
 import { PublishPlanRunService } from '../publish-plan-run.service';
+import { RecreatedIdMapService } from '../recreated-id-map.service';
+import { RefCleanerService } from '../ref-cleaner.service';
 import { RefResolverService } from '../ref-resolver.service';
 import { SchemaHelperService } from '../schema-helper.service';
 
@@ -141,6 +143,22 @@ describe('PublishPlanRunService', () => {
       getBooleanFlag: jest.fn().mockResolvedValue(false),
     } as unknown as jest.Mocked<ExperimentsService>;
 
+    // Recreate flow isn't exercised by these tests; default the lookups to
+    // empty + the upsert to a noop so dispatchCreateBatch's new code path
+    // doesn't trip a missing-method when the connector flow happens to run.
+    const recreatedIdMapService = {
+      upsert: jest.fn().mockResolvedValue(undefined),
+      resolveLatest: jest.fn().mockResolvedValue(null),
+      resolveLatestBatch: jest.fn().mockResolvedValue(new Map()),
+      resolveFkTargetFolders: jest.fn().mockResolvedValue(new Map()),
+      deleteForWorkbook: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<RecreatedIdMapService>;
+
+    const refCleanerService = {
+      extractForeignKeyPaths: jest.fn().mockReturnValue([]),
+      rewriteForeignKeyValues: jest.fn().mockImplementation((content: unknown) => content),
+    } as unknown as jest.Mocked<RefCleanerService>;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PublishPlanRunService,
@@ -153,6 +171,8 @@ describe('PublishPlanRunService', () => {
         { provide: RefResolverService, useValue: refResolverService },
         { provide: SchemaHelperService, useValue: schemaService },
         { provide: ExperimentsService, useValue: experimentsService },
+        { provide: RecreatedIdMapService, useValue: recreatedIdMapService },
+        { provide: RefCleanerService, useValue: refCleanerService },
       ],
     }).compile();
 

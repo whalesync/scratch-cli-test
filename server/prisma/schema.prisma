@@ -488,6 +488,59 @@ model FileReference {
   @@index([workbookId, sourceFilePath, branch])
 }
 
+// Per-path metadata attached to patches uploaded via `/upload-patch/commit`.
+// The dirty branch carries file content only; flags like `revert: true` that
+// arrive on the upload-patch wire DTO need a sidecar persistence so they
+// survive until the publish plan is built (which is what consumes them — see
+// PublishPlanOperation.isRecreate). One row per path; upserted on each
+// upload (the last upload's flag wins). Cleared after the publish that
+// consumed the flagged paths settles; also cleared on workbook delete.
+//
+// Scoped per (workbookId, connectorAccountId, filePath). The publish flow
+// looks up metadata by exact (workbook, account, path) tuple.
+model UploadPatchMeta {
+  id                 String   @id @default(cuid())
+  workbookId         String
+  connectorAccountId String
+  filePath           String
+  // True when the patch was produced by `scratchmd files revert-plan`.
+  // PublishPlanBuildService propagates this onto PublishPlanOperation
+  // (isRecreate), which dispatchUpdateBatch reads to gate FK rewrite
+  // against RecreatedIdMap.
+  revert             Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  @@unique([workbookId, connectorAccountId, filePath])
+}
+
+// Maps a deleted record's prior remote id to the new remote id it was assigned
+// when the user reverted the delete and republished. Written by the publish job
+// after a successful recreate (triggered by a `scratch_pending_recreate_<old_id>`
+// sentinel in the create payload). Read at publish time to rewrite FK fields on
+// other records being recreated, so a sibling revert that referenced the old id
+// resolves to the new id instead of dangling.
+//
+// Scoped per (workbookId, connectorAccountId, folder) because each
+// connector + table has its own id space. Transitive lookups (a recreated
+// record itself getting deleted-and-recreated again) walk the chain via the
+// secondary index on newRemoteId.
+//
+// Lifecycle: never pruned in v1; cleanup ties to WorkbookService.delete and
+// ConnectorAccountService cleanup (see workbook.service.ts pattern for
+// FileIndex / FileReference).
+model RecreatedIdMap {
+  id                 String   @id @default(cuid())
+  workbookId         String
+  connectorAccountId String
+  folder             String
+  priorRemoteId      String
+  newRemoteId        String
+  settledAt          DateTime @default(now())
+
+  @@unique([workbookId, connectorAccountId, folder, priorRemoteId])
+  @@index([workbookId, connectorAccountId, folder, newRemoteId])
+}
+
 model PublishPlan {
   id        String   @id // type: PublishPlanId
   createdAt DateTime @default(now())
@@ -552,6 +605,19 @@ model PublishPlanOperation {
   dataFolderId   String? // The DataFolder ID (for batching)
   status         String  @default("pending") // "pending", "success", "failed-batch"
   error          String?
+
+  // True when this operation was produced from a `scratchmd files revert-plan`
+  // patch (CLI sent `revert: true` on the upload-patch DTO, which
+  // ApplyPatchesService persisted to UploadPatchMeta, which
+  // PublishPlanBuildService joined here at plan-build time). Read by
+  // dispatchUpdateBatch + dispatchCreateBatch to gate FK rewrite against
+  // RecreatedIdMap — only revert-originated edits get their FK literals
+  // remapped; ordinary user edits reflect direct intent and are left alone.
+  // (Note: creates also detect "is recreate" via the
+  // scratch_pending_recreate_<old_id> sentinel in the PK field. The flag and
+  // the sentinel agree by construction; either one suffices for creates.
+  // For updates the flag is the only signal — diffs don't carry a sentinel.)
+  isRecreate Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

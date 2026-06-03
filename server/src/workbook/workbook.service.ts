@@ -27,6 +27,7 @@ import { WorkbookEventService } from './workbook-event.service';
 import { Schedule } from '@prisma/client';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { FileReferenceService } from '../publish-plan/file-reference.service';
+import { RecreatedIdMapService } from '../publish-plan/recreated-id-map.service';
 import { WorkbookRepoService } from './workbook-repo.service';
 
 export type HardDeleteWorkbookPhase =
@@ -65,6 +66,7 @@ export class WorkbookService {
     private readonly scratchGitService: ScratchGitService,
     private readonly fileIndexService: FileIndexService,
     private readonly fileReferenceService: FileReferenceService,
+    private readonly recreatedIdMapService: RecreatedIdMapService,
     private readonly workbookRepoService: WorkbookRepoService,
   ) {}
 
@@ -254,6 +256,8 @@ export class WorkbookService {
     await emit({ phase: 'cleaning_indices' });
     await this.fileIndexService.deleteForWorkbook(id);
     await this.fileReferenceService.deleteForWorkbook(id);
+    await this.recreatedIdMapService.deleteForWorkbook(id);
+    await this.db.client.uploadPatchMeta.deleteMany({ where: { workbookId: id } });
 
     // Delete orphaned SyncMatchKeys (no FK, must delete before cascade removes Sync rows)
     await emit({ phase: 'deleting_syncs' });
@@ -377,6 +381,8 @@ export class WorkbookService {
     // Cleanup index and references
     await this.fileIndexService.deleteForWorkbook(id);
     await this.fileReferenceService.deleteForWorkbook(id);
+    await this.recreatedIdMapService.deleteForWorkbook(id);
+    await this.db.client.uploadPatchMeta.deleteMany({ where: { workbookId: id } });
 
     // Delete all jobs for this workbook
     await this.db.client.dbJob.deleteMany({

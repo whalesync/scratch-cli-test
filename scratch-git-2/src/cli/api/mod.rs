@@ -880,6 +880,25 @@ pub struct UploadPatchEntry {
     pub path: String,
     /// RFC 7396 JSON Merge Patch. `null` means delete the file.
     pub patch: serde_json::Value,
+    /// True when this patch was produced by `files revert-plan` reviving a
+    /// previously-deleted record. The server persists this to
+    /// `UploadPatchMeta` so the publish-plan-build pass4 step can null FK
+    /// fields and route them through the BACKFILL phase, where they get
+    /// resolved against `RecreatedIdMap` after every co-reverted record's
+    /// new id has been assigned in the create phase. Without this flag the
+    /// post-publish create payload carries the stale prior FK literals and
+    /// the connector's FK constraint fires.
+    ///
+    /// `skip_serializing_if = "Clone::clone"` (which is `|b| *b == false`
+    /// for bools) keeps the field absent on non-revert entries to match the
+    /// server's optional shape. Use `#[serde(default, skip_serializing_if)]`
+    /// to omit the field when false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub revert: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 // ── Publish-v2 (plan + run) ────────────────────────────────────────────────

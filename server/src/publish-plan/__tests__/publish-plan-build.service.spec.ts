@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 import { Test, TestingModule } from '@nestjs/testing';
 import { AssetIndexService } from '../../asset/asset-index.service';
 import { CredentialEncryptionService } from '../../credential-encryption/credential-encryption.service';
@@ -29,6 +30,11 @@ function makeDbMock() {
         createMany: jest.fn().mockResolvedValue({}),
       },
       dataFolder: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      // Plan-build joins UploadPatchMeta to set PublishPlanOperation.isRecreate.
+      // Default to no flagged paths — individual tests can override per case.
+      uploadPatchMeta: {
         findMany: jest.fn().mockResolvedValue([]),
       },
       connectorAccount: {
@@ -77,6 +83,10 @@ describe('PublishPlanService', () => {
       stripPseudoRefs: jest.fn().mockImplementation((content) => content),
       // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       stripAssetPseudoRefs: jest.fn().mockImplementation((content) => content),
+      // pass4 default: identity (no FKs stripped). Individual tests override
+      // mockReturnValueOnce to simulate the FK-strip on a revert path.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      nullifyAllForeignKeyFields: jest.fn().mockImplementation((content) => content),
     } as unknown as jest.Mocked<RefCleanerService>;
 
     schemaService = {
@@ -552,6 +562,147 @@ describe('PublishPlanService', () => {
       await service.buildPipeline(WORKBOOK_ID, USER_ID, CONNECTOR_ACCOUNT_ID, PIPELINE_ID);
 
       expect(db.client.publishPlanOperation.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('revert (pass4 FK strip + isRecreate emission)', () => {
+    // The plan-build's pass4 nullifies FK fields on edits/creates whose path
+    // is flagged `revert: true` in UploadPatchMeta (the CLI revert-plan
+    // command sets this when restoring a pre-publish blob). FK literals
+    // captured by that nullification flow into a separate BACKFILL op,
+    // which the run-time backfill phase resolves against RecreatedIdMap
+    // after the create phase has populated every (prior → new) row.
+    //
+    // The flag also propagates to PublishPlanOperation.isRecreate so the
+    // dispatch and any downstream consumers can tell a revert apart from a
+    // normal edit/create.
+
+    it('emits isRecreate=true on create ops for paths flagged revert in UploadPatchMeta', async () => {
+      const filePath = 'articles/recreate.json';
+      const content = JSON.stringify({ id: 'scratch_pending_recreate_5', title: 'Revived' });
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'added' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([{ path: filePath, content }]);
+      db.client.uploadPatchMeta.findMany.mockResolvedValue([{ filePath }]);
+
+      // Connector-account-scoped plan: writable folders must be declared
+      // explicitly so the plan-build's read-only filter doesn't drop the
+      // path before it ever gets to pass4.
+      db.client.dataFolder.findMany.mockResolvedValue([
+        { id: 'df_articles', path: '/articles', options: null },
+        { id: 'df_posts', path: '/posts', options: null },
+      ]);
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, 'ca_test', PIPELINE_ID);
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{
+        phase: string;
+        filePath: string;
+        isRecreate: boolean;
+      }>;
+      const createOp = saved.find((e) => e.phase === 'create' && e.filePath === filePath);
+      expect(createOp?.isRecreate).toBe(true);
+    });
+
+    it('emits isRecreate=false on create ops for paths NOT flagged revert', async () => {
+      const filePath = 'articles/normal.json';
+      const content = JSON.stringify({ title: 'Plain new article' });
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'added' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([{ path: filePath, content }]);
+      db.client.uploadPatchMeta.findMany.mockResolvedValue([]); // nothing flagged
+
+      // Connector-account-scoped plan: writable folders must be declared
+      // explicitly so the plan-build's read-only filter doesn't drop the
+      // path before it ever gets to pass4.
+      db.client.dataFolder.findMany.mockResolvedValue([
+        { id: 'df_articles', path: '/articles', options: null },
+        { id: 'df_posts', path: '/posts', options: null },
+      ]);
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, 'ca_test', PIPELINE_ID);
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{
+        phase: string;
+        filePath: string;
+        isRecreate: boolean;
+      }>;
+      const createOp = saved.find((e) => e.phase === 'create' && e.filePath === filePath);
+      expect(createOp?.isRecreate).toBe(false);
+    });
+
+    it('nullifies FK fields on a revert-create and routes them into a BACKFILL op', async () => {
+      // Pass4 is what splits a revert-create into:
+      //   - a CREATE op with FK fields nulled (so the connector can't trip
+      //     on a co-reverted parent whose new id is still pending)
+      //   - a BACKFILL op carrying the original FK literals, which the
+      //     run-time backfill phase resolves via RecreatedIdMap after every
+      //     create in this plan has landed.
+      const filePath = 'posts/recreate.json';
+      const original = { id: 'scratch_pending_recreate_2', title: 'Post', authorId: 1 };
+      const stripped = { id: 'scratch_pending_recreate_2', title: 'Post', authorId: null };
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'added' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([
+        { path: filePath, content: JSON.stringify(original) },
+      ]);
+      db.client.uploadPatchMeta.findMany.mockResolvedValue([{ filePath }]);
+      // The nullify step is what differentiates pass4 from pass3.
+      refCleanerService.nullifyAllForeignKeyFields.mockReturnValueOnce(stripped);
+
+      // Connector-account-scoped plan: writable folders must be declared
+      // explicitly so the plan-build's read-only filter doesn't drop the
+      // path before it ever gets to pass4.
+      db.client.dataFolder.findMany.mockResolvedValue([
+        { id: 'df_articles', path: '/articles', options: null },
+        { id: 'df_posts', path: '/posts', options: null },
+      ]);
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, 'ca_test', PIPELINE_ID);
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const saved = db.client.publishPlanOperation.createMany.mock.calls[0][0].data as Array<{
+        phase: string;
+        filePath: string;
+        isRecreate: boolean;
+        content: Record<string, unknown>;
+        changedFields?: Record<string, unknown>;
+      }>;
+      const createOp = saved.find((e) => e.phase === 'create' && e.filePath === filePath);
+      const backfillOp = saved.find((e) => e.phase === 'backfill' && e.filePath === filePath);
+
+      expect(createOp).toBeDefined();
+      expect(createOp?.content.authorId).toBeNull();
+      expect(createOp?.isRecreate).toBe(true);
+
+      expect(backfillOp).toBeDefined();
+      // Backfill content keeps the pre-strip (pass1) blob so dispatch can
+      // resolve the FK against RecreatedIdMap. changedFields is the diff:
+      // only the FK key that got nulled.
+      expect(backfillOp?.content.authorId).toBe(1);
+      expect(backfillOp?.changedFields).toEqual({ authorId: 1 });
+      expect(backfillOp?.isRecreate).toBe(true);
+    });
+
+    it('does NOT call nullifyAllForeignKeyFields for non-revert paths', async () => {
+      // pass4 is a no-op for ordinary edits/creates. The strip cost only
+      // applies when the path is on the revert list.
+      const filePath = 'articles/plain.json';
+      const content = JSON.stringify({ title: 'X', authorId: 1 });
+
+      scratchGitService.getRepoStatus.mockResolvedValue([{ path: filePath, status: 'added' }]);
+      scratchGitService.readRepoFilesByFolder.mockResolvedValue([{ path: filePath, content }]);
+      db.client.uploadPatchMeta.findMany.mockResolvedValue([]);
+
+      // Connector-account-scoped plan: writable folders must be declared
+      // explicitly so the plan-build's read-only filter doesn't drop the
+      // path before it ever gets to pass4.
+      db.client.dataFolder.findMany.mockResolvedValue([
+        { id: 'df_articles', path: '/articles', options: null },
+        { id: 'df_posts', path: '/posts', options: null },
+      ]);
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, 'ca_test', PIPELINE_ID);
+
+      expect(refCleanerService.nullifyAllForeignKeyFields).not.toHaveBeenCalled();
     });
   });
 });

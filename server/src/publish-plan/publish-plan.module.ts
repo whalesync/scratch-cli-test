@@ -17,6 +17,7 @@ import { PublishPlanBuildService } from './publish-plan-build.service';
 import { PublishPlanCrudService } from './publish-plan-crud.service';
 import { PublishPlanRunService } from './publish-plan-run.service';
 import { PublishPlanController } from './publish-plan.controller';
+import { RecreatedIdMapService } from './recreated-id-map.service';
 import { RefCleanerService } from './ref-cleaner.service';
 import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
@@ -43,6 +44,7 @@ import { SchemaHelperService } from './schema-helper.service';
     PublishPlanBuildService,
     RefResolverService,
     PublishPlanRunService,
+    RecreatedIdMapService,
     RefCleanerService,
     SchemaHelperService,
   ],
@@ -54,6 +56,7 @@ import { SchemaHelperService } from './schema-helper.service';
     PublishPlanBuildService,
     RefResolverService,
     PublishPlanRunService,
+    RecreatedIdMapService,
     RefCleanerService,
     SchemaHelperService,
   ],

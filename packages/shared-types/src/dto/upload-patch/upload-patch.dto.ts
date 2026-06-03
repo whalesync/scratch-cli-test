@@ -105,5 +105,18 @@ export interface UploadPatchPayload {
      *                       `null` values deleting keys per the spec
      */
     patch: unknown;
+    /**
+     * True when this patch was produced by `scratchmd files revert-plan`
+     * reviving a previously-deleted record. The patch body carries a
+     * `scratch_pending_recreate_<old_id>` sentinel in its PK field; the
+     * publish job strips the sentinel before sending to the connector,
+     * captures the new remote id after success, and writes the mapping to
+     * `RecreatedIdMap` so sibling reverts that FK-reference the old id can
+     * be rewritten to the new id at publish time.
+     *
+     * Optional (defaults false). Marked at upload time, persisted as
+     * `PublishPlanOperation.isRecreate` once the publish plan is built.
+     */
+    revert?: boolean;
   }>;
 }

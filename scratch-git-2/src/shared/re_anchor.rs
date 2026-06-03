@@ -47,6 +47,20 @@ pub struct AnchoredPatch {
     /// RFC 7396 merge patch. `null` for delete; full content for create; merge
     /// patch object for update.
     pub patch: JsonValue,
+    /// True when this patch was produced by `files revert-plan` reviving a
+    /// previously-deleted record. The patch body carries a
+    /// `scratch_pending_recreate_<old_id>` sentinel in its id field; the
+    /// server strips the sentinel before sending to the connector, captures
+    /// the new remote id after success, and writes the mapping to
+    /// `RecreatedIdMap` so sibling reverts that FK-reference the old id can be
+    /// rewritten to the new id at publish time. Omitted from JSON (defaults
+    /// false) for all other patches.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub revert: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// A same-field collision or path-lifecycle conflict detected during
@@ -112,10 +126,11 @@ pub fn re_anchor_one(
     path: &str,
     kind: PatchKind,
     patch: &JsonValue,
+    revert: bool,
     old: Option<&JsonValue>,
     new: Option<&JsonValue>,
 ) -> ReAnchoredOne {
-    let anchored = re_anchor_entry(path, kind, patch, old, new);
+    let anchored = re_anchor_entry(path, kind, patch, revert, old, new);
     let conflict = detect_conflict(path, kind, patch, old, new);
     ReAnchoredOne { anchored, conflict }
 }
@@ -124,15 +139,30 @@ fn re_anchor_entry(
     path: &str,
     kind: PatchKind,
     patch: &JsonValue,
+    revert: bool,
     old: Option<&JsonValue>,
     new: Option<&JsonValue>,
 ) -> Option<AnchoredPatch> {
+    // Revert-create special case: the patch was produced by `files revert-plan`
+    // reviving a deleted record, the publish landed (path now exists on new
+    // main), so the server consumed our `scratch_pending_recreate_<old_id>`
+    // sentinel and wrote the new id to main + RecreatedIdMap. Drop the patch
+    // unconditionally — the normal Create→Update + no-op-detection dance
+    // can't succeed here because the patch body still carries the sentinel id
+    // while main has the server-assigned id; byte-equality would never match.
+    // The new id is canonical on main; download will replay it into the
+    // worktree.
+    if revert && kind == PatchKind::Create && new.is_some() {
+        return None;
+    }
+
     let candidate = match (kind, new) {
         (PatchKind::Delete, None) => None, // both sides agree the file is gone
         (PatchKind::Delete, Some(_)) => Some(AnchoredPatch {
             path: path.to_string(),
             kind: PatchKind::Delete,
             patch: JsonValue::Null,
+            revert,
         }),
         (PatchKind::Update, None) => {
             // Server deleted the file out from under us. Reconstruct the user's
@@ -143,26 +173,31 @@ fn re_anchor_entry(
                 path: path.to_string(),
                 kind: PatchKind::Create,
                 patch: reconstructed,
+                revert,
             })
         }
         (PatchKind::Update, Some(_)) => Some(AnchoredPatch {
             path: path.to_string(),
             kind: PatchKind::Update,
             patch: patch.clone(),
+            revert,
         }),
         (PatchKind::Create, None) => Some(AnchoredPatch {
             path: path.to_string(),
             kind: PatchKind::Create,
             patch: patch.clone(),
+            revert,
         }),
         (PatchKind::Create, Some(_)) => {
             // Server created the same path while the user was also creating.
             // Merge the user's keys onto the server's content via Update — RFC
-            // 7396 will user-win per key.
+            // 7396 will user-win per key. (revert+Create+new.is_some was
+            // short-circuited above.)
             Some(AnchoredPatch {
                 path: path.to_string(),
                 kind: PatchKind::Update,
                 patch: patch.clone(),
+                revert,
             })
         }
     };
@@ -211,16 +246,19 @@ pub fn compute_entry(
             path: path.to_string(),
             kind: PatchKind::Delete,
             patch: JsonValue::Null,
+            revert: false,
         }),
         (None, Some(w)) => Some(AnchoredPatch {
             path: path.to_string(),
             kind: PatchKind::Create,
             patch: w.clone(),
+            revert: false,
         }),
         (Some(s), Some(w)) => merge_patch::diff(s, w).map(|p| AnchoredPatch {
             path: path.to_string(),
             kind: PatchKind::Update,
             patch: p,
+            revert: false,
         }),
     }
 }
@@ -244,6 +282,7 @@ where
             &entry.path,
             entry.kind,
             &entry.patch,
+            entry.revert,
             old.as_ref(),
             new.as_ref(),
         );
@@ -454,6 +493,7 @@ mod tests {
             path: path.into(),
             kind: PatchKind::Update,
             patch,
+            revert: false,
         }
     }
     fn create(path: &str, content: JsonValue) -> AnchoredPatch {
@@ -461,6 +501,7 @@ mod tests {
             path: path.into(),
             kind: PatchKind::Create,
             patch: content,
+            revert: false,
         }
     }
     fn delete(path: &str) -> AnchoredPatch {
@@ -468,6 +509,7 @@ mod tests {
             path: path.into(),
             kind: PatchKind::Delete,
             patch: JsonValue::Null,
+            revert: false,
         }
     }
 
@@ -480,16 +522,16 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Update,
-            &json!({"a": 9}),
+            &json!({"a": 9}), false,
             Some(&old),
-            Some(&new),
-        );
+            Some(&new));
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Update,
-                patch: json!({"a": 9})
+                patch: json!({"a": 9}),
+                revert: false,
             })
         );
         assert_eq!(r.conflict, None);
@@ -497,13 +539,14 @@ mod tests {
 
     #[test]
     fn create_when_new_head_still_lacks_path() {
-        let r = re_anchor_one("p", PatchKind::Create, &json!({"name": "Acme"}), None, None);
+        let r = re_anchor_one("p", PatchKind::Create, &json!({"name": "Acme"}), false, None, None);
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Create,
-                patch: json!({"name": "Acme"})
+                patch: json!({"name": "Acme"}),
+                revert: false,
             })
         );
         assert_eq!(r.conflict, None);
@@ -516,16 +559,16 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Delete,
-            &JsonValue::Null,
+            &JsonValue::Null, false,
             Some(&old),
-            Some(&new),
-        );
+            Some(&new));
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Delete,
-                patch: JsonValue::Null
+                patch: JsonValue::Null,
+                revert: false,
             })
         );
         assert_eq!(r.conflict, None);
@@ -542,10 +585,9 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Update,
-            &json!({"a": 9}),
+            &json!({"a": 9}), false,
             Some(&old),
-            Some(&new),
-        );
+            Some(&new));
         assert_eq!(r.anchored, None);
         assert_eq!(r.conflict, None);
     }
@@ -556,10 +598,9 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Create,
-            &server_content,
+            &server_content, false,
             None,
-            Some(&server_content),
-        );
+            Some(&server_content));
         assert_eq!(r.anchored, None);
         // Both sides arrived at identical content — no override happened.
         assert_eq!(r.conflict, None);
@@ -568,7 +609,7 @@ mod tests {
     #[test]
     fn drop_delete_when_server_also_deleted() {
         let old = json!({"a": 1});
-        let r = re_anchor_one("p", PatchKind::Delete, &JsonValue::Null, Some(&old), None);
+        let r = re_anchor_one("p", PatchKind::Delete, &JsonValue::Null, false, Some(&old), None);
         assert_eq!(r.anchored, None);
         assert_eq!(r.conflict, None);
     }
@@ -579,13 +620,14 @@ mod tests {
     fn server_deleted_path_user_had_update_converts_to_create() {
         let old = json!({"a": 1, "b": 2});
         let user_patch = json!({"a": 9}); // user changed `a` to 9
-        let r = re_anchor_one("p", PatchKind::Update, &user_patch, Some(&old), None);
+        let r = re_anchor_one("p", PatchKind::Update, &user_patch, false, Some(&old), None);
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Create,
-                patch: json!({"a": 9, "b": 2}), // user_intended = apply(old, patch)
+                patch: json!({"a": 9, "b": 2}), // user_intended = apply(old, patch),
+                revert: false,
             })
         );
         assert_eq!(
@@ -600,7 +642,7 @@ mod tests {
     #[test]
     fn server_deleted_path_user_had_delete_drops_entry_no_conflict() {
         let old = json!({"a": 1});
-        let r = re_anchor_one("p", PatchKind::Delete, &JsonValue::Null, Some(&old), None);
+        let r = re_anchor_one("p", PatchKind::Delete, &JsonValue::Null, false, Some(&old), None);
         assert_eq!(r.anchored, None);
         assert_eq!(r.conflict, None);
     }
@@ -614,10 +656,9 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Update,
-            &json!({"a": 9}),
+            &json!({"a": 9}), false,
             Some(&old),
-            Some(&new),
-        );
+            Some(&new));
         // User patch is preserved verbatim — RFC 7396 semantics naturally
         // leave keys-not-mentioned alone, so replaying {"a": 9} on the new
         // head yields {"a": 9, "b": 99}, keeping the server's b=99.
@@ -627,6 +668,7 @@ mod tests {
                 path: "p".into(),
                 kind: PatchKind::Update,
                 patch: json!({"a": 9}),
+                revert: false,
             })
         );
         // No conflict: server touched b, user only touched a — disjoint.
@@ -638,13 +680,14 @@ mod tests {
         let old = json!({"a": 1});
         let new = json!({"a": 5}); // server set a=5
         let user = json!({"a": 9}); // user set a=9
-        let r = re_anchor_one("p", PatchKind::Update, &user, Some(&old), Some(&new));
+        let r = re_anchor_one("p", PatchKind::Update, &user, false, Some(&old), Some(&new));
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Update,
                 patch: json!({"a": 9}),
+                revert: false,
             })
         );
         assert_eq!(
@@ -663,17 +706,17 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Delete,
-            &JsonValue::Null,
+            &JsonValue::Null, false,
             Some(&old),
-            Some(&new),
-        );
+            Some(&new));
         // User-wins: still delete.
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Delete,
-                patch: JsonValue::Null
+                patch: JsonValue::Null,
+                revert: false,
             })
         );
         let c = r.conflict.expect("expected conflict");
@@ -766,6 +809,7 @@ mod tests {
                 path: "p".into(),
                 kind: PatchKind::Create,
                 patch: json!({"name": "Acme"}),
+                revert: false,
             })
         );
     }
@@ -779,6 +823,7 @@ mod tests {
                 path: "p".into(),
                 kind: PatchKind::Delete,
                 patch: JsonValue::Null,
+                revert: false,
             })
         );
     }
@@ -793,6 +838,7 @@ mod tests {
                 path: "p".into(),
                 kind: PatchKind::Update,
                 patch: json!({"a": 9}),
+                revert: false,
             })
         );
     }

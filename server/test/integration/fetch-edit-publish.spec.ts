@@ -93,6 +93,7 @@ import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
+import { RecreatedIdMapService } from 'src/publish-plan/recreated-id-map.service';
 import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
 import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { SchemaHelperService } from 'src/publish-plan/schema-helper.service';
@@ -566,6 +567,16 @@ describe('Fetch → Edit → Publish Integration', () => {
       refResolverService,
       // Flag always off → tests exercise the pre-existing sent-payload path.
       { getBooleanFlag: jest.fn().mockResolvedValue(false) } as unknown as ExperimentsService,
+      // Recreate flow isn't exercised here — defaults to noops so any code
+      // path that happens to touch the service won't blow up on undefined.
+      {
+        upsert: jest.fn().mockResolvedValue(undefined),
+        resolveLatest: jest.fn().mockResolvedValue(null),
+        resolveLatestBatch: jest.fn().mockResolvedValue(new Map()),
+        resolveFkTargetFolders: jest.fn().mockResolvedValue(new Map()),
+        deleteForWorkbook: jest.fn().mockResolvedValue(undefined),
+      } as unknown as RecreatedIdMapService,
+      refCleanerService,
     );
   });
 

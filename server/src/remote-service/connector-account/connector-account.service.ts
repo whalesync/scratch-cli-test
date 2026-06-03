@@ -534,6 +534,20 @@ export class ConnectorAccountService {
       where: { workbookId, connectorAccountId: id },
     });
 
+    // Per-(workbook, account) auxiliary tables with no FK cascade — must be
+    // cleaned up here so a workbook that outlives the deleted account
+    // doesn't carry orphan rows that could surface in a later publish.
+    //   - UploadPatchMeta: tracks `revert: true` flags from upload-patch
+    //     between upload and plan-build for this account's paths.
+    //   - RecreatedIdMap: (priorRemoteId → newRemoteId) mappings written
+    //     by past recreate publishes against this account's connector.
+    await this.db.client.uploadPatchMeta.deleteMany({
+      where: { workbookId, connectorAccountId: id },
+    });
+    await this.db.client.recreatedIdMap.deleteMany({
+      where: { workbookId, connectorAccountId: id },
+    });
+
     // Delete all DataFolders (cascades to SyncTablePair, SyncForeignKeyRecord, SyncRemoteIdMapping)
     await this.db.client.dataFolder.deleteMany({
       where: { workbookId, connectorAccountId: id },

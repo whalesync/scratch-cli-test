@@ -46,6 +46,12 @@ describe('ApplyPatchesService.applyPatches', () => {
         dataFolder: {
           findMany: jest.fn().mockResolvedValue([{ path: '/Companies' }, { path: '/Posts' }]),
         },
+        // applyPatches upserts per-path UploadPatchMeta to carry the upload
+        // DTO's `revert` flag to plan-build time. Stub accepts any args; the
+        // tests in this file don't assert on the persisted metadata.
+        uploadPatchMeta: {
+          upsert: jest.fn().mockResolvedValue(undefined),
+        },
       },
     };
 

@@ -316,6 +316,7 @@ fn restore_deleted_record_paths_from_main_branch_drops_delete_entry_and_writes_m
                     path: "posts/restore.json".into(),
                     kind: PatchKind::Delete,
                     patch: serde_json::Value::Null,
+                    revert: false,
                 }],
             },
         )
@@ -367,6 +368,7 @@ fn restore_deleted_record_paths_from_main_branch_errors_when_entry_is_not_a_dele
                     path: "posts/restore.json".into(),
                     kind: PatchKind::Update,
                     patch: serde_json::json!({"name": "edit"}),
+                    revert: false,
                 }],
             },
         )
@@ -431,6 +433,7 @@ fn drop_create_patches_and_delete_working_files_for_record_paths_drops_create_en
                     path: "posts/created.json".into(),
                     kind: PatchKind::Create,
                     patch: serde_json::json!({"id": "created"}),
+                    revert: false,
                 }],
             },
         )
@@ -483,6 +486,7 @@ fn drop_create_patches_and_delete_working_files_for_record_paths_errors_when_mai
                     path: "posts/created.json".into(),
                     kind: PatchKind::Create,
                     patch: serde_json::json!({"id": "created"}),
+                    revert: false,
                 }],
             },
         )
@@ -720,6 +724,7 @@ mod field_helpers {
             path: path.into(),
             kind,
             patch,
+            revert: false,
         }
     }
 
@@ -1200,6 +1205,7 @@ fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
                 path: path.clone(),
                 kind: PatchKind::Delete,
                 patch: JsonValue::Null,
+                revert: false,
             },
             (None, Some(d)) => {
                 let v: JsonValue = serde_json::from_slice(d).unwrap();
@@ -1207,6 +1213,7 @@ fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
                     path: path.clone(),
                     kind: PatchKind::Create,
                     patch: v,
+                    revert: false,
                 }
             }
             (Some(m), Some(d)) if m != d => {
@@ -1217,6 +1224,7 @@ fn seed_accepted_patches_from_fixture(ctx: &ConnectionContext) {
                     path: path.clone(),
                     kind: PatchKind::Update,
                     patch: p,
+                    revert: false,
                 }
             }
             _ => continue,
@@ -1941,6 +1949,7 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
             path: "posts/rec_acme.json".to_string(),
             kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
         }],
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
@@ -2011,6 +2020,7 @@ fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
             path: "posts/rec_acme.json".to_string(),
             kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
         }],
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
@@ -2115,6 +2125,7 @@ fn reconcile_keeps_patch_when_server_main_did_not_advance() {
             path: "posts/rec_acme.json".to_string(),
             kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
         }],
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
@@ -2161,6 +2172,7 @@ fn reconcile_drops_patch_when_server_published_the_change() {
             path: "posts/rec_acme.json".to_string(),
             kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
         }],
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
@@ -2212,11 +2224,13 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
                 path: "posts/rec_a.json".to_string(),
                 kind: crate::shared::re_anchor::PatchKind::Update,
                 patch: serde_json::json!({"v": 2}),
+                revert: false,
             },
             crate::shared::re_anchor::AnchoredPatch {
                 path: "posts/rec_b.json".to_string(),
                 kind: crate::shared::re_anchor::PatchKind::Update,
                 patch: serde_json::json!({"v": 2}),
+                revert: false,
             },
         ],
     };
@@ -2255,6 +2269,7 @@ mod discard_field_helper {
             path: path.into(),
             kind,
             patch,
+            revert: false,
         }
     }
 
@@ -2760,6 +2775,7 @@ mod entry_points {
                 path: "Companies/rec_acme.json".into(),
                 kind: PatchKind::Update,
                 patch: json!({"industry": "SaaS"}),
+                revert: false,
             }],
         };
         crate::shared::accepted_patches::save_atomic(&fx.connection_dir, &file).unwrap();
@@ -2792,6 +2808,7 @@ mod entry_points {
                 path: "Companies/rec_acme.json".into(),
                 kind: PatchKind::Create,
                 patch: json!({"name": "Acme"}),
+                revert: false,
             }],
         };
         crate::shared::accepted_patches::save_atomic(&fx.connection_dir, &file).unwrap();
@@ -3402,6 +3419,7 @@ fn reconcile_rewrites_worktree_to_canonical_bytes_after_publish() {
             path: "posts/rec_acme.json".to_string(),
             kind: crate::shared::re_anchor::PatchKind::Update,
             patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
         }],
     };
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
@@ -3460,11 +3478,13 @@ fn reconcile_materializes_failed_publish_patch_value_to_worktree() {
                 path: "posts/rec_a.json".to_string(),
                 kind: crate::shared::re_anchor::PatchKind::Update,
                 patch: serde_json::json!({"v": 2}),
+                revert: false,
             },
             crate::shared::re_anchor::AnchoredPatch {
                 path: "posts/rec_b.json".to_string(),
                 kind: crate::shared::re_anchor::PatchKind::Update,
                 patch: serde_json::json!({"v": 2}),
+                revert: false,
             },
         ],
     };

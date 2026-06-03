@@ -1978,6 +1978,7 @@ mod tests {
             path: path.into(),
             kind,
             patch,
+            revert: false,
         }
     }
 

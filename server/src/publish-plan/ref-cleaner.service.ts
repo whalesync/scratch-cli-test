@@ -6,6 +6,65 @@ import { ParsedContent, Schema } from 'src/utils/objects';
 @Injectable()
 export class RefCleanerService {
   /**
+   * Rewrite FK field values via a connector-aware mapping. For each FK in
+   * the schema, look up the literal scalar value (or each element of an
+   * array-valued FK) in `mapFor(linkedTableId)` and replace if the lookup
+   * returns a hit. Values without a hit are left untouched.
+   *
+   * Returns a deep copy of `content` with the rewrites applied. Used by the
+   * publish job to relink FK fields on records being recreated from a
+   * previously-published delete — see `RecreatedIdMapService`.
+   */
+  rewriteForeignKeyValues(
+    content: ParsedContent,
+    schema: Schema | null,
+    mapFor: (linkedTableId: string) => Map<string, string> | undefined,
+  ): ParsedContent {
+    if (!content || !schema) return content;
+
+    const result = structuredClone(content);
+    const fkPaths = this.extractForeignKeyPaths(schema);
+
+    for (const fk of fkPaths) {
+      const remap = mapFor(fk.targetRemoteTableId);
+      if (!remap || remap.size === 0) continue;
+      this.rewriteAtNodes(result, fk.path, (value) => {
+        if (typeof value !== 'string' && typeof value !== 'number') return value;
+        const key = String(value);
+        const replacement = remap.get(key);
+        return replacement === undefined ? value : replacement;
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Nullify every FK field declared in the schema, regardless of value.
+   * Returns a deep copy of content where each `x-scratch-foreign-key` path
+   * is set to null (or, for array-shaped FKs, filtered to empty).
+   *
+   * Used by plan-build's "pass4" for revert ops: the CREATE/EDIT payload
+   * gets emitted without FK fields so the connector doesn't fail an FK
+   * constraint when a co-reverted parent's new id hasn't been assigned yet.
+   * The stripped FK values are recovered into a BACKFILL op that runs after
+   * the create phase, when RecreatedIdMap has every (prior → new) row from
+   * this publish's recreates.
+   */
+  nullifyAllForeignKeyFields(content: ParsedContent, schema: Schema | null): ParsedContent {
+    if (!content || !schema) return content;
+
+    const result = structuredClone(content);
+    const fkPaths = this.extractForeignKeyPaths(schema);
+
+    for (const fk of fkPaths) {
+      this.stripAtNodes(result, fk.path, () => true);
+    }
+
+    return result;
+  }
+
+  /**
    * Strip references whose values match any of the given deleted record IDs.
    * Returns a deep copy of content with matching refs replaced by null.
    */
@@ -202,5 +261,49 @@ export class RefCleanerService {
     } else {
       return shouldStrip(value) ? null : value;
     }
+  }
+
+  /**
+   * Mirror of `stripAtNodes` that REWRITES the value at each terminal node
+   * via `transform(value)` instead of nulling/filtering. Array-valued FKs
+   * have `transform` applied element-wise.
+   */
+  private rewriteAtNodes(
+    root: Record<string, unknown> | unknown[],
+    path: string[],
+    transform: (value: unknown) => unknown,
+  ): void {
+    if (!root) return;
+    if (path.length === 0) return;
+
+    const [head, ...tail] = path;
+
+    if (head === '[]') {
+      if (Array.isArray(root)) {
+        for (let i = 0; i < root.length; i++) {
+          if (tail.length === 0) {
+            root[i] = this.checkAndRewrite(root[i], transform);
+          } else if (root[i] && typeof root[i] === 'object') {
+            this.rewriteAtNodes(root[i] as Record<string, unknown>, tail, transform);
+          }
+        }
+      }
+    } else {
+      const obj = root as Record<string, unknown>;
+      if (obj[head] !== undefined) {
+        if (tail.length === 0) {
+          obj[head] = this.checkAndRewrite(obj[head], transform);
+        } else if (obj[head] && typeof obj[head] === 'object') {
+          this.rewriteAtNodes(obj[head] as Record<string, unknown>, tail, transform);
+        }
+      }
+    }
+  }
+
+  private checkAndRewrite(value: unknown, transform: (value: unknown) => unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => transform(item));
+    }
+    return transform(value);
   }
 }

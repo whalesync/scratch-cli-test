@@ -48,13 +48,13 @@ export class ApplyPatchesService {
     });
 
     // 3. Validate every path BEFORE writing anything (all-or-nothing).
-    const normalized: Array<{ path: string; patch: unknown }> = [];
+    const normalized: Array<{ path: string; patch: unknown; revert: boolean }> = [];
     for (const entry of payload.patches) {
       const safePath = validateRecordPath(
         entry.path,
         dataFolders.map((f) => ({ path: f.path ?? '' })),
       );
-      normalized.push({ path: safePath, patch: entry.patch });
+      normalized.push({ path: safePath, patch: entry.patch, revert: entry.revert === true });
     }
 
     // 4. Split deletes from writes.
@@ -108,13 +108,48 @@ export class ApplyPatchesService {
       );
     }
 
+    // 7. Persist per-path metadata from the upload-patch DTO into
+    //    UploadPatchMeta. The dirty branch we just wrote carries file content
+    //    only; flags like `revert: true` would otherwise be lost between this
+    //    endpoint and the eventual publish job. Last upload wins (upsert per
+    //    (workbook, account, path)), so a stale revert flag from an earlier
+    //    upload is cleared the moment a non-revert upload edits the same
+    //    path. Read by PublishPlanBuildService to set
+    //    PublishPlanOperation.isRecreate; cleared after the publish lands.
+    for (const entry of normalized) {
+      await this.db.client.uploadPatchMeta.upsert({
+        where: {
+          workbookId_connectorAccountId_filePath: {
+            workbookId,
+            connectorAccountId,
+            filePath: entry.path,
+          },
+        },
+        create: {
+          workbookId,
+          connectorAccountId,
+          filePath: entry.path,
+          revert: entry.revert,
+        },
+        update: {
+          revert: entry.revert,
+        },
+      });
+    }
+
     await onProgress?.({ uploadId, patchCount, processedCount: patchCount });
 
     WSLogger.info({
       source: 'ApplyPatchesService.applyPatches',
       message: 'Applied upload-patch payload to dirty branch',
       workbookId,
-      data: { uploadId, patchCount, writes: filesToCommit.length, deletes: toDelete.length },
+      data: {
+        uploadId,
+        patchCount,
+        writes: filesToCommit.length,
+        deletes: toDelete.length,
+        revertCount: normalized.filter((p) => p.revert).length,
+      },
     });
 
     return { patchCount };

@@ -28,6 +28,7 @@ import { FileIndexEntry, FileIndexService } from 'src/publish-plan/file-index.se
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
+import { RecreatedIdMapService } from 'src/publish-plan/recreated-id-map.service';
 import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
 import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
@@ -320,6 +321,8 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
       {
         getBooleanFlag: jest.fn().mockImplementation(() => Promise.resolve(useRemoteReturnedRowsFlag)),
       } as unknown as ExperimentsService,
+      new RecreatedIdMapService(dbService),
+      refCleanerService,
     );
 
     // ---- Create DB entities ----
@@ -1435,6 +1438,8 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       {
         getBooleanFlag: jest.fn().mockImplementation(() => Promise.resolve(useRemoteReturnedRowsFlag)),
       } as unknown as ExperimentsService,
+      new RecreatedIdMapService(dbService),
+      refCleanerService,
     );
 
     // ---- Create DB entities ----
@@ -1741,6 +1746,172 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     expect(editedTagOnMain).toBeDefined();
     const editedTagParsed = JSON.parse(editedTagOnMain!) as ParsedRecord;
     expect(editedTagParsed.lastUpdated).toBe(SERVER_SET_TIMESTAMP);
+  }, 60_000);
+
+  it('revert-with-FK: pass4 strips FK literals, backfill resolves them via RecreatedIdMap', async () => {
+    // The full revert-restore-with-FK flow. Scenario:
+    //   - User previously deleted both a tag (prior id 7777) and a post that
+    //     referenced it (prior id 8888) and published the delete.
+    //   - User reverted the delete-plan; the CLI wrote both files back to
+    //     dirty with `scratch_pending_recreate_<old_id>` sentinels and
+    //     persisted `UploadPatchMeta(revert=true)` for both paths.
+    //   - User publishes the revert.
+    //
+    // What we assert end-to-end:
+    //   1. Plan-build flags both ops `isRecreate=true` (UploadPatchMeta join).
+    //   2. Plan-build's pass4 strips the post's FK literal so the create
+    //      payload doesn't trip the FK constraint when the tag's new id is
+    //      still pending.
+    //   3. dispatchCreateBatch detects the sentinel ids, strips them from
+    //      the connector payload, and after success writes the
+    //      (prior → connector-assigned) rows to RecreatedIdMap.
+    //   4. dispatchUpdateBatch (backfill phase, which runs after every
+    //      create lands) walks the post's FK fields, looks up the prior
+    //      id `7777` in the per-table remap, rewrites to the connector-
+    //      assigned new tag id, and PATCHes the post with the resolved FK.
+    //   5. Post-publish cleanup removes the UploadPatchMeta rows.
+
+    const PRIOR_TAG_ID = 7777;
+    const PRIOR_POST_ID = 8888;
+
+    // Schema override: the baseline schema mock uses `destTagsFolderId`
+    // (a UUID) as the FK's linkedTableId, but `resolveFkTargetFolders` uses
+    // a suffix match against DataFolder.path. Override so the linkedTableId
+    // is the folder slug, which matches `/dest-tags`.
+    (scratchGitService.readSchemaFromGit as jest.Mock).mockImplementation((_repoId: string, folderPath: string) => {
+      const schemas: Record<string, Record<string, unknown>> = {
+        '/dest-tags': { idColumnRemoteId: 'id', slugFieldPath: 'slug' },
+        '/dest-posts': {
+          idColumnRemoteId: 'id',
+          slugFieldPath: 'slug',
+          schema: {
+            type: 'object',
+            properties: {
+              tags: {
+                type: 'array',
+                items: { type: 'string' },
+                'x-scratch-foreign-key': { linkedTableId: 'dest-tags' },
+              },
+            },
+          },
+        },
+      };
+      return Promise.resolve(schemas[folderPath] ?? null);
+    });
+
+    // Dirty branch carries the CLI's revert output: both files exist with
+    // `scratch_pending_recreate_<old_id>` PKs and the post still holds the
+    // prior FK literal. Main is empty (the previous delete-publish removed
+    // both records).
+    vfs.seed(DIRTY_BRANCH, [
+      {
+        path: 'dest-tags/tag.json',
+        content: JSON.stringify({
+          id: `scratch_pending_recreate_${PRIOR_TAG_ID}`,
+          name: 'Revived Tag',
+          slug: 'revived-tag',
+        }),
+      },
+      {
+        path: 'dest-posts/post.json',
+        content: JSON.stringify({
+          id: `scratch_pending_recreate_${PRIOR_POST_ID}`,
+          slug: 'revived-post',
+          tags: [PRIOR_TAG_ID],
+        }),
+      },
+    ]);
+
+    // The CLI's upload-patch step persists per-path revert metadata. The
+    // server's plan-build reads this back to flag the resulting ops
+    // `isRecreate=true`. Pre-seed it directly here to skip the upload-
+    // patch endpoint.
+    await prisma.uploadPatchMeta.createMany({
+      data: [
+        { workbookId, connectorAccountId, filePath: 'dest-tags/tag.json', revert: true },
+        { workbookId, connectorAccountId, filePath: 'dest-posts/post.json', revert: true },
+      ],
+    });
+
+    // Capture every connector call to assert payload shapes after the run.
+    const createPayloads: ConnectorFile[][] = [];
+    const updatePayloads: Array<{ files: ConnectorFile[]; changedFields?: (Record<string, unknown> | undefined)[] }> =
+      [];
+    mockConnector.createRecords.mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
+      createPayloads.push(files);
+      const idField = tableSpec.idColumnRemoteId;
+      // Mirror the default mock's auto-incrementing ids so we can assert
+      // the connector-assigned values made it into the remap + commit.
+      return Promise.resolve(files.map((f) => ({ ...f, [idField]: 2000 + createPayloads.flat().indexOf(f) + 1 })));
+    });
+    mockConnector.updateRecords.mockImplementation(
+      (
+        tableSpec: BaseJsonTableSpec,
+        files: ConnectorFile[],
+        changedFields?: (Record<string, unknown> | undefined)[],
+      ) => {
+        updatePayloads.push({ files, changedFields });
+        return Promise.resolve(files);
+      },
+    );
+
+    // ---- Build + run ----
+    const buildResult = await publishPlanService.buildPipeline(workbookId, userId, connectorAccountId);
+    expect(buildResult.status).toBe('planned');
+
+    const runResult = await publishRunService.runPipeline(buildResult.pipelineId);
+    expect(runResult.status).toBe('completed');
+
+    // ---- Operations: both should be flagged isRecreate=true ----
+    const ops = await prisma.publishPlanOperation.findMany({
+      where: { planId: buildResult.pipelineId },
+      select: { filePath: true, phase: true, isRecreate: true },
+    });
+    const tagOps = ops.filter((o) => o.filePath === 'dest-tags/tag.json');
+    const postOps = ops.filter((o) => o.filePath === 'dest-posts/post.json');
+    expect(tagOps.every((o) => o.isRecreate)).toBe(true);
+    expect(postOps.every((o) => o.isRecreate)).toBe(true);
+    // Post must produce a backfill op because pass4 stripped its `tags` FK.
+    expect(postOps.some((o) => o.phase === 'backfill')).toBe(true);
+
+    // ---- Create payloads: no sentinel ids, no FK literals on the post ----
+    const allCreatePayloads = createPayloads.flat();
+    for (const payload of allCreatePayloads) {
+      expect(typeof payload.id).not.toBe('string'); // sentinel stripped before sending
+    }
+    const postCreatePayload = allCreatePayloads.find((p) => p.slug === 'revived-post');
+    // pass4 nullified the FK; the backfill op carries the real value.
+    expect(postCreatePayload?.tags).toEqual([]);
+
+    // ---- RecreatedIdMap: both (prior → new) rows present ----
+    const remapRows = await prisma.recreatedIdMap.findMany({
+      where: { workbookId, connectorAccountId },
+      select: { folder: true, priorRemoteId: true, newRemoteId: true },
+    });
+    const tagRow = remapRows.find((r) => r.folder === 'dest-tags' && r.priorRemoteId === String(PRIOR_TAG_ID));
+    const postRow = remapRows.find((r) => r.folder === 'dest-posts' && r.priorRemoteId === String(PRIOR_POST_ID));
+    expect(tagRow).toBeDefined();
+    expect(postRow).toBeDefined();
+
+    // ---- Backfill PATCH: post's `tags` rewritten to the new tag id ----
+    // The post's backfill op was emitted by pass4. At dispatch the literal
+    // `7777` is looked up in RecreatedIdMap(dest-tags) → new tag id →
+    // PATCH `{tags: [<new tag id>]}`.
+    expect(updatePayloads.length).toBeGreaterThan(0);
+    const postBackfillCall = updatePayloads.find((c) => c.files.some((f) => f.slug === 'revived-post'));
+    expect(postBackfillCall).toBeDefined();
+    const postBackfillFile = postBackfillCall!.files.find((f) => f.slug === 'revived-post')!;
+    expect(postBackfillFile.tags).toEqual([tagRow!.newRemoteId]);
+
+    // ---- UploadPatchMeta: consumed by the successful publish ----
+    const remainingMeta = await prisma.uploadPatchMeta.findMany({
+      where: { workbookId, connectorAccountId },
+    });
+    expect(remainingMeta).toEqual([]);
+
+    // ---- Cleanup the seeded remap rows so afterEach doesn't trip on
+    //      orphaned entries against the dropped workbook.
+    await prisma.recreatedIdMap.deleteMany({ where: { workbookId } });
   }, 60_000);
 
   it('should use composite V2 repo IDs when checking for diffs without a connectorAccountId', async () => {

@@ -71,6 +71,16 @@ describe('ConnectorAccountService', () => {
         publishPlan: {
           deleteMany: jest.fn().mockResolvedValue({}),
         },
+        // Per-(workbook, account) auxiliary tables cleaned up by
+        // removeConnectionData when a connector is removed without
+        // deleting the workbook itself. Stubs here so the cleanup path
+        // doesn't trip on undefined methods.
+        uploadPatchMeta: {
+          deleteMany: jest.fn().mockResolvedValue({}),
+        },
+        recreatedIdMap: {
+          deleteMany: jest.fn().mockResolvedValue({}),
+        },
         workbook: {
           findUnique: jest.fn(),
         },

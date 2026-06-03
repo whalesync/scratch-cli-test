@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { isScratchPendingPublishId } from '@spinner/shared-types';
+import {
+  isScratchPendingPublishId,
+  isScratchPendingRecreateId,
+  parseScratchPendingRecreateId,
+} from '@spinner/shared-types';
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
 import { formatJsonWithPrettier } from 'src/utils/json-formatter';
@@ -16,6 +20,8 @@ import { EncryptedData } from '../utils/encryption';
 import { pickByShape } from './diff-utils';
 import { FileIndexService } from './file-index.service';
 import { FileReferenceService } from './file-reference.service';
+import { RecreatedIdMapService } from './recreated-id-map.service';
+import { RefCleanerService } from './ref-cleaner.service';
 import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo, PublishPlanStatus } from './types';
@@ -29,6 +35,11 @@ type PublishOperation = {
   content: ParsedContent;
   remoteRecordId?: string | null;
   dataFolderId?: string | null;
+  // True when the row was built from a revert patch (CLI sent `revert: true`
+  // on the upload-patch DTO; ApplyPatchesService persisted to
+  // UploadPatchMeta; PublishPlanBuildService joined here). Dispatch reads
+  // this to gate FK rewrite against RecreatedIdMap.
+  isRecreate?: boolean;
 };
 
 // Operation for the edit/backfill phases — the sparse partial that gets PATCHed.
@@ -62,6 +73,8 @@ export class PublishPlanRunService {
     private readonly schemaService: SchemaHelperService,
     private readonly refResolverService: RefResolverService,
     private readonly experimentsService: ExperimentsService,
+    private readonly recreatedIdMapService: RecreatedIdMapService,
+    private readonly refCleanerService: RefCleanerService,
   ) {}
 
   async runPipeline(
@@ -502,6 +515,36 @@ export class PublishPlanRunService {
         });
       }
 
+      // Consume the upload-patch metadata: rows that were flagged
+      // `revert: true` have done their job (PublishPlanOperation.isRecreate
+      // is set, pass4 ran, backfill remapped FKs). Leaving them around would
+      // cause the next publish to inherit a stale revert flag even after a
+      // non-revert edit landed for the same path. Scoped to this plan's
+      // connector account; cross-account meta is untouched.
+      if (plan.connectorAccountId) {
+        try {
+          const deleted = await this.db.client.uploadPatchMeta.deleteMany({
+            where: { workbookId: plan.workbookId, connectorAccountId: plan.connectorAccountId },
+          });
+          if (deleted.count > 0) {
+            WSLogger.info({
+              source: 'PublishRunService.runPipeline',
+              message: `Cleared ${deleted.count} UploadPatchMeta row(s) consumed by completed publish`,
+              workbookId: plan.workbookId,
+              data: { pipelineId, connectorAccountId: plan.connectorAccountId, deleted: deleted.count },
+            });
+          }
+        } catch (err) {
+          WSLogger.warn({
+            source: 'PublishRunService.runPipeline',
+            message: 'Failed to clear UploadPatchMeta after publish — next plan-build may inherit stale revert flags',
+            error: err,
+            workbookId: plan.workbookId,
+            data: { pipelineId, connectorAccountId: plan.connectorAccountId },
+          });
+        }
+      }
+
       return {
         pipelineId: plan.id,
         workbookId: plan.workbookId,
@@ -548,6 +591,152 @@ export class PublishPlanRunService {
   /**
    * Resolve the connector instance for the given connector account.
    */
+  /**
+   * Look up the connectorAccountId for a publish plan. Cached effectively by
+   * the calling dispatch loop (each batch resolves once). Returns null if the
+   * plan doesn't exist or has no connector — caller treats null as "skip the
+   * recreate-FK rewrite + remap write" for safety.
+   */
+  private async resolveConnectorAccountIdForPlan(planId: string): Promise<string | null> {
+    const plan = await this.db.client.publishPlan.findUnique({
+      where: { id: planId },
+      select: { connectorAccountId: true },
+    });
+    return plan?.connectorAccountId ?? null;
+  }
+
+  /**
+   * Rewrite FK fields on revert-originated entries against `RecreatedIdMap`.
+   *
+   * Called from `dispatchUpdateBatch` during the **backfill phase** for any
+   * batch that contains revert-originated operations (isRecreate=true on the
+   * PublishPlanOperation row). The plan-build pipeline strips literal FK
+   * fields off CREATE/EDIT ops for recreates (pass4) and re-emits them as
+   * BACKFILL ops; by the time backfill runs, every (priorRemoteId →
+   * newRemoteId) row this publish will produce has been written to
+   * RecreatedIdMap by the create dispatch. Walking each FK field per
+   * recreate entry and looking up the scalar literal in the remap gives us
+   * the new id; cyclic/sibling revert-FKs resolve correctly because the
+   * lookup space is fully populated.
+   *
+   * `recreatePerOp` is parallel to `resolvedOps` (both are filtered
+   * `rawContents`-aligned arrays — entries with no content were skipped
+   * upstream). Mutates `resolvedOps` in place at indexes where
+   * `recreatePerOp[i] === true`. Issues one DB pass per FK target folder
+   * (not per entry, not per FK field), batching every literal value the
+   * batch references into a single `resolveLatestBatch` call.
+   */
+  private async rewriteRecreateFkReferences(args: {
+    resolvedOps: ConnectorFile[];
+    recreatePerOp: boolean[];
+    tableSpec: BaseJsonTableSpec;
+    workbookId: string;
+    connectorAccountId: string;
+  }): Promise<void> {
+    const { resolvedOps, recreatePerOp, tableSpec, workbookId, connectorAccountId } = args;
+
+    // Short-circuit: nothing to rewrite if no recreates, no schema, or no FKs.
+    const recreateEntryIndexes: number[] = [];
+    for (let i = 0; i < recreatePerOp.length; i++) {
+      if (recreatePerOp[i]) recreateEntryIndexes.push(i);
+    }
+    if (recreateEntryIndexes.length === 0 || !tableSpec.schema) return;
+
+    const fkPaths = this.refCleanerService.extractForeignKeyPaths(tableSpec.schema);
+    if (fkPaths.length === 0) return;
+
+    // Map each FK schema target (`linkedTableId`, the connector's id for the
+    // target table) → folder path where those records live. The remap is
+    // keyed by folder, so this resolution is the bridge between the schema's
+    // view and the storage layer's view. Empty when no DataFolder matches —
+    // we fall through with no rewrites.
+    const linkedTableIds = [...new Set(fkPaths.map((f) => f.targetRemoteTableId))];
+    const targetFolderByLinkedTableId = await this.recreatedIdMapService.resolveFkTargetFolders({
+      workbookId,
+      connectorAccountId,
+      linkedTableIds,
+    });
+    if (targetFolderByLinkedTableId.size === 0) return;
+
+    // Collect every literal FK value across every recreate entry, grouped by
+    // target folder. One bulk lookup per folder rewrites the whole batch.
+    const valuesPerFolder = new Map<string, Set<string>>();
+    for (const i of recreateEntryIndexes) {
+      const content = resolvedOps[i] as ParsedContent;
+      for (const fk of fkPaths) {
+        const folder = targetFolderByLinkedTableId.get(fk.targetRemoteTableId);
+        if (!folder) continue;
+        const values = this.collectScalarValuesAtPath(content, fk.path);
+        if (values.size === 0) continue;
+        const bucket = valuesPerFolder.get(folder) ?? new Set<string>();
+        for (const v of values) bucket.add(v);
+        valuesPerFolder.set(folder, bucket);
+      }
+    }
+    if (valuesPerFolder.size === 0) return;
+
+    // One bulk resolve per folder. Each call returns only the prior ids that
+    // actually had a (transitively-resolved) hit; folders with no hits are
+    // omitted from `remapByFolder` and the rewrite below short-circuits.
+    const remapByFolder = new Map<string, Map<string, string>>();
+    for (const [folder, values] of valuesPerFolder) {
+      const remap = await this.recreatedIdMapService.resolveLatestBatch({
+        workbookId,
+        connectorAccountId,
+        folder,
+        priorRemoteIds: [...values],
+      });
+      if (remap.size > 0) remapByFolder.set(folder, remap);
+    }
+    if (remapByFolder.size === 0) return;
+
+    for (const i of recreateEntryIndexes) {
+      resolvedOps[i] = this.refCleanerService.rewriteForeignKeyValues(
+        resolvedOps[i] as ParsedContent,
+        tableSpec.schema,
+        (linkedTableId) => {
+          const folder = targetFolderByLinkedTableId.get(linkedTableId);
+          return folder ? remapByFolder.get(folder) : undefined;
+        },
+      ) as ConnectorFile;
+    }
+  }
+
+  /**
+   * Walk `content` along `path` (the same `[]`-aware path shape that
+   * `RefCleanerService.extractForeignKeyPaths` produces) and collect each
+   * terminal scalar value as a canonical string. Arrays at the terminal step
+   * are flattened element-wise. Non-scalars are skipped.
+   */
+  private collectScalarValuesAtPath(content: ParsedContent, path: string[]): Set<string> {
+    const out = new Set<string>();
+    const visit = (node: unknown, remaining: string[]): void => {
+      if (node === null || node === undefined) return;
+      if (remaining.length === 0) {
+        if (Array.isArray(node)) {
+          for (const v of node) {
+            if (typeof v === 'string' || typeof v === 'number') out.add(String(v));
+          }
+        } else if (typeof node === 'string' || typeof node === 'number') {
+          out.add(String(node));
+        }
+        return;
+      }
+      const [head, ...tail] = remaining;
+      if (head === '[]') {
+        if (Array.isArray(node)) {
+          for (const item of node) visit(item, tail);
+        }
+        return;
+      }
+      if (typeof node === 'object' && !Array.isArray(node)) {
+        visit((node as Record<string, unknown>)[head], tail);
+      }
+    };
+    visit(content, path);
+    return out;
+  }
+
   private async resolveConnector(connectorAccountId: string | null): Promise<Connector> {
     if (!connectorAccountId) {
       throw new Error('No connectorAccountId on plan — cannot resolve connector');
@@ -720,10 +909,47 @@ export class PublishPlanRunService {
     useRemoteReturnedRows: boolean,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId;
-    const rawContents = entries.map((e) => e.content).filter(Boolean);
+
+    // `rawContents` is filtered (entries with no `content` are dropped). The
+    // filter applies in lockstep with the downstream iteration below.
+    const rawContents: ParsedContent[] = [];
+    for (const e of entries) {
+      if (!e.content) continue;
+      rawContents.push(e.content);
+    }
     const resolvedContents = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawContents, (asset) =>
       connector.resolveAssetReference(asset),
     );
+
+    // Backfill-phase FK rewrite via `RecreatedIdMap`. Walk EVERY entry's FK
+    // fields (not just isRecreate=true ones): if a literal scalar value
+    // matches a remap entry, the literal is stale BY CONSTRUCTION — the
+    // parent record's prior id was deleted-and-recreated in some earlier
+    // publish, so the only correct value is the new id from the remap.
+    // Rewriting is safe and load-bearing even when an isRecreate flag
+    // failed to propagate (e.g., the CLI patch flag was missing or the
+    // pass4 strip didn't fire).
+    //
+    // Gated on `phase === 'backfill'`: backfill always runs after the
+    // create phase in the same plan, so all (prior → new) rows this plan
+    // will write are present. The edit phase runs BEFORE create and would
+    // see a partial remap — leave it alone.
+    //
+    // Non-revert backfills with no FK literals matching the remap are
+    // a no-op (the helper short-circuits on empty remap-by-folder).
+    if (phase === 'backfill') {
+      const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
+      if (connectorAccountId) {
+        await this.rewriteRecreateFkReferences({
+          resolvedOps: resolvedContents as ConnectorFile[],
+          // Every entry participates — see comment above for why.
+          recreatePerOp: rawContents.map(() => true),
+          tableSpec,
+          workbookId,
+          connectorAccountId,
+        });
+      }
+    }
 
     const contents: ParsedContent[] = [];
     const changedFieldsArray: Record<string, unknown>[] = [];
@@ -746,19 +972,33 @@ export class PublishPlanRunService {
         throw new Error(`Could not resolve remote ID for entry: ${entry.filePath}`);
       }
       // Only overwrite the PK when the content's existing value is
-      // either missing or a pending-publish sentinel (backfill case for
-      // newly-created records that haven't been re-pulled yet). For real
-      // edits the on-disk record already has the PK in its native type
-      // (e.g. integer for Postgres); `remoteId` is the Prisma `String`
-      // column, so a blind overwrite stringifies integer PKs and
-      // corrupts `main_plan_{planId}`. See
+      // either missing or a sentinel placeholder (backfill case for
+      // newly-created records that haven't been re-pulled yet). Two
+      // sentinels can show up here:
+      //   - `scratch_pending_publish_<uuid>` for sync-created records
+      //     awaiting their first publish
+      //   - `scratch_pending_recreate_<old_id>` for revert-create payloads
+      //     whose original record was deleted-and-recreated in this plan;
+      //     the create-phase dispatch stripped the sentinel from the
+      //     outgoing payload and wrote the (prior → new) row to
+      //     RecreatedIdMap, but the backfill op's persisted `content`
+      //     still carries the sentinel verbatim (it was snapshotted at
+      //     plan-build time). Without recognizing the recreate sentinel
+      //     here, the backfill UPDATE ships the sentinel string as the
+      //     PK and the connector blows up trying to match an integer
+      //     column against `"scratch_pending_recreate_2"`.
+      // For real edits the on-disk record already has the PK in its
+      // native type (e.g. integer for Postgres); `remoteId` is the
+      // Prisma `String` column, so a blind overwrite stringifies integer
+      // PKs and corrupts `main_plan_{planId}`. See
       // `docs/publish-pk-stringification-bug.md` for the full write-up.
       const recordObj = resolvedContent as Record<string, unknown>;
       const existingId = recordObj[idField];
       const needsIdFill =
         existingId === undefined ||
         existingId === null ||
-        (typeof existingId === 'string' && isScratchPendingPublishId(existingId));
+        (typeof existingId === 'string' &&
+          (isScratchPendingPublishId(existingId) || isScratchPendingRecreateId(existingId)));
       if (needsIdFill) {
         resolvedContent = { ...recordObj, [idField]: remoteId } as ParsedContent;
       }
@@ -879,31 +1119,59 @@ export class PublishPlanRunService {
     repoId: string,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId;
+    const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
 
-    const rawOps = entries
-      .map((e) => {
-        if (!e.content) return null;
-        const entryContent = { ...(e.content as Record<string, unknown>) };
-        // Strip temporary ID
-        const idValue = entryContent[idField];
-        if (isScratchPendingPublishId(idValue)) {
-          delete entryContent[idField];
-        }
-        return entryContent;
-      })
-      .filter(Boolean) as ParsedContent[];
+    // Per-entry context for revert-creates: the prior remote id encoded in the
+    // `scratch_pending_recreate_<old_id>` sentinel that came in on the PK
+    // field. We capture this BEFORE the sentinel is stripped so we can
+    // (a) rewrite FK fields against `RecreatedIdMap` for this batch, and
+    // (b) upsert (priorRemoteId → newRemoteId) after the connector confirms
+    //     the new id. Parallel to `rawOps` / `resolvedOps` (NOT `entries`):
+    // entries whose `content` is falsy are skipped from both arrays so the
+    // indexes stay aligned with the connector-bound payload.
+    const priorRemoteIdPerOp: (string | null)[] = [];
+
+    const rawOps: ParsedContent[] = [];
+    for (const e of entries) {
+      if (!e.content) continue;
+      const entryContent = { ...(e.content as Record<string, unknown>) };
+      const idValue = entryContent[idField];
+      // Strip temporary IDs (sync-pending-publish + revert-recreate). For
+      // recreate sentinels, capture the encoded prior id so we can later
+      // upsert the (prior → new) remap row.
+      const priorRecreateId = parseScratchPendingRecreateId(idValue);
+      if (priorRecreateId !== null) {
+        delete entryContent[idField];
+        priorRemoteIdPerOp.push(priorRecreateId);
+      } else if (isScratchPendingPublishId(idValue)) {
+        delete entryContent[idField];
+        priorRemoteIdPerOp.push(null);
+      } else {
+        priorRemoteIdPerOp.push(null);
+      }
+      rawOps.push(entryContent as ParsedContent);
+    }
 
     const resolvedOps = await this.refResolverService.resolveBatchPseudoRefs(workbookId, rawOps);
 
+    // No FK rewrite here: revert-creates have their FK fields stripped at
+    // plan-build (pass4) and re-applied via the BACKFILL phase, which runs
+    // AFTER all creates in this plan land. That's the only phase where
+    // RecreatedIdMap is guaranteed to have every (prior → new) row this
+    // publish will produce — so cyclic/sibling revert-FKs resolve correctly.
+    // dispatchUpdateBatch carries the remap rewrite for the backfill phase.
+
     const operations: ConnectorFile[] = [];
-    const entriesWithOps: { entry: PublishOperation; resolvedOp: ConnectorFile }[] = [];
+    const entriesWithOps: { entry: PublishOperation; resolvedOp: ConnectorFile; priorRemoteId: string | null }[] = [];
 
     let opIndex = 0;
     for (const entry of entries) {
       if (!entry.content) continue;
-      const resolvedOp = resolvedOps[opIndex++];
+      const resolvedOp = resolvedOps[opIndex];
+      const priorRemoteId = priorRemoteIdPerOp[opIndex];
+      opIndex++;
       operations.push(resolvedOp);
-      entriesWithOps.push({ entry, resolvedOp });
+      entriesWithOps.push({ entry, resolvedOp, priorRemoteId });
     }
 
     if (operations.length === 0) return;
@@ -917,7 +1185,7 @@ export class PublishPlanRunService {
     const gitFiles: { path: string; content: string }[] = [];
 
     for (let i = 0; i < entriesWithOps.length; i++) {
-      const { entry, resolvedOp } = entriesWithOps[i];
+      const { entry, resolvedOp, priorRemoteId } = entriesWithOps[i];
       const returned = returnedRecords[i] || resolvedOp; // Fallback if connector doesn't return
 
       // Update File Index
@@ -930,6 +1198,20 @@ export class PublishPlanRunService {
           filename,
           recordId: String(realId),
         });
+
+        // Revert-create success: record the (prior → new) mapping so future
+        // FK rewrites against this folder can relink stale literal ids. The
+        // folder we store matches CLI patch paths (e.g. `public/projects`):
+        // `folderPath` is already in that shape after `parsePath`.
+        if (priorRemoteId !== null && connectorAccountId) {
+          await this.recreatedIdMapService.upsert({
+            workbookId,
+            connectorAccountId,
+            folder: folderPath,
+            priorRemoteId,
+            newRemoteId: String(realId),
+          });
+        }
       } else if (realId) {
         WSLogger.error({
           source: 'PublishRunService.dispatchCreateBatch',
