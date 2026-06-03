@@ -22,6 +22,7 @@ import type { ValidationResultRow, ValidationStat } from '../shared/validation-t
 import { WORKSPACE_NEEDS_REINIT_CHANNEL, type WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
 import type { RefreshFolderResult } from './native/scratchmd-native';
 import { nativeGetReviewStats, nativeGetValidationStats, refreshFolderViaNative } from './native/scratchmd-native';
+import { bundledGitBinaryPath } from './setup-git-env';
 import { logCliCommand } from './workspace-logger';
 
 // ── Types ──
@@ -183,26 +184,19 @@ export function getScratchmdBinaryPath(): string {
 // SCRATCH_GIT_BIN, falling back to PATH `git` when unset — so dev runs keep
 // using whatever git is on the developer's PATH.
 //
-// Layout written by scripts/afterPack.cjs differs per platform — dugite-native
-// mirrors what each OS's git distribution ships:
-//   macOS:  Resources/git/bin/git + Resources/git/libexec/git-core/
-//   Windows: Resources/git/mingw64/bin/git.exe + Resources/git/mingw64/libexec/
-//            git-core/ (plus a sibling Resources/git/usr/ tree of bash/curl/ssh
-//            deps git.exe shells out to). Two dirs above git.exe (mingw64/)
-//            is the bundle root, which is exactly what the Rust wrapper's
-//            derive_exec_path expects.
-//
-// We strip any inherited GIT_EXEC_PATH / GIT_TEMPLATE_DIR so the wrapper's
-// bundled-tree derivation wins over stale parent-shell values.
+// DEV-10318: configureBundledGitEnvironment() (setup-git-env.ts) already sets
+// SCRATCH_GIT_BIN on the main process's own process.env at startup, so the
+// in-process napi addon resolves the bundled git too. We re-assert it on the
+// spawned child's env here for defense-in-depth and so this spawn path stays
+// self-contained — stripping any inherited GIT_EXEC_PATH / GIT_TEMPLATE_DIR so
+// the wrapper's bundled-tree derivation wins over stale parent-shell values.
+// See setup-git-env.ts for the per-platform Resources/git layout written by
+// scripts/afterPack.cjs.
 function scratchmdEnv(): NodeJS.ProcessEnv {
   if (!app.isPackaged) {
     return process.env;
   }
-  const bundledGit =
-    process.platform === 'win32'
-      ? join(process.resourcesPath, 'git', 'mingw64', 'bin', 'git.exe')
-      : join(process.resourcesPath, 'git', 'bin', 'git');
-  const env: NodeJS.ProcessEnv = { ...process.env, SCRATCH_GIT_BIN: bundledGit };
+  const env: NodeJS.ProcessEnv = { ...process.env, SCRATCH_GIT_BIN: bundledGitBinaryPath() };
   delete env.GIT_EXEC_PATH;
   delete env.GIT_TEMPLATE_DIR;
   return env;

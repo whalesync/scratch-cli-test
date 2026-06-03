@@ -63,6 +63,7 @@ import {
   startScratchmdLiveCommand,
   uploadWorkspaceChanges,
 } from './scratchmd';
+import { configureBundledGitEnvironment } from './setup-git-env';
 import { initAutoUpdater } from './updater';
 import { getValidationConfigs, writeValidationConfig } from './validation-config';
 import { attachWindowStatePersistence, getRestoredWindowState } from './window-state';
@@ -75,6 +76,11 @@ import {
   type PublishJobEntry,
   type SessionEvent,
 } from './workspace-logger';
+
+// DEV-10318: point in-process (napi) git shell-outs at the bundled git binary
+// before anything can invoke them, so a packaged build never falls back to
+// /usr/bin/git (the Xcode CLT stub) on a clean macOS machine. No-op in dev.
+configureBundledGitEnvironment();
 
 const appStartTime = performance.now();
 
