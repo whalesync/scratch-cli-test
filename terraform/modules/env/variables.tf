@@ -169,6 +169,12 @@ variable "alert_notification_channel" {
   description = "Slack channel to send alerts to."
 }
 
+variable "enable_flow_log_monitoring" {
+  type        = bool
+  default     = false
+  description = "Create log-based metrics and alerts on VPC Flow Logs anomalies (replaces Cloud IDS). Metrics are near-free; alerts additionally honor var.enable_alerts."
+}
+
 variable "client_service_min_instance_count" {
   type        = number
   default     = 1

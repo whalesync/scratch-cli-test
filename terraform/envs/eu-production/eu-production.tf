@@ -14,7 +14,8 @@ module "eu_production" {
   }
 
   # Cloud IDS (creates a new endpoint in europe-west1-b)
-  enable_intrusion_detection = true
+  enable_intrusion_detection = false
+  enable_flow_log_monitoring = true
 
   # Load Balancer
   enable_client_load_balancer = true
