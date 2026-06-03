@@ -3157,8 +3157,12 @@ pub fn run_query(opts: &QueryOptions) -> anyhow::Result<ReadRecordsResult> {
         SortOrder::Desc => "DESC",
     };
 
+    // COLLATE NOCASE on the sort column gives case-insensitive ordering for
+    // text values; SQLite ignores the collation for numeric comparisons, so
+    // REAL-affinity field columns and the 0/1 status columns keep their
+    // numeric ordering.
     let data_sql = format!(
-        "SELECT filename FROM {tq} {} ORDER BY {} {} LIMIT ? OFFSET ?",
+        "SELECT filename FROM {tq} {} ORDER BY {} COLLATE NOCASE {} LIMIT ? OFFSET ?",
         where_clause,
         quote_ident(&sort_col),
         order_str,
@@ -3428,6 +3432,43 @@ mod tests {
         o.sort_by = "fields.title".to_string();
         let result = run_query(&o).unwrap();
         assert_eq!(result.filenames, vec!["b.json", "a.json"]); // apple < banana
+    }
+
+    /// Sorting on a text field is case-insensitive — mixed-case values
+    /// interleave by letter rather than splitting all uppercase before
+    /// all lowercase (the SQLite default BINARY collation).
+    #[test]
+    fn test_text_field_sort_is_case_insensitive() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+
+        write_json(&working_dir, "a.json", r#"{"fields":{"title":"ALPHA"}}"#);
+        write_json(&working_dir, "b.json", r#"{"fields":{"title":"AMINO"}}"#);
+        write_json(&working_dir, "c.json", r#"{"fields":{"title":"Alpha"}}"#);
+        write_json(&working_dir, "d.json", r#"{"fields":{"title":"Amino"}}"#);
+        write_json(&working_dir, "e.json", r#"{"fields":{"title":"alpha"}}"#);
+
+        let mut o = opts(&ws, "conn/posts");
+        o.sort_by = "fields.title".to_string();
+        let result = run_query(&o).unwrap();
+
+        // The three "alpha" variants must collate together before the two
+        // "amino" variants, regardless of case.
+        let positions: Vec<usize> = ["a.json", "c.json", "e.json", "b.json", "d.json"]
+            .iter()
+            .map(|fn_| result.filenames.iter().position(|f| f == fn_).unwrap())
+            .collect();
+        assert!(
+            positions[0] < positions[3]
+                && positions[1] < positions[3]
+                && positions[2] < positions[3]
+                && positions[0] < positions[4]
+                && positions[1] < positions[4]
+                && positions[2] < positions[4],
+            "alpha variants must sort before amino variants: {:?}",
+            result.filenames
+        );
     }
 
     /// When schema.json declares a field as `"type": "number"`, the index column
