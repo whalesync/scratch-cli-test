@@ -38,6 +38,56 @@ export class PipedriveError extends Error {
 }
 
 /**
+ * Shape of a Pipedrive v2 REST error body. The v2 SDK installs an axios response
+ * interceptor (`errorInterceptor` in the SDK's `base.js`) that, on any HTTP error
+ * carrying a response body, rejects with `error.response.data` — i.e. the raw
+ * Pipedrive error body, NOT an axios error and NOT an `Error` instance. So a 400
+ * surfaces to our code as a plain object like
+ * `{ success: false, error: 'Bad request', error_info: '...' }`.
+ */
+interface PipedriveErrorBody {
+  success?: boolean;
+  error?: string;
+  error_info?: string;
+}
+
+/**
+ * Detect the plain-object error body the v2 SDK rejects with (see
+ * {@link PipedriveErrorBody}). We require a string `error` (or `error_info`)
+ * field so we don't misclassify an unrelated thrown object.
+ */
+function isPipedriveErrorBody(value: unknown): value is PipedriveErrorBody {
+  if (typeof value !== 'object' || value === null || value instanceof Error) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.error === 'string' || typeof candidate.error_info === 'string';
+}
+
+/**
+ * Normalize whatever the v2 SDK rejected with into a `PipedriveError` carrying a
+ * human-readable message. Without this, the SDK's unwrapped error body (a plain
+ * object) falls through every `instanceof`/`isAxiosError` check in the connector's
+ * error extraction and is rendered as the useless string `"[object Object]"`.
+ *
+ * Axios errors and already-normalized `PipedriveError`s are returned unchanged so
+ * the connector's existing branches keep handling them.
+ */
+function normalizePipedriveSdkError(error: unknown): unknown {
+  if (error instanceof PipedriveError || isAxiosError(error)) {
+    return error;
+  }
+  if (isPipedriveErrorBody(error)) {
+    const messageParts = [error.error, error.error_info].filter(
+      (part): part is string => typeof part === 'string' && part.length > 0,
+    );
+    const message = messageParts.length > 0 ? messageParts.join(': ') : JSON.stringify(error);
+    return new PipedriveError(message, undefined, undefined, error);
+  }
+  return error;
+}
+
+/**
  * Retry options for Pipedrive API calls — detect 429 from axios errors.
  */
 const PIPEDRIVE_RETRY_OPTS: WithRetryOpts = {
@@ -125,10 +175,18 @@ export class PipedriveApiClient {
   // --- Retry wrapper ---
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.rateLimiter) {
-      return this.rateLimiter.withRetry(fn, PIPEDRIVE_RETRY_OPTS);
+    try {
+      if (this.rateLimiter) {
+        return await this.rateLimiter.withRetry(fn, PIPEDRIVE_RETRY_OPTS);
+      }
+      return await standaloneWithRetry(fn, PIPEDRIVE_RETRY_OPTS);
+    } catch (error) {
+      // The v2 SDK rejects HTTP errors with the unwrapped response body (a plain
+      // object), which would otherwise stringify to "[object Object]" downstream.
+      // Normalize it into a PipedriveError so callers get a real message. Retry
+      // classification has already run against the original error above.
+      throw normalizePipedriveSdkError(error);
     }
-    return standaloneWithRetry(fn, PIPEDRIVE_RETRY_OPTS);
   }
 
   // --- Connection test ---
@@ -185,17 +243,23 @@ export class PipedriveApiClient {
   /**
    * List all entities of a given type using cursor pagination.
    * Yields batches of entities.
+   *
+   * When `updatedSince` (RFC3339) is provided, the server-side `updated_since`
+   * filter restricts the result to records whose `update_time` is at or after
+   * that instant — the incremental-pull path. Omitted ⇒ full scan (unchanged).
    */
   async *listEntities(
     entityType: PipedriveEntityType,
     resumeCursor?: string,
+    updatedSince?: string,
   ): AsyncGenerator<{ data: Record<string, unknown>[]; nextCursor?: string }, void> {
     let cursor: string | undefined = resumeCursor;
 
     do {
       const response: Record<string, unknown> = await this.withRetry(async () => {
-        const params: { limit?: number; cursor?: string } = { limit: 500 };
+        const params: { limit?: number; cursor?: string; updated_since?: string } = { limit: 500 };
         if (cursor) params.cursor = cursor;
+        if (updatedSince) params.updated_since = updatedSince;
 
         switch (entityType) {
           case 'deals':

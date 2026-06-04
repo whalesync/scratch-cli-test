@@ -2,6 +2,7 @@ import { Type, type TSchema } from '@sinclair/typebox';
 import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
@@ -193,6 +194,15 @@ export async function buildPipedriveJsonTableSpec(
     // Mark system read-only fields
     if (READONLY_SYSTEM_FIELDS.has(field.field_code)) {
       annotations[X_SCRATCH_READONLY] = true;
+    }
+
+    // Annotate the fixed `update_time` system field for the UI's
+    // last-modified-field picker and the auto-detect path
+    // (findLastModifiedFieldName). The connector hardcodes `update_time` for
+    // incremental pulls (it is a fixed system field on every Pipedrive entity);
+    // the annotation surfaces that field to the picker.
+    if (field.field_code === 'update_time') {
+      annotations[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
     }
 
     // Merge annotations into the schema

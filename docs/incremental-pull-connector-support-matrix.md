@@ -3,7 +3,7 @@
 **Date**: 2026-06-03
 **Author**: Chris Hoefgen
 **Status**: In Progress
-**Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling) (rollout epic); current branch work tracked under DEV-10312 (Moco)
+**Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling) (rollout epic); recent connector work tracked under DEV-10312 (Moco) and DEV-10311 (Pipedrive)
 
 **Purpose**: A single living reference for **how every connector handles incremental pull** — the methodology where it is implemented, and the difficulty/risk where it is still pending. It replaces the per-connector status that was scattered across the part-3 plan and the feasibility appendix, and is the doc to consult before picking up the next connector.
 
@@ -13,7 +13,7 @@ The server pipeline (landed in the base + follow-up plans) gives every connector
 
 The recurring **sub-patterns**:
 
-- **Fixed system field** — the remote guarantees a modified-at field on every entity (Notion `last_edited_time`, Linear `updatedAt`, Moco `updated_at`). `incrementalPullSupport` is unconditional; no field resolver, no advanced setting.
+- **Fixed system field** — the remote guarantees a modified-at field on every entity (Notion `last_edited_time`, Linear `updatedAt`, Moco `updated_at`, Pipedrive `update_time`). `incrementalPullSupport` is unconditional; no field resolver, no advanced setting.
 - **Resolver + override (annotation-gated)** — the modified-at field varies, so the connector auto-detects it from the schema (`X_SCRATCH_LAST_MODIFIED_FIELD`) and lets the user override it (Airtable, PostgreSQL/Supabase, HubSpot). Folders with no resolvable field demote to full.
 - **Capability-gated** — only some tables/entity types accept the predicate, so support is gated per table/entity (Intercom conversations-only, Shopify query-filterable entities, WordPress non-taxonomy collections, Brevo contacts/templates).
 
@@ -29,9 +29,9 @@ The recurring **sub-patterns**:
 | **Linear** | ✅ Landed | GraphQL `filter: { updatedAt: { gt } }` | fixed system field | — | Per-entity `FILTER_TYPE_MAP` |
 | **Intercom** | ✅ Landed | Search `POST /conversations/search` `updated_at > <unix s>` | capability-gated (table) | — | Conversations only; Unix-seconds |
 | **Moco** | ✅ Landed | REST `?updated_after=<iso8601 UTC>` → `updated_at` | fixed system field | — | All 3 entities; seconds-precision, UTC |
+| **Pipedrive** | ✅ Landed | REST `?updated_since=<rfc3339>` → `update_time` | fixed system field | — | All 3 entities (deals/persons/orgs); RFC3339, ms kept |
 | **HubSpot** | 🟡 Feasible | CRM Search `POST /crm/v3/objects/{type}/search`, `hs_lastmodifieddate GTE` | resolver + override | Medium | Associations omitted + 10k window (both reconciled by `FULL_PULL`) |
 | **Shopify** | 🟡 Feasible | GraphQL root `query: "updated_at:>'<iso>'"` | capability-gated (entity) | Medium | Only some root connections accept `query:` |
-| **Pipedrive** | 🟡 Feasible | `?updated_since=<rfc3339>` + `sort_by:update_time` → `update_time` | fixed system field | Low | SDK-verified on all 3 list calls |
 | **QuickBooks** | 🟡 Feasible | CDC `GET /cdc?entities=…&changedSince=<iso>` → `MetaData.LastUpdatedTime` | fixed system field | Low–Med | Different endpoint; 30-day CDC window |
 | **Brevo** | 🟡 Feasible | `GET /contacts?modifiedSince=<iso>` → `modifiedAt` | capability-gated (table) | Low | Contacts + templates only; lists stay full |
 | **Webflow** | ❌ Blocked | REST v2 supports `lastUpdated`, but installed `webflow-api@3.2.1` SDK does not surface it | resolver + override | — | Needs SDK bump (≥3.3.4) or raw v2 REST; out of scope today |
@@ -44,7 +44,7 @@ The recurring **sub-patterns**:
 | **Wix Blog** | 🚧 Special | base `pullRecordFiles` is a stub | — | — | Re-evaluate after the base pull lands |
 | **Generic API** | ⚠️ Deferred | user-declared `modifiedAtField` + query-param name | resolver + override (user-configured) | High | Foot-gun: misconfig → silent data loss; v2 |
 
-**Next batch (all Low difficulty, all proven fixed-system-field / capability-gated pattern):** Pipedrive, QuickBooks, Brevo. HubSpot and Shopify are the remaining part-3 connectors. Webflow is **blocked** until the `webflow-api` SDK is bumped (the v2 REST `lastUpdated` filter exists but isn't surfaced by the installed `3.2.1` — see below). Most ❌ rows are blocked by the upstream API; Webflow is blocked by our SDK layer specifically.
+**Next batch (all Low difficulty, all proven fixed-system-field / capability-gated pattern):** QuickBooks, Brevo. HubSpot and Shopify are the remaining part-3 connectors. Webflow is **blocked** until the `webflow-api` SDK is bumped (the v2 REST `lastUpdated` filter exists but isn't surfaced by the installed `3.2.1` — see below). Most ❌ rows are blocked by the upstream API; Webflow is blocked by our SDK layer specifically.
 
 ---
 
@@ -78,6 +78,10 @@ Only **Conversations** can filter server-side: `POST /conversations/search` with
 
 Every Moco resource (companies, contacts/people, projects) carries `updated_at`, and Moco accepts `?updated_after=<iso8601-utc>` on all three list endpoints, so support is unconditional. Unlike WordPress, `updated_after` is documented as **UTC**, so no timezone conversion — but Moco's parser requires **seconds precision** and rejects the fractional-second component `Date.toISOString()` emits with a 400, so the milliseconds are stripped. Deletions aren't covered by the filter (Moco recommends delete-webhooks; out of scope, `FULL_PULL` reconciles). 60s clock-skew.
 
+### Pipedrive — REST `?updated_since`, fixed system field
+
+deals, persons, and organizations all carry a server-side `update_time`, and all three v2 list endpoints (`getDeals`/`getPersons`/`getOrganizations`) accept `?updated_since=<rfc3339>` (verified against the installed `pipedrive@31.2.1` SDK request types), so support is unconditional. An optional `updatedSince` is threaded into `listEntities` and added to the v2 request params; the existing opaque-cursor pagination is unchanged. `updated_since` is **inclusive (`>=`)**, but the watermark is client-side so the 60s margin still applies. Unlike Moco, Pipedrive accepts RFC3339 fractional seconds, so `buildPipedriveUpdatedSince` emits `Date.toISOString()` verbatim (no millisecond stripping). `update_time` is annotated with `X_SCRATCH_LAST_MODIFIED_FIELD` for the UI picker. Only the filter is used (no `sort_by`) — the predicate already returns the changed set and cursor pagination is stable, matching Moco.
+
 ---
 
 ## Planned — methodology, difficulty, and caveats
@@ -92,10 +96,6 @@ The standard list endpoint can't filter by modified date; incremental requires t
 ### Shopify — GraphQL `query:` search, capability-gated by entity · **Medium**
 
 Every resource has a server-side `updatedAt`, and root connections accept `query: "updated_at:>'<iso>'"` — **but only some root connections support `query:`** (products, orders, customers, draftOrders, articles, blogs, metaobjects, …). So support is gated by a static `SHOPIFY_QUERY_FILTERABLE` set (derive/verify from `ENTITY_REGISTRY` + Shopify's documented searchable connections); non-filterable entities demote to full. Child entities hydrate through their parent, so incremental applies at the parent level. Shopify search `>` is exclusive → 60s margin matters.
-
-### Pipedrive — `updated_since` on v2 list endpoints, fixed system field · **Low**
-
-deals, persons, organizations — all three v2 list calls expose `updated_since` (RFC3339) + `sort_by: 'update_time'`, **verified directly from the installed `pipedrive@^31.2.1` SDK type definitions** (no SDK bump, no raw-HTTP fallback). Fixed system field, unconditional. Near-mechanical repeat of the Linear/Moco work: thread an optional `updatedSince` into `listEntities`, add a `pipedrive-incremental.ts` helper (builder + 60s constant). `>=`/inclusive boundary, watermark client-side, idempotent commits absorb the re-pull.
 
 ### QuickBooks — Change Data Capture endpoint, fixed system field · **Low–Medium**
 
@@ -127,7 +127,7 @@ Every QBO entity carries `MetaData.LastUpdatedTime`, and Intuit ships a purpose-
 
 ## Verification notes
 
-- **Pipedrive `updated_since`** — read directly from the installed SDK type definitions (`node_modules/pipedrive/dist/versions/v2/api/{deals,persons,organizations}-api.d.ts`); all three list requests expose `updated_since`, `updated_until`, and `sort_by`. Firmest of the "feasible" verdicts (no doc-only inference).
+- **Pipedrive `updated_since`** — verified against the installed SDK type definitions (`node_modules/pipedrive/dist/versions/v2/api/{deals,persons,organizations}-api.d.ts`); all three list requests expose `updated_since` (inclusive `>=`), `updated_until`, and `sort_by`. **Landed** (DEV-10311) using `updated_since` only; `sort_by` was available but unnecessary.
 - **Linear `FILTER_TYPE_MAP`** — verified against `@linear/sdk`'s generated documents; all six filter input types exist and each exposes `updatedAt?: DateComparator`.
 - **Attio / Affinity / Audienceful / Memberstack** — verdicts rest on the connector's own TypeScript models exposing no last-modified field, cross-checked against vendor docs. Audienceful is doc-sparse — treat its "No" as "unconfirmed, no evidence of a filter."
 - **Webflow** — verified against the installed SDK: `webflow-api@3.2.1`'s `ItemsListItemsRequest` does **not** expose `lastUpdated` (only `cmsLocaleId`/`offset`/`limit`/`name`/`slug`/`lastPublished`/`sortBy`/`sortOrder`), and the compiled `__listItems` drops unknown keys with no query-param passthrough — so the v2 REST `lastUpdated` filter is unreachable without an SDK bump (≥3.3.4) or a raw REST call. Blocked.

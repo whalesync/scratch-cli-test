@@ -1,4 +1,4 @@
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -20,6 +20,7 @@ import {
   TablePreview,
 } from '../../types';
 import { PipedriveApiClient, PipedriveError } from './pipedrive-api-client';
+import { buildPipedriveUpdatedSince } from './pipedrive-incremental';
 import { buildPipedriveJsonTableSpec } from './pipedrive-json-schema';
 import { ENTITY_DISPLAY_NAMES, ENTITY_TYPES, PipedriveDownloadProgress, PipedriveEntityType } from './pipedrive-types';
 
@@ -41,6 +42,11 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     table: 'entity',
     tables: 'entities',
     logo: 'https://static.scratch.md/connector-icons/pipedrive.svg',
+    incrementalPull: true,
+    // No user-facing caveats: `update_time` is a fixed system field on every
+    // Pipedrive entity and `updated_since` is unconditional, so there are no
+    // notes to show
+    incrementalPullInstructions: null,
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
@@ -105,25 +111,52 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
   }
 
   /**
-   * Download all entities as JSON files using cursor pagination.
+   * Pipedrive supports incremental pulls unconditionally: every entity type
+   * (deals, persons, organizations) has a guaranteed server-side `update_time`
+   * system field and the v2 list endpoints accept the `updated_since` filter.
+   * The field is fixed (not user-selectable), so there is no per-folder config
+   * to inspect — this always returns `SUPPORTED`.
+   */
+  override incrementalPullSupport(): IncrementalPullSupport {
+    return IncrementalPullSupport.SUPPORTED;
+  }
+
+  /**
+   * Download entities as JSON files using cursor pagination.
+   *
+   * Full pull (default): scan every entity. Incremental pull: filter each list
+   * endpoint by `updated_since` (the clock-skewed watermark) and return the new
+   * watermark for the job to persist.
    */
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: PipedriveDownloadProgress }) => Promise<void>,
     progress: PipedriveDownloadProgress,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: PullRecordFilesOptions,
+    options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
     const resumeCursor = (progress as { nextCursor?: string })?.nextCursor;
 
-    for await (const batch of this.client.listEntities(entityType, resumeCursor)) {
+    // Capture the watermark BEFORE the first API call so records changed
+    // mid-pull aren't lost on the next run. Pipedrive's `updated_since` is
+    // inclusive (`>=`) but `update_time` is server-side while the watermark is
+    // client-side, so the helper subtracts a clock-skew margin; idempotent
+    // commits absorb the small re-pulled window. Pipedrive has no user
+    // `options.filter` today — nothing to combine.
+    let newWatermark: Date | undefined;
+    let updatedSince: string | undefined;
+    if (options.pullMode === 'incremental' && options.since instanceof Date) {
+      newWatermark = new Date();
+      updatedSince = buildPipedriveUpdatedSince(options.since);
+    }
+
+    for await (const batch of this.client.listEntities(entityType, resumeCursor, updatedSince)) {
       await callback({
         files: batch.data as unknown as ConnectorFile[],
         connectorProgress: batch.nextCursor ? { nextCursor: batch.nextCursor } : {},
       });
     }
-    return {};
+    return newWatermark ? { newWatermark } : {};
   }
 
   /**
