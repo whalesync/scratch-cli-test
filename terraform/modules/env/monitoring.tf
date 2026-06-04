@@ -30,19 +30,22 @@ locals {
   # ("jsonPayload.dest_instance":*) is rejected by Cloud Logging's metric validation.
   flow_log_external_egress = "${local.flow_log_base_filter} AND jsonPayload.reporter=\"SRC\" AND NOT jsonPayload.dest_instance:* AND NOT jsonPayload.dest_google_service:*"
   # Admin / DB / cache ports that should never be the target of egress to the internet.
+  # This is intended to flag possible data exfiltration.
+  # It should NOT flag any legitimate connection that Scratch makes for syncing data, e.g. HTTPS, Postgres, etc.
   flow_log_suspicious_ports = [
-    21,   # FTP
-    22,   # SSH / SFTP
-    23,   # telnet
-    445,  # SMB
-    3306, # MySQL
-    3389, # RDP
-    5432, # Postgres
-    6379, # Redis
+    21,    # FTP
+    22,    # SSH / SFTP
+    23,    # telnet
+    445,   # SMB
+    3306,  # MySQL
+    3389,  # RDP
+    6379,  # Redis
+    27017, # MongoDB
   ]
   # Country codes considered normal for traffic to/from the VPC. VPC Flow Logs use
   # ISO 3166-1 alpha-3 lowercase codes (e.g. "usa", "gbr", "irl"), not alpha-2.
-  flow_log_allowed_countries = ["usa", "can", "gbr", "irl"]
+  # Feel free to add to this list as we get legitimate traffic flows to services in other regions.
+  flow_log_allowed_countries = ["usa", "can", "gbr", "irl", "deu", "bel", "fra"]
   # Rendered filter fragments.
   flow_log_suspicious_ports_clause  = "(${join(" OR ", local.flow_log_suspicious_ports)})"
   flow_log_allowed_countries_clause = "(${join(" OR ", [for c in local.flow_log_allowed_countries : "\"${c}\""])})"
@@ -948,7 +951,7 @@ resource "google_monitoring_alert_policy" "flow_log_suspicious_egress_ports_aler
   documentation {
     subject = "Scratch ${local.display_env} VPC Flow Logs - Egress to the internet on a sensitive port"
     content = <<-EOF
-    A workload made an outbound connection to the public internet on a port that should never leave the VPC (SSH/Telnet/SMB/MySQL/Postgres/Redis/RDP). This can indicate compromise, exfiltration, or misconfiguration. Investigate the source instance and destination IP.
+    A workload made an outbound connection to the public internet on a port that should never leave the VPC (SSH/Telnet/SMB/MySQL/Redis/RDP/MongoDB). This can indicate compromise, exfiltration, or misconfiguration. Investigate the source instance and destination IP.
     Ops Playbook: ${local.playbook_link}
     EOF
   }
@@ -1142,75 +1145,4 @@ resource "google_monitoring_alert_policy" "flow_log_external_egress_spike_alert"
   notification_channels = local.warning_notification_channels
   severity              = "WARNING"
   depends_on            = [google_logging_metric.flow_log_external_egress_bytes]
-}
-
-# (d) Egress to the public internet on a non-standard port (not 443/80/53). Catches
-# beaconing/exfil over odd ports not covered by the explicit suspicious-port list in (a).
-resource "google_logging_metric" "flow_log_unexpected_external_dest" {
-  count  = 1
-  name   = "flow-log-unexpected-external-dest"
-  filter = "${local.flow_log_external_egress} AND NOT jsonPayload.connection.dest_port=(443 OR 80 OR 53)"
-  metric_descriptor {
-    metric_kind = "DELTA"
-    value_type  = "INT64"
-    labels {
-      key         = "dest_ip"
-      value_type  = "STRING"
-      description = "External destination IP"
-    }
-    labels {
-      key         = "dest_port"
-      value_type  = "STRING"
-      description = "Destination port"
-    }
-  }
-
-  label_extractors = {
-    "dest_ip"   = "EXTRACT(jsonPayload.connection.dest_ip)"
-    "dest_port" = "EXTRACT(jsonPayload.connection.dest_port)"
-  }
-
-  depends_on = [google_project_service.services]
-}
-
-resource "google_monitoring_alert_policy" "flow_log_unexpected_external_dest_alert" {
-  count        = var.enable_flow_log_monitoring && var.enable_alerts ? 1 : 0
-  display_name = "Scratch ${local.display_env} VPC Flow Logs - Unexpected external destination"
-  documentation {
-    subject = "Scratch ${local.display_env} VPC Flow Logs - Egress to the internet on a non-standard port"
-    content = <<-EOF
-    A high volume of outbound flows reached the public internet on ports other than 443/80/53. This can indicate beaconing or exfiltration over a non-standard channel. Investigate the source instances and destination IPs/ports.
-    Ops Playbook: ${local.playbook_link}
-    EOF
-  }
-  combiner = "OR"
-  conditions {
-    display_name = "Unexpected external destination flow count"
-    condition_threshold {
-      filter          = "resource.type = \"gce_subnetwork\" AND metric.type = \"logging.googleapis.com/user/${google_logging_metric.flow_log_unexpected_external_dest[0].name}\""
-      duration        = "300s"
-      comparison      = "COMPARISON_GT"
-      threshold_value = 10
-      trigger {
-        count = 1
-      }
-      aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_SUM"
-      }
-    }
-  }
-
-  alert_strategy {
-    # See note on auto_close in flow_log_suspicious_egress_ports_alert: pin to the GCP
-    # max (7 days) so a security incident does not self-resolve before a human triages.
-    auto_close = "604800s"
-    notification_channel_strategy {
-      renotify_interval = local.extended_renotify_interval
-    }
-  }
-
-  notification_channels = local.warning_notification_channels
-  severity              = "WARNING"
-  depends_on            = [google_logging_metric.flow_log_unexpected_external_dest]
 }
