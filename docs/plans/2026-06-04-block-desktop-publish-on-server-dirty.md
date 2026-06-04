@@ -31,56 +31,78 @@ Keep the desktop from ever piling its changes onto a staging area that isn't alr
 
 If the desktop is only allowed to upload when the server's staging area for that connection is empty, then after its upload the staging area contains **exactly** the user's approved changes — nothing else. Publish then ships exactly those changes, and the preview matches what actually happens. The bug becomes impossible.
 
-A connection's staging area returns to "clean" the moment its pending changes are published or discarded, so this isn't a permanent wall — it's a "resolve the pending stuff first" gate.
+A connection's staging area returns to "clean" the moment its pending changes are published or discarded, so this isn't a permanent wall — it's a "resolve the pending stuff first" gate. To keep the guarantee true all the way through, we hold it at two points: at upload (refuse onto a non-clean staging area) and again at publish (if the server changed while the user was reviewing, stop rather than ship the surprise).
 
 ## How it behaves
 
-- **The desktop detects and redirects — it never acts on the pending changes itself.** Those changes usually aren't the desktop user's (they came from the automated sync, another user, or a half-finished earlier publish), and the desktop app can only show the user their *local* files, not the server's staging area. So it can't meaningfully let the user review or publish them in place. The web review screen is built exactly for that — it lists the pending changes per connection, shows each one's diff, and lets the user publish or discard them. So the desktop points there.
+- **The desktop detects and redirects — it never acts on the pending changes itself.** Those changes usually aren't the desktop user's (they came from the automated sync, another user, or a half-finished earlier publish), and the desktop app can only show the user their *local* files, not the server's staging area. The web review screen is built exactly for that — it lists the pending changes per connection, shows each one's diff, and lets the user publish or discard them. So the desktop points there.
 - **It reuses the shape of a gate we already have.** When the server has moved ahead of you (someone else published since you last refreshed), the desktop already blocks the upload and tells you to refresh first. This new gate is the sibling of that one: same "the server isn't in a state to accept your upload — here's how to fix it" pattern, just for unpublished-changes instead of you-being-behind.
-- **Pending changes are handled before staleness.** If a connection is both "has unpublished changes" and "you're behind," we surface the unpublished-changes block first — resolving it on the web is the precondition, and doing so may then ask the user to refresh, which the existing gate already handles on the next attempt.
-- **Block the whole publish if any connection has pending changes.** A workspace can have several connections. If any one of them has unpublished changes, the publish is blocked with that connection called out — matching how the existing "you're behind" gate already stops the whole upload rather than letting some connections through.
+- **It checks every connection up front, then blocks the whole publish.** A workspace can have several connections. The desktop checks all of them before applying *any* patches; if any one has pending changes, the entire publish is blocked with that connection called out, and nothing is uploaded. This matches how the existing "you're behind" gate stops the whole upload rather than letting some connections through, and it avoids a half-applied state.
+- **A routine pull doesn't trip it.** "Has pending changes" means real unpublished record changes measured against what's currently live — so pulling fresh data (which doesn't add pending edits) never falsely blocks the user.
+- **Pending changes are surfaced before staleness.** If a connection both has unpublished changes and you're behind, the unpublished-changes block comes first; resolving it on the web is the precondition, and any remaining "you're behind" is handled by the existing gate on the next attempt.
+- **If the server can't be checked, it holds rather than guesses.** When the check itself can't run (the git service is down or busy), the publish is held with a "couldn't verify — try again" message instead of risking an unguarded upload.
+- **The guarantee holds through publish.** If new changes land on the server between your upload and your publish, the publish stops and points you to the web — so the executed publish always equals what you reviewed.
+
+The same protection covers the `scratchmd` CLI for free, since it goes through the same server step; there it prints a clear message instead of showing a modal.
 
 ## The user flow
 
-The desktop's publish modal gains one new blocking screen. When the user tries to publish and the server still has pending changes for a connection:
+The desktop's publish modal gains a blocking screen. When the user tries to publish and the server still has pending changes:
 
 ```
 ┌─ Publish changes ──────────────────────────────────┐
 │ ⚠  Unpublished changes on the server                │
-│ Airtable · CRM has 47 changes waiting to be         │
-│ published. Publish or discard them on the web,      │
-│ then come back here to publish your edits.          │
+│ Publish or discard these on the web, then come      │
+│ back here. (Someone with web access may need to     │
+│ resolve changes you didn't make.)                   │
 │                                                     │
 │   Airtable · CRM        47 changes                  │
-│     +30 added · ~17 modified                        │
-│     /Contacts/rec123.json                           │
-│     /Contacts/rec456.json                           │
-│     … and 45 more                                   │
+│   Webflow · Blog        12 changes                  │
+│   Notion · Docs          3 changes                  │
 │                                                     │
 │              [Close]        [Review on web ↗]       │
 └─────────────────────────────────────────────────────┘
 ```
 
 - Copy avoids internal terms like "dirty branch" — to the user it's "unpublished changes on the server," matching the web's language.
-- It shows a count, a quick added/modified/deleted breakdown, and a handful of example paths so the user has enough context to recognize what's pending (e.g. "oh, that's the sync's stuff").
+- **Count-only:** each dirty connection shows its name and a total count, nothing more. No per-record breakdown, no sample paths — the screen stays minimal.
 - **"Review on web ↗"** opens the workbook's review screen, where the user publishes or discards.
-- There's no "recheck" or "retry" button. The user resolves on the web and reopens Publish later; the check simply re-runs then. Keeps the screen — and the work — minimal.
+- This screen has **no** "retry" button. The user resolves on the web and reopens Publish later; the check simply re-runs then.
+- If the server check itself fails, a distinct screen appears — "Couldn't verify the server's state — try again" — and this one **does** have a **Try again** button (the failure is usually transient).
+- If the server changed while the user was reviewing "Ready to publish," the same unpublished-changes screen appears, led by one line: "The server changed while you were reviewing — there are now unpublished changes to resolve first."
 
-The same protection covers the `scratchmd` CLI for free, since it goes through the same server step; there it just prints a clear message instead of showing a modal.
+All modal states use the existing `'stale'`-mode component vocabulary (Mantine `<Alert>` / `<Stack>` / `<Group>` / `<Anchor>` + `scratch-desktop/UI_SYSTEM.md`); the connection list sits in a `<ScrollArea>` with a max-height. Full state map:
 
-## Decisions (locked in discussion)
+```
+STATE        | USER SEES
+-------------|------------------------------------------------------------
+loading      | ProgressStepList incl. a "Checking server state…" step
+dirty        | yellow Alert + count-only connection list + Close / Review on web ↗
+checkFailed  | red Alert "Couldn't verify the server's state" + Close / Try again  (503, retryable)
+toctou-abort | dirty surface + lead "The server changed while you were reviewing…"
+success      | existing publish-complete flow (unchanged)
+empty        | n/a — the modal only appears when changes exist
+```
 
-1. **Guardrail, not a publish redesign.** We stop the desktop from uploading onto a non-clean staging area. We are *not* (here) changing publish to ship only the user's approved subset, nor changing where the automated sync stages its work — those are deeper directions, noted below.
+## Decisions
+
+1. **Guardrail, not a publish redesign.** We stop the desktop from uploading onto a non-clean staging area. We do not (here) change publish to ship only the user's approved subset, nor change where the automated sync stages its work — that deeper fix is a committed follow-up below.
 2. **Web-only resolution.** The desktop detects and redirects; it never offers in-app publish/discard of the pending changes. Acting on changes the user can't see would just re-create the footgun.
-3. **Block-all scope.** If any connection has pending changes, the whole upload is blocked (matches the existing staleness gate). A per-connection "let the clean ones through" refinement is a possible follow-up.
-4. **Show a sample.** Count + breakdown + a few example paths, not just a bare number.
+3. **Block-all, checked up front.** Every connection is checked before any patches are applied; a single dirty connection blocks the whole publish with nothing uploaded.
+4. **Count-only redirect.** Show each dirty connection's name + total count — not a breakdown or example paths.
 5. **Pending-changes check runs before the staleness check.**
+6. **Compare against live `main`, read-only.** The gate measures pending changes against `main`, so a routine pull (which can leave the older `merge_base` tag lagging) doesn't false-trip it.
+7. **Fail-closed.** If the check can't run, hold the publish with a retryable error rather than upload unguarded.
+8. **Hold the invariant through publish.** Re-check at publish time and abort if the server changed since the user's upload.
+9. **Disable-able.** A server-side kill switch can turn the gate off without shipping a new desktop/CLI build.
 
 ## Out of scope / follow-ups
 
-- **"Three publish runs" (ticket bug #2).** Each publish surfaces as three runs — an apply step, a ~1-second planning run that does no real work, and the actual publish. That's the existing decoupled architecture, not part of this fix. Worth a separate UX cleanup (collapse or label the planning run).
-- **Publishing only the approved subset.** The deeper fix — making publish ship just the user's approved records, and/or keeping the automated sync out of the user's staging area — is a larger architectural change. This plan is the guardrail that makes today's model safe for the desktop; those remain open directions.
-- **Showing the pending-changes count earlier.** We could surface it the moment the publish modal opens, instead of when the user tries to upload. It's a nicety we can add later; the server-side block is the real protection and is enough on its own.
+- **Deeper fix (committed).** Make publish ship only the user's approved subset, and/or keep the automated sync out of the user's staging area. This is the real cure that removes the wall entirely; this guardrail is the stopgap that makes today's model safe for the desktop.
+- **Atomic all-or-nothing apply** across connections — eliminates the residual multi-connection deadlock (see [Review record](#review-record)). Promote if the gate-fire metric shows it happening.
+- **Notify-an-admin / request-resolution** flow, for desktop users who lack web access to resolve someone else's pending changes.
+- **"Three publish runs" (ticket bug #2).** Each publish surfaces as three runs (an apply step, a ~1s no-op planning run, and the real publish). That's the existing decoupled architecture; worth a separate UX cleanup.
+- **Showing the pending-changes count at modal-open**, instead of when the user tries to upload. A nicety; the server-side block is the real protection.
 
 ---
 
@@ -88,85 +110,96 @@ The same protection covers the `scratchmd` CLI for free, since it goes through t
 
 Everything below is for the engineer implementing the plan. Line numbers are against the current tree.
 
+## Landing in two PRs
+
+- **PR1 — server + CLI.** shared-types DTO, the server gate (read-only-vs-`main` check, fail-closed 503, kill switch), and the CLI two-pass. The gate only fires when a client sends `refuseIfDirty: true`, which only updated clients do — so PR1 is **no regression** for un-updated desktops and protects `scratchmd` immediately.
+- **PR2 — desktop + TOCTOU.** The modal modes (count-only `dirty`, `checkFailed`, the TOCTOU lead) and the publish-time drift re-check. This carries the riskiest, most coupling-heavy piece on its own. **Verify the open risk (#7 in the [Review record](#review-record)) early in PR2.**
+
 ## Approach
 
-Mirror the existing `blocked_stale` (D8) gate end to end. That gate is: the server throws a `409` with a structured body → the CLI maps the `409` to a discriminated-union variant → the desktop main process parses it into a typed result → the publish modal pattern-matches on `status` and renders a dedicated mode. We add a parallel `blocked_dirty` path through each of those layers.
+Mirror the existing `blocked_stale` (D8) gate end to end: the server throws a `409` with a structured body → the CLI maps it to a discriminated-union variant → the desktop main process parses it into a typed result → the publish modal pattern-matches on `status` and renders a dedicated mode. We add a parallel `blocked_dirty` path plus a distinct `check_failed` (503) outcome.
 
-**No separate client pre-flight.** The modal auto-starts the upload right after its local checks pass (`loadInitialState` → `startUpload`), so a server-`409`-driven block surfaces almost immediately and carries the count + sample paths in its payload. The server refuse is also the only thing that closes the race where the automated sync stages a change between modal-open and upload, so it's required regardless. (Surfacing the count at modal open is the optional later nicety noted above.)
+`commit()` therefore has **four** outcomes the layers must each handle: `blocked_stale` (409), `blocked_dirty` (409), `check_failed` (503), and the legacy soft path (`refuseIf*` falsy). The CLI runs a **two-pass** upload: a `checkOnly` pass over all connections first, and only if every connection is clean, the real apply pass (the gate is retained on the apply pass too). There is no separate client-side pre-flight beyond this two-pass — the server is the source of truth, which also closes the race where the automated sync stages a change between modal-open and upload.
 
 ## Why the gate establishes the invariant
 
-"Clean" means the connection's `dirty` branch equals its `merge_base` tag — the existing `has-dirty` / `status` semantics (`scratch-git-2/src/service/routes/diff.rs` `status` `:12-41`, `has-dirty` `:43-73`, `count` `:75-104`), which already filter to visible, root-level, non-dotfile record changes. After any successful publish, the post-publish `rebaseDirty` resets `dirty` back to `main`/`merge_base` (`server/src/publish-plan/publish-plan-run.service.ts` → `rebaseDirty`; `scratch-git-2/src/service/git/rebase.rs:8-126`), so a connection naturally returns to clean once its pending changes are published or discarded.
+"Clean" means the connection has no pending visible record changes measured against **live `main`** (a read-only diff). The gate must compare against `main`, **not** the `merge_base` tag, because the tag lags `main` after a pull-without-rebase and would false-positive (`publish-plan-build.service.ts:191-193` keeps `rebaseDirty` for exactly this reason). The relevant scratch-git routes are `scratch-git-2/src/service/routes/diff.rs` (`status` `:12-41`, `has-dirty` `:43-73`, `count` `:75-104`); note `status`/`compare_commits` recurses into subdirectories, while `has-dirty` is the root-level variant — so pick the read that matches "what publish would ship versus `main`" and verify the exact ref in code.
 
-The contamination today comes from two writers sharing that branch: the desktop user's uploaded patches (`server/src/publish-plan/apply-patches.service.ts:94`) and the web's automated sync (`server/src/sync/sync.service.ts`, `commitFilesToBranch(DIRTY_BRANCH, …)`), and from publish building its plan off the full `merge_base → dirty` diff (`server/src/publish-plan/publish-plan-build.service.ts:223`). The preview/executed mismatch is in the modal: the preview comes from the upload result (`PublishChangesModal.tsx:1089-1135`, `aggregateTotals` `:1008`), the executed plan from `publishApi.startPlanJob` (`:760`).
+The contamination today comes from two writers sharing the dirty branch — the desktop user's uploaded patches (`server/src/publish-plan/apply-patches.service.ts:94`) and the web's automated sync (`server/src/sync/sync.service.ts`, `commitFilesToBranch(DIRTY_BRANCH, …)`) — and from publish building its plan off the full `merge_base → dirty` diff (`server/src/publish-plan/publish-plan-build.service.ts:223`). The preview/executed mismatch is in the modal: the preview comes from the upload result (`PublishChangesModal.tsx:1089-1135`, `aggregateTotals` `:1008`), the executed plan from `publishApi.startPlanJob` (`:760`).
+
+The upload-time gate makes the staging area clean before the user's patches land. To keep it clean **through** publish, snapshot the connection's post-apply dirty HEAD and, at `publish-plan-build`, abort if the current dirty HEAD has drifted — compared **before** `rebaseDirty` runs (it force-moves the HEAD).
 
 ## Contract changes, layer by layer
 
 ### 1. shared-types — `packages/shared-types/src/dto/upload-patch/upload-patch.dto.ts`
 
-- Add a `refuseIfDirty?: boolean` field to `UploadPatchCommitDto` (after `refuseIfStale`, `:59`). New, independent flag; default falsy keeps legacy behavior. The only callers of `/upload-patch/commit` are the CLI and desktop, both of which will pass `true`.
-- Add the refusal DTO, a sibling of `UploadPatchBlockedStaleResponseDto` (`:78-86`):
+- Add `refuseIfDirty?: boolean` and `checkOnly?: boolean` to `UploadPatchCommitDto` (after `refuseIfStale`, `:59`). Both default falsy → legacy behavior. The only callers are the CLI and desktop.
+- Add `expectedBaseDirtyHead?: string` to the publish-plan-build request DTO (the client-carried TOCTOU token).
+- Add the count-only refusal DTO (sibling of `UploadPatchBlockedStaleResponseDto`, `:78-86`):
 
   ```ts
   export interface UploadPatchBlockedDirtyResponseDto {
     status: 'blocked_dirty';
     connectorAccountId: string;
-    /** Count of pending (unpublished) record changes on the connection's dirty branch. */
+    /** Total pending (unpublished) record changes on the connection. Count-only UI. */
     dirtyCount: number;
-    added: number;
-    modified: number;
-    deleted: number;
-    /** First N paths, for a preview list in the modal. */
-    samplePaths: string[];
     message?: string;
   }
   ```
 
+- Represent the check failure as a distinct retryable shape (`status: 'check_failed'`, served with HTTP 503).
+
 ### 2. Server — `server/src/cli/upload-patch.controller.ts`
 
-In `commit()` (`:110-189`), **before** the staleness gate (`:130`) and therefore before `enqueueApplyPatchesJob` (`:156`) and the audit log (`:167`) — so a refusal leaves zero side effects:
+In `commit()` (`:110-189`), **before** the staleness gate (`:130`) and therefore before `enqueueApplyPatchesJob` (`:156`) and the audit log (`:167`) — so a refusal or a check-only probe leaves zero side effects:
 
 ```ts
-if (body.refuseIfDirty === true) {
-  const repoId = await this.scratchGitService.resolveConnectionRepoPath(body.connectorAccountId);
-  const dirty = await this.scratchGitService.getRepoStatus(repoId); // FileChange[] (merge_base → dirty)
-  if (dirty.length > 0) {
+if (body.refuseIfDirty === true && (await this.flags.isEnabled('desktop_dirty_gate_enabled'))) {
+  let pendingCount: number;
+  try {
+    const repoId = await this.scratchGitService.resolveConnectionRepoPath(body.connectorAccountId);
+    pendingCount = await this.scratchGitService.getPendingChangeCountVsMain(repoId); // read-only diff vs main
+  } catch (err) {
+    // Fail closed: can't verify -> distinct retryable error, never an unguarded upload.
+    throw new ServiceUnavailableException({
+      status: 'check_failed',
+      message: "Couldn't verify the server's state. Try again.",
+    });
+  }
+  if (pendingCount > 0) {
     const payload: UploadPatchBlockedDirtyResponseDto = {
       status: 'blocked_dirty',
       connectorAccountId: body.connectorAccountId,
-      dirtyCount: dirty.length,
-      added: dirty.filter((c) => c.status === 'added').length,
-      modified: dirty.filter((c) => c.status === 'modified').length,
-      deleted: dirty.filter((c) => c.status === 'deleted').length,
-      samplePaths: dirty.slice(0, 5).map((c) => c.path),
-      message:
-        'This connection has unpublished changes on the server. Publish or discard them on the web, then retry.',
+      dirtyCount: pendingCount,
+      message: 'This connection has unpublished changes on the server. Publish or discard them on the web, then retry.',
     };
-    WSLogger.info({ source: 'UploadPatchController.commit', message: 'Refused upload-patch commit due to dirty server branch', workbookId, userId: actor.userId, data: { connectorAccountId: body.connectorAccountId, dirtyCount: dirty.length } });
+    WSLogger.info({ source: 'UploadPatchController.commit', message: 'Refused upload-patch commit due to pending server changes', workbookId, userId: actor.userId, data: { connectorAccountId: body.connectorAccountId, dirtyCount: pendingCount } });
+    this.posthogService.capture(actor, 'desktop_publish_blocked_dirty', { connectorAccountId: body.connectorAccountId, dirtyCount: pendingCount });
     throw new ConflictException(payload);
   }
 }
+if (body.checkOnly === true) return { ok: true }; // two-pass probe: never applies
 ```
 
-- `getRepoStatus` / `hasDirtyFiles` / `getRepoStatusCount` already exist on `ScratchGitService` (`server/src/scratch-git/scratch-git.service.ts:~313/317/321`). `getRepoStatus` is the right call: one round-trip yields count, per-status breakdown, and the sample.
-- `resolveConnectionRepoPath` is already used here via `lookupRemoteHead` (`:203`) — resolve once and reuse if convenient.
+- A single dirty-check helper backs both the `checkOnly` probe and the `refuseIfDirty` gate (DRY) — do not duplicate the count logic.
+- `getPendingChangeCountVsMain` is the read-only-vs-`main` count. The existing `getRepoStatus` / `getRepoStatusCount` (`server/src/scratch-git/scratch-git.service.ts:~313/321`) diff the `merge_base` tag; add or adapt to compare against `main`. `resolveConnectionRepoPath` is already used here via `lookupRemoteHead` (`:203`).
 
 ### 3. CLI api — `scratch-git-2/src/cli/api/mod.rs`
 
-- Add a `BlockedDirtyResponse` struct next to `BlockedStaleResponse` (`:847`), with serde field names matching the DTO.
-- Add a `BlockedDirty(BlockedDirtyResponse)` variant to `UploadPatchCommitResult` (`:865-867`).
-- In the `409` parse block (`:753-761`), discriminate on the `status` tag — try `blocked_dirty` and `blocked_stale`, returning the matching variant.
-- Add a `refuse_if_dirty: bool` parameter to `upload_patch_commit` (`:728-735`) and include `refuseIfDirty` in the request body.
+- Add `BlockedDirtyResponse` (count-only) and a `CheckFailed` shape next to `BlockedStaleResponse` (`:847`), with serde names matching the DTOs.
+- Add `BlockedDirty(...)` and `CheckFailed(...)` variants to `UploadPatchCommitResult` (`:865-867`).
+- In the `409`/`503` parse block (`:753-761`), discriminate on the `status` tag / HTTP status.
+- Add `refuse_if_dirty: bool` and `check_only: bool` params to `upload_patch_commit` (`:728-735`) and include them in the request body.
 
 ### 4. CLI command — `scratch-git-2/src/cli/commands/files.rs`
 
-- `UploadResult`: add `blocked_dirty: Option<crate::api::BlockedDirtyResponse>` next to `blocked_stale` (`:398`).
-- `upload_single_repo_via_patches` (`:4130`): pass `refuse_if_dirty: true` in the `upload_patch_commit` call (`:4222-4235`), and add a `UploadPatchCommitResult::BlockedDirty(d)` match arm (next to the `BlockedStale` arm at `:4239-4250`) returning `UploadResult { status: "blocked_dirty", blocked_dirty: Some(d), .. }`.
-- `run_upload` (`:827`): fail-fast on the first `blocked_dirty` connection, parallel to the `blocked_stale` handling at `:861`; collect into a `blocked_dirty_connections` vec and call a new `print_blocked_dirty_result` (sibling of `print_blocked_stale_result`, `:3480`). JSON shape:
+- `run_upload` (`:827`) runs **two passes**: pass 1 calls `upload_patch_commit(check_only: true, refuse_if_dirty: true)` for every connection; if any returns `BlockedDirty`/`CheckFailed`, collect and fail fast — **no** connection proceeds to apply. Pass 2 runs the real apply (`refuse_if_dirty: true` retained) only if pass 1 was all-clean.
+- `UploadResult`: add `blocked_dirty` / `check_failed` next to `blocked_stale` (`:398`); add match arms next to `BlockedStale` (`:4239-4250`).
+- Add `print_blocked_dirty_result` (sibling of `print_blocked_stale_result`, `:3480`). Count-only JSON:
 
   ```json
   { "status": "blocked_dirty", "blockedCount": 1,
-    "connections": [{ "connectionName": "…", "dirtyCount": 47, "added": 30, "modified": 17, "deleted": 0, "samplePaths": ["…"] }],
+    "connections": [{ "connectionName": "…", "dirtyCount": 47 }],
     "elapsedMs": 1234 }
   ```
 
@@ -174,33 +207,97 @@ if (body.refuseIfDirty === true) {
 
 ### 5. Desktop main — `scratch-desktop/src/main/scratchmd.ts`
 
-- Add `BlockedDirtyConnection` + `UploadWorkspaceBlockedDirty` interfaces (parallel to `:84-96`).
-- Extend `UploadWorkspaceResult` (`:104`) to include `UploadWorkspaceBlockedDirty`.
-- Generalize `parseBlockedStalePayload` (`:684-699`) into a single `parseUploadRefusalPayload` recognizing both `blocked_stale` and `blocked_dirty`, or add a parallel `parseBlockedDirtyPayload`. `uploadWorkspaceChanges` (`:668-681`) already routes a non-zero exit through the parser; extend it to return the dirty payload as a non-throwing result.
+- Add `BlockedDirtyConnection` + `UploadWorkspaceBlockedDirty` (count-only) and a `check_failed` result (parallel to `:84-96`); extend `UploadWorkspaceResult` (`:104`).
+- Generalize `parseBlockedStalePayload` (`:684-699`) into one `parseUploadRefusalPayload` recognizing `blocked_stale`, `blocked_dirty`, and `check_failed`; `uploadWorkspaceChanges` (`:668-681`) returns each as a non-throwing typed result.
+- Capture the post-apply dirty HEAD from the apply-job result so the renderer can pass it to publish.
 
 ### 6. Desktop modal — `scratch-desktop/src/renderer/src/pages/workspace/PublishChangesModal.tsx`
 
-- Add `'dirty'` to the `PublishMode` union (`:36`).
-- Add `blockedDirty` state (parallel to `blockedStale`, `:401`).
-- In `startUpload` (`:434`), add a branch mirroring the `blocked_stale` handling (`:440-454`): on `result.status === 'blocked_dirty'`, `setBlockedDirty(result)` and `setMode('dirty')`.
-- Render the `'dirty'` mode (parallel to `'stale'`, `:1186-1218`) per the mockup above. Reuse `handleReviewOnWeb` (`:730-735`), which already opens `${webUrl}/workbook/${workspaceId}/review`.
+- Add `'dirty'` and `'checkFailed'` to the `PublishMode` union (`:36`); add `blockedDirty` / `checkFailed` state (parallel to `blockedStale`, `:401`).
+- In `startUpload` (`:434`), branch on `result.status` (parallel to `blocked_stale`, `:440-454`): `'blocked_dirty'` → `setMode('dirty')`; `'check_failed'` → `setMode('checkFailed')`.
+- Render `'dirty'` as a **count-only** connection list (one `<Text>` row per connection, `dirtyCount.toLocaleString()`), in a `<ScrollArea>`; reuse `handleReviewOnWeb` (`:730-735`). Render `'checkFailed'` as a red `<Alert>` + `Close` / **`Try again`**. Truncate long connection names; give "Review on web ↗" an accessible label.
+- Pass the captured post-apply dirty HEAD to `startPlanJob` as `expectedBaseDirtyHead`. When the publish job aborts on drift, route that result back into `'dirty'` mode with the lead line "The server changed while you were reviewing…".
 
-## Implementation decisions
+### 7. Publish-plan-build (PR2) — `server/src/publish-plan/publish-plan-build.service.ts`
 
-- **New `refuseIfDirty` flag**, independent of `refuseIfStale`; CLI + desktop pass both `true`. Alternative considered: always enforce (safe, since only CLI/desktop call this endpoint) — the flag is the more conservative choice.
-- **Dirty checked before stale** in `commit()`.
+- Read `expectedBaseDirtyHead` from the request; **before** `rebaseDirty` (`:193`), if the current dirty HEAD differs, abort with a structured `blocked_dirty`-shaped result and emit `publish_aborted_dirty_drift`. No drift → build the plan as today.
+
+## Observability & kill switch
+
+- **PostHog:** `desktop_publish_blocked_dirty` on gate-fire (with `connectorAccountId`, `dirtyCount`), `publish_aborted_dirty_drift` on TOCTOU abort. The gate-fire rate is the signal for whether the wall is hitting the common case — i.e. whether the deeper fix is urgent.
+- **Kill switch:** `desktop_dirty_gate_enabled` (OpenFeature/PostHog). Org-scoped, logged loudly. Note in the runbook that flipping it **off restores the original over-publish behavior** — it is break-glass, not a neutral toggle.
 
 ## Test plan
 
-- **Server unit** (`server/src/cli/__tests__/upload-patch.controller.spec.ts` or sibling): `commit` with `refuseIfDirty: true` and a non-empty `getRepoStatus` → throws `ConflictException` with a `blocked_dirty` body; **no** `enqueueApplyPatchesJob`, **no** audit log. Clean status → proceeds. `refuseIfDirty` falsy → proceeds even when dirty (back-compat). Both gates triggerable → `blocked_dirty` wins.
-- **CLI**: `upload_patch_commit` parses a `409` `blocked_dirty` body into `UploadPatchCommitResult::BlockedDirty`; `run_upload` emits the structured JSON and fails fast.
-- **Desktop main** (vitest): `parseUploadRefusalPayload` recognizes a `blocked_dirty` stdout payload and `uploadWorkspaceChanges` returns it as a non-throwing result.
-- **Manual**: stage changes on a connection's dirty branch (trigger a web sync), then publish from desktop → modal shows the `dirty` block with the correct count, "Review on web" deep-links to the review page; publish/discard there; reopen desktop Publish → proceeds and publishes only the user's records.
+- **Server unit** (`server/src/cli/__tests__/upload-patch.controller.spec.ts`): `refuseIfDirty: true` + pending>0 → `409` count-only `blocked_dirty`, **no** job, **no** audit; clean → proceeds; `checkOnly: true` → probes and returns without enqueueing; `refuseIfDirty` falsy → legacy soft path; both gates → `blocked_dirty` wins; check throws → `503` `check_failed`, no job/audit; kill switch off → gate skipped; post-pull (`merge_base` lags `main`, no real pending) → **not** blocked.
+- **Two-pass integration:** one dirty connection → assert **zero** connections enqueued an apply job (the deadlock regression guard).
+- **TOCTOU integration:** dirty HEAD drifts between apply and plan-build → publish aborts + redirect (compare runs **before** `rebaseDirty`); no drift → publishes the user's edits.
+- **CLI:** parses `blocked_dirty` / `check_failed`; two-pass emits structured JSON and fails fast.
+- **Desktop main** (vitest): `parseUploadRefusalPayload` recognizes `blocked_dirty` and `check_failed` as non-throwing results.
+- **Desktop modal:** `'dirty'` count-only render; `'checkFailed'` with `Try again`; TOCTOU lead copy; plan-build abort routed into `'dirty'`.
+- **Regression:** `blocked_stale` path and the legacy soft path unchanged.
+- **Manual:** stage changes via a web sync, publish from desktop → count-only `dirty` block with correct counts, "Review on web" deep-links; resolve there; reopen desktop Publish → proceeds and publishes only the user's records.
 
 ## Acceptance criteria
 
-- With unpublished changes on a connection's dirty branch, the desktop publish modal **cannot** upload `accepted-patches.json`; it shows the `dirty` mode with an accurate count + sample and a working "Review on web ↗".
-- `scratchmd files upload` is refused identically (structured `blocked_dirty` JSON; clear human-mode stderr).
-- After the pending changes are published or discarded on the web, the desktop upload + publish proceeds and the executed plan equals the user's approved changes (preview == plan).
-- A refused `commit` enqueues no job and writes no audit log.
-- No regression in the `blocked_stale` path or the legacy (`refuseIfStale`/`refuseIfDirty` falsy) soft path.
+- With pending changes on any connection, the publish modal **cannot** upload `accepted-patches.json`; it shows the count-only `dirty` mode and a working "Review on web ↗".
+- `preview == plan`: holds because of the publish-time drift re-check (abort on drift), not merely a clean-at-upload branch.
+- Multi-connection: one dirty connection blocks the whole publish with **zero** connections applied (modulo the accepted sub-second residual — see [Review record](#review-record)).
+- A check failure yields the distinct retryable `503` with a **Try again** affordance — never a silent proceed, never a generic 500.
+- No post-pull false-positive: a connection with only a lagging `merge_base` tag (no real pending changes) is **not** blocked.
+- The gate can be disabled via `desktop_dirty_gate_enabled` without shipping a client.
+- `scratchmd files upload` is refused identically (count-only structured JSON; clear human-mode stderr).
+- A refused or check-only `commit` enqueues no job and writes no audit log.
+- No regression in the `blocked_stale` path or the legacy (`refuseIf*` falsy) soft path.
+
+---
+
+# Review record
+
+The rationale and audit trail behind the spec above — why these choices, what was rejected, and the open items. Decisions themselves are stated once, in the spec.
+
+## Strategic call (CEO review — HOLD SCOPE)
+
+The premise was challenged: the guardrail can block the **common** case, not the edge case. The bug report itself establishes that the automated sync routinely leaves the staging area non-empty, so in sync-heavy workbooks "staging area is clean" is the exception — the gate may frequently redirect a desktop user to the web to resolve changes they didn't make. We shipped it anyway as the **correctness-first stopgap**: blocking and redirecting is strictly safer than silently over-publishing, and it never publishes unapproved data. The deeper fix (publish ships only the approved subset, and/or sync stages outside the user's staging area) is the real cure that removes the wall; it's a committed follow-up. The gate-fire metric exists precisely to tell us how urgent that follow-up is.
+
+## Outside voice (independent Claude subagent) — 13 findings
+
+- **Adopted:** the gate must diff against `main`, not the lagging `merge_base` tag (else it false-positives after every pull); the fail-closed 503 needs a real retry affordance; the kill switch restores the bug when flipped, so it must be framed/guarded as break-glass.
+- **Rejected (kept the original):** swapping the post-apply HEAD-snapshot TOCTOU mechanism for a "plan ⊆ uploaded paths" assertion. The HEAD-snapshot approach stands — see the open risk below.
+
+## Open risk — verify early in PR2 (#7)
+
+The kept HEAD-snapshot mechanism does **not** cover whether `rebaseDirty` — which merges `main` into the dirty branch at publish-plan-build, before the diff — can pull non-user records into the publish set **independent** of the dirty-branch-sharing path the gate guards. The rejected "plan ⊆ uploaded paths" assertion would have caught this. Verify it early in PR2; if real, revisit the TOCTOU mechanism. Until verified, treat it as the open risk in this plan.
+
+## Accepted residual — two-pass narrows the deadlock, doesn't eliminate it
+
+Two-pass (check all connections, then apply) kills the *common* multi-connection deadlock, but a sub-second sync write between the check pass and a later connection's apply can still re-create the "blocked on your own just-uploaded patches" state. Accepted for v1: it's a rare usability event (not data loss — the publish-time re-check still makes over-publish impossible), and the gate-fire metric watches for it. True elimination needs all-or-nothing apply across connections — the deferred follow-up.
+
+## Failure modes registry
+
+```
+CODEPATH                       | FAILURE MODE              | TEST?      | ERROR HANDLED? | USER SEES        | SILENT?
+-------------------------------|---------------------------|------------|----------------|------------------|--------
+commit() dirty gate            | pending changes present   | unit+integ | Y (409)        | "review on web"  | no
+commit() check                 | scratch-git down/gc       | unit       | Y (503+retry)  | "try again"      | no
+two-pass pass1 -> pass2        | sync writes mid-pass      | integ      | Y (apply gate) | "review on web"  | no (rare residual deadlock — accepted, metered)
+plan-build drift               | sync wrote post-apply     | integ      | Y (abort+redir)| "review on web"  | no
+post-pull merge_base lag       | false-positive block      | unit       | FIXED (vs main)| nothing (passes) | n/a
+rebaseDirty pulls main (#7)    | non-user records in plan  | NONE - GAP | NO - GAP       | over-publish?    | POSSIBLY - verify in PR2
+```
+
+The `#7` row is the one potential critical gap the kept HEAD-snapshot mechanism does not cover — tracked as a PR2 verification, not a confirmed bug.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | reviewed | HOLD SCOPE; premise upheld; guardrail as stopgap, deeper fix committed as follow-up |
+| Outside Voice | Claude subagent | Independent 2nd opinion | 1 | issues_found | 13 findings; 3 adopted (main-baseline, 503 retry, kill-switch framing), 1 rejected (kept HEAD-snapshot); #7 open |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | reviewed | Two-PR split, client-carried snapshot token, unit+integration strategy; 1 potential critical gap (#7) tracked |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | reviewed | 6/10 → 9/10; count-only modal, checkFailed retry, TOCTOU lead; 5 states spec'd |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | not run |
+
+- **CROSS-MODEL:** CEO review + outside voice agree on the two-pass residual and the strategic risk (gate can block the common case). They diverged on the TOCTOU mechanism; the HEAD-snapshot approach was kept, leaving #7 (rebaseDirty contamination) as an open PR2 verification.
+- **UNRESOLVED:** 0 decisions open. 1 open verification (#7) and 1 accepted residual (two-pass sub-second deadlock) — both tracked, neither a blocker.
+- **VERDICT:** CEO + ENG + DESIGN reviewed — scope, execution, and UI states pinned. Ready to implement (PR1 first; design specs and #7 verification apply to PR2).
