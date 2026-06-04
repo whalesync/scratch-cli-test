@@ -3,7 +3,7 @@
 **Date**: 2026-06-03
 **Author**: Chris Hoefgen
 **Status**: In Progress
-**Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling) (rollout epic); recent connector work tracked under DEV-10312 (Moco) and DEV-10311 (Pipedrive)
+**Linear**: [DEV-9757](https://linear.app/whalesync/issue/DEV-9757/incremental-polling) (rollout epic); recent connector work tracked under DEV-10312 (Moco), DEV-10311 (Pipedrive), and DEV-10158 (HubSpot)
 
 **Purpose**: A single living reference for **how every connector handles incremental pull** — the methodology where it is implemented, and the difficulty/risk where it is still pending. It replaces the per-connector status that was scattered across the part-3 plan and the feasibility appendix, and is the doc to consult before picking up the next connector.
 
@@ -30,7 +30,7 @@ The recurring **sub-patterns**:
 | **Intercom** | ✅ Landed | Search `POST /conversations/search` `updated_at > <unix s>` | capability-gated (table) | — | Conversations only; Unix-seconds |
 | **Moco** | ✅ Landed | REST `?updated_after=<iso8601 UTC>` → `updated_at` | fixed system field | — | All 3 entities; seconds-precision, UTC |
 | **Pipedrive** | ✅ Landed | REST `?updated_since=<rfc3339>` → `update_time` | fixed system field | — | All 3 entities (deals/persons/orgs); RFC3339, ms kept |
-| **HubSpot** | 🟡 Feasible | CRM Search `POST /crm/v3/objects/{type}/search`, `hs_lastmodifieddate GTE` | resolver + override | Medium | Associations omitted + 10k window (both reconciled by `FULL_PULL`) |
+| **HubSpot** | ✅ Landed | CRM Search `POST /crm/v3/objects/{type}/search`, `<field> GTE <epoch-ms>` → annotated property | resolver + override | — | Switches list→Search; associations omitted + 10k window (both reconciled by `FULL_PULL`) |
 | **Shopify** | 🟡 Feasible | GraphQL root `query: "updated_at:>'<iso>'"` | capability-gated (entity) | Medium | Only some root connections accept `query:` |
 | **QuickBooks** | 🟡 Feasible | CDC `GET /cdc?entities=…&changedSince=<iso>` → `MetaData.LastUpdatedTime` | fixed system field | Low–Med | Different endpoint; 30-day CDC window |
 | **Brevo** | 🟡 Feasible | `GET /contacts?modifiedSince=<iso>` → `modifiedAt` | capability-gated (table) | Low | Contacts + templates only; lists stay full |
@@ -44,7 +44,7 @@ The recurring **sub-patterns**:
 | **Wix Blog** | 🚧 Special | base `pullRecordFiles` is a stub | — | — | Re-evaluate after the base pull lands |
 | **Generic API** | ⚠️ Deferred | user-declared `modifiedAtField` + query-param name | resolver + override (user-configured) | High | Foot-gun: misconfig → silent data loss; v2 |
 
-**Next batch (all Low difficulty, all proven fixed-system-field / capability-gated pattern):** QuickBooks, Brevo. HubSpot and Shopify are the remaining part-3 connectors. Webflow is **blocked** until the `webflow-api` SDK is bumped (the v2 REST `lastUpdated` filter exists but isn't surfaced by the installed `3.2.1` — see below). Most ❌ rows are blocked by the upstream API; Webflow is blocked by our SDK layer specifically.
+**Next batch (all Low difficulty, all proven fixed-system-field / capability-gated pattern):** QuickBooks, Brevo. **Shopify** is the last remaining part-3 connector (HubSpot landed under DEV-10158). Webflow is **blocked** until the `webflow-api` SDK is bumped (the v2 REST `lastUpdated` filter exists but isn't surfaced by the installed `3.2.1` — see below). Most ❌ rows are blocked by the upstream API; Webflow is blocked by our SDK layer specifically.
 
 ---
 
@@ -82,16 +82,16 @@ Every Moco resource (companies, contacts/people, projects) carries `updated_at`,
 
 deals, persons, and organizations all carry a server-side `update_time`, and all three v2 list endpoints (`getDeals`/`getPersons`/`getOrganizations`) accept `?updated_since=<rfc3339>` (verified against the installed `pipedrive@31.2.1` SDK request types), so support is unconditional. An optional `updatedSince` is threaded into `listEntities` and added to the v2 request params; the existing opaque-cursor pagination is unchanged. `updated_since` is **inclusive (`>=`)**, but the watermark is client-side so the 60s margin still applies. Unlike Moco, Pipedrive accepts RFC3339 fractional seconds, so `buildPipedriveUpdatedSince` emits `Date.toISOString()` verbatim (no millisecond stripping). `update_time` is annotated with `X_SCRATCH_LAST_MODIFIED_FIELD` for the UI picker. Only the filter is used (no `sort_by`) — the predicate already returns the changed set and cursor pagination is stable, matching Moco.
 
+### HubSpot — CRM Search API, resolver + override
+
+The standard list endpoint (`GET /crm/v3/objects/{type}`) can't filter by modified date, so incremental **switches endpoints** to the **CRM Search API** (`POST /crm/v3/objects/{type}/search`) with a `<field> GTE <epoch-ms>` filter sorted **ascending** by that field, cursor-paged via the search `after` offset (`searchRecordsModifiedSince` in `hubspot-api-client.ts`; the body builder + 60s `HUBSPOT_INCREMENTAL_CLOCK_SKEW_MS` live in `hubspot-incremental.ts`). The watermark is rendered as **epoch milliseconds** — the format the Search API accepts uniformly across object types. The modified-date property is object-type-dependent (`hs_lastmodifieddate` for most objects, `lastmodifieddate` for contacts, custom objects vary), so it's the Airtable-style resolver + override: the schema builder annotates whichever candidate the object exposes (`X_SCRATCH_LAST_MODIFIED_FIELD`, preferring `hs_lastmodifieddate`), `resolveHubspotModifiedAtField` prefers an explicit `modifiedAtField` advanced setting over the annotation, and an object with neither reports `NEEDS_CONFIGURATION`. `GTE` is inclusive but the watermark is client-side → 60s clock-skew; ascending sort keeps cursor pagination stable.
+
+- **Caveat — associations**: the Search API returns `properties` but **not** `associations`, so incremental pulls don't refresh association data — the periodic `FULL_PULL` reconciles association drift (same philosophy as deletions). The heavier search-IDs-then-batch-read-with-associations path is deferred.
+- **Caveat — 10k window**: a single Search result set is capped at 10,000 records. Steady-state deltas are small; bootstrap is always a full pull; the watermark advances by what returned and the next run continues. `FULL_PULL` is the safety net.
+
 ---
 
 ## Planned — methodology, difficulty, and caveats
-
-### HubSpot — CRM Search API, resolver + override · **Medium**
-
-The standard list endpoint can't filter by modified date; incremental requires the **CRM Search API** (`POST /crm/v3/objects/{type}/search`) with `hs_lastmodifieddate GTE <since>`, sorted ascending. The modified-date property is object-type-dependent (`hs_lastmodifieddate` vs `lastmodifieddate`; custom objects vary) → Airtable-style resolver + override, with a `modifiedAtField` advanced setting for custom objects the annotation misses.
-
-- **Caveat — associations**: the Search API returns `properties` but **not** `associations`, so incremental pulls don't refresh association data. Recommended v1: let the periodic `FULL_PULL` reconcile association drift (same philosophy as deletions). The heavier search-IDs-then-batch-read-with-associations path is deferred.
-- **Caveat — 10k window**: a single Search result set is capped at 10,000 records. Steady-state deltas are small; bootstrap is always a full pull; the watermark advances by what returned and the next run continues. `FULL_PULL` is the safety net.
 
 ### Shopify — GraphQL `query:` search, capability-gated by entity · **Medium**
 

@@ -204,7 +204,7 @@ Per connector, mirroring the Airtable/Notion specs (`__tests__/`):
 **Shared**
 
 - [server/src/remote-service/connectors/types.ts](../../server/src/remote-service/connectors/types.ts#L178) — generalize `findLastModifiedFieldName` to flat / HubSpot-nested schema shapes. ✅ (all three shapes implemented + unit-tested in `connectors/__tests__/types.spec.ts`)
-- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md#L322) — extend "Incremental Pulls" with the five worked examples + the schema-shape note. ⏳ (schema-shape note + **Linear** + **WordPress** + **Intercom** worked examples landed; HubSpot/Shopify examples pending those connectors)
+- [server/src/remote-service/connectors/CONNECTOR_GUIDE.md](../../server/src/remote-service/connectors/CONNECTOR_GUIDE.md#L322) — extend "Incremental Pulls" with the five worked examples + the schema-shape note. ⏳ (schema-shape note + **Linear** + **WordPress** + **Intercom** + **HubSpot** worked examples landed; Shopify example pending that connector)
 
 **WordPress**
 
@@ -222,10 +222,10 @@ Per connector, mirroring the Airtable/Notion specs (`__tests__/`):
 
 **HubSpot**
 
-- [hubspot-connector.ts](../../server/src/remote-service/connectors/library/hubspot/hubspot-connector.ts) — incremental branch via Search, resolver/override, `advancedSettings` (`modifiedAtField` field-select), `incrementalPull: true`. ⏳
-- [hubspot-api-client.ts](../../server/src/remote-service/connectors/library/hubspot/hubspot-api-client.ts) — new `searchRecordsModifiedSince` generator (CRM Search). ⏳
-- [hubspot-json-schema.ts](../../server/src/remote-service/connectors/library/hubspot/hubspot-json-schema.ts) — annotate the present modified-date property. ⏳
-- `hubspot/hubspot-incremental.ts` — new helper. ⏳
+- [hubspot-connector.ts](../../server/src/remote-service/connectors/library/hubspot/hubspot-connector.ts) — incremental branch via Search, resolver/override, `advancedSettings` (`modifiedAtField` field-select), `incrementalPull: true`. ✅ (landed under DEV-10158; uses the three-state `incrementalPullSupport`/`resolveIncrementalPullSupport`/`incrementalPullAutoDetectsFromSchema` registry contract — supersedes the `supportsIncrementalPull` boolean named here)
+- [hubspot-api-client.ts](../../server/src/remote-service/connectors/library/hubspot/hubspot-api-client.ts) — new `searchRecordsModifiedSince` generator (CRM Search). ✅
+- [hubspot-json-schema.ts](../../server/src/remote-service/connectors/library/hubspot/hubspot-json-schema.ts) — annotate the present modified-date property (`resolveHubspotLastModifiedPropertyName`, prefers `hs_lastmodifieddate`). ✅
+- `hubspot/hubspot-incremental.ts` — new helper. ✅ (+ `__tests__/hubspot-incremental.spec.ts`, `hubspot-api-client-incremental.spec.ts`, `hubspot-json-schema-incremental.spec.ts`, `hubspot-connector-incremental.spec.ts`; integration coverage in `test/integration/hubspot-connector.spec.ts` + the fake's `/search` route)
 
 **Shopify**
 
@@ -246,8 +246,8 @@ Per connector, mirroring the Airtable/Notion specs (`__tests__/`):
 ## Open questions
 
 1. **HubSpot associations on incremental pulls** — Search API does not return associations. Recommended: incremental pulls omit association refresh; the periodic `FULL_PULL` reconciles (consistent with the base plan's deletion philosophy). Confirm acceptable, or require the heavier Search-IDs-then-batch-read-with-associations path (deferred by default).
-   ANSWER:
+   ANSWER: Accepted the recommended v1 — incremental pulls omit associations and the periodic `FULL_PULL` reconciles association drift. Documented in `hubspot-connector.ts`, `hubspot-incremental.ts`, `CONNECTOR_GUIDE.md`, and the support matrix; an integration test asserts incremental responses omit the `associations` key. The Search-IDs-then-batch-read path stays deferred.
 2. **HubSpot >10k Search window** — a single incremental run is capped at 10k results by the Search API. Recommended: accept and document (steady-state deltas are small; bootstrap is always a full pull; watermark advances by what returned; `FULL_PULL` is the safety net). Confirm.
-   ANSWER:
+   ANSWER: Accepted and documented (connector, helper, `CONNECTOR_GUIDE.md`, matrix). No special >10k handling in v1; the watermark advances by what returned, bootstrap is always full, and `FULL_PULL` is the safety net.
 3. **Linear filter input-type names** — `FILTER_TYPE_MAP` (`issues → IssueFilter`, etc.) and each type's `updatedAt` comparator must be verified against the Linear SDK / GraphQL introspection during implementation. Implementation detail, not a product decision — flagged so it isn't missed.
    ANSWER: Verified against `@linear/sdk`'s generated documents (`node_modules/@linear/sdk/dist/_generated_documents.d.ts`). All six filter input types exist exactly as predicted — `issues → IssueFilter`, `projects → ProjectFilter`, `teams → TeamFilter`, `users → UserFilter`, `labels → IssueLabelFilter`, `cycles → CycleFilter` — and each exposes `updatedAt?: InputMaybe<DateComparator>`, where `DateComparator.gt` accepts a `DateTimeOrDuration` (an ISO-8601 string). `FILTER_TYPE_MAP` was implemented with these names; the per-entity mapping is asserted in `linear-api-client-incremental.spec.ts`.

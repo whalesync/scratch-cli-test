@@ -252,6 +252,143 @@ describe('HubspotConnector with fake API', () => {
     });
   });
 
+  describe('incremental pull (CRM Search API)', () => {
+    const OLD_MODIFIED = '2026-01-01T00:00:00.000Z';
+    const NEW_MODIFIED = '2026-05-01T00:00:00.000Z';
+    // Between OLD and NEW, far enough from both that the 60s clock-skew margin
+    // can't pull OLD records back in or push NEW ones out.
+    const SINCE = new Date('2026-03-01T00:00:00.000Z');
+
+    /** Run an incremental pull, collecting files and returning them with the result. */
+    async function pullIncremental(
+      connector: HubspotConnector,
+      tableSpec: BaseJsonTableSpec,
+      since: Date,
+    ): Promise<{ files: ConnectorFile[]; result: { newWatermark?: Date } }> {
+      const files: ConnectorFile[] = [];
+      const result = await connector.pullRecordFiles(
+        tableSpec,
+        async ({ files: batch }) => {
+          files.push(...batch);
+        },
+        {},
+        { pullMode: 'incremental', since },
+      );
+      return { files, result };
+    }
+
+    function emailsOf(files: ConnectorFile[]): string[] {
+      return files.map((f) => (f as unknown as { properties: Record<string, string> }).properties.email);
+    }
+
+    it('reports incrementalPullSupport=SUPPORTED for contacts (lastmodifieddate is auto-detected)', async () => {
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      expect(connector.incrementalPullSupport({}, spec)).toBe('SUPPORTED');
+    });
+
+    it('returns only records modified after the clock-skewed watermark, plus the new watermark', async () => {
+      seedContacts([
+        { email: 'old1@example.com', firstname: 'Old1' },
+        { email: 'old2@example.com', firstname: 'Old2' },
+        { email: 'changed@example.com', firstname: 'Changed' },
+      ]);
+      const contacts = store.listRecords('contacts');
+      // Park every contact well before the watermark...
+      for (const c of contacts) {
+        store.setModifiedAt('contacts', c.id, OLD_MODIFIED);
+      }
+      // ...then "edit" exactly one so it lands after the watermark.
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const changed = contacts.find((c) => c.properties.email === 'changed@example.com')!;
+      store.setModifiedAt('contacts', changed.id, NEW_MODIFIED);
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+      const before = Date.now();
+      const { files, result } = await pullIncremental(connector, spec, SINCE);
+      const after = Date.now();
+
+      expect(emailsOf(files)).toEqual(['changed@example.com']);
+      expect(result.newWatermark).toBeInstanceOf(Date);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(result.newWatermark!.getTime()).toBeGreaterThanOrEqual(before);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(result.newWatermark!.getTime()).toBeLessThanOrEqual(after);
+    });
+
+    it('paginates the search across multiple pages (page size 100)', async () => {
+      // 150 changed contacts → two search pages.
+      seedContacts(Array.from({ length: 150 }, (_, i) => ({ email: `changed${i}@example.com`, firstname: `C${i}` })));
+      for (const c of store.listRecords('contacts')) {
+        store.setModifiedAt('contacts', c.id, NEW_MODIFIED);
+      }
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+
+      const batches: ConnectorFile[][] = [];
+      const result = await connector.pullRecordFiles(
+        spec,
+        async ({ files }) => {
+          batches.push(files);
+        },
+        {},
+        { pullMode: 'incremental', since: SINCE },
+      );
+
+      expect(batches.length).toBeGreaterThan(1);
+      expect(batches.reduce((sum, b) => sum + b.length, 0)).toBe(150);
+      expect(result.newWatermark).toBeInstanceOf(Date);
+    });
+
+    it('omits associations on incremental pulls (documented limitation; full pulls still include them)', async () => {
+      const contact = store.addRecord('contacts', { email: 'linked@example.com', firstname: 'Linked' });
+      const company = store.addRecord('companies', { name: 'Acme Corp' });
+      store.addAssociation('contacts', contact.id, 'companies', company.id);
+      store.setModifiedAt('contacts', contact.id, NEW_MODIFIED);
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(CONTACTS_ENTITY_ID);
+
+      // Full pull includes associations (baseline)...
+      const fullFiles = await collectPulledFiles(connector, spec);
+      expect((fullFiles[0] as unknown as { associations?: unknown }).associations).toBeDefined();
+
+      // ...incremental (via Search) does not.
+      const { files } = await pullIncremental(connector, spec, SINCE);
+      expect(files).toHaveLength(1);
+      expect((files[0] as unknown as { associations?: unknown }).associations).toBeUndefined();
+    });
+
+    it('demotes to a full pull when the object exposes no last-modified property (custom object)', async () => {
+      const CUSTOM_ENTITY_ID: EntityId = { wsId: 'p999_widgets', remoteId: ['p999_widgets'] };
+      // A custom object whose property set has no hs_lastmodifieddate/lastmodifieddate
+      // → nothing to auto-detect, no explicit override → NEEDS_CONFIGURATION.
+      store.setProperties('p999_widgets', [
+        {
+          name: 'widget_name',
+          label: 'Widget Name',
+          type: 'string',
+          fieldType: 'text',
+          description: '',
+          hidden: false,
+        },
+      ]);
+      store.addRecord('p999_widgets', { widget_name: 'W1' });
+      store.addRecord('p999_widgets', { widget_name: 'W2' });
+
+      const connector = createConnector();
+      const spec = await connector.fetchJsonTableSpec(CUSTOM_ENTITY_ID);
+      expect(connector.incrementalPullSupport({}, spec)).toBe('NEEDS_CONFIGURATION');
+
+      const { files, result } = await pullIncremental(connector, spec, SINCE);
+      // Demoted: full scan via the list endpoint returns every record, no watermark.
+      expect(files).toHaveLength(2);
+      expect(result).toEqual({});
+    });
+  });
+
   describe('pullRecordFilesByIds', () => {
     it('pulls only the requested records', async () => {
       seedContacts([

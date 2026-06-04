@@ -1,4 +1,4 @@
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, ConnectorSettingDefinition, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
@@ -16,6 +16,7 @@ import {
   ConnectorErrorDetails,
   ConnectorFile,
   EntityId,
+  findLastModifiedFieldName,
   PullRecordFilesOptions,
   PullRecordFilesResult,
   TablePreview,
@@ -34,6 +35,44 @@ import {
 const LOG_SOURCE = 'HubspotConnector';
 
 /**
+ * Resolve the property name to use for the modified-since filter, preferring an
+ * explicit user setting over the schema-annotated auto-detection. Pure (no
+ * `this`) so both the connector instance and the REST-layer capability resolver
+ * can call it. A `null` tableSpec means no schema is on hand, so only an
+ * explicit `options.modifiedAtField` can resolve. The resolved name is the
+ * HubSpot property key (e.g. `hs_lastmodifieddate`), which is exactly what the
+ * CRM Search API filters and sorts on.
+ */
+export function resolveHubspotModifiedAtField(
+  options: PullRecordFilesOptions,
+  tableSpec: BaseJsonTableSpec | null,
+): string | undefined {
+  if (typeof options.modifiedAtField === 'string' && options.modifiedAtField.trim() !== '') {
+    return options.modifiedAtField.trim();
+  }
+  return tableSpec ? findLastModifiedFieldName(tableSpec) : undefined;
+}
+
+/**
+ * Three-state incremental-pull capability for HubSpot. Standard objects expose
+ * an auto-detectable modified-date property (`hs_lastmodifieddate` /
+ * `lastmodifieddate`) → `SUPPORTED`. A custom object whose modified-date
+ * property the annotation missed has no resolvable field until the user declares
+ * one via the `modifiedAtField` advanced setting → `NEEDS_CONFIGURATION` (never
+ * `NOT_SUPPORTED`, since any HubSpot object the user configures can be searched).
+ * With a `null` tableSpec the field can't be auto-detected yet; the REST layer
+ * reads the schema and re-resolves whenever the answer isn't already `SUPPORTED`.
+ */
+export function hubspotIncrementalPullSupport(
+  options: PullRecordFilesOptions,
+  tableSpec: BaseJsonTableSpec | null,
+): IncrementalPullSupport {
+  return resolveHubspotModifiedAtField(options, tableSpec) !== undefined
+    ? IncrementalPullSupport.SUPPORTED
+    : IncrementalPullSupport.NEEDS_CONFIGURATION;
+}
+
+/**
  * Connector for HubSpot CRM.
  *
  * Supports all standard CRM objects (contacts, companies, deals, tickets, etc.),
@@ -50,6 +89,9 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     table: 'object',
     tables: 'objects',
     logo: 'https://static.scratch.md/connector-icons/hubspot.svg',
+    incrementalPull: true,
+    incrementalPullInstructions:
+      'Incremental pull downloads only records changed since the last pull, based on each object’s last-modified date (e.g. hs_lastmodifieddate). Standard objects are detected automatically; for a custom object whose last-modified property is not detected, select it in the advanced settings. Note: incremental pulls refresh record properties but not associations — associations are reconciled by periodic full pulls.',
     credentialFields: {
       user_provided_params: [
         {
@@ -63,6 +105,16 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     },
     userProvidedParamsLabel: 'Private App Token',
   });
+  static readonly advancedSettings: ConnectorSettingDefinition[] = [
+    {
+      key: 'modifiedAtField',
+      type: 'field-select',
+      label: 'Last modified date property',
+      description:
+        'Select the property that records this object’s last-modified date to enable incremental pulls. Standard objects are detected automatically; set this for a custom object whose property was not detected.',
+      placeholder: 'e.g. hs_lastmodifieddate',
+    },
+  ];
 
   private readonly client: HubspotApiClient;
 
@@ -144,20 +196,67 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   }
 
   /**
-   * Pull all records for an object type using cursor pagination.
-   * Includes associations in the response.
+   * HubSpot supports incremental pulls when we know which property records the
+   * object's last-modified date. Resolution order:
+   *   1. Explicit `options.modifiedAtField` set on the data folder.
+   *   2. Auto-detected property annotated `x-scratch-last-modified-field`
+   *      (`hs_lastmodifieddate` / `lastmodifieddate` — the schema builder
+   *      annotates whichever the object exposes).
+   * Standard objects auto-detect with zero config; a custom object whose
+   * modified-date property the annotation missed reports `NEEDS_CONFIGURATION`
+   * until the user declares the property.
+   */
+  override incrementalPullSupport(
+    options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    return hubspotIncrementalPullSupport(options, tableSpec);
+  }
+
+  /**
+   * Pull records for an object type using cursor pagination.
+   *
+   * Full pull (default): scan every record via the list endpoint, including
+   * associations. Incremental pull: switch to the CRM Search API filtered by the
+   * resolved modified-date property (the clock-skewed watermark), and return the
+   * new watermark for the job to persist. The Search API returns `properties`
+   * but not `associations`, so incremental pulls don't refresh association data
+   * — the periodic full pull reconciles association drift.
    */
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: HubspotDownloadProgress }) => Promise<void>,
     progress: HubspotDownloadProgress,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: PullRecordFilesOptions,
+    options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const objectType = tableSpec.id.remoteId[0];
     const propertyNames = await this.getPropertyNames(objectType);
-    const associations = this.getAssociationTypes(objectType);
 
+    const modifiedAtField = resolveHubspotModifiedAtField(options, tableSpec);
+    const isIncremental =
+      options.pullMode === 'incremental' && modifiedAtField !== undefined && options.since instanceof Date;
+
+    if (isIncremental && options.since && modifiedAtField) {
+      // Capture the start-of-pull timestamp BEFORE the first API call so records
+      // changed mid-pull aren't lost on the next run. Idempotent commits absorb
+      // any duplicates this overlap creates.
+      const newWatermark = new Date();
+      for await (const batch of this.client.searchRecordsModifiedSince(
+        objectType,
+        propertyNames,
+        modifiedAtField,
+        options.since,
+        progress.afterCursor,
+      )) {
+        await callback({
+          files: batch.records as unknown as ConnectorFile[],
+          connectorProgress: { afterCursor: batch.nextCursor },
+        });
+      }
+      return { newWatermark };
+    }
+
+    const associations = this.getAssociationTypes(objectType);
     for await (const batch of this.client.listRecords(objectType, propertyNames, associations, progress.afterCursor)) {
       await callback({
         files: batch.records as unknown as ConnectorFile[],
@@ -472,8 +571,10 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
 connectorRegistry.register({
   service: Service.HUBSPOT,
   metadata: HubspotConnector.metadata,
-  advancedSettings: [],
+  advancedSettings: HubspotConnector.advancedSettings,
   supportedAuthMethods: ['user_provided_params'],
+  resolveIncrementalPullSupport: ({ options, tableSpec }) => hubspotIncrementalPullSupport(options, tableSpec),
+  incrementalPullAutoDetectsFromSchema: true,
   rateLimiterSpec: { points: 10, duration: 1 }, // 10 req/s — HubSpot private apps allow 100 req/10s
   // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {

@@ -116,6 +116,24 @@ class Store {
     return record;
   }
 
+  /**
+   * Override a record's last-modified timestamp (both `updatedAt` and the
+   * `lastmodifieddate` property) to a fixed ISO string. Lets incremental-pull
+   * tests place records deterministically before/after a chosen watermark
+   * instead of depending on wall-clock timing.
+   */
+  setModifiedAt(
+    objectType: string,
+    recordId: string,
+    isoTimestamp: string,
+  ): boolean {
+    const record = this.records.get(objectType)?.get(recordId);
+    if (!record) return false;
+    record.updatedAt = isoTimestamp;
+    record.properties.lastmodifieddate = isoTimestamp;
+    return true;
+  }
+
   deleteRecord(objectType: string, recordId: string): boolean {
     const record = this.records.get(objectType)?.get(recordId);
     if (!record) return false;

@@ -1,6 +1,11 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
-import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
+import {
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
+  X_SCRATCH_READONLY,
+  X_SCRATCH_REMOTE_FIELD_ID,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { HubspotApiClient } from './hubspot-api-client';
@@ -12,7 +17,7 @@ import { ASSOCIATIONS_BY_OBJECT_TYPE, HubspotProperty, OBJECT_CONFIG } from './h
  * We store the raw API response as-is, so all property fields are String | Null.
  * The CONNECTOR_DATA_TYPE annotation carries the semantic type for UI/transformers.
  */
-export function hubspotPropertyToJsonSchema(property: HubspotProperty): TSchema {
+export function hubspotPropertyToJsonSchema(property: HubspotProperty, isLastModifiedField = false): TSchema {
   const connectorDataType = resolveConnectorDataType(property);
   const isReadonly = property.modificationMetadata?.readOnlyValue === true;
 
@@ -26,7 +31,29 @@ export function hubspotPropertyToJsonSchema(property: HubspotProperty): TSchema 
     annotations[X_SCRATCH_READONLY] = true;
   }
 
+  // Mark the object's last-modified property so the generic incremental-pull
+  // layer (auto-detect + the client's last-modified-field picker) can find it.
+  if (isLastModifiedField) {
+    annotations[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
+  }
+
   return Type.Union([Type.String(), Type.Null()], annotations);
+}
+
+/**
+ * Candidate HubSpot last-modified property names, in priority order. Most CRM
+ * objects expose `hs_lastmodifieddate`; contacts use `lastmodifieddate`. Custom
+ * objects vary — when neither candidate is present, the user can declare the
+ * property explicitly via the `modifiedAtField` advanced setting.
+ */
+const LAST_MODIFIED_PROPERTY_CANDIDATES = ['hs_lastmodifieddate', 'lastmodifieddate'] as const;
+
+/**
+ * Pick the modified-date property to annotate, preferring `hs_lastmodifieddate`
+ * over `lastmodifieddate`. Returns `undefined` when the object exposes neither.
+ */
+export function resolveHubspotLastModifiedPropertyName(propertyNames: Set<string>): string | undefined {
+  return LAST_MODIFIED_PROPERTY_CANDIDATES.find((candidate) => propertyNames.has(candidate));
 }
 
 /**
@@ -89,10 +116,14 @@ export async function buildHubspotJsonTableSpec(
   const properties = await client.getProperties(objectType);
   const propertyNames = properties.map((p) => p.name);
 
+  // Annotate the object's last-modified property (if present) so incremental
+  // pulls can auto-detect it. Resolved per object type because the name varies.
+  const lastModifiedPropertyName = resolveHubspotLastModifiedPropertyName(new Set(propertyNames));
+
   // Build the properties sub-object schema
   const propertiesSchema: Record<string, TSchema> = {};
   for (const property of properties) {
-    propertiesSchema[property.name] = hubspotPropertyToJsonSchema(property);
+    propertiesSchema[property.name] = hubspotPropertyToJsonSchema(property, property.name === lastModifiedPropertyName);
   }
 
   // Build top-level record schema matching raw API response

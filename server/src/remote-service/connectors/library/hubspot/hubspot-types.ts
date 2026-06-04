@@ -173,6 +173,33 @@ export interface HubspotBatchReadResponse {
   results: HubspotRecord[];
 }
 
+/**
+ * Request body for the CRM Search API (`POST /crm/v3/objects/{type}/search`),
+ * used by incremental pulls to filter records by their modified-date property.
+ */
+export interface HubspotSearchRequestBody {
+  filterGroups: { filters: { propertyName: string; operator: string; value: string }[] }[];
+  sorts: { propertyName: string; direction: 'ASCENDING' | 'DESCENDING' }[];
+  properties: string[];
+  limit: number;
+  after?: string;
+}
+
+/**
+ * Response envelope for the CRM Search API. Mirrors the list response's paging
+ * shape but, unlike the list endpoint, never includes `associations` on the
+ * returned records (a documented incremental-pull limitation).
+ */
+export interface HubspotSearchResponse {
+  total: number;
+  results: HubspotRecord[];
+  paging?: {
+    next?: {
+      after: string;
+    };
+  };
+}
+
 export interface HubspotRemoteError {
   status: string;
   message: string;

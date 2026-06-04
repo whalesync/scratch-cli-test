@@ -2,6 +2,7 @@ import { AxiosInstance, isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
+import { buildHubspotModifiedSinceSearch } from './hubspot-incremental';
 import {
   HubspotBatchReadResponse,
   HubspotCustomObjectSchemasResponse,
@@ -9,6 +10,7 @@ import {
   HubspotPropertiesResponse,
   HubspotProperty,
   HubspotRecord,
+  HubspotSearchResponse,
 } from './hubspot-types';
 
 const LOG_SOURCE = 'HubspotApiClient';
@@ -179,6 +181,50 @@ export class HubspotApiClient {
 
       const response = await this.withRetry(async () =>
         this.http.get<HubspotListResponse>(`/crm/v3/objects/${objectType}`, { params }),
+      );
+
+      const results = response.data.results.filter((r) => !r.archived);
+      after = response.data.paging?.next?.after;
+
+      if (results.length > 0) {
+        yield { records: results, nextCursor: after };
+      }
+    } while (after);
+  }
+
+  // --- Incremental record search (cursor-paginated async generator) ---
+
+  /**
+   * List records modified on or after `since` using the CRM Search API.
+   * Yields batches sorted ascending by the modified-date property, paginated via
+   * the search `after` cursor.
+   *
+   * Unlike {@link listRecords}, the Search API returns `properties` but **not**
+   * `associations` — incremental pulls therefore don't refresh association data
+   * (reconciled by the periodic full pull). A single Search result set is also
+   * capped at 10,000 records by HubSpot; the watermark advances by what returned
+   * and the next run continues from there.
+   *
+   * @param objectType - The CRM object type to search.
+   * @param propertyNames - All property names to request (HubSpot only returns default properties otherwise).
+   * @param modifiedAtField - The modified-date property to filter and sort on (e.g. `hs_lastmodifieddate`).
+   * @param since - Watermark; the builder subtracts the clock-skew margin and renders epoch-ms.
+   * @param startAfter - Optional cursor to resume from.
+   */
+  async *searchRecordsModifiedSince(
+    objectType: string,
+    propertyNames: string[],
+    modifiedAtField: string,
+    since: Date,
+    startAfter?: string,
+  ): AsyncGenerator<{ records: HubspotRecord[]; nextCursor: string | undefined }> {
+    let after: string | undefined = startAfter;
+
+    do {
+      const body = buildHubspotModifiedSinceSearch(modifiedAtField, since, propertyNames, after);
+
+      const response = await this.withRetry(async () =>
+        this.http.post<HubspotSearchResponse>(`/crm/v3/objects/${objectType}/search`, body),
       );
 
       const results = response.data.results.filter((r) => !r.archived);

@@ -164,6 +164,107 @@ router.post("/objects/:objectType/batch/read", (req, res) => {
   res.json({ status: "COMPLETE", results });
 });
 
+// --- CRM Search API (incremental pull) ---
+
+const SEARCH_PAGE_SIZE = 100;
+
+interface SearchFilter {
+  propertyName: string;
+  operator: string;
+  value: string;
+}
+
+/**
+ * Compare a record's date-valued property (stored as an ISO string) against the
+ * filter value (epoch milliseconds, as the connector sends). Returns false when
+ * the property is absent so a record without the modified field never matches.
+ */
+function recordMatchesFilter(
+  record: HubspotRecord,
+  filter: SearchFilter,
+): boolean {
+  const raw = record.properties[filter.propertyName];
+  if (raw === null || raw === undefined) return false;
+  const recordMs = Date.parse(raw);
+  const filterMs = Number(filter.value);
+  if (Number.isNaN(recordMs) || Number.isNaN(filterMs)) return false;
+  switch (filter.operator) {
+    case "GTE":
+      return recordMs >= filterMs;
+    case "GT":
+      return recordMs > filterMs;
+    case "LTE":
+      return recordMs <= filterMs;
+    case "LT":
+      return recordMs < filterMs;
+    case "EQ":
+      return recordMs === filterMs;
+    default:
+      return true;
+  }
+}
+
+/**
+ * Minimal model of `POST /crm/v3/objects/{type}/search`: AND-filter the first
+ * filter group, sort by the first sort spec, and offset-paginate via a numeric
+ * `after` cursor. Unlike the list endpoint, the Search API never returns
+ * `associations` — the response only carries `properties`.
+ */
+router.post("/objects/:objectType/search", (req, res) => {
+  const { objectType } = req.params;
+  const {
+    filterGroups,
+    sorts,
+    properties: requestedProperties,
+    limit,
+    after,
+  } = req.body ?? {};
+
+  const pageSize = limit
+    ? Math.min(parseInt(String(limit), 10), 200)
+    : SEARCH_PAGE_SIZE;
+
+  let records = store.listRecords(objectType);
+
+  const filters: SearchFilter[] = filterGroups?.[0]?.filters ?? [];
+  for (const filter of filters) {
+    records = records.filter((r) => recordMatchesFilter(r, filter));
+  }
+
+  const sort = sorts?.[0];
+  if (sort) {
+    const direction = sort.direction === "DESCENDING" ? -1 : 1;
+    records = [...records].sort((a, b) => {
+      const av = Date.parse(a.properties[sort.propertyName] ?? "") || 0;
+      const bv = Date.parse(b.properties[sort.propertyName] ?? "") || 0;
+      // Stable tiebreak on numeric id so equal timestamps page deterministically.
+      if (av === bv) return (Number(a.id) - Number(b.id)) * direction;
+      return (av - bv) * direction;
+    });
+  }
+
+  const total = records.length;
+  const startIndex = after ? parseInt(String(after), 10) : 0;
+  const page = records.slice(startIndex, startIndex + pageSize);
+  const nextIndex = startIndex + pageSize;
+
+  const response: Record<string, unknown> = {
+    total,
+    results: page.map((r) => {
+      // Search responses carry properties only — strip associations.
+      const serialized = serializeRecord(r, requestedProperties);
+      delete serialized.associations;
+      return serialized;
+    }),
+  };
+
+  if (nextIndex < total) {
+    response.paging = { next: { after: String(nextIndex) } };
+  }
+
+  res.json(response);
+});
+
 // Create record
 router.post("/objects/:objectType", (req, res) => {
   const { objectType } = req.params;
