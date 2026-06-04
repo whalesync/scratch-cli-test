@@ -7,6 +7,14 @@ import { FlagDataType } from './types';
  */
 export enum SystemFeatureFlag {
   SAMPLE_SYSTEM_FLAG = 'sample_system_flag',
+  /**
+   * DEV-10316 kill switch. When enabled for an organization, the
+   * `/upload-patch/commit` endpoint refuses a desktop/CLI publish whose
+   * connection still has unpublished changes on the server (the dirty gate).
+   * Break-glass, not a neutral toggle: turning it OFF restores the original
+   * over-publish behavior. Evaluated per-org via `getBooleanFlagForOrg`.
+   */
+  DESKTOP_DIRTY_GATE_ENABLED = 'desktop_dirty_gate_enabled',
 }
 
 /**

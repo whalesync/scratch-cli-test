@@ -57,11 +57,42 @@ export class UploadPatchCommitDto {
   @IsBoolean()
   @IsOptional()
   refuseIfStale?: boolean;
+
+  /**
+   * Strict-mode flag for the DEV-10316 dirty gate. When `true` (and the
+   * `desktop_dirty_gate_enabled` kill switch is on), the server refuses the
+   * commit with HTTP 409 + structured `UploadPatchBlockedDirtyResponseDto` if
+   * the connection's `dirty` branch already holds unpublished record changes
+   * versus live `refs/heads/main`. This keeps the desktop/CLI from piling its
+   * approved edits onto a staging area that isn't already clean (which is how
+   * the automated web sync's staged changes got swept into a desktop publish).
+   * The check runs BEFORE the staleness gate, the job enqueue, and the audit
+   * log, so a refusal leaves zero side effects. Default `false` keeps the
+   * legacy behavior — only updated desktop/CLI clients send it.
+   */
+  @IsBoolean()
+  @IsOptional()
+  refuseIfDirty?: boolean;
+
+  /**
+   * Two-pass probe flag. When `true`, the server runs the gates (including the
+   * `refuseIfDirty` dirty check) and returns `{ jobId: null }` WITHOUT
+   * enqueueing the ApplyPatches job or writing an audit log. The CLI's
+   * `files upload` runs a `checkOnly` pass over every connection first and only
+   * proceeds to the real apply pass if every connection is clean — so a single
+   * dirty connection blocks the whole publish with nothing uploaded. Default
+   * `false` performs the real apply.
+   */
+  @IsBoolean()
+  @IsOptional()
+  checkOnly?: boolean;
 }
 
 export type ValidatedUploadPatchCommitDto = Required<Pick<UploadPatchCommitDto, 'uploadId' | 'connectorAccountId'>> & {
   baseHead?: string;
   refuseIfStale?: boolean;
+  refuseIfDirty?: boolean;
+  checkOnly?: boolean;
 };
 
 export interface UploadPatchCommitResponseDto {
@@ -82,6 +113,41 @@ export interface UploadPatchBlockedStaleResponseDto {
   /** The server's current `refs/heads/main` SHA for the connection's repo. */
   currentRemoteHead: string;
   /** Human-readable message; NestJS sets this automatically from ConflictException. */
+  message?: string;
+}
+
+/**
+ * Body shape of the HTTP 409 response from `/upload-patch/commit` when
+ * `refuseIfDirty === true` and the connection's `dirty` branch already holds
+ * unpublished record changes versus live `refs/heads/main` (DEV-10316). This
+ * is intentionally **count-only**: the desktop can't show the user the
+ * server's staging area, so it surfaces a name + total and redirects to the
+ * web review screen rather than listing records. Returned via a NestJS
+ * `ConflictException` whose body serializes as `{ statusCode: 409, ...this }`.
+ */
+export interface UploadPatchBlockedDirtyResponseDto {
+  status: 'blocked_dirty';
+  /** The connection whose staging area is not clean. */
+  connectorAccountId: string;
+  /** Total pending (unpublished) record changes on the connection vs live `main`. Count-only UI. */
+  dirtyCount: number;
+  /** Human-readable message; NestJS sets this automatically from ConflictException. */
+  message?: string;
+}
+
+/**
+ * Body shape of the HTTP 503 response from `/upload-patch/commit` when the
+ * dirty-gate check itself could not run (the git service is down or busy).
+ * Fail-closed: the publish is held with a retryable error rather than risking
+ * an unguarded upload. Distinct from `blocked_dirty` because the failure is
+ * transient — the desktop/CLI offers a "Try again" affordance. Returned via a
+ * NestJS `ServiceUnavailableException`.
+ */
+export interface UploadPatchCheckFailedResponseDto {
+  status: 'check_failed';
+  /** The connection whose state could not be verified. */
+  connectorAccountId: string;
+  /** Human-readable message; NestJS sets this automatically from ServiceUnavailableException. */
   message?: string;
 }
 

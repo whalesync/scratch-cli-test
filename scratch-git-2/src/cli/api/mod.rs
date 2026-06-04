@@ -732,6 +732,8 @@ impl ApiClient {
         upload_id: &str,
         base_head: Option<&str>,
         refuse_if_stale: bool,
+        refuse_if_dirty: bool,
+        check_only: bool,
     ) -> ApiResult<UploadPatchCommitResult> {
         let mut body = serde_json::json!({
             "uploadId": upload_id,
@@ -743,6 +745,12 @@ impl ApiClient {
         if refuse_if_stale {
             body["refuseIfStale"] = serde_json::Value::Bool(true);
         }
+        if refuse_if_dirty {
+            body["refuseIfDirty"] = serde_json::Value::Bool(true);
+        }
+        if check_only {
+            body["checkOnly"] = serde_json::Value::Bool(true);
+        }
         match self
             .post::<_, UploadPatchCommitResponse>(
                 &format!("workbooks/{}/upload-patch/commit", workbook_id),
@@ -753,15 +761,35 @@ impl ApiClient {
             Ok(applied) => Ok(UploadPatchCommitResult::Applied(applied)),
             Err(ApiError::ServerError { status: 409, body }) => {
                 // NestJS's `ConflictException(payload)` serializes as
-                // `{ statusCode: 409, ...payload }`. Parse strictly: the
-                // `status: "blocked_stale"` tag confirms this is the
-                // refuseIfStale response and not some unrelated 409.
+                // `{ statusCode: 409, ...payload }`. Discriminate on the
+                // `status` tag: `blocked_dirty` (DEV-10316 dirty gate) takes
+                // precedence over `blocked_stale` (refuseIfStale) — pending
+                // changes are surfaced before staleness. Anything else is an
+                // unrelated 409 and propagates as an error.
+                if let Ok(dirty) = serde_json::from_str::<BlockedDirtyResponse>(&body) {
+                    if dirty.status == "blocked_dirty" {
+                        return Ok(UploadPatchCommitResult::BlockedDirty(dirty));
+                    }
+                }
                 if let Ok(stale) = serde_json::from_str::<BlockedStaleResponse>(&body) {
                     if stale.status == "blocked_stale" {
                         return Ok(UploadPatchCommitResult::BlockedStale(stale));
                     }
                 }
                 Err(ApiError::ServerError { status: 409, body })
+            }
+            Err(ApiError::ServerError { status: 503, body }) => {
+                // Fail-closed dirty-gate check failure. NestJS's
+                // `ServiceUnavailableException(payload)` serializes as
+                // `{ statusCode: 503, ...payload }`. The `check_failed` tag
+                // confirms it's the retryable gate-check failure and not some
+                // unrelated 503.
+                if let Ok(failed) = serde_json::from_str::<CheckFailedResponse>(&body) {
+                    if failed.status == "check_failed" {
+                        return Ok(UploadPatchCommitResult::CheckFailed(failed));
+                    }
+                }
+                Err(ApiError::ServerError { status: 503, body })
             }
             Err(e) => Err(e),
         }
@@ -858,13 +886,52 @@ pub struct BlockedStaleResponse {
     pub message: Option<String>,
 }
 
+/// Body shape of the HTTP 409 response from `/upload-patch/commit` when
+/// `refuseIfDirty: true` and the connection's `dirty` branch holds unpublished
+/// record changes vs live `refs/heads/main` (DEV-10316). Count-only. Mirrors
+/// `UploadPatchBlockedDirtyResponseDto` in `@spinner/shared-types`.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct BlockedDirtyResponse {
+    /// Always `"blocked_dirty"` for this response shape.
+    pub status: String,
+    /// The connection whose staging area is not clean.
+    #[serde(rename = "connectorAccountId")]
+    pub connector_account_id: String,
+    /// Total pending (unpublished) record changes vs live `main`. Count-only.
+    #[serde(rename = "dirtyCount")]
+    pub dirty_count: u64,
+    /// Human-readable message from `ConflictException`.
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// Body shape of the HTTP 503 response from `/upload-patch/commit` when the
+/// dirty-gate check itself could not run (the git service is down or busy).
+/// Fail-closed and retryable. Mirrors `UploadPatchCheckFailedResponseDto` in
+/// `@spinner/shared-types`.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct CheckFailedResponse {
+    /// Always `"check_failed"` for this response shape.
+    pub status: String,
+    /// The connection whose state could not be verified.
+    #[serde(rename = "connectorAccountId")]
+    pub connector_account_id: String,
+    /// Human-readable message from `ServiceUnavailableException`.
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
 /// Outcome of [`ApiClient::upload_patch_commit`]. Either the patches were
-/// applied (legacy or fresh-state path) or the server refused with a
-/// structured `blocked_stale` payload (refuseIfStale strict-mode path).
+/// applied (legacy or fresh-state path), or the server refused with a
+/// structured payload: `blocked_stale` (refuseIfStale strict-mode),
+/// `blocked_dirty` (DEV-10316 dirty gate), or `check_failed` (the dirty-gate
+/// check itself failed — retryable).
 #[derive(Debug)]
 pub enum UploadPatchCommitResult {
     Applied(UploadPatchCommitResponse),
     BlockedStale(BlockedStaleResponse),
+    BlockedDirty(BlockedDirtyResponse),
+    CheckFailed(CheckFailedResponse),
 }
 
 /// Wire format for the body uploaded to the presigned GCS PUT URL. Mirrors

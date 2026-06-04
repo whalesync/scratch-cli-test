@@ -322,6 +322,19 @@ export class ScratchGitService {
     return this.scratchGitClient.getStatusCount(repoId);
   }
 
+  /**
+   * Read-only count of pending (unpublished) record changes on `dirty`
+   * measured against live `refs/heads/main`. Backs the DEV-10316 dirty gate
+   * (`UploadPatchController.commit`): if this is > 0 for a connection, the
+   * desktop/CLI is refused so it never piles its approved edits onto a staging
+   * area that isn't already clean. Diffs against `main` (not the `merge_base`
+   * tag) so a routine pull doesn't false-positive — see decision #6.
+   */
+  async getPendingChangeCountVsMain(repoId: string): Promise<number> {
+    const { count } = await this.scratchGitClient.getStatusCountVsMain(repoId);
+    return count;
+  }
+
   async getFileDiff(repoId: string, path: string): Promise<string> {
     return this.scratchGitClient.getDiff(repoId, path);
   }

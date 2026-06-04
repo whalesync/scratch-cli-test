@@ -3,7 +3,7 @@ import { User, UserRole } from '@prisma/client';
 import { PostHog } from 'posthog-node';
 import { ScratchConfigService } from '../config/scratch-config.service';
 import { WSLogger } from '../logger';
-import { AllFeatureFlags, ClientUserFlags, UserFlag } from './flags';
+import { AllFeatureFlags, ClientUserFlags, SystemFeatureFlag, UserFlag } from './flags';
 import { ExperimentFlagVariantValue, FlagDataType, JsonValue } from './types';
 
 export type UserFlagValues = Partial<Record<UserFlag, ExperimentFlagVariantValue>>;
@@ -91,6 +91,44 @@ export class ExperimentsService implements OnModuleDestroy {
       WSLogger.warn({
         source: ExperimentsService.name,
         message: `Failed to evaluate boolean flag "${flag}"`,
+        error: err,
+      });
+      return defaultValue;
+    }
+  }
+
+  /**
+   * Gets a boolean SYSTEM flag value scoped to an organization. Used for
+   * org-level kill switches / staged rollouts — e.g. the DEV-10316
+   * `desktop_dirty_gate_enabled` gate. The organization id is used as the
+   * PostHog distinct id, so a flag configured with a percentage rollout or a
+   * `distinct_id` release condition evaluates deterministically per org; we
+   * can enable specific orgs first (e.g. one customer) without shipping a new
+   * desktop/CLI build. (This codebase does not register PostHog group
+   * analytics, so org targeting rides on the distinct id rather than a group
+   * context.) Returns `defaultValue` when PostHog is disabled or the lookup
+   * throws — callers that need fail-closed behavior must guard the protected
+   * operation separately (the dirty gate does: it fail-closes on the git check
+   * itself, not on this flag read).
+   * @param flag - The system feature flag to evaluate
+   * @param defaultValue - Returned if PostHog is disabled or the lookup fails
+   * @param organizationId - The organization to scope the evaluation to
+   */
+  public async getBooleanFlagForOrg(
+    flag: SystemFeatureFlag,
+    defaultValue: boolean,
+    organizationId: string,
+  ): Promise<boolean> {
+    if (!this.posthog) {
+      return defaultValue;
+    }
+    try {
+      const result = await this.posthog.isFeatureEnabled(flag, organizationId);
+      return result ?? defaultValue;
+    } catch (err) {
+      WSLogger.warn({
+        source: ExperimentsService.name,
+        message: `Failed to evaluate org-scoped boolean flag "${flag}" for org ${organizationId}`,
         error: err,
       });
       return defaultValue;

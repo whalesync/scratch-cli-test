@@ -1,6 +1,6 @@
 # Block desktop publish/upload when the server has unpublished changes
 
-**Status**: Planned
+**Status**: In Progress — PR1 (server + CLI) complete, reviewed & green; PR2 (desktop) not started
 **Author**: Curtis Fonger
 **Created**: 2026-06-04
 **Linear**: [DEV-10316](https://linear.app/whalesync/issue/DEV-10316/publish-from-desktop-app-also-pushed-dirty-changes-from-web-app)
@@ -103,6 +103,7 @@ empty        | n/a — the modal only appears when changes exist
 - **Notify-an-admin / request-resolution** flow, for desktop users who lack web access to resolve someone else's pending changes.
 - **"Three publish runs" (ticket bug #2).** Each publish surfaces as three runs (an apply step, a ~1s no-op planning run, and the real publish). That's the existing decoupled architecture; worth a separate UX cleanup.
 - **Showing the pending-changes count at modal-open**, instead of when the user tries to upload. A nicety; the server-side block is the real protection.
+- **Harden the `merge_base`-tag lockstep invariant** (surfaced verifying risk #7). Make `resolve_merge_base_or_main` log loudly — or have publish-plan-build assert — when the `merge_base` tag is missing, instead of silently falling back to `main` (the only construible over-publish path, and only if the invariant is ever broken). Cheap defensive follow-up.
 
 ---
 
@@ -113,7 +114,20 @@ Everything below is for the engineer implementing the plan. Line numbers are aga
 ## Landing in two PRs
 
 - **PR1 — server + CLI.** shared-types DTO, the server gate (read-only-vs-`main` check, fail-closed 503, kill switch), and the CLI two-pass. The gate only fires when a client sends `refuseIfDirty: true`, which only updated clients do — so PR1 is **no regression** for un-updated desktops and protects `scratchmd` immediately.
-- **PR2 — desktop + TOCTOU.** The modal modes (count-only `dirty`, `checkFailed`, the TOCTOU lead) and the publish-time drift re-check. This carries the riskiest, most coupling-heavy piece on its own. **Verify the open risk (#7 in the [Review record](#review-record)) early in PR2.**
+- **PR2 — desktop + TOCTOU.** The modal modes (count-only `dirty`, `checkFailed`, the TOCTOU lead) and the publish-time drift re-check. This carries the riskiest, most coupling-heavy piece on its own. (Risk #7 — whether `rebaseDirty` could over-publish non-user records — was **verified and refuted** before implementation; see [Resolved — risk #7](#resolved--risk-7-rebasedirty-does-not-over-publish-non-user-records). The HEAD-snapshot re-check is sound as specified.)
+
+## PR1 implementation status — DONE (on branch `dev-10316-mr1`)
+
+Server + CLI landed. Deltas from the spec discovered during implementation (all faithful to the decisions, just different plumbing than the pseudocode assumed):
+
+- **Feature flag.** The controller pseudocode assumed `this.flags.isEnabled(...)`; the real server primitive is PostHog-backed `ExperimentsService`. Added `SystemFeatureFlag.DESKTOP_DIRTY_GATE_ENABLED` and a new **`ExperimentsService.getBooleanFlagForOrg(flag, default, orgId)`** (org id as the PostHog distinct id — this codebase wires no PostHog *group* analytics, so org-scoping rides on the distinct id; a flag with a `distinct_id` release condition / percentage rollout enables specific orgs first). Code-level default is **off** (gate active only when the flag evaluates true); a flag-read failure degrades to off, while the *git check* failure is the fail-closed 503.
+- **PostHog.** `PostHogService.captureEvent(PostHogEventName.DESKTOP_PUBLISH_BLOCKED_DIRTY, actor, { connectorAccountId, dirtyCount })`.
+- **vs-`main` count.** Implemented as a **`?base=main` query param on the existing scratch-git `count` route** (`diff.rs`), not a new route — backed by `ScratchGitService.getPendingChangeCountVsMain` → `ScratchGitClient.getStatusCountVsMain`. Returns 0 (clean) on a missing `main`/`dirty` ref, consistent with the existing count route.
+- **CLI two-pass / `checkOnly`.** The controller validates `uploadId` before the gate, so a `checkOnly` probe still carries an `uploadId`. Pass 1 therefore does `init` + `commit(checkOnly=true, refuseIfDirty=true)` per connection (no GCS PUT — the server's `checkOnly` path never reads the payload). **Pass 1 skips connections whose `accepted-patches.json` is empty** — a connection the user isn't publishing to must not be gated on its staging-area state. Pass 2 is the real `init`+PUT+`commit(apply)` with `refuseIfDirty` retained.
+- **`check_failed` precedence.** When pass 1 turns up both `blocked_dirty` and `check_failed` connections, the CLI's aggregated output reports `check_failed` (the "couldn't verify → try again" action re-probes everything) over the partial dirty redirect.
+- **`checkOnly` ordering.** `checkOnly` returns right after the dirty gate and **before** the staleness gate, so the probe never reports `blocked_stale` (decision #5: pending-changes before staleness; the apply pass enforces staleness).
+
+Tests: Rust route premise (`count_vs_main` vs lagging `merge_base`), CLI serde parse + structural discrimination, server unit + controller-level e2e for the full gate matrix (409 `blocked_dirty`, 503 `check_failed`, `checkOnly` no-side-effects, kill-switch off, dirty-wins-over-stale, legacy soft path). Full monorepo `yarn build` green; `cargo test` (864) green.
 
 ## Approach
 
@@ -265,9 +279,13 @@ The premise was challenged: the guardrail can block the **common** case, not the
 - **Adopted:** the gate must diff against `main`, not the lagging `merge_base` tag (else it false-positives after every pull); the fail-closed 503 needs a real retry affordance; the kill switch restores the bug when flipped, so it must be framed/guarded as break-glass.
 - **Rejected (kept the original):** swapping the post-apply HEAD-snapshot TOCTOU mechanism for a "plan ⊆ uploaded paths" assertion. The HEAD-snapshot approach stands — see the open risk below.
 
-## Open risk — verify early in PR2 (#7)
+## Resolved — risk #7 (rebaseDirty does not over-publish non-user records)
 
-The kept HEAD-snapshot mechanism does **not** cover whether `rebaseDirty` — which merges `main` into the dirty branch at publish-plan-build, before the diff — can pull non-user records into the publish set **independent** of the dirty-branch-sharing path the gate guards. The rejected "plan ⊆ uploaded paths" assertion would have caught this. Verify it early in PR2; if real, revisit the TOCTOU mechanism. Until verified, treat it as the open risk in this plan.
+**Verdict: refuted for normal operation** (verified 2026-06-04 by direct reading of `scratch-git-2/src/service/git/rebase.rs` plus a three-lens adversarial check). `rebase_dirty` forces `dirty` to `main` (`:72`), re-applies **only** the user's extracted edits on top (`:78–118`), and **advances the `merge_base` tag to `main` in the same call** (`:123`). The publish diff (`compare_commits(merge_base, dirty)`, `diff.rs:31`) therefore compares main's tree against main+{user edits}; main's records sit on **both** sides of the diff and cancel by blob-OID equality (`compare.rs`), leaving only the user's edits in the plan. This is exactly what the existing Rust tests show — `rebase_preserves_user_edits` / `rebase_no_user_edits_fast_forwards`: dirty's *tree* gains main's content, but the *diff* does not. The earlier "GAP" reading conflated "dirty's tree contains main's records" with "the diff contains them."
+
+The real contamination DEV-10316 fixes is the **dirty-branch-sharing** path (the automated sync writes records into `dirty` that are not on `main`), which the upload-time gate and the publish-time HEAD-snapshot re-check both guard — and the re-check must run **before** `rebaseDirty` (it force-moves the HEAD), exactly as the spec already states. The HEAD-snapshot TOCTOU mechanism is sound; no rework needed.
+
+**Latent fragility (noted, not a blocker, candidate follow-up).** The over-publish protection rests on one invariant: `dirty` never advances without the `merge_base` tag advancing with it. Today every code path holds this, and a `write_tag` failure throws — short-circuiting publish-plan-build at `:193` before the diff at `:223` ever runs. The two adversarial lenses that produced an "over-publish" verdict could only do so by *breaking* that invariant (a hypothetical swallowed `write_tag` failure, or a missing/corrupt `merge_base` tag, where `resolve_merge_base_or_main` silently falls back to `main`). Neither occurs in current code. Cheap hardening for a later PR: have `resolve_merge_base_or_main` log loudly (or publish-plan-build assert) when the tag is missing instead of silently using `main`. Out of scope for this guardrail. (Aside: the publish path's rebase runs the `diff3` strategy — `write.rs:511` — which 3-way-merges a record the user *did* edit when main also changed it; that is in-scope merge behavior, not over-publish of untouched records.)
 
 ## Accepted residual — two-pass narrows the deadlock, doesn't eliminate it
 
@@ -283,21 +301,23 @@ commit() check                 | scratch-git down/gc       | unit       | Y (503
 two-pass pass1 -> pass2        | sync writes mid-pass      | integ      | Y (apply gate) | "review on web"  | no (rare residual deadlock — accepted, metered)
 plan-build drift               | sync wrote post-apply     | integ      | Y (abort+redir)| "review on web"  | no
 post-pull merge_base lag       | false-positive block      | unit       | FIXED (vs main)| nothing (passes) | n/a
-rebaseDirty pulls main (#7)    | non-user records in plan  | NONE - GAP | NO - GAP       | over-publish?    | POSSIBLY - verify in PR2
+rebaseDirty pulls main (#7)    | non-user records in plan  | rust tests | YES (lockstep) | nothing (cancels)| no - REFUTED
+merge_base tag stale/missing   | false baseline -> leak    | NONE       | partial        | over-publish?    | latent (invariant-break only; follow-up)
 ```
 
-The `#7` row is the one potential critical gap the kept HEAD-snapshot mechanism does not cover — tracked as a PR2 verification, not a confirmed bug.
+The `#7` row is **refuted** (see [Resolved — risk #7](#resolved--risk-7-rebasedirty-does-not-over-publish-non-user-records)): `rebaseDirty` advances `merge_base` and `dirty` in lockstep, so main's records cancel in the publish diff. The only way to manufacture over-publish is to break that lockstep invariant (swallowed `write_tag` failure or a missing `merge_base` tag) — neither occurs in current code; tracked as a defensive follow-up.
 
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | reviewed | HOLD SCOPE; premise upheld; guardrail as stopgap, deeper fix committed as follow-up |
-| Outside Voice | Claude subagent | Independent 2nd opinion | 1 | issues_found | 13 findings; 3 adopted (main-baseline, 503 retry, kill-switch framing), 1 rejected (kept HEAD-snapshot); #7 open |
+| Outside Voice | Claude subagent | Independent 2nd opinion | 1 | issues_found | 13 findings; 3 adopted (main-baseline, 503 retry, kill-switch framing), 1 rejected (kept HEAD-snapshot); #7 since verified + refuted |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | reviewed | Two-PR split, client-carried snapshot token, unit+integration strategy; 1 potential critical gap (#7) tracked |
 | Design Review | `/plan-design-review` | UI/UX gaps | 1 | reviewed | 6/10 → 9/10; count-only modal, checkFailed retry, TOCTOU lead; 5 states spec'd |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | not run |
+| PR1 Diff Review | 4-dim adversarial + verify | Post-implementation correctness | 1 | reviewed | 9 findings, 0 confirmed bugs (3 positive confirmations of correct design, 6 verified false positives); 1 comment-clarity tweak applied (flag-read degrades-open vs git-check fail-closed asymmetry) |
 
-- **CROSS-MODEL:** CEO review + outside voice agree on the two-pass residual and the strategic risk (gate can block the common case). They diverged on the TOCTOU mechanism; the HEAD-snapshot approach was kept, leaving #7 (rebaseDirty contamination) as an open PR2 verification.
-- **UNRESOLVED:** 0 decisions open. 1 open verification (#7) and 1 accepted residual (two-pass sub-second deadlock) — both tracked, neither a blocker.
-- **VERDICT:** CEO + ENG + DESIGN reviewed — scope, execution, and UI states pinned. Ready to implement (PR1 first; design specs and #7 verification apply to PR2).
+- **CROSS-MODEL:** CEO review + outside voice agree on the two-pass residual and the strategic risk (gate can block the common case). They diverged on the TOCTOU mechanism; the HEAD-snapshot approach was kept. #7 (rebaseDirty contamination) has since been **verified and refuted** (2026-06-04, direct code read + 3-lens adversarial check) — the HEAD-snapshot mechanism stands unchanged.
+- **UNRESOLVED:** 0 decisions open. 0 open verifications (#7 resolved). 1 accepted residual (two-pass sub-second deadlock) and 1 latent fragility (merge_base-tag lockstep invariant) — both tracked as follow-ups, neither a blocker.
+- **VERDICT:** CEO + ENG + DESIGN reviewed; #7 verified. Scope, execution, and UI states pinned. Ready to implement (PR1 first; design specs apply to PR2).

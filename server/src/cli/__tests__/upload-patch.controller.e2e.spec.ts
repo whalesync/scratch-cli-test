@@ -25,7 +25,9 @@ import type { INestApplication } from '@nestjs/common';
 import { ExecutionContext } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type {
+  UploadPatchBlockedDirtyResponseDto,
   UploadPatchBlockedStaleResponseDto,
+  UploadPatchCheckFailedResponseDto,
   UploadPatchCommitDto,
   UploadPatchInitDto,
   WorkbookId,
@@ -36,6 +38,8 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { PostHogService } from 'src/posthog/posthog.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -57,6 +61,8 @@ describe('UploadPatchController (controller-level e2e)', () => {
   let objectStorageService: jest.Mocked<ObjectStorageService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
+  let experimentsService: jest.Mocked<ExperimentsService>;
+  let posthogService: jest.Mocked<PostHogService>;
 
   beforeEach(async () => {
     const workbookService = {
@@ -83,7 +89,16 @@ describe('UploadPatchController (controller-level e2e)', () => {
     scratchGitService = {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue(`${ORG_ID}/${WORKBOOK_ID}/${CONNECTOR_ID}`),
       getBranchHead: jest.fn().mockResolvedValue(SERVER_MAIN_SHA),
+      getPendingChangeCountVsMain: jest.fn().mockResolvedValue(0),
     } as unknown as jest.Mocked<ScratchGitService>;
+
+    experimentsService = {
+      getBooleanFlagForOrg: jest.fn().mockResolvedValue(true),
+    } as unknown as jest.Mocked<ExperimentsService>;
+
+    posthogService = {
+      captureEvent: jest.fn(),
+    } as unknown as jest.Mocked<PostHogService>;
 
     const moduleBuilder = Test.createTestingModule({
       controllers: [UploadPatchController],
@@ -94,6 +109,8 @@ describe('UploadPatchController (controller-level e2e)', () => {
         { provide: AuditLogService, useValue: auditLogService },
         { provide: ScratchConfigService, useValue: {} },
         { provide: ScratchGitService, useValue: scratchGitService },
+        { provide: ExperimentsService, useValue: experimentsService },
+        { provide: PostHogService, useValue: posthogService },
       ],
     })
       .overrideGuard(ScratchAuthGuard)
@@ -233,6 +250,68 @@ describe('UploadPatchController (controller-level e2e)', () => {
       expect(res.body.jobId).toBe('job_e2e_1');
       expect(res.body.stalenessWarning).toBeUndefined();
       expect(auditLogService.logEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 409 with structured count-only blocked_dirty body when refuseIfDirty=true and the connection is dirty', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(47);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+      };
+
+      const res = await request(app.getHttpServer())
+        .post(`/cli/v1/workbooks/${WORKBOOK_ID}/upload-patch/commit`)
+        .send(body)
+        .expect(409);
+
+      const payload = res.body as UploadPatchBlockedDirtyResponseDto;
+      expect(payload.status).toBe('blocked_dirty');
+      expect(payload.connectorAccountId).toBe(CONNECTOR_ID);
+      expect(payload.dirtyCount).toBe(47);
+
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('returns 503 with a retryable check_failed body when the dirty check itself fails (fail-closed)', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockRejectedValue(new Error('scratch-git down'));
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+      };
+
+      const res = await request(app.getHttpServer())
+        .post(`/cli/v1/workbooks/${WORKBOOK_ID}/upload-patch/commit`)
+        .send(body)
+        .expect(503);
+
+      const payload = res.body as UploadPatchCheckFailedResponseDto;
+      expect(payload.status).toBe('check_failed');
+      expect(payload.connectorAccountId).toBe(CONNECTOR_ID);
+
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('returns 201 + jobId:null for a checkOnly probe on a clean connection (no job, no audit)', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(0);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+        checkOnly: true,
+      };
+
+      const res = await request(app.getHttpServer())
+        .post(`/cli/v1/workbooks/${WORKBOOK_ID}/upload-patch/commit`)
+        .send(body)
+        .expect(201);
+
+      expect(res.body.jobId).toBeNull();
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
     });
   });
 });

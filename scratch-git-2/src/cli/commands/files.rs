@@ -396,6 +396,15 @@ struct UploadResult {
     /// no patches were applied. `run_upload` collects these across the loop
     /// and bails with a structured `blocked_stale` workspace-level payload.
     blocked_stale: Option<crate::api::BlockedStaleResponse>,
+    /// DEV-10316 dirty-gate refusal payload: this connection's `dirty` branch
+    /// held unpublished changes vs live `main` and the call was sent with
+    /// `refuseIfDirty: true`. When `Some`, `status == "blocked_dirty"` and no
+    /// patches were applied. Surfaced count-only.
+    blocked_dirty: Option<crate::api::BlockedDirtyResponse>,
+    /// DEV-10316 fail-closed check failure: the dirty-gate check itself could
+    /// not run (git service down/busy). When `Some`, `status == "check_failed"`
+    /// and no patches were applied. Retryable.
+    check_failed: Option<crate::api::CheckFailedResponse>,
 }
 
 #[derive(Default)]
@@ -849,15 +858,72 @@ async fn run_upload(
     let workbook_id = workspace_marker.workbook.id.as_str();
 
     let verbose = !json;
+
+    // DEV-10316 two-pass upload. Pass 1 probes the dirty gate for EVERY
+    // connection that has something to publish (checkOnly + refuseIfDirty),
+    // applying nothing. Only if every connection's staging area is clean does
+    // pass 2 apply. A single dirty connection blocks the whole publish with
+    // nothing uploaded — this matches the existing "you're behind" gate and
+    // avoids the half-applied state where one connection's patches land and a
+    // later one is refused, leaving the user blocked on their own just-uploaded
+    // patches. The server is the source of truth (closing the race where a sync
+    // stages a change between probe and apply); there is no other client-side
+    // pre-flight.
+    let mut dirty_blocked: Vec<BlockedDirtyConnection> = Vec::new();
+    let mut check_failed: Vec<CheckFailedConnection> = Vec::new();
+    for ctx in &contexts {
+        match probe_connection_dirty_gate(ctx, &client, workbook_id).await? {
+            DirtyGateProbe::Clean => {}
+            DirtyGateProbe::Dirty(dirty) => dirty_blocked.push(BlockedDirtyConnection {
+                connection_name: ctx.conn_dir_name.clone(),
+                dirty,
+            }),
+            DirtyGateProbe::CheckFailed(failed) => check_failed.push(CheckFailedConnection {
+                connection_name: ctx.conn_dir_name.clone(),
+                failed,
+            }),
+        }
+    }
+    if !dirty_blocked.is_empty() || !check_failed.is_empty() {
+        print_blocked_dirty_result(
+            &dirty_blocked,
+            &check_failed,
+            started.elapsed().as_millis(),
+            json,
+        )?;
+        anyhow::bail!(
+            "{} connection(s) refused — resolve unpublished changes on the web, then retry.",
+            dirty_blocked.len() + check_failed.len()
+        );
+    }
+
+    // Pass 2: real apply. The dirty gate is retained here (refuse_if_dirty) so
+    // the rare sub-second residual — a sync writing to a connection's dirty
+    // branch between its probe and its apply — is still refused rather than
+    // applied onto.
     let mut results = Vec::new();
     let mut all_changed_workspace_paths: Vec<String> = Vec::new();
-    let mut blocked_connections: Vec<BlockedStaleConnection> = Vec::new();
+    let mut blocked_stale: Vec<BlockedStaleConnection> = Vec::new();
     for ctx in &contexts {
         if contexts.len() > 1 && verbose {
             println!("Uploading {}...", ctx.conn_dir_name);
         }
         let upload_result =
             upload_single_repo_via_patches(ctx, &client, workbook_id, verbose).await?;
+        if let Some(ref dirty) = upload_result.blocked_dirty {
+            dirty_blocked.push(BlockedDirtyConnection {
+                connection_name: ctx.conn_dir_name.clone(),
+                dirty: dirty.clone(),
+            });
+            break;
+        }
+        if let Some(ref failed) = upload_result.check_failed {
+            check_failed.push(CheckFailedConnection {
+                connection_name: ctx.conn_dir_name.clone(),
+                failed: failed.clone(),
+            });
+            break;
+        }
         if let Some(ref stale) = upload_result.blocked_stale {
             // D8: fail-fast on first stale connection. Earlier connections
             // in the same upload loop may have already applied their patches
@@ -865,7 +931,7 @@ async fn run_upload(
             // a `files download` is idempotent (the prior connection's patch
             // file still matches what's on dirty, so the re-apply is a no-op
             // git commit). Capture for the structured payload + bail.
-            blocked_connections.push(BlockedStaleConnection {
+            blocked_stale.push(BlockedStaleConnection {
                 connection_name: ctx.conn_dir_name.clone(),
                 stale: stale.clone(),
             });
@@ -884,11 +950,23 @@ async fn run_upload(
         reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
     }
 
-    if !blocked_connections.is_empty() {
-        print_blocked_stale_result(&blocked_connections, started.elapsed().as_millis(), json)?;
+    if !dirty_blocked.is_empty() || !check_failed.is_empty() {
+        print_blocked_dirty_result(
+            &dirty_blocked,
+            &check_failed,
+            started.elapsed().as_millis(),
+            json,
+        )?;
+        anyhow::bail!(
+            "{} connection(s) refused — resolve unpublished changes on the web, then retry.",
+            dirty_blocked.len() + check_failed.len()
+        );
+    }
+    if !blocked_stale.is_empty() {
+        print_blocked_stale_result(&blocked_stale, started.elapsed().as_millis(), json)?;
         anyhow::bail!(
             "{} connection(s) refused — run `scratchmd files download`, then retry.",
-            blocked_connections.len()
+            blocked_stale.len()
         );
     }
 
@@ -900,6 +978,81 @@ async fn run_upload(
 struct BlockedStaleConnection {
     connection_name: String,
     stale: crate::api::BlockedStaleResponse,
+}
+
+/// One entry in the structured `blocked_dirty` workspace-level payload
+/// (DEV-10316). Count-only — carries the connection name and the server's
+/// pending-change count, nothing per-record.
+struct BlockedDirtyConnection {
+    connection_name: String,
+    dirty: crate::api::BlockedDirtyResponse,
+}
+
+/// One entry in the structured `check_failed` workspace-level payload
+/// (DEV-10316). The dirty-gate check itself could not run for this connection;
+/// retryable.
+struct CheckFailedConnection {
+    connection_name: String,
+    failed: crate::api::CheckFailedResponse,
+}
+
+/// Outcome of the pass-1 dirty-gate probe for a single connection.
+enum DirtyGateProbe {
+    /// Nothing to publish for this connection, or its staging area is clean.
+    Clean,
+    /// The connection's `dirty` branch holds unpublished changes vs live `main`.
+    Dirty(crate::api::BlockedDirtyResponse),
+    /// The gate check itself failed (fail-closed; retryable).
+    CheckFailed(crate::api::CheckFailedResponse),
+}
+
+/// DEV-10316 pass-1 probe: ask the server to run the dirty gate for this
+/// connection WITHOUT applying. Skips connections with nothing to publish (an
+/// empty `accepted-patches.json`) — a connection the user isn't publishing to
+/// must not be gated on its staging-area state. Otherwise it issues an
+/// `uploadId` and POSTs `/upload-patch/commit` with `checkOnly + refuseIfDirty`
+/// (no payload PUT — the server's checkOnly path never reads it). Staleness is
+/// deliberately NOT checked here (decision #5: pending changes are surfaced
+/// before staleness); the apply pass enforces it.
+async fn probe_connection_dirty_gate(
+    ctx: &ConnectionContext,
+    client: &crate::api::ApiClient,
+    workbook_id: &str,
+) -> anyhow::Result<DirtyGateProbe> {
+    let connection_dir = accepted_patches_dir(ctx);
+    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
+    if accepted_file.patches.is_empty() {
+        return Ok(DirtyGateProbe::Clean);
+    }
+
+    let init = client
+        .upload_patch_init(workbook_id, &ctx.connection_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("upload-patch init (check) failed: {e}"))?;
+    let commit = client
+        .upload_patch_commit(
+            workbook_id,
+            &ctx.connection_id,
+            &init.upload_id,
+            None,  // baseHead irrelevant — checkOnly skips the staleness gate
+            false, // refuse_if_stale: handled on the apply pass
+            true,  // refuse_if_dirty
+            true,  // check_only
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("upload-patch check failed: {e}"))?;
+
+    Ok(match commit {
+        crate::api::UploadPatchCommitResult::Applied(_) => DirtyGateProbe::Clean,
+        crate::api::UploadPatchCommitResult::BlockedDirty(dirty) => DirtyGateProbe::Dirty(dirty),
+        crate::api::UploadPatchCommitResult::CheckFailed(failed) => {
+            DirtyGateProbe::CheckFailed(failed)
+        }
+        // checkOnly returns before the staleness gate, so a stale result can't
+        // occur on the probe; treat defensively as clean (the apply pass
+        // re-checks staleness).
+        crate::api::UploadPatchCommitResult::BlockedStale(_) => DirtyGateProbe::Clean,
+    })
 }
 
 /// Publish accepted edits to external connectors. Two explicit server calls
@@ -3526,6 +3679,95 @@ fn print_blocked_stale_result(
     Ok(())
 }
 
+/// Print the structured DEV-10316 refusal for `files upload`. JSON mode emits a
+/// machine-readable payload the desktop pattern-matches on; human mode prints a
+/// per-connection summary and a redirect to the web review screen. A
+/// `check_failed` (couldn't verify the server's state) takes precedence over
+/// `blocked_dirty` in the top-level `status`: when we couldn't fully verify, the
+/// safe move is "try again" (which re-probes everything) rather than a partial
+/// dirty redirect. Caller bails with non-zero exit immediately after.
+fn print_blocked_dirty_result(
+    dirty_blocked: &[BlockedDirtyConnection],
+    check_failed: &[CheckFailedConnection],
+    elapsed_ms: u128,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        if !check_failed.is_empty() {
+            let connections: Vec<serde_json::Value> = check_failed
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "connectionName": c.connection_name,
+                        "connectorAccountId": c.failed.connector_account_id,
+                        "message": c.failed.message,
+                    })
+                })
+                .collect();
+            let output = serde_json::json!({
+                "status": "check_failed",
+                "blockedCount": check_failed.len(),
+                "connections": connections,
+                "message": "Couldn't verify the server's state. Try again.",
+                "elapsedMs": elapsed_ms,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
+        }
+        let connections: Vec<serde_json::Value> = dirty_blocked
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "connectionName": c.connection_name,
+                    "connectorAccountId": c.dirty.connector_account_id,
+                    "dirtyCount": c.dirty.dirty_count,
+                })
+            })
+            .collect();
+        let output = serde_json::json!({
+            "status": "blocked_dirty",
+            "blockedCount": dirty_blocked.len(),
+            "connections": connections,
+            "elapsedMs": elapsed_ms,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    let elapsed = format_elapsed(elapsed_ms);
+    if !check_failed.is_empty() {
+        println!(
+            "Cannot upload — couldn't verify the server's state for {} connection(s) ({}):",
+            check_failed.len(),
+            elapsed
+        );
+        for c in check_failed {
+            println!(
+                "  {}: {}",
+                c.connection_name,
+                c.failed.message.as_deref().unwrap_or("check failed"),
+            );
+        }
+        println!();
+        println!("This is usually transient — try again.");
+        return Ok(());
+    }
+    println!(
+        "Cannot upload — {} connection(s) have unpublished changes on the server ({}):",
+        dirty_blocked.len(),
+        elapsed
+    );
+    for c in dirty_blocked {
+        println!(
+            "  {}: {} unpublished change(s) on the server",
+            c.connection_name, c.dirty.dirty_count,
+        );
+    }
+    println!();
+    println!("Publish or discard them on the web, then retry.");
+    Ok(())
+}
+
 /// Resolve the connector's `idColumnRemoteId` (dot path into a record file)
 /// for the folder that owns `rel_path`. Reads `.scratch/<folder>/schema.json`
 /// from the given on-disk tree map. Returns [`json_path::DEFAULT_ID_PATH`]
@@ -4219,18 +4461,23 @@ async fn upload_single_repo_via_patches(
         .upload_patch_put(&init.presigned_url, &payload)
         .await
         .map_err(|e| anyhow::anyhow!("upload-patch PUT failed: {e}"))?;
-    // Pass `refuse_if_stale: true` (D8): the server compares `baseHead`
+    // Apply pass. `refuse_if_stale: true` (D8): the server compares `baseHead`
     // against its current `refs/heads/main` and aborts with HTTP 409 +
-    // structured `blocked_stale` body if they diverge. The CLI surfaces
-    // the refusal as a `blocked_stale` UploadResult that `run_upload`
-    // bails on. Symmetric with pull's `blocked_unreviewed` gate.
+    // structured `blocked_stale` body if they diverge. `refuse_if_dirty: true`
+    // (DEV-10316) is retained on the apply pass too — pass 1 already probed
+    // every connection's dirty gate, but a sub-second sync write between the
+    // probe and this apply can re-create a non-clean staging area, so we
+    // re-check here rather than apply onto it. The CLI surfaces each refusal
+    // as a typed UploadResult that `run_upload` bails on.
     let commit = client
         .upload_patch_commit(
             workbook_id,
             &ctx.connection_id,
             &init.upload_id,
             main_hash.as_deref(),
-            true,
+            true,  // refuse_if_stale
+            true,  // refuse_if_dirty
+            false, // check_only (this is the real apply)
         )
         .await
         .map_err(|e| anyhow::anyhow!("upload-patch commit failed: {e}"))?;
@@ -4245,6 +4492,28 @@ async fn upload_single_repo_via_patches(
                 connection_name: ctx.conn_dir_name.clone(),
                 status: "blocked_stale".to_string(),
                 blocked_stale: Some(stale),
+                ..Default::default()
+            });
+        }
+        crate::api::UploadPatchCommitResult::BlockedDirty(dirty) => {
+            if verbose {
+                eprintln!(" dirty");
+            }
+            return Ok(UploadResult {
+                connection_name: ctx.conn_dir_name.clone(),
+                status: "blocked_dirty".to_string(),
+                blocked_dirty: Some(dirty),
+                ..Default::default()
+            });
+        }
+        crate::api::UploadPatchCommitResult::CheckFailed(failed) => {
+            if verbose {
+                eprintln!(" check-failed");
+            }
+            return Ok(UploadResult {
+                connection_name: ctx.conn_dir_name.clone(),
+                status: "check_failed".to_string(),
+                check_failed: Some(failed),
                 ..Default::default()
             });
         }

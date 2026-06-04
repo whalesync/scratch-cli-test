@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Jest mocks passed to expect().toHaveBeen* */
 import { BadRequestException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import type {
+  UploadPatchBlockedDirtyResponseDto,
   UploadPatchBlockedStaleResponseDto,
+  UploadPatchCheckFailedResponseDto,
   UploadPatchCommitDto,
   UploadPatchInitDto,
   WorkbookId,
@@ -11,6 +13,8 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import type { RepoId } from 'src/scratch-git/scratch-git.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -53,6 +57,8 @@ describe('UploadPatchController', () => {
   let auditLogService: jest.Mocked<AuditLogService>;
   let configService: jest.Mocked<ScratchConfigService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
+  let experimentsService: jest.Mocked<ExperimentsService>;
+  let posthogService: jest.Mocked<PostHogService>;
 
   beforeEach(() => {
     workbookService = {
@@ -77,7 +83,19 @@ describe('UploadPatchController', () => {
     scratchGitService = {
       resolveConnectionRepoPath: jest.fn().mockResolvedValue(REPO_ID),
       getBranchHead: jest.fn().mockResolvedValue(SERVER_MAIN_SHA),
+      getPendingChangeCountVsMain: jest.fn().mockResolvedValue(0),
     } as unknown as jest.Mocked<ScratchGitService>;
+
+    // Default: kill switch ON so the dirty-gate suite exercises the gate. The
+    // staleness/validation suites pass `refuseIfDirty` falsy, so the gate is
+    // skipped for them regardless of this flag.
+    experimentsService = {
+      getBooleanFlagForOrg: jest.fn().mockResolvedValue(true),
+    } as unknown as jest.Mocked<ExperimentsService>;
+
+    posthogService = {
+      captureEvent: jest.fn(),
+    } as unknown as jest.Mocked<PostHogService>;
 
     controller = new UploadPatchController(
       workbookService,
@@ -86,6 +104,8 @@ describe('UploadPatchController', () => {
       auditLogService,
       configService,
       scratchGitService,
+      experimentsService,
+      posthogService,
     );
   });
 
@@ -213,6 +233,160 @@ describe('UploadPatchController', () => {
       };
       const result = await controller.commit(makeReq(), WORKBOOK_ID, body);
       expect(result.stalenessWarning).toBeUndefined();
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('commit — dirty gate (DEV-10316)', () => {
+    it('refuses with ConflictException + count-only blocked_dirty when refuseIfDirty=true and pending changes exist', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(47);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+      };
+      let caught: unknown;
+      try {
+        await controller.commit(makeReq(), WORKBOOK_ID, body);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictException);
+      const payload = (caught as ConflictException).getResponse() as UploadPatchBlockedDirtyResponseDto;
+      expect(payload.status).toBe('blocked_dirty');
+      expect(payload.connectorAccountId).toBe(CONNECTOR_ID);
+      expect(payload.dirtyCount).toBe(47);
+      // Count-only: no per-record breakdown leaks into the payload.
+      expect(payload).not.toHaveProperty('paths');
+      // No side effects on refusal.
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
+      // Gate-fire analytics emitted.
+      expect(posthogService.captureEvent).toHaveBeenCalledWith(
+        PostHogEventName.DESKTOP_PUBLISH_BLOCKED_DIRTY,
+        expect.objectContaining({ userId: USER_ID }),
+        { connectorAccountId: CONNECTOR_ID, dirtyCount: 47 },
+      );
+    });
+
+    it('proceeds to apply when refuseIfDirty=true but the connection is clean', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(0);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+      };
+      const result = await controller.commit(makeReq(), WORKBOOK_ID, body);
+      expect(result.jobId).toBe('job_1');
+      expect(scratchGitService.getPendingChangeCountVsMain).toHaveBeenCalledTimes(1);
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).toHaveBeenCalledTimes(1);
+      expect(auditLogService.logEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('checkOnly=true probes the gate and returns { jobId: null } without enqueueing or auditing', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(0);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+        checkOnly: true,
+      };
+      const result = await controller.commit(makeReq(), WORKBOOK_ID, body);
+      expect(result.jobId).toBeNull();
+      expect(scratchGitService.getPendingChangeCountVsMain).toHaveBeenCalledTimes(1);
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('checkOnly=true still refuses a dirty connection (blocks the whole publish before any apply)', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(3);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+        checkOnly: true,
+      };
+      await expect(controller.commit(makeReq(), WORKBOOK_ID, body)).rejects.toBeInstanceOf(ConflictException);
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+    });
+
+    it('skips the gate entirely on the legacy soft path (refuseIfDirty falsy)', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(99);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+      };
+      const result = await controller.commit(makeReq(), WORKBOOK_ID, body);
+      expect(result.jobId).toBe('job_1');
+      expect(scratchGitService.getPendingChangeCountVsMain).not.toHaveBeenCalled();
+      expect(experimentsService.getBooleanFlagForOrg).not.toHaveBeenCalled();
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips the gate when the kill switch is off (restores legacy behavior)', async () => {
+      experimentsService.getBooleanFlagForOrg.mockResolvedValue(false);
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(99);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+      };
+      const result = await controller.commit(makeReq(), WORKBOOK_ID, body);
+      expect(result.jobId).toBe('job_1');
+      expect(scratchGitService.getPendingChangeCountVsMain).not.toHaveBeenCalled();
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).toHaveBeenCalledTimes(1);
+    });
+
+    it('fail-closed: a check failure yields a retryable 503 check_failed, no job, no audit', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockRejectedValue(new Error('scratch-git down'));
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+      };
+      let caught: unknown;
+      try {
+        await controller.commit(makeReq(), WORKBOOK_ID, body);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ServiceUnavailableException);
+      const payload = (caught as ServiceUnavailableException).getResponse() as UploadPatchCheckFailedResponseDto;
+      expect(payload.status).toBe('check_failed');
+      expect(payload.connectorAccountId).toBe(CONNECTOR_ID);
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('dirty gate wins over the staleness gate when both would fire', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(5);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        baseHead: LOCAL_MAIN_SHA, // stale vs SERVER_MAIN_SHA
+        refuseIfStale: true,
+        refuseIfDirty: true,
+      };
+      let caught: unknown;
+      try {
+        await controller.commit(makeReq(), WORKBOOK_ID, body);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictException);
+      const payload = (caught as ConflictException).getResponse() as { status: string };
+      expect(payload.status).toBe('blocked_dirty'); // pending-changes surfaced before staleness
+    });
+
+    it('does not block when the vs-main count is 0 (post-pull merge_base lag does not false-trip)', async () => {
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(0);
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        refuseIfDirty: true,
+      };
+      const result = await controller.commit(makeReq(), WORKBOOK_ID, body);
+      expect(result.jobId).toBe('job_1');
       expect(bullEnqueuerService.enqueueApplyPatchesJob).toHaveBeenCalledTimes(1);
     });
   });

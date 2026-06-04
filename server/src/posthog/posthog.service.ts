@@ -452,6 +452,14 @@ export enum PostHogEventName {
   WORKBOOK_PULL_FILES = 'workbook_pull_files',
   WORKBOOK_PUBLISH_TRIGGERED = 'workbook_publish_triggered',
   WORKBOOK_PUBLISHED = 'workbook_published',
+  /**
+   * DEV-10316: the dirty gate refused a desktop/CLI publish because the
+   * connection still had unpublished changes on the server. The fire rate is
+   * the signal for whether the gate hits the common case — i.e. how urgent the
+   * deeper fix (publish only the approved subset) is. Properties:
+   * { connectorAccountId, dirtyCount }.
+   */
+  DESKTOP_PUBLISH_BLOCKED_DIRTY = 'desktop_publish_blocked_dirty',
   AGENT_CREDENTIAL_CREATED = 'agent_credential_created',
   AGENT_CREDENTIAL_DELETED = 'agent_credential_deleted',
   TRIAL_STARTED = 'trial_started',

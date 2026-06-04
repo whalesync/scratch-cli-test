@@ -1,6 +1,6 @@
 use super::{
-    job_progress_path, ApiClient, BlockedStaleResponse, JobProgress, UploadPatchCommitResponse,
-    Workbook,
+    job_progress_path, ApiClient, BlockedDirtyResponse, BlockedStaleResponse, CheckFailedResponse,
+    JobProgress, UploadPatchCommitResponse, Workbook,
 };
 use reqwest::{Client, Method};
 
@@ -154,4 +154,50 @@ fn upload_patch_commit_response_omits_staleness_warning_on_match() {
     let parsed: UploadPatchCommitResponse = serde_json::from_value(body).unwrap();
     assert_eq!(parsed.job_id.as_deref(), Some("job_1"));
     assert!(parsed.staleness_warning.is_none());
+}
+
+// DEV-10316: locks down the wire-shape contract for the dirty gate. The server
+// throws `ConflictException(payload)` → `{ statusCode: 409, ...payload }`; the
+// CLI parses `status` + the count-only fields strictly.
+#[test]
+fn blocked_dirty_response_deserializes_from_nest_conflict_body() {
+    let body = serde_json::json!({
+        "statusCode": 409,
+        "status": "blocked_dirty",
+        "connectorAccountId": "ca_conn1",
+        "dirtyCount": 47,
+        "message": "This connection has unpublished changes on the server."
+    });
+    let parsed: BlockedDirtyResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(parsed.status, "blocked_dirty");
+    assert_eq!(parsed.connector_account_id, "ca_conn1");
+    assert_eq!(parsed.dirty_count, 47);
+    assert!(parsed.message.unwrap().contains("unpublished"));
+}
+
+// The dirty-gate parse must be structurally distinguishable from blocked_stale
+// so the 409 discriminator in `upload_patch_commit` can't confuse them: a
+// blocked_stale body (no `dirtyCount`) must NOT deserialize as BlockedDirty.
+#[test]
+fn blocked_stale_body_does_not_parse_as_blocked_dirty() {
+    let stale_body = serde_json::json!({
+        "status": "blocked_stale",
+        "currentRemoteHead": "cccccccccccccccccccccccccccccccccccccccc"
+    });
+    assert!(serde_json::from_value::<BlockedDirtyResponse>(stale_body).is_err());
+}
+
+// DEV-10316 fail-closed: `ServiceUnavailableException(payload)` → 503 body.
+#[test]
+fn check_failed_response_deserializes_from_nest_service_unavailable_body() {
+    let body = serde_json::json!({
+        "statusCode": 503,
+        "status": "check_failed",
+        "connectorAccountId": "ca_conn1",
+        "message": "Couldn't verify the server's state. Try again."
+    });
+    let parsed: CheckFailedResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(parsed.status, "check_failed");
+    assert_eq!(parsed.connector_account_id, "ca_conn1");
+    assert!(parsed.message.unwrap().contains("Try again"));
 }

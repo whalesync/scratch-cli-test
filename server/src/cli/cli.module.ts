@@ -4,6 +4,7 @@ import { AuditLogModule } from 'src/audit/audit-log.module';
 import { AuthModule } from 'src/auth/auth.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { JobModule } from 'src/job/job.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
@@ -32,6 +33,7 @@ import { UploadPatchController } from './upload-patch.controller';
     DbModule,
     JobModule,
     PosthogModule,
+    ExperimentsModule,
     WorkbookModule,
     ConnectorAccountModule,
     WorkerEnqueuerModule,

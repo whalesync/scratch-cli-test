@@ -11,7 +11,9 @@ import {
 } from '@nestjs/common';
 import {
   createPlainId,
+  UploadPatchBlockedDirtyResponseDto,
   UploadPatchBlockedStaleResponseDto,
+  UploadPatchCheckFailedResponseDto,
   UploadPatchCommitDto,
   UploadPatchCommitResponseDto,
   UploadPatchInitDto,
@@ -23,7 +25,10 @@ import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { SystemFeatureFlag } from 'src/experiments/flags';
 import { WSLogger } from 'src/logger';
+import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import { gcsKeyForPatchUpload } from 'src/publish-plan/apply-patches.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -56,6 +61,8 @@ export class UploadPatchController {
     private readonly auditLogService: AuditLogService,
     private readonly configService: ScratchConfigService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly experimentsService: ExperimentsService,
+    private readonly posthogService: PostHogService,
   ) {}
 
   @Post('init')
@@ -119,6 +126,90 @@ export class UploadPatchController {
 
     if (!body.uploadId) throw new BadRequestException('uploadId is required');
     if (!body.connectorAccountId) throw new BadRequestException('connectorAccountId is required');
+    const connectorAccountId = body.connectorAccountId;
+
+    // DEV-10316 dirty gate. With `refuseIfDirty: true` (sent by updated desktop
+    // / `scratchmd files upload`) and the org kill switch enabled, refuse the
+    // commit when this connection's `dirty` branch already holds unpublished
+    // record changes versus live `refs/heads/main`. That keeps the desktop/CLI
+    // from piling its approved edits onto a staging area that isn't already
+    // clean — the path by which the web sync's staged changes got swept into a
+    // desktop publish. The gate measures against live `main` (not the
+    // `merge_base` tag) so a routine pull doesn't false-positive (decision #6),
+    // and runs BEFORE the staleness gate (decision #5), the job enqueue, and
+    // the audit log, so a refusal — or a `checkOnly` probe — leaves zero side
+    // effects.
+    //
+    // Two DISTINCT failure modes, deliberately asymmetric:
+    //   - The kill-switch flag read degrades the gate to OFF (publish proceeds).
+    //     PostHog is a separate concern from the data path; we don't block
+    //     publishes on an analytics-service outage. This `&&` short-circuits.
+    //   - The git check ITSELF failing fails CLOSED with a retryable 503
+    //     (decision #7) — see the try/catch below. Never an unguarded upload.
+    if (
+      body.refuseIfDirty === true &&
+      (await this.experimentsService.getBooleanFlagForOrg(
+        SystemFeatureFlag.DESKTOP_DIRTY_GATE_ENABLED,
+        false,
+        workbook.organizationId,
+      ))
+    ) {
+      let pendingCount: number;
+      try {
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+        pendingCount = await this.scratchGitService.getPendingChangeCountVsMain(repoId);
+      } catch (err) {
+        // Fail closed (decision #7): if the check itself can't run (git service
+        // down or busy) hold the publish with a distinct retryable error rather
+        // than risk an unguarded upload. No job, no audit log.
+        WSLogger.warn({
+          source: 'UploadPatchController.commit',
+          message: 'Dirty gate check failed — holding publish (fail-closed)',
+          workbookId,
+          userId: actor.userId,
+          data: { connectorAccountId },
+          error: err,
+        });
+        const payload: UploadPatchCheckFailedResponseDto = {
+          status: 'check_failed',
+          connectorAccountId,
+          message: "Couldn't verify the server's state. Try again.",
+        };
+        throw new ServiceUnavailableException(payload);
+      }
+
+      if (pendingCount > 0) {
+        const payload: UploadPatchBlockedDirtyResponseDto = {
+          status: 'blocked_dirty',
+          connectorAccountId,
+          dirtyCount: pendingCount,
+          message:
+            'This connection has unpublished changes on the server. Publish or discard them on the web, then retry.',
+        };
+        WSLogger.info({
+          source: 'UploadPatchController.commit',
+          message: 'Refused upload-patch commit due to pending server changes',
+          workbookId,
+          userId: actor.userId,
+          data: { connectorAccountId, dirtyCount: pendingCount },
+        });
+        this.posthogService.captureEvent(PostHogEventName.DESKTOP_PUBLISH_BLOCKED_DIRTY, actor, {
+          connectorAccountId,
+          dirtyCount: pendingCount,
+        });
+        throw new ConflictException(payload);
+      }
+    }
+
+    // Two-pass probe (decision #3). The CLI's first pass runs the gates for
+    // every connection without applying; only if every connection is clean does
+    // it run the real apply pass. Return success WITHOUT enqueueing the
+    // ApplyPatches job or writing an audit log so a clean probe leaves zero side
+    // effects. (Staleness is enforced on the apply pass / next attempt —
+    // pending-changes is surfaced first, decision #5.)
+    if (body.checkOnly === true) {
+      return { jobId: null };
+    }
 
     // Staleness gate. With `refuseIfStale: true` (D8, default for `files
     // upload` / desktop publish modal), a mismatch between the client's

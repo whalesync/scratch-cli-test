@@ -369,6 +369,20 @@ export class ScratchGitClient {
     ) as Promise<DirtyFileCountResponse>;
   }
 
+  /**
+   * Count of pending record changes on `dirty` measured against live
+   * `refs/heads/main` (the `?base=main` variant), rather than the `merge_base`
+   * tag. Used by the DEV-10316 dirty gate so a routine pull — which can leave
+   * the `merge_base` tag lagging `main` until the next rebase — does not
+   * false-positive and block a connection that has no real pending changes.
+   */
+  async getStatusCountVsMain(repoId: string): Promise<DirtyFileCountResponse> {
+    return this.callGitApi(
+      `/api/repo/diff/${this.encodeRepoId(repoId)}/status/count?base=main`,
+      'GET',
+    ) as Promise<DirtyFileCountResponse>;
+  }
+
   async getDiff(repoId: string, path: string): Promise<string> {
     return this.callGitApi(
       `/api/repo/read/${this.encodeRepoId(repoId)}/diff?path=${encodeURIComponent(path)}`,
