@@ -237,6 +237,7 @@ resource "google_cloud_run_v2_service" "api_service" {
           "QUICKBOOKS_CLIENT_ID",
           "QUICKBOOKS_CLIENT_SECRET",
           "REDIS_PASSWORD",
+          "SCRATCH_ADMIN_API_KEY",
           "SENDGRID_API_KEY",
           "SHOPIFY_CLIENT_ID",
           "SHOPIFY_CLIENT_SECRET",
