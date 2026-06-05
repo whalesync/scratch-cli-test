@@ -10,6 +10,13 @@ export type ApplyPatchesPublicProgress = {
   uploadId: string;
   patchCount: number;
   processedCount: number;
+  /**
+   * DEV-10316: the dirty-branch HEAD SHA after this apply landed. Only set on
+   * the terminal `completed` checkpoint. The CLI reads it off the job progress
+   * and surfaces it to the desktop, which carries it to `/publish-v2/plan-job`
+   * as the `expectedBaseDirtyHead` TOCTOU token. Absent while running.
+   */
+  dirtyHead?: string;
 };
 
 // ── Job Definition ─────────────────────────────────────────────────────────
@@ -95,6 +102,9 @@ export class ApplyPatchesJobHandler implements JobHandlerBuilder<ApplyPatchesJob
         uploadId: data.uploadId,
         patchCount: result.patchCount,
         processedCount: result.patchCount,
+        // DEV-10316: surface the post-apply dirty HEAD so the desktop can use it
+        // as the publish-time TOCTOU token. `null` (missing dirty branch) ⇒ omit.
+        ...(result.postApplyDirtyHead ? { dirtyHead: result.postApplyDirtyHead } : {}),
       };
 
       await checkpoint({

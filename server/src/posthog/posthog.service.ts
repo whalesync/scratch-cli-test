@@ -343,6 +343,18 @@ export class PostHogService implements OnModuleDestroy {
     this.captureEvent(PostHogEventName.PUBLISH_COMPLETED, actor, properties);
   }
 
+  /**
+   * DEV-10316: a desktop publish was aborted at plan-build time because the
+   * connection's dirty HEAD drifted past the client's `expectedBaseDirtyHead`
+   * TOCTOU token. See {@link PostHogEventName.PUBLISH_ABORTED_DIRTY_DRIFT}.
+   */
+  trackPublishAbortedDirtyDrift(
+    actor: Actor | string,
+    properties: { workbookId: string; connectorAccountId: string; dirtyCount: number },
+  ): void {
+    this.captureEvent(PostHogEventName.PUBLISH_ABORTED_DIRTY_DRIFT, actor, properties);
+  }
+
   trackPullCompleted(
     actor: Actor | string,
     properties: {
@@ -460,6 +472,16 @@ export enum PostHogEventName {
    * { connectorAccountId, dirtyCount }.
    */
   DESKTOP_PUBLISH_BLOCKED_DIRTY = 'desktop_publish_blocked_dirty',
+  /**
+   * DEV-10316 publish-time TOCTOU abort: the publish-plan build found the
+   * connection's `dirty` HEAD had drifted past the `expectedBaseDirtyHead` the
+   * client captured at upload (the server changed while the user was reviewing
+   * "Ready to publish"), so the plan was aborted before `rebaseDirty` rather
+   * than ship the surprise. Complements DESKTOP_PUBLISH_BLOCKED_DIRTY (which is
+   * the upload-time gate); together they bound how often the wall fires.
+   * Properties: { workbookId, connectorAccountId, dirtyCount }.
+   */
+  PUBLISH_ABORTED_DIRTY_DRIFT = 'publish_aborted_dirty_drift',
   AGENT_CREDENTIAL_CREATED = 'agent_credential_created',
   AGENT_CREDENTIAL_DELETED = 'agent_credential_deleted',
   TRIAL_STARTED = 'trial_started',

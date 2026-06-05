@@ -44,6 +44,51 @@ fn job_progress_deserializes_null_failed_reason() {
     assert_eq!(progress.db_job_id, "db_123");
     assert_eq!(progress.status, "completed");
     assert_eq!(progress.failed_reason, None);
+    // No publicProgress in this shape — the dirty-head accessor stays None.
+    assert!(progress
+        .public_progress
+        .and_then(|p| p.dirty_head)
+        .is_none());
+}
+
+#[test]
+fn job_progress_reads_apply_patches_dirty_head_off_public_progress() {
+    // DEV-10316: the desktop reads the post-apply dirty HEAD off the completed
+    // apply-patches job's `publicProgress.dirtyHead` to use as the publish-time
+    // TOCTOU token. Lock down that the CLI's JobProgress deserializes it.
+    let progress: JobProgress = serde_json::from_value(serde_json::json!({
+        "state": "completed",
+        "publicProgress": {
+            "status": "completed",
+            "uploadId": "up_1",
+            "patchCount": 3,
+            "processedCount": 3,
+            "dirtyHead": "abc123def456"
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(progress.status, "completed");
+    assert_eq!(
+        progress.public_progress.and_then(|p| p.dirty_head),
+        Some("abc123def456".to_string())
+    );
+}
+
+#[test]
+fn job_progress_dirty_head_absent_when_public_progress_omits_it() {
+    // A running/non-apply job has no dirtyHead — accessor must yield None
+    // (rather than panic) so the upload path leaves the token unset.
+    let progress: JobProgress = serde_json::from_value(serde_json::json!({
+        "state": "active",
+        "publicProgress": { "status": "running", "uploadId": "up_1", "patchCount": 3, "processedCount": 1 }
+    }))
+    .unwrap();
+
+    assert!(progress
+        .public_progress
+        .and_then(|p| p.dirty_head)
+        .is_none());
 }
 
 #[test]

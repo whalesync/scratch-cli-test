@@ -8,7 +8,7 @@ import { ConnectorsService } from '../../remote-service/connectors/connectors.se
 import { ScratchGitService } from '../../scratch-git/scratch-git.service';
 import { FileIndexService } from '../file-index.service';
 import { FileReferenceService } from '../file-reference.service';
-import { PublishPlanBuildService } from '../publish-plan-build.service';
+import { PublishDirtyDriftError, PublishPlanBuildService } from '../publish-plan-build.service';
 import { RefCleanerService } from '../ref-cleaner.service';
 import { SchemaHelperService } from '../schema-helper.service';
 
@@ -65,6 +65,11 @@ describe('PublishPlanService', () => {
       getRepoStatus: jest.fn().mockResolvedValue([]),
       readRepoFilesByFolder: jest.fn().mockResolvedValue([]),
       rebaseDirty: jest.fn().mockResolvedValue(undefined),
+      // DEV-10316 dirty-drift gate. Only consulted when an expectedBaseDirtyHead
+      // is passed; default to a stable HEAD + zero pending so unrelated tests
+      // never trip the gate.
+      getBranchHead: jest.fn().mockResolvedValue('headsha'),
+      getPendingChangeCountVsMain: jest.fn().mockResolvedValue(0),
     } as unknown as jest.Mocked<ScratchGitService>;
 
     fileIndexService = {
@@ -141,6 +146,71 @@ describe('PublishPlanService', () => {
         data: { status: 'planned' },
       });
       expect(db.client.publishPlanOperation.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // DEV-10316 publish-time TOCTOU gate. When the desktop passes the dirty HEAD
+  // it captured at upload (`expectedBaseDirtyHead`), the build must abort BEFORE
+  // `rebaseDirty` (which force-moves the HEAD) if the connection's current dirty
+  // HEAD has drifted — proving the publish ships exactly what was uploaded.
+  describe('DEV-10316 dirty-drift gate', () => {
+    const CONN = 'ca_test';
+    const UPLOAD_HEAD = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    it('aborts with PublishDirtyDriftError when the dirty HEAD drifted since upload', async () => {
+      scratchGitService.getBranchHead.mockResolvedValue('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(47);
+
+      await expect(
+        service.buildPipeline(WORKBOOK_ID, USER_ID, CONN, PIPELINE_ID, undefined, undefined, UPLOAD_HEAD),
+      ).rejects.toBeInstanceOf(PublishDirtyDriftError);
+
+      // The whole point: the comparison happens before rebaseDirty force-moves
+      // the HEAD, and the diff/plan is never built on the drifted staging area.
+      expect(scratchGitService.rebaseDirty).not.toHaveBeenCalled();
+      expect(scratchGitService.getRepoStatus).not.toHaveBeenCalled();
+      // The error carries the count for the desktop's count-only redirect.
+      expect(scratchGitService.getPendingChangeCountVsMain).toHaveBeenCalledWith(CONN);
+    });
+
+    it('carries the connection + pending count on the thrown error', async () => {
+      scratchGitService.getBranchHead.mockResolvedValue('cccccccccccccccccccccccccccccccccccccccc');
+      scratchGitService.getPendingChangeCountVsMain.mockResolvedValue(12);
+
+      const err = await service
+        .buildPipeline(WORKBOOK_ID, USER_ID, CONN, PIPELINE_ID, undefined, undefined, UPLOAD_HEAD)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(PublishDirtyDriftError);
+      const drift = err as PublishDirtyDriftError;
+      expect(drift.connectorAccountId).toBe(CONN);
+      expect(drift.dirtyCount).toBe(12);
+      expect(drift.expectedBaseDirtyHead).toBe(UPLOAD_HEAD);
+    });
+
+    it('proceeds (rebases + plans) when the dirty HEAD still matches the token', async () => {
+      scratchGitService.getBranchHead.mockResolvedValue(UPLOAD_HEAD);
+
+      const result = await service.buildPipeline(
+        WORKBOOK_ID,
+        USER_ID,
+        CONN,
+        PIPELINE_ID,
+        undefined,
+        undefined,
+        UPLOAD_HEAD,
+      );
+
+      expect(result.status).toBe('planned');
+      expect(scratchGitService.rebaseDirty).toHaveBeenCalledWith(CONN);
+      expect(scratchGitService.getPendingChangeCountVsMain).not.toHaveBeenCalled();
+    });
+
+    it('skips the gate entirely when no expectedBaseDirtyHead is provided (legacy / CLI publish)', async () => {
+      await service.buildPipeline(WORKBOOK_ID, USER_ID, CONN, PIPELINE_ID);
+
+      expect(scratchGitService.getBranchHead).not.toHaveBeenCalled();
+      expect(scratchGitService.rebaseDirty).toHaveBeenCalledWith(CONN);
     });
   });
 

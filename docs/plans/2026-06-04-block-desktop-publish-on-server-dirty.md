@@ -1,6 +1,6 @@
 # Block desktop publish/upload when the server has unpublished changes
 
-**Status**: In Progress — PR1 (server + CLI) complete, reviewed & green; PR2 (desktop) not started
+**Status**: Implemented — PR1 (server + CLI) and PR2 (desktop + TOCTOU) complete; all builds, lints, and tests green
 **Author**: Curtis Fonger
 **Created**: 2026-06-04
 **Linear**: [DEV-10316](https://linear.app/whalesync/issue/DEV-10316/publish-from-desktop-app-also-pushed-dirty-changes-from-web-app)
@@ -128,6 +128,20 @@ Server + CLI landed. Deltas from the spec discovered during implementation (all 
 - **`checkOnly` ordering.** `checkOnly` returns right after the dirty gate and **before** the staleness gate, so the probe never reports `blocked_stale` (decision #5: pending-changes before staleness; the apply pass enforces staleness).
 
 Tests: Rust route premise (`count_vs_main` vs lagging `merge_base`), CLI serde parse + structural discrimination, server unit + controller-level e2e for the full gate matrix (409 `blocked_dirty`, 503 `check_failed`, `checkOnly` no-side-effects, kill-switch off, dirty-wins-over-stale, legacy soft path). Full monorepo `yarn build` green; `cargo test` (864) green.
+
+## PR2 implementation status — DONE (on branch `dev-10316-mr2`)
+
+Desktop + TOCTOU landed. Deltas from the spec discovered during implementation (all faithful to the decisions — the spec under-specified the *plumbing* for two things it named in passing: how the post-apply dirty HEAD reaches the client, and how a drift abort inside the publish job reaches the renderer):
+
+- **Post-apply dirty HEAD surfacing (the spec's "capture from the apply-job result").** This needed an end-to-end channel that didn't exist: `ApplyPatchesService.applyPatches` now returns `postApplyDirtyHead` (a `getBranchHead(repoId, DIRTY_BRANCH)` snapshot taken *after* the commits, server-side, so a concurrent writer can't slip in); the apply job's `ApplyPatchesPublicProgress` gained `dirtyHead`, set on the terminal `completed` checkpoint. The CLI's `JobProgress` gained `publicProgress.dirtyHead` and **`poll_job` now returns the final `JobProgress`** (was `()`), so `files upload` can read the apply job's HEAD and emit it as a per-connection `dirtyHead` in its JSON. The desktop `UploadConnectionResult` carries `dirtyHead` through to the renderer.
+- **TOCTOU token threading.** `expectedBaseDirtyHead` added to `PublishPlanBuildDto` (shared-types interface + server class) and threaded controller → `enqueuePlanPipelineJob` (new trailing optional arg) → `PublishJobDefinition` data → `buildPipeline` (new 7th param, before `onProgress`). The renderer's `publishApi.startPlanJob` takes it as a 3rd arg and includes it in the body only when truthy.
+- **Drift check + how the abort surfaces.** `buildPipeline` reads the current dirty HEAD and compares it to `expectedBaseDirtyHead` **before `rebaseDirty`** (decision #8); on drift it throws a new exported **`PublishDirtyDriftError`** carrying the connection + `getPendingChangeCountVsMain` count. The check lives in `buildPipeline` (not the controller) precisely because `rebaseDirty` — which force-moves the HEAD and only runs inside the job — must be the very next step, keeping the drift window negligible; a controller-level synchronous 409 would reopen a queue-latency window where a sync write re-introduces over-publish. The `PublishJobHandler` catch detects the typed error, **cancels the half-built pipeline**, fires `publish_aborted_dirty_drift`, and surfaces a structured **`blockedDirtyDrift` discriminator on the plan job's `publicProgress`** (with `status: 'failed'`). The renderer reads that off `pollJobToTerminal`, returns a drift signal from `runConnectionPublish` (leaving the connection non-terminal so the publishing→complete effect doesn't fire), and `triggerPublish` flips the whole modal into `dirty` mode with the TOCTOU lead.
+- **Modal.** `PublishMode` gained `dirty` (yellow `Alert`, count-only `<connection> · N change(s)` list in a `<ScrollArea.Autosize>`, **Close / Review on web ↗**) and `checkFailed` (red `Alert`, **Close / Try again** → re-runs the upload+gate). Both the upload-time refusals (the CLI's `blocked_dirty` / `check_failed`, recognized by the generalized **`parseUploadRefusalPayload`** — was `parseBlockedStalePayload`) and the publish-time drift abort feed the same `dirty` surface; only the drift path sets the lead line.
+- **PostHog.** `PostHogEventName.PUBLISH_ABORTED_DIRTY_DRIFT` + `trackPublishAbortedDirtyDrift(actor, { workbookId, connectorAccountId, dirtyCount })`.
+
+CLI publish (`scratchmd files publish`) deliberately does **not** send `expectedBaseDirtyHead` — it has no shared session state between the separate `upload` and `publish` invocations, and is already covered by the upload-time two-pass gate (PR1). The token is desktop-only, matching the spec's "client-carried" framing.
+
+Tests: server unit (buildPipeline drift — aborts before `rebaseDirty`, carries connection+count, proceeds on match, skipped without token); desktop vitest (`parseUploadRefusalPayload` recognizes `blocked_dirty`/`check_failed`; `startPlanJob` includes/omits `expectedBaseDirtyHead`); CLI serde (`JobProgress.publicProgress.dirtyHead`); apply-service + upload-patch e2e updated for the new return shape. Full monorepo `yarn build` (14/14) and `yarn lint` (5/5, incl. server `--max-warnings=0`) green; `cargo test` (866) green; `scratch-desktop` build + lint + vitest (224) green.
 
 ## Approach
 
@@ -317,7 +331,8 @@ The `#7` row is **refuted** (see [Resolved — risk #7](#resolved--risk-7-rebase
 | Design Review | `/plan-design-review` | UI/UX gaps | 1 | reviewed | 6/10 → 9/10; count-only modal, checkFailed retry, TOCTOU lead; 5 states spec'd |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | not run |
 | PR1 Diff Review | 4-dim adversarial + verify | Post-implementation correctness | 1 | reviewed | 9 findings, 0 confirmed bugs (3 positive confirmations of correct design, 6 verified false positives); 1 comment-clarity tweak applied (flag-read degrades-open vs git-check fail-closed asymmetry) |
+| PR2 Diff Review | 4-dim adversarial + verify (13 agents) | Post-implementation correctness | 1 | reviewed | 9 findings, **0 confirmed bugs** (7 false positives + 2 flagged-but-refuted on direct code read): (a) claimed double-checkpoint in the drift catch — refuted, it is a clean `if / else if / else` so the `blockedDirtyDrift` checkpoint is the only one written; (b) claimed the `isAlreadyPlanned` resume path skips the drift check — true mechanically but not exploitable: each desktop publish builds a *fresh* `planning` pipeline so the check always runs on first build, and the plan is a frozen snapshot `run-job` executes, so a post-build drift can't be shipped |
 
 - **CROSS-MODEL:** CEO review + outside voice agree on the two-pass residual and the strategic risk (gate can block the common case). They diverged on the TOCTOU mechanism; the HEAD-snapshot approach was kept. #7 (rebaseDirty contamination) has since been **verified and refuted** (2026-06-04, direct code read + 3-lens adversarial check) — the HEAD-snapshot mechanism stands unchanged.
 - **UNRESOLVED:** 0 decisions open. 0 open verifications (#7 resolved). 1 accepted residual (two-pass sub-second deadlock) and 1 latent fragility (merge_base-tag lockstep invariant) — both tracked as follow-ups, neither a blocker.
-- **VERDICT:** CEO + ENG + DESIGN reviewed; #7 verified. Scope, execution, and UI states pinned. Ready to implement (PR1 first; design specs apply to PR2).
+- **VERDICT:** CEO + ENG + DESIGN reviewed; #7 verified; PR1 and PR2 implemented and diff-reviewed (0 confirmed bugs across both). All builds, lints, and tests green. PR2 awaits human review + commit on `dev-10316-mr2`.

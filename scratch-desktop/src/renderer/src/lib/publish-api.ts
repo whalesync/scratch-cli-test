@@ -20,12 +20,23 @@ export const publishApi = {
    * to track the plan-job to completion. When the server-side dirty branch
    * has no diff against main both fields come back null — caller should
    * skip the connection.
+   *
+   * `expectedBaseDirtyHead` (DEV-10316) is the dirty-branch HEAD the desktop
+   * captured right after its upload landed. When provided, the server aborts
+   * the plan build if the connection's dirty HEAD has since drifted (the web
+   * sync staged changes while the user reviewed), surfacing a
+   * `blockedDirtyDrift` discriminator on the plan job's progress.
    */
-  startPlanJob: async (workbookId: string, connectorAccountId: string): Promise<PlanJobResponse> => {
+  startPlanJob: async (
+    workbookId: string,
+    connectorAccountId: string,
+    expectedBaseDirtyHead?: string | null,
+  ): Promise<PlanJobResponse> => {
     const axios = API_CONFIG.getAxiosInstance();
     const res = await axios.post<PlanJobResponse>(`/cli/v1/workbooks/${workbookId}/publish-v2/plan-job`, {
       connectorAccountId,
       runAfterPlan: false,
+      ...(expectedBaseDirtyHead ? { expectedBaseDirtyHead } : {}),
     });
     return res.data;
   },

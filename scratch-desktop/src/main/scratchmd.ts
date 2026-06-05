@@ -59,6 +59,14 @@ export interface UploadConnectionResult {
   updatedPaths: string[];
   deletedPaths: string[];
   messages: string[];
+  /**
+   * DEV-10316: the connection's `dirty` HEAD after this upload's apply landed,
+   * surfaced by the CLI from the apply-patches job. The publish modal carries
+   * it to `startPlanJob` as `expectedBaseDirtyHead` so the server can abort if
+   * the staging area drifts before publish. `null`/absent when the apply
+   * produced no commit or the server didn't surface a HEAD.
+   */
+  dirtyHead?: string | null;
 }
 
 export interface UploadWorkspaceSuccess {
@@ -97,12 +105,57 @@ export interface UploadWorkspaceBlockedStale {
 }
 
 /**
- * Discriminated union returned by `uploadWorkspaceChanges`. Both branches
- * survive the IPC boundary as plain JSON — error objects don't, so a
- * structured refusal is modeled as a successful return rather than a thrown
- * Error. PublishChangesModal pattern-matches on `status`.
+ * Per-connection entry in a `blocked_dirty` refusal (DEV-10316). Count-only —
+ * the connection name + the server's pending-change count vs live `main`. The
+ * desktop can't show the user the server's staging area, so it surfaces a name
+ * + total and redirects to the web review screen.
  */
-export type UploadWorkspaceResult = UploadWorkspaceSuccess | UploadWorkspaceBlockedStale;
+export interface BlockedDirtyConnection {
+  connectionName: string;
+  connectorAccountId: string;
+  dirtyCount: number;
+}
+
+export interface UploadWorkspaceBlockedDirty {
+  status: 'blocked_dirty';
+  blockedCount: number;
+  connections: BlockedDirtyConnection[];
+  elapsedMs: number;
+}
+
+/**
+ * Per-connection entry in a `check_failed` refusal (DEV-10316). Fail-closed:
+ * the dirty-gate check itself couldn't run (git service down/busy). Retryable.
+ */
+export interface CheckFailedConnection {
+  connectionName: string;
+  connectorAccountId: string;
+  message?: string;
+}
+
+export interface UploadWorkspaceCheckFailed {
+  status: 'check_failed';
+  blockedCount: number;
+  connections: CheckFailedConnection[];
+  message?: string;
+  elapsedMs: number;
+}
+
+/**
+ * Discriminated union returned by `uploadWorkspaceChanges`. Every branch
+ * survives the IPC boundary as plain JSON — error objects don't, so a
+ * structured refusal is modeled as a successful return rather than a thrown
+ * Error. PublishChangesModal pattern-matches on `status`:
+ *   - `blocked_stale` — server's `main` advanced; refresh first (D8).
+ *   - `blocked_dirty` — the connection has unpublished server changes; resolve
+ *     on the web first (DEV-10316).
+ *   - `check_failed` — the dirty-gate check couldn't run; retryable.
+ */
+export type UploadWorkspaceResult =
+  | UploadWorkspaceSuccess
+  | UploadWorkspaceBlockedStale
+  | UploadWorkspaceBlockedDirty
+  | UploadWorkspaceCheckFailed;
 
 /**
  * Shape of the CLI's `workspace_needs_reinit` JSON payload (slice F.1, see
@@ -662,8 +715,12 @@ export async function listUnpublishedChanges(workspacePath: string): Promise<Unr
 export async function uploadWorkspaceChanges(workspacePath: string): Promise<UploadWorkspaceResult> {
   const result = await runScratchmdCapture(['--json', 'files', 'upload'], workspacePath);
   if (result.exitCode !== 0) {
-    const stale = parseBlockedStalePayload(result.stdout);
-    if (stale) return stale;
+    // The CLI exits non-zero for every structured refusal (`blocked_stale` D8,
+    // `blocked_dirty` / `check_failed` DEV-10316), printing the payload to
+    // stdout. Recognize them and return as typed (non-throwing) results so the
+    // modal can pattern-match on `status`; anything else is a real error.
+    const refusal = parseUploadRefusalPayload(result.stdout);
+    if (refusal) return refusal;
     const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
     throw new Error(message);
   }
@@ -674,18 +731,26 @@ export async function uploadWorkspaceChanges(workspacePath: string): Promise<Upl
   }
 }
 
-/** @internal — exported for vitest. */
-export function parseBlockedStalePayload(stdout: string): UploadWorkspaceBlockedStale | null {
+/**
+ * Recognize a structured `files upload` refusal payload on stdout and return
+ * the matching typed branch, or `null` if stdout isn't one (caller falls
+ * through to the generic error path). Handles `blocked_stale` (D8),
+ * `blocked_dirty`, and `check_failed` (DEV-10316).
+ *
+ * @internal — exported for vitest.
+ */
+export function parseUploadRefusalPayload(
+  stdout: string,
+): UploadWorkspaceBlockedStale | UploadWorkspaceBlockedDirty | UploadWorkspaceCheckFailed | null {
   try {
     const parsed = JSON.parse(stdout) as unknown;
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      (parsed as { status?: unknown }).status === 'blocked_stale' &&
-      Array.isArray((parsed as { connections?: unknown }).connections)
-    ) {
-      return parsed as UploadWorkspaceBlockedStale;
-    }
+    if (!parsed || typeof parsed !== 'object') return null;
+    const status = (parsed as { status?: unknown }).status;
+    const hasConnections = Array.isArray((parsed as { connections?: unknown }).connections);
+    if (!hasConnections) return null;
+    if (status === 'blocked_stale') return parsed as UploadWorkspaceBlockedStale;
+    if (status === 'blocked_dirty') return parsed as UploadWorkspaceBlockedDirty;
+    if (status === 'check_failed') return parsed as UploadWorkspaceCheckFailed;
   } catch {
     // stdout wasn't JSON — fall through to the generic error path.
   }

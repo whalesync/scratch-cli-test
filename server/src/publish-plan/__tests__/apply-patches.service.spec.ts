@@ -70,6 +70,9 @@ describe('ApplyPatchesService.applyPatches', () => {
         deleteCalls.push({ branch, paths, message });
         return Promise.resolve();
       }),
+      // DEV-10316: applyPatches snapshots the post-apply dirty HEAD to return as
+      // the publish-time TOCTOU token.
+      getBranchHead: jest.fn().mockResolvedValue('postapply_head_sha'),
     };
 
     const objectStorageService = {
@@ -249,7 +252,8 @@ describe('ApplyPatchesService.applyPatches', () => {
     const result = await service.applyPatches(defaultArgs());
 
     expect(commitCalls).toHaveLength(1);
-    expect(result).toEqual({ patchCount: 1 });
+    // DEV-10316: result now also carries the post-apply dirty HEAD snapshot.
+    expect(result).toEqual({ patchCount: 1, postApplyDirtyHead: 'postapply_head_sha' });
   });
 
   it('emits progress callbacks before and after the patches are applied', async () => {

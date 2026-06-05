@@ -306,6 +306,21 @@ pub struct JobProgress {
     pub status: String,
     #[serde(rename = "failedReason", default, alias = "failed_reason")]
     pub failed_reason: Option<String>,
+    /// UI-facing job progress payload. DEV-10316 reads `dirtyHead` off the
+    /// completed apply-patches job here to use as the publish-time TOCTOU token.
+    #[serde(rename = "publicProgress", default)]
+    pub public_progress: Option<JobPublicProgress>,
+}
+
+/// Subset of a job's `publicProgress` the CLI cares about.
+#[derive(Debug, Default, serde::Deserialize)]
+#[allow(dead_code)]
+pub struct JobPublicProgress {
+    /// DEV-10316: dirty-branch HEAD after an apply-patches job landed. Surfaced
+    /// to the desktop so it can carry it to `/publish-v2/plan-job` as
+    /// `expectedBaseDirtyHead`. Absent on non-apply jobs / while running.
+    #[serde(rename = "dirtyHead", default)]
+    pub dirty_head: Option<String>,
 }
 
 /// Response from endpoints that start a background job.
@@ -329,8 +344,10 @@ fn job_progress_path(job_id: &str) -> String {
     format!("jobs/{}/progress", job_id)
 }
 
-/// Poll a job until it completes or fails. Prints dots to stderr.
-pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<()> {
+/// Poll a job until it completes or fails. Prints dots to stderr. Returns the
+/// final `JobProgress` on success so callers can read the terminal
+/// `publicProgress` (e.g. DEV-10316's `dirtyHead` off an apply-patches job).
+pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<JobProgress> {
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -343,7 +360,7 @@ pub async fn poll_job(client: &ApiClient, job_id: &str) -> ApiResult<()> {
         match progress.status.as_str() {
             "completed" => {
                 eprintln!();
-                return Ok(());
+                return Ok(progress);
             }
             "failed" => {
                 eprintln!();

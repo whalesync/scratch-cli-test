@@ -33,12 +33,40 @@ interface UnreviewedChangeEntry {
   status: string;
 }
 
-type PublishMode = 'approval' | 'uploading' | 'uploaded' | 'publishing' | 'complete' | 'error' | 'stale';
+type PublishMode =
+  | 'approval'
+  | 'uploading'
+  | 'uploaded'
+  | 'publishing'
+  | 'complete'
+  | 'error'
+  | 'stale'
+  // DEV-10316: the connection has unpublished changes on the server — either
+  // detected at upload (the CLI's `blocked_dirty` refusal) or at publish (the
+  // plan-build TOCTOU drift abort). Count-only redirect to the web review screen.
+  | 'dirty'
+  // DEV-10316: the dirty-gate check couldn't run; retryable ("Try again").
+  | 'checkFailed';
 
 type UploadResult = Awaited<ReturnType<typeof window.scratchDesktop.uploadWorkspaceChanges>>;
 type UploadSuccess = Extract<UploadResult, { status: 'uploaded' | 'no_changes' | 'up_to_date' }>;
 type UploadBlockedStale = Extract<UploadResult, { status: 'blocked_stale' }>;
+type UploadCheckFailed = Extract<UploadResult, { status: 'check_failed' }>;
 type UploadConnection = UploadSuccess['connections'][number];
+
+/**
+ * Count-only connection entry shown in the `dirty` redirect. Unifies the
+ * upload-time `blocked_dirty` shape and the publish-time TOCTOU drift shape —
+ * both render as "<connection> · <N> change(s)".
+ */
+interface DirtyGateConnection {
+  connectionName: string;
+  dirtyCount: number;
+}
+
+/** Lead line shown above the `dirty` redirect when entered via a publish-time TOCTOU drift abort. */
+const TOCTOU_DRIFT_LEAD =
+  'The server changed while you were reviewing — there are now unpublished changes to resolve first.';
 
 interface ConnectionPublishState {
   connectionId: string;
@@ -134,6 +162,10 @@ function modeTitle(mode: PublishMode): string {
       return 'Publish failed';
     case 'stale':
       return 'Server has newer changes';
+    case 'dirty':
+      return 'Unpublished changes on the server';
+    case 'checkFailed':
+      return "Couldn't verify the server's state";
   }
 }
 
@@ -164,6 +196,13 @@ interface PublishPipelineProgress {
   deletesPlanned?: number;
   backfillsPlanned?: number;
   renameFilesPlanned?: number;
+  /**
+   * DEV-10316: present (with `status: 'failed'`) when the plan-build aborted
+   * because the connection's dirty HEAD drifted past the desktop's
+   * `expectedBaseDirtyHead` since upload. The modal reads this off the plan
+   * job's progress to route into the count-only `dirty` redirect.
+   */
+  blockedDirtyDrift?: { connectorAccountId: string; dirtyCount: number };
 }
 
 function hasPublishFailures(job: JobStatus | undefined): boolean {
@@ -399,6 +438,10 @@ export function PublishChangesModal({
   const [unreviewedEntries, setUnreviewedEntries] = useState<UnreviewedChangeEntry[]>([]);
   const [uploadResult, setUploadResult] = useState<UploadSuccess | null>(null);
   const [blockedStale, setBlockedStale] = useState<UploadBlockedStale | null>(null);
+  // DEV-10316: count-only `dirty` redirect. `lead` is set only when entered via
+  // a publish-time TOCTOU drift abort (vs an upload-time `blocked_dirty`).
+  const [blockedDirty, setBlockedDirty] = useState<{ connections: DirtyGateConnection[]; lead?: string } | null>(null);
+  const [checkFailed, setCheckFailed] = useState<UploadCheckFailed | null>(null);
   const [stalenessBannerDismissed, setStalenessBannerDismissed] = useState(false);
   const [publishConnections, setPublishConnections] = useState<ConnectionPublishState[]>([]);
   const [jobs, setJobs] = useState<JobStatus[]>([]);
@@ -424,6 +467,8 @@ export function PublishChangesModal({
       setMode('uploading');
       setUploadResult(null);
       setBlockedStale(null);
+      setBlockedDirty(null);
+      setCheckFailed(null);
       setStalenessBannerDismissed(false);
       setProgressSteps((prev) => [
         ...prev,
@@ -450,6 +495,37 @@ export function PublishChangesModal({
           }),
         );
         setMode('stale');
+        return;
+      }
+
+      // DEV-10316: the connection's `dirty` branch already holds unpublished
+      // changes vs live `main` (typically the web sync's staged changes). The
+      // upload bailed before applying anything. Redirect the user to resolve
+      // them on the web — count-only, no per-record detail.
+      if (result.status === 'blocked_dirty') {
+        setBlockedDirty({ connections: result.connections });
+        setProgressSteps((prev) =>
+          prev.map((step) =>
+            step.id === 'upload'
+              ? { ...step, status: 'error', label: 'Unpublished changes on the server — resolve on the web first' }
+              : step,
+          ),
+        );
+        setMode('dirty');
+        return;
+      }
+
+      // DEV-10316: the dirty-gate check itself couldn't run (git service
+      // down/busy). Fail-closed — hold the publish with a retryable error
+      // rather than risk an unguarded upload.
+      if (result.status === 'check_failed') {
+        setCheckFailed(result);
+        setProgressSteps((prev) =>
+          prev.map((step) =>
+            step.id === 'upload' ? { ...step, status: 'error', label: "Couldn't verify the server's state" } : step,
+          ),
+        );
+        setMode('checkFailed');
         return;
       }
 
@@ -500,6 +576,8 @@ export function PublishChangesModal({
     setUnreviewedEntries([]);
     setUploadResult(null);
     setBlockedStale(null);
+    setBlockedDirty(null);
+    setCheckFailed(null);
     setStalenessBannerDismissed(false);
     setPublishConnections([]);
     setJobs([]);
@@ -748,7 +826,11 @@ export function PublishChangesModal({
    * `publishConnections` and `jobs` state as each phase progresses.
    */
   const runConnectionPublish = useCallback(
-    async (wbId: string, conn: ConnectionPublishState) => {
+    async (
+      wbId: string,
+      conn: ConnectionPublishState,
+      expectedBaseDirtyHead?: string | null,
+    ): Promise<DirtyGateConnection | null> => {
       const updateConn = (next: Partial<ConnectionPublishState>) => {
         setPublishConnections((prev) =>
           prev.map((c) => (c.connectionId === conn.connectionId ? { ...c, ...next } : c)),
@@ -757,20 +839,36 @@ export function PublishChangesModal({
 
       try {
         updateConn({ status: 'planning' });
-        const plan = await publishApi.startPlanJob(wbId, conn.connectionId);
+        // DEV-10316: pass the post-upload dirty HEAD so the server aborts the
+        // plan build if the staging area drifted while the user reviewed.
+        const plan = await publishApi.startPlanJob(wbId, conn.connectionId, expectedBaseDirtyHead);
         if (!plan.jobId || !plan.pipelineId) {
           updateConn({ status: 'plan-no-diff' });
-          return;
+          return null;
         }
         const planJobId = String(plan.jobId);
         updateConn({ planJobId, pipelineId: plan.pipelineId });
-        await pollJobToTerminal(planJobId);
+        const planJob = await pollJobToTerminal(planJobId);
+
+        // DEV-10316: the plan-build aborted on dirty-HEAD drift. Return a drift
+        // signal so `triggerPublish` flips the whole modal into the count-only
+        // `dirty` redirect (with the "server changed while you were reviewing"
+        // lead). Leave this connection non-terminal so the publishing→complete
+        // transition effect doesn't fire before the redirect takes over.
+        const planProgress = planJob.publicProgress as PublishPipelineProgress | undefined;
+        if (planProgress?.blockedDirtyDrift) {
+          return { connectionName: conn.connectionName, dirtyCount: planProgress.blockedDirtyDrift.dirtyCount };
+        }
+        if (planJob.state !== 'completed') {
+          updateConn({ status: 'failed', failureMessage: getPublishFailureMessage(planJob) });
+          return null;
+        }
 
         updateConn({ status: 'running' });
         const run = await publishApi.startRunJob(wbId, plan.pipelineId);
         if (!run.jobId) {
           updateConn({ status: 'failed', failureMessage: 'run-job did not return a job id' });
-          return;
+          return null;
         }
         const runJobId = String(run.jobId);
         updateConn({ runJobId });
@@ -781,15 +879,17 @@ export function PublishChangesModal({
             status: 'failed',
             failureMessage: getPublishFailureMessage(finalJob),
           });
-          return;
+          return null;
         }
 
         updateConn({ status: 'completed' });
+        return null;
       } catch (err) {
         updateConn({
           status: 'failed',
           failureMessage: err instanceof Error ? err.message : 'Unknown error while publishing',
         });
+        return null;
       }
     },
     [pollJobToTerminal],
@@ -853,13 +953,31 @@ export function PublishChangesModal({
       setPublishConnections(initial);
       await trackPublishStarted(workspaceId, initial.length);
 
+      // DEV-10316: per-connection post-upload dirty HEAD, used as the
+      // publish-time TOCTOU token so the server aborts if the staging area
+      // drifted between upload and this click.
+      const dirtyHeadByName = new Map(connectionsWithDiff.map((c) => [c.connectionName, c.dirtyHead ?? null]));
+
       // Fan out plan-job → run-job per connection in parallel.
-      await Promise.allSettled(
-        initial.map(async (conn) => {
-          if (conn.status === 'failed') return;
-          await runConnectionPublish(workspaceId, conn);
+      const settled = await Promise.allSettled(
+        initial.map(async (conn): Promise<DirtyGateConnection | null> => {
+          if (conn.status === 'failed') return null;
+          return runConnectionPublish(workspaceId, conn, dirtyHeadByName.get(conn.connectionName));
         }),
       );
+
+      // DEV-10316: if any connection's plan-build aborted on dirty-HEAD drift,
+      // flip the whole modal into the count-only `dirty` redirect. Over-publish
+      // is already impossible (a drifted connection never built a plan); this is
+      // the "resolve on the web, then come back" hand-off, led by the TOCTOU line.
+      const driftedConnections = settled
+        .map((s) => (s.status === 'fulfilled' ? s.value : null))
+        .filter((v): v is DirtyGateConnection => v !== null);
+      if (driftedConnections.length > 0) {
+        setBlockedDirty({ connections: driftedConnections, lead: TOCTOU_DRIFT_LEAD });
+        setMode('dirty');
+        return;
+      }
     } catch (err) {
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to start publish');
@@ -1214,6 +1332,63 @@ export function PublishChangesModal({
                     </Group>
                   </>
                 )}
+              </>
+            )}
+
+            {mode === 'dirty' && blockedDirty && (
+              <>
+                <Alert color="yellow" title="Unpublished changes on the server">
+                  {blockedDirty.lead && (
+                    <Text size="sm" mb="xs">
+                      {blockedDirty.lead}
+                    </Text>
+                  )}
+                  <Text size="sm">
+                    Publish or discard these on the web, then come back here. (Someone with web access may need to
+                    resolve changes you didn&apos;t make.)
+                  </Text>
+                </Alert>
+                <ScrollArea.Autosize mah={240}>
+                  <Stack gap="xs">
+                    {blockedDirty.connections.map((c) => (
+                      <Group key={c.connectionName} justify="space-between" wrap="nowrap">
+                        <Text size="sm" truncate>
+                          {c.connectionName}
+                        </Text>
+                        <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
+                          {c.dirtyCount.toLocaleString()} change{c.dirtyCount === 1 ? '' : 's'}
+                        </Text>
+                      </Group>
+                    ))}
+                  </Stack>
+                </ScrollArea.Autosize>
+                <Group justify="flex-end">
+                  <Button variant="default" onClick={() => handleClose()} loading={closing}>
+                    Close
+                  </Button>
+                  {workspaceId && (
+                    <Button onClick={handleReviewOnWeb} aria-label="Review unpublished changes on the web">
+                      Review on web ↗
+                    </Button>
+                  )}
+                </Group>
+              </>
+            )}
+
+            {mode === 'checkFailed' && checkFailed && (
+              <>
+                <Alert color="red" title="Couldn't verify the server's state">
+                  {checkFailed.message ??
+                    "We couldn't check whether the server has unpublished changes. This is usually temporary — try again."}
+                </Alert>
+                <Group justify="flex-end">
+                  <Button variant="default" onClick={() => handleClose()} loading={closing}>
+                    Close
+                  </Button>
+                  <Button onClick={() => void startUpload()} disabled={closing || initializing}>
+                    Try again
+                  </Button>
+                </Group>
               </>
             )}
 

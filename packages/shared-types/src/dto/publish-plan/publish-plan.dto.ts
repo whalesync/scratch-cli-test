@@ -9,6 +9,18 @@ export interface PublishPlanBuildDto {
   runAfterPlan?: boolean;
   folderPath?: string;
   filePath?: string;
+  /**
+   * DEV-10316 TOCTOU token. The dirty-branch HEAD SHA the client captured right
+   * after its upload-patch apply landed (surfaced by the apply job as
+   * `publicProgress.dirtyHead`). When present, the publish-plan build re-checks,
+   * BEFORE `rebaseDirty` force-moves the HEAD, that the connection's current
+   * dirty HEAD still equals this value; if the server's `dirty` branch advanced
+   * in the window between the user's upload and this publish (e.g. the automated
+   * web sync staged new changes), the build aborts rather than ship the surprise.
+   * Only the desktop publish modal sends it, per-connection; absent ⇒ no
+   * re-check (legacy / CLI publish, which is protected by the upload-time gate).
+   */
+  expectedBaseDirtyHead?: string;
 }
 
 export interface PublishPlanRunDto {

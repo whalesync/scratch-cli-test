@@ -131,6 +131,8 @@ interface ScratchDesktopAPI {
           updatedPaths: string[];
           deletedPaths: string[];
           messages: string[];
+          /** DEV-10316: post-apply dirty HEAD; carried to publish as expectedBaseDirtyHead. */
+          dirtyHead?: string | null;
         }>;
         elapsedMs: number;
       }
@@ -143,6 +145,29 @@ interface ScratchDesktopAPI {
           currentRemoteHead: string;
           message?: string;
         }>;
+        elapsedMs: number;
+      }
+    | {
+        // DEV-10316: the connection has unpublished changes on the server.
+        status: 'blocked_dirty';
+        blockedCount: number;
+        connections: Array<{
+          connectionName: string;
+          connectorAccountId: string;
+          dirtyCount: number;
+        }>;
+        elapsedMs: number;
+      }
+    | {
+        // DEV-10316: the dirty-gate check couldn't run; retryable.
+        status: 'check_failed';
+        blockedCount: number;
+        connections: Array<{
+          connectionName: string;
+          connectorAccountId: string;
+          message?: string;
+        }>;
+        message?: string;
         elapsedMs: number;
       }
   >;

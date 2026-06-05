@@ -522,9 +522,11 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Update,
-            &json!({"a": 9}), false,
+            &json!({"a": 9}),
+            false,
             Some(&old),
-            Some(&new));
+            Some(&new),
+        );
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
@@ -539,7 +541,14 @@ mod tests {
 
     #[test]
     fn create_when_new_head_still_lacks_path() {
-        let r = re_anchor_one("p", PatchKind::Create, &json!({"name": "Acme"}), false, None, None);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Create,
+            &json!({"name": "Acme"}),
+            false,
+            None,
+            None,
+        );
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
@@ -559,9 +568,11 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Delete,
-            &JsonValue::Null, false,
+            &JsonValue::Null,
+            false,
             Some(&old),
-            Some(&new));
+            Some(&new),
+        );
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
@@ -585,9 +596,11 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Update,
-            &json!({"a": 9}), false,
+            &json!({"a": 9}),
+            false,
             Some(&old),
-            Some(&new));
+            Some(&new),
+        );
         assert_eq!(r.anchored, None);
         assert_eq!(r.conflict, None);
     }
@@ -598,9 +611,11 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Create,
-            &server_content, false,
+            &server_content,
+            false,
             None,
-            Some(&server_content));
+            Some(&server_content),
+        );
         assert_eq!(r.anchored, None);
         // Both sides arrived at identical content — no override happened.
         assert_eq!(r.conflict, None);
@@ -609,7 +624,14 @@ mod tests {
     #[test]
     fn drop_delete_when_server_also_deleted() {
         let old = json!({"a": 1});
-        let r = re_anchor_one("p", PatchKind::Delete, &JsonValue::Null, false, Some(&old), None);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Delete,
+            &JsonValue::Null,
+            false,
+            Some(&old),
+            None,
+        );
         assert_eq!(r.anchored, None);
         assert_eq!(r.conflict, None);
     }
@@ -642,7 +664,14 @@ mod tests {
     #[test]
     fn server_deleted_path_user_had_delete_drops_entry_no_conflict() {
         let old = json!({"a": 1});
-        let r = re_anchor_one("p", PatchKind::Delete, &JsonValue::Null, false, Some(&old), None);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Delete,
+            &JsonValue::Null,
+            false,
+            Some(&old),
+            None,
+        );
         assert_eq!(r.anchored, None);
         assert_eq!(r.conflict, None);
     }
@@ -656,9 +685,11 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Update,
-            &json!({"a": 9}), false,
+            &json!({"a": 9}),
+            false,
             Some(&old),
-            Some(&new));
+            Some(&new),
+        );
         // User patch is preserved verbatim — RFC 7396 semantics naturally
         // leave keys-not-mentioned alone, so replaying {"a": 9} on the new
         // head yields {"a": 9, "b": 99}, keeping the server's b=99.
@@ -706,9 +737,11 @@ mod tests {
         let r = re_anchor_one(
             "p",
             PatchKind::Delete,
-            &JsonValue::Null, false,
+            &JsonValue::Null,
+            false,
             Some(&old),
-            Some(&new));
+            Some(&new),
+        );
         // User-wins: still delete.
         assert_eq!(
             r.anchored,

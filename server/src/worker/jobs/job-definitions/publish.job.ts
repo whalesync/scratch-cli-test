@@ -1,6 +1,6 @@
 import { JobType, type WorkbookId } from '@spinner/shared-types';
 import type { PostHogService } from 'src/posthog/posthog.service';
-import type { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { PublishDirtyDriftError, type PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
 import type { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -28,6 +28,15 @@ export type PublishPublicProgress = {
   renameFilesPlanned: number;
   lastSyncError?: string;
   errorCount: number;
+  /**
+   * DEV-10316 publish-time TOCTOU abort. Set (with `status: 'failed'`) when the
+   * connection's dirty HEAD drifted past the client's `expectedBaseDirtyHead`
+   * since upload, so the plan was aborted before building. The desktop modal
+   * reads this off the plan job's progress to route into its count-only `dirty`
+   * redirect (with the "server changed while you were reviewing" lead) instead
+   * of showing a generic failure.
+   */
+  blockedDirtyDrift?: { connectorAccountId: string; dirtyCount: number };
 };
 
 // ── Job Definition ───────────────────────────────────────────────────
@@ -42,6 +51,8 @@ export type PublishJobDefinition = JobDefinitionBuilder<
     runAfterPlan?: boolean;
     folderPath?: string;
     filePath?: string;
+    /** DEV-10316 TOCTOU token — see PublishPlanBuildDto.expectedBaseDirtyHead. */
+    expectedBaseDirtyHead?: string;
     executeSinglePhase?: boolean; // If only executing a single stage
     trigger?: 'web' | 'scheduler' | 'cli' | 'job';
   },
@@ -182,6 +193,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           data.pipelineId,
           data.folderPath,
           data.filePath,
+          data.expectedBaseDirtyHead,
           onPlanProgress,
         );
         pipelineId = plan.pipelineId;
@@ -326,7 +338,42 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
     } catch (error) {
       const isCanceled = error instanceof JobCanceledError || abortSignal.aborted;
 
-      if (isCanceled) {
+      if (error instanceof PublishDirtyDriftError) {
+        // DEV-10316 publish-time TOCTOU abort. The dirty branch drifted past the
+        // client's `expectedBaseDirtyHead` since upload (the web sync staged
+        // changes while the user reviewed). Discard the half-built pipeline and
+        // surface a structured `blockedDirtyDrift` discriminator on the job's
+        // progress so the desktop routes into its count-only `dirty` redirect
+        // (with the "server changed while you were reviewing" lead) rather than a
+        // generic failure. The job still ends `failed` (we re-throw) so it never
+        // proceeds to a run phase.
+        await this.publishPlanService.cancelPipeline(data.pipelineId);
+        await checkpoint({
+          publicProgress: {
+            status: 'failed',
+            ...zeroCounts,
+            blockedDirtyDrift: { connectorAccountId: error.connectorAccountId, dirtyCount: error.dirtyCount },
+          },
+          jobProgress: {},
+          connectorProgress: {},
+        });
+        try {
+          this.postHogService?.trackPublishAbortedDirtyDrift(data.userId, {
+            workbookId: data.workbookId,
+            connectorAccountId: error.connectorAccountId,
+            dirtyCount: error.dirtyCount,
+          });
+        } catch {
+          // PostHog tracking should never break the error flow.
+        }
+        WSLogger.warn({
+          source: 'PublishJob',
+          message: 'Publish job aborted — dirty HEAD drifted since upload (DEV-10316)',
+          workbookId: data.workbookId,
+          jobId,
+          data: { connectorAccountId: error.connectorAccountId, dirtyCount: error.dirtyCount },
+        });
+      } else if (isCanceled) {
         // If aborted during plan, cancelPipeline is safe. The UI handles resuming.
         await this.publishPlanService.cancelPipeline(data.pipelineId);
         WSLogger.warn({

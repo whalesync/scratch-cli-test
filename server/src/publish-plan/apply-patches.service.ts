@@ -31,7 +31,7 @@ export class ApplyPatchesService {
     connectorAccountId: string;
     uploadId: string;
     onProgress?: (progress: { uploadId: string; patchCount: number; processedCount: number }) => Promise<void>;
-  }): Promise<{ patchCount: number }> {
+  }): Promise<{ patchCount: number; postApplyDirtyHead: string | null }> {
     const { workbookId, connectorAccountId, uploadId, onProgress } = args;
 
     // 1. Stream + parse the patch payload.
@@ -136,6 +136,15 @@ export class ApplyPatchesService {
       });
     }
 
+    // 8. Snapshot the dirty branch HEAD *after* this apply. The desktop carries
+    //    this SHA to `/publish-v2/plan-job` as `expectedBaseDirtyHead` (DEV-10316
+    //    TOCTOU token), and the plan build aborts if the connection's dirty HEAD
+    //    has since drifted — proving the publish ships exactly what the user
+    //    just uploaded and nothing the web sync staged in the meantime. Captured
+    //    here, server-side, immediately after the commit so it can't include a
+    //    concurrent writer's change.
+    const postApplyDirtyHead = await this.scratchGitService.getBranchHead(repoId, DIRTY_BRANCH);
+
     await onProgress?.({ uploadId, patchCount, processedCount: patchCount });
 
     WSLogger.info({
@@ -148,10 +157,11 @@ export class ApplyPatchesService {
         writes: filesToCommit.length,
         deletes: toDelete.length,
         revertCount: normalized.filter((p) => p.revert).length,
+        postApplyDirtyHead,
       },
     });
 
-    return { patchCount };
+    return { patchCount, postApplyDirtyHead };
   }
 
   private async readPatchPayload(uploadId: string): Promise<UploadPatchPayload> {

@@ -142,6 +142,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     filePath: string | undefined,
     initialProgress: import('src/types/progress').Progress | undefined,
     runContext: RunContext,
+    expectedBaseDirtyHead?: string,
   ): Promise<Job> {
     const id = `publish-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
@@ -154,6 +155,8 @@ export class BullEnqueuerService implements OnModuleDestroy {
       ...(runAfterPlan && { runAfterPlan }),
       ...(folderPath && { folderPath }),
       ...(filePath && { filePath }),
+      // DEV-10316 TOCTOU token (desktop per-connection publish only).
+      ...(expectedBaseDirtyHead && { expectedBaseDirtyHead }),
     };
     return await this.createAndEnqueue(
       {

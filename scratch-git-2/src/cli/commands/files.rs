@@ -405,6 +405,13 @@ struct UploadResult {
     /// not run (git service down/busy). When `Some`, `status == "check_failed"`
     /// and no patches were applied. Retryable.
     check_failed: Option<crate::api::CheckFailedResponse>,
+    /// DEV-10316 publish-time TOCTOU token: the connection's `dirty` HEAD after
+    /// this upload's apply-patches job landed (read off the job's
+    /// `publicProgress.dirtyHead`). The desktop carries it to
+    /// `/publish-v2/plan-job` as `expectedBaseDirtyHead` so the plan build can
+    /// abort if the staging area drifts before publish. `None` when the apply
+    /// produced no job (no changes) or the server didn't surface a HEAD.
+    dirty_head: Option<String>,
 }
 
 #[derive(Default)]
@@ -4549,14 +4556,18 @@ async fn upload_single_repo_via_patches(
     // Poll the apply-patches job to completion. The job's "done" state means
     // the server's `dirty` branch has the new commit; the publish pipeline is
     // NOT triggered by this endpoint anymore — the caller must run
-    // `scratchmd files publish` afterwards.
+    // `scratchmd files publish` afterwards. DEV-10316: capture the post-apply
+    // dirty HEAD off the completed job so the desktop can use it as the
+    // publish-time TOCTOU token (`expectedBaseDirtyHead`).
+    let mut dirty_head: Option<String> = None;
     if let Some(job_id) = applied.job_id.as_deref() {
         if verbose {
             eprint!("  Applying...");
         }
-        crate::api::poll_job(client, job_id)
+        let final_progress = crate::api::poll_job(client, job_id)
             .await
             .map_err(|e| anyhow::anyhow!("apply-patches job failed: {e}"))?;
+        dirty_head = final_progress.public_progress.and_then(|p| p.dirty_head);
         if verbose {
             eprintln!(" done");
         }
@@ -4574,6 +4585,7 @@ async fn upload_single_repo_via_patches(
         changed_paths,
         messages,
         staleness_warning: applied.staleness_warning,
+        dirty_head,
         ..Default::default()
     })
 }
@@ -5396,6 +5408,9 @@ fn print_upload_result(
                     "updatedPaths": c.updated_paths,
                     "deletedPaths": c.deleted_paths,
                     "messages": c.messages,
+                    // DEV-10316: post-apply dirty HEAD, carried to publish as the
+                    // `expectedBaseDirtyHead` TOCTOU token. Omitted when absent.
+                    "dirtyHead": c.dirty_head,
                 })
             })
             .collect();

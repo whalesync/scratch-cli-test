@@ -21,6 +21,28 @@ import { SchemaHelperService } from './schema-helper.service';
 import { PhaseRequiringChangedFields, PublishPlanInfo, PublishPlanPhase, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
 
+/**
+ * Thrown by {@link PublishPlanBuildService.buildPipeline} when the connection's
+ * current `dirty` HEAD has drifted past the `expectedBaseDirtyHead` TOCTOU token
+ * the client captured at upload time (DEV-10316). Carries the count of pending
+ * changes vs live `main` so the desktop can render its count-only `dirty` redirect.
+ * The publish job handler catches this, cancels the half-built pipeline, and
+ * surfaces a structured `blockedDirtyDrift` discriminator on the job's progress.
+ */
+export class PublishDirtyDriftError extends Error {
+  constructor(
+    public readonly connectorAccountId: string,
+    public readonly dirtyCount: number,
+    public readonly expectedBaseDirtyHead: string,
+    public readonly currentDirtyHead: string | null,
+  ) {
+    super(
+      `Publish aborted: connection ${connectorAccountId} dirty HEAD drifted (expected ${expectedBaseDirtyHead}, found ${currentDirtyHead ?? '<none>'})`,
+    );
+    this.name = 'PublishDirtyDriftError';
+  }
+}
+
 @Injectable()
 export class PublishPlanBuildService {
   constructor(
@@ -159,6 +181,7 @@ export class PublishPlanBuildService {
     existingPipelineId?: string,
     folderPath?: string,
     filePath?: string,
+    expectedBaseDirtyHead?: string,
     onProgress?: (counts: {
       assetUploadsPlanned: number;
       editsPlanned: number;
@@ -187,6 +210,29 @@ export class PublishPlanBuildService {
 
     const wkbId = workbookId as WorkbookId;
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+
+    // DEV-10316 publish-time TOCTOU re-check. The desktop captured the dirty HEAD
+    // right after its upload landed (`expectedBaseDirtyHead`). If the connection's
+    // current dirty HEAD has drifted past it — e.g. the automated web sync staged
+    // new changes while the user was reviewing "Ready to publish" — abort rather
+    // than build a plan that ships those un-approved changes. This MUST run before
+    // `rebaseDirty` below, which force-moves the dirty HEAD and would defeat the
+    // comparison. Only per-connection desktop publishes send the token; absent ⇒
+    // no re-check (the CLI is protected by the upload-time gate instead).
+    if (expectedBaseDirtyHead && connectorAccountId) {
+      const currentDirtyHead = await this.scratchGitService.getBranchHead(repoId, DIRTY_BRANCH);
+      if (currentDirtyHead !== expectedBaseDirtyHead) {
+        const dirtyCount = await this.scratchGitService.getPendingChangeCountVsMain(repoId);
+        WSLogger.warn({
+          source: 'PublishPlanBuildService.buildPipeline',
+          message: 'Aborting publish — dirty HEAD drifted since upload (DEV-10316 TOCTOU)',
+          workbookId,
+          userId,
+          data: { connectorAccountId, expectedBaseDirtyHead, currentDirtyHead, dirtyCount },
+        });
+        throw new PublishDirtyDriftError(connectorAccountId, dirtyCount, expectedBaseDirtyHead, currentDirtyHead);
+      }
+    }
 
     // Ensure merge_base === main before diffing. This is a no-op in steady state (dirty==merge_base)
     // and brings merge_base up to date if a pull job just finished without rebasing.

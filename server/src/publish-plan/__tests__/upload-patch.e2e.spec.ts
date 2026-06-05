@@ -154,6 +154,8 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
         for (const p of paths) dirty.delete(p);
         return Promise.resolve();
       }),
+      // DEV-10316: post-apply dirty HEAD snapshot returned by applyPatches.
+      getBranchHead: jest.fn().mockResolvedValue('postapply_head_sha'),
     };
 
     const objectStorageService = {
@@ -185,7 +187,8 @@ describeIfIntegration('/upload-patch end-to-end (real Prisma, mocked git/GCS/Bul
     expect(JSON.parse(dirty.get('Companies/rec1.json') ?? '')).toEqual({ id: 'rec1', name: 'Acme' });
     expect(JSON.parse(dirty.get('Posts/rec_new.json') ?? '')).toEqual({ id: 'rec_new', title: 'Hi' });
 
-    expect(result).toEqual({ patchCount: 2 });
+    // DEV-10316: result now also carries the post-apply dirty HEAD snapshot.
+    expect(result).toEqual({ patchCount: 2, postApplyDirtyHead: 'postapply_head_sha' });
 
     // After decoupling, /upload-patch/commit is patch-only — no PublishPlan
     // row should be created here. The CLI/desktop calls /publish-v2/plan-job

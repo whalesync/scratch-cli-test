@@ -65,6 +65,29 @@ describe('publishApi.startPlanJob', () => {
 
     expect(result).toEqual({ jobId: null, pipelineId: null });
   });
+
+  it('includes expectedBaseDirtyHead in the body when provided (DEV-10316 TOCTOU token)', async () => {
+    const { publishApi } = await import('../publish-api');
+    responseQueue.push({ jobId: 'job_1', pipelineId: 'pipe_1' });
+
+    await publishApi.startPlanJob('wkb_123', 'ca_456', 'dirtyhead_sha');
+
+    expect(calls[0].body).toEqual({
+      connectorAccountId: 'ca_456',
+      runAfterPlan: false,
+      expectedBaseDirtyHead: 'dirtyhead_sha',
+    });
+  });
+
+  it('omits expectedBaseDirtyHead when null/undefined (legacy / no token captured)', async () => {
+    const { publishApi } = await import('../publish-api');
+    responseQueue.push({ jobId: 'job_1', pipelineId: 'pipe_1' });
+
+    await publishApi.startPlanJob('wkb_123', 'ca_456', null);
+
+    const body = calls[0].body as Record<string, unknown>;
+    expect('expectedBaseDirtyHead' in body).toBe(false);
+  });
 });
 
 describe('publishApi.startRunJob', () => {
