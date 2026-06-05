@@ -16,9 +16,8 @@ jest.mock('@notionhq/client', () => ({
   isFullDataSource: jest.fn(() => true),
 }));
 
-jest.mock('webflow-api', () => ({
-  WebflowClient: jest.fn().mockImplementation(() => ({})),
-  Webflow: { FieldType: {} },
+jest.mock('../library/webflow/webflow-api-client', () => ({
+  WebflowApiClient: jest.fn().mockImplementation(() => ({})),
   WebflowError: class extends Error {},
 }));
 

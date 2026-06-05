@@ -1,12 +1,9 @@
-import { Webflow } from 'webflow-api';
 import { sanitizeForTableWsId } from '../../ids';
 import { TablePreview } from '../../types';
+import { Collection, CollectionListArrayItem, Site } from './webflow-types';
 
 export class WebflowSchemaParser {
-  parseTablePreview(
-    site: Webflow.Site,
-    collection: Webflow.CollectionListArrayItem | Webflow.Collection,
-  ): TablePreview {
+  parseTablePreview(site: Site, collection: CollectionListArrayItem | Collection): TablePreview {
     return {
       id: {
         wsId: sanitizeForTableWsId(collection.id),

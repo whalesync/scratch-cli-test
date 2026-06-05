@@ -1,14 +1,14 @@
 import { X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { Webflow } from 'webflow-api';
 import { buildWebflowPagesJsonTableSpec } from '../webflow-json-schema';
+import { Site } from '../webflow-types';
 
-function makeSite(overrides: Partial<Webflow.Site> = {}): Webflow.Site {
+function makeSite(overrides: Partial<Site> = {}): Site {
   return {
     id: 'site-1',
     displayName: 'My Site',
     shortName: 'mysite',
     ...overrides,
-  } as Webflow.Site;
+  } as Site;
 }
 
 describe('buildWebflowPagesJsonTableSpec', () => {

@@ -1,12 +1,11 @@
 import { TObject, TSchema } from '@sinclair/typebox';
 import { connectorMetadata } from '@spinner/shared-types';
+import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
-import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
-import { Webflow, WebflowClient, WebflowError } from 'webflow-api';
-import { TooManyRequestsError } from 'webflow-api/api/errors';
 import { minifyHtml } from '../../../../wrappers/html-minify';
 import {
   defaultResolveFieldValue,
@@ -15,7 +14,11 @@ import {
 } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
-import { ConnectorInstantiationError } from '../../error';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
 import { Service } from '../../service-constants';
 import {
   BaseJsonTableSpec,
@@ -26,6 +29,7 @@ import {
   PullRecordFilesResult,
   TablePreview,
 } from '../../types';
+import { WebflowApiClient } from './webflow-api-client';
 import {
   buildWebflowAssetsJsonTableSpec,
   buildWebflowJsonTableSpec,
@@ -34,18 +38,32 @@ import {
   WEBFLOW_PAGES_TABLE_ID_PREFIX,
 } from './webflow-json-schema';
 import { WebflowSchemaParser } from './webflow-schema-parser';
-import { WEBFLOW_ECOMMERCE_COLLECTION_SLUGS } from './webflow-types';
+import {
+  CollectionItem,
+  CollectionItemFieldData,
+  CollectionItemWithIdInput,
+  CollectionItemWithIdInputFieldData,
+  Page,
+  PageMetadataWrite,
+  WEBFLOW_ECOMMERCE_COLLECTION_SLUGS,
+} from './webflow-types';
 
 export const WEBFLOW_DEFAULT_BATCH_SIZE = 100;
+
+/** True for an axios error carrying an HTTP 404 (record not found). */
+function isWebflowNotFoundError(error: unknown): boolean {
+  return isAxiosError(error) && error.response?.status === 404;
+}
 
 /**
  * Normalize a Webflow page-metadata object into the ConnectorFile shape we
  * commit to disk. Used by both `pullPages` and `updateRecords` (pages branch,
  * applied to the post-write refetch result). Whitelists the same set of fields
- * on both sides and converts `createdOn`/`lastUpdated` from `Date` to ISO
- * strings so the post-publish git blob is byte-equal to a fresh pull.
+ * on both sides. `createdOn`/`lastUpdated` already arrive as canonical ISO
+ * strings (WebflowApiClient reproduces the old SDK's date normalization), so the
+ * post-publish git blob stays byte-equal to a fresh pull.
  */
-function normalizeWebflowPageForFile(page: Webflow.Page): ConnectorFile {
+function normalizeWebflowPageForFile(page: Page): ConnectorFile {
   return {
     id: page.id,
     title: page.title,
@@ -56,20 +74,10 @@ function normalizeWebflowPageForFile(page: Webflow.Page): ConnectorFile {
     draft: page.draft,
     seo: page.seo,
     openGraph: page.openGraph,
-    createdOn: page.createdOn instanceof Date ? page.createdOn.toISOString() : page.createdOn,
-    lastUpdated: page.lastUpdated instanceof Date ? page.lastUpdated.toISOString() : page.lastUpdated,
+    createdOn: page.createdOn,
+    lastUpdated: page.lastUpdated,
   } as unknown as ConnectorFile;
 }
-
-const WEBFLOW_RETRY_OPTS: WithRetryOpts = {
-  isRateLimited: (error) => error instanceof TooManyRequestsError,
-  getRetryAfterS: (error) => {
-    if (!(error instanceof TooManyRequestsError)) return undefined;
-    const header = error.rawResponse?.headers?.get('retry-after');
-    const seconds = header ? parseInt(header, 10) : NaN;
-    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
-  },
-};
 
 export class WebflowConnector extends Connector {
   readonly service = Service.WEBFLOW;
@@ -89,38 +97,29 @@ export class WebflowConnector extends Connector {
   });
   override supportsFileUpload = true;
 
-  private readonly client: WebflowClient;
+  private readonly client: WebflowApiClient;
   private readonly schemaParser = new WebflowSchemaParser();
-  private readonly rateLimiter?: RateLimiter;
 
   constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new WebflowClient({ accessToken });
-    this.rateLimiter = opts?.rateLimiter;
-  }
-
-  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.rateLimiter) {
-      return this.rateLimiter.withRetry(fn, WEBFLOW_RETRY_OPTS);
-    }
-    return standaloneWithRetry(fn, WEBFLOW_RETRY_OPTS);
+    this.client = new WebflowApiClient(accessToken, { rateLimiter: opts?.rateLimiter });
   }
 
   public async testConnection(): Promise<void> {
     // Test connection by listing sites
-    await this.client.sites.list();
+    await this.client.testConnection();
   }
 
   async listTables(): Promise<TablePreview[]> {
     const tables: TablePreview[] = [];
 
     // Get all sites
-    const sitesResponse = await this.withRetry(() => this.client.sites.list());
+    const sitesResponse = await this.client.listSites();
     const sites = sitesResponse.sites || [];
 
     // For each site, get all collections + an Assets table
     for (const site of sites) {
-      const collectionsResponse = await this.withRetry(() => this.client.collections.list(site.id));
+      const collectionsResponse = await this.client.listCollections(site.id);
       const collections = collectionsResponse.collections || [];
 
       for (const collection of collections) {
@@ -273,12 +272,10 @@ export class WebflowConnector extends Connector {
 
     while (hasMore) {
       // List items with pagination
-      const response = await this.withRetry(() =>
-        this.client.collections.items.listItems(collectionId, {
-          offset,
-          limit: WEBFLOW_DEFAULT_BATCH_SIZE,
-        }),
-      );
+      const response = await this.client.listCollectionItems(collectionId, {
+        offset,
+        limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+      });
 
       const items = response.items || [];
 
@@ -315,12 +312,10 @@ export class WebflowConnector extends Connector {
     let hasMore = true;
 
     while (hasMore) {
-      const response = await this.withRetry(() =>
-        this.client.assets.list(siteId, {
-          offset,
-          limit: WEBFLOW_DEFAULT_BATCH_SIZE,
-        }),
-      );
+      const response = await this.client.listAssets(siteId, {
+        offset,
+        limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+      });
 
       const assets = response.assets || [];
 
@@ -329,14 +324,8 @@ export class WebflowConnector extends Connector {
         break;
       }
 
-      // Normalize asset records: convert Date fields to ISO strings
-      const files: ConnectorFile[] = assets.map((asset) => ({
-        ...asset,
-        createdOn: asset.createdOn instanceof Date ? asset.createdOn.toISOString() : asset.createdOn,
-        lastUpdated: asset.lastUpdated instanceof Date ? asset.lastUpdated.toISOString() : asset.lastUpdated,
-      }));
-
-      await callback({ files });
+      // Asset date fields are already normalized to ISO strings by the client.
+      await callback({ files: assets as unknown as ConnectorFile[] });
 
       const pagination = response.pagination;
       if (pagination) {
@@ -361,12 +350,10 @@ export class WebflowConnector extends Connector {
     let hasMore = true;
 
     while (hasMore) {
-      const response = await this.withRetry(() =>
-        this.client.pages.list(siteId, {
-          limit: WEBFLOW_DEFAULT_BATCH_SIZE,
-          offset,
-        }),
-      );
+      const response = await this.client.listPages(siteId, {
+        limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+        offset,
+      });
 
       const pages = response.pages || [];
 
@@ -401,20 +388,20 @@ export class WebflowConnector extends Connector {
 
     // Handle assets table
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
-      const site = await this.withRetry(() => this.client.sites.get(siteId));
+      const site = await this.client.getSite(siteId);
       return buildWebflowAssetsJsonTableSpec(id, site);
     }
 
     // Handle pages table
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
-      const site = await this.withRetry(() => this.client.sites.get(siteId));
+      const site = await this.client.getSite(siteId);
       return buildWebflowPagesJsonTableSpec(id, site);
     }
 
     // Fetch site and collection directly from Webflow API
     const [site, collection] = await Promise.all([
-      this.withRetry(() => this.client.sites.get(siteId)),
-      this.withRetry(() => this.client.collections.get(collectionId)),
+      this.client.getSite(siteId),
+      this.client.getCollection(collectionId),
     ]);
 
     return buildWebflowJsonTableSpec(id, site, collection);
@@ -432,16 +419,13 @@ export class WebflowConnector extends Connector {
       const buffer: ConnectorFile[] = [];
       for (const assetId of ids) {
         try {
-          const asset = await this.withRetry(() => this.client.assets.get(assetId));
+          const asset = await this.client.getAsset(assetId);
           if (asset) {
-            buffer.push({
-              ...asset,
-              createdOn: asset.createdOn instanceof Date ? asset.createdOn.toISOString() : asset.createdOn,
-              lastUpdated: asset.lastUpdated instanceof Date ? asset.lastUpdated.toISOString() : asset.lastUpdated,
-            } as unknown as ConnectorFile);
+            // Asset date fields are already normalized to ISO strings by the client.
+            buffer.push(asset as unknown as ConnectorFile);
           }
         } catch (error) {
-          if (error instanceof WebflowError && error.statusCode === 404) {
+          if (isWebflowNotFoundError(error)) {
             WSLogger.warn({
               source: 'WebflowConnector',
               message: `Asset ${assetId} not found, skipping`,
@@ -462,24 +446,12 @@ export class WebflowConnector extends Connector {
       const buffer: ConnectorFile[] = [];
       for (const pageId of ids) {
         try {
-          const page = await this.withRetry(() => this.client.pages.getMetadata(pageId));
+          const page = await this.client.getPageMetadata(pageId);
           if (page) {
-            buffer.push({
-              id: page.id,
-              title: page.title,
-              slug: page.slug,
-              publishedPath: page.publishedPath,
-              parentId: page.parentId,
-              archived: page.archived,
-              draft: page.draft,
-              seo: page.seo,
-              openGraph: page.openGraph,
-              createdOn: page.createdOn instanceof Date ? page.createdOn.toISOString() : page.createdOn,
-              lastUpdated: page.lastUpdated instanceof Date ? page.lastUpdated.toISOString() : page.lastUpdated,
-            } as unknown as ConnectorFile);
+            buffer.push(normalizeWebflowPageForFile(page));
           }
         } catch (error) {
-          if (error instanceof WebflowError && error.statusCode === 404) {
+          if (isWebflowNotFoundError(error)) {
             WSLogger.warn({
               source: 'WebflowConnector',
               message: `Page ${pageId} not found, skipping`,
@@ -500,7 +472,7 @@ export class WebflowConnector extends Connector {
 
     for (const itemId of ids) {
       try {
-        const item = await this.withRetry(() => this.client.collections.items.getItem(collectionId, itemId));
+        const item = await this.client.getCollectionItem(collectionId, itemId);
         if (item) {
           buffer.push(item as unknown as ConnectorFile);
         }
@@ -509,7 +481,7 @@ export class WebflowConnector extends Connector {
           await callback({ files: buffer.splice(0) });
         }
       } catch (error) {
-        if (error instanceof WebflowError && error.statusCode === 404) {
+        if (isWebflowNotFoundError(error)) {
           WSLogger.warn({
             source: 'WebflowConnector',
             message: `Item ${itemId} not found in collection ${collectionId}, skipping`,
@@ -545,25 +517,23 @@ export class WebflowConnector extends Connector {
     // Use the Live endpoint so Scratch publish == Webflow live publish in one round-trip.
     // The multi-item body shape preserves per-item isArchived/isDraft, unlike the bulk
     // `createItems` endpoint which only accepts request-level flags.
-    const items: Webflow.CollectionItem[] = [];
+    const items: CollectionItem[] = [];
     for (const file of files) {
       const fieldData = await this.extractFieldDataForApi(file, tableSpec);
-      const item: Webflow.CollectionItem = {
-        fieldData: fieldData as Webflow.CollectionItemFieldData,
+      const item: CollectionItem = {
+        fieldData: fieldData as CollectionItemFieldData,
       };
       if (typeof file.isArchived === 'boolean') item.isArchived = file.isArchived;
       if (typeof file.isDraft === 'boolean') item.isDraft = file.isDraft;
       items.push(item);
     }
 
-    const response = await this.withRetry(() =>
-      this.client.collections.items.createItemLive(collectionId, {
-        skipInvalidFiles: false,
-        items,
-      }),
-    );
+    const response = await this.client.createItemsLive(collectionId, {
+      skipInvalidFiles: false,
+      items,
+    });
 
-    const createdItems = _.get(response, 'items', []) as Webflow.CollectionItem[];
+    const createdItems = _.get(response, 'items', []) as CollectionItem[];
     return createdItems as unknown as ConnectorFile[];
   }
 
@@ -593,14 +563,14 @@ export class WebflowConnector extends Connector {
         if (source.openGraph !== undefined) update.openGraph = source.openGraph;
 
         if (Object.keys(update).length > 0) {
-          await this.withRetry(() => this.client.pages.updatePageSettings(pageId, update as Webflow.PageMetadataWrite));
-          // Refetch via getMetadata and route through the same normalizer as
+          await this.client.updatePageSettings(pageId, update as PageMetadataWrite);
+          // Refetch via getPageMetadata and route through the same normalizer as
           // pullPages so the returned ConnectorFile is byte-equal to a fresh
-          // pull. updatePageSettings does return a `Webflow.Page` directly,
-          // but going through getMetadata + normalizeWebflowPageForFile keeps
-          // a single source of truth for the on-disk shape and matches the
-          // refetch pattern used by Notion + HubSpot updateRecords.
-          const refetched = await this.withRetry(() => this.client.pages.getMetadata(pageId));
+          // pull. updatePageSettings does return a `Page` directly, but going
+          // through getPageMetadata + normalizeWebflowPageForFile keeps a single
+          // source of truth for the on-disk shape and matches the refetch
+          // pattern used by Notion + HubSpot updateRecords.
+          const refetched = await this.client.getPageMetadata(pageId);
           pageResults.push(normalizeWebflowPageForFile(refetched));
         } else {
           // No write fired — input file is already canonical.
@@ -610,31 +580,29 @@ export class WebflowConnector extends Connector {
       return pageResults;
     }
 
-    const items: Webflow.CollectionItemWithIdInput[] = [];
+    const items: CollectionItemWithIdInput[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const source = changedFields?.[i] ?? file;
       const fieldData = await this.extractFieldDataForApi(source, tableSpec);
-      const item: Webflow.CollectionItemWithIdInput = {
+      const item: CollectionItemWithIdInput = {
         id: file.id as string,
-        fieldData: fieldData as Webflow.CollectionItemWithIdInputFieldData,
+        fieldData: fieldData as CollectionItemWithIdInputFieldData,
       };
       if (typeof source.isArchived === 'boolean') item.isArchived = source.isArchived;
       if (typeof source.isDraft === 'boolean') item.isDraft = source.isDraft;
       items.push(item);
     }
 
-    const response = await this.withRetry(() =>
-      this.client.collections.items.updateItemsLive(collectionId, { skipInvalidFiles: false, items }),
-    );
+    const response = await this.client.updateItemsLive(collectionId, { skipInvalidFiles: false, items });
     // `updateItemsLive` returns the persisted items as a list. Map them
     // back to input order by id; missing rows fall back to the input file.
-    const responseItems = (response as { items?: unknown[] } | undefined)?.items;
+    const responseItems = response?.items;
     if (!Array.isArray(responseItems)) return files;
     const byId = new Map<string, ConnectorFile>();
     for (const item of responseItems) {
       const id = (item as { id?: unknown }).id;
-      if (typeof id === 'string') byId.set(id, item as ConnectorFile);
+      if (typeof id === 'string') byId.set(id, item as unknown as ConnectorFile);
     }
     return files.map((file) => byId.get(file.id as string) ?? file);
   }
@@ -657,20 +625,16 @@ export class WebflowConnector extends Connector {
     // pages immediately. Best-effort — items that were never published return 404 and
     // we silently move on to the CMS delete below.
     try {
-      await this.withRetry(() => this.client.collections.items.deleteItemsLive(collectionId, { items }));
+      await this.client.deleteItemsLive(collectionId, { items });
     } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : String(e);
-      const isNotFound =
-        errorMessage.includes('404') || errorMessage.includes('not_found') || errorMessage.includes('not found');
-      if (!isNotFound) throw e;
+      if (!isWebflowNotFoundError(e)) throw e;
     }
 
     // Step 2: remove from the CMS (staging).
     try {
-      await this.withRetry(() => this.client.collections.items.deleteItems(collectionId, { items }));
+      await this.client.deleteItems(collectionId, { items });
     } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : String(e);
-      if (errorMessage.includes('404') || errorMessage.includes('not_found') || errorMessage.includes('not found')) {
+      if (isWebflowNotFoundError(e)) {
         return;
       }
       throw e;
@@ -750,14 +714,12 @@ export class WebflowConnector extends Connector {
 
     const parentFolder = metadata?.parentFolder as string | undefined;
 
-    // createAndUpload handles MD5 hashing, metadata creation, and S3 upload
-    const uploadResult = await this.withRetry(() =>
-      this.client.assets.utilities.createAndUpload(siteId, {
-        file: new Uint8Array(buffer).buffer,
-        fileName: filename,
-        ...(parentFolder && { parentFolder }),
-      }),
-    );
+    // uploadAsset handles MD5 hashing, metadata creation, and the S3 upload.
+    const uploadResult = await this.client.uploadAsset(siteId, {
+      file: buffer,
+      fileName: filename,
+      ...(parentFolder && { parentFolder }),
+    });
 
     const uploadedAssetId = uploadResult.id;
     if (!uploadedAssetId) {
@@ -765,7 +727,7 @@ export class WebflowConnector extends Connector {
     }
 
     // Re-fetch the full asset record to get all metadata
-    const asset = await this.withRetry(() => this.client.assets.get(uploadedAssetId));
+    const asset = await this.client.getAsset(uploadedAssetId);
 
     if (!asset.id) {
       throw new Error('Webflow asset fetch returned no asset ID');
@@ -808,26 +770,46 @@ export class WebflowConnector extends Connector {
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
-    const errors = _.get(error, 'body.errors');
-    if (errors && Array.isArray(errors)) {
-      const formattedError = {
-        userFriendlyMessage: (errors as { message: string }[]).map((error) => error.message).join('; '),
-        description: (errors as { message: string }[]).map((error) => error.message).join('; '),
-      };
-      return formattedError;
-    }
-    if (error instanceof WebflowError) {
-      if (
-        error.statusCode === 409 &&
-        error.message.includes("You've created all the items in your CMS Database allowed on your current plan.")
-      ) {
-        return {
-          userFriendlyMessage: 'You have reached the maximum number of CMS items allowed for your plan.',
-        };
+    if (isAxiosError(error)) {
+      // CMS item plan-limit (409) gets a dedicated, user-friendly message.
+      if (error.response?.status === 409) {
+        const message = extractErrorMessageFromAxiosError(this.service, error, ['message']);
+        if (message.includes("You've created all the items in your CMS Database allowed on your current plan.")) {
+          return {
+            userFriendlyMessage: 'You have reached the maximum number of CMS items allowed for your plan.',
+          };
+        }
       }
+
+      const commonDetails = extractCommonDetailsFromAxiosError(this, error);
+      if (commonDetails) {
+        return commonDetails;
+      }
+
+      // Webflow validation failures return an array of per-field errors (under
+      // `errors` historically, `details` in v2). Surface every message joined,
+      // matching the pre-migration connector — otherwise the user sees only the
+      // single top-level summary and loses the per-field detail.
+      const responseBody = error.response?.data as { errors?: unknown; details?: unknown } | undefined;
+      const errorEntries: unknown[] | undefined = Array.isArray(responseBody?.errors)
+        ? responseBody?.errors
+        : Array.isArray(responseBody?.details)
+          ? responseBody?.details
+          : undefined;
+      if (errorEntries) {
+        const joinedMessages = errorEntries
+          .map((entry) => (entry as { message?: unknown }).message)
+          .filter((message): message is string => typeof message === 'string' && message.length > 0)
+          .join('; ');
+        if (joinedMessages) {
+          return { userFriendlyMessage: joinedMessages, description: joinedMessages };
+        }
+      }
+
+      const message = extractErrorMessageFromAxiosError(this.service, error, ['message']);
       return {
-        userFriendlyMessage: error.message,
-        description: error.message,
+        userFriendlyMessage: message,
+        description: message,
       };
     }
     return this.fallbackErrorDetails(error);

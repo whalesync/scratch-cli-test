@@ -105,9 +105,9 @@ describe('YourConnector', () => {
 ### 1. Mock the API Client, Not Internals
 
 ```typescript
-// GOOD: Mock the SDK/API client
-jest.mock('webflow-api', () => ({
-  WebflowClient: jest.fn().mockImplementation(() => mockClient),
+// GOOD: Mock the connector's api-client so `this.client` is your mock
+jest.mock('../webflow-api-client', () => ({
+  WebflowApiClient: jest.fn().mockImplementation(() => mockClient),
 }));
 
 // BAD: Mock HTTP internals or make real API calls

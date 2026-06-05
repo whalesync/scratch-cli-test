@@ -313,7 +313,7 @@ it('should handle cursor-based pagination', async () => {
 
 ```typescript
 it('should handle offset-based pagination', async () => {
-  mockClient.collections.items.listItems
+  mockClient.listCollectionItems
     .mockResolvedValueOnce({
       items: [{ id: 'item1', fieldData: { name: 'Item 1' } }],
       pagination: { total: 2, offset: 0, limit: 1 },
@@ -326,7 +326,7 @@ it('should handle offset-based pagination', async () => {
   const callback = jest.fn().mockResolvedValue(undefined);
   await connector.pullRecordFiles(mockTableSpec, callback, {});
 
-  expect(mockClient.collections.items.listItems).toHaveBeenCalledTimes(2);
+  expect(mockClient.listCollectionItems).toHaveBeenCalledTimes(2);
   expect(callback).toHaveBeenCalledTimes(2);
 });
 ```
@@ -404,9 +404,9 @@ const specWithMetadata: BaseJsonTableSpec = {
 - Only mock methods your connector actually calls
 
 ```typescript
-// GOOD: Mock the SDK/API client
-jest.mock('webflow-api', () => ({
-  WebflowClient: jest.fn(() => mockClientWrapper.client),
+// GOOD: Mock the connector's api-client
+jest.mock('../webflow-api-client', () => ({
+  WebflowApiClient: jest.fn(() => mockClientWrapper.client),
 }));
 
 // BAD: Mock HTTP internals

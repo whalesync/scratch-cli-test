@@ -15,25 +15,25 @@ import {
   X_SCRATCH_SUGGESTED_TRANSFORMER,
 } from '@spinner/shared-types';
 import _ from 'lodash';
-import { Webflow } from 'webflow-api';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildWebflowDefaultView } from './webflow-default-view';
+import { Collection, Field, FieldType, Site } from './webflow-types';
 
 /**
  * Convert a Webflow field to a TypeBox JSON Schema.
  * Annotates the schema with x-scratch metadata (readonly, foreign key, connector data type).
  */
-export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
+export function webflowFieldToJsonSchema(field: Field): TSchema {
   const description = field.displayName;
   let schema: TSchema;
 
   switch (field.type) {
-    case Webflow.FieldType.PlainText:
+    case FieldType.PlainText:
       schema = Type.String({ description });
       break;
 
-    case Webflow.FieldType.Reference: {
+    case FieldType.Reference: {
       const refCollectionId = _.get(field.validations, 'collectionId') as string | undefined;
       schema = Type.String({
         description,
@@ -42,11 +42,11 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       break;
     }
 
-    case Webflow.FieldType.RichText:
+    case FieldType.RichText:
       schema = Type.String({ description, contentMediaType: 'text/html' });
       break;
 
-    case Webflow.FieldType.Number: {
+    case FieldType.Number: {
       const validations = field.validations as { format?: 'decimal' | 'integer' } | undefined;
       if (validations?.format === 'integer') {
         schema = Type.Integer({ description });
@@ -56,32 +56,32 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       break;
     }
 
-    case Webflow.FieldType.Switch:
+    case FieldType.Switch:
       schema = Type.Boolean({ description });
       break;
 
-    case Webflow.FieldType.DateTime:
+    case FieldType.DateTime:
       schema = Type.String({ description, format: 'date-time' });
       break;
 
-    case Webflow.FieldType.Email:
+    case FieldType.Email:
       schema = Type.String({ description, format: 'email' });
       break;
 
-    case Webflow.FieldType.Phone:
+    case FieldType.Phone:
       schema = Type.String({ description });
       break;
 
-    case Webflow.FieldType.Link:
-    case Webflow.FieldType.VideoLink:
+    case FieldType.Link:
+    case FieldType.VideoLink:
       schema = Type.String({ description, format: 'uri' });
       break;
 
-    case Webflow.FieldType.Color:
+    case FieldType.Color:
       schema = Type.String({ description });
       break;
 
-    case Webflow.FieldType.Option: {
+    case FieldType.Option: {
       // Webflow options are in validations.options as array of { id, name }
       const options = _.get(field.validations, 'options', []) as { id: string; name: string }[];
       if (options.length > 0) {
@@ -103,8 +103,8 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       break;
     }
 
-    case Webflow.FieldType.Image:
-    case Webflow.FieldType.File:
+    case FieldType.Image:
+    case FieldType.File:
       schema = Type.Object(
         {
           fileId: Type.Optional(Type.String()),
@@ -118,7 +118,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       );
       break;
 
-    case Webflow.FieldType.MultiImage:
+    case FieldType.MultiImage:
       schema = Type.Array(
         Type.Object({
           fileId: Type.Optional(Type.String()),
@@ -132,7 +132,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
       );
       break;
 
-    case Webflow.FieldType.MultiReference: {
+    case FieldType.MultiReference: {
       const multiRefCollectionId = _.get(field.validations, 'collectionId') as string | undefined;
       schema = Type.Array(Type.String(), {
         description,
@@ -158,11 +158,7 @@ export function webflowFieldToJsonSchema(field: Webflow.Field): TSchema {
  * Converts Webflow field types to JSON Schema types.
  * Uses field slugs as property keys.
  */
-export function buildWebflowJsonTableSpec(
-  id: EntityId,
-  site: Webflow.Site,
-  collection: Webflow.Collection,
-): BaseJsonTableSpec {
+export function buildWebflowJsonTableSpec(id: EntityId, site: Site, collection: Collection): BaseJsonTableSpec {
   const [, collectionId] = id.remoteId;
 
   const properties: Record<string, TSchema> = {};
@@ -230,7 +226,7 @@ export function buildWebflowJsonTableSpec(
     }
 
     // Track main content column (first RichText field)
-    if (!mainContentColumnRemoteId && field.type === Webflow.FieldType.RichText) {
+    if (!mainContentColumnRemoteId && field.type === FieldType.RichText) {
       mainContentColumnRemoteId = ['fieldData', field.slug];
     }
   }
@@ -268,7 +264,7 @@ export const WEBFLOW_ASSETS_TABLE_ID_PREFIX = '__assets__';
 /**
  * Build a BaseJsonTableSpec schema for Webflow site assets.
  */
-export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Webflow.Site): BaseJsonTableSpec {
+export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Site): BaseJsonTableSpec {
   const schema = Type.Object(
     {
       id: Type.String({ description: 'Unique asset identifier', [X_SCRATCH_READONLY]: true }),
@@ -333,7 +329,7 @@ export { WEBFLOW_PAGES_TABLE_ID_PREFIX } from './webflow-types';
 /**
  * Build a BaseJsonTableSpec schema for Webflow site pages.
  */
-export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Webflow.Site): BaseJsonTableSpec {
+export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site): BaseJsonTableSpec {
   const schema = Type.Object(
     {
       id: Type.String({ description: 'Unique page identifier', [X_SCRATCH_READONLY]: true }),

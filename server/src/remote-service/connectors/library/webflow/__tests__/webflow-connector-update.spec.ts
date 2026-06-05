@@ -7,22 +7,13 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Webflow'),
 }));
 
-// Mock the webflow-api module
+// Mock the WebflowApiClient so the connector's internal `this.client` is the
+// mock — we only need its flat `updateItemsLive` method here.
 const mockUpdateItemsLive = jest.fn().mockResolvedValue({});
-jest.mock('webflow-api', () => ({
-  WebflowClient: jest.fn().mockImplementation(() => ({
-    collections: {
-      items: {
-        updateItemsLive: mockUpdateItemsLive,
-      },
-    },
+jest.mock('../webflow-api-client', () => ({
+  WebflowApiClient: jest.fn().mockImplementation(() => ({
+    updateItemsLive: mockUpdateItemsLive,
   })),
-  Webflow: {
-    FieldType: {
-      PlainText: 'PlainText',
-      RichText: 'RichText',
-    },
-  },
   WebflowError: class WebflowError extends Error {},
 }));
 
