@@ -5,7 +5,12 @@
  * two convenience extractors used by the connector and schema parser.
  */
 
-import { type DataSourceObjectResponse, type PartialDataSourceObjectResponse } from '@notionhq/client';
+import {
+  type DatabaseObjectResponse,
+  type DataSourceObjectResponse,
+  type PartialDatabaseObjectResponse,
+  type PartialDataSourceObjectResponse,
+} from '@notionhq/client';
 
 /**
  * Result row from `client.search({ filter: { value: 'data_source' } })`. The
@@ -13,6 +18,27 @@ import { type DataSourceObjectResponse, type PartialDataSourceObjectResponse } f
  * the search endpoint doesn't return a fully hydrated object.
  */
 export type NotionDataSourceSearchResult = DataSourceObjectResponse | PartialDataSourceObjectResponse;
+
+/**
+ * Structural replacement for the v5 SDK's `isFullDatabase` (we removed the SDK
+ * runtime — see {@link ./notion-api-client.ts}). Reproduces the SDK's check
+ * verbatim: `response.object === 'database'`.
+ */
+export function isFullDatabase(
+  response: DatabaseObjectResponse | PartialDatabaseObjectResponse,
+): response is DatabaseObjectResponse {
+  return response.object === 'database';
+}
+
+/**
+ * Structural replacement for the v5 SDK's `isFullDataSource`. Reproduces the
+ * SDK's check verbatim: `response.object === 'data_source'`.
+ */
+export function isFullDataSource(
+  response: DataSourceObjectResponse | PartialDataSourceObjectResponse,
+): response is DataSourceObjectResponse {
+  return response.object === 'data_source';
+}
 
 /**
  * Best-effort extractor for the parent database id from a data source object.

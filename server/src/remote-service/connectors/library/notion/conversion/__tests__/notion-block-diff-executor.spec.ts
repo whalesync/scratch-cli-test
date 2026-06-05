@@ -1,33 +1,22 @@
-import { Client } from '@notionhq/client';
+import { NotionApiClient } from '../../notion-api-client';
 import { NotionBlockOperation } from '../notion-block-diff';
 import { NotionBlockDiffExecutor } from '../notion-block-diff-executor';
 import { ConvertedNotionBlock } from '../notion-rich-text-push-types';
 
 describe('NotionBlockDiffExecutor', () => {
   let executor: NotionBlockDiffExecutor;
-  let mockClient: jest.Mocked<Pick<Client, 'blocks'>>;
+  // The executor only touches the three flat block-mutation methods of the
+  // api-client, so the mock supplies just those.
+  let mockClient: jest.Mocked<Pick<NotionApiClient, 'appendBlockChildren' | 'updateBlock' | 'deleteBlock'>>;
   const testPageId = 'test-page-id-123';
 
   beforeEach(() => {
-    // Create a mock Notion client with proper types
     mockClient = {
-      blocks: {
-        children: {
-          append: jest.fn() as jest.MockedFunction<Client['blocks']['children']['append']>,
-          list: jest.fn() as jest.MockedFunction<Client['blocks']['children']['list']>,
-        },
-        // `meetingNotes.query` was added to the v5 SDK's `blocks` shape for the
-        // 2026-03-11 meeting-notes API. The executor never touches it, but the
-        // `Pick<Client, 'blocks'>` mock must satisfy the full subtree.
-        meetingNotes: {
-          query: jest.fn() as jest.MockedFunction<Client['blocks']['meetingNotes']['query']>,
-        },
-        retrieve: jest.fn() as jest.MockedFunction<Client['blocks']['retrieve']>,
-        update: jest.fn() as jest.MockedFunction<Client['blocks']['update']>,
-        delete: jest.fn() as jest.MockedFunction<Client['blocks']['delete']>,
-      },
+      appendBlockChildren: jest.fn() as jest.MockedFunction<NotionApiClient['appendBlockChildren']>,
+      updateBlock: jest.fn() as jest.MockedFunction<NotionApiClient['updateBlock']>,
+      deleteBlock: jest.fn() as jest.MockedFunction<NotionApiClient['deleteBlock']>,
     };
-    executor = new NotionBlockDiffExecutor(mockClient as unknown as Client);
+    executor = new NotionBlockDiffExecutor(mockClient as unknown as NotionApiClient);
   });
 
   afterEach(() => {
@@ -70,7 +59,7 @@ describe('NotionBlockDiffExecutor', () => {
         };
 
         // Mock the API response with real IDs assigned by Notion
-        (mockClient.blocks.children.append as jest.Mock).mockResolvedValue({
+        (mockClient.appendBlockChildren as jest.Mock).mockResolvedValue({
           results: [
             {
               id: 'real-notion-id-1',
@@ -140,7 +129,7 @@ describe('NotionBlockDiffExecutor', () => {
         };
 
         // Mock API response with nested structure
-        (mockClient.blocks.children.append as jest.Mock).mockResolvedValue({
+        (mockClient.appendBlockChildren as jest.Mock).mockResolvedValue({
           results: [
             {
               id: 'real-parent-id',
@@ -188,14 +177,14 @@ describe('NotionBlockDiffExecutor', () => {
           after: 'temp.previous-block',
         };
 
-        (mockClient.blocks.children.append as jest.Mock).mockResolvedValue({
+        (mockClient.appendBlockChildren as jest.Mock).mockResolvedValue({
           results: [{ id: 'real-new-id', type: 'paragraph' }],
         });
 
         await executor.executeOperations(testPageId, [createOperation], idMappings);
 
         // Verify the resolved after ID was used in the API call
-        expect(mockClient.blocks.children.append).toHaveBeenCalledWith(
+        expect(mockClient.appendBlockChildren).toHaveBeenCalledWith(
           expect.objectContaining({
             block_id: testPageId,
             after: 'real-previous-id',
@@ -227,7 +216,7 @@ describe('NotionBlockDiffExecutor', () => {
         };
 
         let callCount = 0;
-        (mockClient.blocks.children.append as jest.Mock).mockImplementation(() => {
+        (mockClient.appendBlockChildren as jest.Mock).mockImplementation(() => {
           callCount++;
           const batchStart = (callCount - 1) * 100;
           const batchSize = Math.min(100, 150 - batchStart);
@@ -243,7 +232,7 @@ describe('NotionBlockDiffExecutor', () => {
         await executor.executeOperations(testPageId, [createOperation], idMappings);
 
         // Verify that the operation was split into 2 batches
-        expect(mockClient.blocks.children.append).toHaveBeenCalledTimes(2);
+        expect(mockClient.appendBlockChildren).toHaveBeenCalledTimes(2);
 
         // Verify all IDs were mapped correctly
         expect(idMappings.size).toBe(150);
@@ -274,7 +263,7 @@ describe('NotionBlockDiffExecutor', () => {
         };
 
         let callCount = 0;
-        (mockClient.blocks.children.append as jest.Mock).mockImplementation(() => {
+        (mockClient.appendBlockChildren as jest.Mock).mockImplementation(() => {
           callCount++;
           const batchStart = (callCount - 1) * 100;
           const batchSize = Math.min(100, 150 - batchStart);
@@ -290,7 +279,7 @@ describe('NotionBlockDiffExecutor', () => {
         await executor.executeOperations(testPageId, [createOperation], idMappings);
 
         // Check that the second batch used the last block from the first batch as 'after'
-        const appendMock = mockClient.blocks.children.append as jest.Mock;
+        const appendMock = mockClient.appendBlockChildren as jest.Mock;
         const secondBatchCall = appendMock.mock.calls[1] as unknown[];
         expect(secondBatchCall[0]).toEqual(
           expect.objectContaining({
@@ -328,14 +317,14 @@ describe('NotionBlockDiffExecutor', () => {
         childOperations: [childCreateOp],
       };
 
-      (mockClient.blocks.children.append as jest.Mock).mockResolvedValue({
+      (mockClient.appendBlockChildren as jest.Mock).mockResolvedValue({
         results: [{ id: 'real-child-id', type: 'paragraph' }],
       });
 
       await executor.executeOperations(testPageId, [updateChildrenOp], idMappings);
 
       // Verify the child operation used the resolved parent ID as the block_id
-      expect(mockClient.blocks.children.append).toHaveBeenCalledWith(
+      expect(mockClient.appendBlockChildren).toHaveBeenCalledWith(
         expect.objectContaining({
           block_id: 'real-parent-id',
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -381,7 +370,7 @@ describe('NotionBlockDiffExecutor', () => {
         childOperations: [childCreateOp],
       };
 
-      (mockClient.blocks.children.append as jest.Mock).mockResolvedValue({
+      (mockClient.appendBlockChildren as jest.Mock).mockResolvedValue({
         results: [
           { id: 'real-child-id-1', type: 'paragraph' },
           { id: 'real-child-id-2', type: 'paragraph' },

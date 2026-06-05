@@ -1,4 +1,4 @@
-import { DatabaseObjectResponse, PageObjectResponse } from '@notionhq/client';
+import type { DatabaseObjectResponse, PageObjectResponse } from '@notionhq/client';
 import { sanitizeForTableWsId } from '../../ids';
 import { TablePreview } from '../../types';
 import {

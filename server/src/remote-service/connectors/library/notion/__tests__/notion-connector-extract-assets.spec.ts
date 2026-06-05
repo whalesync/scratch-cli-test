@@ -6,15 +6,6 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'MockService'),
 }));
 
-jest.mock('@notionhq/client', () => ({
-  Client: jest.fn().mockImplementation(() => ({})),
-  APIResponseError: class extends Error {},
-  RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
-  APIErrorCode: {},
-  isFullDatabase: jest.fn(() => true),
-  isFullDataSource: jest.fn(() => true),
-}));
-
 jest.mock('turndown', () =>
   jest.fn().mockImplementation(() => ({
     addRule: jest.fn().mockReturnThis(),

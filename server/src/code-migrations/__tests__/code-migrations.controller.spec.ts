@@ -7,6 +7,7 @@ import { DbService } from 'src/db/db.service';
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
+import { NotionApiClient } from 'src/remote-service/connectors/library/notion/notion-api-client';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
 
@@ -278,7 +279,7 @@ describe('CodeMigrationsController', () => {
 
       // Mock the connector account + Notion fetch. USER_PROVIDED_PARAMS skips
       // the OAuth path; decryptCredentials returns an apiKey; the Notion call
-      // is intercepted via the global fetch mock below.
+      // is intercepted via the api-client spy below.
       dbService.client.connectorAccount.findUnique = jest.fn().mockResolvedValue({
         id: 'cna_a',
         authType: 'USER_PROVIDED_PARAMS',
@@ -286,19 +287,14 @@ describe('CodeMigrationsController', () => {
       });
       credentialEncryptionService.decryptCredentials = jest.fn().mockResolvedValue({ apiKey: 'ntn_test' });
 
-      // Intercept the Notion SDK's underlying fetch. The Client uses global
-      // fetch under the hood; returning a single data source produces the
-      // single_source_rewritten branch.
-      const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            object: 'database',
-            id: 'db_a',
-            data_sources: [{ id: 'ds_a', name: 'Source A' }],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-      );
+      // Intercept the api-client's `retrieveDatabase`. Returning a single data
+      // source produces the single_source_rewritten branch (the real
+      // `isFullDatabase` guard passes on `object: 'database'`).
+      const retrieveDatabaseSpy = jest.spyOn(NotionApiClient.prototype, 'retrieveDatabase').mockResolvedValue({
+        object: 'database',
+        id: 'db_a',
+        data_sources: [{ id: 'ds_a', name: 'Source A' }],
+      } as unknown as Awaited<ReturnType<NotionApiClient['retrieveDatabase']>>);
 
       const result = await controller.runMigration(makeReqWithUser(), {
         migration: 'notion-data-source-backfill',
@@ -319,7 +315,7 @@ describe('CodeMigrationsController', () => {
         action: 'rewrite_tableid',
       });
 
-      fetchSpy.mockRestore();
+      retrieveDatabaseSpy.mockRestore();
     });
 
     it('errors out on folders without a connectorAccountId rather than crashing the run', async () => {

@@ -6,17 +6,15 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Notion'),
 }));
 
-const mockDataSourcesQuery = jest.fn();
+const mockQueryDataSource = jest.fn();
 
-jest.mock('@notionhq/client', () => ({
-  Client: jest.fn().mockImplementation(() => ({
-    dataSources: { query: mockDataSourcesQuery },
+// Mock the api-client so the connector's `this.client` is the mock. Real error
+// classes / constants are kept via requireActual (the connector imports them).
+jest.mock('../notion-api-client', () => ({
+  ...jest.requireActual<typeof import('../notion-api-client')>('../notion-api-client'),
+  NotionApiClient: jest.fn().mockImplementation(() => ({
+    queryDataSource: mockQueryDataSource,
   })),
-  APIResponseError: class extends Error {},
-  RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
-  APIErrorCode: {},
-  isFullDatabase: jest.fn(() => true),
-  isFullDataSource: jest.fn(() => true),
 }));
 
 jest.mock('turndown', () =>
@@ -43,12 +41,12 @@ function buildTableSpec(): BaseJsonTableSpec {
 }
 
 function lastQueryFilter(): unknown {
-  const [args] = mockDataSourcesQuery.mock.calls[0] as [{ filter?: unknown }];
+  const [args] = mockQueryDataSource.mock.calls[0] as [{ filter?: unknown }];
   return args.filter;
 }
 
 function lastQueryDataSourceId(): string {
-  const [args] = mockDataSourcesQuery.mock.calls[0] as [{ data_source_id: string }];
+  const [args] = mockQueryDataSource.mock.calls[0] as [{ data_source_id: string }];
   return args.data_source_id;
 }
 
@@ -65,7 +63,7 @@ describe('NotionConnector.pullRecordFiles (incremental)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockDataSourcesQuery.mockResolvedValue({
+    mockQueryDataSource.mockResolvedValue({
       results: [{ object: 'page', id: 'page_1', last_edited_time: '2026-05-14T13:00:00.000Z' }],
       has_more: false,
       next_cursor: null,

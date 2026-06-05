@@ -6,20 +6,19 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Notion'),
 }));
 
-const mockPagesUpdate = jest.fn();
-const mockPagesRetrieve = jest.fn();
-const mockBlocksChildrenList = jest.fn();
+const mockUpdatePage = jest.fn();
+const mockRetrievePage = jest.fn();
+const mockListBlockChildren = jest.fn();
 
-jest.mock('@notionhq/client', () => ({
-  Client: jest.fn().mockImplementation(() => ({
-    pages: { update: mockPagesUpdate, retrieve: mockPagesRetrieve },
-    blocks: { children: { list: mockBlocksChildrenList } },
+// Mock the api-client so the connector's `this.client` is the mock. Real error
+// classes / constants are kept via requireActual (the connector imports them).
+jest.mock('../notion-api-client', () => ({
+  ...jest.requireActual<typeof import('../notion-api-client')>('../notion-api-client'),
+  NotionApiClient: jest.fn().mockImplementation(() => ({
+    updatePage: mockUpdatePage,
+    retrievePage: mockRetrievePage,
+    listBlockChildren: mockListBlockChildren,
   })),
-  APIResponseError: class extends Error {},
-  RequestTimeoutError: { isRequestTimeoutError: jest.fn(() => false) },
-  APIErrorCode: {},
-  isFullDatabase: jest.fn(() => true),
-  isFullDataSource: jest.fn(() => true),
 }));
 
 jest.mock('turndown', () =>
@@ -46,15 +45,15 @@ describe('NotionConnector.updateRecords', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPagesUpdate.mockResolvedValue(undefined);
+    mockUpdatePage.mockResolvedValue(undefined);
     // updateRecords refetches via pages.retrieve + blocks.children.list after a
     // successful write so the returned ConnectorFile is byte-equal to a fresh
     // pull. Tests that don't care about the refetch shape just need both calls
     // to resolve to something benign.
-    mockPagesRetrieve.mockImplementation(({ page_id }: { page_id: string }) =>
+    mockRetrievePage.mockImplementation(({ page_id }: { page_id: string }) =>
       Promise.resolve({ object: 'page', id: page_id, properties: {} }),
     );
-    mockBlocksChildrenList.mockResolvedValue({ results: [], has_more: false, next_cursor: null });
+    mockListBlockChildren.mockResolvedValue({ results: [], has_more: false, next_cursor: null });
     connector = new NotionConnector('fake-key');
   });
 
@@ -85,8 +84,8 @@ describe('NotionConnector.updateRecords', () => {
 
     await connector.updateRecords(buildTableSpec(), files, changedFields);
 
-    expect(mockPagesUpdate).toHaveBeenCalledTimes(1);
-    const [callArg] = mockPagesUpdate.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
     expect(callArg.page_id).toBe('page_1');
     // Only Title should reach the API; Score (formula) must be stripped.
     expect(Object.keys(callArg.properties)).toEqual(['Title']);
@@ -108,9 +107,9 @@ describe('NotionConnector.updateRecords', () => {
 
     const result = await connector.updateRecords(buildTableSpec(), files, changedFields);
 
-    expect(mockPagesUpdate).not.toHaveBeenCalled();
+    expect(mockUpdatePage).not.toHaveBeenCalled();
     // No write → no refetch. Skipped rows pass the input file through verbatim.
-    expect(mockPagesRetrieve).not.toHaveBeenCalled();
+    expect(mockRetrievePage).not.toHaveBeenCalled();
     expect(result[0]).toBe(files[0]);
   });
 
@@ -131,7 +130,7 @@ describe('NotionConnector.updateRecords', () => {
     // last_edited_time, etc.) and refetched page_content. updateRecords must
     // surface this — not the input file — so the post-publish commit is
     // byte-equal to what a fresh pull would produce.
-    mockPagesRetrieve.mockResolvedValueOnce({
+    mockRetrievePage.mockResolvedValueOnce({
       object: 'page',
       id: 'page_1',
       properties: {
@@ -139,7 +138,7 @@ describe('NotionConnector.updateRecords', () => {
       },
       last_edited_time: '2026-06-01T18:00:00.000Z',
     });
-    mockBlocksChildrenList.mockResolvedValueOnce({
+    mockListBlockChildren.mockResolvedValueOnce({
       results: [{ id: 'block_fresh', type: 'paragraph', has_children: false }],
       has_more: false,
       next_cursor: null,
@@ -147,8 +146,8 @@ describe('NotionConnector.updateRecords', () => {
 
     const [result] = await connector.updateRecords(buildTableSpec(), files, changedFields);
 
-    expect(mockPagesUpdate).toHaveBeenCalledTimes(1);
-    expect(mockPagesRetrieve).toHaveBeenCalledWith({ page_id: 'page_1' });
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    expect(mockRetrievePage).toHaveBeenCalledWith({ page_id: 'page_1' });
     expect(result).not.toBe(files[0]);
     expect((result as { last_edited_time?: string }).last_edited_time).toBe('2026-06-01T18:00:00.000Z');
     expect((result as { page_content?: { id: string }[] }).page_content?.[0]?.id).toBe('block_fresh');

@@ -1,4 +1,5 @@
-import { type BlockObjectRequest, Client } from '@notionhq/client';
+import type { BlockObjectRequest } from '@notionhq/client';
+import { NotionApiClient } from '../notion-api-client';
 import { NotionBlockOperation } from './notion-block-diff';
 import { ConvertedNotionBlock } from './notion-rich-text-push-types';
 
@@ -9,7 +10,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * Handles proper API formatting and temporary ID resolution
  */
 export class NotionBlockDiffExecutor {
-  constructor(private readonly client: Client) {}
+  constructor(private readonly client: NotionApiClient) {}
 
   private resolveBlockId(blockId: string, idMappings: Map<string, string>): string {
     if (blockId.startsWith('temp.')) {
@@ -121,7 +122,7 @@ export class NotionBlockDiffExecutor {
     const blocksForApi = blocks.map((block) => this.prepareBlockForApi(block));
     const afterParam = after ? this.resolveBlockId(after, idMappings) : undefined;
 
-    const response = await this.client.blocks.children.append({
+    const response = await this.client.appendBlockChildren({
       block_id: pageId,
       children: blocksForApi as unknown as BlockObjectRequest[],
       after: afterParam,
@@ -193,7 +194,7 @@ export class NotionBlockDiffExecutor {
           const blockIdToUpdate = this.resolveBlockId(operation.blockId, idMappings);
 
           const blockForUpdate = this.prepareBlockForApi(operation.block);
-          await this.client.blocks.update({
+          await this.client.updateBlock({
             block_id: blockIdToUpdate,
             ...blockForUpdate,
           });
@@ -203,7 +204,7 @@ export class NotionBlockDiffExecutor {
         case 'delete': {
           const blockIdToDelete = this.resolveBlockId(operation.blockId, idMappings);
 
-          await this.client.blocks.delete({
+          await this.client.deleteBlock({
             block_id: blockIdToDelete,
           });
           break;

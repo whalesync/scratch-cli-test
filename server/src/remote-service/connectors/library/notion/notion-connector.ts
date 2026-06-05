@@ -1,14 +1,8 @@
-import {
-  APIErrorCode,
-  APIResponseError,
-  type BlockObjectResponse,
-  Client,
-  type CreatePageParameters,
-  isFullDatabase,
-  isFullDataSource,
-  type PageObjectResponse,
-  type QueryDataSourceParameters,
-  RequestTimeoutError,
+import type {
+  BlockObjectResponse,
+  CreatePageParameters,
+  PageObjectResponse,
+  QueryDataSourceParameters,
 } from '@notionhq/client';
 import {
   connectorMetadata,
@@ -19,7 +13,7 @@ import {
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult, MediaType } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
-import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams } from '../../asset-extraction-helpers';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
@@ -39,42 +33,21 @@ import { NotionBlockDiffExecutor } from './conversion/notion-block-diff-executor
 import { NotionMarkdownConverter } from './conversion/notion-markdown-converter';
 import { convertToNotionBlocks } from './conversion/notion-rich-text-push';
 import { ConvertedNotionBlock } from './conversion/notion-rich-text-push-types';
-import { NotionDataSourceSearchResult } from './notion-data-source-types';
+import {
+  DEFAULT_NOTION_API_VERSION,
+  isNotionApiResponseError,
+  NotionApiClient,
+  NotionApiErrorCode,
+  NotionError,
+  NotionRequestTimeoutError,
+} from './notion-api-client';
+import { isFullDatabase, isFullDataSource, NotionDataSourceSearchResult } from './notion-data-source-types';
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
 import { NotionSchemaParser } from './notion-schema-parser';
 
-function readRetryAfterHeader(headers: unknown): string | undefined {
-  if (!headers || typeof headers !== 'object') return undefined;
-  // v5 surfaces headers as either a fetch `Headers` instance (`.get`-able) or
-  // a plain `Record<string, string>` depending on the underlying fetch impl.
-  if ('get' in headers && typeof (headers as { get: unknown }).get === 'function') {
-    return (headers as { get: (k: string) => string | null }).get('retry-after') ?? undefined;
-  }
-  const record = headers as Record<string, string | undefined>;
-  return record['retry-after'] ?? record['Retry-After'];
-}
-
-const NOTION_RETRY_OPTS: WithRetryOpts = {
-  isRateLimited: (error) => APIResponseError.isAPIResponseError(error) && error.code === APIErrorCode.RateLimited,
-  getRetryAfterS: (error) => {
-    if (!APIResponseError.isAPIResponseError(error)) return undefined;
-    const header = readRetryAfterHeader(error.headers);
-    const seconds = header ? parseInt(header, 10) : NaN;
-    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
-  },
-};
-
 export const PAGE_CONTENT_COLUMN_NAME = 'Page Content';
 export const PAGE_CONTENT_COLUMN_ID = 'WS_PAGE_CONTENT';
-
-/**
- * Notion API version that the connector targets. Matches the v5 SDK's default
- * (`Client.defaultNotionVersion`) but is pinned here so the next 2026-03-11
- * adoption (Phase 5 of DEV-8910) is an explicit code change rather than a
- * silent ride-along on a future SDK bump.
- */
-const NOTION_API_VERSION = '2025-09-03';
 
 type NotionDownloadProgress = {
   nextCursor: string | undefined;
@@ -148,10 +121,9 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     },
   ];
 
-  private readonly client: Client;
+  private readonly client: NotionApiClient;
   private readonly schemaParser = new NotionSchemaParser();
   private readonly markdownConverter = new NotionMarkdownConverter();
-  private readonly rateLimiter?: RateLimiter;
   /**
    * Per-instance cache mapping databaseId → dataSourceId. Populated lazily by
    * {@link resolveDataSourceId} on the fallback path (folders whose `remoteId`
@@ -162,15 +134,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
   constructor(apiKey: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
-    this.client = new Client({ auth: apiKey, notionVersion: NOTION_API_VERSION });
-    this.rateLimiter = opts?.rateLimiter;
-  }
-
-  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.rateLimiter) {
-      return this.rateLimiter.withRetry(fn, NOTION_RETRY_OPTS);
-    }
-    return standaloneWithRetry(fn, NOTION_RETRY_OPTS);
+    this.client = new NotionApiClient(apiKey, {
+      rateLimiter: opts?.rateLimiter,
+      notionVersion: DEFAULT_NOTION_API_VERSION,
+    });
   }
 
   /**
@@ -180,7 +147,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * `[databaseId, dataSourceId]`. This helper supplies the fallback for any
    * folder created before the backfill caught it (or any new folder discovered
    * via `listTables` between Phase 2 and Phase 3 shipping) by calling
-   * `databases.retrieve` and picking `data_sources[0]`. Memoized per Client
+   * `retrieveDatabase` and picking `data_sources[0]`. Memoized per connector
    * instance so a single multi-page pull doesn't trigger N extra retrievals.
    */
   private async resolveDataSourceId(remoteId: string[]): Promise<string> {
@@ -194,7 +161,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     const cached = this.dataSourceIdCache.get(databaseId);
     if (cached) return cached;
 
-    const database = await this.withRetry(() => this.client.databases.retrieve({ database_id: databaseId }));
+    const database = await this.client.retrieveDatabase({ database_id: databaseId });
     if (!isFullDatabase(database)) {
       throw new Error(`Notion databases.retrieve returned a partial response for ${databaseId}`);
     }
@@ -215,13 +182,11 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     query?: string;
     pageSize?: number;
   }): Promise<{ results: NotionDataSourceSearchResult[]; has_more: boolean }> {
-    const response = await this.withRetry(() =>
-      this.client.search({
-        ...(args.query !== undefined ? { query: args.query } : {}),
-        filter: { property: 'object', value: 'data_source' },
-        ...(args.pageSize !== undefined ? { page_size: args.pageSize } : {}),
-      }),
-    );
+    const response = await this.client.search({
+      ...(args.query !== undefined ? { query: args.query } : {}),
+      filter: { property: 'object', value: 'data_source' },
+      ...(args.pageSize !== undefined ? { page_size: args.pageSize } : {}),
+    });
     const results = response.results.filter((r): r is NotionDataSourceSearchResult => r.object === 'data_source');
     return { results, has_more: response.has_more };
   }
@@ -234,7 +199,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     // Just don't throw. We search for `data_source` rather than `database` so
     // testConnection exercises the same surface (the 2025-09-03 search index)
     // that listTables and searchTables rely on.
-    await this.withRetry(() => this.searchDataSources({ pageSize: 1 }));
+    await this.searchDataSources({ pageSize: 1 });
   }
 
   /**
@@ -246,13 +211,11 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     let startCursor: string | undefined = undefined;
 
     while (hasMore) {
-      const response = await this.withRetry(() =>
-        this.client.blocks.children.list({
-          block_id: blockId,
-          start_cursor: startCursor,
-          page_size: 100,
-        }),
-      );
+      const response = await this.client.listBlockChildren({
+        block_id: blockId,
+        start_cursor: startCursor,
+        page_size: 100,
+      });
 
       for (const block of response.results) {
         // Add children property to match ConvertedNotionBlock type
@@ -276,12 +239,12 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   async listTables(): Promise<TablePreview[]> {
-    const response = await this.withRetry(() => this.searchDataSources({ query: '', pageSize: 10 }));
+    const response = await this.searchDataSources({ query: '', pageSize: 10 });
     return response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds));
   }
 
   async searchTables(searchTerm: string): Promise<{ tables: TablePreview[]; hasMore: boolean }> {
-    const response = await this.withRetry(() => this.searchDataSources({ query: searchTerm }));
+    const response = await this.searchDataSources({ query: searchTerm });
     const tables = response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds));
     return { tables, hasMore: response.has_more };
   }
@@ -296,7 +259,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const dataSourceId = await this.resolveDataSourceId(id.remoteId);
-    const dataSource = await this.withRetry(() => this.client.dataSources.retrieve({ data_source_id: dataSourceId }));
+    const dataSource = await this.client.retrieveDataSource({ data_source_id: dataSourceId });
     if (!isFullDataSource(dataSource)) {
       throw new Error(`Notion dataSources.retrieve returned a partial response for ${dataSourceId}`);
     }
@@ -411,14 +374,12 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     }
 
     while (hasMore) {
-      const response = await this.withRetry(() =>
-        this.client.dataSources.query({
-          data_source_id: dataSourceId,
-          start_cursor: nextCursor,
-          page_size: options.pageSize ?? 100,
-          filter: notionFilter,
-        }),
-      );
+      const response = await this.client.queryDataSource({
+        data_source_id: dataSourceId,
+        start_cursor: nextCursor,
+        page_size: options.pageSize ?? 100,
+        filter: notionFilter,
+      });
 
       // Return raw page objects as ConnectorFiles
       const files: ConnectorFile[] = [];
@@ -465,9 +426,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
     for (const pageId of ids) {
       try {
-        const page = (await this.withRetry(() =>
-          this.client.pages.retrieve({ page_id: pageId }),
-        )) as PageObjectResponse;
+        const page = (await this.client.retrievePage({ page_id: pageId })) as PageObjectResponse;
         const connectorFile = page as unknown as ConnectorFile;
 
         try {
@@ -491,7 +450,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
           await callback({ files: buffer.splice(0) });
         }
       } catch (error) {
-        if (APIResponseError.isAPIResponseError(error) && error.code === APIErrorCode.ObjectNotFound) {
+        if (error instanceof NotionError && error.code === NotionApiErrorCode.ObjectNotFound) {
           WSLogger.warn({
             source: 'NotionConnector',
             message: `Page ${pageId} not found, skipping`,
@@ -525,12 +484,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       // Transform properties from read format to create format (same rules as update)
       const properties = this.transformPropertiesForUpdate(rawProperties);
 
-      const newPage = await this.withRetry(() =>
-        this.client.pages.create({
-          parent: { type: 'data_source_id', data_source_id: dataSourceId },
-          properties: properties as CreatePageParameters['properties'],
-        }),
-      );
+      const newPage = await this.client.createPage({
+        parent: { type: 'data_source_id', data_source_id: dataSourceId },
+        properties: properties as CreatePageParameters['properties'],
+      });
       results.push(newPage as unknown as ConnectorFile);
     }
 
@@ -553,7 +510,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     pageContent: ConvertedNotionBlock;
     statistics: { maxDepth: number; maxBreadth: number; totalCalls: number };
   }> {
-    const response = await this.withRetry(() => this.client.blocks.retrieve({ block_id: blockId }));
+    const response = await this.client.retrieveBlock({ block_id: blockId });
     const pageContent = response as unknown as ConvertedNotionBlock;
 
     if (_.has(response, 'has_children') && (response as BlockObjectResponse).has_children) {
@@ -618,13 +575,11 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
         break;
       }
 
-      const response = await this.withRetry(() =>
-        this.client.blocks.children.list({
-          block_id: blockId,
-          start_cursor: startCursor,
-          page_size: NotionConnector.PAGE_CONTENT_PAGE_SIZE,
-        }),
-      );
+      const response = await this.client.listBlockChildren({
+        block_id: blockId,
+        start_cursor: startCursor,
+        page_size: NotionConnector.PAGE_CONTENT_PAGE_SIZE,
+      });
 
       for (const result of response.results) {
         const block = result as unknown as ConvertedNotionBlock;
@@ -704,7 +659,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * Notion truncates to 25 on response, blocks the update API never touches.
    */
   private async refetchPageAsConnectorFile(pageId: string): Promise<ConnectorFile> {
-    const page = (await this.withRetry(() => this.client.pages.retrieve({ page_id: pageId }))) as PageObjectResponse;
+    const page = (await this.client.retrievePage({ page_id: pageId })) as PageObjectResponse;
     const connectorFile = page as unknown as ConnectorFile;
     try {
       const childrenData = await this.pollRecordPageContentChildren(
@@ -759,12 +714,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
       const properties = this.transformPropertiesForUpdate(writableChangedProperties);
 
       if (Object.keys(properties).length > 0) {
-        await this.withRetry(() =>
-          this.client.pages.update({
-            page_id: pageId,
-            properties: properties as CreatePageParameters['properties'],
-          }),
-        );
+        await this.client.updatePage({
+          page_id: pageId,
+          properties: properties as CreatePageParameters['properties'],
+        });
         updatedIndexes.push(i);
       } else {
         results[i] = file;
@@ -790,12 +743,10 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   async deleteRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     for (const file of files) {
       const pageId = file.id as string;
-      await this.withRetry(() =>
-        this.client.pages.update({
-          page_id: pageId,
-          archived: true,
-        }),
-      );
+      await this.client.updatePage({
+        page_id: pageId,
+        archived: true,
+      });
     }
   }
 
@@ -969,52 +920,52 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
    * @returns A common object describing the error for the user.
    */
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
-    if (RequestTimeoutError.isRequestTimeoutError(error)) {
+    if (error instanceof NotionRequestTimeoutError) {
       return {
         userFriendlyMessage: ErrorMessageTemplates.API_TIMEOUT('Notion'),
-        description: error instanceof Error ? error.message : String(error),
+        description: error.message,
       };
     }
 
-    if (APIResponseError.isAPIResponseError(error)) {
+    if (isNotionApiResponseError(error)) {
       const notionError = error;
 
-      if (notionError.code === APIErrorCode.Unauthorized) {
+      if (notionError.code === NotionApiErrorCode.Unauthorized) {
         return {
           userFriendlyMessage: `The credentials Scratch uses to communicate with Notion are no longer valid. Details: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
-      if (notionError.code === APIErrorCode.RateLimited) {
+      if (notionError.code === NotionApiErrorCode.RateLimited) {
         return {
           userFriendlyMessage: `${ErrorMessageTemplates.API_QUOTA_EXCEEDED('Notion')} Details: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
-      if (notionError.code === APIErrorCode.ObjectNotFound) {
+      if (notionError.code === NotionApiErrorCode.ObjectNotFound) {
         return {
           userFriendlyMessage: `Notion object not found: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
-      if (notionError.code === APIErrorCode.InvalidRequest) {
+      if (notionError.code === NotionApiErrorCode.InvalidRequest) {
         return {
           userFriendlyMessage: `Notion invalid request: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
-      if (notionError.code === APIErrorCode.InternalServerError) {
+      if (notionError.code === NotionApiErrorCode.InternalServerError) {
         return {
           userFriendlyMessage: `An internal server error occurred while connecting to Notion. Details: ${notionError.message}`,
           description: notionError.message,
         };
       }
 
-      if (notionError.code === APIErrorCode.ServiceUnavailable) {
+      if (notionError.code === NotionApiErrorCode.ServiceUnavailable) {
         return {
           userFriendlyMessage: `The Notion service is unavailable. Details: ${notionError.message}`,
           description: notionError.message,

@@ -12,7 +12,6 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { Client, isFullDatabase } from '@notionhq/client';
 import { AuthType, Prisma } from '@prisma/client';
 import type {
   AvailableMigrationsResponse,
@@ -30,6 +29,8 @@ import { CredentialEncryptionService } from 'src/credential-encryption/credentia
 import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
+import { NotionApiClient } from 'src/remote-service/connectors/library/notion/notion-api-client';
+import { isFullDatabase } from 'src/remote-service/connectors/library/notion/notion-data-source-types';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { SYSTEM_ACTOR } from 'src/users/types';
 import { EncryptedData } from 'src/utils/encryption';
@@ -270,9 +271,9 @@ export class CodeMigrationsController {
    * `CredentialEncryptionService.decryptCredentials`.
    */
   private buildBackfillDeps(): BackfillDeps {
-    const clientByAccount = new Map<string, Client | 'no_token'>();
+    const clientByAccount = new Map<string, NotionApiClient | 'no_token'>();
 
-    const getClient = async (connectorAccountId: string): Promise<Client | 'no_token'> => {
+    const getClient = async (connectorAccountId: string): Promise<NotionApiClient | 'no_token'> => {
       const cached = clientByAccount.get(connectorAccountId);
       if (cached) return cached;
 
@@ -300,7 +301,7 @@ export class CodeMigrationsController {
         clientByAccount.set(connectorAccountId, 'no_token');
         return 'no_token';
       }
-      const client = new Client({ auth: token, notionVersion: NOTION_API_VERSION_FOR_BACKFILL });
+      const client = new NotionApiClient(token, { notionVersion: NOTION_API_VERSION_FOR_BACKFILL });
       clientByAccount.set(connectorAccountId, client);
       return client;
     };
@@ -311,7 +312,7 @@ export class CodeMigrationsController {
         const client = await getClient(connectorAccountId);
         if (client === 'no_token') return { kind: 'unauthorized' };
         try {
-          const response = await client.databases.retrieve({ database_id: databaseId });
+          const response = await client.retrieveDatabase({ database_id: databaseId });
           if (!isFullDatabase(response)) {
             return { kind: 'error', error: new Error(`partial database response for ${databaseId}`) };
           }
