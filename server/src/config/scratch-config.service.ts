@@ -70,6 +70,19 @@ export class ScratchConfigService {
     return this.getEnvVariable('CLERK_PUBLISHABLE_KEY');
   }
 
+  /**
+   * Admin secrets accepted by ScratchAdminGuard for the internal Whalesync channel
+   * (`/internal/whalesync/*`). Supports rotation: the current key plus an optional previous key
+   * during a rotation window. Returns an empty array when unconfigured, in which case
+   * ScratchAdminGuard denies all requests (fail closed).
+   */
+  getScratchAdminApiKeys(): string[] {
+    return [
+      this.getOptionalEnvVariable<string>('SCRATCH_ADMIN_API_KEY'),
+      this.getOptionalEnvVariable<string>('SCRATCH_ADMIN_API_KEY_PREVIOUS'),
+    ].filter((key): key is string => !!key);
+  }
+
   getDbDebug(): boolean {
     return this.getOptionalFlagVariable('DB_DEBUG', false);
   }
@@ -316,9 +329,26 @@ export class ScratchConfigService {
   }
 
   /**
+   * Origins for the Whalesync product (Dusky) that call the Scratch API directly from the browser as a
+   * shadow user. Sourced from the `WHALESYNC_APP_ORIGINS` env var (comma-separated) so test/staging/dev
+   * origins are configurable without a code change; in production it falls back to `app.whalesync.com`.
+   */
+  public static getWhalesyncAppOrigins(): string[] {
+    const configured = process.env.WHALESYNC_APP_ORIGINS;
+    if (configured) {
+      return configured
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter((origin) => origin.length > 0);
+    }
+    return ScratchConfigService.getScratchEnvironment() === 'production' ? ['https://app.whalesync.com'] : [];
+  }
+
+  /**
    * Returns a CORS origin callback that allows:
    * - The web client origin (e.g. http://localhost:3000 in dev, https://app.scratch.md in prod)
    * - The Electron desktop app dev server (http://localhost:5173) in development
+   * - The Whalesync product (Dusky) origins, which call the Scratch API directly as shadow users
    * - Requests with no Origin header (null) — this covers packaged Electron apps that load from file://
    */
   public static getCorsAllowedOrigins(): (
@@ -329,6 +359,9 @@ export class ScratchConfigService {
     const allowedOrigins = new Set<string>([ScratchConfigService.getClientBaseUrl()]);
     if (env === 'development') {
       allowedOrigins.add('http://localhost:5173');
+    }
+    for (const whalesyncOrigin of ScratchConfigService.getWhalesyncAppOrigins()) {
+      allowedOrigins.add(whalesyncOrigin);
     }
 
     return (origin, callback) => {

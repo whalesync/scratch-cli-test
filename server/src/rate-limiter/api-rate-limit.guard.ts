@@ -9,6 +9,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { TokenType } from '@spinner/shared-types';
 import IORedis from 'ioredis';
 import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import { AuthenticatedUser, RequestWithUser } from 'src/auth/types';
@@ -72,6 +73,13 @@ export class ApiRateLimitGuard implements CanActivate, OnModuleInit, OnModuleDes
     }
 
     const scopes = user.apiToken?.scopes ?? [];
+
+    // Whalesync browser session tokens drive frequent job-status polling and are intentionally
+    // uncapped — the short 10-minute TTL is the abuse control, not the rate limiter. Bypass before
+    // consuming any points.
+    if (user.apiToken?.type === TokenType.WHALESYNC_SESSION) {
+      return true;
+    }
 
     // Env kill-switch or tokens with unlimited scope bypass rate limiting entirely
     if (this.configService.isApiRateLimitDisabled() || scopes.includes('rate-limit:unlimited')) {

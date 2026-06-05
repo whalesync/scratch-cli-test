@@ -144,6 +144,28 @@ describe('ApiRateLimitGuard', () => {
     expect(await guard.canActivate(context)).toBe(true);
   });
 
+  it('should skip rate limiting for WHALESYNC_SESSION tokens', async () => {
+    const { context } = createMockExecutionContext({
+      user: {
+        id: 'user-1',
+        authType: 'api-token',
+        authSource: 'user',
+        apiToken: { type: 'WHALESYNC_SESSION', scopes: [] },
+      },
+    });
+    expect(await guard.canActivate(context)).toBe(true);
+    expect(mockConsume).not.toHaveBeenCalled();
+  });
+
+  it('should still rate limit USER tokens (bypass is specific to WHALESYNC_SESSION)', async () => {
+    mockConsume.mockResolvedValueOnce({});
+    const { context } = createMockExecutionContext({
+      user: { id: 'user-1', authType: 'api-token', authSource: 'cli', apiToken: { type: 'USER', scopes: [] } },
+    });
+    expect(await guard.canActivate(context)).toBe(true);
+    expect(mockConsume).toHaveBeenCalledWith('user-1', 1);
+  });
+
   it('should skip rate limiting for tokens with rate-limit:unlimited scope', async () => {
     const { context } = createMockExecutionContext({
       user: { id: 'user-1', authType: 'api-token', authSource: 'cli', apiToken: { scopes: ['rate-limit:unlimited'] } },

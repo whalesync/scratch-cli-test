@@ -13,6 +13,7 @@ describe('User Type Utilities', () => {
       testUser = {
         id: 'user_123',
         clerkId: 'clerk_456',
+        whalesyncUserId: null,
         organizationId: 'org_789',
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -67,6 +68,7 @@ describe('User Type Utilities', () => {
       const user: UserCluster.User = {
         id: 'user_123',
         clerkId: 'clerk_456',
+        whalesyncUserId: null,
         organizationId: null,
         createdAt: new Date(),
         updatedAt: new Date(),

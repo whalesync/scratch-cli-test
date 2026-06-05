@@ -29,6 +29,8 @@ export enum TokenType {
   WEBSOCKET = 'WEBSOCKET',
   USER = 'USER',
   MCP = 'MCP',
+  // Short-lived browser session tokens for Whalesync shadow users, brokered via Bottlenose.
+  WHALESYNC_SESSION = 'WHALESYNC_SESSION',
 }
 
 export enum ConnectorHealthStatus {

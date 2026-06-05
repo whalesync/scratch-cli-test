@@ -18,7 +18,12 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackFormatters } from 'src/slack/slack-formatters';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
 import { DbService } from '../db/db.service';
-import { generateApiToken, generateTokenExpirationDate, generateWebsocketTokenExpirationDate } from './tokens';
+import {
+  generateApiToken,
+  generateTokenExpirationDate,
+  generateWebsocketTokenExpirationDate,
+  generateWhalesyncSessionTokenExpirationDate,
+} from './tokens';
 import { UserSettings } from './types';
 
 // When the waitlist is required, the user is blocked from using the app and will get an email until an
@@ -114,13 +119,43 @@ export class UsersService {
       return user;
     }
 
+    const newUser = await this.createUserWithOrgAndDefaultWorkbook({ clerkId: clerkUserId, name, email });
+
+    this.postHogService.identifyNewUser(newUser);
+
+    await this.slackNotificationService.sendMessage(SlackFormatters.newUserSignup(newUser));
+
+    if (email) {
+      await this.redeemWorkspaceInvites(email, newUser.id);
+    }
+
+    return newUser;
+  }
+
+  /**
+   * Creates a User with its auto-created Organization, a WEBSOCKET token, and a default Workbook.
+   * This is the shared provisioning core used by both native (Clerk) sign-up and Whalesync shadow-user
+   * provisioning. It performs only the database writes — analytics/Slack/invite side effects stay with
+   * the caller so each provisioning path controls its own behavior.
+   *
+   * @param clerkId Real Clerk ID (`user_…`) for native users, or synthetic `ws_<whalesyncUserId>` for shadow users.
+   * @param whalesyncUserId Set only for Whalesync shadow users; null for native Scratch users.
+   */
+  private async createUserWithOrgAndDefaultWorkbook(params: {
+    clerkId: string;
+    whalesyncUserId?: string;
+    name?: string;
+    email?: string;
+  }): Promise<UserCluster.User> {
+    const { clerkId, whalesyncUserId, name, email } = params;
     const newUserId = createUserId();
     const newOrganizationId = createOrganizationId();
 
     const newUser: UserCluster.User = await this.db.client.user.create({
       data: {
         id: newUserId,
-        clerkId: clerkUserId,
+        clerkId,
+        whalesyncUserId,
         updatedAt: new Date(),
         role: UserRole.USER,
         name,
@@ -138,7 +173,7 @@ export class UsersService {
           create: {
             id: newOrganizationId,
             name: name ? `${name} Organization` : 'New Organization',
-            clerkId: clerkUserId, // Note(chris): this should be Clerk's Organization ID, and will need to be fixed later when fully implement Clerk orgs
+            clerkId, // Note(chris): this should be Clerk's Organization ID, and will need to be fixed later when fully implement Clerk orgs
           },
         },
       },
@@ -169,15 +204,114 @@ export class UsersService {
       WSLogger.error({ source: 'UsersService', message: 'Failed to create default workspace', error });
     }
 
-    this.postHogService.identifyNewUser(newUser);
+    return newUser;
+  }
 
-    await this.slackNotificationService.sendMessage(SlackFormatters.newUserSignup(newUser));
+  public async findByWhalesyncUserId(whalesyncUserId: string): Promise<UserCluster.User | null> {
+    return this.db.client.user.findFirst({
+      where: { whalesyncUserId },
+      include: UserCluster._validator.include,
+    });
+  }
 
-    if (email) {
-      await this.redeemWorkspaceInvites(email, newUser.id);
+  /**
+   * Ensures a Scratch shadow user exists for the given Whalesync user, creating it on first call.
+   * Idempotent on `whalesyncUserId`. Reuses the same provisioning core as native sign-up
+   * ({@link createUserWithOrgAndDefaultWorkbook}), with two shadow-specific differences:
+   *
+   * - A synthetic `ws_<whalesyncUserId>` clerkId satisfies the `@unique` clerkId column and marks the
+   *   user as Whalesync-provisioned (server code can skip Clerk calls for `ws_`-prefixed users).
+   * - The email is stored with a `ws:` prefix so a shadow user never collides with a native Scratch
+   *   user that has the same address on the `@unique` email column. The value is pre-normalized
+   *   (lowercased + trimmed) to match the DB email-normalization trigger and avoid redundant updates.
+   *
+   * Slack sign-up notifications and invite redemption are intentionally skipped for shadow users;
+   * PostHog identify is kept so the shadow-user person properties exist for analytics exclusion.
+   */
+  public async getOrCreateShadowUserFromWhalesync(
+    whalesyncUserId: string,
+    email: string,
+    name?: string,
+  ): Promise<UserCluster.User> {
+    const normalizedShadowEmail = `ws:${email.trim().toLowerCase()}`;
+
+    const existingShadowUser = await this.findByWhalesyncUserId(whalesyncUserId);
+    if (existingShadowUser) {
+      const nameChanged = !!name && name !== existingShadowUser.name;
+      const emailChanged = normalizedShadowEmail !== existingShadowUser.email;
+      if (nameChanged || emailChanged) {
+        await this.db.client.user.update({
+          where: { id: existingShadowUser.id },
+          data: { name, email: normalizedShadowEmail },
+        });
+      }
+      return existingShadowUser;
     }
 
-    return newUser;
+    const newShadowUser = await this.createUserWithOrgAndDefaultWorkbook({
+      clerkId: `ws_${whalesyncUserId}`,
+      whalesyncUserId,
+      name,
+      email: normalizedShadowEmail,
+    });
+
+    this.postHogService.identifyNewUser(newShadowUser);
+
+    return newShadowUser;
+  }
+
+  /**
+   * Mints a short-lived WHALESYNC_SESSION token for a shadow user. Additive — it does NOT delete the
+   * user's other tokens, since overlapping refresh windows are expected and expired rows are reaped by
+   * the {@link ExpiredApiTokenCleanupService} cron rather than on mint.
+   */
+  public async mintWhalesyncSessionToken(userId: string): Promise<{ token: string; expiresAt: Date }> {
+    const newSessionToken = await this.db.client.apiToken.create({
+      data: {
+        id: createApiTokenId(),
+        userId,
+        token: generateApiToken(),
+        expiresAt: generateWhalesyncSessionTokenExpirationDate(),
+        type: TokenType.WHALESYNC_SESSION,
+      },
+    });
+    return { token: newSessionToken.token, expiresAt: newSessionToken.expiresAt };
+  }
+
+  /**
+   * Bulk-revokes a user's WHALESYNC_SESSION tokens (logout / deprovision). Only deletes
+   * WHALESYNC_SESSION rows, so the user's CLI/desktop (USER/WEBSOCKET) tokens are unaffected.
+   * @returns the number of session tokens deleted
+   */
+  public async revokeWhalesyncSessionTokens(userId: string): Promise<number> {
+    const { count } = await this.db.client.apiToken.deleteMany({
+      where: { userId, type: TokenType.WHALESYNC_SESSION },
+    });
+    return count;
+  }
+
+  /**
+   * Deletes a shadow user's database rows during deprovisioning. Call this only AFTER the user's
+   * workbooks have been torn down via `WorkbookService.delete` (workbooks FK both the user and the
+   * auto-created organization). Deleting the user cascades its `ApiToken` rows; the auto-created
+   * organization is then removed. A failure to delete the organization (e.g. an unexpected lingering
+   * reference) is logged and skipped rather than aborting the deprovision.
+   */
+  public async deleteShadowUserAndOrganization(userId: string, organizationId?: string): Promise<void> {
+    await this.db.client.user.delete({ where: { id: userId } });
+
+    if (organizationId) {
+      try {
+        await this.db.client.organization.delete({ where: { id: organizationId } });
+      } catch (error) {
+        WSLogger.warn({
+          source: 'UsersService',
+          message: 'Failed to delete shadow user organization during deprovision; skipping',
+          organizationId,
+          error,
+        });
+      }
+    }
   }
 
   public async search(query: string): Promise<UserCluster.User[]> {

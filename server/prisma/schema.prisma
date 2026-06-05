@@ -66,7 +66,8 @@ model User {
   id                   String                @id // type: UserId
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
-  clerkId              String?               @unique
+  clerkId              String?               @unique // Real Clerk ID (user_…) for native users; synthetic "ws_<whalesyncUserId>" for Whalesync shadow users
+  whalesyncUserId      String?               @unique // UUID of the linked Whalesync user; null for native Scratch users
   name                 String?
   /// Always stored lowercase + trimmed by a BEFORE INSERT/UPDATE trigger.
   email                String?               @unique

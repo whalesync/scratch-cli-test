@@ -17,6 +17,7 @@ import { EmailModule } from './email/email.module';
 import { ExperimentsModule } from './experiments/experiments.module';
 import { HealthModule } from './health/health.module';
 import { ApiRequestMetricsInterceptor } from './interceptors/api-request-metrics.interceptor';
+import { InternalModule } from './internal/internal.module';
 import { JobModule } from './job/job.module';
 import { McpModule } from './mcp/mcp.module';
 import { MetricsModule } from './metrics/metrics.module';
@@ -72,7 +73,9 @@ import { WorkerModule } from './worker/workers.module';
     ScheduleModule,
     ShopifyWebhooksModule,
     McpModule,
-    ...(ScratchConfigService.isAPIService() ? [DevToolsModule, BugReportModule, CodeMigrationsModule] : []),
+    ...(ScratchConfigService.isAPIService()
+      ? [DevToolsModule, BugReportModule, CodeMigrationsModule, InternalModule]
+      : []),
     ...(ScratchConfigService.isTaskWorkerService() ? [WorkerModule] : []),
     ...(ScratchConfigService.isCronService() ? [CronModule] : []),
   ],

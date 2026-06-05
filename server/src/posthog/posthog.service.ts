@@ -88,9 +88,18 @@ export class PostHogService implements OnModuleDestroy {
 
     const signedUpAt = user.createdAt.toISOString().slice(0, 10);
 
+    // Shadow users provisioned from Whalesync are flagged with a durable person property so
+    // Scratch-growth dashboards and funnels can exclude them. `is_whalesync_shadow_user` is set
+    // for every user (true for shadow, explicitly false for native) to keep the exclusion filter
+    // unambiguous, and is set via `$set` (not `$set_once`) so it stays correct if a user is ever
+    // reconciled from shadow to native later.
+    const isWhalesyncShadowUser = !!user.whalesyncUserId;
+
     const eventProperties = {
       email: user.email,
       name: user.name,
+      is_whalesync_shadow_user: isWhalesyncShadowUser,
+      whalesync_user_id: user.whalesyncUserId ?? null,
       $set_once: {
         signed_up_at: signedUpAt,
       },
@@ -105,6 +114,8 @@ export class PostHogService implements OnModuleDestroy {
         name: user.name,
         email: user.email,
         role: user.role,
+        is_whalesync_shadow_user: isWhalesyncShadowUser,
+        whalesync_user_id: user.whalesyncUserId ?? null,
         $set_once: {
           signed_up_at: signedUpAt,
         },

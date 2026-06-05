@@ -24,3 +24,12 @@ export function generateWebsocketTokenExpirationDate(): Date {
   // set to 1 day from now
   return new Date(Date.now() + 1000 * 60 * 60 * 24);
 }
+
+/**
+ * @returns The expiration date for a short-lived Whalesync browser session token (10 minutes).
+ * Dusky refreshes before expiry; the short TTL is what makes a browser-held token acceptable.
+ */
+export function generateWhalesyncSessionTokenExpirationDate(): Date {
+  // set to 10 minutes from now
+  return new Date(Date.now() + 1000 * 60 * 10);
+}

@@ -38,6 +38,7 @@ export * from './dto/desktop-release/desktop-release.dto';
 export * from './dto/dev-tools/change-user-organization.dto';
 export * from './dto/dev-tools/get-all-jobs.dto';
 export * from './dto/dev-tools/update-dev-subscription.dto';
+export * from './dto/internal/whalesync-internal.dto';
 export * from './dto/oauth/oauth-initiate-options.dto';
 export * from './dto/oauth/oauth-state-payload';
 export * from './dto/payment/create-checkout-session.dto';

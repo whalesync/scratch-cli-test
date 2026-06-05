@@ -9,6 +9,7 @@
 - Run all the following commands in the root of the repo
 - Be sure to test the build with `yarn run build` when you’re done making a series of code changes
 - Regularly run the linter with `yarn run lint` for code changes
+- Regularly run `yarn run typecheck` after changes to unit tests, integration tests and generating code for prisma schemas
 - Prefer running single tests, and not the whole test suite, for performance
 - Run the integration tests with `yarn run test:integration` when you're done making a series of code changes.
 
