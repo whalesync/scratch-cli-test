@@ -48,6 +48,9 @@ include:
   - local: "/gitlab-ci/stages/01-cli-integration-tests.yml"
     rules:
       - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+  - local: "/gitlab-ci/stages/01-publish-shared-types.yml"
+    rules:
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
   - local: "/gitlab-ci/stages/02-push-to-prod.yml"
     rules:
       - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'

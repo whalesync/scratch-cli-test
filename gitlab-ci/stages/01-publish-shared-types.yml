@@ -1,0 +1,36 @@
+include:
+  - "/gitlab-ci/stages.yml"
+  - "/gitlab-ci/common.yml"
+
+# =============================================================================
+# PUBLISH @spinner/shared-types TO GITLAB PACKAGE REGISTRY
+# =============================================================================
+#
+# Publishes a new version of @spinner/shared-types on every master commit
+# that touches packages/shared-types/. The version is `0.0.0-master-<sha>`
+# and is tagged `latest`, which is what dusky (in the whalesync repo) pins.
+#
+# See packages/shared-types/CICD.md for full context.
+
+publish shared-types:
+  stage: build and test
+  interruptible: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
+      changes:
+        - packages/shared-types/**/*
+        - gitlab-ci/stages/01-publish-shared-types.yml
+  script:
+    - cd packages/shared-types
+    - !reference [.use_nvm, script]
+    - yarn build
+    # Rewrite the sentinel version in package.json to a SHA-keyed version.
+    # --allow-same-version is a safety net in case the sentinel is ever bumped.
+    - VERSION="0.0.0-master-${CI_COMMIT_SHORT_SHA}"
+    - npm version "$VERSION" --no-git-tag-version --allow-same-version
+    # Auth to the project-scoped registry using the built-in CI job token.
+    # CI_API_V4_URL looks like https://gitlab.com/api/v4
+    - REGISTRY_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
+    - echo "@spinner:registry=${REGISTRY_URL}" > .npmrc
+    - echo "${REGISTRY_URL#https:}:_authToken=${CI_JOB_TOKEN}" >> .npmrc
+    - npm publish --tag latest

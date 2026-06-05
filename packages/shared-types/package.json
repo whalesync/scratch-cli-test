@@ -1,11 +1,18 @@
 {
   "name": "@spinner/shared-types",
-  "version": "1.0.0",
-  "private": true,
+  "//version": "Sentinel version — do NOT bump. CI rewrites this to 0.0.0-master-<sha> before publishing (see CICD.md). Workspace consumers pin '0.0.0-dev' exactly, so any change here breaks `yarn install` across the monorepo.",
+  "version": "0.0.0-dev",
   "license": "UNLICENSED",
   "description": "Shared TypeScript types for client and server",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "restricted"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

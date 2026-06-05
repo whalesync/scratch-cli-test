@@ -62,7 +62,7 @@
     "@prisma/client": "^6.16.3",
     "@sendgrid/mail": "^8.1.6",
     "@sinclair/typebox": "^0.34.48",
-    "@spinner/shared-types": "1.0.0",
+    "@spinner/shared-types": "0.0.0-dev",
     "@types/archiver": "^7.0.0",
     "@types/html-minifier": "^4.0.5",
     "@types/ioredis": "^5.0.0",

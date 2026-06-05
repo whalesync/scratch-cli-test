@@ -41,7 +41,7 @@
     "@mantine/core": "^8.3.5",
     "@mantine/hooks": "^8.3.5",
     "@mantine/notifications": "^8.3.5",
-    "@spinner/shared-types": "1.0.0",
+    "@spinner/shared-types": "0.0.0-dev",
     "@uiw/react-codemirror": "^4.25.3",
     "axios": "1.14.0",
     "chokidar": "^5.0.0",
