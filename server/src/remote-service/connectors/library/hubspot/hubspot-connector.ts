@@ -91,7 +91,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
     logo: 'https://static.scratch.md/connector-icons/hubspot.svg',
     incrementalPull: true,
     incrementalPullInstructions:
-      'Incremental pull downloads only records changed since the last pull, based on each object’s last-modified date (e.g. hs_lastmodifieddate). Standard objects are detected automatically; for a custom object whose last-modified property is not detected, select it in the advanced settings. Note: incremental pulls refresh record properties but not associations — associations are reconciled by periodic full pulls.',
+      'Note: incremental pulls refresh record properties but not associations. Run periodic full pulls reconcile associations.',
     credentialFields: {
       user_provided_params: [
         {
@@ -111,7 +111,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
       type: 'field-select',
       label: 'Last modified date property',
       description:
-        'Select the property that records this object’s last-modified date to enable incremental pulls. Standard objects are detected automatically; set this for a custom object whose property was not detected.',
+        'Select the property that records this object’s last-modified date. Scratch uses the Hubspot last modified date property by default.',
       placeholder: 'e.g. hs_lastmodifieddate',
     },
   ];

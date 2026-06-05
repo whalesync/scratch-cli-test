@@ -98,25 +98,40 @@ function normalizeFolderPath(path: string): string {
 }
 
 /**
- * Build the "Pull This Table - Incremental" context-menu item for a folder
- * based on its server-computed {@link IncrementalPullSupport}. It is enabled
- * only when incremental pulls are fully SUPPORTED; NEEDS_CONFIGURATION and
- * NOT_SUPPORTED are both disabled but carry distinct suffixes so the user knows
- * whether configuring a last-modified field would unlock it.
+ * Build the pull context-menu items for a single linked table based on its
+ * server-computed {@link IncrementalPullSupport}.
+ *
+ * Incremental pull is the default action ("Pull This Table"); a "Pull This Table
+ * - Full refresh" item always forces a full pull. When incremental pulls are not yet
+ * possible the incremental item is rendered disabled with a distinct suffix — so
+ * the user knows whether configuring a last-modified field would unlock it — and
+ * the full pull becomes the default (first) action. In that case the full pull is
+ * the only valid option, so it is labelled plainly "Pull This Table".
  */
-function buildIncrementalPullMenuItem(support: IncrementalPullSupport): {
+function buildTablePullMenuItems(support: IncrementalPullSupport): Array<{
   id: string;
   label: string;
-  enabled: boolean;
-} {
+  enabled?: boolean;
+}> {
   switch (support) {
     case IncrementalPullSupport.SUPPORTED:
-      return { id: 'pull-incremental', label: 'Pull This Table - Incremental', enabled: true };
+      return [
+        { id: 'pull', label: 'Pull This Table' },
+        { id: 'pull-full', label: 'Pull This Table - Full refresh' },
+      ];
     case IncrementalPullSupport.NEEDS_CONFIGURATION:
-      return { id: 'pull-incremental', label: 'Pull This Table - Incremental (Needs Configuration)', enabled: false };
+      // Full is the only valid pull here, so drop the "(Full)" qualifier — it is simply "the" pull.
+      return [
+        { id: 'pull-full', label: 'Pull This Table' },
+        { id: 'pull-incremental', label: 'Pull This Table - Incremental (Needs Configuration)', enabled: false },
+      ];
     case IncrementalPullSupport.NOT_SUPPORTED:
     default:
-      return { id: 'pull-incremental', label: 'Pull This Table - Incremental (Not Supported)', enabled: false };
+      // Full is the only valid pull here, so drop the "(Full)" qualifier — it is simply "the" pull.
+      return [
+        { id: 'pull-full', label: 'Pull This Table' },
+        { id: 'pull-incremental', label: 'Pull This Table - Incremental (Not Supported)', enabled: false },
+      ];
   }
 }
 
@@ -190,10 +205,25 @@ function FolderTreeNodeRow({
         submenu?: Array<{ id: string; label: string }>;
       }> = [];
 
-      if (mappedFolder || (depth === 0 && connectionFolders.length > 0)) {
-        items.push({ id: 'pull', label: mappedFolder ? 'Pull This Table' : 'Pull All Tables' });
-        if (mappedFolder) {
-          items.push(buildIncrementalPullMenuItem(mappedFolder.incrementalPullSupport));
+      if (mappedFolder) {
+        items.push(...buildTablePullMenuItems(mappedFolder.incrementalPullSupport));
+        items.push({ id: 'pull-sep', label: '', type: 'separator' });
+      } else if (depth === 0 && connectionFolders.length > 0) {
+        // Only offer the incremental "Pull All Tables" when at least one table in this
+        // connection actually supports incremental pulls. If none do (e.g. the connector
+        // itself has no incremental support, so every table is NOT_SUPPORTED), incremental
+        // would just full-pull everything anyway — so we show a single plain "Pull All
+        // Tables" that does a full pull, with no redundant "(Full)" qualifier.
+        const anyTableSupportsIncrementalPull = connectionFolders.some(
+          (folder) => folder.incrementalPullSupport === IncrementalPullSupport.SUPPORTED,
+        );
+        if (anyTableSupportsIncrementalPull) {
+          // Incremental is the default; the backend safely falls back to a full pull
+          // for any table that does not support it, so requesting it for all is safe.
+          items.push({ id: 'pull', label: 'Pull All Tables' });
+          items.push({ id: 'pull-full', label: 'Pull All Tables - Full refresh' });
+        } else {
+          items.push({ id: 'pull-full', label: 'Pull All Tables' });
         }
         items.push({ id: 'pull-sep', label: '', type: 'separator' });
       }
@@ -224,24 +254,34 @@ function FolderTreeNodeRow({
       window.scratchDesktop.showNativeContextMenu(items, (id) => {
         if (id === 'pull' && mappedFolder) {
           onRequestPull({
-            title: `Pull Table — ${node.name}`,
-            dataFolderIds: [mappedFolder.id],
-            emptyStateMessage: 'No linked table found for this local folder.',
-          });
-        }
-        if (id === 'pull-incremental' && mappedFolder) {
-          onRequestPull({
             title: `Pull Table (Incremental) — ${node.name}`,
             dataFolderIds: [mappedFolder.id],
             emptyStateMessage: 'No linked table found for this local folder.',
             mode: 'incremental',
           });
         }
+        if (id === 'pull-full' && mappedFolder) {
+          onRequestPull({
+            title: `Pull Table (Full) — ${node.name}`,
+            dataFolderIds: [mappedFolder.id],
+            emptyStateMessage: 'No linked table found for this local folder.',
+            mode: 'full',
+          });
+        }
         if (id === 'pull' && !mappedFolder && depth === 0 && connectionFolders.length > 0) {
           onRequestPull({
-            title: `Pull All Tables — ${node.name}`,
+            title: `Pull All Tables (Incremental) — ${node.name}`,
             dataFolderIds: connectionFolders.map((folder) => folder.id),
             emptyStateMessage: 'No linked tables found for this connection.',
+            mode: 'incremental',
+          });
+        }
+        if (id === 'pull-full' && !mappedFolder && depth === 0 && connectionFolders.length > 0) {
+          onRequestPull({
+            title: `Pull All Tables (Full) — ${node.name}`,
+            dataFolderIds: connectionFolders.map((folder) => folder.id),
+            emptyStateMessage: 'No linked tables found for this connection.',
+            mode: 'full',
           });
         }
         if (id === 'reveal') void window.scratchDesktop.showInFolder(path);

@@ -6,7 +6,6 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
-import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
 import { dataFolderApi } from '@/lib/api/data-folder';
@@ -81,25 +80,42 @@ const FILE_LIMIT = 200;
 const INDENT_PX = 10;
 
 /**
- * Builds the "Pull this table - Incremental" context-menu item for a folder based on its
- * server-computed {@link IncrementalPullSupport}, matching the desktop app's three-state behavior.
- * The item is enabled and clickable only when incremental pulls are fully SUPPORTED;
- * NEEDS_CONFIGURATION and NOT_SUPPORTED render as disabled items with distinct suffixes so the
- * user knows whether configuring a last-modified field would unlock incremental pulls.
+ * Builds the pull context-menu items for a single linked table based on its
+ * server-computed {@link IncrementalPullSupport}.
+ *
+ * Incremental pull is the default action ("Pull this table"), with an explicit
+ * "Pull this table - Full refresh" item that always forces a full pull. When incremental
+ * pulls are not yet possible the incremental item is rendered disabled with a
+ * distinct suffix — so the user knows whether configuring a last-modified field
+ * would unlock it — and the full pull becomes the default (first) action. In that
+ * case the full pull is the only valid option, so it is labelled plainly "Pull this
+ * table" (no "- Full refresh" qualifier).
  */
-function buildIncrementalPullTableMenuItem(
+function buildTablePullMenuItems(
   incrementalPullSupport: IncrementalPullSupport,
   icon: ContextMenuItem['icon'],
-  onClick: () => void,
-): ContextMenuItem {
+  onPullIncremental: () => void,
+  onPullFull: () => void,
+): ContextMenuItem[] {
   switch (incrementalPullSupport) {
     case IncrementalPullSupport.SUPPORTED:
-      return { label: 'Pull this table - Incremental', icon, onClick };
+      return [
+        { label: 'Pull this table', icon, onClick: onPullIncremental },
+        { label: 'Pull this table - Full refresh', icon, onClick: onPullFull },
+      ];
     case IncrementalPullSupport.NEEDS_CONFIGURATION:
-      return { label: 'Pull this table - Incremental (Needs Configuration)', icon, disabled: true };
+      // Full is the only valid pull here, so drop the "- Full refresh" qualifier — it is simply "the" pull.
+      return [
+        { label: 'Pull this table', icon, onClick: onPullFull },
+        { label: 'Pull this table - Incremental (Needs Configuration)', icon, disabled: true },
+      ];
     case IncrementalPullSupport.NOT_SUPPORTED:
     default:
-      return { label: 'Pull this table - Incremental (Not Supported)', icon, disabled: true };
+      // Full is the only valid pull here, so drop the "- Full refresh" qualifier — it is simply "the" pull.
+      return [
+        { label: 'Pull this table', icon, onClick: onPullFull },
+        { label: 'Pull this table - Incremental (Not Supported)', icon, disabled: true },
+      ];
   }
 }
 
@@ -298,11 +314,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const toggleHiddenFiles = useWorkbookUIStore((state) => state.toggleHiddenFiles);
   const { workbook, pullFolders, pullAssets } = useActiveWorkbook();
-  const { metadata } = useConnectorsMetadata();
   const [isReauthorizing, setIsReauthorizing] = useState(false);
-
-  const incrementalService = connectorAccount?.service ?? group.service ?? undefined;
-  const supportsIncrementalPull = incrementalService ? Boolean(metadata?.[incrementalService]?.incrementalPull) : false;
 
   // Targeted Zustand selector — only re-renders when THIS connector's jobs change
   const connectorJobsSelector = useCallback(
@@ -335,12 +347,24 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
 
   // Pull handler - pull only the tables belonging to this connection
   const connectionFolderIds = useMemo(() => group.dataFolders.map((f) => f.id), [group.dataFolders]);
-  const handlePullAll = useCallback(async () => {
-    await pullFolders(connectionFolderIds);
-  }, [pullFolders, connectionFolderIds]);
+  // Incremental is the default pull; the backend safely falls back to a full pull
+  // for any table that does not support incremental, so we can always request it.
   const handlePullAllIncremental = useCallback(async () => {
     await pullFolders(connectionFolderIds, { mode: 'incremental' });
   }, [pullFolders, connectionFolderIds]);
+  const handlePullAllFull = useCallback(async () => {
+    await pullFolders(connectionFolderIds, { mode: 'full' });
+  }, [pullFolders, connectionFolderIds]);
+
+  // Only offer the incremental "Pull All Tables" when at least one table in this
+  // connection actually supports incremental pulls. If none do (e.g. the connector
+  // itself has no incremental support, so every table is NOT_SUPPORTED), incremental
+  // would just full-pull everything anyway — so we show a single plain "Pull All
+  // Tables" that does a full pull, with no redundant "- Full refresh" qualifier.
+  const anyTableSupportsIncrementalPull = useMemo(
+    () => group.dataFolders.some((folder) => folder.incrementalPullSupport === IncrementalPullSupport.SUPPORTED),
+    [group.dataFolders],
+  );
 
   const [pullAssetsModalOpen, { open: openPullAssetsModal, close: closePullAssetsModal }] = useDisclosure(false);
   const handlePullAllAssetsConfirm = useCallback(
@@ -499,16 +523,12 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
           position={contextMenu}
           onClose={() => setContextMenu(null)}
           extraItemsBefore={[
-            { label: 'Pull All Tables', icon: CloudDownloadIcon, onClick: handlePullAll },
-            ...(supportsIncrementalPull
+            ...(anyTableSupportsIncrementalPull
               ? [
-                  {
-                    label: 'Pull All Tables (Incremental)',
-                    icon: CloudDownloadIcon,
-                    onClick: handlePullAllIncremental,
-                  },
+                  { label: 'Pull All Tables', icon: CloudDownloadIcon, onClick: handlePullAllIncremental },
+                  { label: 'Pull All Tables - Full refresh', icon: CloudDownloadIcon, onClick: handlePullAllFull },
                 ]
-              : []),
+              : [{ label: 'Pull All Tables', icon: CloudDownloadIcon, onClick: handlePullAllFull }]),
             { label: 'Pull All Assets', icon: ImageIcon, onClick: openPullAssetsModal },
           ]}
           extraItemsAfter={[
@@ -621,19 +641,20 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const [assetIndexOpened, { open: openAssetIndex, close: closeAssetIndex }] = useDisclosure(false);
   const [infoModalOpened, { open: openInfoModal, close: closeInfoModal }] = useDisclosure(false);
 
-  // Pull handler for this table
-  const handlePullTable = async () => {
-    try {
-      await pullFolders([folder.id]);
-    } catch (error) {
-      console.error('Failed to pull table:', error);
-    }
-  };
+  // Pull handlers for this table. Incremental is the default; full is the explicit
+  // opt-in. The backend falls back to a full pull when incremental isn't supported.
   const handlePullTableIncremental = async () => {
     try {
       await pullFolders([folder.id], { mode: 'incremental' });
     } catch (error) {
       console.error('Failed to pull table (incremental):', error);
+    }
+  };
+  const handlePullTableFull = async () => {
+    try {
+      await pullFolders([folder.id], { mode: 'full' });
+    } catch (error) {
+      console.error('Failed to pull table (full):', error);
     }
   };
 
@@ -859,11 +880,11 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
           onClose={() => setContextMenu(null)}
           position={contextMenu}
           items={[
-            { label: 'Pull this table', icon: CloudDownloadIcon, onClick: handlePullTable },
-            buildIncrementalPullTableMenuItem(
+            ...buildTablePullMenuItems(
               folder.incrementalPullSupport,
               CloudDownloadIcon,
               handlePullTableIncremental,
+              handlePullTableFull,
             ),
             { label: 'Download folder', icon: DownloadIcon, onClick: handleDownloadAll },
             {

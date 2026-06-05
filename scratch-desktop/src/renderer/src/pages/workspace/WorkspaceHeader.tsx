@@ -3,6 +3,7 @@ import { WorkspaceSwitcher } from '@/components/workspace-switcher';
 import { Group, Loader, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
 import {
+  ChevronDown,
   CloudDownload,
   CloudUpload,
   Download,
@@ -27,7 +28,7 @@ interface WorkspaceHeaderProps {
   onDownload: () => void;
   onReDownload: () => void;
   onPublishAll: () => void;
-  onPullAll: () => void;
+  onPullAll: (mode: 'full' | 'incremental') => void;
   watchingEnabled?: boolean;
   onToggleWatching?: () => void;
 }
@@ -35,7 +36,7 @@ interface WorkspaceHeaderProps {
 const isMac = window.electron?.process?.platform === 'darwin';
 
 const RE_DOWNLOAD_TOOLTIP = 'Re-download latest file updates from Scratch Web';
-const PULL_ALL_TOOLTIP = 'Pull the latest data from all connected services';
+const PULL_ALL_TOOLTIP = 'Pull data from all connected services';
 const PUBLISH_ALL_TOOLTIP = 'Publish all pending local changes to connected services';
 
 export function WorkspaceHeader({
@@ -65,6 +66,19 @@ export function WorkspaceHeader({
       [{ id: 'toggle-watching', label: 'Watching files', checked: !!watchingEnabled }],
       (id) => {
         if (id === 'toggle-watching') onToggleWatching?.();
+      },
+    );
+  };
+
+  const handlePullAllMenu = () => {
+    window.scratchDesktop.showNativeContextMenu(
+      [
+        { id: 'pull-incremental', label: 'Pull recent changes' },
+        { id: 'pull-full', label: 'Full refresh' },
+      ],
+      (id) => {
+        if (id === 'pull-incremental') onPullAll('incremental');
+        if (id === 'pull-full') onPullAll('full');
       },
     );
   };
@@ -193,7 +207,12 @@ export function WorkspaceHeader({
           ))}
         {compact ? (
           <Tooltip label={PULL_ALL_TOOLTIP}>
-            <IconButtonGhost size="compact-xs" disabled={!isDownloaded || anyRunning} onClick={() => void onPullAll()}>
+            <IconButtonGhost
+              size="compact-xs"
+              disabled={!isDownloaded || anyRunning}
+              onClick={handlePullAllMenu}
+              aria-label="Pull all"
+            >
               {pullingAll ? <Loader size={12} /> : <CloudDownload size={12} />}
             </IconButtonGhost>
           </Tooltip>
@@ -202,8 +221,9 @@ export function WorkspaceHeader({
             <ButtonSecondaryGhost
               size="compact-xs"
               leftSection={pullingAll ? <Loader size={12} /> : <CloudDownload size={12} />}
+              rightSection={<ChevronDown size={12} />}
               disabled={!isDownloaded || anyRunning}
-              onClick={() => void onPullAll()}
+              onClick={handlePullAllMenu}
             >
               Pull all
             </ButtonSecondaryGhost>

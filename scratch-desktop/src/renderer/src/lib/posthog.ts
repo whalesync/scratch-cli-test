@@ -128,8 +128,8 @@ export async function trackWorkspaceCloudSyncDetected(
   await captureEvent(PostHogEvents.WORKSPACE_CLOUD_SYNC_DETECTED, { workspaceId, provider, surface });
 }
 
-export async function trackPullAll(workspaceId: string): Promise<void> {
-  await captureEvent(PostHogEvents.PULL_ALL, { workspaceId });
+export async function trackPullAll(workspaceId: string, mode: 'full' | 'incremental' = 'incremental'): Promise<void> {
+  await captureEvent(PostHogEvents.PULL_ALL, { workspaceId, mode });
 }
 
 export async function trackPullTable(

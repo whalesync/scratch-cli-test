@@ -4,10 +4,10 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useConnectorAccount } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { Box, Group } from '@mantine/core';
+import { Box, Group, Menu } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { ConnectorAccount, WorkbookId } from '@spinner/shared-types';
-import { CloudDownloadIcon, PlusIcon } from 'lucide-react';
+import { ChevronDownIcon, CloudDownloadIcon, PlusIcon } from 'lucide-react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
@@ -60,11 +60,16 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
 
   const [isPulling, setIsPulling] = useState(false);
 
-  const handlePullAll = useCallback(async () => {
-    setIsPulling(true);
-    await pullFolders();
-    setIsPulling(false);
-  }, [pullFolders]);
+  // Incremental is the default pull; the backend safely falls back to a full pull
+  // for any table that does not support incremental. "Pull all (full)" forces a full.
+  const handlePullAll = useCallback(
+    async (mode: 'full' | 'incremental') => {
+      setIsPulling(true);
+      await pullFolders(undefined, { mode });
+      setIsPulling(false);
+    },
+    [pullFolders],
+  );
 
   const handleConnectionCreated = useCallback(
     (account: ConnectorAccount) => {
@@ -90,15 +95,27 @@ export function FilesSubToolbar({ workbookId }: FilesSubToolbarProps) {
         <ButtonPrimaryLight size="compact-sm" leftSection={<PlusIcon size={12} />} onClick={openConnectionModal}>
           Connect service
         </ButtonPrimaryLight>
-        <ButtonSecondaryOutline
-          size="compact-sm"
-          leftSection={<CloudDownloadIcon size={12} />}
-          onClick={handlePullAll}
-          loading={isPulling}
-          disabled={!hasLinkedFolders}
-        >
-          Pull all
-        </ButtonSecondaryOutline>
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <ButtonSecondaryOutline
+              size="compact-sm"
+              leftSection={<CloudDownloadIcon size={12} />}
+              rightSection={<ChevronDownIcon size={12} />}
+              loading={isPulling}
+              disabled={!hasLinkedFolders}
+            >
+              Pull all
+            </ButtonSecondaryOutline>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item leftSection={<CloudDownloadIcon size={14} />} onClick={() => handlePullAll('incremental')}>
+              Pull recent changes
+            </Menu.Item>
+            <Menu.Item leftSection={<CloudDownloadIcon size={14} />} onClick={() => handlePullAll('full')}>
+              Full refresh
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
       </Group>
 
       {/* Connection Modal */}

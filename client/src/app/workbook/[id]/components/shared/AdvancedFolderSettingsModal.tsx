@@ -167,19 +167,24 @@ function ConnectorSettingField({
   }
   if (setting.type === 'field-select') {
     const current = (value as string) ?? '';
+    const options = fieldOptions ?? [];
     return (
       <Autocomplete
         label={setting.label}
         description={setting.description}
-        // When unset, surface the auto-detected field so users with a typed
-        // last-modified column see incremental works with no input. A free
+        // No candidate fields in the schema (e.g. no column matches the
+        // setting's required format) → tell the user rather than show an empty
+        // picker. When unset, surface the auto-detected field so users with a
+        // typed last-modified column see incremental works with no input. A free
         // typed value is still accepted (Autocomplete) for untyped columns.
         placeholder={
-          !current && autoDetectedField
-            ? `Auto-detected: ${autoDetectedField}`
-            : (setting.placeholder ?? 'Select a field...')
+          options.length === 0
+            ? 'No valid fields found'
+            : !current && autoDetectedField
+              ? `Auto-detected: ${autoDetectedField}`
+              : (setting.placeholder ?? 'Select a field...')
         }
-        data={fieldOptions ?? []}
+        data={options}
         value={current}
         onChange={(val) => onChange(val)}
       />

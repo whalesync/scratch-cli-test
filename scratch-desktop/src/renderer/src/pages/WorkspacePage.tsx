@@ -89,7 +89,8 @@ export function WorkspacePage() {
   const previousLocalPathRef = useRef<string | null>(null);
 
   const [publishModalOpen, setPublishModalOpen] = useState(false);
-  const [pullAllModalOpen, setPullAllModalOpen] = useState(false);
+  // The "Pull all" mode also serves as the modal's open state (null = closed).
+  const [pullAllMode, setPullAllMode] = useState<'full' | 'incremental' | null>(null);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
   const [reinitModalOpen, setReinitModalOpen] = useState(false);
   // selectedFolderPath lives in component state (not the Zustand store) so it
@@ -618,11 +619,12 @@ export function WorkspacePage() {
         }}
       />
       <PullAllModal
-        opened={pullAllModalOpen}
-        onClose={() => setPullAllModalOpen(false)}
+        opened={pullAllMode !== null}
+        onClose={() => setPullAllMode(null)}
         workspaceName={workspace.name}
         localPath={localPath}
         workspaceId={workspace.id}
+        pullMode={pullAllMode ?? undefined}
         invalidateWorkspaceLevelData={handleDataRefresh}
       />
       {localPath && (
@@ -658,7 +660,7 @@ export function WorkspacePage() {
         isDownloaded={localPath !== null}
         downloading={downloading}
         reDownloading={reDownloading}
-        pullingAll={pullAllModalOpen}
+        pullingAll={pullAllMode !== null}
         publishingAll={publishModalOpen}
         onDownload={() => void handleDownload()}
         onReDownload={() => void handleReDownload()}
@@ -666,9 +668,9 @@ export function WorkspacePage() {
           void trackPublishAll(workspace.id);
           setPublishModalOpen(true);
         }}
-        onPullAll={() => {
-          void trackPullAll(workspace.id);
-          setPullAllModalOpen(true);
+        onPullAll={(mode) => {
+          void trackPullAll(workspace.id, mode);
+          setPullAllMode(mode);
         }}
         watchingEnabled={watchingEnabled}
         onToggleWatching={() => void handleToggleWatching()}

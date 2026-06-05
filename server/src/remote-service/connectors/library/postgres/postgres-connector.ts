@@ -79,7 +79,7 @@ export class PostgresConnector extends Connector {
     visible: false,
     incrementalPull: true,
     incrementalPullInstructions:
-      'To enable incremental pulls, this table must contain a timestamp column that tracks when a row was last changed (e.g. updated_at).',
+      'To enable incremental pulls, this table must contain a date-time column that tracks when a row was last changed (e.g. updated_at).',
     userProvidedParamsLabel: 'Connection String',
     credentialFields: {
       user_provided_params: [
@@ -98,7 +98,7 @@ export class PostgresConnector extends Connector {
       key: 'modifiedAtField',
       type: 'field-select',
       label: 'Update field',
-      description: 'A timestamp column that tracks when a row was last changed (e.g. updated_at).',
+      description: 'A date-time column that tracks when a row was last changed (e.g. updated_at).',
       placeholder: 'e.g. updated_at',
       // Only timestamp columns make sense as an incremental watermark; they map
       // to JSON Schema `format: 'date-time'`, so the picker offers only those.
