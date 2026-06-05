@@ -267,7 +267,7 @@ describeIfPostgres(
       }
     });
 
-    it("accept generates accepted-patches.json with the expected RFC 7396 entry", () => {
+    it("accept generates accepted-patches.json with the expected RFC 6902 entry", () => {
       try {
         const acceptResult = cli.json<{
           status: string;
@@ -282,7 +282,7 @@ describeIfPostgres(
         expect(acceptResult.paths).toEqual([editedRecordWorkspacePath]);
 
         // accepted-patches.json must now exist with a single update entry
-        // carrying the field-level RFC 7396 merge patch.
+        // carrying the field-level RFC 6902 JSON Patch (DEV-10237).
         const patchFile = readAcceptedPatches(workspaceDir, connDirName);
         expect(patchFile.patches).toHaveLength(1);
         const entry = patchFile.patches[0];
@@ -294,7 +294,9 @@ describeIfPostgres(
         );
         expect(entry.path).toBe(expectedRelPath);
         expect(entry.kind).toBe("update");
-        expect(entry.patch).toMatchObject({ author: newAuthor });
+        expect(entry.patch).toEqual([
+          { op: "add", path: "/author", value: newAuthor },
+        ]);
 
         // After accept, the change is approved, so `files unreviewed` is empty
         // and `files unpublished` reports the change.
@@ -434,8 +436,7 @@ describeIfPostgres(
         const onDisk = fs.readFileSync(editedRecordAbsPath, "utf-8");
         expect(onDisk.endsWith("\n")).toBe(true);
 
-        const canonical =
-          JSON.stringify(JSON.parse(onDisk), null, 2) + "\n";
+        const canonical = JSON.stringify(JSON.parse(onDisk), null, 2) + "\n";
         expect(onDisk).toBe(canonical);
 
         // Independent confirmation: git sees nothing modified in the
@@ -507,10 +508,9 @@ describeIfPostgres(
           );
         }
 
-        const data = JSON.parse(fs.readFileSync(controlFile, "utf-8")) as Record<
-          string,
-          unknown
-        >;
+        const data = JSON.parse(
+          fs.readFileSync(controlFile, "utf-8"),
+        ) as Record<string, unknown>;
         // Re-serialize WITHOUT a trailing newline. The semantic JSON value
         // is unchanged from main; only the bytes differ.
         fs.writeFileSync(controlFile, JSON.stringify(data, null, 2));
@@ -553,10 +553,12 @@ describeIfPostgres(
         // step has to do the work this time too.
         fs.writeFileSync(editedRecordAbsPath, JSON.stringify(data, null, 2));
 
-        const acceptResult = cli.json<{ status: string; filesAccepted: number }>(
-          ["files", "accept", editedRecordWorkspacePath],
-          { cwd: workspaceDir },
-        );
+        const acceptResult = cli.json<{
+          status: string;
+          filesAccepted: number;
+        }>(["files", "accept", editedRecordWorkspacePath], {
+          cwd: workspaceDir,
+        });
         expect(acceptResult.status).toBe("accepted");
         expect(acceptResult.filesAccepted).toBe(1);
 
@@ -590,9 +592,7 @@ describeIfPostgres(
         // Worktree snapped to canonical bytes for a second time.
         const onDisk = fs.readFileSync(editedRecordAbsPath, "utf-8");
         expect(onDisk.endsWith("\n")).toBe(true);
-        expect(onDisk).toBe(
-          JSON.stringify(JSON.parse(onDisk), null, 2) + "\n",
-        );
+        expect(onDisk).toBe(JSON.stringify(JSON.parse(onDisk), null, 2) + "\n");
 
         // accepted-patches.json drained again.
         expect(
@@ -736,7 +736,10 @@ describeIfPostgres(
       const aliceFile = allFiles
         .map((p) => ({
           p,
-          data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>,
+          data: JSON.parse(fs.readFileSync(p, "utf-8")) as Record<
+            string,
+            unknown
+          >,
         }))
         .find((r) => r.data.author_id === AUTHOR_IDS.alice);
       if (!aliceFile) {
@@ -776,10 +779,9 @@ describeIfPostgres(
         // into the server's dirty branch in git — no DB validation happens
         // there, so upload succeeds. The constraint check happens later when
         // the run-job executes the UPDATE against Postgres.
-        const data = JSON.parse(fs.readFileSync(aliceAbsPath, "utf-8")) as Record<
-          string,
-          unknown
-        >;
+        const data = JSON.parse(
+          fs.readFileSync(aliceAbsPath, "utf-8"),
+        ) as Record<string, unknown>;
         data.name = longName;
         fs.writeFileSync(aliceAbsPath, JSON.stringify(data, null, 2) + "\n");
 
@@ -789,10 +791,10 @@ describeIfPostgres(
         );
         expect(unreviewed.count).toBe(1);
 
-        const acceptResult = cli.json<{ status: string; filesAccepted: number }>(
-          ["files", "accept", aliceWorkspacePath],
-          { cwd: workspaceDir },
-        );
+        const acceptResult = cli.json<{
+          status: string;
+          filesAccepted: number;
+        }>(["files", "accept", aliceWorkspacePath], { cwd: workspaceDir });
         expect(acceptResult.status).toBe("accepted");
         expect(acceptResult.filesAccepted).toBe(1);
 
@@ -877,7 +879,9 @@ describeIfPostgres(
         expect(afterFail.patches).toHaveLength(1);
         const entry = afterFail.patches[0];
         expect(entry.kind).toBe("update");
-        expect(entry.patch).toMatchObject({ name: longName });
+        expect(entry.patch).toEqual([
+          { op: "add", path: "/name", value: longName },
+        ]);
 
         const unpublished = cli.json<{ count: number }>(
           ["files", "unpublished"],
@@ -961,10 +965,9 @@ describeIfPostgres(
         // Rewrite the worktree file. Deliberately omit the trailing newline
         // so the subsequent rematerialize has work to do — this also
         // re-exercises Bug B's fix on the recovery branch.
-        const data = JSON.parse(fs.readFileSync(aliceAbsPath, "utf-8")) as Record<
-          string,
-          unknown
-        >;
+        const data = JSON.parse(
+          fs.readFileSync(aliceAbsPath, "utf-8"),
+        ) as Record<string, unknown>;
         data.name = recoveredName;
         fs.writeFileSync(aliceAbsPath, JSON.stringify(data, null, 2));
 
@@ -978,18 +981,18 @@ describeIfPostgres(
         );
         expect(unreviewed.count).toBe(1);
 
-        const acceptResult = cli.json<{ status: string; filesAccepted: number }>(
-          ["files", "accept", aliceWorkspacePath],
-          { cwd: workspaceDir },
-        );
+        const acceptResult = cli.json<{
+          status: string;
+          filesAccepted: number;
+        }>(["files", "accept", aliceWorkspacePath], { cwd: workspaceDir });
         expect(acceptResult.status).toBe("accepted");
         expect(acceptResult.filesAccepted).toBe(1);
 
         const acceptedAfterFix = readAcceptedPatches(workspaceDir, connDirName);
         expect(acceptedAfterFix.patches).toHaveLength(1);
-        expect(acceptedAfterFix.patches[0].patch).toMatchObject({
-          name: recoveredName,
-        });
+        expect(acceptedAfterFix.patches[0].patch).toEqual([
+          { op: "add", path: "/name", value: recoveredName },
+        ]);
 
         // Upload + publish. This is now a happy-path cycle.
         const uploadResult = cli.json<{ filesUpdated: number }>(
@@ -1037,9 +1040,7 @@ describeIfPostgres(
 
         const onDisk = fs.readFileSync(aliceAbsPath, "utf-8");
         expect(onDisk.endsWith("\n")).toBe(true);
-        expect(onDisk).toBe(
-          JSON.stringify(JSON.parse(onDisk), null, 2) + "\n",
-        );
+        expect(onDisk).toBe(JSON.stringify(JSON.parse(onDisk), null, 2) + "\n");
 
         const status = execFileSync(
           "git",

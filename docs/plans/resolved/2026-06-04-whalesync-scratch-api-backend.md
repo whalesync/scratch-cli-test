@@ -1,6 +1,6 @@
 # Whalesync → Scratch direct API access: Scratch server backend
 
-**Status**: In Review — Scratch server backend implemented; all workstreams + tests complete
+**Status**: Resolved — Scratch server backend implemented; all workstreams + tests complete; integration suite passed against a live server (2026-06-05)
 **Author**: Chris Hoefgen
 **Created**: 2026-06-04
 **Linear**: [DEV-10325 — WS→Scratch Auth system](https://linear.app/whalesync/issue/DEV-10325/ws-scratch-auth-system)
@@ -19,9 +19,9 @@ All six Scratch-server workstreams and the test layer are **implemented and gree
 | 5. Cron cleanup | ✅ Done (scoped to `WHALESYNC_SESSION` for now) | `cron/expired-api-token-cleanup.service.ts` |
 | 6. CORS | ✅ Done | `config/scratch-config.service.ts` |
 | Unit tests (37 cases) | ✅ Pass | guard, users service, posthog, rate-limiter, cron specs |
-| Integration suite (9 cases) | ⏳ Written; needs a live run | `test/integration/whalesync-shadow-user.spec.ts` |
+| Integration suite (9 cases) | ✅ Passed against a live server (2026-06-05) | `test/integration/whalesync-shadow-user.spec.ts` |
 
-**Remaining before Resolved:** run the integration suite against a live server (`RUN_WHALESYNC_INTEGRATION=true SCRATCH_ADMIN_API_KEY=<same> yarn test:integration`), then the Bottlenose/Dusky work (separate repo, out of scope here). DTOs were placed in `shared-types` (`dto/internal/whalesync-internal.dto.ts`) to match the existing controller convention. Two DTO-doc sections below describe the server class implementing the shared interface.
+**Resolved:** the integration suite passed against a live server (`RUN_WHALESYNC_INTEGRATION=true SCRATCH_ADMIN_API_KEY=<same> yarn test:integration`) on 2026-06-05. The Bottlenose/Dusky work (separate repo) and the follow-ups in "Out of scope" below remain, tracked separately. DTOs were placed in `shared-types` (`dto/internal/whalesync-internal.dto.ts`) to match the existing controller convention. Two DTO-doc sections below describe the server class implementing the shared interface.
 
 ## Scope
 

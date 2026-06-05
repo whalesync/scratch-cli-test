@@ -36,10 +36,14 @@ Create a GitLab MR for the current branch with an auto-generated title and chang
    - You MAY use ONE secondary tag to further describe the change in these scenarios: 
      - secondary tags are added to the list with a comma, for example: `[server, tests]`
      - if the changes are mostly in the Scratch CLI add `cli` as a secondary tag
+     - DO NOT format the tags like this `[server] [client]`
      - if the changes are mostly in a unit or integration test suite, add `tests` as a secondary tag
-   - IF there is a Linear issue related to the change, add a link to it in the **Motivation** section
+   - DO NOT add the Linear issue ID to the title unless there is nothing else to work with
+   - Try to keep the title concise
 
 7. **Generate change description**: Based on the full diff, write a 2-3 sentence summary in Markdown list format focusing on key changes and their purpose. Be concise and technical.
+
+- IF there is a Linear issue related to the change, add a link to it in the **Motivation** section
 
 8. **Create the MR body** using this template:
 
