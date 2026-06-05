@@ -31,10 +31,14 @@ publish shared-types:
     - VERSION="0.0.0-master-${CI_COMMIT_SHORT_SHA}"
     - 'sed -i "s/\"version\": \"0.0.0-dev\"/\"version\": \"${VERSION}\"/" package.json'
     # Auth to the project-scoped registry using the built-in CI job token.
-    # CI_API_V4_URL looks like https://gitlab.com/api/v4
+    # CI_API_V4_URL looks like https://gitlab.com/api/v4.
+    # Write the .npmrc to $HOME, NOT the package dir: npm 7+ deliberately
+    # ignores in-package .npmrc files for any package that's a member of a
+    # workspace (warning: "ignoring workspace config at .../.npmrc"). The
+    # user-level config is honored normally.
     - REGISTRY_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
-    - echo "@spinner:registry=${REGISTRY_URL}" > .npmrc
-    - echo "${REGISTRY_URL#https:}:_authToken=${CI_JOB_TOKEN}" >> .npmrc
+    - echo "@spinner:registry=${REGISTRY_URL}" > "$HOME/.npmrc"
+    - echo "${REGISTRY_URL#https:}:_authToken=${CI_JOB_TOKEN}" >> "$HOME/.npmrc"
     # --registry forces npm to use the GitLab registry for publish; without it
     # npm sometimes falls back to npmjs.org.
     - npm publish --tag latest --registry "${REGISTRY_URL}"
