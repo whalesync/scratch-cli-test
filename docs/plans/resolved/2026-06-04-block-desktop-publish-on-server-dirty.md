@@ -1,6 +1,6 @@
 # Block desktop publish/upload when the server has unpublished changes
 
-**Status**: Implemented — PR1 (server + CLI) and PR2 (desktop + TOCTOU) complete; all builds, lints, and tests green
+**Status**: Implemented & verified — PR1 (server + CLI) and PR2 (desktop + TOCTOU) complete and landed on master (PR1 `a75a6816`, PR2 `1e56c65e`); re-verified 2026-06-05 (all builds/lints/tests green; 7-dimension adversarial code review found 0 confirmed bugs)
 **Author**: Curtis Fonger
 **Created**: 2026-06-04
 **Linear**: [DEV-10316](https://linear.app/whalesync/issue/DEV-10316/publish-from-desktop-app-also-pushed-dirty-changes-from-web-app)
@@ -116,7 +116,7 @@ Everything below is for the engineer implementing the plan. Line numbers are aga
 - **PR1 — server + CLI.** shared-types DTO, the server gate (read-only-vs-`main` check, fail-closed 503, kill switch), and the CLI two-pass. The gate only fires when a client sends `refuseIfDirty: true`, which only updated clients do — so PR1 is **no regression** for un-updated desktops and protects `scratchmd` immediately.
 - **PR2 — desktop + TOCTOU.** The modal modes (count-only `dirty`, `checkFailed`, the TOCTOU lead) and the publish-time drift re-check. This carries the riskiest, most coupling-heavy piece on its own. (Risk #7 — whether `rebaseDirty` could over-publish non-user records — was **verified and refuted** before implementation; see [Resolved — risk #7](#resolved--risk-7-rebasedirty-does-not-over-publish-non-user-records). The HEAD-snapshot re-check is sound as specified.)
 
-## PR1 implementation status — DONE (on branch `dev-10316-mr1`)
+## PR1 implementation status — DONE (landed on master, commit `a75a6816`)
 
 Server + CLI landed. Deltas from the spec discovered during implementation (all faithful to the decisions, just different plumbing than the pseudocode assumed):
 
@@ -129,7 +129,7 @@ Server + CLI landed. Deltas from the spec discovered during implementation (all 
 
 Tests: Rust route premise (`count_vs_main` vs lagging `merge_base`), CLI serde parse + structural discrimination, server unit + controller-level e2e for the full gate matrix (409 `blocked_dirty`, 503 `check_failed`, `checkOnly` no-side-effects, kill-switch off, dirty-wins-over-stale, legacy soft path). Full monorepo `yarn build` green; `cargo test` (864) green.
 
-## PR2 implementation status — DONE (on branch `dev-10316-mr2`)
+## PR2 implementation status — DONE (landed on master, commit `1e56c65e`)
 
 Desktop + TOCTOU landed. Deltas from the spec discovered during implementation (all faithful to the decisions — the spec under-specified the *plumbing* for two things it named in passing: how the post-apply dirty HEAD reaches the client, and how a drift abort inside the publish job reaches the renderer):
 
@@ -335,4 +335,24 @@ The `#7` row is **refuted** (see [Resolved — risk #7](#resolved--risk-7-rebase
 
 - **CROSS-MODEL:** CEO review + outside voice agree on the two-pass residual and the strategic risk (gate can block the common case). They diverged on the TOCTOU mechanism; the HEAD-snapshot approach was kept. #7 (rebaseDirty contamination) has since been **verified and refuted** (2026-06-04, direct code read + 3-lens adversarial check) — the HEAD-snapshot mechanism stands unchanged.
 - **UNRESOLVED:** 0 decisions open. 0 open verifications (#7 resolved). 1 accepted residual (two-pass sub-second deadlock) and 1 latent fragility (merge_base-tag lockstep invariant) — both tracked as follow-ups, neither a blocker.
-- **VERDICT:** CEO + ENG + DESIGN reviewed; #7 verified; PR1 and PR2 implemented and diff-reviewed (0 confirmed bugs across both). All builds, lints, and tests green. PR2 awaits human review + commit on `dev-10316-mr2`.
+- **VERDICT:** CEO + ENG + DESIGN reviewed; #7 verified; PR1 and PR2 implemented, diff-reviewed (0 confirmed bugs across both), and **landed on master** (PR1 `a75a6816`, PR2 `1e56c65e`). Re-verified post-landing on 2026-06-05 — see [Post-landing verification](#post-landing-verification-2026-06-05). 0 open items; remaining follow-ups are non-blocking.
+
+## Post-landing verification (2026-06-05)
+
+Independent re-verification of the landed code on the current tree (`master` == `dev-10316-mr3` at `c2b7bdab`), after the two PRs merged. Two tracks: re-run every build/lint/test gate, and adversarially re-check the code against the plan's 9 decisions and acceptance criteria.
+
+**Gates — all green on the current tree** (also confirms the unrelated `@spinner/shared-types` `1.0.0 → 0.0.0-dev` change from another in-flight branch did not regress the dirty-gate work):
+
+| Gate | Result |
+| --- | --- |
+| Root `yarn build` (Turborepo) | 14/14 packages |
+| Root `yarn lint` | 5/5 (incl. `server` `--max-warnings=0`) |
+| `cargo test` (scratch-git-2) | 866 (219 + 274 + 355 unit + 2 + 16 integ) |
+| Server dirty-gate suites | 61 (`upload-patch.controller` unit + e2e on live Postgres, `publish-plan-build.service`) |
+| Desktop `vitest` + `lint` | 224 tests + lint clean |
+
+Dirty-gate Rust tests confirmed executing and passing by name: `count_vs_main_ignores_post_pull_merge_base_lag`, `count_vs_main_counts_real_pending_edits`, `blocked_dirty_response_deserializes_from_nest_conflict_body`, `blocked_stale_body_does_not_parse_as_blocked_dirty`, `job_progress_reads_apply_patches_dirty_head_off_public_progress` (+ absent-case).
+
+**Adversarial code review — 0 confirmed code findings.** 7 review dimensions (shared-types DTOs, server gate, vs-`main` count, CLI two-pass, desktop modal, TOCTOU drift check, holistic acceptance-criteria), each finding adversarially re-verified; 69 checks, 62 direct passes, 0 confirmed bugs. Highest-leverage sites re-read directly and confirmed against the spec: the controller gate ordering (`upload-patch.controller.ts` — dirty gate → `checkOnly` return → staleness → enqueue → audit, so refusals/probes leave zero side effects; flag-read failure degrades the gate *off* while only the git-count failure throws 503 `check_failed`), and the publish-time drift compare throwing `PublishDirtyDriftError` strictly *before* `rebaseDirty` (`publish-plan-build.service.ts`).
+
+Two spec-vs-code divergences examined and judged **benign, not bugs** (no change made): (1) the `check_failed` DTO carries `connectorAccountId` (the spec pseudocode omitted it) — needed for per-connection attribution, leaks no record data; (2) the CLI human-mode refusal prints to **stdout** (`println!`), not the stderr the spec prose mentioned — this matches the sibling `print_blocked_stale_result`, which the plan repeatedly says to mirror, so stdout is the correct, consistent choice.
