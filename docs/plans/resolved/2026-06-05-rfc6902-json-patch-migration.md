@@ -2,7 +2,7 @@
 
 Author: Curtis Fonger
 Created: 2026-06-05
-Status: In Review
+Status: Resolved
 Linear: [DEV-10237 — Stuck with "1 field needs review"](https://linear.app/whalesync/issue/DEV-10237) — tracked under this issue (the migration is the fix for the symptom).
 
 ## Implementation status (2026-06-05)
@@ -42,9 +42,9 @@ apply({a: 1}, {a: null})  →  {}             // "a deleted"  — round-trip is 
 
 A working record holding `"field": null` can never agree with its reconstructed approved state (`apply(main, patch)` strips the null), so:
 
-- the row-level `unapprovedChanges` bit ([`folder_index.rs::compute_review_bits`](../../scratch-git-2/src/shared/folder_index.rs)) flags the record (`working != approved`);
-- the desktop per-field badge ([`local-files.ts::compareFlattenedRecordVersions`](../../scratch-desktop/src/main/local-files.ts)) shows "1 field needs review";
-- **accept cannot clear it** ([`review_ops.rs::accept_field_in_folder`](../../scratch-git-2/src/shared/review_ops.rs)) — folding `field: null` into the patch and reconstructing strips it again (non-convergent);
+- the row-level `unapprovedChanges` bit ([`folder_index.rs::compute_review_bits`](../../../scratch-git-2/src/shared/folder_index.rs)) flags the record (`working != approved`);
+- the desktop per-field badge ([`local-files.ts::compareFlattenedRecordVersions`](../../../scratch-desktop/src/main/local-files.ts)) shows "1 field needs review";
+- **accept cannot clear it** ([`review_ops.rs::accept_field_in_folder`](../../../scratch-git-2/src/shared/review_ops.rs)) — folding `field: null` into the patch and reconstructing strips it again (non-convergent);
 - **reject only "clears" it by deleting the field from the working file**, discarding a real value; the next pull re-adds `field: null` and re-flags it ("hit this again on yesterday's build").
 
 This is not a code slip — it is the format's documented limitation colliding with a product invariant. The fix is to stop overloading `null`: migrate the delta format to **RFC 6902 JSON Patch**, where `null` is an ordinary value and deletion is an explicit `remove` operation.
@@ -63,7 +63,7 @@ This is not a code slip — it is the format's documented limitation colliding w
 - **No array element surgery.** We keep today's atomic-array semantics: any array difference emits a single whole-array `replace` (or `add`) at the array's object-member path. We never emit index-addressed array ops (`/tags/3`, `/tags/-`). This is a deliberate, conformant subset of RFC 6902.
 - **No per-connector null-publishing plumbing.** The merge/json patch is primarily an *internal* representation; the actual publish to a service is computed later from dirty-vs-main by the publish-plan job. Giving connectors the ability to push `field → null` (vs omit) to a specific service is a separate effort, tracked independently. This migration makes the internal state *correct*; it does not change what bytes a connector sends.
 - **No change to object recursion behavior.** We continue to recurse into nested objects key-by-key (matching `merge_patch::diff` today), only treating arrays as atomic. This keeps patches small and diffs legible.
-- **No canonicalization of user edits on accept/upload.** Editors still produce whatever JSON they produce; the detector absorbs harmless byte differences (unchanged from [2026-05-27-unreviewed-detection-semantic-compare](./resolved/2026-05-27-unreviewed-detection-semantic-compare.md)).
+- **No canonicalization of user edits on accept/upload.** Editors still produce whatever JSON they produce; the detector absorbs harmless byte differences (unchanged from [2026-05-27-unreviewed-detection-semantic-compare](./2026-05-27-unreviewed-detection-semantic-compare.md)).
 
 ## Background — where the format lives today
 
@@ -71,17 +71,17 @@ RFC 7396 is load-bearing in three engines that must stay equivalent, and `null` 
 
 | Consumer | File | Role |
 | --- | --- | --- |
-| `merge_patch::diff` / `apply` | [scratch-git-2/src/shared/merge_patch.rs](../../scratch-git-2/src/shared/merge_patch.rs) | Generate + apply the merge patch (null-deletes at line 42) |
-| `compute_entry`, `re_anchor_patches` | [scratch-git-2/src/shared/re_anchor.rs](../../scratch-git-2/src/shared/re_anchor.rs) | Build patch from (snapshot, working); re-anchor pending patches when main advances (preserves the user's patch verbatim, per-key conflict detection) |
-| `AnchoredPatch`, `remove_field`, `upsert_entry` | [scratch-git-2/src/shared/accepted_patches.rs](../../scratch-git-2/src/shared/accepted_patches.rs) | On-disk `accepted-patches.json` schema + field-level edits to the patch |
-| `apply_patch_entry_to_blob`, `accept/reject/discard_field_in_folder`, `approved_object_for_path` | [scratch-git-2/src/shared/review_ops.rs](../../scratch-git-2/src/shared/review_ops.rs) | Reconstruct approved blob; field-level review actions |
-| `approved_json_for_entry`, `compute_review_bits` | [scratch-git-2/src/shared/folder_index.rs](../../scratch-git-2/src/shared/folder_index.rs) | Row-level `approved`/`unapproved` bit compute |
-| `RecordBlobs.approved` reconstruction | [scratch-git-2/napi/src/lib.rs](../../scratch-git-2/napi/src/lib.rs) | Approved/published snapshots consumed by the desktop |
-| `applyJsonMergePatch`, top-level-null delete | [server/src/publish-plan/apply-patches.service.ts](../../server/src/publish-plan/apply-patches.service.ts) | Apply the wire patch onto the dirty branch (null-deletes at line ~225; whole-patch null = delete file at line ~62) |
+| `merge_patch::diff` / `apply` | [scratch-git-2/src/shared/merge_patch.rs](../../../scratch-git-2/src/shared/merge_patch.rs) | Generate + apply the merge patch (null-deletes at line 42) |
+| `compute_entry`, `re_anchor_patches` | [scratch-git-2/src/shared/re_anchor.rs](../../../scratch-git-2/src/shared/re_anchor.rs) | Build patch from (snapshot, working); re-anchor pending patches when main advances (preserves the user's patch verbatim, per-key conflict detection) |
+| `AnchoredPatch`, `remove_field`, `upsert_entry` | [scratch-git-2/src/shared/accepted_patches.rs](../../../scratch-git-2/src/shared/accepted_patches.rs) | On-disk `accepted-patches.json` schema + field-level edits to the patch |
+| `apply_patch_entry_to_blob`, `accept/reject/discard_field_in_folder`, `approved_object_for_path` | [scratch-git-2/src/shared/review_ops.rs](../../../scratch-git-2/src/shared/review_ops.rs) | Reconstruct approved blob; field-level review actions |
+| `approved_json_for_entry`, `compute_review_bits` | [scratch-git-2/src/shared/folder_index.rs](../../../scratch-git-2/src/shared/folder_index.rs) | Row-level `approved`/`unapproved` bit compute |
+| `RecordBlobs.approved` reconstruction | [scratch-git-2/napi/src/lib.rs](../../../scratch-git-2/napi/src/lib.rs) | Approved/published snapshots consumed by the desktop |
+| `applyJsonMergePatch`, top-level-null delete | [server/src/publish-plan/apply-patches.service.ts](../../../server/src/publish-plan/apply-patches.service.ts) | Apply the wire patch onto the dirty branch (null-deletes at line ~225; whole-patch null = delete file at line ~62) |
 | `UploadPatchPayload` DTO | `@spinner/shared-types` | Wire shape of the upload-patch payload (`patch` field) |
-| `compareFlattenedRecordVersions` | [scratch-desktop/src/main/local-files.ts](../../scratch-desktop/src/main/local-files.ts) | Per-field "needs review" badge (compares working vs reconstructed approved) |
+| `compareFlattenedRecordVersions` | [scratch-desktop/src/main/local-files.ts](../../../scratch-desktop/src/main/local-files.ts) | Per-field "needs review" badge (compares working vs reconstructed approved) |
 
-`AnchoredPatch` is the unit ([re_anchor.rs:44](../../scratch-git-2/src/shared/re_anchor.rs)):
+`AnchoredPatch` is the unit ([re_anchor.rs:44](../../../scratch-git-2/src/shared/re_anchor.rs)):
 
 ```rust
 pub struct AnchoredPatch {
@@ -136,7 +136,7 @@ fn diff_6902(base_ptr, old, new, out):
 
 `add` is the single verb for "field should hold this value," whether new or changed (§1). Object recursion is retained so a one-field change in a large nested envelope produces one leaf op, not a whole-subtree replace. The recursion guard (descend only when *both* sides are objects) means a newly-introduced subtree is emitted as a single `add /parent {…}`, which is required anyway since you cannot `add /parent/child` when `/parent` is absent.
 
-`compute_entry` ([re_anchor.rs:237](../../scratch-git-2/src/shared/re_anchor.rs)) keeps its `(snapshot, working)` → `Create`/`Update`/`Delete` shape; only the `Update` branch swaps `merge_patch::diff` for `diff_6902`. `Create`/`Delete` are unchanged.
+`compute_entry` ([re_anchor.rs:237](../../../scratch-git-2/src/shared/re_anchor.rs)) keeps its `(snapshot, working)` → `Create`/`Update`/`Delete` shape; only the `Update` branch swaps `merge_patch::diff` for `diff_6902`. `Create`/`Delete` are unchanged.
 
 ### 4. Data model + on-disk format
 
@@ -146,7 +146,7 @@ fn diff_6902(base_ptr, old, new, out):
 
 ### 5. Reconstruction of the approved state
 
-`apply_patch_entry_to_blob` ([review_ops.rs:383](../../scratch-git-2/src/shared/review_ops.rs)) and `approved_object_for_path` swap `merge_patch::apply` for the 6902 applier on `Update`. Because the applier preserves nulls, the reconstructed approved value now faithfully carries `field: null`, which makes:
+`apply_patch_entry_to_blob` ([review_ops.rs:383](../../../scratch-git-2/src/shared/review_ops.rs)) and `approved_object_for_path` swap `merge_patch::apply` for the 6902 applier on `Update`. Because the applier preserves nulls, the reconstructed approved value now faithfully carries `field: null`, which makes:
 
 - `compute_review_bits` correct (working `{f:null}` == approved `{f:null}` → not flagged);
 - the napi `approved` snapshot faithful, so the **desktop needs no comparison-logic change** — `compareFlattenedRecordVersions` already treats null-vs-absent as different, which is now the *correct* answer (and an approvable one).
@@ -156,7 +156,7 @@ fn diff_6902(base_ptr, old, new, out):
 `accept` / `reject` / `discard_field_in_folder` currently address fields by dot path via `read_nested_json_value` / `apply_nested_json_value`. They keep operating on the **reconstructed approved/working objects** (not on raw patch internals), so the field-edit logic is largely unchanged — the change is:
 
 - The composed approved object is re-diffed with `diff_6902` (via `compute_entry`) instead of merge-patch diff. The null trap is gone: accepting a `field: null` produces `replace /field null`, which reconstructs back to `field: null` → converges.
-- `accepted_patches::remove_field` ([accepted_patches.rs:139](../../scratch-git-2/src/shared/accepted_patches.rs)) currently deletes a key from the merge-patch object. With op arrays it must drop the op(s) whose pointer targets that field (and its descendants). Alternatively — and more robustly — recompute the whole entry from (main, edited-approved) via `compute_entry` and let it emit the minimal op list, avoiding hand-editing the op array. **Preferred: recompute, don't hand-edit.**
+- `accepted_patches::remove_field` ([accepted_patches.rs:139](../../../scratch-git-2/src/shared/accepted_patches.rs)) currently deletes a key from the merge-patch object. With op arrays it must drop the op(s) whose pointer targets that field (and its descendants). Alternatively — and more robustly — recompute the whole entry from (main, edited-approved) via `compute_entry` and let it emit the minimal op list, avoiding hand-editing the op array. **Preferred: recompute, don't hand-edit.**
 
 ### 7. Re-anchoring (`re_anchor_patches`)
 
@@ -170,8 +170,8 @@ Implementation note: because reconstruction is lossless now, the simplest correc
 
 ### 8. Server publish-apply
 
-- Rename/replace `applyJsonMergePatch` → `applyJsonPatch` (RFC 6902 applier) in [apply-patches.service.ts](../../server/src/publish-plan/apply-patches.service.ts), mirroring the Rust applier exactly (shared parity corpus).
-- The whole-record delete signal moves off "top-level `null` patch" (line ~62) onto the explicit `kind = Delete` discriminator that the DTO already carries. (`PatchKind` already matches the wire `kind` field — see [re_anchor.rs:30](../../scratch-git-2/src/shared/re_anchor.rs).) Deletes stop being encoded as a magic null.
+- Rename/replace `applyJsonMergePatch` → `applyJsonPatch` (RFC 6902 applier) in [apply-patches.service.ts](../../../server/src/publish-plan/apply-patches.service.ts), mirroring the Rust applier exactly (shared parity corpus).
+- The whole-record delete signal moves off "top-level `null` patch" (line ~62) onto the explicit `kind = Delete` discriminator that the DTO already carries. (`PatchKind` already matches the wire `kind` field — see [re_anchor.rs:30](../../../scratch-git-2/src/shared/re_anchor.rs).) Deletes stop being encoded as a magic null.
 - Apply `Update` op arrays onto the dirty-branch base; `Create` writes the full record; `Delete` removes the file.
 
 ### 9. Wire format (`@spinner/shared-types`)
