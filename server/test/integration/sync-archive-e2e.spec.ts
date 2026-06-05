@@ -27,6 +27,7 @@ import {
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
@@ -304,6 +305,58 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
       archived: 0,
       unarchived: 1,
     });
+  });
+
+  it('treats an empty/never-pulled destination folder (scratch-git 404) as zero existing records and still creates source records', async () => {
+    // Regression: an empty (or not-yet-populated) destination folder has zero files,
+    // so git tracks no directory for it and a path-scoped read returns 404. The Pass 1
+    // destination read must treat that as "0 existing records" rather than failing the
+    // whole sync — e.g. syncing into a brand-new/empty Webflow collection.
+    // Found by /investigate on 2026-06-01 (sync syn_MOS5XHuygU, empty Webflow collection).
+    setFolderContents(
+      [
+        { path: 'src/s1.json', content: '{"id":"s1","email":"john@example.com","name":"John"}' },
+        { path: 'src/s2.json', content: '{"id":"s2","email":"jane@example.com","name":"Jane"}' },
+      ],
+      [],
+    );
+    // Override the paginated read so the destination folder 404s like an empty git folder.
+    (dataFolderService.getFileContentsByFolderIdPaginated as jest.Mock).mockImplementation(
+      async (wbId, folderId, actorArg, branch) => {
+        if (folderId === destFolderId) {
+          throw new ScratchGitNotFoundError(
+            '/api/repo/read/org%2Fwkb%2Fcoa/files-paginated?branch=dirty&folder=dest&limit=1000',
+            'folder not found',
+          );
+        }
+        const files = ((await (dataFolderService.getAllFileContentsByFolderId as jest.Mock)(
+          wbId,
+          folderId,
+          actorArg,
+          branch,
+        )) ?? []) as { folderId: DataFolderId; path: string; content: string }[];
+        return { files, nextCursor: undefined };
+      },
+    );
+
+    const tableMapping: TableMappingV2 = {
+      sourceDataFolderId: sourceFolderId,
+      destinationDataFolderId: destFolderId,
+      columnMappings: archiveColumnMappings(),
+      recordMatching: { sourceColumnId: 'email', destinationColumnId: 'email' },
+      unmatchedDestinationPolicy: { withMatchKey: 'apply', withoutMatchKey: 'ignore' },
+    };
+
+    const result = await syncService.syncTableMapping(syncId, tableMapping, workbookId, actor);
+
+    // No crash: the 404 destination read is treated as 0 existing records.
+    expect(result.errors).toHaveLength(0);
+    // Both source records create into the empty destination (unmatched-source path).
+    expect(result.recordsCreated).toBe(2);
+    // Pass 3 saw no destination records to classify or archive.
+    expect(result.unmatchedDestinationCounts.withMatchKey).toBe(0);
+    expect(result.unmatchedDestinationCounts.withoutMatchKey).toBe(0);
+    expect(result.unmatchedDestinationCounts.archived).toBe(0);
   });
 
   it('is a no-op when scoped to a single source file (syncOneRecord path)', async () => {

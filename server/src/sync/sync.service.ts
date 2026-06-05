@@ -47,6 +47,7 @@ import { PostHogService } from 'src/posthog/posthog.service';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
 import { BaseJsonTableSpec, IdPath, idPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { findConstantTypeMismatches, getSchemaAtPath, validateSchemaMapping } from 'src/sync/schema-validator';
 import {
@@ -1128,13 +1129,35 @@ export class SyncService {
     let destCursor: string | undefined;
     let batchCounter = 0;
     do {
-      const page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
-        workbookId,
-        tableMapping.destinationDataFolderId,
-        actor,
-        DIRTY_BRANCH,
-        destCursor,
-      );
+      let page: { files: { folderId: DataFolderId; path: string; content: string }[]; nextCursor?: string };
+      try {
+        page = await this.dataFolderService.getFileContentsByFolderIdPaginated(
+          workbookId,
+          tableMapping.destinationDataFolderId,
+          actor,
+          DIRTY_BRANCH,
+          destCursor,
+        );
+      } catch (error) {
+        // An empty (or not-yet-populated) destination folder has zero files, so git
+        // tracks no directory for it and a path-scoped read returns 404. Treat that as
+        // "no existing destination records" rather than failing the whole sync — e.g.
+        // syncing into a brand-new or empty Webflow collection. Every source record
+        // then falls into the unmatched-source (create) path, and Pass 3 sees no
+        // unmatched-destination records. A 404 after pagination has already advanced
+        // (destCursor set) is a genuine anomaly and is rethrown.
+        if (error instanceof ScratchGitNotFoundError && destCursor === undefined) {
+          WSLogger.info({
+            source: 'SyncService.syncTableMapping',
+            message: 'Destination folder not found in git; treating as empty (0 existing records)',
+            syncId,
+            destinationDataFolderId: tableMapping.destinationDataFolderId,
+            destinationFolderPath: destinationFolder.path,
+          });
+          break;
+        }
+        throw error;
+      }
 
       const batchRecords: SyncRecord[] = [];
       for (const file of page.files) {
