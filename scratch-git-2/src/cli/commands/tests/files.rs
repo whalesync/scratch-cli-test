@@ -766,7 +766,10 @@ mod field_helpers {
         assert_eq!(file.patches.len(), 1);
         assert_eq!(file.patches[0].path, "public/smoke_records/record-1.json");
         assert_eq!(file.patches[0].kind, PatchKind::Update);
-        assert_eq!(file.patches[0].patch, json!({"name": "After"}));
+        assert_eq!(
+            file.patches[0].patch,
+            json!([{"op": "add", "path": "/name", "value": "After"}])
+        );
         assert_eq!(
             result.changed_paths,
             vec!["Conn/public/smoke_records/record-1.json".to_string()]
@@ -859,9 +862,15 @@ mod field_helpers {
 
         assert_eq!(file.patches.len(), 1);
         assert_eq!(file.patches[0].kind, PatchKind::Update);
+        // The entry is recomputed against main, so it carries both the
+        // previously-accepted `employees` and the just-accepted `industry`, in
+        // approved-object key order (name skipped as unchanged).
         assert_eq!(
             file.patches[0].patch,
-            json!({"employees": 10, "industry": "SaaS"})
+            json!([
+                {"op": "add", "path": "/industry", "value": "SaaS"},
+                {"op": "add", "path": "/employees", "value": 10}
+            ])
         );
         assert_eq!(
             result.changed_paths,
@@ -896,6 +905,134 @@ mod field_helpers {
     }
 
     #[test]
+    fn accept_field_null_value_converges_and_second_accept_is_noop() {
+        // DEV-10237 regression. The user clears `status` to an explicit null and
+        // accepts it. Under RFC 7396 the patch `{"status": null}` *deleted* the
+        // key, so the reconstructed approved value lost the null and could never
+        // equal the working file — the record stayed stuck at "1 field needs
+        // review". Under RFC 6902 the patch is `add /status null`, which
+        // reconstructs back to `status: null`, so working == approved and a
+        // second accept is a clean no-op.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","status":"active"}"#),
+        )]);
+        let local = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","status":null}"#),
+        )]);
+        let mut file = AcceptedPatchesFile::default();
+
+        let result =
+            accept_field_in_folder(&ctx, "Companies", "status", &main, &mut file, &local).unwrap();
+        assert!(result.patches_changed);
+        assert_eq!(file.patches.len(), 1);
+        assert_eq!(file.patches[0].kind, PatchKind::Update);
+        assert_eq!(
+            file.patches[0].patch,
+            json!([{"op": "add", "path": "/status", "value": null}])
+        );
+
+        // Reconstructed approved carries the null and equals the working file —
+        // this is exactly what `compute_review_bits` compares (working != approved).
+        let approved = crate::shared::review_ops::approved_object_for_path(
+            &main,
+            &file,
+            "Companies/rec_1.json",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            JsonValue::Object(approved),
+            json!({"name": "Acme", "status": null}),
+            "approved must carry the explicit null, so working == approved"
+        );
+
+        // Second accept finds nothing unreviewed → no-op (it would loop forever
+        // under the old merge-patch behavior).
+        let again =
+            accept_field_in_folder(&ctx, "Companies", "status", &main, &mut file, &local).unwrap();
+        assert!(
+            !again.patches_changed,
+            "second accept of a converged null field must be a no-op"
+        );
+        assert_eq!(file.patches.len(), 1);
+    }
+
+    #[test]
+    fn reject_field_restores_null_approved_value_without_disturbing_siblings() {
+        // After `status` was approved-as-null (a 6902 Update entry), the working
+        // file drifts to a typed value. Reject restores it to the approved null
+        // and leaves `name` alone, without touching the patch file.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","status":"active"}"#),
+        )]);
+        let file = AcceptedPatchesFile {
+            patches: vec![entry(
+                "Companies/rec_1.json",
+                PatchKind::Update,
+                json!([{"op": "add", "path": "/status", "value": null}]),
+            )],
+        };
+        let local = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","status":"typed-again"}"#),
+        )]);
+
+        let (next_working, result) =
+            reject_field_in_folder(&ctx, "Companies", "status", &main, &file, &local).unwrap();
+        assert_eq!(result.changed_paths.len(), 1);
+        assert_eq!(
+            parsed(next_working.get("Companies/rec_1.json").unwrap()),
+            json!({"name": "Acme", "status": null}),
+            "status restored to approved null; name untouched"
+        );
+        // Reject never mutates the patch file.
+        assert_eq!(file.patches.len(), 1);
+    }
+
+    #[test]
+    fn discard_field_on_6902_entry_drops_it_and_restores_working_to_main() {
+        // Regression for the array-shaped hand-edit: the old discard code matched
+        // `entry.patch` as a JSON *object* and silently no-op'd on a 6902 array.
+        // The recompute strategy reverts `status` to main, which empties the
+        // single-field entry, so it is dropped and the working file returns to
+        // main's published value.
+        let ctx = empty_conn_ctx();
+        let main = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","status":"active"}"#),
+        )]);
+        let mut file = AcceptedPatchesFile {
+            patches: vec![entry(
+                "Companies/rec_1.json",
+                PatchKind::Update,
+                json!([{"op": "add", "path": "/status", "value": null}]),
+            )],
+        };
+        let local = HashMap::from([(
+            "Companies/rec_1.json".to_string(),
+            json_pretty(r#"{"name":"Acme","status":null}"#),
+        )]);
+
+        let (next_working, result) =
+            discard_field_in_folder(&ctx, "Companies", "status", &main, &mut file, &local).unwrap();
+        assert!(result.patches_changed);
+        assert!(
+            file.patches.is_empty(),
+            "discarding the only touched field must drop the entry (6902 array, not object)"
+        );
+        assert_eq!(
+            parsed(next_working.get("Companies/rec_1.json").unwrap()),
+            json!({"name": "Acme", "status": "active"}),
+            "working file restored to main's published value"
+        );
+    }
+
+    #[test]
     fn accept_field_handles_nested_paths() {
         let ctx = empty_conn_ctx();
         let main = HashMap::from([(
@@ -913,7 +1050,11 @@ mod field_helpers {
 
         assert_eq!(file.patches.len(), 1);
         assert_eq!(file.patches[0].kind, PatchKind::Update);
-        assert_eq!(file.patches[0].patch, json!({"author": {"name": "After"}}));
+        // Object recursion produces a single leaf op addressed by JSON Pointer.
+        assert_eq!(
+            file.patches[0].patch,
+            json!([{"op": "add", "path": "/author/name", "value": "After"}])
+        );
         assert_eq!(
             result.changed_paths,
             vec!["Conn/Posts/rec_1.json".to_string()]
@@ -1329,7 +1470,10 @@ fn accept_all_unreviewed_changes_in_connection_repo_folder_accepts_only_target_f
         crate::shared::re_anchor::PatchKind::Update,
         "posts is an edit over main"
     );
-    assert_eq!(posts.patch, serde_json::json!({"v": "pending-p1"}));
+    assert_eq!(
+        posts.patch,
+        serde_json::json!([{"op": "add", "path": "/v", "value": "pending-p1"}])
+    );
 
     let articles = file
         .patches
@@ -2073,12 +2217,13 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
     let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
     assert_eq!(local_main, origin_main, "local main must advance to origin");
 
-    // Patch preserved verbatim — server didn't touch industry.
+    // User's industry edit preserved (server didn't touch it); re-emitted as a
+    // 6902 op array against the new head.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(reloaded.patches.len(), 1);
     assert_eq!(
         reloaded.patches[0].patch,
-        serde_json::json!({"industry": "SaaS"})
+        serde_json::json!([{"op": "add", "path": "/industry", "value": "SaaS"}])
     );
 
     // Working file = apply(new_main_blob, patch): server's name rename
@@ -2141,11 +2286,11 @@ fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
     assert_eq!(result.status, "downloaded");
     assert_eq!(result.conflicts_auto_resolved, 1);
 
-    // User wins: patch unchanged.
+    // User wins: the industry edit survives, re-emitted as a 6902 op array.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(
         reloaded.patches[0].patch,
-        serde_json::json!({"industry": "SaaS"})
+        serde_json::json!([{"op": "add", "path": "/industry", "value": "SaaS"}])
     );
     let working: serde_json::Value = serde_json::from_slice(
         &std::fs::read(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap(),
@@ -2241,7 +2386,7 @@ fn reconcile_keeps_patch_when_server_main_did_not_advance() {
     );
     assert_eq!(
         reloaded.patches[0].patch,
-        serde_json::json!({"industry": "SaaS"})
+        serde_json::json!([{"op": "add", "path": "/industry", "value": "SaaS"}])
     );
     assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
 }
@@ -2352,7 +2497,10 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
         "B's patch must survive partial publish"
     );
     assert_eq!(reloaded.patches[0].path, "posts/rec_b.json");
-    assert_eq!(reloaded.patches[0].patch, serde_json::json!({"v": 2}));
+    assert_eq!(
+        reloaded.patches[0].patch,
+        serde_json::json!([{"op": "add", "path": "/v", "value": 2}])
+    );
 }
 
 mod discard_field_helper {
@@ -2760,7 +2908,10 @@ mod entry_points {
         let entry = &file.patches[0];
         assert_eq!(entry.path, "Companies/rec_acme.json");
         assert_eq!(entry.kind, PatchKind::Update);
-        assert_eq!(entry.patch, json!({"industry": "SaaS"}));
+        assert_eq!(
+            entry.patch,
+            json!([{"op": "add", "path": "/industry", "value": "SaaS"}])
+        );
     }
 
     #[test]

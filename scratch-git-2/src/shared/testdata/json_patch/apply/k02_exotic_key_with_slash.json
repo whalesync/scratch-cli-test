@@ -1,0 +1,14 @@
+{
+  "description": "pointer addresses a key containing a slash via ~1",
+  "base": {},
+  "patch": [
+    {
+      "op": "add",
+      "path": "/c~1d",
+      "value": 2
+    }
+  ],
+  "expected": {
+    "c/d": 2
+  }
+}

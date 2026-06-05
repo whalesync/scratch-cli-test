@@ -1,0 +1,26 @@
+{
+  "description": "RFC6902 A.7 move an array element",
+  "base": {
+    "foo": [
+      "all",
+      "grass",
+      "cows",
+      "eat"
+    ]
+  },
+  "patch": [
+    {
+      "op": "move",
+      "from": "/foo/1",
+      "path": "/foo/3"
+    }
+  ],
+  "expected": {
+    "foo": [
+      "all",
+      "cows",
+      "eat",
+      "grass"
+    ]
+  }
+}

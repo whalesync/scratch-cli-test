@@ -1,0 +1,16 @@
+{
+  "description": "field set to null -> add null, NOT remove (DEV-10237)",
+  "old": {
+    "a": 1
+  },
+  "new": {
+    "a": null
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/a",
+      "value": null
+    }
+  ]
+}

@@ -25,8 +25,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::shared::merge_patch;
-
 /// Kind of patch entry. Persisted in `working-patches.json` and
 /// `accepted-patches.json` (Phase 5). Matches the on-wire `kind` field of the
 /// upload-patch DTO.
@@ -106,22 +104,24 @@ pub struct ReAnchorOutput {
 /// path. `old` and `new` are the JSON content of the file at that path in the
 /// respective trees (`None` if the path didn't exist there).
 ///
-/// The strategy is to preserve the user's RFC 7396 patch verbatim wherever
-/// possible — a merge patch like `{"industry": "SaaS"}` only mentions the
-/// keys the user touched, and re-applying it on a different `new` head is
-/// already the correct semantic for "set these keys, leave the rest alone."
-/// The only times the entry has to change shape are:
+/// The strategy is **value-based**, which makes it dialect-agnostic (it reads
+/// RFC 6902 op arrays and legacy RFC 7396 merge patches alike) and robust to
+/// arbitrary server drift:
 ///
-///   - **Server deleted the path** (`new = None`) while the user had an
-///     `Update`: convert to `Create` with `apply(old, patch)` so the user's
-///     edit survives as a fresh record.
-///   - **Server created the path** (`old = None`, `new = Some`) while the
-///     user also had a `Create`: convert to `Update` with the same patch —
-///     RFC 7396 semantics will merge the user's keys onto the server's
-///     content (user wins per-key).
+///   1. Reconstruct the user's intended value against the base they edited
+///      (`apply(old, patch)`), dual-read by shape.
+///   2. Layer those edits onto the server's `new` state, user-wins per touched
+///      key, preserving the server's changes to keys the user didn't touch
+///      (`rebase_onto`). This is pure value work — a `remove` the server already
+///      performed, or a nested parent the server deleted, never errors the way
+///      replaying op-by-op against a drifted base would.
+///   3. Re-emit a fresh entry against `new` via [`compute_entry`], which yields
+///      a clean RFC 6902 body and drops the entry entirely when the server
+///      already reflects the user's intent (no-op).
 ///
-/// No-op detection drops patches that would produce no change against the
-/// new head (e.g. user-update value already matches server's new value).
+/// Server-deleted paths (`new = None`) with a surviving `Update`/`Create` intent
+/// re-emit as a `Create` of the reconstructed value; a user `Delete` survives as
+/// a `Delete` (user-wins).
 pub fn re_anchor_one(
     path: &str,
     kind: PatchKind,
@@ -129,10 +129,10 @@ pub fn re_anchor_one(
     revert: bool,
     old: Option<&JsonValue>,
     new: Option<&JsonValue>,
-) -> ReAnchoredOne {
-    let anchored = re_anchor_entry(path, kind, patch, revert, old, new);
-    let conflict = detect_conflict(path, kind, patch, old, new);
-    ReAnchoredOne { anchored, conflict }
+) -> anyhow::Result<ReAnchoredOne> {
+    let anchored = re_anchor_entry(path, kind, patch, revert, old, new)?;
+    let conflict = detect_conflict(path, kind, patch, old, new)?;
+    Ok(ReAnchoredOne { anchored, conflict })
 }
 
 fn re_anchor_entry(
@@ -142,79 +142,112 @@ fn re_anchor_entry(
     revert: bool,
     old: Option<&JsonValue>,
     new: Option<&JsonValue>,
-) -> Option<AnchoredPatch> {
+) -> anyhow::Result<Option<AnchoredPatch>> {
     // Revert-create special case: the patch was produced by `files revert-plan`
     // reviving a deleted record, the publish landed (path now exists on new
     // main), so the server consumed our `scratch_pending_recreate_<old_id>`
     // sentinel and wrote the new id to main + RecreatedIdMap. Drop the patch
-    // unconditionally — the normal Create→Update + no-op-detection dance
-    // can't succeed here because the patch body still carries the sentinel id
-    // while main has the server-assigned id; byte-equality would never match.
-    // The new id is canonical on main; download will replay it into the
-    // worktree.
+    // unconditionally — the normal re-base + no-op dance can't succeed here
+    // because the patch body still carries the sentinel id while main has the
+    // server-assigned id; byte-equality would never match. The new id is
+    // canonical on main; download will replay it into the worktree.
     if revert && kind == PatchKind::Create && new.is_some() {
-        return None;
+        return Ok(None);
     }
 
-    let candidate = match (kind, new) {
-        (PatchKind::Delete, None) => None, // both sides agree the file is gone
-        (PatchKind::Delete, Some(_)) => Some(AnchoredPatch {
-            path: path.to_string(),
-            kind: PatchKind::Delete,
-            patch: JsonValue::Null,
-            revert,
-        }),
-        (PatchKind::Update, None) => {
-            // Server deleted the file out from under us. Reconstruct the user's
-            // intended content from old + patch and re-emit as a Create.
-            let base = old.cloned().unwrap_or(JsonValue::Null);
-            let reconstructed = merge_patch::apply(&base, patch);
-            Some(AnchoredPatch {
+    // Delete carries no value to rebase.
+    match (kind, new) {
+        (PatchKind::Delete, None) => return Ok(None), // both sides agree the file is gone
+        (PatchKind::Delete, Some(_)) => {
+            return Ok(Some(AnchoredPatch {
                 path: path.to_string(),
-                kind: PatchKind::Create,
-                patch: reconstructed,
+                kind: PatchKind::Delete,
+                patch: JsonValue::Null,
                 revert,
-            })
+            }));
         }
-        (PatchKind::Update, Some(_)) => Some(AnchoredPatch {
-            path: path.to_string(),
-            kind: PatchKind::Update,
-            patch: patch.clone(),
-            revert,
-        }),
-        (PatchKind::Create, None) => Some(AnchoredPatch {
-            path: path.to_string(),
-            kind: PatchKind::Create,
-            patch: patch.clone(),
-            revert,
-        }),
-        (PatchKind::Create, Some(_)) => {
-            // Server created the same path while the user was also creating.
-            // Merge the user's keys onto the server's content via Update — RFC
-            // 7396 will user-win per key. (revert+Create+new.is_some was
-            // short-circuited above.)
-            Some(AnchoredPatch {
-                path: path.to_string(),
-                kind: PatchKind::Update,
-                patch: patch.clone(),
-                revert,
-            })
+        _ => {}
+    }
+
+    // Reconstruct the user's intended value against the base they edited, then
+    // re-emit it against `new`.
+    let user_intended = reconstruct_user_intended(kind, patch, old)?;
+    let re_emitted = match new {
+        // Server deleted the path; re-create the user's intended content.
+        None => compute_entry(path, None, Some(&user_intended)),
+        // Path still exists on new: layer the user's edits onto it (user-wins),
+        // then diff against new to produce the re-anchored 6902 entry.
+        Some(n) => {
+            let rebased = rebase_onto(old, &user_intended, n);
+            compute_entry(path, Some(n), Some(&rebased))
         }
     };
-
-    candidate.filter(|a| !is_noop_against(a, new))
+    Ok(re_emitted.map(|mut entry| {
+        entry.revert = revert;
+        entry
+    }))
 }
 
-/// Returns true if applying `entry` against `new` would produce no change to
-/// the file's content.
-fn is_noop_against(entry: &AnchoredPatch, new: Option<&JsonValue>) -> bool {
-    match (entry.kind, new) {
-        (PatchKind::Delete, None) => true,
-        (PatchKind::Delete, Some(_)) => false,
-        (PatchKind::Create, None) => false,
-        (PatchKind::Create, Some(n)) => n == &entry.patch,
-        (PatchKind::Update, None) => false,
-        (PatchKind::Update, Some(n)) => &merge_patch::apply(n, &entry.patch) == n,
+/// The value the user intended at this path, computed against the base they
+/// edited (`old`). `Create` carries the full content verbatim; `Update` applies
+/// the patch (dual-read by shape) onto `old`.
+fn reconstruct_user_intended(
+    kind: PatchKind,
+    patch: &JsonValue,
+    old: Option<&JsonValue>,
+) -> anyhow::Result<JsonValue> {
+    match kind {
+        PatchKind::Create => Ok(patch.clone()),
+        PatchKind::Update => {
+            let base = old.cloned().unwrap_or(JsonValue::Null);
+            crate::shared::json_patch::apply_update_patch(&base, patch)
+        }
+        // Delete is handled by the caller before reaching here.
+        PatchKind::Delete => Ok(JsonValue::Null),
+    }
+}
+
+/// Layer the user's edits (`base` → `ours`) on top of the server's `theirs`
+/// state, user-wins per touched key. Pure value op; never errors. The server's
+/// changes to keys the user didn't touch are preserved; keys the user deleted
+/// are removed from the result. Recurses into nested objects so a deep leaf edit
+/// stays disjoint from a sibling the server changed.
+fn rebase_onto(base: Option<&JsonValue>, ours: &JsonValue, theirs: &JsonValue) -> JsonValue {
+    let base_map = base.and_then(|v| v.as_object());
+    match (ours.as_object(), theirs.as_object()) {
+        (Some(ours_obj), Some(theirs_obj)) => {
+            let mut result = theirs_obj.clone();
+            // Keys the user added or changed (relative to base).
+            for (key, ours_value) in ours_obj {
+                let base_value = base_map.and_then(|b| b.get(key));
+                if base_value == Some(ours_value) {
+                    continue; // user didn't touch this key
+                }
+                let merged = match (base_value, theirs_obj.get(key)) {
+                    (Some(base_child), Some(theirs_child))
+                        if base_child.is_object()
+                            && ours_value.is_object()
+                            && theirs_child.is_object() =>
+                    {
+                        rebase_onto(Some(base_child), ours_value, theirs_child)
+                    }
+                    _ => ours_value.clone(),
+                };
+                result.insert(key.clone(), merged);
+            }
+            // Keys the user deleted (present in base, absent in ours).
+            if let Some(base_obj) = base_map {
+                for key in base_obj.keys() {
+                    if !ours_obj.contains_key(key) {
+                        result.shift_remove(key);
+                    }
+                }
+            }
+            JsonValue::Object(result)
+        }
+        // The user's intended value is a non-object (scalar / array / null), or
+        // the server replaced the record with a non-object — user wins wholesale.
+        _ => ours.clone(),
     }
 }
 
@@ -229,11 +262,15 @@ fn is_noop_against(entry: &AnchoredPatch, new: Option<&JsonValue>) -> bool {
 ///   - snapshot=Some, working=Some, equal → no change
 ///   - snapshot=None, working=Some → Create (patch = the working content)
 ///   - snapshot=Some, working=None → Delete (patch = null)
-///   - snapshot=Some, working=Some, different → Update (patch = `diff(snap, work)`)
+///   - snapshot=Some, working=Some, different → Update (patch = the RFC 6902
+///     op array `json_patch::diff(snap, work)`)
 ///
 /// Used by the accept-time path: every accept / accept-field / accept-all
 /// flows through this to produce the entry written into
-/// `accepted-patches.json`.
+/// `accepted-patches.json`. This is the single chokepoint that makes accepted
+/// `Update` bodies RFC 6902 (so a `field: null` accept round-trips and DEV-10237
+/// converges); `Create` keeps the full verbatim record and `Delete` keeps the
+/// `kind` discriminator, both already null-safe.
 pub fn compute_entry(
     path: &str,
     snapshot: Option<&JsonValue>,
@@ -254,12 +291,21 @@ pub fn compute_entry(
             patch: w.clone(),
             revert: false,
         }),
-        (Some(s), Some(w)) => merge_patch::diff(s, w).map(|p| AnchoredPatch {
-            path: path.to_string(),
-            kind: PatchKind::Update,
-            patch: p,
-            revert: false,
-        }),
+        (Some(s), Some(w)) => {
+            // s != w here (the equal case is handled above), so the op list is
+            // non-empty; the guard is just defensive.
+            let ops = crate::shared::json_patch::diff(s, w);
+            if ops.is_empty() {
+                None
+            } else {
+                Some(AnchoredPatch {
+                    path: path.to_string(),
+                    kind: PatchKind::Update,
+                    patch: crate::shared::json_patch::ops_to_value(&ops),
+                    revert: false,
+                })
+            }
+        }
     }
 }
 
@@ -285,7 +331,7 @@ where
             entry.revert,
             old.as_ref(),
             new.as_ref(),
-        );
+        )?;
         if let Some(a) = result.anchored {
             out.patches.push(a);
         }
@@ -296,14 +342,37 @@ where
     Ok(out)
 }
 
-/// Top-level keys of an RFC 7396 merge patch object. Returns `None` for a
-/// non-object patch (whole-file replacement / delete) — caller should treat
-/// such patches as touching the whole file.
-fn patch_top_keys(patch: &JsonValue) -> Option<Vec<String>> {
-    match patch {
-        JsonValue::Object(o) => Some(o.keys().cloned().collect()),
-        _ => None,
+/// Coalesce an empty conflicting-key list to the whole-file sentinel.
+fn nonempty_or_whole_file(keys: Vec<String>) -> Vec<String> {
+    if keys.is_empty() {
+        vec![WHOLE_FILE_KEY.to_string()]
+    } else {
+        keys
     }
+}
+
+/// Top-level keys where the user's intended value differs from the base they
+/// edited — the dialect-free analogue of "the keys the patch mentions". Returns
+/// the whole-file sentinel when the intended value isn't an object.
+fn touched_top_level_keys(old: Option<&JsonValue>, intended: &JsonValue) -> Vec<String> {
+    let old_map = old.and_then(|v| v.as_object());
+    let Some(intended_map) = intended.as_object() else {
+        return vec![WHOLE_FILE_KEY.to_string()];
+    };
+    let mut keys: Vec<String> = Vec::new();
+    for (key, intended_value) in intended_map {
+        if old_map.and_then(|o| o.get(key)) != Some(intended_value) {
+            keys.push(key.clone());
+        }
+    }
+    if let Some(old_obj) = old_map {
+        for key in old_obj.keys() {
+            if !intended_map.contains_key(key) && !keys.contains(key) {
+                keys.push(key.clone());
+            }
+        }
+    }
+    keys
 }
 
 /// Top-level keys where `old` and `new` differ. Both `None` → empty. Either
@@ -347,130 +416,125 @@ fn detect_conflict(
     patch: &JsonValue,
     old: Option<&JsonValue>,
     new: Option<&JsonValue>,
-) -> Option<PatchConflict> {
+) -> anyhow::Result<Option<PatchConflict>> {
     if old == new {
-        return None; // server didn't touch this path
+        return Ok(None); // server didn't touch this path
     }
 
-    // Outcome the user wanted, regardless of what's on the server.
+    // Outcome the user wanted, regardless of what's on the server (dual-read).
     let user_intended: Option<JsonValue> = match kind {
-        PatchKind::Create => Some(patch.clone()),
-        PatchKind::Update => {
-            let base = old.cloned().unwrap_or(JsonValue::Null);
-            Some(merge_patch::apply(&base, patch))
-        }
         PatchKind::Delete => None,
+        _ => Some(reconstruct_user_intended(kind, patch, old)?),
     };
 
     if user_intended.as_ref() == new {
         // user and server agree on final state — even if they got there
         // independently, there's no override happening.
-        return None;
+        return Ok(None);
     }
 
     // Path-deleted remotely while user had a non-Delete edit.
     if new.is_none() {
-        let keys = patch_top_keys(patch).unwrap_or_else(|| vec![WHOLE_FILE_KEY.to_string()]);
-        return Some(PatchConflict {
+        let intended = user_intended.as_ref().unwrap();
+        return Ok(Some(PatchConflict {
             path: path.to_string(),
-            conflicting_keys: if keys.is_empty() {
-                vec![WHOLE_FILE_KEY.to_string()]
-            } else {
-                keys
-            },
-        });
+            conflicting_keys: nonempty_or_whole_file(touched_top_level_keys(old, intended)),
+        }));
     }
 
     // User wants Delete on a server-modified file — all server-changed keys
     // are being lost.
     if kind == PatchKind::Delete {
-        let server_changed = server_changed_keys(old, new);
-        return Some(PatchConflict {
+        return Ok(Some(PatchConflict {
             path: path.to_string(),
-            conflicting_keys: if server_changed.is_empty() {
-                vec![WHOLE_FILE_KEY.to_string()]
-            } else {
-                server_changed
-            },
-        });
+            conflicting_keys: nonempty_or_whole_file(server_changed_keys(old, new)),
+        }));
     }
 
-    // Update / Create where the file exists on the new head: walk the patch
-    // recursively. A key path (e.g. "properties.city") is "conflicting" iff
-    // (a) user touched it, (b) the server changed it, AND (c) the user's
-    // intended value differs from the server's new value. Recursing into
-    // nested objects is what makes the audit log specific enough to act on —
-    // top-level-only reporting (the old behavior) flagged ["properties"]
-    // when the user actually only collided on properties.city.
-    let new_obj = new.unwrap();
-    let intended_obj = user_intended.as_ref().unwrap();
-    if patch_top_keys(patch).is_none() {
-        // Whole-file scalar/array replacement (or null) — treat as a single
-        // conflicting scope. Recursion only makes sense for object patches.
-        return Some(PatchConflict {
+    // Update / Create where the file exists on the new head: walk the
+    // reconstructed values. A key path (e.g. "properties.city") is "conflicting"
+    // iff (a) the user touched it, (b) the server changed it, AND (c) the user's
+    // intended value differs from the server's new value. Walking values rather
+    // than the patch makes this dialect-free and keeps the audit log specific
+    // (properties.city, not the whole "properties" subtree).
+    let intended = user_intended.as_ref().unwrap();
+    let new_value = new.unwrap();
+    if !intended.is_object() || !new_value.is_object() {
+        // Whole-file scalar/array replacement — a single conflicting scope.
+        return Ok(Some(PatchConflict {
             path: path.to_string(),
             conflicting_keys: vec![WHOLE_FILE_KEY.to_string()],
-        });
+        }));
     }
 
     let mut conflicting: Vec<String> = Vec::new();
-    collect_nested_conflicts(patch, intended_obj, new_obj, old, "", &mut conflicting);
+    collect_value_conflicts(old, intended, new_value, "", &mut conflicting);
 
-    if conflicting.is_empty() {
+    Ok(if conflicting.is_empty() {
         None
     } else {
         Some(PatchConflict {
             path: path.to_string(),
             conflicting_keys: conflicting,
         })
-    }
+    })
 }
 
-/// Recursively walk the user's patch and accumulate dot-separated key paths
-/// where the user's intended value diverges from the server's new value AND
-/// the server actually changed that scope. `prefix` is the dot-prefix for the
-/// current recursion depth (empty at the top level). Mirrors RFC 7396's merge
-/// semantics: an object value in the patch means "recurse into this key";
-/// any non-object (scalar, array, null) is a leaf-level replacement.
-fn collect_nested_conflicts(
-    patch: &JsonValue,
+/// Recursively walk the user's reconstructed intended value against `old` and
+/// `new`, accumulating dot-separated key paths where the user touched a key,
+/// the server also changed it, and the two outcomes differ. Dialect-free: it
+/// compares values, not patch structure. A missing key is treated as `null`
+/// (matching the legacy merge-patch comparison) so the conflict report is
+/// stable across the dialect migration.
+fn collect_value_conflicts(
+    old: Option<&JsonValue>,
     intended: &JsonValue,
     new: &JsonValue,
-    old: Option<&JsonValue>,
     prefix: &str,
     out: &mut Vec<String>,
 ) {
-    let JsonValue::Object(patch_obj) = patch else {
+    let Some(intended_map) = intended.as_object() else {
         return;
     };
-    let intended_map = intended.as_object();
     let new_map = new.as_object();
     let old_map = old.and_then(|v| v.as_object());
 
-    for (k, patch_v) in patch_obj {
+    // Keys present in the intended value plus keys the user deleted (in old,
+    // absent from intended).
+    let mut keys: Vec<&String> = intended_map.keys().collect();
+    if let Some(old_obj) = old_map {
+        for key in old_obj.keys() {
+            if !intended_map.contains_key(key) {
+                keys.push(key);
+            }
+        }
+    }
+
+    for key in keys {
         let key_path = if prefix.is_empty() {
-            k.clone()
+            key.clone()
         } else {
-            format!("{prefix}.{k}")
+            format!("{prefix}.{key}")
         };
-        let intended_v = intended_map
-            .and_then(|o| o.get(k))
-            .cloned()
-            .unwrap_or(JsonValue::Null);
+        let intended_v = intended_map.get(key).cloned().unwrap_or(JsonValue::Null);
         let new_v = new_map
-            .and_then(|o| o.get(k))
+            .and_then(|o| o.get(key))
             .cloned()
             .unwrap_or(JsonValue::Null);
         let old_v = old_map
-            .and_then(|o| o.get(k))
+            .and_then(|o| o.get(key))
             .cloned()
             .unwrap_or(JsonValue::Null);
 
-        // Recurse into the sub-object only when all four sides are objects;
-        // otherwise the comparison happens at this level (the values are
-        // wholly replaced rather than recursively merged per RFC 7396).
-        if patch_v.is_object() && intended_v.is_object() && new_v.is_object() && old_v.is_object() {
-            collect_nested_conflicts(patch_v, &intended_v, &new_v, Some(&old_v), &key_path, out);
+        if old_v == intended_v {
+            continue; // user didn't touch this key
+        }
+
+        // Recurse into the sub-object only when all three sides are objects;
+        // otherwise the comparison happens at this level (the values are wholly
+        // replaced rather than recursively merged).
+        if intended_v.is_object() && new_v.is_object() && old_v.is_object() {
+            collect_value_conflicts(Some(&old_v), &intended_v, &new_v, &key_path, out);
             continue;
         }
 
@@ -513,6 +577,20 @@ mod tests {
         }
     }
 
+    /// Test shadow: re-anchoring a well-formed patch against its own base never
+    /// fails, so unwrap the `Result` for terse assertions. Shadows the
+    /// glob-imported `super::re_anchor_one`.
+    fn re_anchor_one(
+        path: &str,
+        kind: PatchKind,
+        patch: &JsonValue,
+        revert: bool,
+        old: Option<&JsonValue>,
+        new: Option<&JsonValue>,
+    ) -> ReAnchoredOne {
+        super::re_anchor_one(path, kind, patch, revert, old, new).unwrap()
+    }
+
     // ── server didn't touch path ────────────────────────────────────────────
 
     #[test]
@@ -532,7 +610,8 @@ mod tests {
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Update,
-                patch: json!({"a": 9}),
+                // Re-emitted as a 6902 op array against the (unchanged) new head.
+                patch: json!([{"op": "add", "path": "/a", "value": 9}]),
                 revert: false,
             })
         );
@@ -690,15 +769,14 @@ mod tests {
             Some(&old),
             Some(&new),
         );
-        // User patch is preserved verbatim — RFC 7396 semantics naturally
-        // leave keys-not-mentioned alone, so replaying {"a": 9} on the new
-        // head yields {"a": 9, "b": 99}, keeping the server's b=99.
+        // User only touched `a`; re-basing onto new keeps the server's b=99 and
+        // re-emits just the `a` edit as a 6902 op — disjoint, no conflict.
         assert_eq!(
             r.anchored,
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Update,
-                patch: json!({"a": 9}),
+                patch: json!([{"op": "add", "path": "/a", "value": 9}]),
                 revert: false,
             })
         );
@@ -717,7 +795,7 @@ mod tests {
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Update,
-                patch: json!({"a": 9}),
+                patch: json!([{"op": "add", "path": "/a", "value": 9}]),
                 revert: false,
             })
         );
@@ -783,10 +861,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.patches.len(), 2);
-        // p1: re-anchored to set a=9 against new head where a=5 → patch {"a": 9}.
-        assert_eq!(result.patches[0].patch, json!({"a": 9}));
-        // p2: re-anchored to set y=50 against new head where y=20 → patch {"y": 50}.
-        assert_eq!(result.patches[1].patch, json!({"y": 50}));
+        // p1: re-anchored to set a=9 against new head where a=5 → 6902 add /a 9.
+        assert_eq!(
+            result.patches[0].patch,
+            json!([{"op": "add", "path": "/a", "value": 9}])
+        );
+        // p2: re-anchored to set y=50 against new head where y=20 → 6902 add /y 50.
+        assert_eq!(
+            result.patches[1].patch,
+            json!([{"op": "add", "path": "/y", "value": 50}])
+        );
         // Only p1 should produce a conflict (p2's y was added by the server
         // and is being overwritten — collision on `y`).
         let conflict_paths: Vec<&str> = result.conflicts.iter().map(|c| c.path.as_str()).collect();
@@ -794,6 +878,168 @@ mod tests {
         // p1 conflicting_keys = ["a"]; p2 conflicting_keys = ["y"].
         assert_eq!(result.conflicts[0].conflicting_keys, vec!["a"]);
         assert_eq!(result.conflicts[1].conflicting_keys, vec!["y"]);
+    }
+
+    // ── 6902-native input, null + remove robustness, pointer conflicts ──────
+
+    #[test]
+    fn re_anchor_6902_input_reemits_6902() {
+        // Native path: the incoming patch is already a 6902 op array.
+        let old = json!({"a": 1, "b": 2});
+        let new = old.clone();
+        let patch = json!([{"op": "add", "path": "/a", "value": 9}]);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Update,
+            &patch,
+            false,
+            Some(&old),
+            Some(&new),
+        );
+        assert_eq!(
+            r.anchored.unwrap().patch,
+            json!([{"op": "add", "path": "/a", "value": 9}])
+        );
+        assert_eq!(r.conflict, None);
+    }
+
+    #[test]
+    fn re_anchor_preserves_set_null_across_rebase() {
+        // DEV-10237 carried through re-anchor: a field set to null survives the
+        // re-base and re-emits as `add /a null` (the server's disjoint `b` is
+        // left alone).
+        let old = json!({"a": 1});
+        let new = json!({"a": 1, "b": 7});
+        let patch = json!([{"op": "add", "path": "/a", "value": null}]);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Update,
+            &patch,
+            false,
+            Some(&old),
+            Some(&new),
+        );
+        assert_eq!(
+            r.anchored.unwrap().patch,
+            json!([{"op": "add", "path": "/a", "value": null}])
+        );
+        assert_eq!(r.conflict, None);
+    }
+
+    #[test]
+    fn re_anchor_remove_is_tolerant_when_server_already_removed() {
+        // The robustness win over verbatim op replay: the user removed `b`, and
+        // the server independently removed `b` too. Replaying `remove /b`
+        // op-by-op against the new head would error (target missing); value-based
+        // re-base sees the intent already satisfied and drops the entry.
+        let old = json!({"a": 1, "b": 2});
+        let new = json!({"a": 1});
+        let patch = json!([{"op": "remove", "path": "/b"}]);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Update,
+            &patch,
+            false,
+            Some(&old),
+            Some(&new),
+        );
+        assert_eq!(r.anchored, None, "user and server both removed b → no-op");
+        assert_eq!(r.conflict, None);
+    }
+
+    #[test]
+    fn re_anchor_remove_reemits_when_server_kept_key() {
+        let old = json!({"a": 1, "b": 2});
+        let new = json!({"a": 1, "b": 2});
+        let patch = json!([{"op": "remove", "path": "/b"}]);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Update,
+            &patch,
+            false,
+            Some(&old),
+            Some(&new),
+        );
+        assert_eq!(
+            r.anchored.unwrap().patch,
+            json!([{"op": "remove", "path": "/b"}])
+        );
+        assert_eq!(r.conflict, None);
+    }
+
+    #[test]
+    fn re_anchor_revert_create_drops_entry_once_publish_landed() {
+        // A `files revert-plan` Create whose body still carries the
+        // scratch_pending_recreate_<id> sentinel: the publish landed (the path
+        // now exists on new main under a server-assigned id), so the patch is
+        // dropped unconditionally — byte-equality could never match the sentinel.
+        let sentinel_body = json!({"id": "scratch_pending_recreate_old123", "name": "Revived"});
+        let server_assigned = json!({"id": "rec_new999", "name": "Revived"});
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Create,
+            &sentinel_body,
+            true, // revert
+            None,
+            Some(&server_assigned),
+        );
+        assert_eq!(
+            r.anchored, None,
+            "revert-create drops once the publish lands"
+        );
+    }
+
+    #[test]
+    fn re_anchor_null_wins_and_conflicts_when_server_set_same_field() {
+        // Same-field collision where the user's intended value is an explicit
+        // null: user-wins (re-emits `add /a null`) AND the collision is reported.
+        let old = json!({"a": 1});
+        let new = json!({"a": 5}); // server set a=5
+        let patch = json!([{"op": "add", "path": "/a", "value": null}]); // user set a=null
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Update,
+            &patch,
+            false,
+            Some(&old),
+            Some(&new),
+        );
+        assert_eq!(
+            r.anchored.unwrap().patch,
+            json!([{"op": "add", "path": "/a", "value": null}])
+        );
+        assert_eq!(
+            r.conflict,
+            Some(PatchConflict {
+                path: "p".into(),
+                conflicting_keys: vec!["a".into()]
+            })
+        );
+    }
+
+    #[test]
+    fn re_anchor_nested_conflict_reports_dotted_path_and_keeps_sibling() {
+        // Conflict granularity: the user edited properties.city, the server
+        // changed both city and zip. Re-base is user-wins on city (server's zip
+        // preserved) and the conflict is reported precisely as properties.city —
+        // not the whole "properties" subtree, and zip is not flagged.
+        let old = json!({"properties": {"city": "Paris", "zip": "75001"}});
+        let new = json!({"properties": {"city": "Berlin", "zip": "10115"}});
+        let patch = json!([{"op": "add", "path": "/properties/city", "value": "London"}]);
+        let r = re_anchor_one(
+            "p",
+            PatchKind::Update,
+            &patch,
+            false,
+            Some(&old),
+            Some(&new),
+        );
+        assert_eq!(
+            r.anchored.unwrap().patch,
+            json!([{"op": "add", "path": "/properties/city", "value": "London"}])
+        );
+        let c = r.conflict.expect("city collides");
+        assert_eq!(c.conflicting_keys, vec!["properties.city".to_string()]);
     }
 
     // ── serde shapes ───────────────────────────────────────────────────────
@@ -862,7 +1108,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_entry_updates_with_merge_patch() {
+    fn compute_entry_updates_with_json_patch_op_array() {
         let s = json!({"a": 1, "b": 2});
         let w = json!({"a": 9, "b": 2});
         assert_eq!(
@@ -870,7 +1116,25 @@ mod tests {
             Some(AnchoredPatch {
                 path: "p".into(),
                 kind: PatchKind::Update,
-                patch: json!({"a": 9}),
+                // RFC 6902 op array, not a merge-patch object.
+                patch: json!([{"op": "add", "path": "/a", "value": 9}]),
+                revert: false,
+            })
+        );
+    }
+
+    #[test]
+    fn compute_entry_update_setting_field_to_null_is_add_null() {
+        // The DEV-10237 case: accepting a field set to null emits `add null`,
+        // which reconstructs back to `field: null` (vs RFC 7396's lossy delete).
+        let s = json!({"a": 1});
+        let w = json!({"a": null});
+        assert_eq!(
+            compute_entry("p", Some(&s), Some(&w)),
+            Some(AnchoredPatch {
+                path: "p".into(),
+                kind: PatchKind::Update,
+                patch: json!([{"op": "add", "path": "/a", "value": null}]),
                 revert: false,
             })
         );

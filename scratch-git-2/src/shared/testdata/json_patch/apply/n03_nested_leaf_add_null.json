@@ -1,0 +1,21 @@
+{
+  "description": "add null at a nested leaf",
+  "base": {
+    "meta": {
+      "x": 1
+    }
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/meta/y",
+      "value": null
+    }
+  ],
+  "expected": {
+    "meta": {
+      "x": 1,
+      "y": null
+    }
+  }
+}

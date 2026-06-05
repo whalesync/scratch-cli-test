@@ -4457,17 +4457,20 @@ async fn upload_single_repo_via_patches(
         .map(|p| p.path.clone())
         .collect();
 
-    // `accepted-patches.json` IS the wire format (minus the local `kind`
-    // tag, which the server infers from the patch shape). Ship it verbatim,
-    // including the per-entry `revert` flag so the server can persist it to
-    // `UploadPatchMeta` and the plan-build pass4 step can route FK fields
-    // through the BACKFILL phase for revert-creates.
+    // `accepted-patches.json` IS the wire format. Ship it verbatim, carrying the
+    // explicit `kind` (so the server's delete signal is `kind == delete`, not a
+    // magic null), the format `version` (so the server can track dialect
+    // prevalence during rollout), and the per-entry `revert` flag so the server
+    // can persist it to `UploadPatchMeta` and the plan-build pass4 step can route
+    // FK fields through the BACKFILL phase for revert-creates.
     let payload = crate::api::UploadPatchPayload {
+        version: crate::shared::accepted_patches::FORMAT_VERSION,
         patches: accepted_file
             .patches
             .iter()
             .map(|p| crate::api::UploadPatchEntry {
                 path: p.path.clone(),
+                kind: p.kind,
                 patch: p.patch.clone(),
                 revert: p.revert,
             })

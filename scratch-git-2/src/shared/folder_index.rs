@@ -297,7 +297,8 @@ fn load_patch_index(workspace: &Path, folder: &str) -> PatchIndex {
 ///   - no entry → published (`main_json`, or `None` if the path isn't on `main`)
 ///   - `Delete`   → `None` (the file is approved-deleted)
 ///   - `Create`   → `entry.patch` (full content)
-///   - `Update`   → `apply(main_json_or_null, entry.patch)` — RFC 7396
+///   - `Update`   → `apply(main_json_or_null, entry.patch)` via the dual-read
+///     bridge (RFC 6902 op array or legacy RFC 7396 merge patch, by shape)
 fn approved_json_for_entry(
     main_json: Option<&serde_json::Value>,
     entry: Option<&AcceptedEntry>,
@@ -309,7 +310,11 @@ fn approved_json_for_entry(
             AcceptedKind::Create => Some(e.patch.clone()),
             AcceptedKind::Update => {
                 let base = main_json.cloned().unwrap_or(serde_json::Value::Null);
-                Some(crate::shared::merge_patch::apply(&base, &e.patch))
+                // Best-effort: a malformed 6902 patch falls back to `base`, which
+                // keeps the row flagged as needs-review (working != approved)
+                // rather than crashing the index — consistent with this module's
+                // "never silently green" policy.
+                Some(crate::shared::json_patch::apply_update_patch(&base, &e.patch).unwrap_or(base))
             }
         },
     }
@@ -4325,5 +4330,50 @@ mod tests {
         }];
         let r2 = run_query(&o).unwrap();
         assert_eq!(r2.filenames, vec!["rec.json"]);
+    }
+
+    #[test]
+    fn null_field_6902_update_converges_unapproved_bit() {
+        // DEV-10237: a working file holding `status: null` with a 6902 Update
+        // patch `add /status null` reconstructs to approved `status: null`, so
+        // unapprovedChanges clears (working == approved).
+        let master = serde_json::json!({"name": "Acme", "status": "active"});
+        let working = serde_json::json!({"name": "Acme", "status": null});
+        let entry = AcceptedEntry {
+            kind: AcceptedKind::Update,
+            patch: serde_json::json!([{"op": "add", "path": "/status", "value": null}]),
+        };
+        let (approved_changes, unapproved_changes) =
+            compute_review_bits(Some(&entry), Some((1, 1)), Some(&working), Some(&master));
+        assert_eq!(
+            approved_changes, 1,
+            "an entry exists, so approvedChanges is set"
+        );
+        assert_eq!(
+            unapproved_changes, 0,
+            "6902 reconstructs the null, so working == approved and the row is not stuck"
+        );
+    }
+
+    #[test]
+    fn null_field_legacy_7396_update_cannot_converge() {
+        // The exact bug being fixed, documented via the legacy dialect: a 7396
+        // merge patch `{"status": null}` *deletes* the key on apply, so the
+        // reconstructed approved value is `{name}` while the working file is
+        // `{name, status: null}` — they can never agree (stuck "needs review").
+        // Dual-read still applies the v1 body correctly (as a delete); the point
+        // is that the legacy *representation* could not express set-null at all.
+        let master = serde_json::json!({"name": "Acme", "status": "active"});
+        let working = serde_json::json!({"name": "Acme", "status": null});
+        let entry = AcceptedEntry {
+            kind: AcceptedKind::Update,
+            patch: serde_json::json!({"status": null}),
+        };
+        let (_approved, unapproved_changes) =
+            compute_review_bits(Some(&entry), Some((1, 1)), Some(&working), Some(&master));
+        assert_eq!(
+            unapproved_changes, 1,
+            "legacy 7396 strips the null on reconstruct — the stuck state we migrated away from"
+        );
     }
 }

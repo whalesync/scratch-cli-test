@@ -1,0 +1,24 @@
+{
+  "description": "replace at an array index overwrites that element",
+  "base": {
+    "t": [
+      1,
+      2,
+      3
+    ]
+  },
+  "patch": [
+    {
+      "op": "replace",
+      "path": "/t/1",
+      "value": 9
+    }
+  ],
+  "expected": {
+    "t": [
+      1,
+      9,
+      3
+    ]
+  }
+}

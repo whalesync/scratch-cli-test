@@ -1,0 +1,16 @@
+{
+  "description": "null-valued field removed -> remove (distinct from set-null)",
+  "old": {
+    "a": null,
+    "b": 2
+  },
+  "new": {
+    "b": 2
+  },
+  "patch": [
+    {
+      "op": "remove",
+      "path": "/a"
+    }
+  ]
+}

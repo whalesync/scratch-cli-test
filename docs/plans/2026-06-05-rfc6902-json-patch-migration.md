@@ -2,8 +2,28 @@
 
 Author: Curtis Fonger
 Created: 2026-06-05
-Status: Planned
+Status: In Review
 Linear: [DEV-10237 — Stuck with "1 field needs review"](https://linear.app/whalesync/issue/DEV-10237) — tracked under this issue (the migration is the fix for the symptom).
+
+## Implementation status (2026-06-05)
+
+All six phases implemented and committed on `dev-10237-mr1`, each landing its own tests green:
+
+| Phase | Commit | What |
+| --- | --- | --- |
+| 1 | `39dfdefd` | `shared/json_patch.rs`: full RFC 6902 applier + constrained add/remove differ + shared parity corpus (`testdata/json_patch/`, incl. Appendix A + null round-trip). |
+| 2 | `01c27735` | Reconstruction (`review_ops`, `folder_index`) + accept/discard recompute on 6902 with shape-dispatched dual-read; `AcceptedPatchesFile` `version` marker; DEV-10237 convergence tests. |
+| 3 | `738a9606` | `re_anchor` ported to value-based re-base (`rebase_onto`) + value-space conflict detection — dialect-agnostic, robust to drift (`remove` tolerance). |
+| 4 | `991c947d` | napi: faithful 6902 approved snapshot verified end-to-end (new null-reconstruction test); desktop unchanged. |
+| 5 | `42337483` | Server `applyJsonPatch` (TS mirror) + `applyUpdatePatch` dual-read + delete-via-kind; shared-types `version`/`kind`; server-side parity corpus run (39 assertions). |
+| 6 | `97333d47` | CLI wire `version`/`kind` threading; server dialect telemetry (gates v1-read-path removal); lossless v1→v2 conversion test. |
+
+Verification: Rust 265 lib + 406 bin, napi 20, server publish-plan 58 — all green; `lint-strict` clean; engines validated against the **same** shared corpus.
+
+Deviations from the plan, all noted in commit messages:
+- **No proactive whole-file conversion sweep on `save_atomic`.** It already happens through normal use (re-anchor converts the whole file on pull; accept/discard convert touched entries; `save_atomic` stamps v2), and shape-dispatch makes any lingering mixed v1/v2 file correct — so a per-write whole-file main-blob scan would only add hot-path cost. Conversion stays lazy; the v1 read path is retired on telemetry.
+- **Dual-read is shape-authoritative, not version-gated.** A 6902 `Update` body is always a JSON array and a 7396 one always an object, so reconstruction dispatches by shape; the `version` marker is informational/telemetry. This is strictly more robust than version-keyed dispatch (handles mixed files entry-by-entry).
+- **Desktop field-id → pointer rework deferred.** The field-command boundary still addresses fields by dot-path (unchanged by the migration); reworking it to JSON Pointers for exotic keys is a pre-existing, separable improvement, left out of scope.
 
 **Commit & tracking convention:** every commit, branch, and PR for this work **must include `DEV-10237` in the title** so Linear auto-links it to the issue. The working branch already carries the id; keep the scoped-prefix style and append/lead with the id, e.g. `[shared-types] DEV-10237 add RFC 6902 json_patch applier`.
 

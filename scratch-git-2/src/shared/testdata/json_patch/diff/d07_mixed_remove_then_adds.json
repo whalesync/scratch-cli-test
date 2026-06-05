@@ -1,0 +1,29 @@
+{
+  "description": "removes emitted before adds; adds in new-key order",
+  "old": {
+    "keep": 1,
+    "drop": 2,
+    "change": 3
+  },
+  "new": {
+    "keep": 1,
+    "change": 9,
+    "added": 4
+  },
+  "patch": [
+    {
+      "op": "remove",
+      "path": "/drop"
+    },
+    {
+      "op": "add",
+      "path": "/change",
+      "value": 9
+    },
+    {
+      "op": "add",
+      "path": "/added",
+      "value": 4
+    }
+  ]
+}

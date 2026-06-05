@@ -1,0 +1,21 @@
+{
+  "description": "RFC6902 A.10 add a nested member object",
+  "base": {
+    "foo": "bar"
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/child",
+      "value": {
+        "grandchild": {}
+      }
+    }
+  ],
+  "expected": {
+    "foo": "bar",
+    "child": {
+      "grandchild": {}
+    }
+  }
+}

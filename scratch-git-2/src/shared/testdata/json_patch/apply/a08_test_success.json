@@ -1,0 +1,31 @@
+{
+  "description": "RFC6902 A.8 test a value (success, no change)",
+  "base": {
+    "baz": "qux",
+    "foo": [
+      "a",
+      2,
+      "c"
+    ]
+  },
+  "patch": [
+    {
+      "op": "test",
+      "path": "/baz",
+      "value": "qux"
+    },
+    {
+      "op": "test",
+      "path": "/foo/1",
+      "value": 2
+    }
+  ],
+  "expected": {
+    "baz": "qux",
+    "foo": [
+      "a",
+      2,
+      "c"
+    ]
+  }
+}

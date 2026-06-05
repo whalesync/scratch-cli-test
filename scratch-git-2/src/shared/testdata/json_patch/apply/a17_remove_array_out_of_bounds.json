@@ -1,0 +1,15 @@
+{
+  "description": "remove past the end of an array errors",
+  "base": {
+    "t": [
+      1
+    ]
+  },
+  "patch": [
+    {
+      "op": "remove",
+      "path": "/t/5"
+    }
+  ],
+  "error": true
+}

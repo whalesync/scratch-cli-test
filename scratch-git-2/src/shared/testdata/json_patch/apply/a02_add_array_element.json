@@ -1,0 +1,23 @@
+{
+  "description": "RFC6902 A.2 add an array element (insert, shift)",
+  "base": {
+    "foo": [
+      "bar",
+      "baz"
+    ]
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/foo/1",
+      "value": "qux"
+    }
+  ],
+  "expected": {
+    "foo": [
+      "bar",
+      "qux",
+      "baz"
+    ]
+  }
+}

@@ -115,7 +115,40 @@ test('acceptField round-trip writes the patch entry', async () => {
   assert.equal(file.patches.length, 1);
   assert.equal(file.patches[0].path, 'Companies/rec_acme.json');
   assert.equal(file.patches[0].kind, 'update');
-  assert.deepEqual(file.patches[0].patch, { industry: 'SaaS' });
+  // Update bodies are RFC 6902 op arrays (DEV-10237).
+  assert.deepEqual(file.patches[0].patch, [{ op: 'add', path: '/industry', value: 'SaaS' }]);
+});
+
+test('acceptField on a null value reconstructs approved with the null preserved (DEV-10237)', async () => {
+  const native = loadNative();
+  const { workspaceDir, scratchRoot } = makeFixture();
+
+  // Main has industry=Other; the user clears it to an explicit null.
+  writeWorking(
+    workspaceDir,
+    'Companies/rec_acme.json',
+    JSON.stringify({ name: 'Acme', industry: null }, null, 2),
+  );
+  await native.acceptField(workspaceDir, CONN, 'Companies/rec_acme.json', 'industry');
+
+  // The patch body is a 6902 `add /industry null` (not a merge-patch delete).
+  const patchPath = join(scratchRoot, 'connections', CONN, 'accepted-patches.json');
+  const file = JSON.parse(readFileSync(patchPath, 'utf8'));
+  assert.deepEqual(file.patches[0].patch, [{ op: 'add', path: '/industry', value: null }]);
+
+  // The approved snapshot crossing the napi boundary carries the explicit null
+  // (key present, value null) — not a missing key. Under RFC 7396 the null was
+  // stripped on reconstruct, leaving the record stuck at "1 field needs review".
+  const blobs = await native.readFolderBlobs(workspaceDir, CONN, 'Companies');
+  const acme = blobs.find((b) => b.filename === 'rec_acme.json');
+  const approved = JSON.parse(acme.approved);
+  assert.ok('industry' in approved, 'approved must keep the industry key');
+  assert.equal(approved.industry, null, 'approved must carry the explicit null');
+  // Working file equals the approved snapshot → the row is no longer stuck.
+  const working = JSON.parse(
+    readFileSync(join(workspaceDir, CONN, 'Companies/rec_acme.json'), 'utf8'),
+  );
+  assert.deepEqual(working, approved);
 });
 
 test('discardField drops patch entry and restores working file from main', async () => {

@@ -1,0 +1,10 @@
+{
+  "description": "equal documents -> empty patch",
+  "old": {
+    "a": 1
+  },
+  "new": {
+    "a": 1
+  },
+  "patch": []
+}

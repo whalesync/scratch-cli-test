@@ -30,13 +30,41 @@ use crate::shared::re_anchor::{AnchoredPatch, PatchKind};
 
 const FILENAME: &str = "accepted-patches.json";
 
-/// On-disk wrapper. Single `patches` key today; the wrapper exists so we can
-/// add metadata (schema version, last-updated, etc.) later without breaking
-/// older clients.
+/// On-disk schema version written by this build.
+///
+/// * Absent or `1` — legacy RFC 7396 (JSON Merge Patch) dialect: every `Update`
+///   patch body is a merge-patch object.
+/// * `2` — written by an RFC 6902-capable build. `Update` patch bodies may be in
+///   *either* dialect (a freshly re-touched record is 6902; an untouched record
+///   carried over from before the cutover may still be 7396). Reconstruction
+///   dispatches per entry by **shape**, not by this marker — see
+///   [`crate::shared::json_patch::apply_update_patch`] — so a mixed file reads
+///   correctly. The marker exists for rollout telemetry and so the v1 read path
+///   can eventually be retired once it shows no traffic.
+pub const FORMAT_VERSION: u32 = 2;
+
+/// serde fill for a `version` key absent from an older on-disk file.
+fn legacy_format_version() -> u32 {
+    1
+}
+
+/// On-disk wrapper. The in-memory shape carries only `patches`; the file-level
+/// `version` is a pure serialization-boundary concern ([`save_atomic`] always
+/// writes [`FORMAT_VERSION`]; readers that care call [`peek_format_version`]),
+/// which keeps every in-memory constructor free of a version field.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AcceptedPatchesFile {
     #[serde(default)]
     pub patches: Vec<AnchoredPatch>,
+}
+
+/// The `version` + `patches` envelope as it actually sits on disk. Used only to
+/// read the version marker; everyday loads go through [`load`] which deserializes
+/// straight into [`AcceptedPatchesFile`] (serde ignores the extra `version` key).
+#[derive(Debug, Deserialize)]
+struct VersionedEnvelope {
+    #[serde(default = "legacy_format_version")]
+    version: u32,
 }
 
 /// Resolve the file path for a given connection directory
@@ -59,6 +87,23 @@ pub fn load(connection_dir: &Path) -> anyhow::Result<AcceptedPatchesFile> {
         // treat as empty rather than failing parse.
         return Ok(AcceptedPatchesFile::default());
     }
+    // Fail loud rather than silently mis-reconstruct. A file written by a *newer*
+    // scratchmd carries `Update` bodies this build can't interpret (a future
+    // on-disk format), and reconstructing them would corrupt records — e.g. an
+    // older build that lacks RFC 6902 awareness would treat a v2 op array as a
+    // merge patch and write the literal `[{"op":…}]` into the user's record on
+    // the next download. Refuse and tell the user to upgrade. Older/equal
+    // versions read fine (reconstruction dispatches per entry by shape).
+    let envelope: VersionedEnvelope = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to parse accepted patches at {}", p.display()))?;
+    if envelope.version > FORMAT_VERSION {
+        anyhow::bail!(
+            "accepted-patches.json at {} was written by a newer scratchmd (format version {}, this build supports {}); upgrade scratchmd to read this workspace",
+            p.display(),
+            envelope.version,
+            FORMAT_VERSION,
+        );
+    }
     serde_json::from_slice(&bytes)
         .with_context(|| format!("failed to parse accepted patches at {}", p.display()))
 }
@@ -75,7 +120,19 @@ pub fn save_atomic(connection_dir: &Path, file: &AcceptedPatchesFile) -> anyhow:
     })?;
     let final_path = path(connection_dir);
     let tmp_path = connection_dir.join(format!("{FILENAME}.tmp.{}", std::process::id()));
-    let bytes = serde_json::to_vec_pretty(file).context("failed to serialize accepted patches")?;
+    // Always stamp the current format version. Any write by this build means the
+    // file now requires shape-dispatch reading (it may contain 6902 entries), so
+    // the marker is honest at v2 regardless of what the in-memory entries are.
+    #[derive(Serialize)]
+    struct OnDisk<'a> {
+        version: u32,
+        patches: &'a [AnchoredPatch],
+    }
+    let bytes = serde_json::to_vec_pretty(&OnDisk {
+        version: FORMAT_VERSION,
+        patches: &file.patches,
+    })
+    .context("failed to serialize accepted patches")?;
     {
         let mut f = fs::File::create(&tmp_path)
             .with_context(|| format!("failed to open {}", tmp_path.display()))?;
@@ -86,6 +143,31 @@ pub fn save_atomic(connection_dir: &Path, file: &AcceptedPatchesFile) -> anyhow:
     fs::rename(&tmp_path, &final_path)
         .with_context(|| format!("failed to rename to {}", final_path.display()))?;
     Ok(())
+}
+
+/// Read just the on-disk format version marker for a connection's
+/// `accepted-patches.json`. Returns [`FORMAT_VERSION`] when the file is missing
+/// (a not-yet-created file is conceptually current), `1` when the file exists
+/// but predates the version marker, or the stored version otherwise. Used by
+/// rollout telemetry to spot lingering legacy (v1) files without parsing the
+/// whole patch list.
+pub fn peek_format_version(connection_dir: &Path) -> anyhow::Result<u32> {
+    let p = path(connection_dir);
+    if !p.exists() {
+        return Ok(FORMAT_VERSION);
+    }
+    let bytes = fs::read(&p)
+        .with_context(|| format!("failed to read accepted patches at {}", p.display()))?;
+    if bytes.is_empty() {
+        return Ok(FORMAT_VERSION);
+    }
+    let envelope: VersionedEnvelope = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "failed to parse accepted patches version at {}",
+            p.display()
+        )
+    })?;
+    Ok(envelope.version)
 }
 
 /// Get the existing patch entry for a path, if any.
@@ -299,5 +381,71 @@ mod tests {
         remove_field(&mut f, "d", "x");
         assert_eq!(f.patches.len(), 2);
         assert_eq!(f.patches[0].patch, json!({"a": 1}));
+    }
+
+    #[test]
+    fn save_stamps_current_version_and_peek_reads_it() {
+        let dir = tempdir().unwrap();
+        save_atomic(dir.path(), &AcceptedPatchesFile::default()).unwrap();
+        assert_eq!(peek_format_version(dir.path()).unwrap(), FORMAT_VERSION);
+        let raw = fs::read_to_string(path(dir.path())).unwrap();
+        assert!(
+            raw.contains("\"version\""),
+            "saved file must carry a version marker"
+        );
+    }
+
+    #[test]
+    fn peek_treats_versionless_file_as_legacy_v1() {
+        let dir = tempdir().unwrap();
+        // A file written before the version marker existed.
+        fs::write(path(dir.path()), b"{\"patches\":[]}").unwrap();
+        assert_eq!(peek_format_version(dir.path()).unwrap(), 1);
+    }
+
+    #[test]
+    fn peek_missing_file_is_current_version() {
+        let dir = tempdir().unwrap();
+        assert_eq!(peek_format_version(dir.path()).unwrap(), FORMAT_VERSION);
+    }
+
+    #[test]
+    fn load_rejects_a_newer_format_version() {
+        // Fail-loud guard against the downgrade-corruption path: an older build
+        // must refuse a file a newer scratchmd wrote rather than mis-reconstruct.
+        let dir = tempdir().unwrap();
+        fs::write(path(dir.path()), br#"{"version":999,"patches":[]}"#).unwrap();
+        let err = load(dir.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("newer scratchmd"),
+            "expected an upgrade error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn load_accepts_current_and_legacy_versions() {
+        let dir = tempdir().unwrap();
+        fs::write(path(dir.path()), br#"{"version":2,"patches":[]}"#).unwrap();
+        assert!(load(dir.path()).is_ok(), "current version must load");
+        fs::write(path(dir.path()), br#"{"patches":[]}"#).unwrap();
+        assert!(
+            load(dir.path()).is_ok(),
+            "legacy (versionless) file must load"
+        );
+    }
+
+    #[test]
+    fn load_ignores_version_marker_and_keeps_6902_array_body() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            path(dir.path()),
+            br#"{"version":2,"patches":[{"path":"p","kind":"update","patch":[{"op":"add","path":"/a","value":1}]}]}"#,
+        )
+        .unwrap();
+        let loaded = load(dir.path()).unwrap();
+        assert_eq!(loaded.patches.len(), 1);
+        assert_eq!(loaded.patches[0].kind, PatchKind::Update);
+        // A 6902 op-array body survives the round trip as a JSON array.
+        assert!(loaded.patches[0].patch.is_array());
     }
 }

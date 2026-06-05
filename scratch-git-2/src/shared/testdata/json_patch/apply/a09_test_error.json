@@ -1,0 +1,14 @@
+{
+  "description": "RFC6902 A.9 test a value (error)",
+  "base": {
+    "baz": "qux"
+  },
+  "patch": [
+    {
+      "op": "test",
+      "path": "/baz",
+      "value": "bar"
+    }
+  ],
+  "error": true
+}

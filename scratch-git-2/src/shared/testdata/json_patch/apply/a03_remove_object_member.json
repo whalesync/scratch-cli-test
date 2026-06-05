@@ -1,0 +1,16 @@
+{
+  "description": "RFC6902 A.3 remove an object member",
+  "base": {
+    "baz": "qux",
+    "foo": "bar"
+  },
+  "patch": [
+    {
+      "op": "remove",
+      "path": "/baz"
+    }
+  ],
+  "expected": {
+    "foo": "bar"
+  }
+}

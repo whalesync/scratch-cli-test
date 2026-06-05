@@ -1,0 +1,16 @@
+{
+  "description": "add of null sets the value to null (not a delete)",
+  "base": {
+    "a": 1
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/a",
+      "value": null
+    }
+  ],
+  "expected": {
+    "a": null
+  }
+}

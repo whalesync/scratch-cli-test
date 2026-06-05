@@ -1,0 +1,28 @@
+{
+  "description": "array change -> whole-array add at the array path (never index ops)",
+  "old": {
+    "tags": [
+      1,
+      2,
+      3
+    ]
+  },
+  "new": {
+    "tags": [
+      1,
+      2,
+      4
+    ]
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/tags",
+      "value": [
+        1,
+        2,
+        4
+      ]
+    }
+  ]
+}

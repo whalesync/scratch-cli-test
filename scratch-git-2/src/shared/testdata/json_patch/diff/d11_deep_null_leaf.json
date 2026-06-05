@@ -1,0 +1,24 @@
+{
+  "description": "deeply nested leaf set to null -> recursive add null",
+  "old": {
+    "a": {
+      "deep": {
+        "v": 1
+      }
+    }
+  },
+  "new": {
+    "a": {
+      "deep": {
+        "v": null
+      }
+    }
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/a/deep/v",
+      "value": null
+    }
+  ]
+}

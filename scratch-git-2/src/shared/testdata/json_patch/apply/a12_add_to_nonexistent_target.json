@@ -1,0 +1,14 @@
+{
+  "description": "RFC6902 A.12 add to a nonexistent target (error)",
+  "base": {
+    "foo": "bar"
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/baz/bat",
+      "value": "qux"
+    }
+  ],
+  "error": true
+}

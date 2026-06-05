@@ -4,6 +4,7 @@ pub mod git_exec;
 pub mod git_local;
 pub mod git_path;
 pub mod index;
+pub mod json_patch;
 pub mod json_path;
 pub mod layout;
 pub mod merge;

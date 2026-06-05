@@ -1,0 +1,14 @@
+{
+  "description": "key with slash -> pointer-escaped add",
+  "old": {},
+  "new": {
+    "a/b": 1
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/a~1b",
+      "value": 1
+    }
+  ]
+}

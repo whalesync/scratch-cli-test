@@ -1,0 +1,17 @@
+{
+  "description": "added key -> add",
+  "old": {
+    "a": 1
+  },
+  "new": {
+    "a": 1,
+    "b": 2
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/b",
+      "value": 2
+    }
+  ]
+}

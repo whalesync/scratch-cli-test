@@ -1,0 +1,23 @@
+{
+  "description": "copy duplicates a value to a new location",
+  "base": {
+    "a": {
+      "x": 1
+    }
+  },
+  "patch": [
+    {
+      "op": "copy",
+      "from": "/a",
+      "path": "/b"
+    }
+  ],
+  "expected": {
+    "a": {
+      "x": 1
+    },
+    "b": {
+      "x": 1
+    }
+  }
+}

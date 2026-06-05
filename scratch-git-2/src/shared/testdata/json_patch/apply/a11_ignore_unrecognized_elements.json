@@ -1,0 +1,18 @@
+{
+  "description": "RFC6902 A.11 ignore unrecognized op members (xyz)",
+  "base": {
+    "foo": "bar"
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/baz",
+      "value": "qux",
+      "xyz": 123
+    }
+  ],
+  "expected": {
+    "foo": "bar",
+    "baz": "qux"
+  }
+}

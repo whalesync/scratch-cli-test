@@ -1,0 +1,22 @@
+{
+  "description": "nested object change -> single recursive leaf add",
+  "old": {
+    "meta": {
+      "x": 1,
+      "y": 2
+    }
+  },
+  "new": {
+    "meta": {
+      "x": 1,
+      "y": 3
+    }
+  },
+  "patch": [
+    {
+      "op": "add",
+      "path": "/meta/y",
+      "value": 3
+    }
+  ]
+}

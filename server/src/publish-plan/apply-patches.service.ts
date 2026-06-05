@@ -5,6 +5,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { validateRecordPath } from 'src/utils/path-validation';
+import { applyJsonPatch, isJsonPatchDialect } from './json-patch';
 
 /** GCS key derived from an uploadId. Used by both the controller (PUT) and worker (stream). */
 export function gcsKeyForPatchUpload(uploadId: string): string {
@@ -47,20 +48,23 @@ export class ApplyPatchesService {
     });
 
     // 3. Validate every path BEFORE writing anything (all-or-nothing).
-    const normalized: Array<{ path: string; patch: unknown; revert: boolean }> = [];
+    const normalized: Array<{ path: string; patch: unknown; revert: boolean; kind?: string }> = [];
     for (const entry of payload.patches) {
       const safePath = validateRecordPath(
         entry.path,
         dataFolders.map((f) => ({ path: f.path ?? '' })),
       );
-      normalized.push({ path: safePath, patch: entry.patch, revert: entry.revert === true });
+      normalized.push({ path: safePath, patch: entry.patch, revert: entry.revert === true, kind: entry.kind });
     }
 
-    // 4. Split deletes from writes.
+    // 4. Split deletes from writes. A delete is the explicit `kind: "delete"`
+    //    discriminator (v2 wire) or, for older clients that don't send `kind`, a
+    //    null patch body — these agree, since a Delete entry always carries a
+    //    null patch in both dialects.
     const toDelete: string[] = [];
     const toWrite: Array<{ path: string; patch: unknown }> = [];
     for (const entry of normalized) {
-      if (entry.patch === null) toDelete.push(entry.path);
+      if (entry.kind === 'delete' || entry.patch === null) toDelete.push(entry.path);
       else toWrite.push(entry);
     }
 
@@ -77,7 +81,7 @@ export class ApplyPatchesService {
           base = {};
         }
       }
-      const next = applyJsonMergePatch(base, entry.patch);
+      const next = applyUpdatePatch(base, entry.patch);
       if (next === null || typeof next !== 'object' || Array.isArray(next)) {
         throw new Error(`Patch result for ${entry.path} is not a JSON object — record files must serialize as objects`);
       }
@@ -147,6 +151,17 @@ export class ApplyPatchesService {
 
     await onProgress?.({ uploadId, patchCount, processedCount: patchCount });
 
+    // Dialect telemetry for the migration rollout. `jsonPatchUpdates` counts RFC
+    // 6902 (op-array) Update bodies; `legacyMergePatchUpdates` counts the v1
+    // merge-patch Update bodies still being uploaded (distinguished from full
+    // `Create` records by the explicit `kind`, when the client sends it). The v1
+    // read path can be retired once these — and pre-`kind` clients — fall to ~0
+    // across the fleet. DEV-10237.
+    const jsonPatchUpdates = toWrite.filter((e) => Array.isArray(e.patch)).length;
+    const legacyMergePatchUpdates = normalized.filter(
+      (e) => e.kind === 'update' && e.patch !== null && typeof e.patch === 'object' && !Array.isArray(e.patch),
+    ).length;
+
     WSLogger.info({
       source: 'ApplyPatchesService.applyPatches',
       message: 'Applied upload-patch payload to dirty branch',
@@ -157,6 +172,9 @@ export class ApplyPatchesService {
         writes: filesToCommit.length,
         deletes: toDelete.length,
         revertCount: normalized.filter((p) => p.revert).length,
+        payloadVersion: payload.version ?? 1,
+        jsonPatchUpdates,
+        legacyMergePatchUpdates,
         postApplyDirtyHead,
       },
     });
@@ -196,7 +214,22 @@ export class ApplyPatchesService {
 }
 
 /**
- * RFC 7396 JSON Merge Patch.
+ * Apply an `Update` patch body onto a (dirty-branch) base, dispatching by
+ * dialect: a 6902 op array (v2) goes through {@link applyJsonPatch}; a 7396
+ * merge-patch object (v1) through {@link applyJsonMergePatch}. The patch body's
+ * *shape* — not a wire version marker — selects the applier, mirroring the Rust
+ * `json_patch::apply_update_patch`, so a fleet mid-rollout (v1 clients, v2
+ * clients) all apply correctly.
+ */
+export function applyUpdatePatch(base: unknown, patch: unknown): unknown {
+  return isJsonPatchDialect(patch)
+    ? applyJsonPatch(base, patch as readonly unknown[])
+    : applyJsonMergePatch(base, patch);
+}
+
+/**
+ * RFC 7396 JSON Merge Patch — the legacy (v1) dialect, retained for the
+ * dual-read window.
  *
  *   apply(target, patch):
  *     if patch is not an object:        return patch
@@ -207,8 +240,9 @@ export class ApplyPatchesService {
  *       else:                           target[k] = patch[k]
  *     return target
  *
- * Arrays are atomic per the spec — same-array conflicts upgrade to RFC 6902
- * is a future option (see plan §"Decisions / open questions").
+ * Arrays are atomic per the spec. Its defining limitation — `null` overloaded as
+ * the delete sentinel, so it cannot represent "set this field to null" — is why
+ * new `Update` bodies are RFC 6902 (DEV-10237); see {@link applyJsonPatch}.
  */
 export function applyJsonMergePatch(target: unknown, patch: unknown): unknown {
   if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) {

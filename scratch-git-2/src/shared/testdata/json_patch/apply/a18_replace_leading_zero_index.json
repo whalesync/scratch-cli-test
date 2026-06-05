@@ -1,0 +1,17 @@
+{
+  "description": "an array index with a leading zero is rejected",
+  "base": {
+    "t": [
+      1,
+      2
+    ]
+  },
+  "patch": [
+    {
+      "op": "replace",
+      "path": "/t/01",
+      "value": 9
+    }
+  ],
+  "error": true
+}

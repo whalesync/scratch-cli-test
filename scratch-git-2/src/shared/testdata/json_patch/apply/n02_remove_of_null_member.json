@@ -1,0 +1,16 @@
+{
+  "description": "remove of a null-valued member deletes it (distinct from set-null)",
+  "base": {
+    "a": null,
+    "b": 2
+  },
+  "patch": [
+    {
+      "op": "remove",
+      "path": "/a"
+    }
+  ],
+  "expected": {
+    "b": 2
+  }
+}

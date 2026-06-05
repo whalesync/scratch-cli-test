@@ -1,0 +1,22 @@
+{
+  "description": "RFC6902 A.4 remove an array element (shift down)",
+  "base": {
+    "foo": [
+      "bar",
+      "qux",
+      "baz"
+    ]
+  },
+  "patch": [
+    {
+      "op": "remove",
+      "path": "/foo/1"
+    }
+  ],
+  "expected": {
+    "foo": [
+      "bar",
+      "baz"
+    ]
+  }
+}

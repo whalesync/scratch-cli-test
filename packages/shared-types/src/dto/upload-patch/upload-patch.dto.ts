@@ -160,17 +160,37 @@ export interface UploadPatchCheckFailedResponseDto {
  * The Rust CLI re-declares this in serde.
  */
 export interface UploadPatchPayload {
+  /**
+   * On-disk / wire format version. Absent or `1` means every `Update` patch body
+   * is a legacy RFC 7396 merge-patch object. `2` means a 6902-capable client
+   * produced this payload and `Update` bodies may be in *either* dialect (the
+   * server dispatches per entry by shape — see `applyUpdatePatch`). Informational
+   * for rollout telemetry; the server never relies on it for correctness.
+   */
+  version?: number;
   patches: Array<{
     /** Path relative to the connection root, e.g. `Companies/rec123.json`. */
     path: string;
     /**
-     * RFC 7396 JSON Merge Patch:
-     *   - `null`          → delete the file
-     *   - full JSON value → applied on top of the current file (or an empty
-     *                       object if the file does not exist), with nested
-     *                       `null` values deleting keys per the spec
+     * The patch body. Its dialect is selected by shape (the server's
+     * `applyUpdatePatch` dispatches accordingly):
+     *   - JSON **array** → RFC 6902 JSON Patch (`Update`): a list of
+     *     `{op,path,value}` ops where `null` is an ordinary value
+     *     (`{"op":"add","path":"/f","value":null}` sets null;
+     *     `{"op":"remove","path":"/f"}` deletes). This is what current clients
+     *     emit (DEV-10237).
+     *   - JSON **object** → either a full record (`Create`) or a legacy RFC 7396
+     *     merge patch (`Update`), applied on top of the current file.
+     *   - `null` → delete the file (equivalent to `kind: "delete"`).
      */
     patch: unknown;
+    /**
+     * Record-lifecycle discriminator. Optional for backward compatibility — when
+     * absent the server infers it from the patch shape (a `null` patch is a
+     * delete). When present, `"delete"` is the explicit whole-record delete
+     * signal (the patch body is `null`); `"create"`/`"update"` are writes.
+     */
+    kind?: 'create' | 'update' | 'delete';
     /**
      * True when this patch was produced by `scratchmd files revert-plan`
      * reviving a previously-deleted record. The patch body carries a

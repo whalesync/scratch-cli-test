@@ -955,6 +955,11 @@ pub enum UploadPatchCommitResult {
 /// `packages/shared-types/src/dto/upload-patch/upload-patch.dto.ts::UploadPatchPayload`.
 #[derive(Debug, serde::Serialize)]
 pub struct UploadPatchPayload {
+    /// On-disk / wire format version (see
+    /// `accepted_patches::FORMAT_VERSION`). `2` tells the server this payload is
+    /// from a 6902-capable client; `Update` bodies may be RFC 6902 op arrays or
+    /// legacy RFC 7396 merge patches, dispatched server-side by shape.
+    pub version: u32,
     pub patches: Vec<UploadPatchEntry>,
 }
 
@@ -962,7 +967,14 @@ pub struct UploadPatchPayload {
 pub struct UploadPatchEntry {
     /// Path relative to the connection root, e.g. `Companies/rec123.json`.
     pub path: String,
-    /// RFC 7396 JSON Merge Patch. `null` means delete the file.
+    /// Record-lifecycle discriminator (`create` | `update` | `delete`). Sent
+    /// explicitly so the server's whole-record delete signal is `kind == delete`
+    /// rather than a magic null patch. Serializes lowercase.
+    pub kind: crate::shared::re_anchor::PatchKind,
+    /// The patch body. A JSON **array** is an RFC 6902 JSON Patch (`Update`,
+    /// where `null` is an ordinary value); a JSON **object** is a full record
+    /// (`Create`) or a legacy RFC 7396 merge patch (`Update`); `null` is a
+    /// whole-record delete.
     pub patch: serde_json::Value,
     /// True when this patch was produced by `files revert-plan` reviving a
     /// previously-deleted record. The server persists this to

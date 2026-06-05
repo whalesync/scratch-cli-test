@@ -1,0 +1,14 @@
+{
+  "description": "pointer addresses a key containing a dot (impossible under dot-split)",
+  "base": {},
+  "patch": [
+    {
+      "op": "add",
+      "path": "/a.b",
+      "value": 1
+    }
+  ],
+  "expected": {
+    "a.b": 1
+  }
+}

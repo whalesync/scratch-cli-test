@@ -1,0 +1,16 @@
+{
+  "description": "removed key -> remove",
+  "old": {
+    "a": 1,
+    "b": 2
+  },
+  "new": {
+    "a": 1
+  },
+  "patch": [
+    {
+      "op": "remove",
+      "path": "/b"
+    }
+  ]
+}

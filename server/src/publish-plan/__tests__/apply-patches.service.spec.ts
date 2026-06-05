@@ -1,6 +1,18 @@
 import { UploadPatchPayload, WorkbookId } from '@spinner/shared-types';
 import { Readable } from 'stream';
-import { applyJsonMergePatch, ApplyPatchesService } from '../apply-patches.service';
+import { applyJsonMergePatch, ApplyPatchesService, applyUpdatePatch } from '../apply-patches.service';
+
+describe('applyUpdatePatch (dual-read dialect dispatch)', () => {
+  it('routes a 6902 op array through the JSON Patch applier', () => {
+    expect(applyUpdatePatch({ a: 1 }, [{ op: 'add', path: '/a', value: null }])).toEqual({ a: null });
+  });
+
+  it('routes a 7396 merge-patch object through the merge applier (live mixed-fleet case)', () => {
+    // A pre-cutover client still uploads object bodies; the server must keep
+    // applying them as merge patches (null deletes, per RFC 7396) by shape.
+    expect(applyUpdatePatch({ a: 1, b: 2 }, { a: 9, b: null })).toEqual({ a: 9 });
+  });
+});
 
 describe('applyJsonMergePatch (RFC 7396)', () => {
   it('overwrites scalar values', () => {
@@ -173,6 +185,71 @@ describe('ApplyPatchesService.applyPatches', () => {
 
     const content = JSON.parse(commitCalls[0].files[0].content) as Record<string, unknown>;
     expect(content).toEqual({ id: 'rec1', name: 'Acme' });
+  });
+
+  it('applies a 6902 op-array Update onto existing content (dual-read by shape)', async () => {
+    const { service, commitCalls } = buildService(
+      {
+        version: 2,
+        patches: [
+          {
+            path: 'Companies/rec1.json',
+            kind: 'update',
+            patch: [{ op: 'add', path: '/name', value: 'New Name' }],
+          },
+        ],
+      },
+      {
+        existingContent: {
+          'Companies/rec1.json': JSON.stringify({ id: 'rec1', name: 'Old Name', industry: 'Tech' }),
+        },
+      },
+    );
+
+    await service.applyPatches(defaultArgs());
+
+    const content = JSON.parse(commitCalls[0].files[0].content) as Record<string, unknown>;
+    expect(content).toEqual({ id: 'rec1', name: 'New Name', industry: 'Tech' });
+  });
+
+  it('sets a field to null via a 6902 add (DEV-10237 — not a delete)', async () => {
+    const { service, commitCalls } = buildService(
+      {
+        version: 2,
+        patches: [
+          {
+            path: 'Companies/rec1.json',
+            kind: 'update',
+            patch: [{ op: 'add', path: '/website', value: null }],
+          },
+        ],
+      },
+      {
+        existingContent: {
+          'Companies/rec1.json': JSON.stringify({ id: 'rec1', website: 'old.example' }),
+        },
+      },
+    );
+
+    await service.applyPatches(defaultArgs());
+
+    const content = JSON.parse(commitCalls[0].files[0].content) as Record<string, unknown>;
+    // The key is present with an explicit null — under RFC 7396 the merge patch
+    // could only have deleted it.
+    expect(content).toEqual({ id: 'rec1', website: null });
+    expect('website' in content).toBe(true);
+  });
+
+  it('routes an explicit kind:"delete" to deleteFilesFromBranch', async () => {
+    const { service, commitCalls, deleteCalls } = buildService({
+      version: 2,
+      patches: [{ path: 'Companies/rec1.json', kind: 'delete', patch: null }],
+    });
+
+    await service.applyPatches(defaultArgs());
+
+    expect(commitCalls).toHaveLength(0);
+    expect(deleteCalls[0].paths).toEqual(['Companies/rec1.json']);
   });
 
   it('rejects path traversal before writing anything', async () => {

@@ -1,0 +1,18 @@
+{
+  "description": "RFC6902 A.14 ~ escape ordering: /~01 decodes to key ~1",
+  "base": {
+    "/": 9,
+    "~1": 10
+  },
+  "patch": [
+    {
+      "op": "test",
+      "path": "/~01",
+      "value": 10
+    }
+  ],
+  "expected": {
+    "/": 9,
+    "~1": 10
+  }
+}

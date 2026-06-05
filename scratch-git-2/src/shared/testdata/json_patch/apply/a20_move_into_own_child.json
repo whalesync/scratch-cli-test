@@ -1,0 +1,16 @@
+{
+  "description": "move MUST NOT move a location into one of its children",
+  "base": {
+    "a": {
+      "b": 1
+    }
+  },
+  "patch": [
+    {
+      "op": "move",
+      "from": "/a",
+      "path": "/a/b"
+    }
+  ],
+  "error": true
+}

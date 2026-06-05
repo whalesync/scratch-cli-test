@@ -136,7 +136,8 @@ test('rejectField on a stacked state restores working to the approved value and 
   await native.acceptField(workspaceDir, CONN, 'Companies/rec_acme.json', 'industry');
   const after1 = readPatches(scratchRoot);
   assert.equal(after1.patches.length, 1);
-  assert.deepEqual(after1.patches[0].patch, { industry: 'SaaS' });
+  // Update bodies are RFC 6902 op arrays (DEV-10237).
+  assert.deepEqual(after1.patches[0].patch, [{ op: 'add', path: '/industry', value: 'SaaS' }]);
 
   // Step 2: user makes a further unreviewed edit on top of approved
   // (industry=Aerospace). Patch entry still says SaaS.
@@ -158,10 +159,10 @@ test('rejectField on a stacked state restores working to the approved value and 
   const obj = JSON.parse(readFileSync(workingPath, 'utf8'));
   assert.equal(obj.industry, 'SaaS', 'working file must hold the approved value after reject');
 
-  // The strict invariant: the patch entry survives unchanged.
+  // The strict invariant: the patch entry survives unchanged (RFC 6902 body).
   const after3 = readPatches(scratchRoot);
   assert.equal(after3.patches.length, 1);
-  assert.deepEqual(after3.patches[0].patch, { industry: 'SaaS' });
+  assert.deepEqual(after3.patches[0].patch, [{ op: 'add', path: '/industry', value: 'SaaS' }]);
 });
 
 test('rejectField is a NoOp when the working value already matches approved', async () => {

@@ -357,14 +357,6 @@ fn apply_nested_json_value_parts(
     object.is_empty()
 }
 
-/// True iff the patch object's "logical" keys include `field` (supports
-/// dotted nested keys like `metadata.author`). Walks the object tree the same
-/// way `read_nested_json_value` does so the field-mention check agrees with
-/// what would actually be read at lookup time.
-pub fn patch_object_mentions_field(object: &JsonMap<String, JsonValue>, field: &str) -> bool {
-    read_nested_json_value(object, field).is_some()
-}
-
 // ---------------------------------------------------------------------------
 // Patch <-> blob bridge
 // ---------------------------------------------------------------------------
@@ -377,8 +369,9 @@ pub fn patch_object_mentions_field(object: &JsonMap<String, JsonValue>, field: &
 /// - `Update`: parse the `main` blob (or treat as `null` if missing — this is
 ///   a pathological state caused by something earlier in the pipeline;
 ///   `re_anchor` converts server-side deletes to `Create` at pull time so
-///   `Update` against `None` shouldn't normally occur) and apply the RFC 7396
-///   patch.
+///   `Update` against `None` shouldn't normally occur) and apply the patch via
+///   the dual-read bridge (RFC 6902 op array, or legacy RFC 7396 merge patch,
+///   chosen by the patch body's shape).
 /// - `Delete`: returns `None` so callers can `out.remove(path)`.
 pub fn apply_patch_entry_to_blob(
     main_blob: Option<&[u8]>,
@@ -406,7 +399,10 @@ pub fn apply_patch_entry_to_blob(
                 })?,
                 None => JsonValue::Null,
             };
-            let merged = crate::shared::merge_patch::apply(&base, &entry.patch);
+            let merged = crate::shared::json_patch::apply_update_patch(&base, &entry.patch)
+                .with_context(|| {
+                    format!("failed to apply accepted Update patch for {}", entry.path)
+                })?;
             let mut bytes = serde_json::to_vec_pretty(&merged).with_context(|| {
                 format!("failed to serialize accepted Update for {}", entry.path)
             })?;
@@ -662,6 +658,93 @@ pub fn reject_field_in_folder(
     ))
 }
 
+/// Recompute an accepted-patches entry after discarding `field` — i.e.
+/// reverting that field to its published (main) value — returning the resulting
+/// [`PatchAction`] so the caller can drive worktree restoration.
+///
+/// This replaces hand-editing the patch object in place, which only worked for
+/// the RFC 7396 dialect (an `Update` body is now an RFC 6902 op **array**, not a
+/// mergeable object). Instead we reconstruct the approved object (dual-read),
+/// set `field` back to `published_value` (or remove it when main lacks the
+/// field), and re-derive the entry from `(main, reverted_approved)` via
+/// [`re_anchor::compute_entry`]. That is dialect-agnostic and re-emits a clean
+/// RFC 6902 body for any surviving entry.
+///
+/// `published_value` is the field's value in `refs/heads/main` (`None` when main
+/// lacks the field / path). The entry is mutated in place — upserted when it
+/// survives, removed when reverting empties it. `Delete` entries (and paths with
+/// no entry) report [`PatchAction::Untouched`]; callers special-case `Delete`
+/// before calling.
+fn recompute_entry_after_discarding_field(
+    file: &mut AcceptedPatchesFile,
+    file_path_to_contents_map_in_main_branch: &FileMap,
+    path: &str,
+    field: &str,
+    published_value: Option<JsonValue>,
+) -> anyhow::Result<PatchAction> {
+    let Some(existing_kind) = accepted_patches::get_entry(file, path).map(|e| e.kind) else {
+        return Ok(PatchAction::Untouched);
+    };
+    if existing_kind == PatchKind::Delete {
+        return Ok(PatchAction::Untouched);
+    }
+
+    let approved_object_at_path_if_any =
+        approved_object_for_path(file_path_to_contents_map_in_main_branch, file, path)?;
+    let field_value_in_approved_state = approved_object_at_path_if_any
+        .as_ref()
+        .and_then(|obj| read_nested_json_value(obj, field));
+
+    // If the approved state already matches main for this field, the entry does
+    // not meaningfully touch it — nothing to drop. (A minimal patch from
+    // `compute_entry` never carries a field equal to main, so this mirrors the
+    // old "does the patch mention this field?" check for well-formed patches.)
+    if field_value_in_approved_state == published_value {
+        return Ok(PatchAction::Untouched);
+    }
+
+    let mut approved_object_after_reverting_field =
+        approved_object_at_path_if_any.unwrap_or_default();
+    apply_nested_json_value(
+        &mut approved_object_after_reverting_field,
+        field,
+        published_value,
+    );
+
+    let record_parsed_from_main_branch_if_any = parse_json_value_at(
+        file_path_to_contents_map_in_main_branch,
+        path,
+        "refs/heads/main",
+    )?;
+    let reverted_approved_or_none_if_empty_with_no_main = if approved_object_after_reverting_field
+        .is_empty()
+        && record_parsed_from_main_branch_if_any.is_none()
+    {
+        None
+    } else {
+        Some(JsonValue::Object(approved_object_after_reverting_field))
+    };
+
+    match crate::shared::re_anchor::compute_entry(
+        path,
+        record_parsed_from_main_branch_if_any.as_ref(),
+        reverted_approved_or_none_if_empty_with_no_main.as_ref(),
+    ) {
+        Some(new_entry) => {
+            accepted_patches::upsert_entry(file, new_entry);
+            Ok(PatchAction::Modified)
+        }
+        None => {
+            accepted_patches::remove_entry(file, path);
+            Ok(if existing_kind == PatchKind::Create {
+                PatchAction::DroppedCreate
+            } else {
+                PatchAction::Dropped
+            })
+        }
+    }
+}
+
 /// Folder-scoped, field-level discard. Per file in `repo_folder`, drop the
 /// named field from any accepted-patches entry AND restore the working
 /// file's value for that field to whatever `refs/heads/main` says.
@@ -690,7 +773,6 @@ pub fn discard_field_in_folder(
     let mut file_path_to_contents_map_in_worktree_after_applying_field_edit =
         file_path_to_contents_map_in_worktree.clone();
     let mut result = FieldCommandResult::default();
-    let mut entries_to_drop: Vec<String> = Vec::new();
 
     let paths = field_paths_in_folder(
         file_path_to_contents_map_in_main_branch,
@@ -709,41 +791,20 @@ pub fn discard_field_in_folder(
         };
         let main_has_path = file_path_to_contents_map_in_main_branch.contains_key(path.as_str());
 
-        let mut patch_action = PatchAction::Untouched;
-        if let Some(entry) = file.patches.iter_mut().find(|e| e.path == path) {
-            match entry.kind {
-                PatchKind::Update => {
-                    if let JsonValue::Object(map) = &mut entry.patch {
-                        if patch_object_mentions_field(map, field) {
-                            apply_nested_json_value(map, field, None);
-                            if map.is_empty() {
-                                entries_to_drop.push(path.clone());
-                                patch_action = PatchAction::Dropped;
-                            } else {
-                                patch_action = PatchAction::Modified;
-                            }
-                        }
-                    }
-                }
-                PatchKind::Create => {
-                    if let JsonValue::Object(map) = &mut entry.patch {
-                        if patch_object_mentions_field(map, field) {
-                            apply_nested_json_value(map, field, None);
-                            if map.is_empty() {
-                                entries_to_drop.push(path.clone());
-                                patch_action = PatchAction::DroppedCreate;
-                            } else {
-                                patch_action = PatchAction::Modified;
-                            }
-                        }
-                    }
-                }
-                PatchKind::Delete => {
-                    // Field-level discard on a Delete entry is a no-op.
-                    continue;
-                }
-            }
+        // Field-level discard on a Delete entry is a no-op (use
+        // restore-deleted-record to undo a whole-file delete).
+        if let Some(PatchKind::Delete) = accepted_patches::get_entry(file, &path).map(|e| e.kind) {
+            continue;
         }
+        // Drop the field from the entry by recomputing it (dialect-agnostic),
+        // yielding the PatchAction that drives the worktree restore below.
+        let patch_action = recompute_entry_after_discarding_field(
+            file,
+            file_path_to_contents_map_in_main_branch,
+            &path,
+            field,
+            published_value.clone(),
+        )?;
 
         // Update the working file's view of this field. If we just emptied
         // a Create, the file no longer exists at the approved state and
@@ -804,10 +865,6 @@ pub fn discard_field_in_folder(
                 result.patches_changed = true;
             }
         }
-    }
-
-    for path in entries_to_drop {
-        file.patches.retain(|e| e.path != path);
     }
 
     Ok((
@@ -1471,46 +1528,33 @@ pub fn drop_approved_field_and_restore_to_main_value(
     };
     let main_has_path = file_path_to_contents_map_in_main_branch.contains_key(record_rel_path);
 
-    let mut patch_action = PatchAction::Untouched;
-    if let Some(entry) = file.patches.iter_mut().find(|e| e.path == record_rel_path) {
-        match entry.kind {
-            PatchKind::Update => {
-                if let JsonValue::Object(map) = &mut entry.patch {
-                    if patch_object_mentions_field(map, field) {
-                        apply_nested_json_value(map, field, None);
-                        patch_action = if map.is_empty() {
-                            PatchAction::Dropped
-                        } else {
-                            PatchAction::Modified
-                        };
-                    }
-                }
-            }
-            PatchKind::Create => {
-                if let JsonValue::Object(map) = &mut entry.patch {
-                    if patch_object_mentions_field(map, field) {
-                        apply_nested_json_value(map, field, None);
-                        patch_action = if map.is_empty() {
-                            PatchAction::DroppedCreate
-                        } else {
-                            PatchAction::Modified
-                        };
-                    }
-                }
-            }
-            PatchKind::Delete => {
-                // Field-level discard on a Delete entry is a no-op.
-                return Ok(ReviewOpResult {
-                    workspace_path,
-                    patches_changed: false,
-                    working_changed: false,
-                    effect: ReviewOpEffect::NoOp,
-                });
-            }
-        }
+    // Field-level discard on a Delete entry is a no-op.
+    if let Some(PatchKind::Delete) = file
+        .patches
+        .iter()
+        .find(|e| e.path == record_rel_path)
+        .map(|e| e.kind)
+    {
+        return Ok(ReviewOpResult {
+            workspace_path,
+            patches_changed: false,
+            working_changed: false,
+            effect: ReviewOpEffect::NoOp,
+        });
     }
+    // Drop the field from the entry by recomputing it (dialect-agnostic). The
+    // entry is mutated in place — upserted if it survives, removed if reverting
+    // the field empties it — so no further patch-file edit is needed below.
+    let patch_action = recompute_entry_after_discarding_field(
+        &mut file,
+        &file_path_to_contents_map_in_main_branch,
+        record_rel_path,
+        field,
+        published_value.clone(),
+    )
+    .map_err(ReviewOpError::Internal)?;
 
-    let mut patches_changed = matches!(
+    let patches_changed = matches!(
         patch_action,
         PatchAction::Modified | PatchAction::Dropped | PatchAction::DroppedCreate
     );
@@ -1561,19 +1605,12 @@ pub fn drop_approved_field_and_restore_to_main_value(
         }
     }
 
-    // Drop the entry from the patch file last so the working-file write above
-    // had its chance to inspect it.
-    if matches!(
-        patch_action,
-        PatchAction::Dropped | PatchAction::DroppedCreate
-    ) {
-        accepted_patches::remove_entry(&mut file, record_rel_path);
-    }
-
+    // The entry was already upserted/removed by
+    // `recompute_entry_after_discarding_field`; the working-file write above
+    // reads only `patch_action` + `published_value`, not the patch list, so the
+    // in-place mutation order is safe.
     if patches_changed {
         accepted_patches::save_atomic(&connection_dir, &file).map_err(ReviewOpError::Internal)?;
-    } else {
-        patches_changed = false;
     }
 
     let effect = match (patches_changed, working_changed) {
@@ -2148,5 +2185,86 @@ mod tests {
         let e = entry("p.json", PatchKind::Update, json!({"name": "Acme"}));
         let out = apply_patch_entry_to_blob(None, &e).unwrap();
         assert_eq!(out, Some(json_bytes(&json!({"name": "Acme"}))));
+    }
+
+    #[test]
+    fn legacy_v1_update_converts_to_equivalent_v2_losslessly() {
+        // The migration's core guarantee: a legacy v1 (RFC 7396) Update entry —
+        // here setting `industry` and deleting `website` (null = delete) —
+        // converts to a v2 (RFC 6902) entry that reconstructs to the *identical*
+        // approved value. Lossless precisely because v1 could never store an
+        // intentional null (the conversion algorithm in the plan's Migration
+        // section: reconstruct approved via 7396, re-diff via 6902).
+        let main = json!({"name": "Acme", "industry": "Other", "website": "old.example"});
+        let main_blob = json_bytes(&main);
+
+        // v1 dialect: a merge-patch object.
+        let v1 = entry(
+            "Companies/rec_1.json",
+            PatchKind::Update,
+            json!({"industry": "SaaS", "website": null}),
+        );
+        let approved_via_v1 = apply_patch_entry_to_blob(Some(&main_blob), &v1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            approved_via_v1,
+            json_bytes(&json!({"name": "Acme", "industry": "SaaS"}))
+        );
+
+        // Convert: reconstruct the approved value, then re-diff it against main
+        // via the shared accept-time chokepoint → a 6902 op array.
+        let approved_value: JsonValue = serde_json::from_slice(&approved_via_v1).unwrap();
+        let v2 = crate::shared::re_anchor::compute_entry(
+            "Companies/rec_1.json",
+            Some(&main),
+            Some(&approved_value),
+        )
+        .unwrap();
+        assert_eq!(v2.kind, PatchKind::Update);
+        assert!(v2.patch.is_array(), "converted body is a 6902 op array");
+
+        // The v2 entry reconstructs to byte-identical approved content.
+        let approved_via_v2 = apply_patch_entry_to_blob(Some(&main_blob), &v2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            approved_via_v2, approved_via_v1,
+            "v1 -> v2 conversion is lossless"
+        );
+    }
+
+    #[test]
+    fn compute_accepted_state_reconstructs_mixed_v1_and_v2_entries() {
+        // The migration-window state: one legacy 7396 (object-bodied) Update and
+        // one 6902 (array-bodied) Update in the same file. Shape-dispatch
+        // reconstructs each with its correct applier.
+        let main = map_of(&[
+            ("a.json", "{\"name\":\"A\",\"v\":\"old\"}"),
+            ("b.json", "{\"name\":\"B\",\"v\":\"old\"}"),
+        ]);
+        let file = AcceptedPatchesFile {
+            patches: vec![
+                // v1 dialect: a merge-patch object.
+                entry("a.json", PatchKind::Update, json!({"v": "new"})),
+                // v2 dialect: a 6902 op array.
+                entry(
+                    "b.json",
+                    PatchKind::Update,
+                    json!([{"op": "add", "path": "/v", "value": "new"}]),
+                ),
+            ],
+        };
+        let approved = compute_accepted_state(&main, &file).unwrap();
+        assert_eq!(
+            approved.get("a.json").map(|b| b.as_slice()),
+            Some(json_bytes(&json!({"name": "A", "v": "new"})).as_slice()),
+            "v1 object entry reconstructs via the merge-patch applier"
+        );
+        assert_eq!(
+            approved.get("b.json").map(|b| b.as_slice()),
+            Some(json_bytes(&json!({"name": "B", "v": "new"})).as_slice()),
+            "v2 array entry reconstructs via the 6902 applier"
+        );
     }
 }
