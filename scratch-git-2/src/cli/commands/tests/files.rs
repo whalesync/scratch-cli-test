@@ -1423,6 +1423,105 @@ fn accept_all_unreviewed_changes_in_connection_repo_folder_handles_deletion_insi
 }
 
 #[test]
+fn accept_all_unreviewed_changes_in_connection_repo_accepts_locally_created_untracked_record() {
+    // Repro for DEV-10321: a brand-new record file written to the worktree
+    // (untracked in git — not present in main or the dirty branch) must be
+    // picked up by accept-all and folded in as a Create patch. Before the fix,
+    // accept-all's candidate set came only from `gix::status` (which does not
+    // surface untracked files) ∪ existing accepted-patches entries, so freshly
+    // created records were silently skipped.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+    seed_accepted_patches_from_fixture(&ctx);
+
+    // A locally-created record: no entry in main, no entry in dirty/approved.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_new.json"),
+        "{\"v\":\"created-locally\"}",
+    );
+
+    let result = accept_all_unreviewed_changes_in_connection_repo(
+        &ctx,
+        &ctx.workspace_dir.clone(),
+        Some("posts"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.files_accepted, 1,
+        "the newly created record must be accepted"
+    );
+    assert_eq!(
+        result.accepted_paths,
+        vec!["posts/rec_new.json".to_string()]
+    );
+
+    let file = load_accepted(&ctx);
+    let created = file
+        .patches
+        .iter()
+        .find(|e| e.path == "posts/rec_new.json")
+        .expect("a Create patch must be recorded for the new record");
+    assert_eq!(created.kind, crate::shared::re_anchor::PatchKind::Create);
+    assert_eq!(created.patch, serde_json::json!({"v": "created-locally"}));
+}
+
+#[test]
+fn accept_all_unreviewed_changes_in_connection_repo_accepts_records_created_in_brand_new_folder() {
+    // Repro for DEV-10321: ~200 records created via Claude land in a brand-new
+    // table/folder that does not exist on main or the dirty branch. gix::status
+    // collapses a wholly-untracked directory into a single directory entry
+    // rather than listing each file, so accept-all's candidate set never sees
+    // the individual records and "Approve all" appears to do nothing.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let (_tmp, ctx) = create_multi_folder_fixture();
+    seed_accepted_patches_from_fixture(&ctx);
+
+    // A brand-new folder ("widgets") with multiple locally-created records.
+    write_file(
+        &ctx.worktree_dir.join("widgets/rec_a.json"),
+        "{\"v\":\"new-a\"}",
+    );
+    write_file(
+        &ctx.worktree_dir.join("widgets/rec_b.json"),
+        "{\"v\":\"new-b\"}",
+    );
+    write_file(
+        &ctx.worktree_dir.join("widgets/rec_c.json"),
+        "{\"v\":\"new-c\"}",
+    );
+
+    // No folder scope — mirrors the "Approve all" button.
+    let result =
+        accept_all_unreviewed_changes_in_connection_repo(&ctx, &ctx.workspace_dir.clone(), None)
+            .unwrap();
+
+    assert_eq!(
+        result.files_accepted, 3,
+        "all three records in the new folder must be accepted"
+    );
+
+    let file = load_accepted(&ctx);
+    for name in ["rec_a", "rec_b", "rec_c"] {
+        let path = format!("widgets/{name}.json");
+        let entry = file
+            .patches
+            .iter()
+            .find(|e| e.path == path)
+            .unwrap_or_else(|| panic!("a Create patch must be recorded for {path}"));
+        assert_eq!(entry.kind, crate::shared::re_anchor::PatchKind::Create);
+    }
+}
+
+#[test]
 fn discard_all_unreviewed_changes_in_connection_repo_folder_reverts_only_target_folder() {
     if !git_available() {
         eprintln!("skipping git-dependent test: git executable not available");

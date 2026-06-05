@@ -3513,7 +3513,14 @@ fn list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(
 
     let repo = gix::open(&ctx.worktree_dir)
         .with_context(|| format!("failed to open worktree at {}", ctx.worktree_dir.display()))?;
-    let platform = repo.status(gix::progress::Discard)?;
+    // Emit untracked files individually rather than collapsing a wholly-
+    // untracked directory into one entry — otherwise records freshly created
+    // in a brand-new folder never surface as unreviewed changes. See
+    // `collect_all_ops_candidate_record_paths` for the full rationale
+    // (DEV-10321).
+    let platform = repo
+        .status(gix::progress::Discard)?
+        .untracked_files(gix::status::UntrackedFiles::Files);
     let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
 
     let mut gix_status_flagged_record_paths_and_status: Vec<(String, &'static str)> = Vec::new();
@@ -3938,7 +3945,17 @@ fn collect_all_ops_candidate_record_paths(
 
     let repo = gix::open(&ctx.worktree_dir)
         .with_context(|| format!("failed to open worktree at {}", ctx.worktree_dir.display()))?;
-    let platform = repo.status(gix::progress::Discard)?;
+    // Emit untracked files individually. gix defaults to
+    // `UntrackedFiles::Collapsed`, which reports a wholly-untracked directory
+    // (e.g. a brand-new table folder full of freshly created records) as a
+    // single directory entry rather than the individual `.json` files. We
+    // enumerate per-record paths below, so a collapsed `widgets/` entry fails
+    // the data-path `scope_filter` and every newly created record inside a new
+    // folder is silently dropped from the candidate set — leaving accept-all
+    // with nothing to do (DEV-10321). `UntrackedFiles::Files` emits each path.
+    let platform = repo
+        .status(gix::progress::Discard)?
+        .untracked_files(gix::status::UntrackedFiles::Files);
     let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
     for item in iter {
         let item = item?;
