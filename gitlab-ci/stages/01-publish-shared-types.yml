@@ -33,4 +33,7 @@ publish shared-types:
     - REGISTRY_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
     - echo "@spinner:registry=${REGISTRY_URL}" > .npmrc
     - echo "${REGISTRY_URL#https:}:_authToken=${CI_JOB_TOKEN}" >> .npmrc
-    - npm publish --tag latest
+    # --registry forces npm to use the GitLab registry for publish; without it
+    # npm sometimes falls back to npmjs.org and does a pre-publish lookup that
+    # 404s on our scoped package.
+    - npm publish --tag latest --registry "${REGISTRY_URL}"
