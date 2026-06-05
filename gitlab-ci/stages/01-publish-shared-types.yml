@@ -24,16 +24,17 @@ publish shared-types:
     - cd packages/shared-types
     - !reference [.use_nvm, script]
     - yarn build
-    # Rewrite the sentinel version in package.json to a SHA-keyed version.
-    # --allow-same-version is a safety net in case the sentinel is ever bumped.
+    # Rewrite the sentinel version in package.json with sed (NOT `npm version`,
+    # which triggers an `npm install` that resolves @spinner/shared-types from
+    # the public registry and 404s). The sentinel "0.0.0-dev" is unique to
+    # this file so a plain substitution is safe.
     - VERSION="0.0.0-master-${CI_COMMIT_SHORT_SHA}"
-    - npm version "$VERSION" --no-git-tag-version --allow-same-version
+    - 'sed -i "s/\"version\": \"0.0.0-dev\"/\"version\": \"${VERSION}\"/" package.json'
     # Auth to the project-scoped registry using the built-in CI job token.
     # CI_API_V4_URL looks like https://gitlab.com/api/v4
     - REGISTRY_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
     - echo "@spinner:registry=${REGISTRY_URL}" > .npmrc
     - echo "${REGISTRY_URL#https:}:_authToken=${CI_JOB_TOKEN}" >> .npmrc
     # --registry forces npm to use the GitLab registry for publish; without it
-    # npm sometimes falls back to npmjs.org and does a pre-publish lookup that
-    # 404s on our scoped package.
+    # npm sometimes falls back to npmjs.org.
     - npm publish --tag latest --registry "${REGISTRY_URL}"
