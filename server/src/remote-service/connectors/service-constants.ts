@@ -29,6 +29,7 @@ export const Service = {
   STRIPE: 'STRIPE',
   AFFINITY: 'AFFINITY',
   ATTIO: 'ATTIO',
+  COPPER: 'COPPER',
   GENERIC_API: 'GENERIC_API',
   GOHIGHLEVEL: 'GOHIGHLEVEL',
 } as const;

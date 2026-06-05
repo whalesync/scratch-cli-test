@@ -10,6 +10,8 @@ export interface DecryptedCredentials {
   endpoint?: string;
   // Moco specific
   domain?: string;
+  // Copper specific (the account email the API key was generated under, sent as X-PW-UserEmail)
+  email?: string;
   // PostgreSQL specific
   connectionString?: string;
   // Supabase multi-project (OAuth)

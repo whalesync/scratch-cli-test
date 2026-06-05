@@ -6,6 +6,7 @@ import './airtable/airtable-connector';
 import './attio/attio-connector';
 import './audienceful/audienceful-connector';
 import './brevo/brevo-connector';
+import './copper/copper-connector';
 import './generic-api/generic-api-connector';
 import './gohighlevel/gohighlevel-connector';
 import './hubspot/hubspot-connector';

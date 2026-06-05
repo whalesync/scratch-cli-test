@@ -1,0 +1,288 @@
+import { connectorMetadata, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import { isAxiosError } from 'axios';
+import { WSLogger } from 'src/logger';
+import { RateLimiter } from 'src/rate-limiter/rate-limiter';
+import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
+import { connectorRegistry } from '../../connector-registry';
+import {
+  ConnectorInstantiationError,
+  extractCommonDetailsFromAxiosError,
+  extractErrorMessageFromAxiosError,
+} from '../../error';
+import { Service } from '../../service-constants';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  EntityId,
+  PullRecordFilesOptions,
+  PullRecordFilesResult,
+  readRecordIdAsString,
+  TablePreview,
+} from '../../types';
+import { CopperApiClient, CopperError } from './copper-api-client';
+import { buildCopperJsonTableSpec } from './copper-json-schema';
+import { COPPER_ENTITY_CONFIG, COPPER_ENTITY_TYPES, CopperDownloadProgress, CopperEntityType } from './copper-types';
+
+const LOG_SOURCE = 'CopperConnector';
+
+/** Batch size for re-pulling specific records by id. */
+const PULL_BY_IDS_BATCH_SIZE = 20;
+
+/**
+ * Connector for the Copper CRM.
+ *
+ * Supports six writable record entities: People, Companies, Opportunities,
+ * Leads, Tasks, Projects. (Activities are deferred — read-only system rows,
+ * no `date_modified`.) Listing is via `POST /{entity}/search` (offset
+ * pagination); custom fields are discovered via `/custom_field_definitions`.
+ *
+ * v1 ships full-scan pull only; incremental is a fast-follow.
+ */
+export class CopperConnector extends Connector<string, CopperDownloadProgress> {
+  readonly service = Service.COPPER;
+  static readonly displayName = 'Copper';
+  static readonly metadata = connectorMetadata({
+    displayName: 'Copper',
+    table: 'entity',
+    tables: 'entities',
+    logo: 'https://static.scratch.md/connector-icons/copper.svg',
+    // Hidden from the production connector picker until v1 is validated end-to-end;
+    // still selectable in local dev (use-connectors.ts shows all connectors when NODE_ENV=development).
+    visible: false,
+    credentialFields: {
+      user_provided_params: [
+        { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter your Copper API key', required: true },
+        {
+          key: 'email',
+          type: 'string',
+          label: 'Account Email',
+          placeholder: 'The email the API key was generated under',
+          required: true,
+        },
+      ],
+    },
+  });
+
+  private readonly client: CopperApiClient;
+
+  constructor(credentials: { apiKey: string; email: string }, opts?: { rateLimiter?: RateLimiter }) {
+    super();
+    this.client = new CopperApiClient(credentials, opts);
+  }
+
+  async testConnection(): Promise<void> {
+    await this.client.testConnection();
+  }
+
+  /** List the six writable entity types as tables. */
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async listTables(): Promise<TablePreview[]> {
+    return COPPER_ENTITY_TYPES.map((entityType) => ({
+      id: { wsId: entityType, remoteId: [entityType] },
+      displayName: COPPER_ENTITY_CONFIG[entityType].displayName,
+      metadata: { entityType },
+    }));
+  }
+
+  /**
+   * Build the schema for a Copper entity: static system fields merged with
+   * dynamically discovered custom field definitions.
+   */
+  async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
+    const entityType = this.resolveEntityType(id.wsId);
+    const customFieldDefinitions = await this.client.listCustomFieldDefinitions();
+    return buildCopperJsonTableSpec(id, entityType, customFieldDefinitions);
+  }
+
+  /**
+   * Stream all records via offset-paginated `POST /{entity}/search`. Checkpoints
+   * the next page so a stalled job resumes mid-table. Full-scan only in v1.
+   */
+  async pullRecordFiles(
+    tableSpec: BaseJsonTableSpec,
+    callback: (params: { files: ConnectorFile[]; connectorProgress?: CopperDownloadProgress }) => Promise<void>,
+    progress: CopperDownloadProgress,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _options: PullRecordFilesOptions,
+  ): Promise<PullRecordFilesResult> {
+    const entityType = this.resolveEntityType(tableSpec.id.wsId);
+    const startPage = typeof progress?.nextPage === 'number' && progress.nextPage > 0 ? progress.nextPage : 1;
+
+    for await (const batch of this.client.listEntities(entityType, undefined, startPage)) {
+      await callback({
+        files: batch.records as ConnectorFile[],
+        connectorProgress: { nextPage: batch.nextPage },
+      });
+    }
+    return {};
+  }
+
+  /** Re-fetch specific records by id (e.g. after a publish). Skips 404s. */
+  async pullRecordFilesByIds(
+    tableSpec: BaseJsonTableSpec,
+    ids: string[],
+    callback: (params: { files: ConnectorFile[] }) => Promise<void>,
+  ): Promise<void> {
+    const entityType = this.resolveEntityType(tableSpec.id.wsId);
+    const buffer: ConnectorFile[] = [];
+
+    for (const id of ids) {
+      const numericId = parseInt(id, 10);
+      if (isNaN(numericId)) {
+        WSLogger.warn({ source: LOG_SOURCE, message: `Invalid non-numeric id "${id}" for ${entityType}, skipping` });
+        continue;
+      }
+
+      const record = await this.client.getEntity(entityType, numericId);
+      if (record) {
+        buffer.push(record as ConnectorFile);
+      }
+
+      if (buffer.length >= PULL_BY_IDS_BATCH_SIZE) {
+        await callback({ files: buffer.splice(0) });
+      }
+    }
+
+    if (buffer.length > 0) {
+      await callback({ files: buffer });
+    }
+  }
+
+  /** One request per record — no bulk write wired in v1. */
+  getBatchSize(): number {
+    return 1;
+  }
+
+  /** Create records; returns Copper's response (carries the assigned id). */
+  async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
+    const entityType = this.resolveEntityType(tableSpec.id.wsId);
+    const readonlyKeys = readonlyFieldKeys(tableSpec);
+    const results: ConnectorFile[] = [];
+
+    for (const file of files) {
+      const body = stripReadonlyFields(file, readonlyKeys);
+      const created = await this.client.createEntity(entityType, body);
+      results.push(created as ConnectorFile);
+    }
+
+    return results;
+  }
+
+  /** Update records. Prefers the sparse `changedFields` payload (Copper applies only sent fields). */
+  async updateRecords(
+    tableSpec: BaseJsonTableSpec,
+    files: ConnectorFile[],
+    changedFields?: (Record<string, unknown> | undefined)[],
+  ): Promise<ConnectorFile[]> {
+    const entityType = this.resolveEntityType(tableSpec.id.wsId);
+    const readonlyKeys = readonlyFieldKeys(tableSpec);
+    const results: ConnectorFile[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const id = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      if (!id) {
+        WSLogger.warn({ source: LOG_SOURCE, message: `Skipping update for ${entityType} record with no id` });
+        continue;
+      }
+
+      const changed = changedFields?.[i];
+      const body = changed ? stripReadonlyFields(changed, readonlyKeys) : stripReadonlyFields(file, readonlyKeys);
+      const updated = await this.client.updateEntity(entityType, parseInt(id, 10), body);
+      results.push(updated as ConnectorFile);
+    }
+
+    return results;
+  }
+
+  /** Delete records by id. Already-deleted (404) is a no-op. */
+  async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
+    const entityType = this.resolveEntityType(tableSpec.id.wsId);
+
+    for (const file of files) {
+      const id = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      if (!id) continue;
+      await this.client.deleteEntity(entityType, parseInt(id, 10));
+    }
+  }
+
+  getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
+    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    return suggestFileNamesFromFieldPaths(records, titlePath, 'name');
+  }
+
+  extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
+    if (error instanceof CopperError) {
+      return {
+        userFriendlyMessage: error.message,
+        description: error.message,
+        additionalContext: { status: error.statusCode, responseData: error.responseData },
+      };
+    }
+
+    if (isAxiosError(error)) {
+      const common = extractCommonDetailsFromAxiosError(this, error);
+      if (common) return common;
+
+      return {
+        userFriendlyMessage: extractErrorMessageFromAxiosError(this.service, error, ['message', 'error']),
+        description: error.message,
+        additionalContext: { status: error.response?.status },
+      };
+    }
+
+    return this.fallbackErrorDetails(error);
+  }
+
+  // --- Private helpers ---
+
+  private resolveEntityType(wsId: string): CopperEntityType {
+    if (!(COPPER_ENTITY_TYPES as string[]).includes(wsId)) {
+      throw new CopperError(`Entity type '${wsId}' not found. Copper supports: ${COPPER_ENTITY_TYPES.join(', ')}`, 404);
+    }
+    return wsId as CopperEntityType;
+  }
+}
+
+/** Collect the set of top-level field keys marked `x-scratch-readonly` in the schema. */
+function readonlyFieldKeys(tableSpec: BaseJsonTableSpec): Set<string> {
+  const keys = new Set<string>();
+  const schema = tableSpec.schema as { properties?: Record<string, Record<string, unknown>> };
+  const properties = schema.properties;
+  if (!properties) return keys;
+  for (const [key, fieldSchema] of Object.entries(properties)) {
+    if (fieldSchema && fieldSchema[X_SCRATCH_READONLY] === true) {
+      keys.add(key);
+    }
+  }
+  return keys;
+}
+
+/** Return a copy of the record with read-only fields removed (never sent on write). */
+function stripReadonlyFields(record: Record<string, unknown>, readonlyKeys: Set<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (readonlyKeys.has(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+connectorRegistry.register({
+  service: Service.COPPER,
+  metadata: CopperConnector.metadata,
+  advancedSettings: [],
+  supportedAuthMethods: ['user_provided_params'],
+  rateLimiterSpec: { points: 3, duration: 1 },
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async createConnector(ctx) {
+    const apiKey = ctx.decryptedCredentials?.apiKey;
+    const email = ctx.decryptedCredentials?.email;
+    if (!apiKey || !email) {
+      throw new ConnectorInstantiationError('API key and account email are required for Copper', Service.COPPER);
+    }
+    const rateLimiter = ctx.connectorAccount ? ctx.createRateLimiter(ctx.connectorAccount.id) : undefined;
+    return new CopperConnector({ apiKey, email }, { rateLimiter });
+  },
+});
