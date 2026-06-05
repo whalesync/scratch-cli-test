@@ -11,6 +11,7 @@ import { WSLogger } from '../logger';
 import { Connector } from '../remote-service/connectors/connector';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec } from '../remote-service/connectors/types';
+import { ScratchGitNotFoundError } from '../scratch-git/scratch-git.client';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { computeChangedFields } from './diff-utils';
@@ -146,6 +147,21 @@ export class PublishPlanBuildService {
     });
   }
 
+  /**
+   * Like `getRepoStatus`, but treats a not-yet-created repo (scratch-git 404)
+   * as "no changes" instead of throwing. A connection whose repo has never been
+   * pulled has nothing to publish — the status controller already handles this
+   * the same way; the publish path must too, or planning crashes with a 404.
+   */
+  private async getRepoStatusToleratingMissingRepo(
+    repoId: string,
+  ): Promise<Awaited<ReturnType<ScratchGitService['getRepoStatus']>>> {
+    return this.scratchGitService.getRepoStatus(repoId).catch((err) => {
+      if (err instanceof ScratchGitNotFoundError) return [];
+      throw err;
+    });
+  }
+
   async hasDiffs(
     workbookId: string,
     connectorAccountId?: string,
@@ -154,7 +170,7 @@ export class PublishPlanBuildService {
   ): Promise<boolean> {
     const wkbId = workbookId as WorkbookId;
     const repoIds = await this.resolveAllRepoIds(wkbId, connectorAccountId);
-    const allStatuses = await Promise.all(repoIds.map((id) => this.scratchGitService.getRepoStatus(id)));
+    const allStatuses = await Promise.all(repoIds.map((id) => this.getRepoStatusToleratingMissingRepo(id)));
     let changes = allStatuses.flat();
     if (changes.length === 0) return false;
 
@@ -266,7 +282,7 @@ export class PublishPlanBuildService {
       await onProgress?.({ ...liveCounts, step });
     };
 
-    let changes = await this.scratchGitService.getRepoStatus(repoId);
+    let changes = await this.getRepoStatusToleratingMissingRepo(repoId);
 
     await reportProgress(`Diffing branches (${changes.length} changes found)`);
 

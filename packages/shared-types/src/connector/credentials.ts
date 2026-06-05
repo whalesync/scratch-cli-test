@@ -1,5 +1,9 @@
 export interface DecryptedCredentials {
   apiKey?: string;
+  // HighLevel (GoHighLevel) specific: the sub-account ("Location") the Private
+  // Integration Token is scoped to. Required as a query/body param on most v2
+  // endpoints, so it is captured alongside the token at connect time.
+  locationId?: string;
   // WordPress specific
   username?: string;
   password?: string;

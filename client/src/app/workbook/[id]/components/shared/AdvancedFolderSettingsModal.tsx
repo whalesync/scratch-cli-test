@@ -10,7 +10,7 @@ import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { isTableFullyLocked, TableList } from '@/types/server-entities/table-list';
+import { isTableFullyLocked, settingAppliesToTable, TableList } from '@/types/server-entities/table-list';
 import {
   Autocomplete,
   Checkbox,
@@ -221,6 +221,16 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   const supportsFilters = tableList?.supportsFilters ?? false;
   const advancedSettings = useMemo(() => tableList?.advancedSettings ?? [], [tableList?.advancedSettings]);
 
+  // Look up this folder's TablePreview to detect connector-level lockout and to
+  // scope per-table settings (forTableWsIds). Defined above the settings memos
+  // so they can filter by it.
+  const tablePreview = useMemo(() => {
+    if (!tableList || folder.tableId.length === 0) return undefined;
+    const key = folder.tableId.join('/');
+    return tableList.tables.find((t) => t.id.remoteId.join('/') === key);
+  }, [tableList, folder.tableId]);
+  const fullyLocked = isTableFullyLocked(tablePreview);
+
   // Connector-level incremental-pull capability and its user-facing note, gated
   // the same way as the sidebar menu items and schedule modal.
   const incrementalPullSupported = folder.connectorService
@@ -233,14 +243,23 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
 
   // The last-modified-field picker belongs to the Incremental Pull section; all
   // other advanced settings are connector-specific and render under their own
-  // "<Connector> Settings" section.
+  // "<Connector> Settings" section. Both are scoped by `forTableWsIds` so a
+  // setting can target specific tables (settingAppliesToTable; omitted = all).
+  // buildOptions and the init effect still iterate the full advancedSettings
+  // list, so a previously-saved value on a now-hidden setting is preserved.
   const incrementalPullFieldSettings = useMemo(
-    () => advancedSettings.filter((s) => s.key === INCREMENTAL_PULL_FIELD_SETTING_KEY),
-    [advancedSettings],
+    () =>
+      advancedSettings.filter(
+        (s) => s.key === INCREMENTAL_PULL_FIELD_SETTING_KEY && settingAppliesToTable(s, tablePreview?.id.wsId),
+      ),
+    [advancedSettings, tablePreview],
   );
   const connectorSpecificSettings = useMemo(
-    () => advancedSettings.filter((s) => s.key !== INCREMENTAL_PULL_FIELD_SETTING_KEY),
-    [advancedSettings],
+    () =>
+      advancedSettings.filter(
+        (s) => s.key !== INCREMENTAL_PULL_FIELD_SETTING_KEY && settingAppliesToTable(s, tablePreview?.id.wsId),
+      ),
+    [advancedSettings, tablePreview],
   );
 
   // Only fetch the schema when a field-select that will actually render is
@@ -276,14 +295,6 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
       return format !== undefined && allowedFormats.includes(format);
     });
   };
-
-  // Look up this folder's TablePreview so we can detect connector-level lockout.
-  const tablePreview = useMemo(() => {
-    if (!tableList || folder.tableId.length === 0) return undefined;
-    const key = folder.tableId.join('/');
-    return tableList.tables.find((t) => t.id.remoteId.join('/') === key);
-  }, [tableList, folder.tableId]);
-  const fullyLocked = isTableFullyLocked(tablePreview);
 
   useEffect(() => {
     if (opened) {

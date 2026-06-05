@@ -38,4 +38,11 @@ export interface ConnectorSettingDefinition {
    * no connector-specific knowledge.
    */
   fieldSelectFormats?: string[];
+  /**
+   * Optional whitelist of table `wsId`s this setting applies to. When omitted,
+   * the setting applies to every table (backwards-compatible default). When set,
+   * the client only renders the setting for folders whose table wsId is listed —
+   * e.g. a Contacts-only deep-fetch toggle on a connector with many tables.
+   */
+  forTableWsIds?: string[];
 }

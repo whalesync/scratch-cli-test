@@ -21,6 +21,7 @@ import {
 } from '@/stores/workbook-websocket-store';
 import {
   isTableFullyLocked,
+  settingAppliesToTable,
   TableList,
   TablePreview,
   TableSchemaPreview,
@@ -1259,14 +1260,16 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
                     )}
 
                     {!entry.isRemoved &&
-                      advancedSettings.map((setting) => (
-                        <ConnectorSettingField
-                          key={setting.key}
-                          setting={setting}
-                          value={connectorOptions.get(entry.tableKey)?.[setting.key]}
-                          onChange={(val) => handleConnectorOptionChange(entry.tableKey, setting.key, val)}
-                        />
-                      ))}
+                      advancedSettings
+                        .filter((setting) => settingAppliesToTable(setting, tableLookup.get(entry.tableKey)?.id.wsId))
+                        .map((setting) => (
+                          <ConnectorSettingField
+                            key={setting.key}
+                            setting={setting}
+                            value={connectorOptions.get(entry.tableKey)?.[setting.key]}
+                            onChange={(val) => handleConnectorOptionChange(entry.tableKey, setting.key, val)}
+                          />
+                        ))}
                   </Stack>
                 </Box>
               );

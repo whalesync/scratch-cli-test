@@ -30,4 +30,5 @@ export const Service = {
   AFFINITY: 'AFFINITY',
   ATTIO: 'ATTIO',
   GENERIC_API: 'GENERIC_API',
+  GOHIGHLEVEL: 'GOHIGHLEVEL',
 } as const;

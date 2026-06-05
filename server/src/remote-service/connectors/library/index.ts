@@ -7,6 +7,7 @@ import './attio/attio-connector';
 import './audienceful/audienceful-connector';
 import './brevo/brevo-connector';
 import './generic-api/generic-api-connector';
+import './gohighlevel/gohighlevel-connector';
 import './hubspot/hubspot-connector';
 import './intercom/intercom-connector';
 import './linear/linear-connector';
