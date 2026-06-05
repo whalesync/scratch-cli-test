@@ -5,7 +5,7 @@
 **Linear**: [DEV-9754](https://linear.app/whalesync/issue/DEV-9754/remove-connector-api-libraries)
 **Author**: Curtis Fonger
 
-> **Progress:** PR0 ✅ · PR1 ✅ · PR2–PR6 not started. See [Progress log](#progress-log) and [Implementation notes & corrections](#implementation-notes--corrections) at the bottom.
+> **Progress:** PR0 ✅ (committed) · PR1 ✅ (committed `622e5360`) · PR2 ✅ · PR3 ✅ (both implemented + verified, **uncommitted**) · PR4–PR6 not started. **Webflow SDK fully removed.** See [Progress log](#progress-log) and [Implementation notes & corrections](#implementation-notes--corrections) at the bottom.
 
 ## Problem
 
@@ -50,9 +50,9 @@ The fix: replace each SDK with an explicit axios client that mirrors the existin
 - Modify `webflow-connector.ts` (swap client + calls + error mapping; remove connector-local `withRetry`/RETRY_OPTS), `webflow-json-schema.ts` & `webflow-schema-parser.ts` (repoint `Webflow.*`/`FieldType` to local types).
 - Date fields: raw axios returns ISO strings, so the existing `x instanceof Date ? toISOString() : x` guards pass strings through unchanged — no coercion needed.
 
-**PR2 — Webflow OAuth provider.** Replace `WebflowClient.authorizeURL` with a hand-built `https://webflow.com/oauth/authorize?...` URL and `WebflowClient.getAccessToken` with an axios `POST https://api.webflow.com/oauth/access_token`. Inline `OauthScope` as a string-literal union. *(Confirm authorize host/token path against current Webflow OAuth docs.)*
+**PR2 — Webflow OAuth provider. ✅ DONE** (implemented + verified; uncommitted). Replaced `WebflowClient.authorizeURL` with a hand-built `https://webflow.com/oauth/authorize?...` URL and `WebflowClient.getAccessToken` with `axios POST https://api.webflow.com/oauth/access_token`. Inlined `OauthScope` → local `WebflowOauthScope` string-literal union (the 7 CMS/pages/sites scopes used). Confirmed request shapes against the SDK source directly (`node_modules/webflow-api/dist/wrapper/WebflowClient.js`): same param order (`response_type`,`client_id`,`redirect_uri`,`state`,`scope`), space-joined scopes, JSON body with `grant_type=authorization_code`; used `encodeURIComponent` so spaces are `%20` (byte-identical to the SDK's `qs.stringify`); dropped only the SDK's `X-Fern-*` telemetry headers. Error path now surfaces the axios response body (was opaque in the SDK wrapper).
 
-**PR3 — Drop `webflow-api`.** Remove from `server/package.json`; grep proves zero imports; `yarn install`; build + lint + rewritten tests.
+**PR3 — Drop `webflow-api`. ✅ DONE** (uncommitted). Removed from `server/package.json`; grep confirms **zero** `from 'webflow-api'` source imports; `yarn install` pruned it from the authoritative **root** `yarn.lock` and from `node_modules`; server `typecheck` + `eslint --max-warnings=0` + `prettier` all pass. ⚠️ The vestigial tracked `server/yarn.lock` (not used by the workspace install, which maintains root `yarn.lock`) still carries an orphaned `webflow-api@^3.2.0` block — pre-existing, harmless, left for optional cleanup.
 
 **PR4 — Notion client (runtime only).** New `notion-api-client.ts` (`baseURL https://api.notion.com/v1`, `Authorization: Bearer` + `Notion-Version: 2025-09-03`) returning verbatim `response.data`; `NotionError`/`NotionRequestTimeoutError`; error classification off Notion JSON `code` strings + HTTP status; structural replacements for `isFullDatabase`/`isFullDataSource` in `notion-data-source-types.ts`. Port `notion-connector.ts` + the dead-code `notion-block-diff-executor.ts`. Keep all `import type`.
 
@@ -82,7 +82,9 @@ The fix: replace each SDK with an explicit axios client that mirrors the existin
 
 - **PR0 — Cleanup: DONE** (commit `5c2c9760`). This doc added; `experimental/scratch-v4-backend` deleted.
 - **PR1 — Webflow client + types: DONE** (implemented, adversarially reviewed, verified — not yet committed). `webflow-api-client.ts` + local `webflow-types.ts` added; `webflow-connector.ts` / `webflow-json-schema.ts` / `webflow-schema-parser.ts` rewired off the SDK; flat client methods (`listSites`, `listCollectionItems`, `createItemsLive`, …) replace the SDK's nested `client.collections.items.*`. `yarn typecheck` + `lint` + `nest build` pass; **123 webflow/asset tests pass**. New tests: `webflow-api-client.spec.ts` (exact endpoints/params/body, date-normalization, upload field-ordering + MD5) and `webflow-connector-errors.spec.ts` (`extractConnectorErrorDetails` + `deleteRecords` 404 swallow); connector-test docs updated to the flat-client mock. The only remaining `from 'webflow-api'` import is the OAuth provider (PR2).
-- **PR2–PR6: NOT STARTED.**
+- **PR2 — Webflow OAuth provider: DONE** (implemented + verified, uncommitted). `webflow-oauth.provider.ts` no longer imports `webflow-api`; authorize URL + token exchange hand-rolled with axios, matched against the SDK source. No OAuth-provider unit test exists, so none to update.
+- **PR3 — Drop `webflow-api`: DONE** (uncommitted). Dep removed from `server/package.json`; zero source imports remain; root `yarn.lock` + `node_modules` pruned; server typecheck/lint/prettier green. **Webflow is now SDK-free.** (Vestigial `server/yarn.lock` orphan noted above.)
+- **PR4–PR6 (Notion half): NOT STARTED.** Notion still imports runtime symbols (`Client`, `isFullDatabase`) in `notion-connector.ts`, `code-migrations.controller.ts`, `notion-block-diff-executor.ts`, and a test; `@notionhq/client` is still in `dependencies`.
 
 ## Implementation notes & corrections
 
