@@ -1,0 +1,18 @@
+# Conductor: gitignored files to copy into every new workspace.
+#
+# A Conductor workspace is a fresh git worktree, so files that aren't committed
+# (local env / secrets) don't come along automatically. List them here and
+# Conductor copies them from the repo root when it creates the workspace.
+#
+# Syntax: .gitignore-style, one pattern per line, relative to the repo root
+# (a leading `/` anchors to the root). `#` starts a comment.
+
+# Dev env
+/client/.env
+/server/.env
+/scratch-desktop/.env
+
+# Test env (client tests, live-API integration + smoke tests; e.g. WEBFLOW_API_KEY)
+/client/.env.test
+/server/.env.integration
+/smoke-tests/.env.integration
