@@ -473,7 +473,7 @@ fn sync_config_filename(display_name: &str, sync_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Local sync output types (mirrors experimental/scratch-v4-backend)
+// Local sync output types
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Serialize, Debug)]
