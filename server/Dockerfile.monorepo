@@ -20,7 +20,6 @@ COPY ./packages/shared-types/src/ /app/packages/shared-types/src/
 
 # Copy server package files (needed for workspace resolution)
 COPY ./server/package.json /app/server/package.json
-COPY ./server/yarn.lock /app/server/yarn.lock
 COPY ./server/prisma/ /app/server/prisma/
 
 # Install all workspace dependencies at root level to properly hoist dependencies

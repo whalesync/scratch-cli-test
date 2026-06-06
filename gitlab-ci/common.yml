@@ -182,21 +182,29 @@ include:
   shared_types:
     key:
       files:
-        - packages/shared-types/yarn.lock
+        # Root yarn.lock is the single authoritative lockfile for this Yarn 1
+        # workspaces monorepo; nested per-package lockfiles were removed
+        # (DEV-10343). Keying off it invalidates node_modules caches on real
+        # dependency changes. A distinct prefix keeps each cache uniquely keyed
+        # even though they now share the same keying file.
+        - yarn.lock
+      prefix: shared_types
     paths:
       - packages/shared-types/node_modules
     unprotect: true
   server:
     key:
       files:
-        - server/yarn.lock
+        - yarn.lock
+      prefix: server
     paths:
       - server/node_modules
     unprotect: true
   client:
     key:
       files:
-        - client/yarn.lock
+        - yarn.lock
+      prefix: client
     paths:
       - client/node_modules
     unprotect: true

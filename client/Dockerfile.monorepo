@@ -29,7 +29,6 @@ RUN yarn build
 # Copy and install client dependencies
 WORKDIR /app
 COPY ./client/package.json /app/client/package.json
-COPY ./client/yarn.lock /app/client/yarn.lock
 
 WORKDIR /app/client
 RUN yarn install --immutable
