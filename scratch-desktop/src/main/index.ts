@@ -11,6 +11,7 @@ import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-i
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import { UPDATER_EVENT_CHANNEL, UpdaterEvent } from '../shared/updater-events';
 import { clearCredentials, getCredentials, isTokenExpired, saveCredentials } from './auth-store';
+import { claudeChatService } from './claude-chat';
 import { detectCloudSync, type CloudSyncDetection } from './cloud-sync';
 import { installScratchmdToPath, isCliSymlinkInstalled, uninstallScratchmdFromPath } from './install-cli';
 import {
@@ -436,6 +437,9 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     void workspaceFileWatchService.clearWorkspaceFileWatch();
+    // SIGTERM any in-flight `claude` chat children so a closed window can't
+    // leave an orphaned agent mutating the workspace git repo.
+    claudeChatService.killAllTurns();
     // Drop the now-destroyed WebContents subscriber and any queued work —
     // see review-refresh-queue.ts module docstring.
     reviewRefreshQueue.setSubscriber(null);
@@ -819,6 +823,20 @@ ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, s
 ipcMain.handle('scratch:start-run-local-sync', async (event, workspacePath: string, syncName: string) =>
   startWorkspaceInternalLiveCommand(event.sender, workspacePath, ['syncs', 'run-local', '--sync', syncName]),
 );
+
+// ── Embedded Claude chat (Approach A — see src/main/claude-chat.ts) ──
+// These handlers wrap synchronous service calls; `ipcMain.handle` still returns
+// a promise to the renderer, and a synchronous throw rejects it cleanly.
+ipcMain.handle('scratch:claude-chat-check', () => claudeChatService.checkAvailability());
+ipcMain.handle('scratch:claude-chat-send', (event, workspacePath: string, message: string, requestId: string) =>
+  claudeChatService.startTurn(event.sender, { workspacePath, message, requestId }),
+);
+ipcMain.handle('scratch:claude-chat-stop', (_, requestId: string) => {
+  claudeChatService.stopTurn(requestId);
+});
+ipcMain.handle('scratch:claude-chat-reset', (_, workspacePath: string) => {
+  claudeChatService.resetSession(workspacePath);
+});
 ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string) =>
   withWorkspaceInternalMutation(workspacePath, () =>
     runScratchmdJson<{ jobIds: string[] }>(['--json', 'linked', 'pull-all'], workspacePath),

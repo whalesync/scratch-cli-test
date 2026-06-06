@@ -1,5 +1,6 @@
 import { ElectronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
+import type { ClaudeChatAvailability, ClaudeChatEvent, StartClaudeChatTurnResult } from '../shared/claude-chat';
 import type { CliInstallEvent } from '../shared/cli-install-events';
 import type { AppWillQuitPayload } from '../shared/lifecycle-events';
 import type { ReviewStatsMayHaveChangedEvent } from '../shared/review-stats-events';
@@ -181,6 +182,14 @@ interface ScratchDesktopAPI {
     syncName: string,
   ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   startRunLocalSync: (workspacePath: string, syncName: string) => Promise<{ sessionId: string }>;
+  checkClaudeChatAvailable: () => Promise<ClaudeChatAvailability>;
+  sendClaudeChatMessage: (
+    workspacePath: string,
+    message: string,
+    requestId: string,
+  ) => Promise<StartClaudeChatTurnResult>;
+  stopClaudeChat: (requestId: string) => Promise<void>;
+  resetClaudeChatSession: (workspacePath: string) => Promise<void>;
   pullAllLinkedTables: (workspacePath: string) => Promise<{ jobIds: string[] }>;
   showInFolder: (folderPath: string) => Promise<void>;
   showItemInFolder: (filePath: string) => Promise<void>;
@@ -227,6 +236,7 @@ interface ScratchDesktopAPI {
   watchWorkspaceFiles: (workspacePath: string) => Promise<string[]>;
   clearWorkspaceFileWatch: () => Promise<void>;
   onCommandEvent: (callback: (event: ScratchCommandEvent) => void) => () => void;
+  onClaudeChatEvent: (callback: (event: ClaudeChatEvent) => void) => () => void;
   onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void) => () => void;
   onReviewStatsMayHaveChanged: (callback: (event: ReviewStatsMayHaveChangedEvent) => void) => () => void;
   onConnectionFileChanged: (callback: (event: ConnectionFileChangedEvent) => void) => () => void;

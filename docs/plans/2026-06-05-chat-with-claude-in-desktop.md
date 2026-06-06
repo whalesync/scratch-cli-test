@@ -1,12 +1,74 @@
 # Design: Chat with Claude inside Scratch desktop
 
-- **Status:** Planned
+- **Status:** In Progress (Approach A spike implemented 2026-06-05)
 - **Created:** 2026-06-05
 - **Author:** Curtis Fonger
 - **Linear:** _TBD_
 - **Branch:** chat-with-claude-in-desktop
 - **Affected package:** scratch-desktop
 - **Source:** /office-hours design session (Startup mode), approved 2026-06-05
+
+## Implementation Log
+
+### 2026-06-05 — Approach A (thin CLI shell-out panel) landed on `victoria`
+
+The magic-moment spike is built and verified end-to-end at the unit + build level
+(manual demo against a real customer workbook — "The Assignment" — is the remaining step).
+
+**Both landmines de-risked first (live, against the real `claude` CLI v2.1.165):**
+
+- Non-TTY streaming: `claude --print --output-format stream-json --verbose
+  --include-partial-messages --permission-mode acceptEdits --session-id <uuid>`
+  streams token-by-token via `content_block_delta`/`text_delta` and runs headless under
+  **BYO subscription auth** (`apiKeySource: "none"` — no API key needed). P6 holds.
+- Session continuity (Open Q2): a follow-up turn with `--resume <id>` correctly recalled
+  prior-turn context **when `cwd` is the workspace path** (sessions are project-scoped — a
+  resume from a different cwd fails, which is fine since we always spawn with
+  `cwd=localPath`).
+
+**What shipped (files):**
+
+- `src/shared/claude-chat.ts` — IPC channel + normalized event contract.
+- `src/main/claude-chat.ts` — `ClaudeChatService`: BYO-binary resolution (probes
+  `~/.local/bin`, homebrew, etc. — a packaged macOS app doesn't inherit shell `PATH`),
+  per-turn spawn, `stream-json` → normalized-event parsing, per-workspace session map for
+  `--resume`, and SIGTERM teardown on window-close. Agent edits are deliberately **not**
+  wrapped in `beginInternalWorkspaceMutation`, so the `WorkspaceFileWatchService` surfaces
+  them as external mutations in the change-review ladder (P2).
+- `src/renderer/src/hooks/use-claude-chat.ts` — message state + event folding; stops the
+  in-flight turn on unmount (no orphans on workspace switch).
+- `src/renderer/src/pages/workspace/ClaudeChatPanel.tsx` — the chat surface (streamed text +
+  generic tool chips, BYO install prompt, `marked` markdown on completed turns).
+- `src/renderer/src/pages/workspace/CenterTabBar.tsx` — Conductor-style center tab strip.
+- Wired into `WorkspaceContent` as a **center-pane tab system** (Open Q4, revised below),
+  `workspace-ui-store` (`activeCenterTab: 'chat' | 'data'`), PostHog (`open_claude_chat_panel`,
+  `send_claude_chat_message` — length only, never message text).
+- `src/main/__tests__/claude-chat.spec.ts` — locks the parse/label contract (11 tests).
+- **Dev-gated behind a flag** (`useClaudeChatEnabled`, localStorage `claude_chat_enabled`,
+  off by default). Toggled via a **"Claude chat" checkbox in the workspace Debug menu** (the
+  dev-toolbox kebab in the header, which only appears for users with the `DEV_TOOLBOX`
+  experiment). When off, the center pane is just the data view as before — no chat tab. This
+  keeps the feature dev-only while it's refined.
+
+**Decisions made (Open Questions):**
+
+- Q2 session storage: in-memory per `workspacePath` in main (resets on app restart —
+  acceptable for the spike; persistence deferred).
+- Q3 permission posture: **`--dangerously-skip-permissions`** (founder's standing
+  preference — runs fully autonomous). The git review ladder (P2), not a permission prompt,
+  is the guardrail: every edit lands as a reviewable/revertible diff before anything
+  publishes. (Initially shipped as `acceptEdits`; changed per founder direction.)
+- Q4 panel placement (**revised to center-pane tabs**): Chat is the primary center "tab"
+  (Conductor-style), not a right rail. Selecting a folder on the left opens that folder's
+  grid as a second tab beside Chat; you switch between them. Chat stays mounted across tab
+  switches so the conversation persists; the data tab also covers the
+  connections/publish-history/validation panels. (Initially shipped as a right rail; the
+  right-rail pattern is falling out of favor vs. center-pane AI chat.)
+
+**Verification:** `yarn lint` clean, all 235 desktop tests pass, full `electron-vite build`
+succeeds. Remaining: the live demo + sit-behind-a-marketer assignment, then **Approach B**
+(Agent SDK, pending Open Q1 — SDK subscription-auth check) and **Approach C** (MCP) per the
+recommended sequencing.
 
 ## Problem Statement
 
