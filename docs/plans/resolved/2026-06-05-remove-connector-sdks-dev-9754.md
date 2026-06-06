@@ -1,11 +1,13 @@
 # Remove imported connector SDKs (`webflow-api`, `@notionhq/client`)
 
 **Date**: 2026-06-05
-**Status**: In Progress
+**Status**: Resolved
 **Linear**: [DEV-9754](https://linear.app/whalesync/issue/DEV-9754/remove-connector-api-libraries)
 **Author**: Curtis Fonger
 
-> **Progress:** PR0 ✅ (`5c2c9760`) · PR1 ✅ (`622e5360`) · PR2 ✅ · PR3 ✅ (`f3b75ba5`) — all **committed and on `master`**; Webflow SDK fully removed. · PR4 ✅ · PR5 ✅ · PR6 ✅ — Notion runtime SDK removed, `@notionhq/client` moved to **devDependencies** (types only); implemented + verified, **uncommitted on this branch**. **`@notionhq/client` and `webflow-api` are now both out of the production dependency closure.** See [Progress log](#progress-log) and [Implementation notes & corrections](#implementation-notes--corrections) at the bottom.
+> **Progress: COMPLETE — all PRs merged to `master`.** PR0 ✅ (`5c2c9760`) · PR1 ✅ (`622e5360`) · PR2 ✅ · PR3 ✅ (`f3b75ba5`) — Webflow SDK fully removed. · PR4 ✅ · PR5 ✅ · PR6 ✅ (`31d02bc3`) — Notion runtime SDK removed, `@notionhq/client` moved to **devDependencies** (types only). Shipped as 4 merged GitLab MRs (2616, 2618, 2626, 2630). **`@notionhq/client` and `webflow-api` are both out of the production dependency closure.** The vestigial `server/yarn.lock` `webflow-api` orphan (PR3 note) has since been scrubbed. See [Progress log](#progress-log) and [Implementation notes & corrections](#implementation-notes--corrections) at the bottom.
+>
+> **Deferred follow-up:** the `createApiClient()`-level request/response logging interceptor is tracked as [DEV-10339](https://linear.app/whalesync/issue/DEV-10339).
 
 ## Problem
 
@@ -84,9 +86,10 @@ The fix: replace each SDK with an explicit axios client that mirrors the existin
 - **PR1 — Webflow client + types: DONE** (implemented, adversarially reviewed, verified — not yet committed). `webflow-api-client.ts` + local `webflow-types.ts` added; `webflow-connector.ts` / `webflow-json-schema.ts` / `webflow-schema-parser.ts` rewired off the SDK; flat client methods (`listSites`, `listCollectionItems`, `createItemsLive`, …) replace the SDK's nested `client.collections.items.*`. `yarn typecheck` + `lint` + `nest build` pass; **123 webflow/asset tests pass**. New tests: `webflow-api-client.spec.ts` (exact endpoints/params/body, date-normalization, upload field-ordering + MD5) and `webflow-connector-errors.spec.ts` (`extractConnectorErrorDetails` + `deleteRecords` 404 swallow); connector-test docs updated to the flat-client mock. The only remaining `from 'webflow-api'` import is the OAuth provider (PR2).
 - **PR2 — Webflow OAuth provider: DONE & COMMITTED** (`f3b75ba5`, on `master`). `webflow-oauth.provider.ts` no longer imports `webflow-api`; authorize URL + token exchange hand-rolled with axios, matched against the SDK source.
 - **PR3 — Drop `webflow-api`: DONE & COMMITTED** (`f3b75ba5`, on `master`). Dep removed from `server/package.json`; zero source imports remain; root `yarn.lock` + `node_modules` pruned. **Webflow is now SDK-free.** (Vestigial `server/yarn.lock` orphan noted above.)
-- **PR4 — Notion client (runtime only): DONE** (implemented + verified, uncommitted on this branch). `notion-api-client.ts` (`NotionApiClient`) added; `notion-connector.ts` + `notion-block-diff-executor.ts` rewired off the SDK; structural `isFullDatabase`/`isFullDataSource` in `notion-data-source-types.ts`; `notion-schema-parser.ts` → `import type`.
-- **PR5 — Notion ancillary + dep move: DONE** (uncommitted). `code-migrations.controller.ts` ported; **`@notionhq/client` moved `dependencies` → `devDependencies`**; compiled `dist/` proven free of runtime SDK `require`s. **Notion is now runtime-SDK-free.**
-- **PR6 — Test-mock rewrite: DONE** (uncommitted). The 4 SDK-coupled specs rewritten to mock the flat api-client (see PR6 above). `yarn install` left the lockfile unchanged (devDep move resolves the same tree).
+- **PR4 — Notion client (runtime only): DONE & COMMITTED** (`31d02bc3`, on `master`; GitLab MR 2630). `notion-api-client.ts` (`NotionApiClient`) added; `notion-connector.ts` + `notion-block-diff-executor.ts` rewired off the SDK; structural `isFullDatabase`/`isFullDataSource` in `notion-data-source-types.ts`; `notion-schema-parser.ts` → `import type`.
+- **PR5 — Notion ancillary + dep move: DONE & COMMITTED** (`31d02bc3`, on `master`; GitLab MR 2630). `code-migrations.controller.ts` ported; **`@notionhq/client` moved `dependencies` → `devDependencies`**; compiled `dist/` proven free of runtime SDK `require`s. **Notion is now runtime-SDK-free.**
+- **PR6 — Test-mock rewrite: DONE & COMMITTED** (`31d02bc3`, on `master`; GitLab MR 2630). The 4 SDK-coupled specs rewritten to mock the flat api-client (see PR6 above). `yarn install` left the lockfile unchanged (devDep move resolves the same tree).
+- **Post-ship cleanup: DONE.** The vestigial `webflow-api@^3.2.0` block in the tracked-but-unused `server/yarn.lock` (flagged in the PR3 note) was removed; the authoritative root `yarn.lock` was already clean.
 - **Verification (whole Notion half):** server `typecheck` + `lint-strict` (`--max-warnings=0`) + `nest build` green; **187/187** notion + code-migrations tests pass; **1845/1845** `src/remote-service` unit tests pass; root `yarn build` (14/14) + root `yarn lint` (5/5) green; prettier clean. Baseline captured before changes was 187/187, so behaviour is preserved.
 
 ## Implementation notes & corrections

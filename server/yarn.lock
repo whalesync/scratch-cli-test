@@ -9086,20 +9086,6 @@ wcwidth@^1.0.1:
   dependencies:
     defaults "^1.0.3"
 
-webflow-api@^3.2.0:
-  version "3.2.0"
-  resolved "https://registry.yarnpkg.com/webflow-api/-/webflow-api-3.2.0.tgz#495aa28836b129a2e3d665871b3a9aee0e4ac76a"
-  integrity sha512-fFZoxFl8TZeGCkC9/NGA7BKgVysfmEYPx4sK7HWLmHakd4pRI+ZivZk5ycCOJFHMmUKyH+owkzgYneDiJZ2cDA==
-  dependencies:
-    crypto-browserify "^3.12.1"
-    form-data "^4.0.0"
-    formdata-node "^6.0.3"
-    js-base64 "3.7.7"
-    node-fetch "^2.7.0"
-    qs "^6.13.1"
-    readable-stream "^4.5.2"
-    url-join "4.0.1"
-
 webidl-conversions@^3.0.0:
   version "3.0.1"
   resolved "https://registry.yarnpkg.com/webidl-conversions/-/webidl-conversions-3.0.1.tgz#24534275e2a7bc6be7bc86611cc16ae0a5654871"
