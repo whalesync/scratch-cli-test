@@ -8,19 +8,6 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Pipedrive'),
 }));
 
-// Mock the pipedrive SDK
-jest.mock('pipedrive/v2', () => {
-  return {
-    Configuration: jest.fn(),
-    DealsApi: jest.fn(),
-    PersonsApi: jest.fn(),
-    OrganizationsApi: jest.fn(),
-    DealFieldsApi: jest.fn(),
-    PersonFieldsApi: jest.fn(),
-    OrganizationFieldsApi: jest.fn(),
-  };
-});
-
 // Mock the API client
 const mockTestConnection = jest.fn();
 const mockGetFields = jest.fn();

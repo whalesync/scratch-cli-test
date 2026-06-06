@@ -8,18 +8,6 @@ jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Pipedrive'),
 }));
 
-// The connector pulls in the v2 SDK transitively via the api-client; mock it so
-// the real SDK is never constructed.
-jest.mock('pipedrive/v2', () => ({
-  Configuration: jest.fn(),
-  DealsApi: jest.fn(),
-  PersonsApi: jest.fn(),
-  OrganizationsApi: jest.fn(),
-  DealFieldsApi: jest.fn(),
-  PersonFieldsApi: jest.fn(),
-  OrganizationFieldsApi: jest.fn(),
-}));
-
 const mockListEntities = jest.fn();
 
 jest.mock('../pipedrive-api-client', () => ({

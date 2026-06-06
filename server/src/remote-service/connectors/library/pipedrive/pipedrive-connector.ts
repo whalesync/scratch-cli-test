@@ -32,7 +32,8 @@ import { ENTITY_DISPLAY_NAMES, ENTITY_TYPES, PipedriveDownloadProgress, Pipedriv
  * - Persons (contacts)
  * - Organizations (companies)
  *
- * Uses the Pipedrive v2 API exclusively via the official SDK.
+ * Talks to the Pipedrive v2 REST API exclusively through {@link PipedriveApiClient}
+ * (an explicit axios client), not a vendored SDK.
  */
 export class PipedriveConnector extends Connector<string, PipedriveDownloadProgress> {
   readonly service = Service.PIPEDRIVE;

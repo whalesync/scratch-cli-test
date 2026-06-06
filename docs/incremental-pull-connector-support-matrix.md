@@ -29,7 +29,7 @@ The recurring **sub-patterns**:
 | **Linear** | ✅ Landed | GraphQL `filter: { updatedAt: { gt } }` | fixed system field | — | Per-entity `FILTER_TYPE_MAP` |
 | **Intercom** | ✅ Landed | Search `POST /conversations/search` `updated_at > <unix s>` | capability-gated (table) | — | Conversations only; Unix-seconds |
 | **Moco** | ✅ Landed | REST `?updated_after=<iso8601 UTC>` → `updated_at` | fixed system field | — | All 3 entities; seconds-precision, UTC |
-| **Pipedrive** | ✅ Landed | REST `?updated_since=<rfc3339>` → `update_time` | fixed system field | — | All 3 entities (deals/persons/orgs); RFC3339, ms kept |
+| **Pipedrive** | ✅ Landed | REST `?updated_since=<rfc3339>` → `update_time` | fixed system field | — | All 3 entities (deals/persons/orgs); whole-second RFC3339 (ms stripped — v2 parser rejects fractional seconds) |
 | **HubSpot** | ✅ Landed | CRM Search `POST /crm/v3/objects/{type}/search`, `<field> GTE <epoch-ms>` → annotated property | resolver + override | — | Switches list→Search; associations omitted + 10k window (both reconciled by `FULL_PULL`) |
 | **Shopify** | 🟡 Feasible | GraphQL root `query: "updated_at:>'<iso>'"` | capability-gated (entity) | Medium | Only some root connections accept `query:` |
 | **QuickBooks** | 🟡 Feasible | CDC `GET /cdc?entities=…&changedSince=<iso>` → `MetaData.LastUpdatedTime` | fixed system field | Low–Med | Different endpoint; 30-day CDC window |
@@ -80,7 +80,7 @@ Every Moco resource (companies, contacts/people, projects) carries `updated_at`,
 
 ### Pipedrive — REST `?updated_since`, fixed system field
 
-deals, persons, and organizations all carry a server-side `update_time`, and all three v2 list endpoints (`getDeals`/`getPersons`/`getOrganizations`) accept `?updated_since=<rfc3339>` (verified against the installed `pipedrive@31.2.1` SDK request types), so support is unconditional. An optional `updatedSince` is threaded into `listEntities` and added to the v2 request params; the existing opaque-cursor pagination is unchanged. `updated_since` is **inclusive (`>=`)**, but the watermark is client-side so the 60s margin still applies. Unlike Moco, Pipedrive accepts RFC3339 fractional seconds, so `buildPipedriveUpdatedSince` emits `Date.toISOString()` verbatim (no millisecond stripping). `update_time` is annotated with `X_SCRATCH_LAST_MODIFIED_FIELD` for the UI picker. Only the filter is used (no `sort_by`) — the predicate already returns the changed set and cursor pagination is stable, matching Moco.
+deals, persons, and organizations all carry a server-side `update_time`, and all three v2 list endpoints (`getDeals`/`getPersons`/`getOrganizations`) accept `?updated_since=<rfc3339>` (verified against the installed `pipedrive@31.2.1` SDK request types), so support is unconditional. An optional `updatedSince` is threaded into `listEntities` and added to the v2 request params; the existing opaque-cursor pagination is unchanged. `updated_since` is **inclusive (`>=`)**, but the watermark is client-side so the 60s margin still applies. Like Moco, Pipedrive's v2 `updated_since` parser rejects the fractional-second component, so `buildPipedriveUpdatedSince` strips milliseconds and emits whole-second RFC3339 UTC (`YYYY-MM-DDTHH:mm:ssZ`). `update_time` is annotated with `X_SCRATCH_LAST_MODIFIED_FIELD` for the UI picker. Only the filter is used (no `sort_by`) — the predicate already returns the changed set and cursor pagination is stable, matching Moco.
 
 ### HubSpot — CRM Search API, resolver + override
 

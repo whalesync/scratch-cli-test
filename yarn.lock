@@ -6712,7 +6712,7 @@ axios-proxy-builder@^0.1.2:
   dependencies:
     tunnel "^0.0.6"
 
-axios@*, axios@1.14.0, axios@^1.10.0, axios@^1.12.0, axios@^1.13.2, axios@^1.9.0:
+axios@*, axios@1.14.0, axios@^1.10.0, axios@^1.12.0, axios@^1.13.2:
   version "1.14.0"
   resolved "https://registry.yarnpkg.com/axios/-/axios-1.14.0.tgz#7c29f4cf2ea91ef05018d5aa5399bf23ed3120eb"
   integrity sha512-3Y8yrqLSwjuzpXuZ0oIYZ/XGgLwUIBU3uLvbcpb0pidD9ctpShJd43KSlEEkVQg6DS0G9NKyzOvBfUtDKEyHvQ==
@@ -14033,14 +14033,6 @@ picomatch@^4.0.2, picomatch@^4.0.3:
   version "4.0.3"
   resolved "https://registry.npmjs.org/picomatch/-/picomatch-4.0.3.tgz"
   integrity sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q==
-
-pipedrive@^31.2.1:
-  version "31.2.1"
-  resolved "https://registry.yarnpkg.com/pipedrive/-/pipedrive-31.2.1.tgz#89d69158a4c99b217e169d819ce372e13a9f5f18"
-  integrity sha512-0luNa+zeJNpJmEg5xPUqJwScdmKU3qBb/GpTfdL12DJqQ793XmVHELzQy4oNj1fGZsaZSeqrF09sxMAxReWSlg==
-  dependencies:
-    axios "^1.9.0"
-    qs "^6.11.0"
 
 pirates@^4.0.4, pirates@^4.0.7:
   version "4.0.7"

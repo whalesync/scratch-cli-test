@@ -1,24 +1,37 @@
-import { isAxiosError } from 'axios';
-import {
-  AddDealRequest,
-  AddOrganizationRequest,
-  AddPersonRequest,
-  Configuration,
-  DealFieldsApi,
-  DealsApi,
-  OrganizationFieldsApi,
-  OrganizationsApi,
-  PersonFieldsApi,
-  PersonsApi,
-  UpdateDealRequest,
-  UpdateOrganizationRequest,
-  UpdatePersonRequest,
-} from 'pipedrive/v2';
+import { AxiosInstance, isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { createApiClient } from '../../create-api-client';
 import { PipedriveEntityType, PipedriveField } from './pipedrive-types';
 
 const LOG_SOURCE = 'PipedriveApiClient';
+
+/**
+ * Base URL for the Pipedrive v2 REST API. The official `pipedrive` SDK hardcoded
+ * this exact value (`BASE_PATH` in its generated `base.js`) for both API-key and
+ * OAuth auth modes — a plain `Configuration({ accessToken })` never swapped in a
+ * company-specific `api_domain` (only the `OAuth2Configuration` flow we never
+ * used did that), so we preserve the single shared host to keep request behaviour
+ * byte-identical.
+ */
+const PIPEDRIVE_V2_BASE_URL = 'https://api.pipedrive.com/api/v2';
+
+/** REST collection path for each entity type's list / create / single-fetch endpoints. */
+const ENTITY_COLLECTION_PATH: Record<PipedriveEntityType, string> = {
+  deals: '/deals',
+  persons: '/persons',
+  organizations: '/organizations',
+};
+
+/** REST collection path for each entity type's Fields-metadata endpoint. */
+const ENTITY_FIELDS_PATH: Record<PipedriveEntityType, string> = {
+  deals: '/dealFields',
+  persons: '/personFields',
+  organizations: '/organizationFields',
+};
+
+/** Max page size the v2 list and field endpoints accept. */
+const PIPEDRIVE_MAX_PAGE_SIZE = 500;
 
 /**
  * Custom error class for Pipedrive API errors.
@@ -38,53 +51,16 @@ export class PipedriveError extends Error {
 }
 
 /**
- * Shape of a Pipedrive v2 REST error body. The v2 SDK installs an axios response
- * interceptor (`errorInterceptor` in the SDK's `base.js`) that, on any HTTP error
- * carrying a response body, rejects with `error.response.data` — i.e. the raw
- * Pipedrive error body, NOT an axios error and NOT an `Error` instance. So a 400
- * surfaces to our code as a plain object like
- * `{ success: false, error: 'Bad request', error_info: '...' }`.
+ * Envelope every Pipedrive v2 REST endpoint wraps its payload in. `data` is the
+ * record (single fetch / create / update) or the array of records (list); cursor
+ * pagination advances via `additional_data.next_cursor`. axios hands us this
+ * verbatim as `response.data` and we never reshape it — preserving on-disk byte
+ * fidelity, exactly as the old SDK's response interceptor (a pure
+ * `response.data` passthrough, no model deserialization or date coercion) did.
  */
-interface PipedriveErrorBody {
-  success?: boolean;
-  error?: string;
-  error_info?: string;
-}
-
-/**
- * Detect the plain-object error body the v2 SDK rejects with (see
- * {@link PipedriveErrorBody}). We require a string `error` (or `error_info`)
- * field so we don't misclassify an unrelated thrown object.
- */
-function isPipedriveErrorBody(value: unknown): value is PipedriveErrorBody {
-  if (typeof value !== 'object' || value === null || value instanceof Error) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.error === 'string' || typeof candidate.error_info === 'string';
-}
-
-/**
- * Normalize whatever the v2 SDK rejected with into a `PipedriveError` carrying a
- * human-readable message. Without this, the SDK's unwrapped error body (a plain
- * object) falls through every `instanceof`/`isAxiosError` check in the connector's
- * error extraction and is rendered as the useless string `"[object Object]"`.
- *
- * Axios errors and already-normalized `PipedriveError`s are returned unchanged so
- * the connector's existing branches keep handling them.
- */
-function normalizePipedriveSdkError(error: unknown): unknown {
-  if (error instanceof PipedriveError || isAxiosError(error)) {
-    return error;
-  }
-  if (isPipedriveErrorBody(error)) {
-    const messageParts = [error.error, error.error_info].filter(
-      (part): part is string => typeof part === 'string' && part.length > 0,
-    );
-    const message = messageParts.length > 0 ? messageParts.join(': ') : JSON.stringify(error);
-    return new PipedriveError(message, undefined, undefined, error);
-  }
-  return error;
+interface PipedriveResponseEnvelope {
+  data?: unknown;
+  additional_data?: { next_cursor?: string };
 }
 
 /**
@@ -116,87 +92,50 @@ function buildRequestBody(
 }
 
 /**
- * Low-level API client for Pipedrive v2 API.
- * Wraps the official `pipedrive` SDK with retry + rate limiting.
+ * Low-level HTTP client for the Pipedrive v2 REST API.
+ *
+ * Talks to the API directly over axios (via {@link createApiClient}) rather than
+ * the vendored `pipedrive` SDK, so every URL we hit is visible and the connector
+ * can be exercised offline against a fake server. The v2 endpoints are
+ * cursor-paginated (`additional_data.next_cursor`) and authenticate via either
+ * the `x-api-token` header (API key) or `Authorization: Bearer` (OAuth).
  */
 export class PipedriveApiClient {
-  private readonly config: Configuration;
+  private readonly http: AxiosInstance;
   private readonly rateLimiter?: RateLimiter;
 
-  // Lazy-initialized API instances
-  private _dealsApi?: DealsApi;
-  private _personsApi?: PersonsApi;
-  private _organizationsApi?: OrganizationsApi;
-  private _dealFieldsApi?: DealFieldsApi;
-  private _personFieldsApi?: PersonFieldsApi;
-  private _organizationFieldsApi?: OrganizationFieldsApi;
-
   constructor(token: string, opts?: { rateLimiter?: RateLimiter; authType?: 'apiKey' | 'oauth' }) {
+    // The v2 SDK injected the API key as the `x-api-token` request header and an
+    // OAuth token as `Authorization: Bearer` (verified in its generated auth
+    // helpers, `setApiKeyToObject` / `setBearerAuthToObject`). Reproduce exactly
+    // so the wire request is unchanged.
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (opts?.authType === 'oauth') {
-      this.config = new Configuration({ accessToken: token });
+      headers.Authorization = `Bearer ${token}`;
     } else {
-      this.config = new Configuration({ apiKey: token });
+      headers['x-api-token'] = token;
     }
+    this.http = createApiClient({ baseURL: PIPEDRIVE_V2_BASE_URL, headers });
     this.rateLimiter = opts?.rateLimiter;
-  }
-
-  // --- Lazy API getters ---
-
-  private get dealsApi(): DealsApi {
-    if (!this._dealsApi) this._dealsApi = new DealsApi(this.config);
-    return this._dealsApi;
-  }
-
-  private get personsApi(): PersonsApi {
-    if (!this._personsApi) this._personsApi = new PersonsApi(this.config);
-    return this._personsApi;
-  }
-
-  private get organizationsApi(): OrganizationsApi {
-    if (!this._organizationsApi) this._organizationsApi = new OrganizationsApi(this.config);
-    return this._organizationsApi;
-  }
-
-  private get dealFieldsApi(): DealFieldsApi {
-    if (!this._dealFieldsApi) this._dealFieldsApi = new DealFieldsApi(this.config);
-    return this._dealFieldsApi;
-  }
-
-  private get personFieldsApi(): PersonFieldsApi {
-    if (!this._personFieldsApi) this._personFieldsApi = new PersonFieldsApi(this.config);
-    return this._personFieldsApi;
-  }
-
-  private get organizationFieldsApi(): OrganizationFieldsApi {
-    if (!this._organizationFieldsApi) this._organizationFieldsApi = new OrganizationFieldsApi(this.config);
-    return this._organizationFieldsApi;
   }
 
   // --- Retry wrapper ---
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
-    try {
-      if (this.rateLimiter) {
-        return await this.rateLimiter.withRetry(fn, PIPEDRIVE_RETRY_OPTS);
-      }
-      return await standaloneWithRetry(fn, PIPEDRIVE_RETRY_OPTS);
-    } catch (error) {
-      // The v2 SDK rejects HTTP errors with the unwrapped response body (a plain
-      // object), which would otherwise stringify to "[object Object]" downstream.
-      // Normalize it into a PipedriveError so callers get a real message. Retry
-      // classification has already run against the original error above.
-      throw normalizePipedriveSdkError(error);
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, PIPEDRIVE_RETRY_OPTS);
     }
+    return standaloneWithRetry(fn, PIPEDRIVE_RETRY_OPTS);
   }
 
   // --- Connection test ---
 
   async testConnection(): Promise<void> {
     try {
-      await this.withRetry(async () => this.dealsApi.getDeals({ limit: 1 }) as Promise<unknown>);
+      await this.withRetry(async () => this.http.get(ENTITY_COLLECTION_PATH.deals, { params: { limit: 1 } }));
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 401) {
-        throw new PipedriveError('Invalid API key or access token', 401, 'UNAUTHORIZED', error.response?.data);
+        throw new PipedriveError('Invalid API key or access token', 401, 'UNAUTHORIZED', error.response.data);
       }
       throw error;
     }
@@ -208,31 +147,24 @@ export class PipedriveApiClient {
    * Fetch all fields for an entity type, paginating if needed.
    */
   async getFields(entityType: PipedriveEntityType): Promise<PipedriveField[]> {
+    const fieldsPath = ENTITY_FIELDS_PATH[entityType];
     const allFields: PipedriveField[] = [];
     let cursor: string | undefined;
 
     do {
-      const response: Record<string, unknown> = await this.withRetry(async () => {
-        const params: { limit?: number; cursor?: string } = { limit: 500 };
-        if (cursor) params.cursor = cursor;
+      const params: { limit: number; cursor?: string } = { limit: PIPEDRIVE_MAX_PAGE_SIZE };
+      if (cursor) params.cursor = cursor;
 
-        switch (entityType) {
-          case 'deals':
-            return this.dealFieldsApi.getDealFields(params) as Promise<Record<string, unknown>>;
-          case 'persons':
-            return this.personFieldsApi.getPersonFields(params) as Promise<Record<string, unknown>>;
-          case 'organizations':
-            return this.organizationFieldsApi.getOrganizationFields(params) as Promise<Record<string, unknown>>;
-        }
-      });
+      const response = await this.withRetry(async () =>
+        this.http.get<PipedriveResponseEnvelope>(fieldsPath, { params }),
+      );
 
-      const data = response?.data;
+      const data = response.data.data;
       if (Array.isArray(data)) {
         allFields.push(...(data as PipedriveField[]));
       }
 
-      const additionalData = response?.additional_data as { next_cursor?: string } | undefined;
-      cursor = additionalData?.next_cursor ?? undefined;
+      cursor = response.data.additional_data?.next_cursor ?? undefined;
     } while (cursor);
 
     return allFields;
@@ -253,27 +185,20 @@ export class PipedriveApiClient {
     resumeCursor?: string,
     updatedSince?: string,
   ): AsyncGenerator<{ data: Record<string, unknown>[]; nextCursor?: string }, void> {
+    const collectionPath = ENTITY_COLLECTION_PATH[entityType];
     let cursor: string | undefined = resumeCursor;
 
     do {
-      const response: Record<string, unknown> = await this.withRetry(async () => {
-        const params: { limit?: number; cursor?: string; updated_since?: string } = { limit: 500 };
-        if (cursor) params.cursor = cursor;
-        if (updatedSince) params.updated_since = updatedSince;
+      const params: { limit: number; cursor?: string; updated_since?: string } = { limit: PIPEDRIVE_MAX_PAGE_SIZE };
+      if (cursor) params.cursor = cursor;
+      if (updatedSince) params.updated_since = updatedSince;
 
-        switch (entityType) {
-          case 'deals':
-            return this.dealsApi.getDeals(params) as Promise<Record<string, unknown>>;
-          case 'persons':
-            return this.personsApi.getPersons(params) as Promise<Record<string, unknown>>;
-          case 'organizations':
-            return this.organizationsApi.getOrganizations(params) as Promise<Record<string, unknown>>;
-        }
-      });
+      const response = await this.withRetry(async () =>
+        this.http.get<PipedriveResponseEnvelope>(collectionPath, { params }),
+      );
 
-      const data = response?.data;
-      const additionalData = response?.additional_data as { next_cursor?: string } | undefined;
-      cursor = additionalData?.next_cursor ?? undefined;
+      const data = response.data.data;
+      cursor = response.data.additional_data?.next_cursor ?? undefined;
 
       if (Array.isArray(data) && data.length > 0) {
         yield { data: data as Record<string, unknown>[], nextCursor: cursor };
@@ -287,20 +212,12 @@ export class PipedriveApiClient {
    * Get a single entity by type and ID. Returns null on 404.
    */
   async getEntity(entityType: PipedriveEntityType, id: number): Promise<Record<string, unknown> | null> {
+    const collectionPath = ENTITY_COLLECTION_PATH[entityType];
     try {
-      const response: Record<string, unknown> = await this.withRetry(async () => {
-        switch (entityType) {
-          case 'deals':
-            return this.dealsApi.getDeal({ id }) as Promise<Record<string, unknown>>;
-          case 'persons':
-            return this.personsApi.getPerson({ id }) as Promise<Record<string, unknown>>;
-          case 'organizations':
-            return this.organizationsApi.getOrganization({ id }) as Promise<Record<string, unknown>>;
-        }
-      });
-
-      const data = response?.data;
-      return (data as Record<string, unknown>) ?? null;
+      const response = await this.withRetry(async () =>
+        this.http.get<PipedriveResponseEnvelope>(`${collectionPath}/${id}`),
+      );
+      return (response.data.data as Record<string, unknown>) ?? null;
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {
         return null;
@@ -319,30 +236,13 @@ export class PipedriveApiClient {
     data: Record<string, unknown>,
     customFieldKeys: Set<string>,
   ): Promise<Record<string, unknown>> {
+    const collectionPath = ENTITY_COLLECTION_PATH[entityType];
     const { systemFields, customFields } = this.separateFields(data, customFieldKeys);
     const body = buildRequestBody(systemFields, customFields);
 
-    // SDK request types have required fields (e.g. title for deals) but we're dynamically constructing
-    // payloads from user data, so we cast through unknown to satisfy the type system.
-    const response: Record<string, unknown> = await this.withRetry(async () => {
-      switch (entityType) {
-        case 'deals':
-          return this.dealsApi.addDeal({
-            AddDealRequest: body as unknown as AddDealRequest,
-          }) as Promise<Record<string, unknown>>;
-        case 'persons':
-          return this.personsApi.addPerson({
-            AddPersonRequest: body as unknown as AddPersonRequest,
-          }) as Promise<Record<string, unknown>>;
-        case 'organizations':
-          return this.organizationsApi.addOrganization({
-            AddOrganizationRequest: body as unknown as AddOrganizationRequest,
-          }) as Promise<Record<string, unknown>>;
-      }
-    });
+    const response = await this.withRetry(async () => this.http.post<PipedriveResponseEnvelope>(collectionPath, body));
 
-    const responseData = response?.data;
-    return (responseData as Record<string, unknown>) ?? {};
+    return (response.data.data as Record<string, unknown>) ?? {};
   }
 
   // --- Update ---
@@ -356,31 +256,15 @@ export class PipedriveApiClient {
     data: Record<string, unknown>,
     customFieldKeys: Set<string>,
   ): Promise<Record<string, unknown>> {
+    const collectionPath = ENTITY_COLLECTION_PATH[entityType];
     const { systemFields, customFields } = this.separateFields(data, customFieldKeys);
     const body = buildRequestBody(systemFields, customFields);
 
-    const response: Record<string, unknown> = await this.withRetry(async () => {
-      switch (entityType) {
-        case 'deals':
-          return this.dealsApi.updateDeal({
-            id,
-            UpdateDealRequest: body as unknown as UpdateDealRequest,
-          }) as Promise<Record<string, unknown>>;
-        case 'persons':
-          return this.personsApi.updatePerson({
-            id,
-            UpdatePersonRequest: body as unknown as UpdatePersonRequest,
-          }) as Promise<Record<string, unknown>>;
-        case 'organizations':
-          return this.organizationsApi.updateOrganization({
-            id,
-            UpdateOrganizationRequest: body as unknown as UpdateOrganizationRequest,
-          }) as Promise<Record<string, unknown>>;
-      }
-    });
+    const response = await this.withRetry(async () =>
+      this.http.patch<PipedriveResponseEnvelope>(`${collectionPath}/${id}`, body),
+    );
 
-    const responseData = response?.data;
-    return (responseData as Record<string, unknown>) ?? {};
+    return (response.data.data as Record<string, unknown>) ?? {};
   }
 
   // --- Delete ---
@@ -389,17 +273,9 @@ export class PipedriveApiClient {
    * Delete an entity by type and ID. Throws on non-404 errors.
    */
   async deleteEntity(entityType: PipedriveEntityType, id: number): Promise<void> {
+    const collectionPath = ENTITY_COLLECTION_PATH[entityType];
     try {
-      await this.withRetry(async () => {
-        switch (entityType) {
-          case 'deals':
-            return this.dealsApi.deleteDeal({ id }) as Promise<unknown>;
-          case 'persons':
-            return this.personsApi.deletePerson({ id }) as Promise<unknown>;
-          case 'organizations':
-            return this.organizationsApi.deleteOrganization({ id }) as Promise<unknown>;
-        }
-      });
+      await this.withRetry(async () => this.http.delete(`${collectionPath}/${id}`));
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {
         WSLogger.warn({
