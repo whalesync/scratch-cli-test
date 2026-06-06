@@ -1,17 +1,20 @@
-# Remove imported connector SDKs (`webflow-api`, `@notionhq/client`)
+# Remove imported connector SDKs (`webflow-api`, `@notionhq/client`, `pipedrive`)
 
-**Date**: 2026-06-05
-**Status**: Resolved
+**Date**: 2026-06-05 (Pipedrive added to scope 2026-06-06)
+**Status**: In Progress
 **Linear**: [DEV-9754](https://linear.app/whalesync/issue/DEV-9754/remove-connector-api-libraries)
 **Author**: Curtis Fonger
 
-> **Progress: COMPLETE — all PRs merged to `master`.** PR0 ✅ (`5c2c9760`) · PR1 ✅ (`622e5360`) · PR2 ✅ · PR3 ✅ (`f3b75ba5`) — Webflow SDK fully removed. · PR4 ✅ · PR5 ✅ · PR6 ✅ (`31d02bc3`) — Notion runtime SDK removed, `@notionhq/client` moved to **devDependencies** (types only). Shipped as 4 merged GitLab MRs (2616, 2618, 2626, 2630). **`@notionhq/client` and `webflow-api` are both out of the production dependency closure.** The vestigial `server/yarn.lock` `webflow-api` orphan (PR3 note) has since been scrubbed. See [Progress log](#progress-log) and [Implementation notes & corrections](#implementation-notes--corrections) at the bottom.
+> **Progress: Webflow + Notion DONE & merged to `master`; Pipedrive REMAINING.**
+> PR0 ✅ (`5c2c9760`) · PR1 ✅ (`622e5360`) · PR2 ✅ · PR3 ✅ (`f3b75ba5`) — Webflow SDK fully removed. · PR4 ✅ · PR5 ✅ · PR6 ✅ (`31d02bc3`) — Notion runtime SDK removed, `@notionhq/client` moved to **devDependencies** (types only). Shipped as 4 merged GitLab MRs (2616, 2618, 2626, 2630). **`@notionhq/client` and `webflow-api` are both out of the production dependency closure.** The vestigial `server/yarn.lock` `webflow-api` orphan (PR3 note) has since been scrubbed.
+> **PR7 ⏳ NOT STARTED — Pipedrive: remove the `pipedrive` SDK** (`pipedrive/v2`). Added to scope 2026-06-06 (see [Pipedrive](#pipedrive-added-to-scope-2026-06-06) below). Until it lands, the ticket is **not** done.
+> See [Progress log](#progress-log) and [Implementation notes & corrections](#implementation-notes--corrections) at the bottom.
 >
 > **Deferred follow-up:** the `createApiClient()`-level request/response logging interceptor is tracked as [DEV-10339](https://linear.app/whalesync/issue/DEV-10339).
 
 ## Problem
 
-The Webflow and Notion connectors are the only two that still talk to their service through a vendored npm SDK (`webflow-api`, `@notionhq/client`) instead of an explicit axios client. Every other connector (hubspot, airtable, attio, brevo, affinity, …) already follows the house `*-api-client.ts` axios pattern and has a matching fake server under `test-api-fakes/*`.
+The Webflow, Notion, and Pipedrive connectors still talk to their service through a vendored npm SDK (`webflow-api`, `@notionhq/client`, `pipedrive`) instead of an explicit axios client. (The original scoping named only Webflow and Notion as "the only two"; **Pipedrive was missed** — its `pipedrive-api-client.ts` wraps the `pipedrive/v2` SDK rather than calling axios directly. It was added to scope 2026-06-06.) Every other connector (hubspot, airtable, attio, brevo, affinity, …) already follows the house `*-api-client.ts` axios pattern and has a matching fake server under `test-api-fakes/*`.
 
 Keeping the SDKs costs us:
 
@@ -70,6 +73,37 @@ The fix: replace each SDK with an explicit axios client that mirrors the existin
 - Implementing Webflow incremental pull (the `lastUpdated` param this unblocks) — only correct the support-matrix note when the SDK is gone.
 - Full `test-api-fakes/{webflow,notion}` fake servers — unlocked by this work, but not required here.
 
+## Pipedrive (added to scope 2026-06-06)
+
+The Pipedrive connector is a **third** vendored-SDK connector that the original scoping missed. It uses the official `pipedrive` package (the Fern/OpenAPI-generated `pipedrive/v2`: `Configuration` + `DealsApi`/`PersonsApi`/`OrganizationsApi`/`*FieldsApi`). The same motivations (fakeable tests, visible endpoints, smaller production dependency closure) apply, so DEV-9754 is not done until Pipedrive is SDK-free too.
+
+**Current state (favorable — most contained of the three).**
+
+- The **only** non-test importer of the SDK is `pipedrive-api-client.ts` (`PipedriveApiClient`). The connector, schema parser, incremental, and types already go through `PipedriveApiClient` + local `pipedrive-types.ts` — none touch the SDK directly.
+- `PipedriveApiClient` already returns raw `Record<string, unknown>` response bodies, so **on-disk record fidelity is automatic** (no reshaping to undo).
+- **No OAuth provider to port** (unlike Webflow PR2) — there is no `pipedrive` reference under `server/src/oauth`; auth is handled inside the SDK's `Configuration` (apiKey vs OAuth `accessToken`).
+- Retry is already house-pattern (429-only `PIPEDRIVE_RETRY_OPTS` via the rate limiter), living in the api-client.
+
+**Decision: full removal (runtime + types), Webflow-style.** Hand-author the axios client + local request/response types and drop `pipedrive` entirely (it has no deep discriminated-union types like Notion, so there's no reason to keep it for types).
+
+**SDK surface to reproduce** (all Pipedrive REST **v2**, cursor-paginated via `additional_data.next_cursor`):
+
+- **Deals**: `getDeals`, `getDeal`, `addDeal`, `updateDeal`, `deleteDeal`
+- **Persons**: `getPersons`, `getPerson`, `addPerson`, `updatePerson`, `deletePerson`
+- **Organizations**: `getOrganizations`, `getOrganization`, `addOrganization`, `updateOrganization`, `deleteOrganization`
+- **Fields**: `getDealFields`, `getPersonFields`, `getOrganizationFields`
+- **Auth** (`Configuration`): apiKey **and** OAuth `accessToken` modes.
+
+**PR7 — Pipedrive client + drop dependency.**
+
+1. Rewrite `pipedrive-api-client.ts` to build an axios client via `createApiClient({ baseURL, headers/auth })` and hit the v2 endpoints directly. Keep the **public surface unchanged** (`testConnection`, `getFields`, `listEntities`, `getEntity`, `createEntity`, `updateEntity`, `deleteEntity`, `separateFields`, `PipedriveError`) so the connector and its tests need no behavioral change. Keep `PIPEDRIVE_RETRY_OPTS` and the `custom_fields`-wrapper / `separateFields` logic as-is.
+2. Replace SDK types (`Configuration`, `*Api`, `Add*Request`/`Update*Request`) with local types in `pipedrive-types.ts`. The request bodies are already built dynamically as `Record<string, unknown>` and cast, so the local request types are minimal.
+3. **Read the `pipedrive` SDK source directly** (as we did for Webflow/Notion) to reproduce exactly: the v2 base URL (expected `https://api.pipedrive.com/api/v2`), how `Configuration({ apiKey })` injects the token (query `api_token=` vs header) vs `Configuration({ accessToken })` → `Authorization: Bearer`, and confirm the SDK does **no** response coercion (so raw `response.data` is byte-identical — Pipedrive looks like the Notion case: plain `JSON.parse` passthrough).
+4. **Error handling simplifies.** The SDK installs an axios `errorInterceptor` that rejects with the *unwrapped* `error.response.data` (a plain object), which is why `normalizePipedriveSdkError`/`isPipedriveErrorBody` exist. With raw axios, errors are normal `AxiosError`s — drop that normalization and route through the connector's standard axios-error branch.
+5. Drop `pipedrive` from `server/package.json` `dependencies`; `yarn install` prunes the authoritative root `yarn.lock` + `node_modules`.
+6. Rewrite the 3 `jest.mock('pipedrive/v2')` specs to mock the axios client (`jest.mock('../pipedrive-api-client')` keeping the real `PipedriveError` via `requireActual`) — mirrors the Notion PR6 approach.
+7. Behaviour-preservation: golden-fixture deep-equality of `ConnectorFile` output before/after (should be byte-identical since the client already returns raw bodies); HTTP-assertion unit tests pin exact endpoints/params (`limit`, `cursor`, `updated_since`, the `custom_fields` wrapper).
+
 ## Verification
 
 - Per change set: `yarn build` + `yarn lint` from root, **plus `yarn lint-strict` in `server/`** (root lint misses strict server warnings).
@@ -91,6 +125,7 @@ The fix: replace each SDK with an explicit axios client that mirrors the existin
 - **PR6 — Test-mock rewrite: DONE & COMMITTED** (`31d02bc3`, on `master`; GitLab MR 2630). The 4 SDK-coupled specs rewritten to mock the flat api-client (see PR6 above). `yarn install` left the lockfile unchanged (devDep move resolves the same tree).
 - **Post-ship cleanup: DONE.** The vestigial `webflow-api@^3.2.0` block in the tracked-but-unused `server/yarn.lock` (flagged in the PR3 note) was removed; the authoritative root `yarn.lock` was already clean.
 - **Verification (whole Notion half):** server `typecheck` + `lint-strict` (`--max-warnings=0`) + `nest build` green; **187/187** notion + code-migrations tests pass; **1845/1845** `src/remote-service` unit tests pass; root `yarn build` (14/14) + root `yarn lint` (5/5) green; prettier clean. Baseline captured before changes was 187/187, so behaviour is preserved.
+- **PR7 — Pipedrive client + drop `pipedrive`: NOT STARTED** (added to scope 2026-06-06). The connector's SDK usage is fully isolated in `pipedrive-api-client.ts`; see [Pipedrive](#pipedrive-added-to-scope-2026-06-06) for the approach. Until this lands, `pipedrive` remains in the **production** dependency closure and DEV-9754 stays open.
 
 ## Implementation notes & corrections
 
