@@ -52,7 +52,7 @@ locals {
   # Per-flow byte size (p99 over the window) that counts as a suspiciously large single
   # egress flow. A DISTRIBUTION metric must be collapsed to a scalar via a percentile
   # aligner before threshold comparison, so this is a single-flow size, not a window total.
-  flow_log_egress_byte_spike_threshold = 67108864 # 64 MiB
+  flow_log_egress_byte_spike_threshold = 1073741824 # 1 GiB
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------
