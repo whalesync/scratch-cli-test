@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import type { youtube_v3 } from '@googleapis/youtube';
 import { connectorMetadata } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { JsonSafeObject } from 'src/utils/objects';
@@ -18,6 +17,7 @@ import {
 } from '../../types';
 import { YoutubeApiClient } from './youtube-api-client';
 import { buildYouTubeJsonTableSpec } from './youtube-json-schema';
+import type { YouTubeVideo } from './youtube-types';
 
 export class YouTubeConnector extends Connector {
   readonly service = Service.YOUTUBE;
@@ -199,7 +199,7 @@ export class YouTubeConnector extends Connector {
         tags: changed.tags,
       };
 
-      let persisted: youtube_v3.Schema$Video | undefined;
+      let persisted: YouTubeVideo | undefined;
       if (Object.values(updateData).some((value) => value !== undefined)) {
         persisted = await this.apiClient.updateVideo(videoId, updateData);
       }

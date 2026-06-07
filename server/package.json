@@ -38,7 +38,6 @@
   "dependencies": {
     "@clerk/backend": "^3.2.0",
     "@google-cloud/storage": "^7.15.0",
-    "@googleapis/youtube": "25.1.0",
     "@langchain/core": "^1.1.31",
     "@langchain/openai": "^1.2.12",
     "@linear/sdk": "^66.0.1",

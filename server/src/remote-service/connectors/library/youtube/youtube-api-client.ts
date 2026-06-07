@@ -1,37 +1,135 @@
-import { youtube, youtube_v3 } from '@googleapis/youtube';
-import { Readable } from 'stream';
-// import { SyncProblem, SyncProblemCode } from '../types/sync-problem';
+import { AxiosInstance, isAxiosError } from 'axios';
+import { randomUUID } from 'crypto';
+import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
+import { createApiClient } from '../../create-api-client';
+import {
+  YouTubeCaption,
+  YouTubeCaptionListResponse,
+  YouTubeChannelListResponse,
+  YouTubePlaylistItemListResponse,
+  YouTubeVideo,
+  YouTubeVideoListResponse,
+} from './youtube-types';
+
+/**
+ * Base URL for the YouTube Data API v3. The official `@googleapis/youtube` SDK
+ * hardcoded `https://youtube.googleapis.com/` as its `rootUrl` and built every
+ * method path as `/youtube/v3/<resource>` (read from its generated `build/v3.js`),
+ * so we fold the version segment into the base to keep request paths identical.
+ */
+const YOUTUBE_API_BASE_URL = 'https://youtube.googleapis.com/youtube/v3';
+
+/**
+ * Resumable/multipart caption uploads live on a *separate* path the SDK called
+ * its `mediaUrl`: `https://youtube.googleapis.com/upload/youtube/v3/captions`
+ * (note the `/upload` prefix, not under `/youtube/v3`). We pass this as an
+ * absolute URL so axios bypasses {@link YOUTUBE_API_BASE_URL}.
+ */
+const YOUTUBE_CAPTIONS_UPLOAD_URL = 'https://youtube.googleapis.com/upload/youtube/v3/captions';
+
+/**
+ * Retry options for YouTube API calls — 429-only, matching every other house
+ * api-client (the SDK's gaxios transport retried 408/429/5xx, but our jobs are
+ * idempotent/resumable so 429 with `Retry-After` is sufficient).
+ */
+const YOUTUBE_RETRY_OPTS: WithRetryOpts = {
+  isRateLimited: (error) => isAxiosError(error) && error.response?.status === 429,
+  getRetryAfterS: (error) => {
+    if (!isAxiosError(error)) return undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const header = error.response?.headers?.['retry-after'];
+    const seconds = header ? parseInt(String(header), 10) : NaN;
+    return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
+  },
+};
+
+/** Read the HTTP status off an axios error, or undefined for non-axios errors. */
+function httpStatusOf(error: unknown): number | undefined {
+  return isAxiosError(error) ? error.response?.status : undefined;
+}
+
+/**
+ * Pull the human-readable detail out of an error. The YouTube API returns error
+ * detail in the response body (`{ error: { message } }`), which axios exposes on
+ * `error.response.data` rather than on `error.message` (the generic "Request
+ * failed with status code N"), so fall back through both plus the error message.
+ */
+function apiErrorMessageOf(error: unknown): string {
+  if (isAxiosError(error)) {
+    const data: unknown = error.response?.data;
+    if (data && typeof data === 'object' && 'error' in data) {
+      const inner: unknown = (data as { error: unknown }).error;
+      if (inner && typeof inner === 'object' && 'message' in inner) {
+        const message = (inner as { message: unknown }).message;
+        if (typeof message === 'string') return message;
+      }
+    }
+  }
+  return error instanceof Error ? error.message : '';
+}
+
+/**
+ * Low-level HTTP client for the YouTube Data API v3.
+ *
+ * Talks to the API directly over axios (via {@link createApiClient}) rather than
+ * the vendored `@googleapis/youtube` SDK, so every URL we hit is visible and the
+ * connector can be exercised offline against a fake server. Array query params
+ * (`part`, `id`) are serialized as repeated keys — `?part=id&part=snippet` —
+ * exactly as the SDK's `qs.stringify(params, { arrayFormat: 'repeat' })` did.
+ * Auth is `Authorization: Bearer <accessToken>` (the only header the SDK set).
+ */
 export class YoutubeApiClient {
-  youtubeClient!: youtube_v3.Youtube;
-  constructor(private readonly accessToken: string) {
-    this.youtubeClient = youtube({ version: 'v3', headers: { Authorization: `Bearer ${this.accessToken}` } });
-  }
+  private readonly http: AxiosInstance;
+  private readonly rateLimiter?: RateLimiter;
 
-  async getChannels(): Promise<youtube_v3.Schema$ChannelListResponse> {
-    const channelResponse = await this.youtubeClient.channels.list({
-      part: ['id', 'snippet'],
-      mine: true,
-      maxResults: 100,
+  constructor(
+    private readonly accessToken: string,
+    opts?: { rateLimiter?: RateLimiter },
+  ) {
+    this.http = createApiClient({
+      baseURL: YOUTUBE_API_BASE_URL,
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+      // YouTube expects repeated query params (e.g. ?part=id&part=snippet), not
+      // the bracketed default axios uses for arrays — matches the SDK's `repeat`
+      // array serialization.
+      paramsSerializer: { indexes: null },
     });
-    return channelResponse.data;
+    this.rateLimiter = opts?.rateLimiter;
   }
 
-  async getChannelsByIds(channelIds: string[]): Promise<youtube_v3.Schema$ChannelListResponse> {
-    const channelResponse = await this.youtubeClient.channels.list({
-      part: ['id', 'snippet'],
-      id: channelIds,
-      maxResults: 100,
-    });
-    return channelResponse.data;
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.rateLimiter) {
+      return this.rateLimiter.withRetry(fn, YOUTUBE_RETRY_OPTS);
+    }
+    return standaloneWithRetry(fn, YOUTUBE_RETRY_OPTS);
   }
 
-  async getVideos(channelId: string, nextPageToken?: string): Promise<youtube_v3.Schema$VideoListResponse> {
+  async getChannels(): Promise<YouTubeChannelListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeChannelListResponse>('/channels', {
+        params: { part: ['id', 'snippet'], mine: true, maxResults: 100 },
+      }),
+    );
+    return response.data;
+  }
+
+  async getChannelsByIds(channelIds: string[]): Promise<YouTubeChannelListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeChannelListResponse>('/channels', {
+        params: { part: ['id', 'snippet'], id: channelIds, maxResults: 100 },
+      }),
+    );
+    return response.data;
+  }
+
+  async getVideos(channelId: string, nextPageToken?: string): Promise<YouTubeVideoListResponse> {
     // Get videos from the specified channel (user's channel or brand channel they manage)
     // First, get the channel's uploads playlist ID
-    const channelResponse = await this.youtubeClient.channels.list({
-      part: ['contentDetails'],
-      id: [channelId],
-    });
+    const channelResponse = await this.withRetry(async () =>
+      this.http.get<YouTubeChannelListResponse>('/channels', {
+        params: { part: ['contentDetails'], id: [channelId] },
+      }),
+    );
 
     const uploadsPlaylistId = channelResponse.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
 
@@ -40,12 +138,11 @@ export class YoutubeApiClient {
     }
 
     // Get videos from the uploads playlist (includes private videos)
-    const playlistResponse = await this.youtubeClient.playlistItems.list({
-      part: ['snippet'],
-      playlistId: uploadsPlaylistId,
-      maxResults: 100,
-      pageToken: nextPageToken,
-    });
+    const playlistResponse = await this.withRetry(async () =>
+      this.http.get<YouTubePlaylistItemListResponse>('/playlistItems', {
+        params: { part: ['snippet'], playlistId: uploadsPlaylistId, maxResults: 100, pageToken: nextPageToken },
+      }),
+    );
 
     if (!playlistResponse.data.items || playlistResponse.data.items.length === 0) {
       return {
@@ -55,7 +152,7 @@ export class YoutubeApiClient {
         pageInfo: playlistResponse.data.pageInfo,
         kind: 'youtube#videoListResponse',
         etag: playlistResponse.data.etag,
-      } as youtube_v3.Schema$VideoListResponse;
+      };
     }
 
     // Get video IDs from playlist items
@@ -75,14 +172,15 @@ export class YoutubeApiClient {
         pageInfo: playlistResponse.data.pageInfo,
         kind: 'youtube#videoListResponse',
         etag: playlistResponse.data.etag,
-      } as youtube_v3.Schema$VideoListResponse;
+      };
     }
 
     // Get full video details including statistics and status
-    const videosResponse = await this.youtubeClient.videos.list({
-      part: ['snippet', 'id', 'statistics', 'status'],
-      id: videoIds,
-    });
+    const videosResponse = await this.withRetry(async () =>
+      this.http.get<YouTubeVideoListResponse>('/videos', {
+        params: { part: ['snippet', 'id', 'statistics', 'status'], id: videoIds },
+      }),
+    );
 
     // Return with pagination info from playlist
     return {
@@ -92,39 +190,37 @@ export class YoutubeApiClient {
       pageInfo: playlistResponse.data.pageInfo,
       kind: 'youtube#videoListResponse',
       etag: playlistResponse.data.etag,
-    } as youtube_v3.Schema$VideoListResponse;
+    };
   }
 
-  async getVideo(videoId: string): Promise<youtube_v3.Schema$VideoListResponse> {
-    const searchResponse = await this.youtubeClient.videos.list({
-      part: ['snippet', 'id', 'statistics', 'status'],
-      id: [videoId],
-    });
-    return searchResponse.data;
+  async getVideo(videoId: string): Promise<YouTubeVideoListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeVideoListResponse>('/videos', {
+        params: { part: ['snippet', 'id', 'statistics', 'status'], id: [videoId] },
+      }),
+    );
+    return response.data;
   }
 
   // Somehow youtube forces you to send the category of the video to update it.
-  async updateVideo(videoId: string, snippet: object): Promise<youtube_v3.Schema$Video> {
-    const searchResponse = await this.youtubeClient.videos.update({
-      part: ['snippet', 'id'],
-      requestBody: {
-        id: videoId,
-        snippet,
-      },
-    });
-    return searchResponse.data;
+  async updateVideo(videoId: string, snippet: object): Promise<YouTubeVideo> {
+    const response = await this.withRetry(async () =>
+      this.http.put<YouTubeVideo>('/videos', { id: videoId, snippet }, { params: { part: ['snippet', 'id'] } }),
+    );
+    return response.data;
   }
 
   async getVideoTranscript(
     videoId: string,
-  ): Promise<{ text: string; id: string | null; captionListItems: youtube_v3.Schema$Caption[] | null }> {
-    let captionListItems: youtube_v3.Schema$Caption[] | null = null;
+  ): Promise<{ text: string; id: string | null; captionListItems: YouTubeCaption[] | null }> {
+    let captionListItems: YouTubeCaption[] | null = null;
     try {
       // List available caption tracks for the video
-      const captionListResponse = await this.youtubeClient.captions.list({
-        part: ['snippet'],
-        videoId: videoId,
-      });
+      const captionListResponse = await this.withRetry(async () =>
+        this.http.get<YouTubeCaptionListResponse>('/captions', {
+          params: { part: ['snippet'], videoId },
+        }),
+      );
 
       // Find the English caption track
       let captionId: string | null = null;
@@ -147,11 +243,14 @@ export class YoutubeApiClient {
         };
       }
 
-      // Download the transcript
-      const transcriptResponse = await this.youtubeClient.captions.download({
-        id: captionId,
-        tfmt: 'srt',
-      });
+      // Download the transcript. The download endpoint lives at /captions/{id}
+      // and returns the caption file body directly (here SRT) — no JSON wrapper.
+      const transcriptResponse = await this.withRetry(async () =>
+        this.http.get<ArrayBuffer>(`/captions/${captionId}`, {
+          params: { tfmt: 'srt' },
+          responseType: 'arraybuffer',
+        }),
+      );
 
       if (!transcriptResponse.data) {
         return {
@@ -161,22 +260,15 @@ export class YoutubeApiClient {
         };
       }
 
-      // The response is a Blob, we need to convert it to string
-      // Convert Blob to ArrayBuffer, then to Buffer, then to string
-      const blob = transcriptResponse.data as Blob;
-      const arrayBuffer = await blob.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      const transcript = buffer.toString('utf-8');
+      const transcript = Buffer.from(transcriptResponse.data).toString('utf-8');
       return { text: transcript, id: captionId, captionListItems };
     } catch (error: unknown) {
       // Handle specific error cases
-      if (typeof error === 'object' && error !== null && 'status' in error) {
-        const statusError = error as { status: number; message?: string };
-        if (statusError.status === 403) {
-          return { text: `Access denied for transcript of video ${videoId}`, id: null, captionListItems };
-        } else if (statusError.status === 404) {
-          return { text: `No captions found for video ${videoId}`, id: null, captionListItems };
-        }
+      const status = httpStatusOf(error);
+      if (status === 403) {
+        return { text: `Access denied for transcript of video ${videoId}`, id: null, captionListItems };
+      } else if (status === 404) {
+        return { text: `No captions found for video ${videoId}`, id: null, captionListItems };
       }
 
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -191,11 +283,11 @@ export class YoutubeApiClient {
   async updateTranscript(videoId: string, transcriptId: string, transcriptText: string): Promise<void> {
     try {
       // First, we need to get the caption track details to update it
-      const captionResponse = await this.youtubeClient.captions.list({
-        part: ['snippet'],
-        id: [transcriptId],
-        videoId,
-      });
+      const captionResponse = await this.withRetry(async () =>
+        this.http.get<YouTubeCaptionListResponse>('/captions', {
+          params: { part: ['snippet'], id: [transcriptId], videoId },
+        }),
+      );
 
       if (!captionResponse.data.items || captionResponse.data.items.length === 0) {
         throw new Error(`Transcript with ID ${transcriptId} not found`);
@@ -223,38 +315,21 @@ export class YoutubeApiClient {
         );
       }
 
-      // Convert the transcript text to a readable stream for upload
-      const transcriptStream = Readable.from([transcriptText]);
-
-      // Update the caption track with the new content
-      await this.youtubeClient.captions.update({
-        part: ['snippet'],
-        requestBody: {
-          id: transcriptId,
-          snippet: {
-            ...caption.snippet,
-            // Keep the existing snippet data but update the content
-          },
-        },
-        media: {
-          mimeType: 'text/plain',
-          body: transcriptStream,
-        },
-      });
+      // Update the caption track with the new content (multipart media upload).
+      await this.uploadCaption('put', { id: transcriptId, snippet: { ...caption.snippet } }, transcriptText);
     } catch (error: unknown) {
-      if (typeof error === 'object' && error !== null && 'status' in error) {
-        const statusError = error as { status: number; message?: string };
-        if (statusError.status === 403) {
-          // Check if this is specifically about auto-generated captions
-          if (statusError.message?.includes('auto-generated') || statusError.message?.includes('ASR')) {
-            throw new Error(`Cannot update auto-generated captions. Please upload a new caption track instead.`);
-          }
-          throw new Error(
-            `Access denied for updating transcript ${transcriptId}. This may be an auto-generated caption that cannot be updated.`,
-          );
-        } else if (statusError.status === 404) {
-          throw new Error(`Transcript ${transcriptId} not found`);
+      const status = httpStatusOf(error);
+      if (status === 403) {
+        // Check if this is specifically about auto-generated captions
+        const message = apiErrorMessageOf(error);
+        if (message.includes('auto-generated') || message.includes('ASR')) {
+          throw new Error(`Cannot update auto-generated captions. Please upload a new caption track instead.`);
         }
+        throw new Error(
+          `Access denied for updating transcript ${transcriptId}. This may be an auto-generated caption that cannot be updated.`,
+        );
+      } else if (status === 404) {
+        throw new Error(`Transcript ${transcriptId} not found`);
       }
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Error updating transcript ${transcriptId}: ${message}`);
@@ -267,39 +342,31 @@ export class YoutubeApiClient {
    */
   async createTranscript(videoId: string, transcriptText: string, language: string = 'en'): Promise<string> {
     try {
-      // Convert the transcript text to a readable stream for upload
-      const transcriptStream = Readable.from([transcriptText]);
-
-      // Create a new caption track
-      const response = await this.youtubeClient.captions.insert({
-        part: ['snippet'],
-        requestBody: {
+      // Create a new caption track (multipart media upload).
+      const created = await this.uploadCaption(
+        'post',
+        {
           snippet: {
-            videoId: videoId,
-            language: language,
+            videoId,
+            language,
             name: 'User Uploaded Captions',
             isDraft: false, // Publish immediately
           },
         },
-        media: {
-          mimeType: 'text/plain',
-          body: transcriptStream,
-        },
-      });
+        transcriptText,
+      );
 
-      if (!response.data.id) {
+      if (!created.id) {
         throw new Error('Failed to create new caption track');
       }
 
-      return response.data.id;
+      return created.id;
     } catch (error: unknown) {
-      if (typeof error === 'object' && error !== null && 'status' in error) {
-        const statusError = error as { status: number };
-        if (statusError.status === 403) {
-          throw new Error(`Access denied for creating transcript for video ${videoId}`);
-        } else if (statusError.status === 404) {
-          throw new Error(`Video ${videoId} not found`);
-        }
+      const status = httpStatusOf(error);
+      if (status === 403) {
+        throw new Error(`Access denied for creating transcript for video ${videoId}`);
+      } else if (status === 404) {
+        throw new Error(`Video ${videoId} not found`);
       }
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Error creating transcript for video ${videoId}: ${message}`);
@@ -313,11 +380,11 @@ export class YoutubeApiClient {
   async hideAutoGeneratedTranscript(videoId: string, transcriptId: string): Promise<void> {
     try {
       // First, get the caption track details
-      const captionResponse = await this.youtubeClient.captions.list({
-        part: ['snippet'],
-        id: [transcriptId],
-        videoId,
-      });
+      const captionResponse = await this.withRetry(async () =>
+        this.http.get<YouTubeCaptionListResponse>('/captions', {
+          params: { part: ['snippet'], id: [transcriptId], videoId },
+        }),
+      );
 
       if (!captionResponse.data.items || captionResponse.data.items.length === 0) {
         throw new Error(`Transcript with ID ${transcriptId} not found`);
@@ -333,28 +400,62 @@ export class YoutubeApiClient {
         throw new Error(`Cannot hide non-auto-generated caption track`);
       }
 
-      // Set the caption track to draft to hide it
-      await this.youtubeClient.captions.update({
-        part: ['snippet'],
-        requestBody: {
-          id: transcriptId,
-          snippet: {
-            ...caption.snippet,
-            isDraft: true, // Hide the auto-generated caption
+      // Set the caption track to draft to hide it (metadata-only PUT, no media).
+      await this.withRetry(async () =>
+        this.http.put<YouTubeCaption>(
+          '/captions',
+          {
+            id: transcriptId,
+            snippet: {
+              ...caption.snippet,
+              isDraft: true, // Hide the auto-generated caption
+            },
           },
-        },
-      });
+          { params: { part: ['snippet'] } },
+        ),
+      );
     } catch (error: unknown) {
-      if (typeof error === 'object' && error !== null && 'status' in error) {
-        const statusError = error as { status: number };
-        if (statusError.status === 403) {
-          throw new Error(`Access denied for hiding transcript ${transcriptId}`);
-        } else if (statusError.status === 404) {
-          throw new Error(`Transcript ${transcriptId} not found`);
-        }
+      const status = httpStatusOf(error);
+      if (status === 403) {
+        throw new Error(`Access denied for hiding transcript ${transcriptId}`);
+      } else if (status === 404) {
+        throw new Error(`Transcript ${transcriptId} not found`);
       }
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Error hiding transcript ${transcriptId}: ${message}`);
     }
+  }
+
+  /**
+   * Insert or update a caption track with a media body. Reproduces the SDK's
+   * `multipart/related` upload to `/upload/youtube/v3/captions?uploadType=multipart`:
+   * part 1 is the JSON resource (`application/json`), part 2 is the caption text
+   * (`text/plain`). Returns the API's verbatim caption resource.
+   */
+  private async uploadCaption(
+    method: 'post' | 'put',
+    resource: Record<string, unknown>,
+    transcriptText: string,
+  ): Promise<YouTubeCaption> {
+    const boundary = randomUUID();
+    const body =
+      `--${boundary}\r\n` +
+      `content-type: application/json\r\n\r\n` +
+      `${JSON.stringify(resource)}\r\n` +
+      `--${boundary}\r\n` +
+      `content-type: text/plain\r\n\r\n` +
+      `${transcriptText}\r\n` +
+      `--${boundary}--`;
+
+    const response = await this.withRetry(async () =>
+      this.http.request<YouTubeCaption>({
+        method,
+        url: YOUTUBE_CAPTIONS_UPLOAD_URL,
+        params: { part: ['snippet'], uploadType: 'multipart' },
+        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+        data: body,
+      }),
+    );
+    return response.data;
   }
 }
