@@ -108,6 +108,11 @@ export class WSLogger {
     }
   }
 
+  /** Whether a log line at the given level would currently be emitted. */
+  static isLevelEnabled(level: LogLevel): boolean {
+    return this.logger.isLevelEnabled(level);
+  }
+
   /** Only output this and lower. */
   static setOutputLevel(level: LogLevel): void {
     // Don't use the logger to log this!
