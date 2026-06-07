@@ -143,6 +143,43 @@ describe('StripeApiClient', () => {
       expect(pages).toHaveLength(0);
     });
 
+    it('passes status=all for subscriptions so canceled/ended ones are not omitted', async () => {
+      mockGet.mockResolvedValue({
+        data: { object: 'list', data: [], has_more: false },
+      });
+
+      const gen: AsyncGenerator<unknown[]> = client.listEntities('subscriptions');
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _page of gen) {
+        // consume
+      }
+
+      expect(mockGet).toHaveBeenCalledWith('/v1/subscriptions', {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        params: expect.objectContaining({ status: 'all' }),
+      });
+    });
+
+    it('does not pass a status filter for entity types that list all records by default', async () => {
+      mockGet.mockResolvedValue({
+        data: { object: 'list', data: [], has_more: false },
+      });
+
+      for (const entityType of ['customers', 'products', 'prices', 'invoices', 'payment_intents', 'charges'] as const) {
+        mockGet.mockClear();
+        const gen: AsyncGenerator<unknown[]> = client.listEntities(entityType);
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for await (const _page of gen) {
+          // consume
+        }
+
+        expect(mockGet).toHaveBeenCalledWith(expect.any(String), {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          params: expect.not.objectContaining({ status: expect.anything() }),
+        });
+      }
+    });
+
     it('calls correct endpoints for each entity type', async () => {
       const emptyResponse = {
         data: { object: 'list', data: [], has_more: false },
@@ -220,6 +257,137 @@ describe('StripeApiClient', () => {
       await client.getEntity('payment_intents', 'pi_123');
 
       expect(mockGet).toHaveBeenCalledWith('/v1/payment_intents/pi_123', { params: {} });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Subscription items hydration (Stripe truncates expanded items to 10)
+  // ---------------------------------------------------------------------------
+
+  describe('subscription items hydration', () => {
+    it('follows pagination to backfill subscriptions whose expanded items list is truncated', async () => {
+      const truncatedSubscription = {
+        id: 'sub_1',
+        object: 'subscription',
+        items: {
+          object: 'list',
+          url: '/v1/subscription_items?subscription=sub_1',
+          has_more: true,
+          data: [{ id: 'si_1', object: 'subscription_item' }],
+        },
+      };
+
+      mockGet
+        // Single page of subscriptions
+        .mockResolvedValueOnce({
+          data: { object: 'list', data: [truncatedSubscription], has_more: false },
+        })
+        // subscription_items page 1
+        .mockResolvedValueOnce({
+          data: {
+            object: 'list',
+            data: [
+              { id: 'si_1', object: 'subscription_item' },
+              { id: 'si_2', object: 'subscription_item' },
+            ],
+            has_more: true,
+          },
+        })
+        // subscription_items page 2
+        .mockResolvedValueOnce({
+          data: {
+            object: 'list',
+            data: [{ id: 'si_3', object: 'subscription_item' }],
+            has_more: false,
+          },
+        });
+
+      const pages: Record<string, unknown>[][] = [];
+      for await (const page of client.listEntities('subscriptions')) {
+        pages.push(page);
+      }
+
+      // The yielded subscription now carries the full, untruncated item set.
+      expect(pages).toHaveLength(1);
+      const subscription = pages[0][0];
+      const items = subscription.items as { has_more: boolean; data: { id: string }[] };
+      expect(items.has_more).toBe(false);
+      expect(items.data.map((item) => item.id)).toEqual(['si_1', 'si_2', 'si_3']);
+
+      // It fetched items from the dedicated endpoint, scoped to the subscription
+      // and following the cursor across pages.
+      expect(mockGet).toHaveBeenCalledWith('/v1/subscription_items', {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        params: expect.objectContaining({ subscription: 'sub_1', limit: 100 }),
+      });
+      expect(mockGet).toHaveBeenCalledWith('/v1/subscription_items', {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        params: expect.objectContaining({ subscription: 'sub_1', starting_after: 'si_2' }),
+      });
+    });
+
+    it('does not re-fetch items for subscriptions that fit in a single page', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: {
+          object: 'list',
+          data: [
+            {
+              id: 'sub_small',
+              object: 'subscription',
+              items: {
+                object: 'list',
+                has_more: false,
+                data: [{ id: 'si_1', object: 'subscription_item' }],
+              },
+            },
+          ],
+          has_more: false,
+        },
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _page of client.listEntities('subscriptions')) {
+        // consume
+      }
+
+      // Only the subscriptions list call — no subscription_items follow-up.
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(mockGet).not.toHaveBeenCalledWith('/v1/subscription_items', expect.anything());
+    });
+
+    it('hydrates truncated items when fetching a single subscription via getEntity', async () => {
+      mockGet
+        .mockResolvedValueOnce({
+          data: {
+            id: 'sub_1',
+            object: 'subscription',
+            items: {
+              object: 'list',
+              has_more: true,
+              data: [{ id: 'si_1', object: 'subscription_item' }],
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            object: 'list',
+            data: [
+              { id: 'si_1', object: 'subscription_item' },
+              { id: 'si_2', object: 'subscription_item' },
+            ],
+            has_more: false,
+          },
+        });
+
+      const subscription = await client.getEntity('subscriptions', 'sub_1');
+
+      const items = subscription?.items as { has_more: boolean; data: { id: string }[] };
+      expect(items.has_more).toBe(false);
+      expect(items.data.map((item) => item.id)).toEqual(['si_1', 'si_2']);
+      expect(mockGet).toHaveBeenCalledWith('/v1/subscription_items', {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        params: expect.objectContaining({ subscription: 'sub_1' }),
+      });
     });
   });
 });

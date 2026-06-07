@@ -113,13 +113,22 @@ export class StripeApiClient {
       // Expand nested objects for certain entity types to get full data
       const expandParams = this.getExpandParams(entityType);
 
+      // Override Stripe list defaults that would otherwise silently omit records
+      // (e.g. subscriptions exclude canceled ones unless status=all is passed).
+      const fullPullFilterParams = this.getListFilterParamsToIncludeAllRecords(entityType);
+
       const response = await this.client.get<StripeListResponse<Record<string, unknown>>>(endpoint, {
-        params: { ...params, ...expandParams },
+        params: { ...params, ...expandParams, ...fullPullFilterParams },
       });
 
       const list = response.data;
 
       if (list.data && list.data.length > 0) {
+        if (entityType === 'subscriptions') {
+          for (const subscription of list.data) {
+            await this.hydrateTruncatedSubscriptionItems(subscription);
+          }
+        }
         yield list.data;
         const lastItem = list.data[list.data.length - 1];
         startingAfter = lastItem.id as string;
@@ -140,7 +149,11 @@ export class StripeApiClient {
       const response = await this.client.get<Record<string, unknown>>(`${endpoint}/${id}`, {
         params: expandParams,
       });
-      return response.data;
+      const entity = response.data;
+      if (entityType === 'subscriptions') {
+        await this.hydrateTruncatedSubscriptionItems(entity);
+      }
+      return entity;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return null;
@@ -160,6 +173,92 @@ export class StripeApiClient {
       default:
         return {};
     }
+  }
+
+  /**
+   * Get additional list-query parameters needed to pull *every* record for an
+   * entity type, overriding Stripe defaults that would silently omit some.
+   *
+   * Stripe's `GET /v1/subscriptions` returns only non-canceled subscriptions
+   * unless `status=all` is supplied, which would drop canceled/ended
+   * subscriptions from a full pull. Every other entity type lists all records by
+   * default — products and prices return both active and inactive, invoices
+   * return every status including drafts, and charges and payment intents have
+   * no status filter — so they need no extra parameters.
+   *
+   * See: https://docs.stripe.com/api/subscriptions/list (status parameter)
+   */
+  private getListFilterParamsToIncludeAllRecords(entityType: StripeEntityType): Record<string, string> {
+    switch (entityType) {
+      case 'subscriptions':
+        return { status: 'all' };
+      default:
+        return {};
+    }
+  }
+
+  /**
+   * Repair a subscription whose expanded `items` list was truncated.
+   *
+   * Stripe caps the inline `expand[]=data.items` list at 10 entries (the
+   * nested-expand limit) and sets `items.has_more = true` when the subscription
+   * has more line items. A nested expanded list cannot be paginated in-line, so
+   * we re-fetch the complete set from `/v1/subscription_items` — the same
+   * endpoint that backs the nested list (`items.url`) — and splice it back in.
+   * The result is byte-for-byte what Stripe would have returned had it not
+   * truncated the list, preserving record fidelity.
+   *
+   * No-op for subscriptions whose items already fit in a single page.
+   */
+  private async hydrateTruncatedSubscriptionItems(subscription: Record<string, unknown>): Promise<void> {
+    const subscriptionItemsList = subscription.items as StripeListResponse<Record<string, unknown>> | undefined;
+    if (!subscriptionItemsList || subscriptionItemsList.has_more !== true) {
+      return;
+    }
+
+    const subscriptionId = subscription.id;
+    if (typeof subscriptionId !== 'string') {
+      return;
+    }
+
+    subscriptionItemsList.data = await this.fetchAllSubscriptionItems(subscriptionId);
+    subscriptionItemsList.has_more = false;
+  }
+
+  /**
+   * Fetch every line item for a subscription, following Stripe's cursor-based
+   * pagination at the maximum page size. Each returned item embeds its full
+   * `price` object by default, matching the shape of the inline expanded items.
+   */
+  private async fetchAllSubscriptionItems(subscriptionId: string): Promise<Record<string, unknown>[]> {
+    const allSubscriptionItems: Record<string, unknown>[] = [];
+    let startingAfter: string | undefined;
+    let hasMore = true;
+
+    while (hasMore) {
+      const params: Record<string, string | number> = {
+        subscription: subscriptionId,
+        limit: 100,
+      };
+      if (startingAfter) {
+        params.starting_after = startingAfter;
+      }
+
+      const response = await this.client.get<StripeListResponse<Record<string, unknown>>>('/v1/subscription_items', {
+        params,
+      });
+      const list = response.data;
+
+      if (list.data && list.data.length > 0) {
+        allSubscriptionItems.push(...list.data);
+        const lastSubscriptionItem = list.data[list.data.length - 1];
+        startingAfter = lastSubscriptionItem.id as string;
+      }
+
+      hasMore = list.has_more;
+    }
+
+    return allSubscriptionItems;
   }
 }
 
