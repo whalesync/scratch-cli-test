@@ -1,4 +1,5 @@
 import { electronAPI } from '@electron-toolkit/preload';
+import type { TableView } from '@spinner/shared-types';
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   CLAUDE_CHAT_EVENT_CHANNEL,
@@ -376,8 +377,6 @@ const scratchFiles = {
       name: string;
       path: string;
       fileCount: number;
-      lastModified: number;
-      totalSize: number;
     }>
   > => invoke('files:list-folders', workspacePath),
   getFolderMetadata: (
@@ -387,10 +386,10 @@ const scratchFiles = {
     name: string;
     path: string;
     fileCount: number;
-    lastModified: number;
-    totalSize: number;
     schema: Record<string, unknown>;
     columnDefinitions: ColumnDefinition[];
+    view: TableView | null;
+    availableViewNames: string[];
   }> => invoke('files:folder-metadata', folderPath, workspacePath),
   listFiles: (
     folderPath: string,

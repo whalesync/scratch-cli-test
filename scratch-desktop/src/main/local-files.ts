@@ -61,8 +61,6 @@ interface FolderEntry {
   name: string;
   path: string;
   fileCount: number;
-  lastModified: number;
-  totalSize: number;
 }
 
 interface FolderMetadata extends FolderEntry {
@@ -201,30 +199,30 @@ export async function countWorkspaceFiles(workspacePath: string): Promise<number
 
 export async function getFolderMetadata(folderPath: string, workspacePath: string): Promise<FolderMetadata> {
   const folderName = basename(folderPath);
-  const meta = await computeFolderStats(folderPath);
   const relPath = relative(workspacePath, folderPath);
-  const schema = await readConnectionSchema(workspacePath, relPath);
+
+  // The schema/view reads and the record-file count are independent I/O, so run
+  // them concurrently. fileCount is derived from a single readdir (no per-file
+  // stat), matching how the sidebar's collectLeafFolders counts files.
+  const [schema, diskView, availableViewNames, fileCount] = await Promise.all([
+    readConnectionSchema(workspacePath, relPath),
+    readConnectionView(workspacePath, relPath),
+    listConnectionViewNames(workspacePath, relPath),
+    countRecordFilesInFolder(folderPath),
+  ]);
   if (!schema) {
     throw new Error(
       `Schema not found for folder "${folderName}" at ${join(SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'schema.json')}`,
     );
   }
 
-  const [diskView, availableViewNames] = await Promise.all([
-    readConnectionView(workspacePath, relPath),
-    listConnectionViewNames(workspacePath, relPath),
-  ]);
-  const view = diskView ?? createFallbackTableView(schema);
-
   return {
     name: folderName,
     path: folderPath,
-    fileCount: meta.fileCount,
-    lastModified: meta.lastModified,
-    totalSize: meta.totalSize,
+    fileCount,
     schema,
     columnDefinitions: buildColumnDefinitions(schema),
-    view,
+    view: diskView ?? createFallbackTableView(schema),
     availableViewNames,
   };
 }
@@ -709,30 +707,10 @@ function sortNormalizedRows(rows: NormalizedRecordRow[], column: string, order: 
   });
 }
 
-async function computeFolderStats(
-  folderPath: string,
-): Promise<{ fileCount: number; lastModified: number; totalSize: number }> {
+/** Counts record files in a folder with a single readdir (no per-file stat). */
+async function countRecordFilesInFolder(folderPath: string): Promise<number> {
   const entries = await readdir(folderPath, { withFileTypes: true });
-  let fileCount = 0;
-  let lastModified = 0;
-  let totalSize = 0;
-
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    if (entry.name.startsWith(HIDDEN_PREFIX)) continue;
-
-    fileCount++;
-    try {
-      const fileStat = await stat(join(folderPath, entry.name));
-      totalSize += fileStat.size;
-      const mtime = fileStat.mtimeMs;
-      if (mtime > lastModified) lastModified = mtime;
-    } catch {
-      // Skip files we can't stat
-    }
-  }
-
-  return { fileCount, lastModified, totalSize };
+  return entries.filter((entry) => entry.isFile() && !entry.name.startsWith(HIDDEN_PREFIX)).length;
 }
 
 async function getCachedFileNames(folderPath: string): Promise<string[]> {
@@ -818,8 +796,6 @@ async function collectLeafFolders(root: string, dir: string, out: FolderEntry[])
         name: relativePath,
         path: dir,
         fileCount,
-        lastModified: 0,
-        totalSize: 0,
       });
     }
     return;

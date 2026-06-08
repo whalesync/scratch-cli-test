@@ -1,7 +1,5 @@
 /** Types shared between main process (local-files.ts) and renderer for the local file access layer. */
 
-import type { ColumnDefinition } from '../../../shared/schema-columns';
-
 export type {
   ColumnAttributes,
   ColumnDataType,
@@ -22,24 +20,6 @@ export interface WorkspaceConnection {
   displayName: string;
   service: string;
   dirName: string;
-}
-
-export interface FolderEntry {
-  name: string;
-  /** Absolute path on disk */
-  path: string;
-  fileCount: number;
-  /** Epoch ms of most recently modified file */
-  lastModified: number;
-  /** Total size in bytes of all files */
-  totalSize: number;
-}
-
-export interface FolderMetadata extends FolderEntry {
-  /** Parsed .scratch/schemas/<name>.json — throws if schema is missing */
-  schema: Record<string, unknown>;
-  /** Pre-computed column definitions derived from the schema */
-  columnDefinitions: ColumnDefinition[];
 }
 
 export interface ListFilesOptions {

@@ -274,8 +274,6 @@ interface ScratchFilesAPI {
       name: string;
       path: string;
       fileCount: number;
-      lastModified: number;
-      totalSize: number;
     }>
   >;
   getFolderMetadata: (
@@ -285,8 +283,6 @@ interface ScratchFilesAPI {
     name: string;
     path: string;
     fileCount: number;
-    lastModified: number;
-    totalSize: number;
     schema: Record<string, unknown>;
     columnDefinitions: ColumnDefinition[];
     view: TableView | null;

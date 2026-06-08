@@ -60,9 +60,9 @@ Loads the entire working tree folder and the entire dirty branch folder into mem
 
 Every query re-reads from disk. The `dirCache` caches only filenames (not contents). Parsed JSON is discarded after each grid render.
 
-### `files:list-folders` stats every file on open
+### ~~`files:list-folders` stats every file on open~~ (resolved)
 
-`computeFolderStats` stats every file in every folder just to get counts and sizes. Called on workspace open and on every sidebar refresh.
+Previously `computeFolderStats` ran one `stat()` per file in a folder just to get counts/sizes, on workspace open and every sidebar refresh. Both the sidebar (`collectLeafFolders`) and folder-open (`getFolderMetadata`) paths now derive `fileCount` from a single `readdir` with no per-file `stat`; the unused `lastModified`/`totalSize` aggregates were dropped.
 
 ### CLI subprocess cold-start cost
 

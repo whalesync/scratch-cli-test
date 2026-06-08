@@ -21,8 +21,6 @@ export interface LocalFolder {
   name: string;
   path: string;
   fileCount: number;
-  lastModified: number;
-  totalSize: number;
 }
 
 interface WorkspaceContentProps {
