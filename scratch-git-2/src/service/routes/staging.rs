@@ -44,10 +44,16 @@ fn open_staging_db(staging_job_dir: &StdPath) -> Result<Connection, AppError> {
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          CREATE TABLE IF NOT EXISTS staged_files (
-             path      TEXT PRIMARY KEY,  -- relative to the folder dir (e.g. 'file.json')
+             path      TEXT NOT NULL,      -- relative to the folder dir (e.g. 'file.json')
              folder    TEXT NOT NULL,      -- staging folder name (e.g. 'Products')
              processed INTEGER NOT NULL DEFAULT 0,  -- 1 = indexed in Postgres
-             committed INTEGER NOT NULL DEFAULT 0   -- 1 = committed to git
+             committed INTEGER NOT NULL DEFAULT 0,  -- 1 = committed to git
+             -- PK is (folder, path), NOT path alone: the same filename legitimately
+             -- occurs in different folders (e.g. a Contact and a Conversation both
+             -- named after 'Ivan Dimitrov' → 'ivan-dimitrov.json'). With a path-only
+             -- PK the second folder's INSERT OR IGNORE silently dropped that file,
+             -- so a folder pulled concurrently could commit nothing (empty folder).
+             PRIMARY KEY (folder, path)
          );
          CREATE INDEX IF NOT EXISTS idx_unprocessed ON staged_files(folder, processed);
          CREATE INDEX IF NOT EXISTS idx_uncommitted ON staged_files(folder, committed);",
@@ -824,6 +830,53 @@ mod tests {
         let json = response_json(response).await;
         assert_eq!(json["data"]["files"].as_array().unwrap().len(), 2);
         assert_eq!(json["data"]["remaining"], 1);
+    }
+
+    #[tokio::test]
+    async fn same_filename_in_different_folders_is_not_dropped() {
+        // Regression: the staging index PK used to be `path` alone, so a filename
+        // that legitimately occurs in two folders — e.g. a Contact and a
+        // Conversation both named after 'Ivan Dimitrov' → 'ivan-dimitrov.json' —
+        // collided: the second folder's INSERT OR IGNORE was silently dropped and
+        // that folder committed nothing (empty folder). With a (folder, path) PK
+        // both files must survive independently.
+        let repo_id = "test-org/test-wkb/test-conn".to_string();
+        let (state, _repos, _staging, _index) = make_state_with_repo(&repo_id);
+        let job_id = "job_collision";
+
+        do_stage_files(
+            &state,
+            job_id,
+            "Contacts",
+            vec![("ivan-dimitrov.json", r#"{"id":"c1"}"#)],
+        )
+        .await;
+        do_stage_files(
+            &state,
+            job_id,
+            "Conversations",
+            vec![("ivan-dimitrov.json", r#"{"id":"v1"}"#)],
+        )
+        .await;
+
+        for folder in ["Contacts", "Conversations"] {
+            let response = read_staged_files(
+                State(state.clone()),
+                AxumPath(job_id.to_string()),
+                AxumQuery(ReadStagedFilesQuery {
+                    folder: folder.to_string(),
+                    limit: 100,
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let json = response_json(response).await;
+            assert_eq!(
+                json["data"]["files"].as_array().unwrap().len(),
+                1,
+                "folder {folder} should still have its file staged despite the cross-folder filename collision"
+            );
+        }
     }
 
     #[tokio::test]

@@ -66,6 +66,17 @@ tower = { version = "0.5.3", features = ["util"] }
 [profile.dev]
 debug = "line-tables-only"
 
+# `cargo test` links two large test binaries (the lib unit-test binary and the
+# `scratchmd` bin unit-test binary), each statically linking the rustpython/gix
+# dependency tree. The `test` profile inherits `line-tables-only` from
+# `[profile.dev]`, but on cold CI builds that was STILL enough to OOM-kill `ld`
+# (SIGKILL while linking). Drop debug info entirely for test binaries so the
+# linker stays under the runner's cgroup memory limit. Test backtraces lose
+# line numbers, which is an acceptable trade for green CI; debug a failing test
+# locally with `cargo test` (dev profile keeps line tables).
+[profile.test]
+debug = false
+
 # Keep release symbols thin so the napi `.node` ships small (slice H.2).
 # Thin LTO + multiple codegen units to keep peak rustc memory under the
 # GitLab runner's cgroup limit during cross-compile (was OOM-killing on fat LTO).

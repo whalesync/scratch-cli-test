@@ -60,7 +60,7 @@ include:
   # local-runners.yml is excluded via RELEASE_DESKTOP_ONLY / RELEASE_CLI_ONLY.
   # ✏️  ADD YOUR USERNAME HERE (1 of 2 — you must also update
   #    .rules.skip_for_local_runner_users in gitlab-ci/stages/01-build-and-test.yml).
-  local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324|ivanjdws)$/'
+  local_runner_users_mr: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324)$/'
 
   # Local runner user list
   #
@@ -70,7 +70,7 @@ include:
   # ✏️  ADD YOUR USERNAME HERE (2 of 2 — you must also update
   #    .rules.local_runner_users_mr in gitlab-ci/local-runners.yml)
   skip_for_local_runner_users:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324|ivanjdws)$/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $GITLAB_USER_LOGIN =~ /^(cfonger|ryderziola|choefgen|rob324)$/'
       when: never
 
 # =============================================================================
