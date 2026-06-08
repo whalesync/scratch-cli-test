@@ -182,8 +182,8 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
       },
       {
         "kind": "col",
-        "name": "Archived",
-        "path": "archived",
+        "name": "In Trash",
+        "path": "in_trash",
         "type": "checkbox",
       },
       {
@@ -228,8 +228,15 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
       {
         "hidden": true,
         "kind": "col",
-        "name": "In Trash",
-        "path": "in_trash",
+        "name": "Archived",
+        "path": "archived",
+        "type": "checkbox",
+      },
+      {
+        "hidden": true,
+        "kind": "col",
+        "name": "Is Archived",
+        "path": "is_archived",
         "type": "checkbox",
       },
       {
@@ -255,7 +262,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
     "$id": "notion/36b81e58-1794-80d8-89a4-d65d5dd08119",
     "properties": {
       "archived": {
-        "description": "Is page archived",
+        "description": "Is page archived (legacy; absent under 2026-03-11+)",
         "type": "boolean",
       },
       "cover": {
@@ -432,6 +439,10 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
       },
       "in_trash": {
         "description": "Is page in trash",
+        "type": "boolean",
+      },
+      "is_archived": {
+        "description": "Is page archived (2026-03-11+)",
         "type": "boolean",
       },
       "last_edited_by": {
@@ -1299,7 +1310,6 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
       "created_by",
       "last_edited_by",
       "parent",
-      "archived",
       "properties",
       "url",
     ],

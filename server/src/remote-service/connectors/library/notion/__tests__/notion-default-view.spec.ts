@@ -177,11 +177,16 @@ describe('buildNotionDefaultView', () => {
   });
 
   describe('hidden fixed fields', () => {
-    it('hides object, parent, in_trash, public_url', () => {
+    it('hides object, parent, archived, is_archived, public_url', () => {
       expect(findCol(view, 'object')?.hidden).toBe(true);
       expect(findCol(view, 'parent')?.hidden).toBe(true);
-      expect(findCol(view, 'in_trash')?.hidden).toBe(true);
+      expect(findCol(view, 'archived')?.hidden).toBe(true);
+      expect(findCol(view, 'is_archived')?.hidden).toBe(true);
       expect(findCol(view, 'public_url')?.hidden).toBe(true);
+    });
+
+    it('shows in_trash (the canonical 2026-03-11 trash flag)', () => {
+      expect(findCol(view, 'in_trash')?.hidden).toBeUndefined();
     });
 
     it('does not hide property columns', () => {

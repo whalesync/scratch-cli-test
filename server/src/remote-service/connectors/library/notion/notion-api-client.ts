@@ -40,13 +40,15 @@ const BASE_URL = 'https://api.notion.com/v1';
 const NOTION_REQUEST_TIMEOUT_MS = 60_000;
 
 /**
- * Notion API version this client targets by default. Matches the v5 SDK's
- * `Client.defaultNotionVersion` but is pinned here so the next 2026-03-11
- * adoption (Phase 5 of DEV-8910) is an explicit code change rather than a
- * silent ride-along on a future dependency bump. Callers may override it
+ * Notion API version this client targets by default. Pinned here (rather than
+ * riding along on the SDK's `Client.defaultNotionVersion`) so each version
+ * adoption is an explicit, reviewable code change rather than a silent
+ * ride-along on a dependency bump. Bumped to 2026-03-11 in Phase 5 of DEV-8910,
+ * which also adopted that version's field cleanups (page `archived` →
+ * `in_trash`, block append `after` → `position`). Callers may override it
  * through the constructor.
  */
-export const DEFAULT_NOTION_API_VERSION = '2025-09-03';
+export const DEFAULT_NOTION_API_VERSION = '2026-03-11';
 
 /**
  * Notion API error `code` strings — the `code` field of a Notion error

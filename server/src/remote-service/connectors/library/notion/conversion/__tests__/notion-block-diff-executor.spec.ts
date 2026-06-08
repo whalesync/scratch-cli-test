@@ -153,8 +153,8 @@ describe('NotionBlockDiffExecutor', () => {
       });
     });
 
-    describe('ID resolution in after parameter', () => {
-      it('should resolve temporary ID in after parameter', async () => {
+    describe('ID resolution in position parameter', () => {
+      it('should resolve temporary ID and pass it as a 2026-03-11 after_block position', async () => {
         const idMappings = new Map<string, string>([['temp.previous-block', 'real-previous-id']]);
 
         const blocksToCreate: ConvertedNotionBlock[] = [
@@ -183,13 +183,16 @@ describe('NotionBlockDiffExecutor', () => {
 
         await executor.executeOperations(testPageId, [createOperation], idMappings);
 
-        // Verify the resolved after ID was used in the API call
+        // Verify the resolved ID is sent as the 2026-03-11 `position` (after_block),
+        // not the deprecated flat `after` param.
         expect(mockClient.appendBlockChildren).toHaveBeenCalledWith(
           expect.objectContaining({
             block_id: testPageId,
-            after: 'real-previous-id',
+            position: { type: 'after_block', after_block: { id: 'real-previous-id' } },
           }),
         );
+        const [appendArg] = (mockClient.appendBlockChildren as jest.Mock).mock.calls[0] as [Record<string, unknown>];
+        expect(appendArg).not.toHaveProperty('after');
       });
     });
 
@@ -241,7 +244,7 @@ describe('NotionBlockDiffExecutor', () => {
         }
       });
 
-      it('should chain batches using the last created block ID as after parameter', async () => {
+      it('should chain batches using the last created block ID as the after_block position', async () => {
         const idMappings = new Map<string, string>();
 
         // Create 150 blocks to trigger batching
@@ -278,12 +281,13 @@ describe('NotionBlockDiffExecutor', () => {
 
         await executor.executeOperations(testPageId, [createOperation], idMappings);
 
-        // Check that the second batch used the last block from the first batch as 'after'
+        // Check that the second batch used the last block from the first batch as the
+        // `after_block` position (the 2026-03-11 replacement for the flat `after` param).
         const appendMock = mockClient.appendBlockChildren as jest.Mock;
         const secondBatchCall = appendMock.mock.calls[1] as unknown[];
         expect(secondBatchCall[0]).toEqual(
           expect.objectContaining({
-            after: 'real-id-99', // Last block from first batch
+            position: { type: 'after_block', after_block: { id: 'real-id-99' } }, // Last block from first batch
           }),
         );
       });

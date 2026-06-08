@@ -134,8 +134,14 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
         ],
         { description: 'Parent reference (database or data source)' },
       ),
-      archived: Type.Boolean({ description: 'Is page archived' }),
+      // Trash / archive state. Notion renamed these across API versions:
+      // 2025-09-03 emitted `archived`; 2026-03-11 stopped emitting it and uses
+      // `in_trash` (the renamed soft-delete) plus a distinct `is_archived`. All
+      // three are optional so the envelope faithfully describes a record pulled
+      // under either version — older on-disk records still carry `archived`.
+      archived: Type.Optional(Type.Boolean({ description: 'Is page archived (legacy; absent under 2026-03-11+)' })),
       in_trash: Type.Optional(Type.Boolean({ description: 'Is page in trash' })),
+      is_archived: Type.Optional(Type.Boolean({ description: 'Is page archived (2026-03-11+)' })),
       page_content: Type.Optional(
         Type.Array(Type.Unknown(), {
           description: 'Page body content (Notion blocks)',

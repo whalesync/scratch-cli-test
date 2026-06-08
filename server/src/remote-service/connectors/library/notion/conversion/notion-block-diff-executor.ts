@@ -120,12 +120,14 @@ export class NotionBlockDiffExecutor {
     idMappings: Map<string, string>,
   ): Promise<Array<{ id: string; [key: string]: unknown }>> {
     const blocksForApi = blocks.map((block) => this.prepareBlockForApi(block));
-    const afterParam = after ? this.resolveBlockId(after, idMappings) : undefined;
+    const insertAfterBlockId = after ? this.resolveBlockId(after, idMappings) : undefined;
 
     const response = await this.client.appendBlockChildren({
       block_id: pageId,
       children: blocksForApi as unknown as BlockObjectRequest[],
-      after: afterParam,
+      // 2026-03-11 replaced the flat `after: <blockId>` param with a structured
+      // `position`. Omitting it (no `after`) appends to the end, as before.
+      position: insertAfterBlockId ? { type: 'after_block', after_block: { id: insertAfterBlockId } } : undefined,
     });
 
     // Map temporary IDs to real Notion IDs (including nested children)

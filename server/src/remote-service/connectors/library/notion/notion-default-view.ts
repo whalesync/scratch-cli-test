@@ -19,7 +19,7 @@ const FIXED_FIELD_PRIORITY: string[] = [
   'last_edited_time',
   'created_by',
   'last_edited_by',
-  'archived',
+  'in_trash',
   'cover',
   'icon',
   'page_content',
@@ -29,7 +29,8 @@ const FIXED_FIELD_PRIORITY: string[] = [
 const HIDDEN_FIXED_FIELDS = new Set([
   'object', // Always 'page', never useful
   'parent', // Always the same database_id
-  'in_trash',
+  'archived', // Legacy trash flag (absent under 2026-03-11+); superseded by in_trash, which is shown instead
+  'is_archived', // Distinct 2026-03-11 archive flag; in_trash is the shown trash column
   'public_url',
 ]);
 

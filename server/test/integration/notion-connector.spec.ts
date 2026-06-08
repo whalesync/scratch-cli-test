@@ -478,7 +478,7 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     await Promise.allSettled(cleanups.map((fn) => fn()));
   });
 
-  it('creates a page, updates a writable property, then archives it', async () => {
+  it('creates a page, updates a writable property, then trashes it', async () => {
     const titlePropName = findTitlePropertyName(tableSpec);
     const initialTitle = `${ROUND_TRIP_TITLE_PREFIX} ${Date.now()}`;
     const updatedDescription = `Updated at ${new Date().toISOString()}`;
@@ -517,13 +517,15 @@ describeIfKey('NotionConnector — CRUD round-trip', () => {
     expect(afterUpdate).not.toBeNull();
     expect(readRichText(afterUpdate!, 'Description')).toBe(updatedDescription);
 
-    // ── Delete (archive) ──
+    // ── Delete (move to trash) ──
     await connector.deleteRecords(tableSpec, [{ id: pageId }]);
 
     const afterDelete = await fetchById(connector, tableSpec, pageId);
-    // Archived pages remain readable but carry archived: true.
+    // Trashed pages remain readable. Under the 2026-03-11 API version the page
+    // carries `in_trash: true`; the legacy `archived` field is no longer present
+    // in responses (it was only emitted for API versions prior to 2026-03-11).
     expect(afterDelete).not.toBeNull();
-    expect((afterDelete as Record<string, unknown>).archived).toBe(true);
+    expect((afterDelete as Record<string, unknown>).in_trash).toBe(true);
   });
 
   it('updateRecords silently strips read-only property changes (formula, rollup, created_time)', async () => {

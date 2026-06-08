@@ -737,15 +737,18 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   }
 
   /**
-   * Delete (archive) pages in Notion.
-   * Files should have an 'id' field with the page ID to archive.
+   * Delete (move to trash) pages in Notion.
+   * Files should have an 'id' field with the page ID to trash.
+   *
+   * Uses `in_trash: true` (the 2026-03-11 successor to the now-deprecated
+   * `archived: true`); both still resolve to the same soft-delete server-side.
    */
   async deleteRecords(_tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     for (const file of files) {
       const pageId = file.id as string;
       await this.client.updatePage({
         page_id: pageId,
-        archived: true,
+        in_trash: true,
       });
     }
   }
