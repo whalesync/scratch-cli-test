@@ -15,16 +15,16 @@ publish shared-types:
   script:
     - cd packages/shared-types
     - !reference [.use_nvm, script]
-    # Bake the spinner pipeline SHA into src/_build.ts so consumers can call
-    # getBuild() and get back the short-SHA they were built from. Must run
+    - VERSION="0.0.0-master-${CI_COMMIT_SHORT_SHA}"
+    # Bake the published version into src/_build.ts so consumers can call
+    # getBuild() and get back the version they were built with. Must run
     # BEFORE `yarn build` since tsc copies the value into dist/.
-    - 'sed -i "s/BUILD = ''local''/BUILD = ''${CI_COMMIT_SHORT_SHA}''/" src/_build.ts'
+    - 'sed -i "s/BUILD = ''local''/BUILD = ''${VERSION}''/" src/_build.ts'
     - yarn build
     # Rewrite the sentinel version in package.json with sed (NOT `npm version`,
     # which triggers an `npm install` that resolves @spinner/shared-types from
     # the public registry and 404s). The sentinel "0.0.0-dev" is unique to
     # this file so a plain substitution is safe.
-    - VERSION="0.0.0-master-${CI_COMMIT_SHORT_SHA}"
     - 'sed -i "s/\"version\": \"0.0.0-dev\"/\"version\": \"${VERSION}\"/" package.json'
     # Auth to the project-scoped registry using the built-in CI job token.
     # Write the .npmrc to $HOME, NOT the package dir: npm 7+ deliberately

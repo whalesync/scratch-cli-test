@@ -38,7 +38,7 @@ export default function UserInfoDevPage() {
               </Group>
 
               <Group wrap="nowrap" gap="xs">
-                <Text13Regular miw={150}>Build Number</Text13Regular>
+                <Text13Regular miw={150}>@spinner/shared-types version</Text13Regular>
                 <Text13Regular>{getBuild()}</Text13Regular>
                 <CopyButton value={getBuild()} timeout={2000}>
                   {({ copied, copy }) => (

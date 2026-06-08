@@ -45,6 +45,11 @@ build and test client:
   script:
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
     - echo "Labelling this build as $BUILD_VERSION"
+    # Bake the @spinner/shared-types version into _build.ts so the bundled
+    # workspace copy reports it via getBuild() in the deployed client. The
+    # Dockerfile's deps stage compiles src/_build.ts into the package, so this
+    # must run on the build context BEFORE `docker build`.
+    - 'sed -i "s/BUILD = ''local''/BUILD = ''0.0.0-master-${CI_COMMIT_SHORT_SHA}''/" packages/shared-types/src/_build.ts'
     # Environment-specific .env flags are set here.
     # Service-type flags are set in terraform on launch.
     - >
@@ -83,6 +88,11 @@ build client docker image for production:
   script:
     - BUILD_VERSION=`date +%y.%m.%d.%H.%M.$CI_COMMIT_SHORT_SHA`
     - echo "Labelling this build as $BUILD_VERSION"
+    # Bake the @spinner/shared-types version into _build.ts so the bundled
+    # workspace copy reports it via getBuild() in the deployed client. The
+    # Dockerfile's deps stage compiles src/_build.ts into the package, so this
+    # must run on the build context BEFORE `docker build`.
+    - 'sed -i "s/BUILD = ''local''/BUILD = ''0.0.0-prod-${CI_COMMIT_SHORT_SHA}''/" packages/shared-types/src/_build.ts'
     # Environment-specific .env flags are set here.
     # Service-type flags are set in terraform on launch.
     - >
