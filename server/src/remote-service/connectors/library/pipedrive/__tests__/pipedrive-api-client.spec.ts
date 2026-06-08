@@ -241,70 +241,74 @@ describe('PipedriveApiClient', () => {
     });
   });
 
+  // The client POSTs/PATCHes the record verbatim — Pipedrive's read and write
+  // shapes are identical, so no custom-field reshaping is needed (DEV-10353). The
+  // connector strips read-only system fields before calling, so these tests pass
+  // already-writable data.
   describe('createEntity', () => {
-    it('POSTs system fields verbatim when there are no custom fields', async () => {
+    it('POSTs the record verbatim (no custom fields)', async () => {
       mockPost.mockResolvedValue({ data: { data: { id: 1, title: 'New' } } });
-      const created = await client.createEntity('deals', { title: 'New', value: 100 }, new Set());
+      const created = await client.createEntity('deals', { title: 'New', value: 100 });
       expect(mockPost).toHaveBeenCalledWith('/api/v2/deals', { title: 'New', value: 100 });
       expect(created).toEqual({ id: 1, title: 'New' });
     });
 
-    it('nests custom-field keys under a custom_fields wrapper for v2 entities', async () => {
+    it('POSTs a v2 record with custom fields nested under custom_fields (the on-disk shape) verbatim', async () => {
       mockPost.mockResolvedValue({ data: { data: { id: 2 } } });
-      await client.createEntity('deals', { title: 'New', abc123: 'custom-val' }, new Set(['abc123']));
+      await client.createEntity('deals', { title: 'New', custom_fields: { abc123: 'custom-val', def456: 42 } });
       expect(mockPost).toHaveBeenCalledWith('/api/v2/deals', {
         title: 'New',
-        custom_fields: { abc123: 'custom-val' },
+        custom_fields: { abc123: 'custom-val', def456: 42 },
       });
     });
 
-    it('keeps custom-field keys flat (top-level) for v1 entities like leads', async () => {
+    it('POSTs a v1 lead with custom fields as flat top-level hash keys verbatim', async () => {
       mockPost.mockResolvedValue({ data: { data: { id: 'lead-uuid' } } });
-      await client.createEntity('leads', { title: 'New Lead', abc123: 'custom-val' }, new Set(['abc123']));
+      await client.createEntity('leads', { title: 'New Lead', abc123: 'custom-val' });
       expect(mockPost).toHaveBeenCalledWith('/v1/leads', { title: 'New Lead', abc123: 'custom-val' });
     });
 
-    it('POSTs notes to the v1 path with all fields flat (notes have no custom fields)', async () => {
+    it('POSTs notes to the v1 path', async () => {
       mockPost.mockResolvedValue({ data: { data: { id: 9 } } });
-      await client.createEntity('notes', { content: 'hi', deal_id: 3 }, new Set());
+      await client.createEntity('notes', { content: 'hi', deal_id: 3 });
       expect(mockPost).toHaveBeenCalledWith('/v1/notes', { content: 'hi', deal_id: 3 });
-    });
-
-    it('drops read-only system fields (id/add_time/update_time) and the custom_fields wrapper itself', async () => {
-      mockPost.mockResolvedValue({ data: { data: { id: 3 } } });
-      await client.createEntity(
-        'persons',
-        { id: 5, add_time: 't1', update_time: 't2', custom_fields: { x: 1 }, name: 'Jane' },
-        new Set(),
-      );
-      expect(mockPost).toHaveBeenCalledWith('/api/v2/persons', { name: 'Jane' });
     });
 
     it('returns {} when the response carries no data', async () => {
       mockPost.mockResolvedValue({ data: {} });
-      await expect(client.createEntity('deals', { title: 'X' }, new Set())).resolves.toEqual({});
+      await expect(client.createEntity('deals', { title: 'X' })).resolves.toEqual({});
     });
   });
 
   describe('updateEntity', () => {
-    it('PATCHes the v2 /{collection}/{id} path with the separated body', async () => {
+    it('PATCHes the v2 /{collection}/{id} path with the body verbatim', async () => {
       mockPatch.mockResolvedValue({ data: { data: { id: 42 } } });
-      await client.updateEntity('organizations', 42, { name: 'Acme', abc: 'cv' }, new Set(['abc']));
+      await client.updateEntity('organizations', 42, { name: 'Acme', custom_fields: { abc: 'cv' } });
       expect(mockPatch).toHaveBeenCalledWith('/api/v2/organizations/42', {
         name: 'Acme',
         custom_fields: { abc: 'cv' },
       });
     });
 
-    it('PATCHes a lead by UUID id with custom fields kept flat', async () => {
+    it('PATCHes a v2 custom-field-only edit shaped as the publish diff nests it (DEV-10353 regression)', async () => {
+      // The publish diff for an edited v2 custom field arrives nested under
+      // custom_fields — `{ custom_fields: { <hash>: <newValue> } }` — which is
+      // exactly the write shape, so it goes through verbatim. The original bug
+      // dropped this wrapper and shipped an empty body.
+      mockPatch.mockResolvedValue({ data: { data: { id: 7 } } });
+      await client.updateEntity('deals', 7, { custom_fields: { abc123: 'new value' } });
+      expect(mockPatch).toHaveBeenCalledWith('/api/v2/deals/7', { custom_fields: { abc123: 'new value' } });
+    });
+
+    it('PATCHes a lead by UUID id with custom fields kept flat (verbatim)', async () => {
       mockPatch.mockResolvedValue({ data: { data: { id: 'lead-uuid' } } });
-      await client.updateEntity('leads', 'lead-uuid', { title: 'Updated', abc: 'cv' }, new Set(['abc']));
+      await client.updateEntity('leads', 'lead-uuid', { title: 'Updated', abc: 'cv' });
       expect(mockPatch).toHaveBeenCalledWith('/v1/leads/lead-uuid', { title: 'Updated', abc: 'cv' });
     });
 
     it('PUTs notes (the v1 update verb for notes)', async () => {
       mockPut.mockResolvedValue({ data: { data: { id: 9 } } });
-      await client.updateEntity('notes', 9, { content: 'edited' }, new Set());
+      await client.updateEntity('notes', 9, { content: 'edited' });
       expect(mockPut).toHaveBeenCalledWith('/v1/notes/9', { content: 'edited' });
       expect(mockPatch).not.toHaveBeenCalled();
     });
@@ -332,16 +336,6 @@ describe('PipedriveApiClient', () => {
       const error = makeAxiosError(500, { error: 'boom' });
       mockDelete.mockRejectedValue(error);
       await expect(client.deleteEntity('deals', 1)).rejects.toBe(error);
-    });
-  });
-
-  describe('separateFields', () => {
-    it('splits system vs custom fields and skips read-only / wrapper keys', () => {
-      const result = client.separateFields(
-        { title: 'D', abc123: 'c', id: 9, add_time: 't', update_time: 'u', custom_fields: {} },
-        new Set(['abc123']),
-      );
-      expect(result).toEqual({ systemFields: { title: 'D' }, customFields: { abc123: 'c' } });
     });
   });
 });

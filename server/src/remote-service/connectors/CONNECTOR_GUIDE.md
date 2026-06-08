@@ -841,6 +841,7 @@ For connectors that write, the integration spec should round-trip every expected
 - [ ] **Object × CRUD**: one test per (object, action) — e.g. `companies × {create, read, update, delete}`. Each test creates a hermetic scratch record, exercises the action, then deletes it on teardown.
 - [ ] **Field-type coverage**: each test record sets one value of each universal field type the connector exposes (text, number, checkbox, select, date, currency, etc.). Object-specific types (e.g. a status pipeline only on deals, a personal-name only on people) are tested via the system built-ins where they naturally live.
 - [ ] **Round-trip assertions**: write a value → read it back → assert the read deserializes to the same value. Many APIs accept terse write shapes (`{ option: "Lead" }`) and return expanded read shapes (`{ option: { id, title: "Lead", ... } }`); a per-type matcher that strips metadata and normalizes references is what makes the assertion meaningful.
+- [ ] **Custom fields, separately** (services that have them — CRMs especially): custom fields are a distinct surface that system-field tests don't cover (see [Custom Fields](#custom-fields-crms-and-similar)). Round-trip create + edit + publish-back of a custom field across object types **and** field types, provisioning a throwaway custom field in the bootstrap script if the account has none. Pipedrive's spec creates a temporary custom field on `persons` and asserts an edited value is live after publish — the exact DEV-10353 scenario.
 - [ ] **List / sub-resource CRUD** (where applicable): exercise list-entry or sub-resource writes separately if they go through different endpoints.
 
 The unit of testing is _object × action_, not _object × action × field type_ — the field-type dimension is absorbed into each test record. This keeps the test count linear (~3 objects × 4 actions = 12 tests) instead of combinatorial (3 × 4 × ~15 types = 180 tests).
@@ -1056,6 +1057,23 @@ async updateRecords(
 ### Read-Only Fields on Publish
 
 > **Legacy behavior (do not replicate):** Several existing connectors silently strip read-only fields before sending data to the API. This masks user errors and should be removed. With `changedFields` now available on `updateRecords`, connectors can send only the fields the user actually changed, avoiding API rejections from unchanged read-only fields without silently masking real edits.
+
+### Custom Fields (CRMs and similar)
+
+> **Treat custom fields as their own surface, and test them separately.** Services with user-defined custom fields — CRMs especially (Pipedrive, Moco, HubSpot, Attio, Copper, …) — almost always handle them differently from built-in system fields. A connector whose system-field CRUD round-trips cleanly can still **silently drop or corrupt every custom-field write** (this is exactly what happened in DEV-10353, where the Pipedrive connector shipped an empty PATCH body for custom-field edits while system-field edits worked). System-field tests do not cover custom fields. Write dedicated ones.
+
+Why custom fields behave differently:
+
+- **They live in a dedicated container, not at the top level — and the container varies by service, and sometimes by API version within one service.** Pipedrive v2 nests them under a `custom_fields` object; Pipedrive v1 (leads) carries them as flat top-level keys; Moco puts them under `custom_properties`. The publish diff mirrors whatever shape the record uses on disk, so the write path has to carry that container through — not skip it as an unknown key.
+- **Keys are opaque, not the human field label.** Pipedrive references each custom field by a randomly generated 40-character hash (discovered via a per-entity Fields endpoint); Moco uses the user's own property names. Don't hardcode them, and don't assume a key is a system field just because it isn't a recognizable name.
+- **Discovery varies.** Some services expose a Fields/metadata endpoint so you can discover each custom field and its type (Pipedrive's `*Fields`); others give you no introspection at all, so the schema is an open map — Moco models `custom_properties` as `Type.Record(Type.String(), Type.Unknown())`. With no metadata you can't type-check or validate up front; the value rides through as-is.
+- **Per-type value encoding, and read ≠ write.** Each custom field has a type, and structured types (monetary, address, date-range, multi-select) often serialize differently than scalars — and sometimes differently on read vs. write. A partial diff into a structured value can clobber the sibling subfields, and clearing semantics can be type-specific (Pipedrive's multi-select `set` clears with `null`; sending `[]` is a validation error). These are the asymmetries the [live-API tests](#live-api-integration-tests-recommended-for-connectors-that-write) exist to catch.
+
+What to do:
+
+- **Default to pushing the stored shape through verbatim.** Because we [store the raw API response](#store-raw-api-responses) and most services' read and write shapes match, the on-disk record (and the `changedFields` diff derived from it) is usually already in the exact shape the write API wants — including the custom-field container. Prefer that over re-separating system vs. custom fields and rebuilding the body; the rebuild is where wrappers get dropped. (The Pipedrive connector was simplified to do exactly this — see `library/pipedrive/pipedrive-api-client.ts`.)
+- **Verify the read==write assumption per service**, since the asymmetries above are real. Where a structured type's write shape differs from its read shape, adapt at the write boundary, not by reshaping stored data.
+- **Test custom fields explicitly** — their own create + edit + publish-back round-trips, across object types **and** field types, asserting the value is actually live in the service after publish (not just that the request returned 200). See the testing call-out below.
 
 ### Asset Extraction
 

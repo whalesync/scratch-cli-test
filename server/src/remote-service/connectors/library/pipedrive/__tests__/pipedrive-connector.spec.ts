@@ -59,11 +59,6 @@ describe('PipedriveConnector', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     connector = new PipedriveConnector('test-api-key');
-    // Setup default mock for getFields to populate custom field cache
-    mockGetFields.mockResolvedValue([
-      { field_code: 'title', field_name: 'Title', field_type: 'varchar', is_custom_field: false },
-      { field_code: 'abc123', field_name: 'Custom', field_type: 'varchar', is_custom_field: true },
-    ]);
   });
 
   describe('service', () => {
@@ -113,7 +108,7 @@ describe('PipedriveConnector', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({ id: 42, title: 'New Deal' });
-      expect(mockCreateEntity).toHaveBeenCalledWith('deals', { title: 'New Deal' }, expect.any(Set));
+      expect(mockCreateEntity).toHaveBeenCalledWith('deals', { title: 'New Deal' });
     });
   });
 
@@ -126,12 +121,7 @@ describe('PipedriveConnector', () => {
 
       await connector.updateRecords(tableSpec, files);
 
-      expect(mockUpdateEntity).toHaveBeenCalledWith(
-        'deals',
-        42,
-        { title: 'Updated Deal', value: 100 },
-        expect.any(Set),
-      );
+      expect(mockUpdateEntity).toHaveBeenCalledWith('deals', 42, { title: 'Updated Deal', value: 100 });
     });
 
     it('sends only changed fields when changedFields is provided', async () => {
@@ -143,7 +133,24 @@ describe('PipedriveConnector', () => {
 
       await connector.updateRecords(tableSpec, files, changedFields);
 
-      expect(mockUpdateEntity).toHaveBeenCalledWith('deals', 42, { title: 'Updated' }, expect.any(Set));
+      expect(mockUpdateEntity).toHaveBeenCalledWith('deals', 42, { title: 'Updated' });
+    });
+
+    it('passes a nested custom_fields diff through to the client verbatim (DEV-10353)', async () => {
+      // The publish diff for an edited v2 custom field is nested under custom_fields.
+      // The connector must hand it to the client unchanged; the client (not the
+      // connector) is responsible for placing it on the wire.
+      mockUpdateEntity.mockResolvedValue({});
+
+      const tableSpec = buildTableSpec('deals');
+      const files: ConnectorFile[] = [
+        { id: 42, title: 'Deal', custom_fields: { abc123: 'new value' } } as unknown as ConnectorFile,
+      ];
+      const changedFields: (Record<string, unknown> | undefined)[] = [{ custom_fields: { abc123: 'new value' } }];
+
+      await connector.updateRecords(tableSpec, files, changedFields);
+
+      expect(mockUpdateEntity).toHaveBeenCalledWith('deals', 42, { custom_fields: { abc123: 'new value' } });
     });
   });
 
@@ -172,7 +179,7 @@ describe('PipedriveConnector', () => {
       await connector.updateRecords(tableSpec, [{ id: uuid } as unknown as ConnectorFile], [{ title: 'X' }]);
       await connector.deleteRecords(tableSpec, [{ id: uuid } as unknown as ConnectorFile]);
 
-      expect(mockUpdateEntity).toHaveBeenCalledWith('leads', uuid, { title: 'X' }, expect.any(Set));
+      expect(mockUpdateEntity).toHaveBeenCalledWith('leads', uuid, { title: 'X' });
       expect(mockDeleteEntity).toHaveBeenCalledWith('leads', uuid);
     });
 

@@ -16,6 +16,7 @@
  */
 
 import { IncrementalPullSupport } from '@spinner/shared-types';
+import axios from 'axios';
 
 // Break the circular import chain: connector.ts → display-names.ts → all
 // connectors → connector.ts (same shim the Airtable/Notion live tests use).
@@ -531,6 +532,97 @@ describeIfKey('PipedriveConnector — new entity types CRUD', () => {
 });
 
 // ===========================================================================
+// Custom field publish-back (DEV-10353)
+// ===========================================================================
+//
+// Editing a custom field on a v2 entity must publish back to Pipedrive. The
+// regression: the publish diff nests the edit under `custom_fields`
+// (`{ custom_fields: { <key>: <value> } }`, the verbatim on-disk shape), and the
+// client used to drop that wrapper — so the PATCH shipped an empty body and the
+// edit was silently lost. These tests create a real temporary custom field on
+// persons, then run the full create → update → read-back path against the live
+// API across multiple field types.
+
+describeIfKey('PipedriveConnector — custom field publish-back', () => {
+  let connector: PipedriveConnector;
+  let personsSpec: BaseJsonTableSpec;
+  const cleanups: Array<() => Promise<void>> = [];
+
+  beforeAll(async () => {
+    connector = createConnector();
+    const tables = await connector.listTables();
+    const found = tables.find((t) => t.id.wsId === 'persons');
+    if (!found) throw new Error('Expected a "persons" table.');
+    personsSpec = await connector.fetchJsonTableSpec(found.id);
+  });
+
+  afterAll(async () => {
+    await Promise.allSettled(cleanups.map((fn) => fn()));
+  });
+
+  // One round-trip per field type so a failure points at the specific type.
+  const customFieldCases: Array<{ fieldType: string; initial: unknown; updated: unknown }> = [
+    { fieldType: 'varchar', initial: 'initial text', updated: 'updated text' },
+    { fieldType: 'double', initial: 12.5, updated: 99 },
+  ];
+
+  it.each(customFieldCases)(
+    'creates, then publishes an edit to a %s custom field on a person (nested custom_fields)',
+    async ({ fieldType, initial, updated }) => {
+      // ── Create a throwaway custom field on persons ──
+      const { id: fieldId, key: cfKey } = await createPersonCustomField(
+        `${ROUND_TRIP_NAME_PREFIX} cf ${fieldType} ${Date.now()}`,
+        fieldType,
+      );
+      cleanups.push(async () => {
+        await deletePersonCustomField(fieldId);
+      });
+
+      // No schema refresh needed: the connector pushes the record shape verbatim
+      // and does not consult any per-field cache for custom fields.
+
+      // ── Create a person with the custom field set (nested under custom_fields) ──
+      const name = `${ROUND_TRIP_NAME_PREFIX} cf-person ${Date.now()}`;
+      const [created] = await connector.createRecords(personsSpec, [
+        { name, custom_fields: { [cfKey]: initial } } as unknown as ConnectorFile,
+      ]);
+      const recordId = (created as Record<string, unknown>).id as number;
+      cleanups.push(async () => {
+        await connector.deleteRecords(personsSpec, [{ id: recordId } as unknown as ConnectorFile]);
+      });
+
+      // The created value is readable back (rides out any brief propagation lag).
+      const afterCreate = await pollUntil(
+        () => fetchById(connector, personsSpec, String(recordId)),
+        (record) => customFieldValue(record, cfKey) === initial,
+        { tries: 6, intervalMs: 2000 },
+      );
+      expect(customFieldValue(afterCreate, cfKey)).toEqual(initial);
+
+      // ── Publish an edit to the custom field, shaped exactly as the publish diff
+      //    nests it: { custom_fields: { <key>: <newValue> } } ──
+      await connector.updateRecords(
+        personsSpec,
+        [{ id: recordId, name, custom_fields: { [cfKey]: updated } } as unknown as ConnectorFile],
+        [{ custom_fields: { [cfKey]: updated } }],
+      );
+
+      // ── The edit must be live in Pipedrive (this is what regressed) ──
+      const afterUpdate = await pollUntil(
+        () => fetchById(connector, personsSpec, String(recordId)),
+        (record) => customFieldValue(record, cfKey) === updated,
+        { tries: 6, intervalMs: 2000 },
+      );
+      expect(customFieldValue(afterUpdate, cfKey)).toEqual(updated);
+
+      // ── Cleanup (also covered by afterAll best-effort) ──
+      await connector.deleteRecords(personsSpec, [{ id: recordId } as unknown as ConnectorFile]);
+      await deletePersonCustomField(fieldId);
+    },
+  );
+});
+
+// ===========================================================================
 // Helpers
 // ===========================================================================
 
@@ -615,4 +707,45 @@ async function createPerson(
     await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
   });
   return record;
+}
+
+/**
+ * Raw axios client for the bits the connector intentionally doesn't expose —
+ * here, custom-field metadata management (creating/deleting the throwaway field a
+ * publish-back test needs). Custom fields are account-level metadata shared
+ * across API versions, so a field created via v1 surfaces in the connector's v2
+ * `getFields` listing too.
+ */
+function rawPipedriveClient(): axios.AxiosInstance {
+  return axios.create({
+    baseURL: 'https://api.pipedrive.com',
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    headers: { 'Content-Type': 'application/json', 'x-api-token': API_KEY! },
+  });
+}
+
+/**
+ * Create a temporary custom field on persons and return its numeric `id` (for
+ * deletion) and 40-char `key` (the hash the record nests the value under, equal
+ * to the connector's `field_code`). Field CRUD lives on the v1 Fields API.
+ */
+async function createPersonCustomField(name: string, fieldType: string): Promise<{ id: number; key: string }> {
+  const res = await rawPipedriveClient().post<{ data: { id: number; key: string } }>('/v1/personFields', {
+    name,
+    field_type: fieldType,
+  });
+  return { id: res.data.data.id, key: res.data.data.key };
+}
+
+/** Delete a temporary custom field by its numeric id (v1 Fields API). */
+async function deletePersonCustomField(id: number): Promise<void> {
+  await rawPipedriveClient().delete(`/v1/personFields/${id}`);
+}
+
+/** Read a custom field's value from a v2 record's nested `custom_fields` bag. */
+function customFieldValue(record: Record<string, unknown> | null, key: string): unknown {
+  if (!record) return undefined;
+  const customFields = record.custom_fields;
+  if (customFields === null || typeof customFields !== 'object') return undefined;
+  return (customFields as Record<string, unknown>)[key];
 }

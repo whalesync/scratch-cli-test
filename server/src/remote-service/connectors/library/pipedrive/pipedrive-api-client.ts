@@ -2,13 +2,7 @@ import { AxiosInstance, isAxiosError } from 'axios';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
-import {
-  ENTITY_CONFIG,
-  PipedriveApiVersion,
-  PipedriveCustomFieldPlacement,
-  PipedriveEntityType,
-  PipedriveField,
-} from './pipedrive-types';
+import { ENTITY_CONFIG, PipedriveApiVersion, PipedriveEntityType, PipedriveField } from './pipedrive-types';
 
 const LOG_SOURCE = 'PipedriveApiClient';
 
@@ -120,26 +114,6 @@ const PIPEDRIVE_RETRY_OPTS: WithRetryOpts = {
     return !isNaN(seconds) && seconds > 0 ? seconds : undefined;
   },
 };
-
-/**
- * Build a request body, placing custom fields where the entity's API expects them:
- * - `nested` (v2): under a `custom_fields` sub-object.
- * - `flat` (v1, e.g. leads): as top-level hash keys alongside system fields.
- * - `none` (notes): no custom fields exist; `customFields` is always empty.
- */
-function buildRequestBody(
-  systemFields: Record<string, unknown>,
-  customFields: Record<string, unknown>,
-  placement: PipedriveCustomFieldPlacement,
-): Record<string, unknown> {
-  if (Object.keys(customFields).length === 0) {
-    return { ...systemFields };
-  }
-  if (placement === 'nested') {
-    return { ...systemFields, custom_fields: customFields };
-  }
-  return { ...systemFields, ...customFields };
-}
 
 /**
  * Low-level HTTP client for the Pipedrive REST API (v1 + v2).
@@ -336,19 +310,20 @@ export class PipedriveApiClient {
   // --- Create ---
 
   /**
-   * Create an entity. Separates system fields from custom fields and places the
-   * latter per the entity's custom-field placement (nested for v2, flat for v1).
+   * Create an entity by POSTing the record verbatim.
+   *
+   * No custom-field reshaping is needed: we store the verbatim GET response, and
+   * Pipedrive's read and write shapes are identical (v2 entities nest custom
+   * fields under a `custom_fields` object, v1 entities carry them as flat
+   * top-level hash keys — the same on the way out as on the way in). So the
+   * on-disk record is already in the exact shape the write API wants. This is the
+   * connector guide's default: push the JSON shape through as-is. The connector
+   * strips read-only system fields (`id`/`add_time`/`update_time`) upstream via
+   * `extractWritableData`.
    */
-  async createEntity(
-    entityType: PipedriveEntityType,
-    data: Record<string, unknown>,
-    customFieldKeys: Set<string>,
-  ): Promise<Record<string, unknown>> {
+  async createEntity(entityType: PipedriveEntityType, data: Record<string, unknown>): Promise<Record<string, unknown>> {
     const collectionPath = collectionPathFor(entityType);
-    const { systemFields, customFields } = this.separateFields(data, customFieldKeys);
-    const body = buildRequestBody(systemFields, customFields, ENTITY_CONFIG[entityType].customFieldPlacement);
-
-    const response = await this.withRetry(async () => this.http.post<PipedriveResponseEnvelope>(collectionPath, body));
+    const response = await this.withRetry(async () => this.http.post<PipedriveResponseEnvelope>(collectionPath, data));
 
     return (response.data.data as Record<string, unknown>) ?? {};
   }
@@ -356,24 +331,24 @@ export class PipedriveApiClient {
   // --- Update ---
 
   /**
-   * Update an entity. Uses the entity's update verb (PATCH for v2 entities and
-   * leads, PUT for notes) and places custom fields per the entity's placement.
+   * Update an entity by sending the record (or sparse diff) verbatim with the
+   * entity's update verb (PATCH for v2 entities and leads, PUT for notes). As with
+   * {@link createEntity}, no custom-field reshaping is needed — the publish diff
+   * (`{ custom_fields: { <hash>: <value> } }` for v2, flat hash keys for v1)
+   * already matches the write API exactly.
    */
   async updateEntity(
     entityType: PipedriveEntityType,
     id: string | number,
     data: Record<string, unknown>,
-    customFieldKeys: Set<string>,
   ): Promise<Record<string, unknown>> {
     const config = ENTITY_CONFIG[entityType];
     const url = `${collectionPathFor(entityType)}/${id}`;
-    const { systemFields, customFields } = this.separateFields(data, customFieldKeys);
-    const body = buildRequestBody(systemFields, customFields, config.customFieldPlacement);
 
     const response = await this.withRetry(async () =>
       config.updateVerb === 'PUT'
-        ? this.http.put<PipedriveResponseEnvelope>(url, body)
-        : this.http.patch<PipedriveResponseEnvelope>(url, body),
+        ? this.http.put<PipedriveResponseEnvelope>(url, data)
+        : this.http.patch<PipedriveResponseEnvelope>(url, data),
     );
 
     return (response.data.data as Record<string, unknown>) ?? {};
@@ -398,33 +373,5 @@ export class PipedriveApiClient {
       }
       throw error;
     }
-  }
-
-  // --- Field separation ---
-
-  /**
-   * Separate data into system fields and custom fields.
-   * Custom fields are identified by their hash keys from the Fields API.
-   */
-  separateFields(
-    data: Record<string, unknown>,
-    customFieldKeys: Set<string>,
-  ): { systemFields: Record<string, unknown>; customFields: Record<string, unknown> } {
-    const systemFields: Record<string, unknown> = {};
-    const customFields: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(data)) {
-      if (key === 'id' || key === 'add_time' || key === 'update_time' || key === 'custom_fields') {
-        // Skip read-only fields and the custom_fields wrapper itself
-        continue;
-      }
-      if (customFieldKeys.has(key)) {
-        customFields[key] = value;
-      } else {
-        systemFields[key] = value;
-      }
-    }
-
-    return { systemFields, customFields };
   }
 }

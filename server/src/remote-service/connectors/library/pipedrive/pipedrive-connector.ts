@@ -73,9 +73,6 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
 
   private readonly client: PipedriveApiClient;
 
-  /** Cache of custom field keys per entity type (populated during fetchJsonTableSpec) */
-  private customFieldKeysCache = new Map<PipedriveEntityType, Set<string>>();
-
   constructor(token: string, opts?: { rateLimiter?: RateLimiter; authType?: 'apiKey' | 'oauth' }) {
     super();
     this.client = new PipedriveApiClient(token, opts);
@@ -120,10 +117,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
       );
     }
 
-    // Build schema and cache custom field keys
-    const spec = await buildPipedriveJsonTableSpec(id, entityType, this.client);
-    await this.populateCustomFieldKeysCache(entityType);
-    return spec;
+    return buildPipedriveJsonTableSpec(id, entityType, this.client);
   }
 
   /**
@@ -249,12 +243,11 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
    */
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
-    const customFieldKeys = await this.getCustomFieldKeys(entityType);
     const results: ConnectorFile[] = [];
 
     for (const file of files) {
       const data = this.extractWritableData(file);
-      const created = await this.client.createEntity(entityType, data, customFieldKeys);
+      const created = await this.client.createEntity(entityType, data);
       results.push(created as ConnectorFile);
     }
 
@@ -271,7 +264,6 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<ConnectorFile[]> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
-    const customFieldKeys = await this.getCustomFieldKeys(entityType);
 
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
@@ -288,7 +280,7 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
       const cf = changedFields?.[i];
       const data = cf ?? this.extractWritableData(file);
 
-      const updated = await this.client.updateEntity(entityType, entityId, data, customFieldKeys);
+      const updated = await this.client.updateEntity(entityType, entityId, data);
       results.push(updated as unknown as ConnectorFile);
     }
     return results;
@@ -362,30 +354,6 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
       data[key] = value;
     }
     return data;
-  }
-
-  /**
-   * Get or populate the custom field keys cache for an entity type.
-   */
-  private async getCustomFieldKeys(entityType: PipedriveEntityType): Promise<Set<string>> {
-    if (!this.customFieldKeysCache.has(entityType)) {
-      await this.populateCustomFieldKeysCache(entityType);
-    }
-    return this.customFieldKeysCache.get(entityType) ?? new Set();
-  }
-
-  /**
-   * Populate the custom field keys cache by querying the Fields API.
-   */
-  private async populateCustomFieldKeysCache(entityType: PipedriveEntityType): Promise<void> {
-    const fields = await this.client.getFields(entityType);
-    const customKeys = new Set<string>();
-    for (const field of fields) {
-      if (field.is_custom_field) {
-        customKeys.add(field.field_code);
-      }
-    }
-    this.customFieldKeysCache.set(entityType, customKeys);
   }
 }
 
