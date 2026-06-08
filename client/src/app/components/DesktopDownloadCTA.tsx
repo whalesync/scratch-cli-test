@@ -4,6 +4,7 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { Text12Regular, Text16Regular, TextTitle2 } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { useDesktopRelease } from '@/hooks/use-desktop-release';
+import { trackDownloadDesktopApp } from '@/lib/posthog';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Stack } from '@mantine/core';
 import type { DesktopReleaseAsset } from '@spinner/shared-types';
@@ -58,6 +59,16 @@ export function DesktopDownloadCTA({ eyebrow }: DesktopDownloadCTAProps) {
           fullWidth
           loading={isReleaseLoading}
           disabled={!isReleaseLoading && !macDmg}
+          onClick={() => {
+            // Button is disabled until a macOS build resolves, so a click means `macDmg` is present.
+            if (!macDmg) return;
+            trackDownloadDesktopApp({
+              section: 'desktop_download_cta',
+              platform: 'MacOS',
+              assetName: macDmg.name,
+              version: release?.version,
+            });
+          }}
         >
           Download for macOS
         </ButtonPrimaryLight>

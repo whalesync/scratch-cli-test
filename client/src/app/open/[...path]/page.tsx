@@ -2,7 +2,7 @@
 
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text16Regular, TextTitle2 } from '@/app/components/base/text';
-import { trackOpenInDesktopInterstitialFallback } from '@/lib/posthog';
+import { trackDownloadDesktopApp, trackOpenInDesktopInterstitialFallback } from '@/lib/posthog';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Center, Stack } from '@mantine/core';
 import Link from 'next/link';
@@ -103,6 +103,7 @@ function OpenInDesktopInner(): ReactElement {
             <Stack gap="sm" w="100%">
               <ButtonPrimaryLight
                 onClick={() => {
+                  trackDownloadDesktopApp({ section: 'open_in_desktop_interstitial' });
                   window.open(RouteUrls.downloadsPageUrl, '_blank', 'noopener,noreferrer');
                 }}
               >

@@ -16,6 +16,8 @@ export enum PostHogEvents {
   DELETE_WORKBOOK = 'delete_workbook',
   CLICK_OPEN_IN_DESKTOP = 'click_open_in_desktop',
   OPEN_IN_DESKTOP_INTERSTITIAL_FALLBACK = 'open_in_desktop_interstitial_fallback',
+  DOWNLOAD_DESKTOP_APP = 'download_desktop_app',
+  DOWNLOAD_CLI = 'download_cli',
 }
 
 export function captureEvent(eventName: PostHogEvents, additionalProperties: Record<string, unknown> = {}): void {
@@ -119,4 +121,48 @@ export function trackClickOpenInDesktop(context: { section: 'toolbar' | 'workspa
 
 export function trackOpenInDesktopInterstitialFallback(context: { reason: 'timeout' | 'invalid_path' }): void {
   captureEvent(PostHogEvents.OPEN_IN_DESKTOP_INTERSTITIAL_FALLBACK, context);
+}
+
+/** Operating-system family a downloadable Scratch Desktop / CLI build targets. */
+export type DownloadPlatform = 'MacOS' | 'Windows' | 'Linux';
+
+/**
+ * Which surface in the web app a Scratch Desktop download was initiated from.
+ *
+ * `downloads_page` and `desktop_download_cta` represent clicks on a real binary
+ * (the `.dmg`/`.exe`/etc. starts downloading). `open_desktop_interstitial` and
+ * `open_in_desktop_interstitial` are the "Download Scratch Desktop" buttons on the
+ * deep-link fallback screens, which navigate the user to the downloads page rather
+ * than downloading a binary directly — filter on `section` to tell them apart.
+ */
+export type DesktopAppDownloadSection =
+  | 'downloads_page'
+  | 'desktop_download_cta'
+  | 'open_desktop_interstitial'
+  | 'open_in_desktop_interstitial';
+
+export function trackDownloadDesktopApp(context: {
+  section: DesktopAppDownloadSection;
+  platform?: DownloadPlatform;
+  /** Human-readable build variant, e.g. "Apple Silicon (.dmg)". */
+  variant?: string;
+  /** Release asset filename, e.g. "Scratch-1.2.3-arm64.dmg". */
+  assetName?: string;
+  /** Release version the asset belongs to, e.g. "v1.2.3". */
+  version?: string;
+}): void {
+  captureEvent(PostHogEvents.DOWNLOAD_DESKTOP_APP, context);
+}
+
+export function trackDownloadCli(context: {
+  platform: DownloadPlatform;
+  /** Human-readable build variant, e.g. "Apple Silicon (.tar.gz)". */
+  variant: string;
+  /** Release asset filename, e.g. "scratchmd_darwin_arm64.tar.gz". */
+  assetName: string;
+  /** Release version the asset belongs to, e.g. "v1.2.3". */
+  version?: string;
+}): void {
+  // The CLI is only downloadable from the downloads page, so there is no `section` discriminator.
+  captureEvent(PostHogEvents.DOWNLOAD_CLI, context);
 }

@@ -2,7 +2,7 @@
 
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text16Regular, TextTitle2 } from '@/app/components/base/text';
-import { trackOpenInDesktopInterstitialFallback } from '@/lib/posthog';
+import { trackDownloadDesktopApp, trackOpenInDesktopInterstitialFallback } from '@/lib/posthog';
 import { RouteUrls } from '@/utils/route-urls';
 import { Box, Center, Stack } from '@mantine/core';
 import Link from 'next/link';
@@ -97,7 +97,11 @@ function OpenDesktopInner(): ReactElement {
               <ButtonPrimaryLight onClick={() => (window.location.href = deepLink)}>
                 Open Scratch Desktop
               </ButtonPrimaryLight>
-              <ButtonSecondaryOutline component={Link} href={RouteUrls.downloadsPageUrl}>
+              <ButtonSecondaryOutline
+                component={Link}
+                href={RouteUrls.downloadsPageUrl}
+                onClick={() => trackDownloadDesktopApp({ section: 'open_desktop_interstitial' })}
+              >
                 Download Scratch Desktop
               </ButtonSecondaryOutline>
             </Stack>

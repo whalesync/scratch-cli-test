@@ -14,6 +14,7 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import MainContent from '@/app/components/layouts/MainContent';
 import { useCliRelease } from '@/hooks/use-cli-release';
 import { useDesktopRelease } from '@/hooks/use-desktop-release';
+import { DownloadPlatform, trackDownloadCli, trackDownloadDesktopApp } from '@/lib/posthog';
 import { Anchor, Box, Card, Collapse, Divider, Group, Image, Stack, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { DesktopReleaseAsset, DesktopReleaseResponse } from '@spinner/shared-types';
@@ -31,7 +32,7 @@ const PLATFORM_ICONS = {
 } as const;
 
 type AssetVariant = { label: string; asset: DesktopReleaseAsset };
-type PlatformGroup = { platform: string; iconUrl: string; variants: AssetVariant[] };
+type PlatformGroup = { platform: DownloadPlatform; iconUrl: string; variants: AssetVariant[] };
 
 function desktopVariantLabel(filename: string): string {
   if (/arm64.*\.dmg$/i.test(filename)) return 'Apple Silicon (.dmg)';
@@ -175,14 +176,32 @@ function DesktopSection({ release }: { release: DesktopReleaseResponse }) {
       {/* Platform download groups — indented to align with title text */}
       <Stack gap="xl" pl={96}>
         {groups.map((group) => (
-          <PlatformDownloadRow key={group.platform} group={group} />
+          <PlatformDownloadRow
+            key={group.platform}
+            group={group}
+            onDownloadVariantClicked={(variant) =>
+              trackDownloadDesktopApp({
+                section: 'downloads_page',
+                platform: group.platform,
+                variant: variant.label,
+                assetName: variant.asset.name,
+                version: release.version,
+              })
+            }
+          />
         ))}
       </Stack>
     </Stack>
   );
 }
 
-function PlatformDownloadRow({ group }: { group: PlatformGroup }) {
+function PlatformDownloadRow({
+  group,
+  onDownloadVariantClicked,
+}: {
+  group: PlatformGroup;
+  onDownloadVariantClicked: (variant: AssetVariant) => void;
+}) {
   return (
     <Stack gap="xs">
       <Group gap="sm" align="center">
@@ -190,13 +209,20 @@ function PlatformDownloadRow({ group }: { group: PlatformGroup }) {
         <Text13Medium>{group.platform}</Text13Medium>
       </Group>
       <Stack gap={6} pl={28}>
-        {group.variants.map(({ label, asset }) => (
-          <Anchor key={asset.name} href={asset.url} size="sm" c="var(--mantine-color-green-7)" underline="hover">
+        {group.variants.map((variant) => (
+          <Anchor
+            key={variant.asset.name}
+            href={variant.asset.url}
+            size="sm"
+            c="var(--mantine-color-green-7)"
+            underline="hover"
+            onClick={() => onDownloadVariantClicked(variant)}
+          >
             <Group gap={6} align="center">
               <StyledLucideIcon Icon={Download} size="sm" c="var(--mantine-color-green-7)" />
-              {label}
+              {variant.label}
               <Text12Regular c="dimmed" component="span">
-                ({formatBytes(asset.size)})
+                ({formatBytes(variant.asset.size)})
               </Text12Regular>
             </Group>
           </Anchor>
@@ -255,7 +281,18 @@ function CliDisclosure({ release }: { release: DesktopReleaseResponse }) {
 
           <Stack gap="xl" pl={96}>
             {groups.map((group) => (
-              <PlatformDownloadRow key={group.platform} group={group} />
+              <PlatformDownloadRow
+                key={group.platform}
+                group={group}
+                onDownloadVariantClicked={(variant) =>
+                  trackDownloadCli({
+                    platform: group.platform,
+                    variant: variant.label,
+                    assetName: variant.asset.name,
+                    version: release.version,
+                  })
+                }
+              />
             ))}
           </Stack>
         </Stack>
