@@ -9,11 +9,20 @@
  *   - RUN_WHALESYNC_INTEGRATION=true
  *   - SCRATCH_ADMIN_API_KEY set to the SAME value the running server was started with
  *   - A Scratch server reachable at INTEGRATION_TEST_API_DOMAIN (default localhost:3010)
- *   - A reachable Postgres (DATABASE_URL) — used to assert persisted row shapes
  *
  * These drive the real server over HTTP, so they exercise the full chain: ScratchAdminGuard →
  * controller → UsersService/WorkbookService → DB → git. Each test uses a fresh random whalesyncUserId
  * and is torn down through the deprovision endpoint so workbook repos are cleaned up (not orphaned).
+ *
+ * DATABASE ASSERTIONS — LOCAL VS. REMOTE.
+ * Every behavioral guarantee is asserted over HTTP and holds in both modes. When a Postgres
+ * (DATABASE_URL) that the target server actually writes to is available — i.e. a local run against a
+ * local server — the suite ADDITIONALLY asserts the persisted row shapes (exact token counts and the
+ * WHALESYNC_SESSION token type, which `/users/current` does not expose). Against a remote/deployed
+ * server (e.g. the post-deploy environment test hitting test-api.scratch.md) the configured Postgres
+ * is a different, empty database, so those direct-DB assertions cannot see the server's writes and are
+ * skipped — the suite runs API-only. API-only mode is inferred automatically whenever the target API is
+ * not localhost, and can also be forced with WHALESYNC_TEST_API_ONLY=true.
  */
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
@@ -37,20 +46,36 @@ const apiUrl = getApiUrl();
 const adminHeaders = { 'X-Scratch-Admin-Token': ADMIN_TOKEN ?? '' };
 const anyStatus = { validateStatus: () => true };
 
+// Direct-DB row-shape assertions require a DATABASE_URL pointing at the SAME database the target
+// server writes to, which only holds for a local run against a local server. Against a remote/deployed
+// server the configured Postgres is a different database, so we validate purely over HTTP. Inferred
+// from a non-localhost API target; can be forced with WHALESYNC_TEST_API_ONLY=true.
+const isApiOnlyMode = process.env.WHALESYNC_TEST_API_ONLY === 'true' || !apiUrl.includes('localhost');
+
 interface SessionResponse {
   scratchUserId: string;
   apiToken: string;
   expiresAt: string;
 }
 
+interface CurrentUserResponse {
+  id: string;
+  email?: string;
+  clerkId: string | null;
+  isAdmin: boolean;
+}
+
 describeOrSkip('Whalesync shadow-user internal endpoints', () => {
   jest.setTimeout(60000);
 
-  let prisma: PrismaClient;
+  // Present only when a local DB matching the target server is available; undefined in API-only mode.
+  let prismaForDbRowAssertions: PrismaClient | undefined;
   const provisionedWhalesyncUserIds: string[] = [];
 
   beforeAll(() => {
-    prisma = new PrismaClient();
+    if (!isApiOnlyMode) {
+      prismaForDbRowAssertions = new PrismaClient();
+    }
   });
 
   afterEach(async () => {
@@ -64,7 +89,7 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
   });
 
   afterAll(async () => {
-    await prisma.$disconnect();
+    await prismaForDbRowAssertions?.$disconnect();
   });
 
   async function createSession(whalesyncUserId: string, email: string, name?: string): Promise<SessionResponse> {
@@ -75,6 +100,14 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
       { headers: adminHeaders },
     );
     return response.data;
+  }
+
+  // Resolve the actor a session token authenticates as. Does not throw on 401 — callers assert status.
+  function fetchCurrentUser(apiToken: string) {
+    return axios.get<CurrentUserResponse>(`${apiUrl}/users/current`, {
+      headers: { Authorization: `API-Token ${apiToken}` },
+      ...anyStatus,
+    });
   }
 
   // 1 + 2 — provision + mint, ws: email prefix + normalization, coexistence with a native email
@@ -91,18 +124,25 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     expect(ttlMs).toBeGreaterThan(1000 * 60 * 8);
     expect(ttlMs).toBeLessThan(1000 * 60 * 12);
 
-    const userRow = await prisma.user.findUnique({ where: { whalesyncUserId } });
-    expect(userRow?.clerkId).toBe(`ws_${whalesyncUserId}`);
-    expect(userRow?.role).toBe('USER');
-    // ws: prefix applied AND lowercased/trimmed by the DB email-normalization trigger
-    expect(userRow?.email).toBe('ws:ada@example.com');
-
-    const tokenRow = await prisma.apiToken.findUnique({ where: { token: session.apiToken } });
-    expect(tokenRow?.type).toBe('WHALESYNC_SESSION');
-    expect(tokenRow?.userId).toBe(session.scratchUserId);
-
+    // The minted token authenticates as the shadow user, and /users/current exposes the synthetic
+    // clerkId and the ws:-prefixed, normalized email — so these are asserted over HTTP and hold in
+    // both local and remote/deployed (API-only) modes.
+    const whoami = await fetchCurrentUser(session.apiToken);
+    expect(whoami.status).toBe(200);
+    expect(whoami.data.id).toBe(session.scratchUserId);
+    expect(whoami.data.clerkId).toBe(`ws_${whalesyncUserId}`);
+    expect(whoami.data.isAdmin).toBe(false); // role === USER
+    // ws: prefix applied AND lowercased/trimmed by the DB email-normalization trigger.
+    expect(whoami.data.email).toBe('ws:ada@example.com');
     // A native user with the un-prefixed email can coexist (the whole point of the prefix).
-    expect(userRow?.email).not.toBe('ada@example.com');
+    expect(whoami.data.email).not.toBe('ada@example.com');
+
+    if (prismaForDbRowAssertions) {
+      // Token type is not exposed over HTTP; assert it directly when a matching DB is available.
+      const tokenRow = await prismaForDbRowAssertions.apiToken.findUnique({ where: { token: session.apiToken } });
+      expect(tokenRow?.type).toBe('WHALESYNC_SESSION');
+      expect(tokenRow?.userId).toBe(session.scratchUserId);
+    }
   });
 
   // 3 — idempotency: same user, additive token
@@ -111,15 +151,27 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     const first = await createSession(whalesyncUserId, 'repeat@example.com');
     const second = await createSession(whalesyncUserId, 'repeat@example.com');
 
+    // Same shadow user resolved both times (idempotent on whalesyncUserId)...
     expect(second.scratchUserId).toBe(first.scratchUserId);
+    // ...and each call minted a distinct, independently-valid token (additive minting), both
+    // resolving to the same shadow user — observable over HTTP without a DB.
+    expect(second.apiToken).not.toBe(first.apiToken);
+    const firstWhoami = await fetchCurrentUser(first.apiToken);
+    const secondWhoami = await fetchCurrentUser(second.apiToken);
+    expect(firstWhoami.status).toBe(200);
+    expect(secondWhoami.status).toBe(200);
+    expect(firstWhoami.data.id).toBe(first.scratchUserId);
+    expect(secondWhoami.data.id).toBe(first.scratchUserId);
 
-    const userCount = await prisma.user.count({ where: { whalesyncUserId } });
-    expect(userCount).toBe(1);
+    if (prismaForDbRowAssertions) {
+      const userCount = await prismaForDbRowAssertions.user.count({ where: { whalesyncUserId } });
+      expect(userCount).toBe(1);
 
-    const sessionTokenCount = await prisma.apiToken.count({
-      where: { userId: first.scratchUserId, type: 'WHALESYNC_SESSION' },
-    });
-    expect(sessionTokenCount).toBe(2);
+      const sessionTokenCount = await prismaForDbRowAssertions.apiToken.count({
+        where: { userId: first.scratchUserId, type: 'WHALESYNC_SESSION' },
+      });
+      expect(sessionTokenCount).toBe(2);
+    }
   });
 
   // 4 — minted token authenticates a real request as the shadow user
@@ -127,9 +179,7 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     const whalesyncUserId = randomUUID();
     const session = await createSession(whalesyncUserId, 'whoami@example.com');
 
-    const whoami = await axios.get(`${apiUrl}/users/current`, {
-      headers: { Authorization: `API-Token ${session.apiToken}` },
-    });
+    const whoami = await fetchCurrentUser(session.apiToken);
     expect(whoami.status).toBe(200);
     expect(whoami.data.id).toBe(session.scratchUserId);
   });
@@ -146,11 +196,15 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     );
     expect(response.status).toBe(201);
     expect(response.data.scratchUserId).toBeTruthy();
+    // The ensure-only endpoint returns no token — minting is exclusive to POST /sessions.
+    expect(response.data.apiToken).toBeUndefined();
 
-    const sessionTokenCount = await prisma.apiToken.count({
-      where: { userId: response.data.scratchUserId, type: 'WHALESYNC_SESSION' },
-    });
-    expect(sessionTokenCount).toBe(0);
+    if (prismaForDbRowAssertions) {
+      const sessionTokenCount = await prismaForDbRowAssertions.apiToken.count({
+        where: { userId: response.data.scratchUserId, type: 'WHALESYNC_SESSION' },
+      });
+      expect(sessionTokenCount).toBe(0);
+    }
   });
 
   // 6 — bulk revoke, and a revoked token stops authenticating
@@ -159,21 +213,24 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     const session = await createSession(whalesyncUserId, 'revoke@example.com');
     await createSession(whalesyncUserId, 'revoke@example.com'); // a second session token
 
+    // Token authenticates before revocation.
+    expect((await fetchCurrentUser(session.apiToken)).status).toBe(200);
+
     const revokeResponse = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}/sessions`, {
       headers: adminHeaders,
     });
     expect(revokeResponse.data.revoked).toBe(2);
 
-    const remaining = await prisma.apiToken.count({
-      where: { userId: session.scratchUserId, type: 'WHALESYNC_SESSION' },
-    });
-    expect(remaining).toBe(0);
-
-    const afterRevoke = await axios.get(`${apiUrl}/users/current`, {
-      headers: { Authorization: `API-Token ${session.apiToken}` },
-      ...anyStatus,
-    });
+    // The revoked token no longer authenticates.
+    const afterRevoke = await fetchCurrentUser(session.apiToken);
     expect(afterRevoke.status).toBe(401);
+
+    if (prismaForDbRowAssertions) {
+      const remaining = await prismaForDbRowAssertions.apiToken.count({
+        where: { userId: session.scratchUserId, type: 'WHALESYNC_SESSION' },
+      });
+      expect(remaining).toBe(0);
+    }
   });
 
   // 7 — deprovision tears down user + org + workbooks, idempotent on unknown id
@@ -187,10 +244,16 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     });
     expect(first.status).toBe(204);
 
-    const userRow = await prisma.user.findUnique({ where: { whalesyncUserId } });
-    expect(userRow).toBeNull();
-    const tokenCount = await prisma.apiToken.count({ where: { userId: session.scratchUserId } });
-    expect(tokenCount).toBe(0);
+    // The user and its tokens are gone: the previously-valid token stops authenticating.
+    const afterDeprovision = await fetchCurrentUser(session.apiToken);
+    expect(afterDeprovision.status).toBe(401);
+
+    if (prismaForDbRowAssertions) {
+      const userRow = await prismaForDbRowAssertions.user.findUnique({ where: { whalesyncUserId } });
+      expect(userRow).toBeNull();
+      const tokenCount = await prismaForDbRowAssertions.apiToken.count({ where: { userId: session.scratchUserId } });
+      expect(tokenCount).toBe(0);
+    }
 
     // Idempotent: deleting an unknown / already-gone user still succeeds.
     const second = await axios.delete(`${apiUrl}/internal/whalesync/users/${whalesyncUserId}`, {

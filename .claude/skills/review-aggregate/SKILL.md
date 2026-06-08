@@ -18,8 +18,8 @@ reviewed in bulk and justified in Vanta.
 This skill triages the list so a human reviewer can focus on the MRs that actually
 need careful attention.
 
-**Scope:** This skill only evaluates MRs from the [`whalesync/spinner`](https://gitlab.com/whalesync/spinner)
-repo. MRs from other repos (e.g., `whalesync/whalesync`, `whalesync/internal`) are
+**Scope:** This skill only evaluates MRs from the [`whalesync/spinner`](https://gitlab.com/whalesync/spinner) and [`whalesync/scratch-www`](https://gitlab.com/whalesync/scratch-www)
+repos. MRs from other repos (e.g., `whalesync/whalesync`, `whalesync/internal`) are
 listed separately as out-of-scope and not triaged.
 
 ## Arguments

@@ -22,8 +22,17 @@ environment tests for test env post-deploy:
     INTEGRATION_TEST_CLIENT_DOMAIN: "test.scratch.md"
     INTEGRATION_TEST_API_DOMAIN: "test-api.scratch.md"
     INTEGRATION_TEST_USER_ID: user_35RRk1ww8PJ4g0TfVfxbeU5iFJz
-    # Turns on Notion integration tests.
+    # Live connector integration tests. Each *-connector.spec.ts self-skips (describe.skip) when its
+    # key is unset, so any CI/CD variable left empty simply skips that connector's suite — wiring them
+    # all is safe. Define these as masked CI/CD variables in the GitLab project settings to enable the
+    # corresponding connector. (HubSpot is not here: it runs against an in-process fake, no key needed.)
     NOTION_API_KEY: "${INTEGRATION_TEST_NOTION_API_KEY}"
+
+    # Whalesync shadow-user / session admin-channel test (whalesync-shadow-user.spec.ts). Drives the
+    RUN_WHALESYNC_INTEGRATION: "true"
+    WHALESYNC_TEST_API_ONLY: "true"
+    SCRATCH_ADMIN_API_KEY: "${INTEGRATION_TEST_SCRATCH_ADMIN_API_KEY}"
+
   script:
     - !reference [.build_shared_types, script]
     - cd server
