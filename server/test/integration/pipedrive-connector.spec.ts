@@ -1,14 +1,16 @@
 /**
  * Pipedrive connector live API integration test.
  *
- * Exercises the real Pipedrive v2 API: validates credentials, lists the three
- * entity types as tables, builds a schema for each, pulls records (full +
- * incremental), and runs a create→update→delete round-trip (cleaning up after
- * itself).
+ * Exercises the real Pipedrive API (v2 + v1): validates credentials, lists every
+ * supported entity type as a table, builds a schema for each, pulls records (full
+ * + incremental), and runs create→update→delete round-trips — covering the v2
+ * cursor entities (deals/persons/organizations/products/activities) and the v1
+ * offset entities (leads with a UUID id, notes).
  *
  * Requires PIPEDRIVE_API_KEY in .env.integration. Any Pipedrive account works —
  * a free trial with the default sample data is enough; the suite creates and
- * deletes its own `persons` records and never depends on pre-seeded content.
+ * deletes its own records (and any persons it links leads/notes to) and never
+ * depends on pre-seeded content.
  *
  * Run via: cd server && yarn test:integration -- pipedrive-connector
  */
@@ -22,7 +24,11 @@ jest.mock('src/remote-service/connectors/display-names', () => ({
 }));
 
 import { PipedriveConnector } from 'src/remote-service/connectors/library/pipedrive/pipedrive-connector';
-import { ENTITY_DISPLAY_NAMES, ENTITY_TYPES } from 'src/remote-service/connectors/library/pipedrive/pipedrive-types';
+import {
+  ENTITY_DISPLAY_NAMES,
+  ENTITY_TYPES,
+  PipedriveEntityType,
+} from 'src/remote-service/connectors/library/pipedrive/pipedrive-types';
 import {
   BaseJsonTableSpec,
   ConnectorFile,
@@ -100,7 +106,7 @@ describeIfKey('PipedriveConnector — live API', () => {
   // -------------------------------------------------------------------------
 
   describe('listTables', () => {
-    it('returns exactly the three Pipedrive entity types', () => {
+    it('returns exactly the supported Pipedrive entity types', () => {
       const wsIds = allTables.map((t) => t.id.wsId).sort();
       expect(wsIds).toEqual([...ENTITY_TYPES].sort());
     });
@@ -249,8 +255,20 @@ describeIfKey('PipedriveConnector — live API', () => {
       expect(connector.getBatchSize()).toBe(1);
     });
 
-    it('incrementalPullSupport returns SUPPORTED', () => {
-      expect(connector.incrementalPullSupport()).toBe(IncrementalPullSupport.SUPPORTED);
+    it('incrementalPullSupport is SUPPORTED for the primary table and NOT_SUPPORTED for pipelines/stages', () => {
+      expect(connector.incrementalPullSupport({} as PullRecordFilesOptions, primarySpec)).toBe(
+        IncrementalPullSupport.SUPPORTED,
+      );
+      // pipelines/stages reject updated_since, so incremental is unsupported
+      // (incrementalPullSupport reads only tableSpec.id.wsId).
+      const pipelinesSpec = { id: { wsId: 'pipelines', remoteId: ['pipelines'] } } as BaseJsonTableSpec;
+      expect(connector.incrementalPullSupport({} as PullRecordFilesOptions, pipelinesSpec)).toBe(
+        IncrementalPullSupport.NOT_SUPPORTED,
+      );
+      // A null spec reports the connector's general capability.
+      expect(connector.incrementalPullSupport({} as PullRecordFilesOptions, null)).toBe(
+        IncrementalPullSupport.SUPPORTED,
+      );
     });
   });
 });
@@ -315,6 +333,200 @@ describeIfKey('PipedriveConnector — CRUD round-trip', () => {
     expect(afterDelete).not.toBeNull();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(afterDelete!.is_deleted).toBe(true);
+  });
+});
+
+// ===========================================================================
+// CRUD round-trip for the newly added entity types
+// ===========================================================================
+
+describeIfKey('PipedriveConnector — new entity types CRUD', () => {
+  let connector: PipedriveConnector;
+  const specs = new Map<PipedriveEntityType, BaseJsonTableSpec>();
+  const cleanups: Array<() => Promise<void>> = [];
+
+  beforeAll(async () => {
+    connector = createConnector();
+    const tables = await connector.listTables();
+    const entityTypes: PipedriveEntityType[] = [
+      'persons',
+      'products',
+      'activities',
+      'leads',
+      'notes',
+      'pipelines',
+      'stages',
+    ];
+    for (const entityType of entityTypes) {
+      const found = tables.find((t) => t.id.wsId === entityType);
+      if (!found) throw new Error(`Expected a "${entityType}" table.`);
+      specs.set(entityType, await connector.fetchJsonTableSpec(found.id));
+    }
+  });
+
+  afterAll(async () => {
+    await Promise.allSettled(cleanups.map((fn) => fn()));
+  });
+
+  function specFor(entityType: PipedriveEntityType): BaseJsonTableSpec {
+    const spec = specs.get(entityType);
+    if (!spec) throw new Error(`No spec loaded for ${entityType}`);
+    return spec;
+  }
+
+  /** Create a person to link a lead/note to, registering its cleanup. Returns the new id. */
+  async function createLinkedPerson(): Promise<number> {
+    const spec = specFor('persons');
+    const [created] = await connector.createRecords(spec, [
+      { name: `${ROUND_TRIP_NAME_PREFIX} link ${Date.now()}` } as ConnectorFile,
+    ]);
+    const id = (created as Record<string, unknown>).id as number;
+    cleanups.push(async () => {
+      await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+    });
+    return id;
+  }
+
+  it('products: create → update → delete (v2, integer id)', async () => {
+    const spec = specFor('products');
+    const name = `${ROUND_TRIP_NAME_PREFIX} product ${Date.now()}`;
+
+    const [created] = await connector.createRecords(spec, [{ name } as ConnectorFile]);
+    const record = created as Record<string, unknown>;
+    const id = record.id as number;
+    expect(typeof id).toBe('number');
+    expect(record.name).toBe(name);
+    cleanups.push(async () => {
+      await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+    });
+
+    const updatedName = `${name} (updated)`;
+    await connector.updateRecords(spec, [{ id } as unknown as ConnectorFile], [{ name: updatedName }]);
+    const afterUpdate = await fetchById(connector, spec, String(id));
+    expect(afterUpdate?.name).toBe(updatedName);
+
+    await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+  });
+
+  it('activities: create → update → delete (v2, integer id)', async () => {
+    const spec = specFor('activities');
+    const subject = `${ROUND_TRIP_NAME_PREFIX} activity ${Date.now()}`;
+
+    // v2 activity create requires `subject` and a valid `type` key_string; `call`
+    // is a default activity type present in every Pipedrive account.
+    const [created] = await connector.createRecords(spec, [{ subject, type: 'call' } as ConnectorFile]);
+    const record = created as Record<string, unknown>;
+    const id = record.id as number;
+    expect(typeof id).toBe('number');
+    expect(record.subject).toBe(subject);
+    cleanups.push(async () => {
+      await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+    });
+
+    const updatedSubject = `${subject} (updated)`;
+    await connector.updateRecords(spec, [{ id } as unknown as ConnectorFile], [{ subject: updatedSubject }]);
+    const afterUpdate = await fetchById(connector, spec, String(id));
+    expect(afterUpdate?.subject).toBe(updatedSubject);
+
+    await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+  });
+
+  it('leads: create (linked to a person, UUID id) → update → delete (v1)', async () => {
+    const personId = await createLinkedPerson();
+    const spec = specFor('leads');
+    const title = `${ROUND_TRIP_NAME_PREFIX} lead ${Date.now()}`;
+
+    // A lead requires a title and a linked person or organization.
+    const [created] = await connector.createRecords(spec, [{ title, person_id: personId } as ConnectorFile]);
+    const record = created as Record<string, unknown>;
+    const id = record.id as string;
+    // Leads are the one entity with a UUID string id, not an integer.
+    expect(typeof id).toBe('string');
+    expect(record.title).toBe(title);
+    cleanups.push(async () => {
+      await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+    });
+
+    const updatedTitle = `${title} (updated)`;
+    await connector.updateRecords(spec, [{ id } as unknown as ConnectorFile], [{ title: updatedTitle }]);
+    const afterUpdate = await fetchById(connector, spec, id);
+    expect(afterUpdate?.title).toBe(updatedTitle);
+
+    await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+  });
+
+  it('notes: create (linked to a person) → update → delete (v1, PUT update)', async () => {
+    const personId = await createLinkedPerson();
+    const spec = specFor('notes');
+    const content = `<p>${ROUND_TRIP_NAME_PREFIX} note ${Date.now()}</p>`;
+
+    // A note requires content and a parent object id.
+    const [created] = await connector.createRecords(spec, [{ content, person_id: personId } as ConnectorFile]);
+    const record = created as Record<string, unknown>;
+    const id = record.id as number;
+    expect(typeof id).toBe('number');
+    cleanups.push(async () => {
+      await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+    });
+
+    const updatedContent = `${content}<p>edited</p>`;
+    await connector.updateRecords(spec, [{ id } as unknown as ConnectorFile], [{ content: updatedContent }]);
+    const afterUpdate = await fetchById(connector, spec, String(id));
+    expect(String(afterUpdate?.content)).toContain('edited');
+
+    await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+  });
+
+  it('pipelines: create → update → delete (v2 config, integer id)', async () => {
+    const spec = specFor('pipelines');
+    const name = `${ROUND_TRIP_NAME_PREFIX} pipeline ${Date.now()}`;
+
+    const [created] = await connector.createRecords(spec, [{ name } as ConnectorFile]);
+    const record = created as Record<string, unknown>;
+    const id = record.id as number;
+    expect(typeof id).toBe('number');
+    expect(record.name).toBe(name);
+    cleanups.push(async () => {
+      await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+    });
+
+    const updatedName = `${name} (updated)`;
+    await connector.updateRecords(spec, [{ id } as unknown as ConnectorFile], [{ name: updatedName }]);
+    const afterUpdate = await fetchById(connector, spec, String(id));
+    expect(afterUpdate?.name).toBe(updatedName);
+
+    await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+  });
+
+  it('stages: create (in a fresh pipeline) → update → delete (v2 config, integer id)', async () => {
+    // A stage must belong to a pipeline, so create a throwaway pipeline first.
+    const pipelineSpec = specFor('pipelines');
+    const [pipeline] = await connector.createRecords(pipelineSpec, [
+      { name: `${ROUND_TRIP_NAME_PREFIX} stage-parent ${Date.now()}` } as ConnectorFile,
+    ]);
+    const pipelineId = (pipeline as Record<string, unknown>).id as number;
+    cleanups.push(async () => {
+      await connector.deleteRecords(pipelineSpec, [{ id: pipelineId } as unknown as ConnectorFile]);
+    });
+
+    const spec = specFor('stages');
+    const name = `${ROUND_TRIP_NAME_PREFIX} stage ${Date.now()}`;
+    const [created] = await connector.createRecords(spec, [{ name, pipeline_id: pipelineId } as ConnectorFile]);
+    const record = created as Record<string, unknown>;
+    const id = record.id as number;
+    expect(typeof id).toBe('number');
+    expect(record.name).toBe(name);
+    expect(record.pipeline_id).toBe(pipelineId);
+    cleanups.push(async () => {
+      await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
+    });
+
+    const updatedName = `${name} (updated)`;
+    await connector.updateRecords(spec, [{ id } as unknown as ConnectorFile], [{ name: updatedName }]);
+    const afterUpdate = await fetchById(connector, spec, String(id));
+    expect(afterUpdate?.name).toBe(updatedName);
+
+    await connector.deleteRecords(spec, [{ id } as unknown as ConnectorFile]);
   });
 });
 

@@ -8,6 +8,7 @@ import {
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { PipedriveApiClient } from './pipedrive-api-client';
+import { STATIC_SYSTEM_SCHEMAS } from './pipedrive-static-schemas';
 import { ENTITY_CONFIG, ENTITY_DISPLAY_NAMES, PipedriveEntityType, PipedriveField } from './pipedrive-types';
 
 /**
@@ -135,7 +136,9 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
       return Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true });
 
     case 'stage':
-      return Type.Union([Type.Number(), Type.Null()]);
+      return Type.Union([Type.Number(), Type.Null()], {
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: 'stages' },
+      });
 
     case 'status':
       return Type.Union([Type.String(), Type.Null()]);
@@ -167,62 +170,104 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
 }
 
 /**
- * Build a BaseJsonTableSpec from the Pipedrive Fields API response.
- * Custom fields are nested under a `custom_fields` property to mirror the v2 API structure.
+ * Build a BaseJsonTableSpec for a Pipedrive entity.
+ *
+ * System fields come from one of two sources depending on the entity config:
+ * - **Dynamic** (deals/persons/organizations/products/activities): discovered
+ *   from the entity's v2 `*Fields` endpoint, so user-added fields appear
+ *   automatically.
+ * - **Static** (leads/notes): hardcoded in {@link STATIC_SYSTEM_SCHEMAS} because
+ *   the API exposes no Fields endpoint for them.
+ *
+ * Custom fields (when the entity has a `*Fields` endpoint) are always taken
+ * dynamically and placed according to `customFieldPlacement`: `nested` under a
+ * `custom_fields` object for v2 entities, or `flat` (top-level hash keys) for v1
+ * entities like leads, matching how each API returns and accepts them.
  */
 export async function buildPipedriveJsonTableSpec(
   id: EntityId,
   entityType: PipedriveEntityType,
   client: PipedriveApiClient,
 ): Promise<BaseJsonTableSpec> {
-  const fields = await client.getFields(entityType);
   const config = ENTITY_CONFIG[entityType];
 
   const systemProperties: Record<string, TSchema> = {};
   const customProperties: Record<string, TSchema> = {};
 
-  for (const field of fields) {
-    const schema = pipedriveFieldToJsonSchema(field);
-    if (!schema) continue;
-
-    // Build annotations object
-    const annotations: Record<string, unknown> = {
-      description: field.field_name,
-      [X_SCRATCH_REMOTE_FIELD_ID]: field.field_code,
-    };
-
-    // Mark system read-only fields
-    if (READONLY_SYSTEM_FIELDS.has(field.field_code)) {
-      annotations[X_SCRATCH_READONLY] = true;
-    }
-
-    // Annotate the fixed `update_time` system field for the UI's
-    // last-modified-field picker and the auto-detect path
-    // (findLastModifiedFieldName). The connector hardcodes `update_time` for
-    // incremental pulls (it is a fixed system field on every Pipedrive entity);
-    // the annotation surfaces that field to the picker.
-    if (field.field_code === 'update_time') {
-      annotations[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
-    }
-
-    // Merge annotations into the schema
-    const annotatedSchema: TSchema = { ...schema, ...annotations };
-
-    if (field.is_custom_field) {
-      customProperties[field.field_code] = annotatedSchema;
-    } else {
-      systemProperties[field.field_code] = annotatedSchema;
+  // 1. Static system fields (leads, notes) — entities without a Fields endpoint
+  //    (or, for leads, without an introspectable system shape).
+  const staticSystemSchema = STATIC_SYSTEM_SCHEMAS[entityType];
+  if (staticSystemSchema) {
+    for (const [fieldCode, fieldSchema] of Object.entries(staticSystemSchema)) {
+      systemProperties[fieldCode] = {
+        description: fieldCode,
+        [X_SCRATCH_REMOTE_FIELD_ID]: fieldCode,
+        ...fieldSchema,
+      };
     }
   }
 
-  // Build the top-level schema
-  const schemaProperties: Record<string, TSchema> = { ...systemProperties };
+  // 2. Dynamic fields from the Fields endpoint. For dynamic-system entities this
+  //    supplies both system and custom fields; for leads it supplies only custom
+  //    fields (the static system schema above wins for system fields).
+  if (config.fieldsCollectionPath) {
+    const fields = await client.getFields(entityType);
+    for (const field of fields) {
+      const schema = pipedriveFieldToJsonSchema(field);
+      if (!schema) continue;
 
-  // Add custom_fields as a nested object if there are any custom fields
+      // Build annotations object
+      const annotations: Record<string, unknown> = {
+        description: field.field_name,
+        [X_SCRATCH_REMOTE_FIELD_ID]: field.field_code,
+      };
+
+      // Mark system read-only fields
+      if (READONLY_SYSTEM_FIELDS.has(field.field_code)) {
+        annotations[X_SCRATCH_READONLY] = true;
+      }
+
+      // Annotate the fixed `update_time` system field for the UI's
+      // last-modified-field picker and the auto-detect path
+      // (findLastModifiedFieldName). The connector hardcodes `update_time` for
+      // incremental pulls (it is a fixed system field on every Pipedrive entity);
+      // the annotation surfaces that field to the picker.
+      if (field.field_code === 'update_time') {
+        annotations[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
+      }
+
+      // Deals reference their pipeline via a plain numeric `pipeline_id`
+      // (field_type `double`, so there's no type-based hook like `stage`); wire
+      // it as a foreign key to the pipelines table.
+      if (field.field_code === 'pipeline_id') {
+        annotations[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId: 'pipelines' };
+      }
+
+      // Merge annotations into the schema
+      const annotatedSchema: TSchema = { ...schema, ...annotations };
+
+      if (field.is_custom_field) {
+        customProperties[field.field_code] = annotatedSchema;
+      } else if (config.useDynamicSystemFields) {
+        systemProperties[field.field_code] = annotatedSchema;
+      }
+      // else: an entity with a static system schema (leads) — ignore the Fields
+      // endpoint's system fields; only its custom fields are used.
+    }
+  }
+
+  // 3. Assemble the top-level schema, placing custom fields per the config.
+  const schemaProperties: Record<string, TSchema> = { ...systemProperties };
   if (Object.keys(customProperties).length > 0) {
-    schemaProperties['custom_fields'] = Type.Object(customProperties, {
-      description: 'Custom fields',
-    });
+    if (config.customFieldPlacement === 'nested') {
+      // v2 entities nest custom fields under a `custom_fields` object.
+      schemaProperties['custom_fields'] = Type.Object(customProperties, {
+        description: 'Custom fields',
+      });
+    } else {
+      // v1 entities (leads) carry custom fields as top-level hash keys.
+      Object.assign(schemaProperties, customProperties);
+    }
   }
 
   const schema = Type.Object(schemaProperties, {
@@ -236,7 +281,7 @@ export async function buildPipedriveJsonTableSpec(
     name: ENTITY_DISPLAY_NAMES[entityType],
     schema,
     idColumnRemoteId: idPath(config.idField),
-    titleColumnRemoteId: [config.titleField],
+    titleColumnRemoteId: config.titleField ? [config.titleField] : undefined,
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

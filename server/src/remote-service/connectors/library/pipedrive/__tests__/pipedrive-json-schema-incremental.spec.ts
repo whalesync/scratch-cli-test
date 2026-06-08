@@ -2,7 +2,12 @@ import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { findLastModifiedFieldName } from '../../../types';
 import { PipedriveApiClient } from '../pipedrive-api-client';
 import { buildPipedriveJsonTableSpec } from '../pipedrive-json-schema';
-import { PipedriveEntityType, PipedriveField } from '../pipedrive-types';
+import { ENTITY_CONFIG, ENTITY_TYPES, PipedriveEntityType, PipedriveField } from '../pipedrive-types';
+
+// Only entities whose list endpoint accepts `updated_since` carry the
+// last-modified annotation; the pipeline/stage config endpoints reject it.
+const INCREMENTAL_ENTITY_TYPES = ENTITY_TYPES.filter((e) => ENTITY_CONFIG[e].supportsIncremental);
+const NON_INCREMENTAL_ENTITY_TYPES = ENTITY_TYPES.filter((e) => !ENTITY_CONFIG[e].supportsIncremental);
 
 // Mock display-names to break the circular import chain (same as the existing
 // pipedrive-json-schema spec).
@@ -21,13 +26,15 @@ function makeField(overrides: Partial<PipedriveField> & { field_code: string; fi
   };
 }
 
-const ENTITY_TYPES: PipedriveEntityType[] = ['deals', 'persons', 'organizations'];
-
 describe('buildPipedriveJsonTableSpec last-modified annotation', () => {
   const mockClient = { getFields: jest.fn() };
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // For the dynamic (v2) entities, update_time/add_time/id come from the Fields
+    // endpoint. For leads/notes they come from the static system schema (leads
+    // ignores these dynamic system fields; notes never calls getFields), so the
+    // same assertions hold across every entity type.
     mockClient.getFields.mockResolvedValue([
       makeField({ field_code: 'id', field_type: 'int' }),
       makeField({ field_code: 'title', field_type: 'varchar' }),
@@ -45,10 +52,13 @@ describe('buildPipedriveJsonTableSpec last-modified annotation', () => {
     return (spec.schema as unknown as { properties: Record<string, Record<string, unknown>> }).properties;
   }
 
-  it.each(ENTITY_TYPES)('annotates update_time with x-scratch-last-modified-field=true for %s', async (entityType) => {
-    const props = await topLevelProps(entityType);
-    expect(props.update_time[X_SCRATCH_LAST_MODIFIED_FIELD]).toBe(true);
-  });
+  it.each(INCREMENTAL_ENTITY_TYPES)(
+    'annotates update_time with x-scratch-last-modified-field=true for %s',
+    async (entityType) => {
+      const props = await topLevelProps(entityType);
+      expect(props.update_time[X_SCRATCH_LAST_MODIFIED_FIELD]).toBe(true);
+    },
+  );
 
   it.each(ENTITY_TYPES)('does not annotate the add_time system field for %s', async (entityType) => {
     const props = await topLevelProps(entityType);
@@ -60,7 +70,7 @@ describe('buildPipedriveJsonTableSpec last-modified annotation', () => {
     expect(props.id[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
   });
 
-  it.each(ENTITY_TYPES)(
+  it.each(INCREMENTAL_ENTITY_TYPES)(
     'findLastModifiedFieldName resolves update_time (flat top-level shape) for %s',
     async (entityType) => {
       const spec = await buildPipedriveJsonTableSpec(
@@ -69,6 +79,20 @@ describe('buildPipedriveJsonTableSpec last-modified annotation', () => {
         mockClient as unknown as PipedriveApiClient,
       );
       expect(findLastModifiedFieldName(spec)).toBe('update_time');
+    },
+  );
+
+  it.each(NON_INCREMENTAL_ENTITY_TYPES)(
+    'does NOT annotate update_time for %s (its endpoint rejects updated_since)',
+    async (entityType) => {
+      const props = await topLevelProps(entityType);
+      expect(props.update_time[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: entityType, remoteId: [entityType] },
+        entityType,
+        mockClient as unknown as PipedriveApiClient,
+      );
+      expect(findLastModifiedFieldName(spec)).toBeUndefined();
     },
   );
 });

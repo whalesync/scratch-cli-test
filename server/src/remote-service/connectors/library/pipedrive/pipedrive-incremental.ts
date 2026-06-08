@@ -1,15 +1,15 @@
 /**
  * Helpers for the Pipedrive incremental-pull modified-since mechanism. Pipedrive
- * expresses "modified since" as the v2 list-endpoint query param
- * `updated_since=<rfc3339>`, passed on every entity list call (deals, persons,
- * organizations).
+ * expresses "modified since" as the list-endpoint query param
+ * `updated_since=<rfc3339>`, passed on every entity list call.
  *
- * Every Pipedrive entity carries a server-side `update_time` and all three v2
- * list endpoints accept `updated_since` (verified against the installed
- * `pipedrive@31.2.1` SDK request types), so the param is identical regardless of
- * entity type — there is no per-folder configuration to inspect. Pipedrive has no
- * user `options.filter` today, so there is no filter-combiner here; this module
- * owns the clock-skew constant and the watermark formatter.
+ * Every Pipedrive entity carries a server-side `update_time`, and both the v2 list
+ * endpoints (deals, persons, organizations, products, activities) and the v1 list
+ * endpoints we use (leads, notes) accept `updated_since` (verified live against
+ * the real API), so the param is identical regardless of entity type or API
+ * version — there is no per-folder configuration to inspect. Pipedrive has no user
+ * `options.filter` today, so there is no filter-combiner here; this module owns
+ * the clock-skew constant and the watermark formatter.
  *
  * Pipedrive's `updated_since` parser rejects the fractional-second component that
  * `Date.toISOString()` emits with

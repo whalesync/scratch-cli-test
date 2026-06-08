@@ -73,20 +73,32 @@ describe('PipedriveConnector', () => {
   });
 
   describe('listTables', () => {
-    it('returns all three entity types', async () => {
+    it('returns all supported entity types (v2 + v1)', async () => {
       const tables = await connector.listTables();
-      expect(tables).toHaveLength(3);
+      expect(tables).toHaveLength(9);
 
       const ids = tables.map((t) => t.id.wsId);
-      expect(ids).toContain('deals');
-      expect(ids).toContain('persons');
-      expect(ids).toContain('organizations');
+      expect(ids).toEqual(
+        expect.arrayContaining([
+          'deals',
+          'persons',
+          'organizations',
+          'products',
+          'activities',
+          'leads',
+          'notes',
+          'pipelines',
+          'stages',
+        ]),
+      );
     });
 
     it('includes display names', async () => {
       const tables = await connector.listTables();
       const deals = tables.find((t) => t.id.wsId === 'deals');
       expect(deals?.displayName).toBe('Deals');
+      const leads = tables.find((t) => t.id.wsId === 'leads');
+      expect(leads?.displayName).toBe('Leads');
     });
   });
 
@@ -147,6 +159,45 @@ describe('PipedriveConnector', () => {
       expect(mockDeleteEntity).toHaveBeenCalledTimes(2);
       expect(mockDeleteEntity).toHaveBeenCalledWith('deals', 1);
       expect(mockDeleteEntity).toHaveBeenCalledWith('deals', 2);
+    });
+  });
+
+  describe('v1 entity id handling', () => {
+    it('passes a lead UUID id through unparsed on update/delete', async () => {
+      mockUpdateEntity.mockResolvedValue({});
+      mockDeleteEntity.mockResolvedValue(undefined);
+      const tableSpec = buildTableSpec('leads');
+      const uuid = 'f597f430-2d98-11ef-ba6b-4936cb336154';
+
+      await connector.updateRecords(tableSpec, [{ id: uuid } as unknown as ConnectorFile], [{ title: 'X' }]);
+      await connector.deleteRecords(tableSpec, [{ id: uuid } as unknown as ConnectorFile]);
+
+      expect(mockUpdateEntity).toHaveBeenCalledWith('leads', uuid, { title: 'X' }, expect.any(Set));
+      expect(mockDeleteEntity).toHaveBeenCalledWith('leads', uuid);
+    });
+
+    it('fetches leads by their UUID id (not skipped as non-numeric)', async () => {
+      mockGetEntity.mockResolvedValue({ id: 'lead-uuid', title: 'Lead' });
+      const tableSpec = buildTableSpec('leads');
+
+      const got: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(tableSpec, ['lead-uuid'], async ({ files }) => {
+        got.push(...files);
+        return Promise.resolve();
+      });
+
+      expect(mockGetEntity).toHaveBeenCalledWith('leads', 'lead-uuid');
+      expect(got).toEqual([{ id: 'lead-uuid', title: 'Lead' }]);
+    });
+
+    it('parses integer note ids (and skips a non-numeric one)', async () => {
+      mockDeleteEntity.mockResolvedValue(undefined);
+      const tableSpec = buildTableSpec('notes');
+
+      await connector.deleteRecords(tableSpec, [{ id: '42' }, { id: 'not-a-number' }] as unknown as ConnectorFile[]);
+
+      expect(mockDeleteEntity).toHaveBeenCalledTimes(1);
+      expect(mockDeleteEntity).toHaveBeenCalledWith('notes', 42);
     });
   });
 

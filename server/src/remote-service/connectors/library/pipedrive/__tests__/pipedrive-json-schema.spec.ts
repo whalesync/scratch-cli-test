@@ -133,6 +133,13 @@ describe('pipedriveFieldToJsonSchema', () => {
     expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'deals' });
   });
 
+  it('maps stage to Number | Null with FOREIGN_KEY_OPTIONS to stages', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'stage' }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'stages' });
+  });
+
   it('maps user to Number | Null with READONLY_FLAG', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'user' }));
     expect(schema).toBeDefined();
@@ -211,5 +218,121 @@ describe('buildPipedriveJsonTableSpec', () => {
     );
 
     expect(spec.schema.properties).not.toHaveProperty('custom_fields');
+  });
+
+  describe('leads (v1: static system fields + flat custom fields)', () => {
+    it('uses the static lead system schema and places custom fields flat (top-level, not nested)', async () => {
+      // Leads share deals' custom fields; the Fields endpoint returns both deal
+      // system fields (ignored for leads) and custom fields (kept, placed flat).
+      mockClient.getFields.mockResolvedValue([
+        makeField({ field_code: 'stage_id', field_name: 'Stage', field_type: 'stage', is_custom_field: false }),
+        makeField({
+          field_code: 'deadbeefhash',
+          field_name: 'My Custom',
+          field_type: 'varchar',
+          is_custom_field: true,
+        }),
+      ]);
+
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'leads', remoteId: ['leads'] },
+        'leads',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      expect(spec.name).toBe('Leads');
+      expect(spec.titleColumnRemoteId).toEqual(['title']);
+      // Static lead system fields are present...
+      expect(spec.schema.properties).toHaveProperty('title');
+      expect(spec.schema.properties).toHaveProperty('value');
+      expect(spec.schema.properties).toHaveProperty('person_id');
+      // ...the deal-only dynamic system field is NOT pulled in...
+      expect(spec.schema.properties).not.toHaveProperty('stage_id');
+      // ...the custom field is flat at the top level (no custom_fields wrapper)...
+      expect(spec.schema.properties).not.toHaveProperty('custom_fields');
+      expect(spec.schema.properties).toHaveProperty('deadbeefhash');
+    });
+
+    it('marks the lead id and update_time read-only and annotates update_time as last-modified', async () => {
+      mockClient.getFields.mockResolvedValue([]);
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'leads', remoteId: ['leads'] },
+        'leads',
+        mockClient as unknown as PipedriveApiClient,
+      );
+      expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
+      expect(spec.schema.properties.update_time[X_SCRATCH_READONLY]).toBe(true);
+      expect(spec.schema.properties.update_time['x-scratch-last-modified-field']).toBe(true);
+    });
+  });
+
+  describe('notes (v1: fully static, no Fields endpoint, no title)', () => {
+    it('builds the static note schema without calling getFields and without a title column', async () => {
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'notes', remoteId: ['notes'] },
+        'notes',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      expect(mockClient.getFields).not.toHaveBeenCalled();
+      expect(spec.name).toBe('Notes');
+      expect(spec.titleColumnRemoteId).toBeUndefined();
+      expect(spec.schema.properties).toHaveProperty('content');
+      expect(spec.schema.properties).toHaveProperty('deal_id');
+      expect(spec.schema.properties).not.toHaveProperty('custom_fields');
+      // The server-hydrated stub objects are read-only.
+      expect(spec.schema.properties.person[X_SCRATCH_READONLY]).toBe(true);
+    });
+  });
+
+  describe('deals foreign keys to pipeline config', () => {
+    it('wires deals.pipeline_id (a plain double) and stage_id as foreign keys', async () => {
+      mockClient.getFields.mockResolvedValue([
+        makeField({ field_code: 'id', field_name: 'ID', field_type: 'int' }),
+        makeField({ field_code: 'pipeline_id', field_name: 'Pipeline', field_type: 'double' }),
+        makeField({ field_code: 'stage_id', field_name: 'Stage', field_type: 'stage' }),
+      ]);
+
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'deals', remoteId: ['deals'] },
+        'deals',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      expect(spec.schema.properties.pipeline_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'pipelines' });
+      expect(spec.schema.properties.stage_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'stages' });
+    });
+  });
+
+  describe('pipelines / stages (v2 config: static, no custom fields, not incremental)', () => {
+    it('builds a static pipelines schema (no getFields, name title, no last-modified annotation)', async () => {
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'pipelines', remoteId: ['pipelines'] },
+        'pipelines',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      expect(mockClient.getFields).not.toHaveBeenCalled();
+      expect(spec.name).toBe('Pipelines');
+      expect(spec.titleColumnRemoteId).toEqual(['name']);
+      expect(spec.schema.properties).toHaveProperty('name');
+      expect(spec.schema.properties).not.toHaveProperty('custom_fields');
+      expect(spec.schema.properties.update_time[X_SCRATCH_READONLY]).toBe(true);
+      // update_time is intentionally NOT a last-modified field — the pipelines
+      // endpoint rejects updated_since, so incremental pulls are unsupported.
+      expect(spec.schema.properties.update_time['x-scratch-last-modified-field']).toBeUndefined();
+    });
+
+    it('builds a static stages schema with pipeline_id as a foreign key to pipelines', async () => {
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'stages', remoteId: ['stages'] },
+        'stages',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      expect(spec.name).toBe('Stages');
+      expect(spec.schema.properties.pipeline_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'pipelines' });
+      expect(spec.schema.properties.update_time['x-scratch-last-modified-field']).toBeUndefined();
+    });
   });
 });

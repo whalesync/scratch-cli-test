@@ -19,21 +19,36 @@ import {
   PullRecordFilesResult,
   TablePreview,
 } from '../../types';
-import { PipedriveApiClient, PipedriveError } from './pipedrive-api-client';
+import { PipedriveApiClient, PipedriveError, PipedriveListResume } from './pipedrive-api-client';
 import { buildPipedriveUpdatedSince } from './pipedrive-incremental';
 import { buildPipedriveJsonTableSpec } from './pipedrive-json-schema';
-import { ENTITY_DISPLAY_NAMES, ENTITY_TYPES, PipedriveDownloadProgress, PipedriveEntityType } from './pipedrive-types';
+import {
+  coercePipedriveEntityId,
+  ENTITY_CONFIG,
+  ENTITY_DISPLAY_NAMES,
+  ENTITY_TYPES,
+  PipedriveDownloadProgress,
+  PipedriveEntityType,
+} from './pipedrive-types';
 
 /**
  * Connector for the Pipedrive CRM.
  *
- * Supports three entity types:
+ * Supports the standard Pipedrive object types:
  * - Deals (sales pipeline items)
  * - Persons (contacts)
  * - Organizations (companies)
+ * - Products
+ * - Activities (calls, meetings, tasks)
+ * - Leads
+ * - Notes
+ * - Pipelines and Stages (deal pipeline configuration)
  *
- * Talks to the Pipedrive v2 REST API exclusively through {@link PipedriveApiClient}
- * (an explicit axios client), not a vendored SDK.
+ * Talks to the Pipedrive REST API exclusively through {@link PipedriveApiClient}
+ * (an explicit axios client), not a vendored SDK. Most objects use the modern v2
+ * API; leads and notes are only available on the legacy v1 API. The client and
+ * the per-entity {@link ENTITY_CONFIG} hide those differences (paths, pagination,
+ * update verb, custom-field placement, id type) from this connector.
  */
 export class PipedriveConnector extends Connector<string, PipedriveDownloadProgress> {
   readonly service = Service.PIPEDRIVE;
@@ -112,14 +127,26 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
   }
 
   /**
-   * Pipedrive supports incremental pulls unconditionally: every entity type
-   * (deals, persons, organizations) has a guaranteed server-side `update_time`
-   * system field and the v2 list endpoints accept the `updated_since` filter.
-   * The field is fixed (not user-selectable), so there is no per-folder config
-   * to inspect — this always returns `SUPPORTED`.
+   * Incremental support is decided per entity type. Every Pipedrive object with
+   * a guaranteed server-side `update_time` whose list endpoint accepts
+   * `updated_since` supports it (deals, persons, organizations, products,
+   * activities, leads, notes); the pipeline/stage config endpoints reject
+   * `updated_since` (HTTP 400) and so are always full-pulled. The deciding field
+   * is fixed (not user-selectable), so there is no per-folder config to inspect —
+   * the answer comes straight from {@link ENTITY_CONFIG}. A `null` tableSpec
+   * (REST computing the value before a folder's first pull) reports the
+   * connector's general capability; the pull path always has a spec and gates
+   * precisely.
    */
-  override incrementalPullSupport(): IncrementalPullSupport {
-    return IncrementalPullSupport.SUPPORTED;
+  override incrementalPullSupport(
+    _options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    if (!tableSpec) return IncrementalPullSupport.SUPPORTED;
+    const entityType = tableSpec.id.wsId as PipedriveEntityType;
+    return ENTITY_CONFIG[entityType].supportsIncremental
+      ? IncrementalPullSupport.SUPPORTED
+      : IncrementalPullSupport.NOT_SUPPORTED;
   }
 
   /**
@@ -136,25 +163,38 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
-    const resumeCursor = (progress as { nextCursor?: string })?.nextCursor;
+    const config = ENTITY_CONFIG[entityType];
+
+    // Resume from whichever pagination marker this entity uses: a cursor (v2) or
+    // a `start` offset (v1 leads/notes).
+    const resume: PipedriveListResume =
+      config.paginationStyle === 'cursor' ? { cursor: progress.nextCursor } : { start: progress.nextStart };
 
     // Capture the watermark BEFORE the first API call so records changed
     // mid-pull aren't lost on the next run. Pipedrive's `updated_since` is
     // inclusive (`>=`) but `update_time` is server-side while the watermark is
     // client-side, so the helper subtracts a clock-skew margin; idempotent
     // commits absorb the small re-pulled window. Pipedrive has no user
-    // `options.filter` today — nothing to combine.
+    // `options.filter` today — nothing to combine. Entities whose endpoint
+    // rejects `updated_since` (pipelines/stages) never take this branch, so they
+    // are always full-pulled even if a caller requests incremental.
     let newWatermark: Date | undefined;
     let updatedSince: string | undefined;
-    if (options.pullMode === 'incremental' && options.since instanceof Date) {
+    if (config.supportsIncremental && options.pullMode === 'incremental' && options.since instanceof Date) {
       newWatermark = new Date();
       updatedSince = buildPipedriveUpdatedSince(options.since);
     }
 
-    for await (const batch of this.client.listEntities(entityType, resumeCursor, updatedSince)) {
+    for await (const batch of this.client.listEntities(entityType, resume, updatedSince)) {
+      let connectorProgress: PipedriveDownloadProgress = {};
+      if (batch.nextCursor !== undefined) {
+        connectorProgress = { nextCursor: batch.nextCursor };
+      } else if (batch.nextStart !== undefined) {
+        connectorProgress = { nextStart: batch.nextStart };
+      }
       await callback({
         files: batch.data as unknown as ConnectorFile[],
-        connectorProgress: batch.nextCursor ? { nextCursor: batch.nextCursor } : {},
+        connectorProgress,
       });
     }
     return newWatermark ? { newWatermark } : {};
@@ -173,16 +213,16 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     const buffer: ConnectorFile[] = [];
 
     for (const id of ids) {
-      const numericId = parseInt(id, 10);
-      if (isNaN(numericId)) {
+      const entityId = coercePipedriveEntityId(entityType, id);
+      if (entityId === null) {
         WSLogger.warn({
           source: 'PipedriveConnector',
-          message: `Invalid non-numeric ID "${id}" for ${entityType}, skipping`,
+          message: `Invalid ID "${id}" for ${entityType}, skipping`,
         });
         continue;
       }
 
-      const entity = await this.client.getEntity(entityType, numericId);
+      const entity = await this.client.getEntity(entityType, entityId);
       if (entity) {
         buffer.push(entity as ConnectorFile);
       }
@@ -236,7 +276,14 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const entityId = parseInt(String(file.id), 10);
+      const entityId = coercePipedriveEntityId(entityType, file.id);
+      if (entityId === null) {
+        WSLogger.warn({
+          source: 'PipedriveConnector',
+          message: `Invalid ID "${String(file.id)}" for ${entityType}, skipping update`,
+        });
+        continue;
+      }
 
       const cf = changedFields?.[i];
       const data = cf ?? this.extractWritableData(file);
@@ -254,7 +301,14 @@ export class PipedriveConnector extends Connector<string, PipedriveDownloadProgr
     const entityType = tableSpec.id.wsId as PipedriveEntityType;
 
     for (const file of files) {
-      const entityId = parseInt(String(file.id), 10);
+      const entityId = coercePipedriveEntityId(entityType, file.id);
+      if (entityId === null) {
+        WSLogger.warn({
+          source: 'PipedriveConnector',
+          message: `Invalid ID "${String(file.id)}" for ${entityType}, skipping delete`,
+        });
+        continue;
+      }
       await this.client.deleteEntity(entityType, entityId);
     }
   }

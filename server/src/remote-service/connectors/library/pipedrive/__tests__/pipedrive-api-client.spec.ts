@@ -8,6 +8,7 @@ import { PipedriveApiClient } from '../pipedrive-api-client';
 const mockGet = jest.fn();
 const mockPost = jest.fn();
 const mockPatch = jest.fn();
+const mockPut = jest.fn();
 const mockDelete = jest.fn();
 
 jest.mock('../../../create-api-client', () => ({
@@ -15,6 +16,7 @@ jest.mock('../../../create-api-client', () => ({
     get: mockGet,
     post: mockPost,
     patch: mockPatch,
+    put: mockPut,
     delete: mockDelete,
   })),
 }));
@@ -32,6 +34,14 @@ function makeAxiosError(status: number, data: unknown): axios.AxiosError {
   });
 }
 
+/** Consume an async generator to exhaustion. */
+async function drain(gen: AsyncIterable<unknown>): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _page of gen) {
+    // consume the generator
+  }
+}
+
 describe('PipedriveApiClient', () => {
   let client: PipedriveApiClient;
 
@@ -41,9 +51,9 @@ describe('PipedriveApiClient', () => {
   });
 
   describe('constructor', () => {
-    it('configures the v2 base URL and authenticates the API key via the x-api-token header', () => {
+    it('configures the bare host base URL and authenticates the API key via the x-api-token header', () => {
       expect(createApiClient).toHaveBeenCalledWith({
-        baseURL: 'https://api.pipedrive.com/api/v2',
+        baseURL: 'https://api.pipedrive.com',
         headers: {
           'Content-Type': 'application/json',
           'x-api-token': 'test-key',
@@ -55,7 +65,7 @@ describe('PipedriveApiClient', () => {
       jest.clearAllMocks();
       new PipedriveApiClient('oauth-token', { authType: 'oauth' });
       expect(createApiClient).toHaveBeenCalledWith({
-        baseURL: 'https://api.pipedrive.com/api/v2',
+        baseURL: 'https://api.pipedrive.com',
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'Bearer oauth-token',
@@ -65,10 +75,10 @@ describe('PipedriveApiClient', () => {
   });
 
   describe('testConnection', () => {
-    it('GETs /deals with limit 1', async () => {
+    it('GETs the v2 /deals path with limit 1', async () => {
       mockGet.mockResolvedValue({ data: { data: [], additional_data: {} } });
       await client.testConnection();
-      expect(mockGet).toHaveBeenCalledWith('/deals', { params: { limit: 1 } });
+      expect(mockGet).toHaveBeenCalledWith('/api/v2/deals', { params: { limit: 1 } });
     });
 
     it('maps a 401 to a PipedriveError with status 401', async () => {
@@ -88,22 +98,32 @@ describe('PipedriveApiClient', () => {
   });
 
   describe('getFields', () => {
-    it('GETs the per-entity Fields path and unwraps the data array', async () => {
+    it('GETs the per-entity v2 Fields path and unwraps the data array', async () => {
       mockGet.mockResolvedValue({
         data: { data: [{ field_code: 'title', is_custom_field: false }], additional_data: {} },
       });
       const fields = await client.getFields('deals');
-      expect(mockGet).toHaveBeenCalledWith('/dealFields', { params: { limit: 500 } });
+      expect(mockGet).toHaveBeenCalledWith('/api/v2/dealFields', { params: { limit: 500 } });
       expect(fields).toEqual([{ field_code: 'title', is_custom_field: false }]);
     });
 
     it.each([
-      ['persons', '/personFields'],
-      ['organizations', '/organizationFields'],
+      ['persons', '/api/v2/personFields'],
+      ['organizations', '/api/v2/organizationFields'],
+      ['products', '/api/v2/productFields'],
+      ['activities', '/api/v2/activityFields'],
+      // Leads have no Fields endpoint of their own — they share deals' custom fields.
+      ['leads', '/api/v2/dealFields'],
     ] as const)('uses %s → %s', async (entityType, path) => {
       mockGet.mockResolvedValue({ data: { data: [], additional_data: {} } });
       await client.getFields(entityType);
       expect(mockGet).toHaveBeenCalledWith(path, { params: { limit: 500 } });
+    });
+
+    it('returns [] without any HTTP call for entities with no Fields endpoint (notes)', async () => {
+      const fields = await client.getFields('notes');
+      expect(fields).toEqual([]);
+      expect(mockGet).not.toHaveBeenCalled();
     });
 
     it('follows next_cursor across pages and concatenates fields', async () => {
@@ -113,24 +133,105 @@ describe('PipedriveApiClient', () => {
 
       const fields = await client.getFields('deals');
 
-      expect(mockGet).toHaveBeenNthCalledWith(1, '/dealFields', { params: { limit: 500 } });
-      expect(mockGet).toHaveBeenNthCalledWith(2, '/dealFields', { params: { limit: 500, cursor: 'P2' } });
+      expect(mockGet).toHaveBeenNthCalledWith(1, '/api/v2/dealFields', { params: { limit: 500 } });
+      expect(mockGet).toHaveBeenNthCalledWith(2, '/api/v2/dealFields', { params: { limit: 500, cursor: 'P2' } });
       expect(fields).toEqual([{ field_code: 'a' }, { field_code: 'b' }]);
     });
   });
 
+  describe('listEntities — cursor pagination (v2)', () => {
+    it('yields one page and stops when next_cursor is absent', async () => {
+      mockGet.mockResolvedValue({ data: { data: [{ id: 1 }], additional_data: {} } });
+      const pages: unknown[] = [];
+      for await (const page of client.listEntities('deals')) pages.push(page);
+      expect(pages).toEqual([{ data: [{ id: 1 }], nextCursor: undefined }]);
+      expect(mockGet).toHaveBeenCalledWith('/api/v2/deals', { params: { limit: 500 } });
+    });
+
+    it('threads the resume cursor', async () => {
+      mockGet.mockResolvedValue({ data: { data: [{ id: 1 }], additional_data: {} } });
+      await drain(client.listEntities('activities', { cursor: 'CUR9' }));
+      expect(mockGet).toHaveBeenCalledWith('/api/v2/activities', { params: { limit: 500, cursor: 'CUR9' } });
+    });
+  });
+
+  describe('listEntities — offset pagination (v1)', () => {
+    it('GETs /v1/{collection} with start=0 and stops when more_items_in_collection is false', async () => {
+      mockGet.mockResolvedValue({
+        data: { data: [{ id: 1 }], additional_data: { pagination: { more_items_in_collection: false } } },
+      });
+      const pages: unknown[] = [];
+      for await (const page of client.listEntities('notes')) pages.push(page);
+      expect(pages).toEqual([{ data: [{ id: 1 }], nextStart: undefined }]);
+      expect(mockGet).toHaveBeenCalledWith('/v1/notes', { params: { limit: 500, start: 0 } });
+    });
+
+    it('advances by next_start across pages and exposes it as the resume marker', async () => {
+      mockGet
+        .mockResolvedValueOnce({
+          data: {
+            data: [{ id: 1 }],
+            additional_data: { pagination: { more_items_in_collection: true, next_start: 2 } },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: { data: [{ id: 3 }], additional_data: { pagination: { more_items_in_collection: false } } },
+        });
+
+      const pages: Array<{ data: unknown[]; nextStart?: number }> = [];
+      for await (const page of client.listEntities('leads')) pages.push(page);
+
+      expect(mockGet).toHaveBeenNthCalledWith(1, '/v1/leads', { params: { limit: 500, start: 0 } });
+      expect(mockGet).toHaveBeenNthCalledWith(2, '/v1/leads', { params: { limit: 500, start: 2 } });
+      expect(pages).toEqual([
+        { data: [{ id: 1 }], nextStart: 2 },
+        { data: [{ id: 3 }], nextStart: undefined },
+      ]);
+    });
+
+    it('resumes from a start offset', async () => {
+      mockGet.mockResolvedValue({
+        data: { data: [{ id: 7 }], additional_data: { pagination: { more_items_in_collection: false } } },
+      });
+      await drain(client.listEntities('notes', { start: 40 }));
+      expect(mockGet).toHaveBeenCalledWith('/v1/notes', { params: { limit: 500, start: 40 } });
+    });
+
+    it('passes updated_since alongside the offset', async () => {
+      mockGet.mockResolvedValue({
+        data: { data: [{ id: 1 }], additional_data: { pagination: { more_items_in_collection: false } } },
+      });
+      await drain(client.listEntities('leads', undefined, '2026-05-14T11:59:00Z'));
+      expect(mockGet).toHaveBeenCalledWith('/v1/leads', {
+        params: { limit: 500, start: 0, updated_since: '2026-05-14T11:59:00Z' },
+      });
+    });
+  });
+
   describe('getEntity', () => {
-    it('GETs /{collection}/{id} and returns the unwrapped record', async () => {
+    it('GETs the v2 /{collection}/{id} path and returns the unwrapped record', async () => {
       mockGet.mockResolvedValue({ data: { data: { id: 7, title: 'Deal' } } });
       const entity = await client.getEntity('deals', 7);
-      expect(mockGet).toHaveBeenCalledWith('/deals/7');
+      expect(mockGet).toHaveBeenCalledWith('/api/v2/deals/7');
       expect(entity).toEqual({ id: 7, title: 'Deal' });
+    });
+
+    it('GETs a v1 entity by its integer id', async () => {
+      mockGet.mockResolvedValue({ data: { data: { id: 5 } } });
+      await client.getEntity('notes', 5);
+      expect(mockGet).toHaveBeenCalledWith('/v1/notes/5');
+    });
+
+    it('GETs a lead by its UUID string id (not parsed as a number)', async () => {
+      mockGet.mockResolvedValue({ data: { data: { id: 'abc-uuid' } } });
+      await client.getEntity('leads', 'abc-uuid');
+      expect(mockGet).toHaveBeenCalledWith('/v1/leads/abc-uuid');
     });
 
     it('returns null on 404', async () => {
       mockGet.mockRejectedValue(makeAxiosError(404, { error: 'not found' }));
       await expect(client.getEntity('persons', 99)).resolves.toBeNull();
-      expect(mockGet).toHaveBeenCalledWith('/persons/99');
+      expect(mockGet).toHaveBeenCalledWith('/api/v2/persons/99');
     });
 
     it('re-throws non-404 errors', async () => {
@@ -144,14 +245,29 @@ describe('PipedriveApiClient', () => {
     it('POSTs system fields verbatim when there are no custom fields', async () => {
       mockPost.mockResolvedValue({ data: { data: { id: 1, title: 'New' } } });
       const created = await client.createEntity('deals', { title: 'New', value: 100 }, new Set());
-      expect(mockPost).toHaveBeenCalledWith('/deals', { title: 'New', value: 100 });
+      expect(mockPost).toHaveBeenCalledWith('/api/v2/deals', { title: 'New', value: 100 });
       expect(created).toEqual({ id: 1, title: 'New' });
     });
 
-    it('nests custom-field keys under a custom_fields wrapper', async () => {
+    it('nests custom-field keys under a custom_fields wrapper for v2 entities', async () => {
       mockPost.mockResolvedValue({ data: { data: { id: 2 } } });
       await client.createEntity('deals', { title: 'New', abc123: 'custom-val' }, new Set(['abc123']));
-      expect(mockPost).toHaveBeenCalledWith('/deals', { title: 'New', custom_fields: { abc123: 'custom-val' } });
+      expect(mockPost).toHaveBeenCalledWith('/api/v2/deals', {
+        title: 'New',
+        custom_fields: { abc123: 'custom-val' },
+      });
+    });
+
+    it('keeps custom-field keys flat (top-level) for v1 entities like leads', async () => {
+      mockPost.mockResolvedValue({ data: { data: { id: 'lead-uuid' } } });
+      await client.createEntity('leads', { title: 'New Lead', abc123: 'custom-val' }, new Set(['abc123']));
+      expect(mockPost).toHaveBeenCalledWith('/v1/leads', { title: 'New Lead', abc123: 'custom-val' });
+    });
+
+    it('POSTs notes to the v1 path with all fields flat (notes have no custom fields)', async () => {
+      mockPost.mockResolvedValue({ data: { data: { id: 9 } } });
+      await client.createEntity('notes', { content: 'hi', deal_id: 3 }, new Set());
+      expect(mockPost).toHaveBeenCalledWith('/v1/notes', { content: 'hi', deal_id: 3 });
     });
 
     it('drops read-only system fields (id/add_time/update_time) and the custom_fields wrapper itself', async () => {
@@ -161,7 +277,7 @@ describe('PipedriveApiClient', () => {
         { id: 5, add_time: 't1', update_time: 't2', custom_fields: { x: 1 }, name: 'Jane' },
         new Set(),
       );
-      expect(mockPost).toHaveBeenCalledWith('/persons', { name: 'Jane' });
+      expect(mockPost).toHaveBeenCalledWith('/api/v2/persons', { name: 'Jane' });
     });
 
     it('returns {} when the response carries no data', async () => {
@@ -171,21 +287,40 @@ describe('PipedriveApiClient', () => {
   });
 
   describe('updateEntity', () => {
-    it('PATCHes /{collection}/{id} with the separated body', async () => {
+    it('PATCHes the v2 /{collection}/{id} path with the separated body', async () => {
       mockPatch.mockResolvedValue({ data: { data: { id: 42 } } });
       await client.updateEntity('organizations', 42, { name: 'Acme', abc: 'cv' }, new Set(['abc']));
-      expect(mockPatch).toHaveBeenCalledWith('/organizations/42', {
+      expect(mockPatch).toHaveBeenCalledWith('/api/v2/organizations/42', {
         name: 'Acme',
         custom_fields: { abc: 'cv' },
       });
     });
+
+    it('PATCHes a lead by UUID id with custom fields kept flat', async () => {
+      mockPatch.mockResolvedValue({ data: { data: { id: 'lead-uuid' } } });
+      await client.updateEntity('leads', 'lead-uuid', { title: 'Updated', abc: 'cv' }, new Set(['abc']));
+      expect(mockPatch).toHaveBeenCalledWith('/v1/leads/lead-uuid', { title: 'Updated', abc: 'cv' });
+    });
+
+    it('PUTs notes (the v1 update verb for notes)', async () => {
+      mockPut.mockResolvedValue({ data: { data: { id: 9 } } });
+      await client.updateEntity('notes', 9, { content: 'edited' }, new Set());
+      expect(mockPut).toHaveBeenCalledWith('/v1/notes/9', { content: 'edited' });
+      expect(mockPatch).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteEntity', () => {
-    it('DELETEs /{collection}/{id}', async () => {
+    it('DELETEs the v2 /{collection}/{id} path', async () => {
       mockDelete.mockResolvedValue({ data: { data: { id: 1 } } });
       await client.deleteEntity('deals', 1);
-      expect(mockDelete).toHaveBeenCalledWith('/deals/1');
+      expect(mockDelete).toHaveBeenCalledWith('/api/v2/deals/1');
+    });
+
+    it('DELETEs a lead by UUID id on the v1 path', async () => {
+      mockDelete.mockResolvedValue({ data: { data: { id: 'lead-uuid' } } });
+      await client.deleteEntity('leads', 'lead-uuid');
+      expect(mockDelete).toHaveBeenCalledWith('/v1/leads/lead-uuid');
     });
 
     it('swallows a 404 (already deleted)', async () => {
