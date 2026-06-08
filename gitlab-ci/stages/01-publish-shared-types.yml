@@ -6,29 +6,25 @@ include:
 # PUBLISH @spinner/shared-types TO GITLAB PACKAGE REGISTRY
 # =============================================================================
 #
-# Two channels, one per long-lived branch:
-#   - master → publishes 0.0.0-master-<sha>, tagged `test`
-#   - prod   → publishes 0.0.0-prod-<sha>,   tagged `prod`
-#
-# dusky (in the whalesync repo) defaults to the `test` tag; whalesync's
-# prod-branch CI overrides to `prod` before install. See CICD.md.
+# One channel: spinner `master` publishes 0.0.0-master-<sha>, tagged `latest`.
+# Consumers (dusky in the whalesync repo) resolve `latest`. See CICD.md.
 
-.publish-shared-types-base:
+publish shared-types:
   stage: build and test
   interruptible: false
   script:
     - cd packages/shared-types
     - !reference [.use_nvm, script]
-    # Bake the channel + spinner pipeline SHA into src/_build.ts so consumers
-    # can call getBuild() and get back "test:<sha>" or "prod:<sha>". Must run
+    # Bake the spinner pipeline SHA into src/_build.ts so consumers can call
+    # getBuild() and get back the short-SHA they were built from. Must run
     # BEFORE `yarn build` since tsc copies the value into dist/.
-    - 'sed -i "s/BUILD = ''local''/BUILD = ''${PUBLISH_TAG}:${CI_COMMIT_SHORT_SHA}''/" src/_build.ts'
+    - 'sed -i "s/BUILD = ''local''/BUILD = ''${CI_COMMIT_SHORT_SHA}''/" src/_build.ts'
     - yarn build
     # Rewrite the sentinel version in package.json with sed (NOT `npm version`,
     # which triggers an `npm install` that resolves @spinner/shared-types from
     # the public registry and 404s). The sentinel "0.0.0-dev" is unique to
     # this file so a plain substitution is safe.
-    - VERSION="0.0.0-${PUBLISH_TAG}-${CI_COMMIT_SHORT_SHA}"
+    - VERSION="0.0.0-master-${CI_COMMIT_SHORT_SHA}"
     - 'sed -i "s/\"version\": \"0.0.0-dev\"/\"version\": \"${VERSION}\"/" package.json'
     # Auth to the project-scoped registry using the built-in CI job token.
     # Write the .npmrc to $HOME, NOT the package dir: npm 7+ deliberately
@@ -40,24 +36,9 @@ include:
     - echo "${REGISTRY_URL#https:}:_authToken=${CI_JOB_TOKEN}" >> "$HOME/.npmrc"
     # --registry forces npm to use the GitLab registry for publish; without it
     # npm sometimes falls back to npmjs.org.
-    - npm publish --tag "${PUBLISH_TAG}" --registry "${REGISTRY_URL}"
-
-publish shared-types (test):
-  extends: .publish-shared-types-base
-  variables:
-    PUBLISH_TAG: test
+    - npm publish --tag latest --registry "${REGISTRY_URL}"
   rules:
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
-      changes:
-        - packages/shared-types/**/*
-        - gitlab-ci/stages/01-publish-shared-types.yml
-
-publish shared-types (prod):
-  extends: .publish-shared-types-base
-  variables:
-    PUBLISH_TAG: prod
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "prod" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_PIPELINE_SOURCE != "schedule"'
       changes:
         - packages/shared-types/**/*
         - gitlab-ci/stages/01-publish-shared-types.yml

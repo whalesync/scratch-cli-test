@@ -9,6 +9,7 @@ import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { getSessionId, getSessionRecordingStatus, getSessionReplayUrl } from '@/lib/posthog';
 import { FLAGS, LocalStorageFlag } from '@/utils/flags-dev';
 import { ActionIcon, Checkbox, CopyButton, Divider, Grid, Group, PasswordInput, Stack, Tooltip } from '@mantine/core';
+import { getBuild } from '@spinner/shared-types';
 import { CheckIcon, CopyIcon, PlayIcon, WrenchIcon } from 'lucide-react';
 import { Fragment, JSX, useState } from 'react';
 
@@ -28,6 +29,20 @@ export default function UserInfoDevPage() {
                 <CopyButton value={user?.clerkId || ''} timeout={2000}>
                   {({ copied, copy }) => (
                     <Tooltip label={copied ? 'Copied' : `${user?.clerkId}`} withArrow position="right">
+                      <ActionIcon color={copied ? 'teal' : 'gray'} variant="subtle" onClick={copy}>
+                        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </CopyButton>
+              </Group>
+
+              <Group wrap="nowrap" gap="xs">
+                <Text13Regular miw={150}>Build Number</Text13Regular>
+                <Text13Regular>{getBuild()}</Text13Regular>
+                <CopyButton value={getBuild()} timeout={2000}>
+                  {({ copied, copy }) => (
+                    <Tooltip label={copied ? 'Copied' : `${getBuild()}`} withArrow position="right">
                       <ActionIcon color={copied ? 'teal' : 'gray'} variant="subtle" onClick={copy}>
                         {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
                       </ActionIcon>
