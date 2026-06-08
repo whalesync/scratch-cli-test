@@ -4,6 +4,7 @@
 import 'reflect-metadata';
 
 // Enums shared between client and server
+export * from './build';
 export * from './email';
 export * from './enums';
 
