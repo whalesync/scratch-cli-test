@@ -17,6 +17,14 @@ export interface DecryptedCredentials {
   // Supabase multi-project (OAuth)
   supabaseProjects?: SupabaseProjectCredentials[];
 
+  // Zoho CRM specific (user-provided OAuth client + long-lived refresh token).
+  // Zoho has no static API key — the connector mints short-lived access tokens
+  // from these by calling the data-center's accounts token endpoint.
+  zohoClientId?: string;
+  zohoClientSecret?: string;
+  zohoRefreshToken?: string;
+  zohoDataCenter?: string; // one of: US | EU | IN | AU | JP | CA | CN | SA (defaults to US)
+
   oauthAccessToken?: string;
   oauthRefreshToken?: string;
   oauthExpiresAt?: string; // ISO string

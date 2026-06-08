@@ -25,3 +25,4 @@ import './webflow/webflow-connector';
 import './wix/wix-blog/wix-blog-connector';
 import './wordpress/wordpress-connector';
 import './youtube/youtube-connector';
+import './zoho/zoho-connector';

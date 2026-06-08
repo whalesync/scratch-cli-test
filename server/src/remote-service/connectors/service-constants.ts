@@ -30,6 +30,7 @@ export const Service = {
   AFFINITY: 'AFFINITY',
   ATTIO: 'ATTIO',
   COPPER: 'COPPER',
+  ZOHO: 'ZOHO',
   GENERIC_API: 'GENERIC_API',
   GOHIGHLEVEL: 'GOHIGHLEVEL',
 } as const;
