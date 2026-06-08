@@ -316,7 +316,7 @@ export class ScratchConfigService {
   public static getClientBaseUrl(): string {
     const env = ScratchConfigService.getScratchEnvironment();
     if (env === 'development') {
-      return `http://localhost:3000`;
+      return process.env.CLIENT_BASE_URL ?? 'http://localhost:3000';
     }
 
     if (env === 'production') {
