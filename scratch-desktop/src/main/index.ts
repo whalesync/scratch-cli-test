@@ -43,7 +43,7 @@ import {
   setCurrentWorkspaceId,
   setWorkbookSetting,
 } from './preferences-store';
-import { reviewRefreshQueue } from './review-refresh-queue';
+import { reviewStatsNotifier } from './review-stats-notifier';
 import {
   acceptFieldChanges,
   clearFolderIndex,
@@ -92,53 +92,16 @@ let pendingDeepLink: { route: string; query: string } | null = null;
 let updaterController: ReturnType<typeof initAutoUpdater> = null;
 const workspaceFileWatchService = new WorkspaceFileWatchService();
 
-/**
- * Per-workspace cache of the workspace-relative folder names
- * (`<connection>/<sub_path>`) that were enumerated at the last
- * `watchWorkspaceFiles` call. Used by the accepted-patches handler below to
- * fan out a refresh across every folder under a connection without
- * re-walking the disk on each watcher burst.
- */
-const folderRelPathsByWorkspace = new Map<string, string[]>();
-
-// Review-state dots: route every watcher burst (internal AND external) into
-// the refresh queue. External bursts (Claude/vim editing record files,
-// external `scratchmd` CLI runs) need a `refreshFolder` re-read because the
-// SQLite bits haven't observed the changes yet. Internal bursts (Scratch's
-// own accept/discard/reject/pull/publish IPCs) only need a notify — the CLI
-// already updated the bits before returning, so re-running `refreshFolder`
-// would be wasted work.
-workspaceFileWatchService.setMutationHandler((workspacePath, source, absoluteFolderPaths) => {
-  if (source === 'external') {
-    reviewRefreshQueue.enqueueAbsoluteFolderPaths(workspacePath, absoluteFolderPaths);
-  } else {
-    reviewRefreshQueue.notifyReviewStatsChanged(workspacePath);
-  }
+// Review-state dots derive live from git + `accepted-patches.json` on every
+// `getReviewStats` call (DEV-10327), so any change — a record-file edit
+// (internal OR external), or a change to a connection's `accepted-patches.json`
+// — just needs the renderer nudged to re-fetch. No per-folder refresh, no
+// source branch: the re-fetch's `gix status` already sees the current state.
+workspaceFileWatchService.setMutationHandler((workspacePath) => {
+  reviewStatsNotifier.notifyReviewStatsChanged(workspacePath);
 });
-
-// `accepted-patches.json` watcher: any change to a connection's patch file
-// could flip the `approvedChanges` AND `unapprovedChanges` bits for any
-// record under that connection, so we have to refresh every folder in the
-// connection. External bursts enqueue refreshes; internal bursts just
-// notify (the CLI's mutation path already updated the index).
-workspaceFileWatchService.setAcceptedPatchesHandler((workspacePath, source, connectionDirName) => {
-  if (source === 'internal') {
-    reviewRefreshQueue.notifyReviewStatsChanged(workspacePath);
-    return;
-  }
-  const cachedFolderRelPaths = folderRelPathsByWorkspace.get(workspacePath) ?? [];
-  const affected = cachedFolderRelPaths.filter(
-    (rel) => rel === connectionDirName || rel.startsWith(`${connectionDirName}/`),
-  );
-  if (affected.length > 0) {
-    reviewRefreshQueue.enqueueFolderRefresh(workspacePath, affected);
-  } else {
-    // Fallback when we haven't cached the folder list yet (e.g. an event
-    // racing the initial `watchWorkspaceFiles` call): a plain notify still
-    // re-reads the current SQL aggregate so stale dots clear at least once
-    // the next refresh cycle runs.
-    reviewRefreshQueue.notifyReviewStatsChanged(workspacePath);
-  }
+workspaceFileWatchService.setAcceptedPatchesHandler((workspacePath) => {
+  reviewStatsNotifier.notifyReviewStatsChanged(workspacePath);
 });
 
 function parseScratchDeepLink(url: string): { route: string; query: string } | null {
@@ -440,10 +403,10 @@ function createWindow(): void {
     // SIGTERM any in-flight `claude` chat children so a closed window can't
     // leave an orphaned agent mutating the workspace git repo.
     claudeChatService.killAllTurns();
-    // Drop the now-destroyed WebContents subscriber and any queued work —
-    // see review-refresh-queue.ts module docstring.
-    reviewRefreshQueue.setSubscriber(null);
-    reviewRefreshQueue.clear();
+    // Drop the now-destroyed WebContents subscriber and any pending notify —
+    // see review-stats-notifier.ts module docstring.
+    reviewStatsNotifier.setSubscriber(null);
+    reviewStatsNotifier.clear();
     mainWindow = null;
   });
 
@@ -845,29 +808,18 @@ ipcMain.handle('scratch:pull-all-linked-tables', async (_, workspacePath: string
 ipcMain.handle('scratch:watch-workspace-files', async (event, workspacePath: string) => {
   const folders = await listFolders(workspacePath);
   const folderPaths = folders.map((f) => f.path);
-  const folderRelPaths = folders.map((f) => f.name);
-  // Cache the folder list so the accepted-patches watcher can fan a refresh
-  // out to every folder under the affected connection without re-walking
-  // the disk.
-  folderRelPathsByWorkspace.set(workspacePath, folderRelPaths);
-  // Register the same renderer as the subscriber for review-stats notifications
-  // and kick off the cold-start sweep so dots fill in for any folder whose
-  // index is stale relative to the working tree.
-  reviewRefreshQueue.setSubscriber(event.sender);
-  reviewRefreshQueue.enqueueAllFolders(workspacePath, folderRelPaths);
+  // Register the renderer as the subscriber for review-stats notifications.
+  // No cold-start sweep: the dots derive live from git on the renderer's
+  // initial `getReviewStats` fetch (DEV-10327).
+  reviewStatsNotifier.setSubscriber(event.sender);
   return workspaceFileWatchService.watchWorkspaceFiles(event.sender, workspacePath, folderPaths);
 });
 ipcMain.handle('scratch:clear-workspace-file-watch', (_, workspacePath?: string) => {
   workspaceFileWatchService.clearWorkspaceFileWatch();
-  reviewRefreshQueue.setSubscriber(null);
-  // Drop any queued Pass-A items for the workspace being closed/switched away
-  // from so they don't continue draining against a workspace the user has
-  // moved on from.
+  reviewStatsNotifier.setSubscriber(null);
+  // Drop any pending notify for the workspace being closed/switched away from.
   if (workspacePath) {
-    reviewRefreshQueue.cancelWorkspace(workspacePath);
-    folderRelPathsByWorkspace.delete(workspacePath);
-  } else {
-    folderRelPathsByWorkspace.clear();
+    reviewStatsNotifier.cancelWorkspace(workspacePath);
   }
 });
 ipcMain.handle('scratch:show-in-folder', (_, folderPath: string) => {

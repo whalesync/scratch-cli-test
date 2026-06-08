@@ -2564,55 +2564,6 @@ pub fn find_stale(
     })
 }
 
-/// Return filenames where `approvedChanges = 1` — i.e. the working tree differs
-/// from the dirty branch for this folder. Backed by a partial index on the bit,
-/// so it's O(changed-files) on tables created with the current schema.
-pub fn select_files_with_approved_changes(
-    workspace: &Path,
-    folder: &str,
-    db_path_override: Option<&Path>,
-) -> anyhow::Result<Vec<String>> {
-    select_filenames_where(workspace, folder, db_path_override, "approvedChanges = 1")
-}
-
-/// Return filenames where the working+dirty state diverges from master — the set
-/// of records `discard-all` needs to revert. Matches rows with either bit set
-/// (`approvedChanges = 1 OR unapprovedChanges = 1`). The partial indexes cover
-/// each branch of the OR.
-pub fn select_files_with_local_changes(
-    workspace: &Path,
-    folder: &str,
-    db_path_override: Option<&Path>,
-) -> anyhow::Result<Vec<String>> {
-    select_filenames_where(
-        workspace,
-        folder,
-        db_path_override,
-        "approvedChanges = 1 OR unapprovedChanges = 1",
-    )
-}
-
-fn select_filenames_where(
-    workspace: &Path,
-    folder: &str,
-    db_path_override: Option<&Path>,
-    where_clause: &str,
-) -> anyhow::Result<Vec<String>> {
-    let db_path = resolve_db_path(workspace, folder, db_path_override);
-    if !db_path.exists() {
-        return Ok(vec![]);
-    }
-    let table = table_name_from_folder(folder);
-    let conn = open_conn(&db_path)?;
-    ensure_schema(&conn, &table)?;
-    let tq = quote_ident(&table);
-    let mut stmt = conn.prepare(&format!("SELECT filename FROM {tq} WHERE {where_clause}"))?;
-    let rows: Vec<rusqlite::Result<String>> = stmt.query_map([], |row| row.get(0))?.collect();
-    rows.into_iter()
-        .collect::<Result<_, _>>()
-        .map_err(Into::into)
-}
-
 /// Reindex specific files: reads the working file + `refs/heads/main` blob
 /// (via the master worktree) + the connection's `accepted-patches.json`,
 /// computes approvedChanges/unapprovedChanges per Slice E, updates the base

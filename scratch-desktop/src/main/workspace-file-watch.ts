@@ -40,10 +40,8 @@
  * File events arriving while the counter is positive are tagged
  * `source: 'internal'`. A 1 500 ms grace period after the counter drops to
  * zero absorbs OS-delayed events. The renderer uses `source` to decide
- * whether to show a "files changed" refresh toast, and the review-stats
- * refresh queue uses it to decide whether to spend cycles re-running
- * `refreshFolder` (external) or just re-fetch the SQL aggregate (internal —
- * the index is already current because the CLI updated it on the way out).
+ * whether to show a "files changed" refresh toast; the review-stats notifier
+ * nudges the renderer to re-fetch the git-derived dots either way.
  */
 import type { WebContents } from 'electron';
 import type { FSWatcher } from 'fs';
@@ -114,7 +112,7 @@ export class WorkspaceFileWatchService {
   /**
    * Register a callback that fires whenever a debounced burst of data-folder
    * changes flushes — for BOTH internal Scratch-induced mutations and
-   * external edits. Used by `review-refresh-queue.ts` to keep the
+   * external edits. Used by `review-stats-notifier.ts` to keep the
    * folder-tree review-state dots fresh.
    *
    * Called BEFORE the renderer IPC dispatch so a handler exception cannot

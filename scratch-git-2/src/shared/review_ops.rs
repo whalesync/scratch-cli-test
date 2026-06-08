@@ -1258,6 +1258,160 @@ where
     }
 }
 
+/// One record whose working-tree content differs from its approved state — the
+/// unit the desktop's "needs review" dots count and the CLI's `files unreviewed`
+/// surface lists. `status` mirrors the gix-status summary verb.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreviewedRecord {
+    /// Connection-relative record path, e.g. `"Posts/rec1.json"`.
+    pub path: String,
+    /// `"modified"` | `"added"` | `"deleted"`.
+    pub status: &'static str,
+}
+
+/// gix::status-backed unreviewed detector. Index-backed, parallel.
+/// ~210ms warm on a 110k-file connection vs. the multi-second tree-walks the
+/// previous `detect_unreviewed_for_pull` (now deleted) paid.
+///
+/// `gix::status` answers "working tree differs from index"; the index reflects
+/// `refs/heads/main` after [`worktree_reset_mixed`] (run on init + pull). The
+/// byte-level diff is a fast pre-filter — every data path it flags gets a
+/// semantic JSON compare in the second pass against its "expected" content:
+///
+///   - paths in `accepted-patches.json` → expected = `apply(main_blob, entry)`
+///   - paths not in `accepted-patches.json` → expected = `main_blob` verbatim
+///
+/// Lives in `shared` (not the CLI) so both the CLI's `files unreviewed` / pull /
+/// publish gates *and* the napi `getReviewStats` sidebar-dots aggregator derive
+/// the identical set — there is exactly one definition of "unreviewed". If
+/// `short_circuit` is true, returns as soon as the first truly-unreviewed path
+/// is found (the "any?" check that gates the Publish action).
+pub fn list_unreviewed_records_using_gix_status(
+    paths: &ConnectionPaths,
+    short_circuit: bool,
+) -> anyhow::Result<Vec<UnreviewedRecord>> {
+    let accepted_file = accepted_patches::load(&accepted_patches_dir(paths))?;
+    let accepted_patch_entry_by_record_path: std::collections::HashMap<&str, &AnchoredPatch> =
+        accepted_file
+            .patches
+            .iter()
+            .map(|patch| (patch.path.as_str(), patch))
+            .collect();
+
+    let repo = gix::open(&paths.worktree_dir).map_err(|err| {
+        anyhow::anyhow!(
+            "failed to open worktree at {}: {err}",
+            paths.worktree_dir.display()
+        )
+    })?;
+    // Emit untracked files individually rather than collapsing a wholly-
+    // untracked directory into one entry — otherwise records freshly created in
+    // a brand-new folder never surface as unreviewed changes (DEV-10321).
+    let platform = repo
+        .status(gix::progress::Discard)?
+        .untracked_files(gix::status::UntrackedFiles::Files);
+    let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
+
+    let mut gix_status_flagged_record_paths_and_status: Vec<(String, &'static str)> = Vec::new();
+    use gix::status::index_worktree::iter::Summary;
+    for item in iter {
+        let item = item?;
+        let summary = match item.summary() {
+            Some(s) => s,
+            None => continue,
+        };
+        let status = match summary {
+            Summary::Modified => "modified",
+            Summary::Added => "added",
+            Summary::Removed => "deleted",
+            // Rename/copy tracking never fires for our add/delete shapes; treat
+            // defensively as a modification.
+            Summary::Renamed | Summary::Copied => "modified",
+            // Conflict / TypeChange / IntentToAdd are not states we produce.
+            Summary::Conflict | Summary::TypeChange | Summary::IntentToAdd => continue,
+        };
+        let rel_path: String = String::from_utf8_lossy(item.rela_path()).into_owned();
+        if !is_data_path_in_folder(&rel_path, "") {
+            continue;
+        }
+        gix_status_flagged_record_paths_and_status.push((rel_path, status));
+    }
+
+    let mut records: Vec<UnreviewedRecord> = Vec::new();
+    if !gix_status_flagged_record_paths_and_status.is_empty() {
+        // Load only the byte-flagged paths from main; cat-file streams just the
+        // handful of blobs we'll compare against rather than the whole tree.
+        let gix_status_flagged_paths_set: std::collections::HashSet<&str> =
+            gix_status_flagged_record_paths_and_status
+                .iter()
+                .map(|(p, _)| p.as_str())
+                .collect();
+        let file_path_to_contents_map_in_main_branch: FileMap =
+            match crate::shared::git_local::rev_parse_optional_to_string(
+                &paths.bare_repo,
+                "refs/heads/main",
+            )? {
+                Some(hash) => crate::shared::git_local::read_tree_files_filtered(
+                    &paths.bare_repo,
+                    &hash,
+                    |p| gix_status_flagged_paths_set.contains(p),
+                )?,
+                None => FileMap::new(),
+            };
+        for (rel_path, status) in gix_status_flagged_record_paths_and_status {
+            let main_blob = file_path_to_contents_map_in_main_branch
+                .get(&rel_path)
+                .map(|v| v.as_slice());
+            // The expected-content rule depends on whether the path has an
+            // accepted patch (then `apply(main, patch)` is the user-intended
+            // state) or not (then `main` is authoritative and any working edit
+            // is unreviewed by definition).
+            let expected: Option<Vec<u8>> =
+                match accepted_patch_entry_by_record_path.get(rel_path.as_str()) {
+                    Some(entry) => apply_patch_entry_to_blob(main_blob, entry)?,
+                    None => main_blob.map(|b| b.to_vec()),
+                };
+            let actual = std::fs::read(paths.worktree_dir.join(&rel_path)).ok();
+            if json_content_differs(expected.as_deref(), actual.as_deref()) {
+                records.push(UnreviewedRecord {
+                    path: rel_path,
+                    status,
+                });
+                if short_circuit {
+                    return Ok(records);
+                }
+            }
+        }
+    }
+
+    Ok(records)
+}
+
+/// Compare two optional byte slices that may be JSON records. `true` if they
+/// semantically differ — presence diff, or both parseable and `Value`
+/// inequality. Falls back to byte equality when either side fails to parse, so
+/// unparseable garbage still surfaces as a change. Keeping this semantic
+/// mirrors `reindex_files`'s bit computation, so a whitespace- or key-order-only
+/// edit the user has since reverted is not treated as a real change.
+//
+// NOTE: a byte-identical twin lives at `cli::commands::files::json_content_differs`
+// (used by the scoped accept-all / discard-all fast paths). Fold those callers
+// onto this one when the folder_index review-bit columns are dropped (DEV-10327
+// slice 3).
+fn json_content_differs(a: Option<&[u8]>, b: Option<&[u8]>) -> bool {
+    match (a, b) {
+        (None, None) => false,
+        (None, Some(_)) | (Some(_), None) => true,
+        (Some(a), Some(b)) => match (
+            serde_json::from_slice::<JsonValue>(a),
+            serde_json::from_slice::<JsonValue>(b),
+        ) {
+            (Ok(va), Ok(vb)) => va != vb,
+            _ => a != b,
+        },
+    }
+}
+
 fn workspace_path_for(paths: &ConnectionPaths, rel: &str) -> String {
     format!("{}/{}", paths.conn_dir_name, rel)
 }

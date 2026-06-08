@@ -3500,103 +3500,22 @@ fn list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(
     ctx: &ConnectionContext,
     short_circuit: bool,
 ) -> anyhow::Result<Vec<RecordChangeEntry>> {
-    let connection_dir = accepted_patches_dir(ctx);
-    let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    let accepted_patch_entry_by_record_path: HashMap<
-        &str,
-        &crate::shared::re_anchor::AnchoredPatch,
-    > = accepted_file
-        .patches
-        .iter()
-        .map(|p| (p.path.as_str(), p))
-        .collect();
-
-    let repo = gix::open(&ctx.worktree_dir)
-        .with_context(|| format!("failed to open worktree at {}", ctx.worktree_dir.display()))?;
-    // Emit untracked files individually rather than collapsing a wholly-
-    // untracked directory into one entry — otherwise records freshly created
-    // in a brand-new folder never surface as unreviewed changes. See
-    // `collect_all_ops_candidate_record_paths` for the full rationale
-    // (DEV-10321).
-    let platform = repo
-        .status(gix::progress::Discard)?
-        .untracked_files(gix::status::UntrackedFiles::Files);
-    let iter = platform.into_index_worktree_iter(Vec::<gix::bstr::BString>::new())?;
-
-    let mut gix_status_flagged_record_paths_and_status: Vec<(String, &'static str)> = Vec::new();
-
-    use gix::status::index_worktree::iter::Summary;
-    for item in iter {
-        let item = item?;
-        let summary = match item.summary() {
-            Some(s) => s,
-            None => continue,
-        };
-        let status = match summary {
-            Summary::Modified => "modified",
-            Summary::Added => "added",
-            Summary::Removed => "deleted",
-            // Renames/copies don't fire in practice (rewrite tracking is on
-            // by default but our adds aren't matched against deletes); treat
-            // defensively as a modification.
-            Summary::Renamed | Summary::Copied => "modified",
-            // Conflict / TypeChange / IntentToAdd are not states we produce.
-            // Skip rather than spam the user.
-            Summary::Conflict | Summary::TypeChange | Summary::IntentToAdd => continue,
-        };
-
-        let rel_path: String = String::from_utf8_lossy(item.rela_path()).into_owned();
-        if !is_data_path_in_folder(&rel_path, "") {
-            continue;
-        }
-
-        gix_status_flagged_record_paths_and_status.push((rel_path, status));
-    }
-
-    let mut entries: Vec<RecordChangeEntry> = Vec::new();
-    if !gix_status_flagged_record_paths_and_status.is_empty() {
-        // Load only the byte-flagged paths from main; ls-tree still enumerates
-        // the whole tree (cat-file needs OIDs), but cat-file only streams the
-        // handful of blobs we'll actually compare against. Pre-narrowing, a
-        // single dirty record in a 38k-record workspace caused us to read the
-        // entire main tree before we could even answer "anything to review?".
-        let gix_status_flagged_paths_set: std::collections::HashSet<&str> =
-            gix_status_flagged_record_paths_and_status
-                .iter()
-                .map(|(p, _)| p.as_str())
-                .collect();
-        // The expected-content rule depends on whether the path has an
-        // accepted patch (which makes `apply(main, patch)` the user-intended
-        // state) or not (where `main` is the authoritative state and any
-        // working-tree edit is unreviewed by definition).
-        let file_path_to_contents_map_in_main_branch =
-            read_main_branch_contents_filtered_by_path(&ctx.bare_repo, |p| {
-                gix_status_flagged_paths_set.contains(p)
-            })?;
-        for (rel_path, status) in gix_status_flagged_record_paths_and_status {
-            let main_blob = file_path_to_contents_map_in_main_branch
-                .get(&rel_path)
-                .map(|v| v.as_slice());
-            let expected: Option<Vec<u8>> =
-                match accepted_patch_entry_by_record_path.get(rel_path.as_str()) {
-                    Some(entry) => review_ops::apply_patch_entry_to_blob(main_blob, entry)?,
-                    None => main_blob.map(|b| b.to_vec()),
-                };
-            let actual = std::fs::read(ctx.worktree_dir.join(&rel_path)).ok();
-            if json_content_differs(expected.as_deref(), actual.as_deref()) {
-                entries.push(RecordChangeEntry {
-                    connection_name: ctx.conn_dir_name.clone(),
-                    path: rel_path,
-                    status: status.to_string(),
-                });
-                if short_circuit {
-                    return Ok(entries);
-                }
-            }
-        }
-    }
-
-    Ok(entries)
+    // Delegates to the shared detector so the CLI's pull / publish / unreviewed
+    // gates and the napi `getReviewStats` sidebar dots derive the identical set
+    // — one definition of "unreviewed". See
+    // `crate::shared::review_ops::list_unreviewed_records_using_gix_status`.
+    let records = crate::shared::review_ops::list_unreviewed_records_using_gix_status(
+        &ctx.to_paths(),
+        short_circuit,
+    )?;
+    Ok(records
+        .into_iter()
+        .map(|record| RecordChangeEntry {
+            connection_name: ctx.conn_dir_name.clone(),
+            path: record.path,
+            status: record.status.to_string(),
+        })
+        .collect())
 }
 
 /// Print the structured `blocked_unreviewed` result. Caller bails with

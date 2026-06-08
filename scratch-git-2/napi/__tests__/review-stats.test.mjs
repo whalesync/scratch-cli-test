@@ -1,13 +1,14 @@
-// Smoke test for the review/validation stats napi bindings added for the
-// folder-tree "needs review" / "approved" dots (Slice 2 of the
-// folder-tree-review-approved-dots plan).
+// Smoke test for the review/validation stats napi bindings that back the
+// folder-tree "needs review" / "approved" dots.
 //
-// Exercises the real JS → Rust → JS round trip for `refreshFolder`,
-// `getReviewStats`, and `getValidationStats` against a hand-built workspace +
-// bare repo, plus the `INTERNAL:` error-message mapping. Mirrors the fixture
-// and runner conventions in accept-field.test.mjs. Run with
-// `node --test __tests__/` from the napi crate root after building the
-// `.node` addon (CI runs scratch-desktop/scripts/build-native.sh first).
+// Exercises the real JS → Rust → JS round trip for `getReviewStats` and
+// `getValidationStats` against a hand-built workspace. `getReviewStats` derives
+// its counts live from `gix status` + `accepted-patches.json` (DEV-10327), so
+// the connection directory must be a real git worktree on `main` — no
+// persisted index, no `refreshFolder` step. Mirrors the fixture conventions in
+// accept-field.test.mjs. Run with `node --test __tests__/` from the napi crate
+// root after building the `.node` addon (CI runs
+// scratch-desktop/scripts/build-native.sh first).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,28 +37,34 @@ function loadNative() {
 const REPO_ID = 'conn1';
 const CONN = 'HubSpot';
 
-// Builds a workspace whose `HubSpot` connection has one record (rec_acme) on
-// the `main` branch of a bare repo, matching accept-field.test.mjs. Returns
-// both the workspace root and the `.scratch` root.
+// Builds a workspace whose `HubSpot` connection is a real git worktree on
+// `main` at `<tmp>/HubSpot`, with one committed record (rec_acme). A bare repo
+// cloned from it lives at `<tmp>/.repos/conn1.git` — the layout
+// `collect_review_stats` resolves via the workspace marker. Returns the
+// workspace root.
 function makeFixture() {
   const tmp = mkdtempSync(join(tmpdir(), 'napi-reviewstats-'));
   const bareRepo = join(tmp, '.repos', `${REPO_ID}.git`);
   const scratchRoot = join(tmp, '.scratch');
-  const sourceDir = join(tmp, 'source');
+  const worktree = join(tmp, CONN);
 
   mkdirSync(scratchRoot, { recursive: true });
   mkdirSync(join(bareRepo, '..'), { recursive: true });
-  mkdirSync(sourceDir, { recursive: true });
+  mkdirSync(worktree, { recursive: true });
 
   const git = (cwd, args) => execSync(`git ${args}`, { cwd, stdio: 'pipe' });
-  git(sourceDir, 'init');
-  git(sourceDir, 'checkout -b main');
-  mkdirSync(join(sourceDir, 'Companies'), { recursive: true });
-  writeFileSync(join(sourceDir, 'Companies/rec_acme.json'), JSON.stringify({ name: 'Acme', industry: 'Other' }, null, 2));
-  git(sourceDir, 'add -A');
-  git(sourceDir, '-c user.name=Test -c user.email=t@t commit -m seed');
-
-  git(tmp, `clone --bare "${sourceDir}" "${bareRepo}"`);
+  // The connection dir IS the worktree: init on main, commit the seed record,
+  // then clone a bare repo from it (gix status compares the worktree to its
+  // index; collect_review_stats reads `main` blobs from the bare repo).
+  git(worktree, 'init -q -b main');
+  mkdirSync(join(worktree, 'Companies'), { recursive: true });
+  writeFileSync(
+    join(worktree, 'Companies/rec_acme.json'),
+    JSON.stringify({ name: 'Acme', industry: 'Other' }, null, 2),
+  );
+  git(worktree, 'add -A');
+  git(worktree, '-c user.name=Test -c user.email=t@t commit -q -m seed');
+  git(worktree, `clone -q --bare . "${bareRepo}"`);
 
   writeFileSync(
     join(scratchRoot, '.scratchmd'),
@@ -77,7 +84,7 @@ connections:
 `,
   );
   mkdirSync(join(scratchRoot, 'connections', CONN), { recursive: true });
-  return { workspaceDir: tmp, scratchRoot };
+  return { workspaceDir: tmp };
 }
 
 function writeWorking(workspaceDir, recordRelPath, body) {
@@ -86,26 +93,18 @@ function writeWorking(workspaceDir, recordRelPath, body) {
   writeFileSync(fp, body);
 }
 
-test('refreshFolder then getReviewStats reports unreviewed + approved counts for the folder', async () => {
+test('getReviewStats reports unreviewed + approved counts derived from git', async () => {
   const native = loadNative();
   const { workspaceDir } = makeFixture();
 
-  // rec_acme: working differs from published (industry Other → SaaS), no
-  // accepted patch → unapprovedChanges (counts toward `unreviewed`).
+  // rec_acme: working differs from main (industry Other → SaaS), no accepted
+  // patch → an unreviewed working-tree edit (counts toward `unreviewed`).
   writeWorking(workspaceDir, 'Companies/rec_acme.json', JSON.stringify({ name: 'Acme', industry: 'SaaS' }, null, 2));
 
   // rec_new: a brand-new record accepted as a Create patch. Working == approved
-  // so it's NOT unreviewed, but it has a patch entry → approvedChanges (counts
-  // toward `approved`).
+  // so it's NOT unreviewed, but it has a patch entry → counts toward `approved`.
   writeWorking(workspaceDir, 'Companies/rec_new.json', JSON.stringify({ name: 'New Co' }, null, 2));
   await native.acceptField(workspaceDir, CONN, 'Companies/rec_new.json', 'name');
-
-  // refreshFolder indexes the folder (no DB exists yet → seeds from working +
-  // main) and returns the smart-refresh counts.
-  const refreshResult = await native.refreshFolder(workspaceDir, `${CONN}/Companies`);
-  assert.equal(typeof refreshResult.base_refreshed, 'number');
-  assert.equal(typeof refreshResult.columns_refreshed, 'number');
-  assert.ok(refreshResult.base_refreshed >= 2, `expected >=2 base refreshes, got ${refreshResult.base_refreshed}`);
 
   const stats = await native.getReviewStats(workspaceDir);
   const companies = stats.find((s) => s.connection === CONN && s.folder_path === 'Companies');
@@ -114,12 +113,11 @@ test('refreshFolder then getReviewStats reports unreviewed + approved counts for
   assert.equal(companies.approved, 1);
 });
 
-test('getReviewStats returns an empty array for an unindexed workspace', async () => {
+test('getReviewStats returns an empty array for a clean workspace', async () => {
   const native = loadNative();
   const { workspaceDir } = makeFixture();
 
-  // No working files written, no refresh run — the connection root doesn't
-  // even exist on disk yet, so there are no folders to aggregate.
+  // No working changes and no accepted patches → nothing to report.
   const stats = await native.getReviewStats(workspaceDir);
   assert.ok(Array.isArray(stats));
   assert.equal(stats.length, 0);

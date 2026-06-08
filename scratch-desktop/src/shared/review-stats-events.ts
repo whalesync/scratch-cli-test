@@ -1,18 +1,18 @@
 /**
- * IPC channel + payload contract for "the persisted review-state bits for one
- * or more folders may have changed; consumers should re-fetch
- * `getReviewStats`."
+ * IPC channel + payload contract for "the review state of a workspace may have
+ * changed; consumers should re-fetch `getReviewStats`."
  *
- * Fired by the main-process refresh queue (`review-refresh-queue.ts`) after a
- * `refreshFolder` napi call completes. The renderer's `useReviewStats` hook
+ * Fired (debounced) by the main-process review-stats notifier
+ * (`review-stats-notifier.ts`) whenever a record-file edit or an
+ * `accepted-patches.json` change lands. The renderer's `useReviewStats` hook
  * subscribes via `window.scratchDesktop.onReviewStatsMayHaveChanged` and
- * debounces re-fetches.
+ * re-fetches; `getReviewStats` derives the dots live from git +
+ * `accepted-patches.json` (DEV-10327), so there is nothing to "catch up" — the
+ * re-fetch reflects the current working tree.
  *
- * Why a separate channel from `WORKSPACE_FILE_WATCH_EVENT_CHANNEL`: the file
- * watcher fires once per file-change burst with `changedFolderPaths`; this
- * event fires once per *completed* refresh and signals "the SQLite bits are
- * now current." Renderer consumers want the latter, not the former — they
- * want the dots to update *after* the index catches up, not *before*.
+ * Separate from `WORKSPACE_FILE_WATCH_EVENT_CHANNEL` (which carries
+ * `changedFolderPaths` for the file tree) so the review-dots consumer can stay
+ * a workspace-keyed, debounced signal rather than a per-burst file list.
  */
 
 export const REVIEW_STATS_MAY_HAVE_CHANGED_CHANNEL = 'scratch:review-stats-may-have-changed';

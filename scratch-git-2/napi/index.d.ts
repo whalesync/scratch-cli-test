@@ -181,19 +181,6 @@ export interface ValidationStat {
   records: number;
 }
 
-/**
- * Result of {@link refreshFolder}. Counts of files actually re-read during
- * the smart mtime-aware refresh. `validated` is always omitted (the napi
- * surface calls refresh with `validate=false`).
- */
-export interface RefreshFolderResult {
-  /** Files reindexed against working + dirty + master tree (base row + all column values). */
-  base_refreshed: number;
-  /** Files where only active field-column values were stale. */
-  columns_refreshed: number;
-  /** Omitted (validate=false). */
-  validated?: number;
-}
 
 /**
  * Workspace-wide per-folder counts of `(unreviewed, approved)` records.
@@ -221,18 +208,3 @@ export function getReviewStats(workspaceDir: string): Promise<ReviewStat[]>;
  * `LOCK_BUSY`.
  */
 export function getValidationStats(workspaceDir: string): Promise<ValidationStat[]>;
-
-/**
- * Refresh one folder's index so the bits surfaced by {@link getReviewStats}
- * are current. Mtime-aware: only files whose working-tree timestamp changed
- * are re-read. A fully fresh folder finishes in a few ms; an N-file change
- * batch is ~N JSON reads.
- *
- * `folder` is the workspace-relative `<connection>/<sub_path>` shape used
- * throughout `folder_index` (e.g. `"HubSpot/Posts"`).
- *
- * Throws an `Error` whose message is prefixed with `INTERNAL:`. No
- * `LOCK_BUSY` — writes to the per-connection index DB under
- * `<workspace>/.repos/`, outside the workspace lock's scope.
- */
-export function refreshFolder(workspaceDir: string, folder: string): Promise<RefreshFolderResult>;

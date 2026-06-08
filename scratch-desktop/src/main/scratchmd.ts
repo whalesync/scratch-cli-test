@@ -20,8 +20,7 @@ import { performance } from 'perf_hooks';
 import type { ReviewStat } from '../shared/review-types';
 import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
 import { WORKSPACE_NEEDS_REINIT_CHANNEL, type WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
-import type { RefreshFolderResult } from './native/scratchmd-native';
-import { nativeGetReviewStats, nativeGetValidationStats, refreshFolderViaNative } from './native/scratchmd-native';
+import { nativeGetReviewStats, nativeGetValidationStats } from './native/scratchmd-native';
 import { bundledGitBinaryPath } from './setup-git-env';
 import { logCliCommand } from './workspace-logger';
 
@@ -785,7 +784,6 @@ export async function restoreDeletedRecord(workspacePath: string, recordPath: st
 
 export type { ReviewStat } from '../shared/review-types';
 export type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
-export type { RefreshFolderResult } from './native/scratchmd-native';
 
 export async function getValidationResults(
   workspacePath: string,
@@ -879,20 +877,6 @@ export async function getReviewStats(workspacePath: string): Promise<ReviewStat[
   } catch {
     return [];
   }
-}
-
-/**
- * Refresh one folder's index so the bits surfaced by `getReviewStats` are
- * current. Used by `review-refresh-queue.ts` (cold-start sweep + watcher-
- * driven per-folder refresh).
- *
- * `folder` is the workspace-relative `<connection>/<sub_path>` shape used by
- * the Rust `folder_index` module (e.g. `"HubSpot/Posts"`). Errors are
- * surfaced as thrown `Error` — the queue logs + retries; we deliberately do
- * NOT swallow here because the queue needs to know about failures.
- */
-export async function refreshFolderForReviewStats(workspacePath: string, folder: string): Promise<RefreshFolderResult> {
-  return refreshFolderViaNative(workspacePath, folder);
 }
 
 export async function getFolderValidationSample(workspacePath: string, folder: string): Promise<ValidationResultRow[]> {

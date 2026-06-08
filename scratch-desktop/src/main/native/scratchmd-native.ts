@@ -19,13 +19,7 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, relative, resolve } from 'node:path';
 
-import type {
-  FolderBlob,
-  RefreshFolderResult,
-  ReviewOpResult,
-  ReviewStat,
-  ValidationStat,
-} from '../../../../scratch-git-2/napi/index.d.ts';
+import type { FolderBlob, ReviewOpResult, ReviewStat, ValidationStat } from '../../../../scratch-git-2/napi/index.d.ts';
 
 const requireNative = createRequire(__filename);
 
@@ -80,7 +74,6 @@ interface NativeModule {
   listFolderFilenames(workspaceDir: string, connectionDirName: string, folderRelPath: string): Promise<string[]>;
   getReviewStats(workspaceDir: string): Promise<ReviewStat[]>;
   getValidationStats(workspaceDir: string): Promise<ValidationStat[]>;
-  refreshFolder(workspaceDir: string, folder: string): Promise<RefreshFolderResult>;
 }
 
 function loadNative(): NativeModule {
@@ -334,9 +327,10 @@ export async function listFolderFilenames(
  * Workspace-wide per-folder counts of `(unreviewed, approved)` records.
  * Powers the sidebar's blue "Needs review" and gray "Approved" dots.
  *
- * Reads persisted bit columns from each folder's SQLite index — no mtime
- * walk, no JSON parse. Folders that haven't been indexed yet are skipped.
- * Call {@link refreshFolderViaNative} first if fresh bits are required.
+ * Derives the counts live from `gix status` + `accepted-patches.json` per
+ * connection — no persisted index, no cold-start sweep (DEV-10327). O(changes),
+ * so it reflects the current working tree on every call with nothing to refresh
+ * first.
  *
  * Failure surfaces as a thrown `Error` whose message is prefixed with
  * `INTERNAL:`. Callers in `scratchmd.ts` swallow this into `[]` to preserve
@@ -358,20 +352,4 @@ export async function nativeGetValidationStats(workspaceDir: string): Promise<Va
   return loadNative().getValidationStats(workspaceDir);
 }
 
-/**
- * Refresh one folder's index so the bits surfaced by
- * {@link nativeGetReviewStats} are current. Mtime-aware: only files whose
- * working-tree timestamp changed are re-read.
- *
- * `folder` is the workspace-relative `<connection>/<sub_path>` shape used
- * throughout the Rust `folder_index` module (e.g. `"HubSpot/Posts"`).
- *
- * Failure surfaces as a thrown `Error` whose message is prefixed with
- * `INTERNAL:`. Used by the cold-start refresh queue
- * (`review-refresh-queue.ts`) and the watcher-driven per-folder refresh.
- */
-export async function refreshFolderViaNative(workspaceDir: string, folder: string): Promise<RefreshFolderResult> {
-  return loadNative().refreshFolder(workspaceDir, folder);
-}
-
-export type { FolderBlob, RefreshFolderResult, ReviewOpResult, ReviewStat, ValidationStat };
+export type { FolderBlob, ReviewOpResult, ReviewStat, ValidationStat };
