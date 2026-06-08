@@ -109,6 +109,29 @@ export class GoHighLevelApiClient {
       baseURL: GOHIGHLEVEL_API_BASE_URL,
       headers,
     });
+
+    // Surface HighLevel's actual error body. Axios's default message is just
+    // "Request failed with status code 4xx", which hides WHY HighLevel rejected
+    // the request and gets stored verbatim in publish operation errors. Wrap
+    // non-429 HTTP errors in a GoHighLevelError carrying the method, URL, and
+    // response body. (429s are left as AxiosErrors so the rate-limiter retry
+    // logic still recognizes them.)
+    this.client.interceptors.response.use(undefined, (error: unknown) => {
+      if (axios.isAxiosError(error) && error.response && error.response.status !== 429) {
+        const method = (error.config?.method ?? 'request').toUpperCase();
+        const url = error.config?.url ?? '';
+        const bodyText = JSON.stringify(error.response.data);
+        return Promise.reject(
+          new GoHighLevelError(
+            `HighLevel ${method} ${url} failed (${error.response.status}): ${bodyText}`,
+            error.response.status,
+            error.response.data,
+          ),
+        );
+      }
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- re-reject the ORIGINAL error untouched so the 429 rate-limiter retry still recognizes the AxiosError
+      return Promise.reject(error);
+    });
   }
 
   // ---------------------------------------------------------------------------

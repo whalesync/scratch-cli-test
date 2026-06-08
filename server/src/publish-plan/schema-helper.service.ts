@@ -107,9 +107,18 @@ export class SchemaHelperService {
     workbookId: string,
     folderPath: string,
     cache?: Map<string, { id: string; tableId: string[]; spec: BaseJsonTableSpec } | null>,
+    connectorAccountId?: string | null,
   ): Promise<{ id: string; tableId: string[]; spec: BaseJsonTableSpec } | null> {
-    if (cache && cache.has(folderPath)) {
-      return cache.get(folderPath) ?? null;
+    // A workbook can have two connections with folders of the same path (e.g.
+    // both a CRM and a generic-api connection expose a "/Contacts" table). The
+    // lookup MUST be scoped to the connection, or `findFirst` returns the wrong
+    // folder — handing one connector another connector's schema, which then
+    // mis-routes writes (e.g. a HighLevel contact create dispatched to the
+    // generic-api table id, yielding `POST /objects/GET/records` → 400). Scope
+    // both the query and the cache key by connectorAccountId when it's known.
+    const cacheKey = `${connectorAccountId ?? ''}::${folderPath}`;
+    if (cache && cache.has(cacheKey)) {
+      return cache.get(cacheKey) ?? null;
     }
 
     try {
@@ -117,13 +126,14 @@ export class SchemaHelperService {
         where: {
           workbookId,
           path: { in: [folderPath, `/${folderPath}`] },
+          ...(connectorAccountId ? { connectorAccountId } : {}),
         },
         select: { id: true, tableId: true, connectorAccountId: true, path: true },
       });
 
       if (!dataFolder) {
         if (cache) {
-          cache.set(folderPath, null);
+          cache.set(cacheKey, null);
         }
         return null;
       }
@@ -131,13 +141,13 @@ export class SchemaHelperService {
       const spec = await this.readSchemaFromGit(workbookId, dataFolder.connectorAccountId, dataFolder.path);
       if (!spec) {
         if (cache) {
-          cache.set(folderPath, null);
+          cache.set(cacheKey, null);
         }
         return null;
       }
       const result = { id: dataFolder.id, tableId: dataFolder.tableId, spec };
       if (cache) {
-        cache.set(folderPath, result);
+        cache.set(cacheKey, result);
       }
       return result;
     } catch (error) {
@@ -147,7 +157,7 @@ export class SchemaHelperService {
         error,
       });
       if (cache) {
-        cache.set(folderPath, null);
+        cache.set(cacheKey, null);
       }
       return null;
     }

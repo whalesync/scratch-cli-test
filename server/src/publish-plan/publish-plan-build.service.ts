@@ -340,7 +340,9 @@ export class PublishPlanBuildService {
     const dataFolderCache = new Map<string, { id: string; tableId: string[]; spec: BaseJsonTableSpec } | null>();
 
     const getDataFolderInfo = async (folderPath: string) => {
-      return this.schemaService.getDataFolderInfo(workbookId, folderPath, dataFolderCache);
+      // Pass connectorAccountId so a folder path shared across two connections
+      // (e.g. both expose "/Contacts") resolves to THIS connection's folder.
+      return this.schemaService.getDataFolderInfo(workbookId, folderPath, dataFolderCache, connectorAccountId);
     };
 
     // --- Prepare for "Delete Ref Clearing" ---
