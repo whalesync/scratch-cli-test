@@ -172,12 +172,30 @@ export class WebflowApiClient {
 
   // --- Collection items ---
 
+  /**
+   * List a collection's staged items, page by page.
+   *
+   * `lastUpdatedSince` (incremental pull) is an ISO-8601 UTC timestamp; when
+   * present it becomes Webflow's v2 `lastUpdated[gte]` range filter (items
+   * updated on-or-after the watermark), and the page is additionally sorted by
+   * `lastUpdated` ascending so that, under offset pagination, an item updated
+   * mid-pull migrates to the tail — at worst re-pulled on the next page, never
+   * skipped. Full pulls pass it `undefined` and the request is byte-identical to
+   * the pre-incremental call (offset + limit only).
+   */
   async listCollectionItems(
     collectionId: string,
-    params: { offset: number; limit: number },
+    params: { offset: number; limit: number; lastUpdatedSince?: string },
   ): Promise<CollectionItemList> {
+    const { offset, limit, lastUpdatedSince } = params;
+    const query: Record<string, string | number> = { offset, limit };
+    if (lastUpdatedSince !== undefined) {
+      query['lastUpdated[gte]'] = lastUpdatedSince;
+      query.sortBy = 'lastUpdated';
+      query.sortOrder = 'asc';
+    }
     const response = await this.withRetry(() =>
-      this.http.get<CollectionItemList>(`/collections/${encodeURIComponent(collectionId)}/items`, { params }),
+      this.http.get<CollectionItemList>(`/collections/${encodeURIComponent(collectionId)}/items`, { params: query }),
     );
     return response.data;
   }

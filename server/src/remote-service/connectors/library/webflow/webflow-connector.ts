@@ -1,5 +1,5 @@
 import { TObject, TSchema } from '@sinclair/typebox';
-import { connectorMetadata } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -30,6 +30,7 @@ import {
   TablePreview,
 } from '../../types';
 import { WebflowApiClient } from './webflow-api-client';
+import { buildWebflowLastUpdatedFilter, webflowIncrementalPullSupport } from './webflow-incremental';
 import {
   buildWebflowAssetsJsonTableSpec,
   buildWebflowJsonTableSpec,
@@ -89,6 +90,9 @@ export class WebflowConnector extends Connector {
     record: 'item',
     records: 'items',
     logo: 'https://static.scratch.md/connector-icons/webflow.svg',
+    incrementalPull: true,
+    incrementalPullInstructions:
+      'Incremental pull using Webflow’s last-updated filter. The Assets and Pages tables are not supported.',
     credentialFields: {
       user_provided_params: [
         { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter API Key', required: true },
@@ -245,36 +249,72 @@ export class WebflowConnector extends Connector {
     return null;
   }
 
+  /**
+   * Incremental support is decided per table type. CMS collections carry a
+   * server-side `lastUpdated` on every item and their List Collection Items
+   * endpoint accepts a `lastUpdated[gte]` filter, so they are unconditionally
+   * SUPPORTED. The synthetic site-level Assets and Pages tables have no
+   * changed-since filter on their list endpoints, so they are NOT_SUPPORTED
+   * (always full-pulled). The deciding field is fixed (not user-selectable), so
+   * there is no per-folder config to inspect — the answer comes straight from the
+   * table's collection remote id. A `null` tableSpec (the REST layer computing the
+   * value before a folder's first pull) reports the connector's general
+   * capability; the registry's `resolveIncrementalPullSupport` gates precisely
+   * from the `tableId` even without a schema.
+   */
+  override incrementalPullSupport(
+    _options: PullRecordFilesOptions,
+    tableSpec: BaseJsonTableSpec | null,
+  ): IncrementalPullSupport {
+    if (!tableSpec) return IncrementalPullSupport.SUPPORTED;
+    const [, collectionId] = tableSpec.id.remoteId;
+    return webflowIncrementalPullSupport(collectionId);
+  }
+
   async pullRecordFiles(
     tableSpec: BaseJsonTableSpec,
     callback: (params: { files: ConnectorFile[]; connectorProgress?: JsonSafeObject }) => Promise<void>,
     progress: JsonSafeObject,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _options: PullRecordFilesOptions,
+    options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'WebflowConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
     const [siteId, collectionId] = tableSpec.id.remoteId;
 
-    // Handle assets table
+    // Handle assets table (full pull only — no changed-since filter)
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
       await this.pullAssets(siteId, callback);
       return {};
     }
 
-    // Handle pages table
+    // Handle pages table (full pull only — no changed-since filter)
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
       await this.pullPages(siteId, callback);
       return {};
+    }
+
+    // CMS collection items. Incremental pull filters the list by
+    // `lastUpdated[gte] = since − skew`; a full pull leaves it unfiltered. Capture
+    // the watermark BEFORE the first API call so an item changed mid-pull is
+    // re-pulled next run (idempotent commits absorb the overlap). The assets/pages
+    // tables returned above, so the filter only applies where Webflow supports it;
+    // an incremental request without a `since` (the first pull) falls through to a
+    // full scan and issues no watermark.
+    let newWatermark: Date | undefined;
+    let lastUpdatedSince: string | undefined;
+    if (options.pullMode === 'incremental' && options.since instanceof Date) {
+      newWatermark = new Date();
+      lastUpdatedSince = buildWebflowLastUpdatedFilter(options.since);
     }
 
     let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
     let hasMore = true;
 
     while (hasMore) {
-      // List items with pagination
+      // List items with pagination (filtered by lastUpdated when incremental)
       const response = await this.client.listCollectionItems(collectionId, {
         offset,
         limit: WEBFLOW_DEFAULT_BATCH_SIZE,
+        lastUpdatedSince,
       });
 
       const items = response.items || [];
@@ -298,7 +338,7 @@ export class WebflowConnector extends Connector {
 
       await callback({ files: items as unknown as ConnectorFile[], connectorProgress: { nextOffset: offset } });
     }
-    return {};
+    return newWatermark ? { newWatermark } : {};
   }
 
   /**
@@ -822,6 +862,10 @@ connectorRegistry.register({
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
   rateLimiterSpec: { points: 120, duration: 60 },
+  // CMS collections support incremental pull; Assets/Pages tables don't. The
+  // table type is encoded in tableId[1] (the collection remote id), so this
+  // resolves without a schema read — no incrementalPullAutoDetectsFromSchema.
+  resolveIncrementalPullSupport: ({ tableId }) => webflowIncrementalPullSupport(tableId[1] ?? ''),
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for Webflow', Service.WEBFLOW);

@@ -9,6 +9,7 @@ import {
   X_SCRATCH_ASSET_TABLE,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
@@ -182,6 +183,10 @@ export function buildWebflowJsonTableSpec(id: EntityId, site: Site, collection: 
       format: 'date-time',
       description: 'When the item was last updated (read-only)',
       [X_SCRATCH_REMOTE_FIELD_ID]: 'updated-on',
+      // The fixed system field incremental pull filters on (`lastUpdated[gte]`).
+      // last-modified field is discoverable generically; the actual capability
+      // gate is the table type, not this annotation (see webflow-incremental.ts).
+      [X_SCRATCH_LAST_MODIFIED_FIELD]: true,
       [X_SCRATCH_READONLY]: true,
     }),
   );
