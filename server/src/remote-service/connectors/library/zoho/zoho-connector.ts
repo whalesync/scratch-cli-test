@@ -20,7 +20,13 @@ import {
   TablePreview,
 } from '../../types';
 import { ZOHO_PAGE_TOKEN_RECORD_CEILING, ZOHO_WRITE_BATCH_SIZE, ZohoApiClient, ZohoError } from './zoho-api-client';
-import { buildZohoJsonTableSpec, sanitizeZohoWritePayload, ZOHO_MODIFIED_TIME_FIELD } from './zoho-json-schema';
+import {
+  buildZohoJsonTableSpec,
+  buildZohoUsersTableSpec,
+  sanitizeZohoWritePayload,
+  ZOHO_MODIFIED_TIME_FIELD,
+  ZOHO_USERS_TABLE_ID,
+} from './zoho-json-schema';
 import {
   categoryForModule,
   normalizeZohoDataCenter,
@@ -123,6 +129,21 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
       });
     }
 
+    // Org users aren't in /settings/modules — they come from the dedicated
+    // /users endpoint. Expose them as a read-only reference table: it's the FK
+    // target of every ownerlookup/userlookup field, and a near-universal entity
+    // worth syncing in its own right.
+    tables.push({
+      id: { wsId: ZOHO_USERS_TABLE_ID, remoteId: [ZOHO_USERS_TABLE_ID] },
+      displayName: 'Users',
+      parentPath: 'Org',
+      disabledCreates: true,
+      disabledUpdates: true,
+      disabledDeletes: true,
+      disabledReason: 'Zoho org users are a read-only reference table.',
+      metadata: { displayName: 'Users' },
+    });
+
     return tables;
   }
 
@@ -131,10 +152,14 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
    * cache the list-safe field names for the pull path.
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
-    const moduleApiName = id.remoteId[0];
-    const fields = await this.client.getFields(moduleApiName);
-    this.pullFieldNamesCache.set(moduleApiName, pullFieldNamesFrom(fields));
-    return buildZohoJsonTableSpec(id, moduleApiName, moduleApiName, fields);
+    const tableId = id.remoteId[0];
+    if (tableId === ZOHO_USERS_TABLE_ID) {
+      // The /users endpoint has no /settings/fields metadata — curated schema.
+      return buildZohoUsersTableSpec(id);
+    }
+    const fields = await this.client.getFields(tableId);
+    this.pullFieldNamesCache.set(tableId, pullFieldNamesFrom(fields));
+    return buildZohoJsonTableSpec(id, tableId, tableId, fields);
   }
 
   incrementalPullSupport(
@@ -162,6 +187,16 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
     options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     const moduleApiName = tableSpec.id.remoteId[0];
+
+    // Users come from /users (full pull each time — small read-only reference table).
+    if (moduleApiName === ZOHO_USERS_TABLE_ID) {
+      const users = await this.client.listUsers();
+      if (users.length > 0) {
+        await callback({ files: users as ConnectorFile[] });
+      }
+      return {};
+    }
+
     const fieldNames = await this.getPullFieldNames(moduleApiName);
 
     const isIncremental = options.pullMode === 'incremental' && !!options.since;
@@ -214,6 +249,15 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
     const moduleApiName = tableSpec.id.remoteId[0];
+
+    // Users have no get-by-id; refetch the small /users list and filter.
+    if (moduleApiName === ZOHO_USERS_TABLE_ID) {
+      const wanted = new Set(ids.map(String));
+      const matched = (await this.client.listUsers()).filter((user) => wanted.has(String(user.id)));
+      if (matched.length > 0) await callback({ files: matched as ConnectorFile[] });
+      return;
+    }
+
     const fieldNames = await this.getPullFieldNames(moduleApiName);
     const BUFFER_SIZE = 50;
     const buffer: ConnectorFile[] = [];

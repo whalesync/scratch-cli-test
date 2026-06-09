@@ -1,8 +1,8 @@
 # Connector-build playbook — cross-connector tricks & problems
 
-Helper file for the **`/connector-build`** skill. This is the **accumulated, cross-connector** catalog of edge cases, tricks, and gotchas. The per-connector coverage lives in each connector's `TESTING.md`; **this file is the shared memory** so every new connector starts forewarned.
+Helper file for the **`/connector-build`** skill. This is the **accumulated, cross-connector** catalog of edge cases, tricks, and gotchas. The per-connector coverage lives in each connector's `STATE.md`; **this file is the shared memory** so every new connector starts forewarned.
 
-**How to use:** read this at **Step 0** before building/testing a connector. When you discover a new quirk (Stage E), **append a short entry here** (service · trick/problem · how it surfaced · what to do). Keep entries terse and concrete. Grow it every run — the compounding catalog is the point.
+**How to use:** read this at **Step 0** before building/testing a connector — it's organized by **type of trickiness**, not by connector, so you can scan the *kinds* of problems to watch for and recognize them on the connector in front of you. The **deep, connector-specific specifics live in each connector's `STATE.md`**; this file keeps only the *type* + a one-line example per connector + a pointer. When you discover a new quirk (Stage E): write the full specifics in the connector's `STATE.md`, then **add a one-line example under the matching trick type here** (or open a new type if it's genuinely new). Keep the entries here terse; the compounding *taxonomy* is the point.
 
 ---
 
@@ -28,39 +28,47 @@ Reusable *ways to test*, not facts about one connector. The skill adds simple ed
 - **CLI-first, browser-where-it-counts.** The CLI is local and much faster than clicking a web UI — do reads, edits, creates, deletes, FK wiring, and verification with `scratchmd` whenever possible. Use the browser for the two things only it can do: **seeding data through the service UI** (when there's nothing to pull yet) and **confirming a change landed in the UI** the way a user sees it.
 - **Two-workbook round-trip (push-then-pull-elsewhere).** Connect the **same service to two workbooks**. Make a change in workbook A and push it; then **pull in workbook B** and confirm the change is there and reads back cleanly. This proves the write genuinely reached the service (not just Scratch's `main`) and that it survives a fresh read — stronger than a same-workspace pull, which can replay pending local patches.
 
-## Per-service tricks
+## Trick types (the catalog — scan these against the next connector)
 
-### Notion (dynamic)
-- **Page content is record-by-record.** The bulk/list endpoint returns page *metadata* only; the page **content (blocks)** must be fetched per page via a separate call. Pull-of-content is a distinct path from pull-of-metadata.
+Each entry is a *kind* of trickiness with a one-line tell and brief per-connector examples. **Full specifics live in each connector's `STATE.md`** (linked); add a one-line example here when you hit a new instance, deep notes there.
 
-### YouTube (static)
-- **Transcripts are a separate, trickier fetch** than the video metadata — not part of the normal video record pull.
+### Fetch / read
+- **Heavy fields (N+1 fetch).** A field's real payload is **not** in the bulk/list endpoint and must be fetched **per record** — turning a 1-page pull (1 call) into **N+1 calls**. Tell: list returns metadata/stubs, real content needs a per-id call. Examples: **Notion** page content/blocks (`notion/STATE.md`), **YouTube** transcripts (`youtube/STATE.md`). Plan the pull as light-list + heavy-hydrate; mind rate limits.
+- **Bulk vs single field-set mismatch.** The single-record GET returns a **different set of fields** than the list/search endpoint. Tell: a field present in list is missing from get-by-id (or vice-versa). **Verify writes with the same read path the connector uses**, not get-by-id. Example: **GoHighLevel** `GET /contacts/{id}` omits `companyName`/`city`/… that search returns (`gohighlevel/STATE.md`).
+- **Reference/config entities & missing get-by-id.** Not every entity round-trips — some are reference/config (pull-only), and a reference object may have **no get-by-id** (must refetch the list and filter). Example: **GoHighLevel** writable subset; Pipelines (no get-by-id) (`gohighlevel/STATE.md`).
 
-### Webflow (dynamic CMS)
-- **Live vs draft = two states that behave like two tables.** Items exist as draft and/or published; the **status field is special** and changing it is a dedicated operation, not a normal field write.
+### Field shape
+- **Read shape ≠ write shape.** A field **reads** as one shape and **writes** as another; store the read shape verbatim, translate only on write. Examples: **ClickUp** `status` object→name, `priority` object→int, dates ms-string→ms-int (`clickup/STATE.md`).
+- **State / bucket fields.** A field — usually a *status/state* — is **more than a value: it moves the record into a different bucket**, especially at publish (draft vs live), so changing it is a **dedicated operation**, not a normal field write. Examples: **Webflow** draft↔published live state (`webflow/STATE.md`); watch for the same in any CMS/CRM with publish/approval stages.
+- **Value containers: array-by-id vs flat keys.** Custom-field values may live in an **array addressed by field id** (write via a per-field endpoint) instead of flat top-level keys. Examples: **ClickUp** `custom_fields[]` → `POST /task/{id}/field/{field_id}`, **Copper** `custom_fields[]`; contrast Airtable's flat `fields{}` (`clickup/`, `copper/`).
+- **Date / number normalization.** The service silently snaps a date to a day/tz boundary or coerces number precision, so the write **doesn't round-trip exactly**. Example: **ClickUp** `due_date` → day boundary in workspace TZ unless `due_date_time:true` (`clickup/STATE.md`).
+- **Lossy text encoding (emoji / astral chars).** The service stores text as 3-byte `utf8` (not `utf8mb4`), so BMP unicode survives but **4-byte/astral characters (emoji) are silently replaced with `?`** on write. Tell: accented chars round-trip but `🎯` comes back as `?`. Confirm it's the service (raw API probe), not the connector. Example: **Zoho** text fields (`zoho/STATE.md`).
 
-### GoHighLevel / HighLevel (mixed: static + per-Location custom fields + Custom Objects)
-- **`limit`-cap → silent empty pull (generalizable trap).** Each list endpoint caps `limit` differently and the OpenAPI docs are *wrong*; exceeding it returns `422` that **fails the whole folder pull while the job still reports success** — you get an empty folder, not an error. **Always probe a new entity's real `limit` cap (start at 100)** rather than trusting docs. Watch for this shape on any connector.
-- **Pagination is per-entity, not standardized** (searchAfter / startAfter+id / page / skip / offset / date-cursor). Pagination tokens like `searchAfter` are **stripped from each record before storage** (transport, not data) — make sure your connector does this so cursors don't leak into the saved JSON.
-- **Mandatory version header** (`Version: 2021-07-28`) on every request — omitting it "fails obscurely." Many APIs have a required version/date header; check first.
-- **Inconsistent location/tenant param** across endpoints (`locationId` in body vs `location_id` snake_case vs query). Per-entity scoping param is a common foot-gun.
-- **Per-entity value-key drift:** Contacts custom-field value key is `value`, Opportunities is `fieldValue`. Same concept, different key per object — verify per entity.
-- **Reference object with no get-by-id** (Pipelines) → pull-by-id must re-fetch all and filter.
-- **Writable subset:** only Contacts, Opportunities, Custom Objects records are writable; the rest are reference/config (pull-only). Don't assume every entity round-trips.
-- **`GET /contacts/{id}` omits fields the search endpoint returns** (`companyName`, `city`, `businessName`, …). Verifying a contact write via GET-by-id nearly produced a false "didn't land". **Verify contact writes via the connector's pull / the search endpoint**, not GET-by-id. (Generalizable: a service's single-record GET and its list/search can return different field sets — verify writes with the same read path the connector uses.)
-- **Create can silently fail per-record while the publish reports connection success.** Verified 2026-06-05: a Contacts create published as "Published 1 connection(s)" but never landed (no remote id, not in GHL, still in `files unpublished`) — while Opportunity create *did* land. **After any push, confirm each write actually landed** (re-pull or service read) **and check `files unpublished` is empty.** A connection-level "success" is not a record-level guarantee.
+### Write
+- **Feature-gated fields fail the whole write.** A field gated on a service add-on/feature; sending it when the feature is off **errors and fails the entire record write** (not just that field). Tell: a 4xx naming a feature/app. Fix: only send a non-null value the user actually set. Examples: **ClickUp** `points` (Sprint Points ClickApp), `time_estimate` (Time Estimates) → `400 ITEM_227` (`clickup/STATE.md`).
+- **Silent success that didn't land.** An op reports success but the data isn't there: a per-record create fails under a connection-level "Published", or a `limit`-cap `422` **empties the folder while the job reports OK**. **Always verify each write in the service API and that `files unpublished` is empty.** Examples: **GoHighLevel** per-record create silent-fail; limit-cap silent-empty-pull (`gohighlevel/STATE.md`).
+- **FK / relationship modeling.** A relationship can be a **plain id field**, a **separate association endpoint**, or a **relationship custom-field type** — identify which and test that path both directions. Examples: **Copper** plain id field (`primary_contact_id`), **HubSpot** association endpoint, **ClickUp** `tasks`-type custom field (`copper/`, `clickup/`).
+- **Storage / edition caps block ALL creates (test like update instead).** A free/over-quota org can be at a hard **record-count cap**, so every `POST` 4xx's (`MAX_LIMIT_REACHED`) **org-wide** — even a minimal create — while **update/pull keep working**. Tell: minimal create 400s but an existing-record edit succeeds. Don't read it as a connector bug; prove write coverage **non-destructively via `updateRecords` (save-and-restore on an existing record)** and gate create/delete behind an env flag for a green-field org. Example: **Zoho** free-edition 5000-record cap, Accounts at 25k (`zoho/STATE.md`).
 
-### Copper (static CRM · custom fields = mixed) — verified 2026-06-05
-- **Filename is a name-slug, not the remote id.** Records save as e.g. `scratchpull-testco-0605.json`; the Copper `id` lives **inside** the file. New local records receive their `id` **after** publish.
-- **FKs are plain id fields** on the record (`primary_contact_id` → People via `x-scratch-foreign-key`). No special association endpoint observed.
-- **`assignee_id` is a Copper User id**, not a linked Scratch table — leave it as a plain number.
-- **Auth = `user_provided_params`** (apiKey + email) → connectable from the CLI.
+### Per-entity & API request quirks
+- **Per-entity inconsistency.** The same concept differs **per entity**: value-key, scoping param, pagination style, `limit` cap (docs often wrong — probe the real cap from 100). Don't assume uniformity. Examples: **GoHighLevel** value-key (`value` vs `fieldValue`), location param (`locationId`/`location_id`/query), per-entity pagination & limit caps (`gohighlevel/STATE.md`).
+- **Required version/date headers.** A mandatory header on **every** request; omit it → obscure failure. Example: **GoHighLevel** `Version: 2021-07-28` (`gohighlevel/STATE.md`).
+- **Pagination cursor leakage.** Pagination tokens are **transport, not data** — strip them from each record before storage so cursors don't leak into the saved JSON. Example: **GoHighLevel** `searchAfter` (`gohighlevel/STATE.md`).
+
+### Schema & structure
+- **Schema you can read/set but can't create via API.** Custom fields are readable and value-settable but **UI-only to create** — seed one of each type via the service UI before testing field types. Example: **ClickUp** custom fields (Custom Field Manager) (`clickup/STATE.md`).
+- **Structural object modeling.** How the service models sub-objects decides the codepath (and the [path structure](#structural-hierarchy--scratch-folder-paths)): e.g. a **subtask is just a record with a `parent`** (no special path needed), statuses are **per-list not global**. Example: **ClickUp** (`clickup/STATE.md`).
+
+### Identity & auth
+- **Filename ≠ id; id lives inside the file.** The filename may be a **name-slug** or the **remote id**; the id is **always inside the file**; new records get their id **after** publish. Examples: **Copper** name-slug, Airtable/Webflow remote id (`copper/STATE.md`).
+- **Credential UI quirks.** Masked token fields (copy-only), an SSO re-auth to mint a token, multi-field auth. Examples: **ClickUp** `pk_` token masked + Copy-only + Google SSO re-auth; **Copper** apiKey+email (`clickup/`, `copper/`).
 
 ---
 
 ## General Scratch / CLI / browser gotchas (apply to every connector)
 
 - **CLI publish is 3 steps:** `files accept` → `files upload` → `files publish`. `linked publish` alone **no-ops yet prints "completed"** (it never uploads the accepted patches). Always upload first.
+- **`files upload` needs GCS + valid gcloud creds (local-dev trap).** `upload` → `POST /cli/v1/workbooks/:id/upload-patch/init` issues a **GCS presigned PUT URL** (`object-storage.service.ts`, gated on `GCS_PATCH_UPLOAD_BUCKET`). In local dev the signing uses **impersonated gcloud ADC**; when those expire you get a **500** on upload with `invalid_rapt` / `SigningError` in the server log. Fix: `gcloud auth application-default login` (re-auth the impersonation). This blocks the publish path for **every** connector — when `files upload` 500s, check the server log for the GCS sign error before suspecting the connector. To prove writes meanwhile, run a **live-API integration spec** (`server/test/integration/<svc>-connector.spec.ts`) that drives the connector's create/update/delete directly and reads back via the service API.
 - **Confirm pushes against the service API, not a Scratch pull.** A pull replays still-pending accepted patches over `main`, so the local file can look right while the service is unchanged.
 - **`files publish` is 403'd** unless `User.settings.cliCanPublish = true` (web app Settings → Integrations).
 - **Read-only fields** (`x-scratch-readonly`: ids, `date_created/modified`, computed) are dropped on publish by design — omit them from new records. But never *silently* strip a user's edit to a read-only field; let the service reject it.

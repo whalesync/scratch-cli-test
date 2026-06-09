@@ -32,11 +32,19 @@ describe('ZohoConnector.listTables — eligibility policy', () => {
     const tables = await makeConnector().listTables();
 
     const byId = new Map(tables.map((t) => [t.id.wsId, t]));
-    expect([...byId.keys()].sort()).toEqual(['DealHistory', 'Leads']);
+    // The two eligible modules plus the always-appended read-only `users` table.
+    expect([...byId.keys()].sort()).toEqual(['DealHistory', 'Leads', 'users']);
 
     const leads = byId.get('Leads');
     expect(leads?.disabledCreates).toBeUndefined();
     expect(leads?.parentPath).toBe('Sales');
+
+    // Users is a synthetic, read-only reference table (FK target of *.Owner).
+    const users = byId.get('users');
+    expect(users?.id.remoteId).toEqual(['users']);
+    expect(users?.disabledCreates).toBe(true);
+    expect(users?.disabledUpdates).toBe(true);
+    expect(users?.disabledDeletes).toBe(true);
 
     const dealHistory = byId.get('DealHistory');
     expect(dealHistory?.disabledCreates).toBe(true);

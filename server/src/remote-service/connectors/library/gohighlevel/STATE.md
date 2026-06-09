@@ -39,6 +39,42 @@
 
 Legend: ✅ verified in GHL · ⬜ not yet · ➖ N/A (read-only) · ❌ broken.
 
+## Objects / entity types — what the connector exposes
+Best-case future-state contract (`Status` = built/planned), not just what's wired today. GHL is **MIXED**: static entities + per-Location custom fields + **custom objects**.
+
+### 1. Structural entities — define the record path in Scratch
+**Record path:** `/{Entity}/{record}.json`. A Private Integration Token is scoped to **one Location** (sub-account), so the Location is the **connection scope, not a path segment** — the Entity is the only path segment (`basePath = []`). Compare Airtable `/{base}/{table}/{record}.json`.
+
+| Structural entity | Role | Path segment? |
+|---|---|---|
+| Location (sub-account) | the connection scope; the PIT is scoped to one | — (the connection, not in path) |
+| **Entity** (Contacts/Opportunities/Custom Object/…) | the table — its records are files | **path segment** (the table itself) |
+
+### 2. Main entities — independent top-level record types → each its own Scratch table
+Custom **Objects** (user-defined record types) are entities → here. Custom **fields** are columns (see [the dynamic part](#custom-fields--custom-objects-the-dynamic-part--untested)), not entities. Writable: Contacts, Opportunities, Custom Object records; the rest are reference/read-only.
+
+| Entity | Scratch table | Pull | Create | Edit | Delete | FK | Status |
+|---|---|:--:|:--:|:--:|:--:|:--:|---|
+| Contacts | record | ✅ | ✅ | ✅ | ⬜ | ⬜ | **built** (New→Push ❌ — see flag) |
+| Opportunities | record | ✅ | ✅ | ⬜ | ⬜ | ✅ both ways | **built** |
+| Custom Objects | record (dynamic) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
+| Users | read-only reference (`GET /users/`) | ✅ | ➖ | ➖ | ➖ | — | **built** (pull, read-only) |
+| Pipelines | read-only reference (no get-by-id) | ✅ | ➖ | ➖ | ➖ | — | **built** (read-only) |
+| Calendars / Campaigns / Conversations / Forms / Trigger Links / Products / Proposals / Surveys / Workflows / Blog Authors / Blog Categories | read-only reference | ⬜ | ➖ | ➖ | ➖ | — | **built** (code, read-only); pull untested |
+| Funnels / Payments / Email Templates | top-level reference (not yet built) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only) |
+
+### 3. Scoped / non-top-level entities
+GHL's per-contact (or per-calendar) sub-resources — **scoped to a parent**, reached only through it; they belong in the parent's deep fetch, not a top-level table.
+
+| Entity | Why not top-level | How we reach it | Status |
+|---|---|---|---|
+| Notes | **scoped** — `GET /contacts/{id}/notes`, no global list | embed into each Contact's deep fetch | planned |
+| Tasks | **scoped** — `GET /contacts/{id}/tasks` | embed into Contact deep fetch | planned |
+| Appointments / Calendar Events | **scoped** — per contact / per calendar | per-parent fetch → embed | planned |
+| Associations | **scoped** — relations per record (the `/associations` API) | per-parent; out of scope in v1 | planned |
+
+> Structural facts for GHL are captured under [Connector facts](#connector-facts-from-endpointsmd--read-before-testing) and [Edge cases](#edge-cases-discovered-from-endpointsmd---re-verify-live): Location-scoped PIT, mandatory `Version` header, per-entity valueKey/scoping-param/pagination/limit-caps, custom-object values in a keyed `properties` bag.
+
 ## Entities × Operations
 
 Writable per the API: **Contacts** (CRUD+upsert), **Opportunities** (CRUD+status), **Custom Object records**. Everything else is reference/config → **pull-only**.
@@ -63,9 +99,10 @@ Writable per the API: **Contacts** (CRUD+upsert), **Opportunities** (CRUD+status
 | Blog Authors | ⬜ | ➖ | ➖ | ➖ | ➖ | — | (read-only; limit cap **50**) |
 | Blog Categories | ⬜ | ➖ | ➖ | ➖ | ➖ | — | (read-only; limit cap **50**) |
 
-Not implemented (deliberately): Tasks, Notes, Appointments, Calendar Events, Funnels, Payments, Associations, Email Templates.
+Not yet built — but **classified, not dropped** (see the Objects tables above, best-case future state): Tasks / Notes / Appointments / Calendar Events / Associations are **scoped** sub-entities (table 3, planned); Funnels / Payments / Email Templates are top-level reference entities (table 2, planned).
 
 ## Custom fields / Custom Objects (the dynamic part) — untested
+Distinction: a custom **field** is a **column on an entity** (Contacts/Opportunities) → field-types, not an entity. A custom **object** is a user-defined **record type** → it's a main entity (table 2 above).
 - Contacts/Opportunities custom fields discovered from `GET /locations/{locationId}/customFields` (filtered by `model`). Stored verbatim as `{ id, <valueKey> }` — **valueKey is `value` for Contacts, `fieldValue` for Opportunities**. dataTypes: TEXT, LARGE_TEXT, NUMERICAL, PHONE, MONETORY, SINGLE_OPTIONS, MULTIPLE_OPTIONS, DATE, CHECKBOX, FILE_UPLOAD, RADIO, EMAIL. ⬜ add one of each in GHL → pull → edit → push.
 - Custom Object record values live in a keyed **`properties`** bag (by `fieldKey`). ⬜
 

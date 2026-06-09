@@ -1,5 +1,5 @@
 <!--
-TEMPLATE for server/src/remote-service/connectors/library/<connector>/TESTING.md
+TEMPLATE for server/src/remote-service/connectors/library/<connector>/STATE.md
 Copy this, fill it in, and keep it updated — it is the resumable source of truth for
 /connector-build. Legend: ✅ verified against the service · ⬜ not yet ·
 ➖ N/A (read-only entity/field) · ❌ broken (link an issue).
@@ -31,6 +31,50 @@ and BOTH for MIXED (delete the unused one).
 
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 
+## Milestones — where this connector is in the build
+At-a-glance progress through the build journey, so anyone can see where this connector is at a glance. Status: ✅ done · 🔄 in progress · ⬜ not started.
+
+| # | Milestone | Status | Notes |
+|---|---|:--:|---|
+| 1 | **Account ready** (registered / logged into the service web app) | ⬜ | |
+| 2 | **Connected** (connection created, health OK) | ⬜ | |
+| 3 | **First fetch** (pulled ≥1 record) | ⬜ | |
+| 4 | **All entities seeded & fetched** (every main entity has a record, pulled in) | ⬜ | |
+| 5 | **Full write CRUD** (create + edit + delete exercised, push) | ⬜ | |
+| 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
+| 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
+
+## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
+These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
+
+### 1. Structural entities — define the record path in Scratch
+**Record path:** `/{<segment>}/{<segment>}/{record}.json`  ← write the actual path (e.g. Postgres `/{schema}/{table}/{record}.json`, Airtable `/{base}/{table}/{record}.json`). The hierarchy (workspace/space/folder/schema) **should be implemented as path segments from the start** via `basePath` on the table spec — don't ship a flat path.
+
+| Structural entity | Role | Path segment or `parentPath` grouping? |
+|---|---|---|
+| <Workspace/Base/Schema> | <walked for discovery / groups tables> | <path segment | parentPath grouping | discovery-only> |
+| <Table/List/Collection> | the table (its records are files) | path segment |
+
+### 2. Main entities — independent top-level record types → each its own Scratch table
+Every entity that is (or could be) fetched as a standalone top-level list. Include custom **objects**; maximize this table (list planned ones too). Structurally-different-but-top-level entities go here with their own codepath.
+
+| Entity | Scratch table | Pull | Create→Push | Edit→Push | Delete | FK | Status |
+|---|---|:--:|:--:|:--:|:--:|:--:|---|
+| <Entity1> | <table name/shape> | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built / planned |
+
+### 3. Scoped / non-top-level entities — not directly fetchable as a top-level entity
+Entities that can't be a standalone Scratch table, for either reason: **(i) scoped to a parent** — reached only through it, so embed into the parent's deep fetch; or **(ii) weird in another way** that blocks top-level treatment — no list endpoint, export/search-only, returned only as a side-effect, requires an unsupported scope. Still data we want — never drop it.
+
+| Entity | Why not top-level | How we reach it | Status |
+|---|---|---|---|
+| Notes | **scoped** — only listed per parent (`GET /users/{id}/notes`), no global list | embed into each User record on its deep fetch | planned |
+| Audit log entries | **weird** — no list endpoint at all; only emitted on the export/webhook stream | special export-based codepath, not a normal pull | planned |
+
+<!-- A green ✅ in any *push* column (Edit→Push / New→Push / Delete / FK-write) means you
+     MANUALLY edited the record file on disk and pushed it through the CLI (files accept →
+     upload → publish), then confirmed in the service. Direct API calls or integration-spec
+     coverage are evidence only — they do NOT earn the ✅. -->
+
 ## Entities × Operations  (STATIC / mixed)
 
 | Entity | Pull | Create→Pull | Edit→Push | New→Push | Delete | FK | Service-UI create path |
@@ -53,8 +97,29 @@ Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
 | formula / computed | ➖ | ➖ | ➖ | read-only |
 | rich text / html | ⬜ | ⬜ | ⬜ | |
 
+## Bulk operation limits / pagination
+Max records (or fields) per API request, **per operation** — services often differ between read/create/update/delete. If the service has **per-entity** limits (rare), note them here AND in that entity's row in the entity table.
+
+| Operation | Max per request | Mechanism (endpoint / cursor) | Notes |
+|---|---|---|---|
+| Read (list) | <N> records/page | <page/offset/cursor> | <field cap? hard ceiling that needs a bulk API?> |
+| Create | <N> records/request | <endpoint> | |
+| Update | <N> records/request | <endpoint> | |
+| Delete | <N> ids/request | <endpoint> | |
+
+<Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
+
+## Incremental polling
+- **Supported:** <YES / NO>. Driver field = `<last-modified field>` (annotated `x-scratch-last-modified-field`); `incrementalPullSupport` returns <SUPPORTED/NOT_SUPPORTED> when <condition>.
+- **Mechanism:** <how a `since` pull is expressed — e.g. `If-Modified-Since` header / `updated_since` param / cursor> and **how the new watermark is derived** (server time captured before the first page? max record timestamp?). Note idempotency (mid-run edits re-pulled next time).
+- **Deletions:** <how deletes are detected on an incremental run — tombstone/deleted endpoint, or "not supported">.
+
 ## Foreign keys / associations
-- `<Entity>.<field>` → `<linkedTable>` (`x-scratch-foreign-key`): write ⬜ / read ⬜
+One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *different* parent (move the record parent→parent) → `files accept` → `upload` → `publish` → confirm it re-parented in the service. **Read** = a service-side link pulls back as the correct id/value.
+
+| FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
+|---|:--:|:--:|---|
+| `<Entity>.<field>` → `<table>` | ⬜ | ⬜ | |
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered

@@ -33,4 +33,5 @@ export const Service = {
   ZOHO: 'ZOHO',
   GENERIC_API: 'GENERIC_API',
   GOHIGHLEVEL: 'GOHIGHLEVEL',
+  CLICKUP: 'CLICKUP',
 } as const;

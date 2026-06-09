@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, isAxiosError } from 'axios';
+import { createHash } from 'crypto';
 import { WSLogger } from 'src/logger';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { ZOHO_DATA_CENTER_HOSTS, ZohoConnectorCredentials, ZohoFieldMetadata, ZohoModuleMetadata } from './zoho-types';
@@ -72,6 +73,36 @@ interface ZohoTokenResponse {
 }
 
 /**
+ * Process-wide access-token cache shared across every {@link ZohoApiClient}.
+ *
+ * A fresh connector — and therefore a fresh ZohoApiClient — is built for **every**
+ * operation: `ConnectorsService.getConnector` calls `createConnector` per
+ * request/job and never reuses the instance. An instance-level token cache is
+ * therefore useless — each pull/link/test would mint a brand-new access token
+ * from the refresh token, and a bulk operation across many tables quickly trips
+ * Zoho's token-generation rate limit (`too many requests continuously`). Caching
+ * the minted token at module scope, keyed by the credential set, lets all
+ * instances in the process reuse one token until just before it expires —
+ * dropping token minting from per-operation to ~once per token lifetime. The
+ * in-flight map dedupes a burst of concurrent first-time mints (e.g. linking 14
+ * tables at once) down to a single token request.
+ */
+interface SharedZohoAccessToken {
+  token: string;
+  expiresAtMs: number;
+  apiDomain: string;
+}
+const sharedAccessTokenByCredential = new Map<string, SharedZohoAccessToken>();
+const inFlightTokenMintByCredential = new Map<string, Promise<SharedZohoAccessToken>>();
+
+/** Stable cache key for a credential set (never stores the raw secret as the key). */
+function zohoTokenCacheKey(credentials: ZohoConnectorCredentials): string {
+  return createHash('sha256')
+    .update(`${credentials.dataCenter}:${credentials.clientId}:${credentials.refreshToken}`)
+    .digest('hex');
+}
+
+/**
  * Low-level HTTP client for the Zoho CRM v8 REST API.
  *
  * Owns OAuth token lifecycle: it exchanges the long-lived refresh token for a
@@ -89,9 +120,6 @@ export class ZohoApiClient {
   private readonly rateLimiter?: RateLimiter;
   private readonly http: AxiosInstance;
 
-  private cachedAccessToken?: string;
-  private accessTokenExpiresAtMs = 0;
-
   constructor(credentials: ZohoConnectorCredentials, opts?: { rateLimiter?: RateLimiter }) {
     this.credentials = credentials;
     const hosts = ZOHO_DATA_CENTER_HOSTS[credentials.dataCenter];
@@ -104,15 +132,33 @@ export class ZohoApiClient {
   // --- Auth ---
 
   /**
-   * Return a valid access token, refreshing from the refresh token when the
-   * cached one is missing or within 60s of expiry.
+   * Return a valid access token from the process-wide cache, minting a new one
+   * from the refresh token only when the cached one is missing or within 60s of
+   * expiry. Concurrent first-time callers share a single in-flight mint so a
+   * burst of parallel jobs issues one token request, not one per job.
    */
   private async getAccessToken(): Promise<string> {
-    const now = Date.now();
-    if (this.cachedAccessToken && now < this.accessTokenExpiresAtMs) {
-      return this.cachedAccessToken;
+    const cacheKey = zohoTokenCacheKey(this.credentials);
+    const cached = sharedAccessTokenByCredential.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAtMs) {
+      this.apiDomain = cached.apiDomain;
+      return cached.token;
     }
 
+    let mint = inFlightTokenMintByCredential.get(cacheKey);
+    if (!mint) {
+      mint = this.mintAccessToken().finally(() => inFlightTokenMintByCredential.delete(cacheKey));
+      inFlightTokenMintByCredential.set(cacheKey, mint);
+    }
+    const fresh = await mint;
+    sharedAccessTokenByCredential.set(cacheKey, fresh);
+    this.apiDomain = fresh.apiDomain;
+    return fresh.token;
+  }
+
+  /** Exchange the refresh token for a fresh access token (no caching here). */
+  private async mintAccessToken(): Promise<SharedZohoAccessToken> {
+    const now = Date.now();
     const params = new URLSearchParams({
       grant_type: 'refresh_token',
       client_id: this.credentials.clientId,
@@ -136,14 +182,13 @@ export class ZohoApiClient {
       );
     }
 
-    this.cachedAccessToken = body.access_token;
     // Zoho access tokens last ~3600s; refresh 60s early to avoid races.
     const expiresInMs = (body.expires_in ?? 3600) * 1000;
-    this.accessTokenExpiresAtMs = now + expiresInMs - 60_000;
-    if (body.api_domain) {
-      this.apiDomain = body.api_domain;
-    }
-    return this.cachedAccessToken;
+    return {
+      token: body.access_token,
+      expiresAtMs: now + expiresInMs - 60_000,
+      apiDomain: body.api_domain ?? this.apiDomain,
+    };
   }
 
   // --- Request helper ---

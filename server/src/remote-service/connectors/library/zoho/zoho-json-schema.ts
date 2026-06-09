@@ -96,9 +96,17 @@ export function zohoFieldToJsonSchema(field: ZohoFieldMetadata): TSchema {
     // also only returned on single-record fetch, so they're typically absent in v1.
     case 'multiselectlookup':
       return Type.Union([Type.Array(Type.Unknown()), Type.Null()]);
+    // Polymorphic/opaque references and activity metadata, stored verbatim.
+    // NOTE: Zoho's live data_type strings are underscored (`multi_module_lookup`),
+    // confirmed against the Notes module — the un-underscored aliases are kept
+    // only for safety. ALARM/RRULE are the reminder/recurrence fields on
+    // Tasks/Events. All have no write path in v1.
+    case 'multi_module_lookup':
     case 'multimodulelookup':
     case 'consent_lookup':
+    case 'ALARM':
     case 'RRULE':
+    case 'multireminder':
       return Type.Union([Type.Unknown(), Type.Null()]);
 
     case 'subform':
@@ -256,6 +264,68 @@ export function buildZohoJsonTableSpec(
 
 function isTextLikeType(dataType: string): boolean {
   return dataType === 'text' || dataType === 'textarea' || dataType === 'email' || dataType === 'website';
+}
+
+/** The synthetic table id for the org users reference table (FK target of ownerlookup/userlookup). */
+export const ZOHO_USERS_TABLE_ID = 'users';
+
+/**
+ * Build the table spec for the synthetic read-only `users` table. Org users come
+ * from the dedicated `/users` endpoint, which — unlike record modules — has **no
+ * `/settings/fields` metadata**. Per the "hardcode a schema only when the API
+ * offers no introspection" rule, we curate the common user fields and keep the
+ * object **permissive** (`additionalProperties`) so any extra keys Zoho returns
+ * are stored verbatim. Every field is read-only; the table is never written. We
+ * deliberately omit `Modified_Time` from the defined properties so the connector
+ * reports incremental pull as unsupported (this small reference table full-pulls).
+ */
+export function buildZohoUsersTableSpec(id: EntityId): BaseJsonTableSpec {
+  const readonly = (base: TSchema, remoteId: string, label: string, connectorType: string): TSchema => ({
+    ...base,
+    [X_SCRATCH_READONLY]: true,
+    [X_SCRATCH_REMOTE_FIELD_ID]: remoteId,
+    [X_SCRATCH_CONNECTOR_DATA_TYPE]: `zoho/${connectorType}`,
+    description: label,
+  });
+  const stringOrNull = Type.Union([Type.String(), Type.Null()]);
+  const referenceObjectOrNull = Type.Union([
+    Type.Object(
+      { id: Type.Optional(Type.String()), name: Type.Optional(Type.String()) },
+      { additionalProperties: true },
+    ),
+    Type.Null(),
+  ]);
+
+  const properties: Record<string, TSchema> = {
+    id: readonly(Type.String(), 'id', 'User ID', 'bigint'),
+    full_name: readonly(stringOrNull, 'full_name', 'Full Name', 'text'),
+    first_name: readonly(stringOrNull, 'first_name', 'First Name', 'text'),
+    last_name: readonly(stringOrNull, 'last_name', 'Last Name', 'text'),
+    email: readonly(Type.Union([Type.String({ format: 'email' }), Type.Null()]), 'email', 'Email', 'email'),
+    role: readonly(referenceObjectOrNull, 'role', 'Role', 'lookup'),
+    profile: readonly(referenceObjectOrNull, 'profile', 'Profile', 'lookup'),
+    status: readonly(stringOrNull, 'status', 'Status', 'text'),
+    phone: readonly(stringOrNull, 'phone', 'Phone', 'phone'),
+    mobile: readonly(stringOrNull, 'mobile', 'Mobile', 'phone'),
+    zuid: readonly(stringOrNull, 'zuid', 'Zoho UID', 'bigint'),
+    Created_Time: readonly(
+      Type.Union([Type.String({ format: 'date-time' }), Type.Null()]),
+      'Created_Time',
+      'Created Time',
+      'datetime',
+    ),
+  };
+
+  const schema = Type.Object(properties, { $id: 'zoho/users', title: 'Users', additionalProperties: true });
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Users',
+    schema,
+    idColumnRemoteId: idPath('id'),
+    titleColumnRemoteId: ['full_name'],
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 /** Read the `x-scratch-readonly` flag for a field straight off the built schema. */

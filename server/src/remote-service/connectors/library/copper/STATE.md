@@ -22,6 +22,44 @@
 
 Legend: ✅ verified in Copper · ⬜ not yet · ➖ N/A · ❌ broken.
 
+## Objects / entity types — what the connector exposes
+Best-case future-state contract (`Status` = built/planned), not just what's wired today. Copper is a CRM with a **fixed** set of record entities plus **custom fields** (mixed); it has **no custom objects**.
+
+### 1. Structural entities — define the record path in Scratch
+**Record path:** `/{Entity}/{record}.json` (e.g. `/Companies/scratchpull-testco-0605.json`). Copper has a single account/workspace (the connection), so there is **no hierarchy above the entity** — the Entity is the only path segment (`basePath = []`). Compare Postgres `/{schema}/{table}/{record}.json`, Airtable `/{base}/{table}/{record}.json`.
+
+| Structural entity | Role | Path segment? |
+|---|---|---|
+| Account (workspace) | the connection scope; one per API key | — (the connection, not in path) |
+| **Entity** (People/Companies/…) | the table — its records are files | **path segment** (the table itself) |
+
+### 2. Main entities — independent top-level record types → each its own Scratch table
+The six writable record entities (built) + read-only reference entities (planned). No custom objects (custom *fields* are columns — see [Custom fields](#custom-fields-mixed--untested), not entities).
+
+| Entity | Scratch table | Pull | Create | Edit | Delete | FK | Status |
+|---|---|:--:|:--:|:--:|:--:|:--:|---|
+| Companies | record | ✅ | ✅ | ✅ | ⬜ | ✅ | **built**, verified |
+| People | record | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); ops untested |
+| Opportunities | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
+| Leads | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
+| Tasks | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
+| Projects | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
+| Users | read-only reference (`GET /users/search`) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only; `assignee_id` references them) |
+| Activities | top-level but **read-only** system rows (no `date_modified`) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only; deferred in v1) |
+| Pipelines / Customer Sources / Loss Reasons / Contact Types | reference/config that other entities link to | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only reference) |
+
+### 3. Scoped / non-top-level entities
+| Entity | Why not top-level | How we reach it | Status |
+|---|---|---|---|
+| Related Items (associations) | **scoped** — relations are set/listed per parent entity, not a global list | per-parent endpoint (`People.company_id` is set via Related Items) | planned (read-only in v1) |
+
+### Structural facts (how Copper models things)
+- **Filename = name-slug, not the remote id** (`scratchpull-testco-0605.json`); the `id` lives **inside** the file; new records get their `id` after publish.
+- **FKs are plain id fields** on the record (e.g. `primary_contact_id` → People) — **no separate association endpoint** for those; only Related Items associations use a dedicated path.
+- **`assignee_id` is a Copper User id**, not a linked Scratch table — leave it a plain number.
+- **Custom-field values live in an array** `custom_fields: [{ custom_field_definition_id, value }]` (addressed by definition id), not flat top-level keys. Stored verbatim.
+- **No system-field metadata endpoint** — system fields are hardcoded per entity; only *custom* fields are discovered dynamically.
+
 ## Entities × Operations
 
 | Entity | Pull | Create→Pull | Edit→Push | New→Push | Delete | FK | Service-UI create path |
@@ -40,6 +78,7 @@ Legend: ✅ verified in Copper · ⬜ not yet · ➖ N/A · ❌ broken.
 - **FK:** company 76658976 `primary_contact_id` → person `dadad` (183382759), confirmed via Copper API.
 
 ## Custom fields (mixed) — untested
+Custom fields are **columns on each entity** (a field belongs to an entity), *not* entities — Copper has no custom *objects*. Discovered dynamically via `GET /custom_field_definitions`.
 - Copper supports `custom_fields[]` per record. Add a custom field in Copper → pull → edit → push round-trip. ⬜
 
 ## Foreign keys / associations
