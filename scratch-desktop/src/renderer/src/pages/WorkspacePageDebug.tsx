@@ -16,6 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { DataFolder, Workspace } from '@spinner/shared-types';
 import { ArrowLeft, BracesIcon } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -24,7 +25,6 @@ import { LiveCommandOutput } from '../components/LiveCommandOutput';
 import { API_CONFIG } from '../lib/api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { workspacesApi } from '../lib/workspaces-api';
-import { DataFolder, Workspace } from '../types/workspace';
 
 interface SyncValidationResult {
   syncName: string;

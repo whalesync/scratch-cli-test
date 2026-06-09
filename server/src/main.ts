@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { ZodValidationPipe } from 'nestjs-zod';
 import { AppModule } from './app.module';
 import { ScratchConfigService } from './config/scratch-config.service';
 import {
@@ -12,6 +13,7 @@ import {
   NotFoundExceptionFilter,
 } from './exception-filters/generic-errors.exception-filter';
 import { SyncExceptionFilter } from './exception-filters/sync.exception-filter';
+import { ZodValidationExceptionFilter } from './exception-filters/zod-validation.exception-filter';
 import { LoggingInterceptor } from './interceptors/logging.interceptor';
 import { WSLogger, WSLoggerShim } from './logger';
 
@@ -45,8 +47,12 @@ async function bootstrap(): Promise<void> {
   // which causes generated URLs (e.g. git clone URLs) to use http:// instead of https://.
   app.set('trust proxy', 1);
 
-  // Turn on class validation for body and URL params (DTOs).
-  app.useGlobalPipes(new ValidationPipe());
+  // Turn on validation for body and URL params (DTOs).
+  // - `ValidationPipe` validates class-validator DTOs (the existing pattern).
+  // - `ZodValidationPipe` validates `createZodDto(...)` DTOs against their zod
+  //   schema and passes every non-ZodDto metatype through untouched, so the two
+  //   coexist and endpoints can migrate to zod one at a time.
+  app.useGlobalPipes(new ValidationPipe(), new ZodValidationPipe());
 
   // Enable CORS — restrict to known client origins for the current environment.
   const clientOrigin = ScratchConfigService.getClientBaseUrl();
@@ -64,6 +70,9 @@ async function bootstrap(): Promise<void> {
 
   // Apply global exception filters for connector errors
   app.useGlobalFilters(
+    // Must precede BadRequestExceptionFilter: ZodValidationException extends
+    // BadRequestException, so the first matching filter in this list wins.
+    new ZodValidationExceptionFilter(),
     new BadRequestExceptionFilter(),
     new NotFoundExceptionFilter(),
     new ConnectorInstantiationErrorExceptionFilter(),

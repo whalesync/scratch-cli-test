@@ -45,6 +45,12 @@ open({
 return <ConfirmDialog {...dialogProps} />;
 ```
 
+## API request/response types — always from shared-types
+
+Every type that crosses the REST boundary (request bodies, query params, response shapes, and the data objects inside them) **must be imported from `@spinner/shared-types`** — never re-declared in `client/src/types/...` or inline in a `lib/api/*` file. A locally-declared copy is a "shadow type" that silently drifts from the server. Read **[`/packages/shared-types/CLAUDE.md`](../packages/shared-types/CLAUDE.md)** for the full rules (naming, when to use zod, fidelity).
+
+In practice, when writing a `lib/api/*` client: the generic on `axios.get<T>()`/`post<T>()` and the function's param/return types come from `@spinner/shared-types`. If the type you need isn't there yet, add it there first. `client/src/types/server-entities/` should hold only genuinely client-local view helpers — not server contract types.
+
 ## Loading server data
 
 The Scratch Rest API is encapsulated in a collection of SDK objects located in the `/client/src/lib/api` folder

@@ -1,5 +1,5 @@
 import { isNotEmpty } from '@/utils/helpers';
-import { DataFolder, Service, Workbook } from '@spinner/shared-types';
+import { DataFolder, Service, Workspace } from '@spinner/shared-types';
 import isBoolean from 'lodash/isBoolean';
 import isNumber from 'lodash/isNumber';
 import partition from 'lodash/partition';
@@ -51,7 +51,7 @@ export function getSafeNumberValue(
  * - All snapshot tables with connector accounts have a deleted connection.
  * Returns false otherwise.
  */
-export function hasAllConnectionsDeleted(workbook: Workbook | undefined): boolean {
+export function hasAllConnectionsDeleted(workbook: Workspace | undefined): boolean {
   if (!workbook) {
     return false;
   }
@@ -65,7 +65,7 @@ export function hasAllConnectionsDeleted(workbook: Workbook | undefined): boolea
   );
 }
 
-export function getConnectorsWithStatus(workbook: Workbook): { connectorService: Service; isBroken: boolean }[] {
+export function getConnectorsWithStatus(workbook: Workspace): { connectorService: Service; isBroken: boolean }[] {
   // Collect connector info from both snapshotTables and dataFolders
   const connectorSources = [
     ...(workbook.dataFolders ?? []).map((folder) => ({
@@ -96,7 +96,7 @@ export function getConnectorsWithStatus(workbook: Workbook): { connectorService:
  * - All snapshot tables with the given service have a deleted connection.
  * Returns false otherwise.
  */
-export function hasDeletedServiceConnection(workbook: Workbook | undefined, service: Service): boolean {
+export function hasDeletedServiceConnection(workbook: Workspace | undefined, service: Service): boolean {
   if (!workbook) {
     return false;
   }

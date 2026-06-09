@@ -117,7 +117,7 @@ function StartupRedirect({ children }: { children: React.ReactNode }) {
         // Cross-check registry IDs against the remote list (same logic as useWorkspaces) so stale/orphaned
         // registry entries from other accounts don't count as "downloaded".
         const [workspaces, localRegistry] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
-        const remoteIds = new Set(workspaces.map((ws) => ws.id));
+        const remoteIds = new Set<string>(workspaces.map((ws) => ws.id));
         const downloadedCount = localRegistry.filter((entry) => remoteIds.has(entry.id)).length;
         console.log(
           '[StartupRedirect] no-stored-ID branch: remoteWorkspaces:',

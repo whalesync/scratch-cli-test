@@ -6,8 +6,8 @@ import {
   CreateWorkbookDto,
   DeleteWorkbookResponseDto,
   UpdateWorkbookDto,
-  Workbook,
   WorkbookId,
+  Workspace,
 } from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
@@ -19,11 +19,11 @@ export interface UseWorkbooksOptions {
 }
 
 export interface UseWorkbooksReturn {
-  workbooks: Workbook[] | undefined;
+  workbooks: Workspace[] | undefined;
   isLoading: boolean;
   error: string | undefined;
-  createWorkbook: (dto: CreateWorkbookDto) => Promise<Workbook>;
-  updateWorkbook: (id: WorkbookId, updateDto: UpdateWorkbookDto) => Promise<Workbook>;
+  createWorkbook: (dto: CreateWorkbookDto) => Promise<Workspace>;
+  updateWorkbook: (id: WorkbookId, updateDto: UpdateWorkbookDto) => Promise<Workspace>;
   /**
    * Delete a workbook. Default path is asynchronous: server flags the workbook for
    * deletion and the worker tears it down. Pass `{ force: true }` for synchronous
@@ -37,7 +37,7 @@ export interface UseWorkbooksReturn {
 export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksReturn => {
   const { connectorAccountId, sortBy = 'createdAt', sortOrder = 'desc' } = options;
   const { mutate } = useSWRConfig();
-  const { data, error, isLoading } = useSWR<Workbook[], Error>(
+  const { data, error, isLoading } = useSWR<Workspace[], Error>(
     SWR_KEYS.workbook.list(sortBy, sortOrder),
     () => workbookApi.list(connectorAccountId, sortBy, sortOrder),
     {
@@ -46,7 +46,7 @@ export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksRet
   );
 
   const createWorkbook = useCallback(
-    async (dto: CreateWorkbookDto): Promise<Workbook> => {
+    async (dto: CreateWorkbookDto): Promise<Workspace> => {
       const newWorkbook = await workbookApi.create(dto);
       mutate(SWR_KEYS.workbook.listKeyMatcher());
       return newWorkbook;
@@ -55,7 +55,7 @@ export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksRet
   );
 
   const updateWorkbook = useCallback(
-    async (id: WorkbookId, updateDto: UpdateWorkbookDto): Promise<Workbook> => {
+    async (id: WorkbookId, updateDto: UpdateWorkbookDto): Promise<Workspace> => {
       const updatedWorkbook = await workbookApi.update(id, updateDto);
       mutate(SWR_KEYS.workbook.listKeyMatcher());
       mutate(SWR_KEYS.workbook.detail(id));

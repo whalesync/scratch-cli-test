@@ -1,10 +1,10 @@
 import { Text13Medium } from '@/components/base/text';
 import { useWorkspaces } from '@/hooks/use-workspaces';
 import { Badge, Box, Loader, Menu, ScrollArea } from '@mantine/core';
+import { Workspace } from '@spinner/shared-types';
 import { ChevronDown, HardDriveDownload as DownloadIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { trackOpenWorkspace } from '../lib/posthog';
-import { Workspace } from '../types/workspace';
 
 interface WorkspaceSwitcherProps {
   currentWorkspaceId: string;

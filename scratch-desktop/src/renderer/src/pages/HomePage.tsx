@@ -1,5 +1,6 @@
 import { Alert, Box, Center, Group, Loader, Modal, Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { Workspace } from '@spinner/shared-types';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -24,7 +25,6 @@ import {
   trackOpenWorkspace,
   trackRemoveLocalWorkspace,
 } from '../lib/posthog';
-import { Workspace } from '../types/workspace';
 
 function getLocalSectionLabel(): string {
   const platform = window.electron?.process?.platform;

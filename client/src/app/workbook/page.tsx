@@ -7,7 +7,7 @@ import { useWorkbooks } from '@/hooks/use-workbooks';
 import { usersApi } from '@/lib/api/users';
 import { workbookApi } from '@/lib/api/workbook';
 import { Box, Center, Divider, Group, Stack, TextInput, UnstyledButton } from '@mantine/core';
-import type { Workbook } from '@spinner/shared-types';
+import type { Workspace } from '@spinner/shared-types';
 import { ChevronRightIcon, PlusIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -25,7 +25,7 @@ export default function WorkbookPickerPage() {
 
   const hasWorkbooks = workbooks && workbooks.length > 0;
 
-  const handleSelectWorkbook = async (workbook: Workbook) => {
+  const handleSelectWorkbook = async (workbook: Workspace) => {
     usersApi.updateLastWorkbook(workbook.id).catch(console.error);
     router.push(`/workbook/${workbook.id}/files`);
   };

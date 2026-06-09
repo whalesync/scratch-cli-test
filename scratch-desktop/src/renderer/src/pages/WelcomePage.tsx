@@ -1,4 +1,5 @@
 import { Alert, Box, Center, Group, Loader, Stack } from '@mantine/core';
+import { Workspace } from '@spinner/shared-types';
 import { Cloud, Download } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -9,7 +10,6 @@ import { StyledLucideIcon } from '../components/icons/StyledLucideIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '../hooks/use-connectors-metadata';
 import { trackCancelPickParentFolder, trackFirstRunDownload } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
-import { Workspace } from '../types/workspace';
 
 function WorkspaceServiceIcons({ workspace }: { workspace: Workspace }) {
   const { data: connectorsMetadata } = useConnectorsMetadata();

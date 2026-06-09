@@ -7,7 +7,7 @@ import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
-import type { ConnectorAccount, FileDiffStatus, Workbook } from '@spinner/shared-types';
+import type { ConnectorAccount, FileDiffStatus, Workspace } from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { ReviewConnectionNode } from './ReviewTreeNode';
@@ -17,7 +17,7 @@ import { WorkbookRepoNode } from './WorkbookRepoNode';
 export type FileTreeMode = 'files' | 'review';
 
 interface FileTreeProps {
-  workbook: Workbook;
+  workbook: Workspace;
   mode?: FileTreeMode;
 }
 
@@ -167,7 +167,7 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
           </Group>
         </Box>
 
-        {/* Workbook repo browser (admin only) */}
+        {/* Workspace repo browser (admin only) */}
         {mode === 'files' && isAdmin && <WorkbookRepoNode workbookId={workbook.id} />}
 
         {/* Data folder groups (connections with tables) */}

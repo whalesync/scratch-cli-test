@@ -9,7 +9,7 @@ import { workbookApi } from '@/lib/api/workbook';
 import { Box, Button, Group, Menu, Modal, Stack, TextInput, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
-import type { Workbook, WorkbookId } from '@spinner/shared-types';
+import type { WorkbookId, Workspace } from '@spinner/shared-types';
 import { CheckIcon, ChevronDownIcon, PencilIcon, PlusIcon, UploadIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
@@ -51,7 +51,7 @@ function ScratchLogo({ size = 16, backgroundColor = '#9BF9EB' }: { size?: number
 }
 
 interface ProjectSwitcherProps {
-  currentWorkbook: Workbook;
+  currentWorkbook: Workspace;
 }
 
 export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
@@ -62,7 +62,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
 
   // Rename modal state
   const [renameModalOpened, { open: openRenameModal, close: closeRenameModal }] = useDisclosure(false);
-  const [workbookToRename, setWorkbookToRename] = useState<Workbook | null>(null);
+  const [workbookToRename, setWorkbookToRename] = useState<Workspace | null>(null);
   const [newName, setNewName] = useState('');
   const [isRenaming, setIsRenaming] = useState(false);
 
@@ -87,7 +87,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
   );
 
   const handleOpenRename = useCallback(
-    (e: React.MouseEvent, workbook: Workbook) => {
+    (e: React.MouseEvent, workbook: Workspace) => {
       e.stopPropagation();
       setWorkbookToRename(workbook);
       setNewName(workbook.name ?? '');
@@ -193,7 +193,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
         </Menu.Target>
 
         <Menu.Dropdown>
-          {/* Workbook list */}
+          {/* Workspace list */}
           {workbooks?.map((workbook, index) => {
             const isCurrent = workbook.id === currentWorkbook.id;
 

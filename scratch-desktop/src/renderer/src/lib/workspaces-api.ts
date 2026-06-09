@@ -1,12 +1,13 @@
-import { Workspace } from '../types/workspace';
+import { WorkbookListQuery, Workspace } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
 export const workspacesApi = {
   list: async (): Promise<Workspace[]> => {
     const axios = API_CONFIG.getAxiosInstance();
-    const res = await axios.get<Workspace[]>('/workbook', {
-      params: { sortBy: 'updatedAt', sortOrder: 'desc' },
-    });
+    // Params are typed by the shared schema, so a typo in sortBy/sortOrder is a compile error
+    // and the server validates the exact same shape via zod.
+    const params: WorkbookListQuery = { sortBy: 'updatedAt', sortOrder: 'desc' };
+    const res = await axios.get<Workspace[]>('/workbook', { params });
     return res.data;
   },
 

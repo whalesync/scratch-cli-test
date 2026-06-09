@@ -2,7 +2,7 @@
 
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Box, Stack } from '@mantine/core';
-import type { Workbook } from '@spinner/shared-types';
+import type { Workspace } from '@spinner/shared-types';
 import { usePathname } from 'next/navigation';
 import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { FilesSubToolbar } from './MainPane/FilesSubToolbar';
@@ -17,7 +17,7 @@ import { SidebarFooter } from './Sidebar/SidebarFooter';
 import { SyncsList } from './Sidebar/SyncsList';
 
 interface WorkbookLayoutProps {
-  workbook: Workbook;
+  workbook: Workspace;
   children: ReactNode;
 }
 

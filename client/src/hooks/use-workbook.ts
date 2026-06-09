@@ -10,15 +10,15 @@ import {
   DataFolder,
   DataFolderId,
   UpdateWorkbookDto,
-  Workbook,
   WorkbookId,
+  Workspace,
 } from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { dataFolderApi } from '../lib/api/data-folder';
 
 export interface UseWorkbookReturn {
-  workbook: Workbook | undefined;
+  workbook: Workspace | undefined;
   isLoading: boolean;
   error: string | undefined;
   refreshWorkbook: () => Promise<void>;
@@ -40,7 +40,7 @@ export interface UseWorkbookReturn {
 
 export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
-  const { data, error, isLoading, mutate } = useSWR<Workbook, Error>(
+  const { data, error, isLoading, mutate } = useSWR<Workspace, Error>(
     id ? SWR_KEYS.workbook.detail(id) : null,
     () => {
       if (!id) {

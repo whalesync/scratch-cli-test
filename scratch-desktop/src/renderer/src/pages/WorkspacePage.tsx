@@ -1,5 +1,6 @@
 import { Alert, Box, Center, Group, Loader, Modal, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { Workspace } from '@spinner/shared-types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
@@ -16,7 +17,6 @@ import { parentDirectoryPath } from '../lib/parent-path';
 import { trackDeepLinkProcessed, trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
 import { useWorkspaceUiStore } from '../stores/workspace-ui-store';
-import { Workspace } from '../types/workspace';
 import { CloudSyncWarningBanner } from './workspace/CloudSyncWarningBanner';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { PullAllModal } from './workspace/PullAllModal';

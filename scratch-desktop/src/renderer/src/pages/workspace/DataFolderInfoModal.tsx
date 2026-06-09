@@ -1,10 +1,10 @@
 import { ActionIcon, Badge, Group, Modal, Stack, Tooltip } from '@mantine/core';
+import type { DataFolder } from '@spinner/shared-types';
 import { FolderOpen } from 'lucide-react';
 import { Text13Medium, TextMono9Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '../../hooks/use-connectors-metadata';
 import { relativeTime } from '../../lib/date-format';
-import type { DataFolder } from '../../types/workspace';
 
 const isMac = window.electron?.process?.platform === 'darwin';
 

@@ -1,4 +1,5 @@
 import { Box } from '@mantine/core';
+import { Workspace } from '@spinner/shared-types';
 import { History, ShieldCheck, Table, Unplug, type LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -7,7 +8,6 @@ import type { ValidationStat, ValidatorConfig } from '../../../../shared/validat
 import { trackOpenClaudeChatPanel, trackOpenConnectionsDialog } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
-import { Workspace } from '../../types/workspace';
 import { CenterTabBar } from './CenterTabBar';
 import { ClaudeChatPanel } from './ClaudeChatPanel';
 import { ConnectionsPanel } from './ConnectionsPanel';

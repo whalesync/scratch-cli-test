@@ -1,6 +1,7 @@
 import { ButtonPrimaryLight } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/text';
 import { Badge, Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
+import { Workspace } from '@spinner/shared-types';
 import {
   BugIcon,
   CheckIcon,
@@ -22,7 +23,6 @@ import { useCurrentUser } from '../../hooks/use-current-user';
 import { useDevTools } from '../../hooks/use-dev-tools';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
-import { Workspace } from '../../types/workspace';
 import { FolderTree } from './FolderTree';
 import { LocalFolder } from './WorkspaceContent';
 

@@ -1,9 +1,9 @@
 import { ConnectorIcon } from '@/components/ConnectorIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { Box, Group, Progress } from '@mantine/core';
+import { Workspace } from '@spinner/shared-types';
 import { Download, MoreHorizontal } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Workspace } from '../types/workspace';
 import { ButtonSecondaryOutline, IconButtonGhost } from './base/buttons';
 import { Text12Medium, Text16Medium, TextTitle4 } from './base/text';
 import { StyledLucideIcon } from './icons/StyledLucideIcon';

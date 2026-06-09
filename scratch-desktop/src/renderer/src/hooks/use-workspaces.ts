@@ -1,4 +1,5 @@
 import { notifications } from '@mantine/notifications';
+import { Workspace } from '@spinner/shared-types';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isServerConnectionError } from '../lib/is-server-connection-error';
@@ -6,7 +7,6 @@ import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { logPerf } from '../lib/perf';
 import { trackCancelPickParentFolder, trackDownloadWorkspace } from '../lib/posthog';
 import { workspacesApi } from '../lib/workspaces-api';
-import { Workspace } from '../types/workspace';
 
 export interface UseWorkspacesResult {
   workspaces: Workspace[];

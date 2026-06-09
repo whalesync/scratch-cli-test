@@ -4,6 +4,6 @@ export * from './data-folder';
 export * from './organization';
 export * from './schedule';
 export * from './sync';
-export * from './workbook';
+export * from './workspace';
 export * from './workspace-invite';
 export * from './workspace-permission';

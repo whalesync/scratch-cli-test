@@ -21,6 +21,7 @@ import type {
   PullAssetsResponseDto,
   PullFilesResponseDto,
   WorkbookId,
+  Workspace,
   WorkspaceInviteId,
   WorkspacePermissionId,
 } from '@spinner/shared-types';
@@ -39,7 +40,8 @@ import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { WorkspacePermissionRole, userToActor } from '../users/types';
 import { UsersService } from '../users/users.service';
 import { DataFolderService } from './data-folder.service';
-import { Workbook, WorkspaceInviteEntity, WorkspacePermissionEntity } from './entities';
+import { WorkbookListQueryDto } from './dto/list-workbooks-query.dto';
+import { WorkspaceEntity, WorkspaceInviteEntity, WorkspacePermissionEntity } from './entities';
 
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { ScratchConfigService } from '../config/scratch-config.service';
@@ -59,23 +61,19 @@ export class WorkbookController {
   ) {}
 
   @Post()
-  async create(@Body() createWorkbookDto: CreateWorkbookDto, @Req() req: RequestWithUser): Promise<Workbook> {
+  async create(@Body() createWorkbookDto: CreateWorkbookDto, @Req() req: RequestWithUser): Promise<Workspace> {
     const dto = createWorkbookDto;
     const workbook = await this.service.create(dto, userToActor(req.user));
 
     // Set this as the user's last workbook
     await this.usersService.updateLastWorkbook(req.user.id, workbook.id);
 
-    return new Workbook(workbook);
+    return WorkspaceEntity.from(workbook);
   }
 
   @Get()
-  async findAll(
-    @Query('connectorAccountId') connectorAccountId: string | undefined,
-    @Query('sortBy') sortBy: 'name' | 'createdAt' | 'updatedAt' | undefined,
-    @Query('sortOrder') sortOrder: 'asc' | 'desc' | undefined,
-    @Req() req: RequestWithUser,
-  ): Promise<Workbook[]> {
+  async findAll(@Query() query: WorkbookListQueryDto, @Req() req: RequestWithUser): Promise<Workspace[]> {
+    const { connectorAccountId, sortBy, sortOrder } = query;
     let workbooks: WorkbookCluster.Workbook[] = [];
     if (connectorAccountId) {
       workbooks = await this.service.findAllForConnectorAccount(
@@ -99,19 +97,19 @@ export class WorkbookController {
         workbooks.flatMap((workbook) => workbook.dataFolders),
       );
 
-    return workbooks.map(
-      (s) => new Workbook(s, allSchedules.get(s.id as WorkbookId), incrementalPullSupportByDataFolderId),
+    return workbooks.map((s) =>
+      WorkspaceEntity.from(s, allSchedules.get(s.id as WorkbookId), incrementalPullSupportByDataFolderId),
     );
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<Workbook> {
+  async findOne(@Param('id') id: WorkbookId, @Req() req: RequestWithUser): Promise<Workspace> {
     const actor = userToActor(req.user);
     const workbook = await this.service.assertReadableWorkbook(actor, id);
     const schedulesByEntityId = await this.service.fetchSchedulesByEntityId(workbook.id as WorkbookId);
     const incrementalPullSupportByDataFolderId =
       await this.dataFolderService.computeIncrementalPullSupportByDataFolderId(workbook.dataFolders);
-    return new Workbook(workbook, schedulesByEntityId, incrementalPullSupportByDataFolderId);
+    return WorkspaceEntity.from(workbook, schedulesByEntityId, incrementalPullSupportByDataFolderId);
   }
 
   @Patch(':id')
@@ -119,11 +117,11 @@ export class WorkbookController {
     @Param('id') id: WorkbookId,
     @Body() updateWorkbookDto: UpdateWorkbookDto,
     @Req() req: RequestWithUser,
-  ): Promise<Workbook> {
+  ): Promise<Workspace> {
     const actor = userToActor(req.user);
     await this.service.assertWritableWorkbook(actor, id);
     const dto = updateWorkbookDto;
-    return new Workbook(await this.service.update(id, dto, actor));
+    return WorkspaceEntity.from(await this.service.update(id, dto, actor));
   }
 
   @Post(':id/pull-files')

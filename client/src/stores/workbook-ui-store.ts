@@ -1,4 +1,4 @@
-import { Workbook, WorkbookId } from '@spinner/shared-types';
+import { WorkbookId, Workspace } from '@spinner/shared-types';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
@@ -38,7 +38,7 @@ export interface WorkbookUIState {
 
   activeModal: WorkbookModalParams | null;
 
-  // Global Workbook Error
+  // Global Workspace Error
   workbookError: WorkbookError | null;
 
   // Selection state is URL-driven (from route params), not stored here
@@ -52,7 +52,7 @@ export interface WorkbookUIState {
 type Actions = {
   openWorkbook: (params: { workbookId: WorkbookId }) => void;
   closeWorkbook: () => void;
-  reconcileWithWorkbook: (workbook: Workbook) => void;
+  reconcileWithWorkbook: (workbook: Workspace) => void;
 
   showModal: (modal: WorkbookModalParams) => void;
   dismissModal: (modalType: WorkbookModalParams['type']) => void;
@@ -99,7 +99,7 @@ export const useWorkbookUIStore = create<WorkbookUIStore>()(
        * This is called every time the workbook is updated from the server.
        * Any state that has a dependency on the workbook's data should be updated here, to clean up any stale state.
        */
-      reconcileWithWorkbook: (workbook: Workbook) => {
+      reconcileWithWorkbook: (workbook: Workspace) => {
         const current = get();
 
         if (workbook.id !== current.workbookId) {

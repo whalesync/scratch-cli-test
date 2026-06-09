@@ -1,10 +1,9 @@
 import {
-  CreateCheckoutSessionDto,
   CreateCheckoutSessionResponse,
   CreateCustomerPortalUrlResponse,
   CreatePortalDto,
 } from '@/types/server-entities/payment';
-import { SubscriptionPlan } from '@spinner/shared-types';
+import { CreateCheckoutSessionBody, SubscriptionPlan } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
@@ -21,7 +20,7 @@ export const paymentApi = {
 
   createCheckoutSession: async (
     planType: string,
-    dto: CreateCheckoutSessionDto,
+    dto: CreateCheckoutSessionBody,
   ): Promise<CreateCheckoutSessionResponse> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();

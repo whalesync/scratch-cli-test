@@ -20,8 +20,8 @@ import {
   TransformerConfig,
   UpdateWorkbookDto,
   UpdateWorkspacePermissionDto,
-  Workbook,
   WorkbookId,
+  Workspace,
   WorkspaceInvite,
   WorkspaceInviteId,
   WorkspacePermission,
@@ -71,10 +71,10 @@ export const workbookApi = {
     connectorAccountId?: string,
     sortBy: WorkbookSortBy = 'createdAt',
     sortOrder: WorkbookSortOrder = 'desc',
-  ): Promise<Workbook[]> => {
+  ): Promise<Workspace[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<Workbook[]>('/workbook', {
+      const res = await axios.get<Workspace[]>('/workbook', {
         params: {
           connectorAccountId,
           sortBy,
@@ -87,30 +87,30 @@ export const workbookApi = {
     }
   },
 
-  detail: async (id: WorkbookId): Promise<Workbook> => {
+  detail: async (id: WorkbookId): Promise<Workspace> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<Workbook>(`/workbook/${id}`);
+      const res = await axios.get<Workspace>(`/workbook/${id}`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to fetch workspace');
     }
   },
 
-  async create(dto: CreateWorkbookDto): Promise<Workbook> {
+  async create(dto: CreateWorkbookDto): Promise<Workspace> {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<Workbook>('/workbook', dto);
+      const res = await axios.post<Workspace>('/workbook', dto);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to create a workspace');
     }
   },
 
-  update: async (id: WorkbookId, updateDto: UpdateWorkbookDto): Promise<Workbook> => {
+  update: async (id: WorkbookId, updateDto: UpdateWorkbookDto): Promise<Workspace> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.patch<Workbook>(`/workbook/${id}`, updateDto);
+      const res = await axios.patch<Workspace>(`/workbook/${id}`, updateDto);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to update workspace');

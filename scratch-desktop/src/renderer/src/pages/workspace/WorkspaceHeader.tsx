@@ -2,6 +2,7 @@ import { ButtonPrimaryLight, IconButtonGhost } from '@/components/base/buttons';
 import { WorkspaceSwitcher } from '@/components/workspace-switcher';
 import { Group, Loader, Tooltip } from '@mantine/core';
 import { useViewportSize } from '@mantine/hooks';
+import { Workspace } from '@spinner/shared-types';
 import {
   ChevronDown,
   CloudDownload,
@@ -15,7 +16,6 @@ import { useNavigate } from 'react-router-dom';
 import logoColor from '../../assets/logo-color.svg';
 import { ButtonSecondaryGhost } from '../../components/base/buttons';
 import { useDevTools } from '../../hooks/use-dev-tools';
-import { Workspace } from '../../types/workspace';
 
 interface WorkspaceHeaderProps {
   workspace: Workspace;

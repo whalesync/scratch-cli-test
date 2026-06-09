@@ -64,6 +64,12 @@ Before implementing or modifying any React UI in the renderer, read [`UI_SYSTEM.
 - Do not use non-null assertions (`x!`) in production code — the `@typescript-eslint/no-non-null-assertion` rule is enabled and will fail lint. Use a real guard (`if (!x) throw …` / early return), narrow with a type predicate, or restructure to capture the value during the existence check. Non-null assertions are only permitted in unit/integration test files, and even there must be paired with an `// eslint-disable-next-line @typescript-eslint/no-non-null-assertion` comment.
 
 
+## API request/response types — always from shared-types
+
+Every type that crosses the REST boundary (request bodies, query params, response shapes, and the data objects inside them) **must be imported from `@spinner/shared-types`** — never re-declared under `src/renderer/src/types/...` or inline in a `lib/*-api.ts` file. A locally-declared copy is a "shadow type" that silently drifts from the server. Read **[`/packages/shared-types/CLAUDE.md`](../packages/shared-types/CLAUDE.md)** for the full rules.
+
+Note the terminology: the desktop UI says "workspace" where the server says "workbook", but the **shared data type is `Workspace`** — import it (and `DataFolder`, `IncrementalPullSupport`, `User`, etc.) from `@spinner/shared-types`. `src/renderer/src/types/` is only for genuinely desktop-local concerns (e.g. the Electron main↔renderer local-file IPC shapes in `local-files.ts`), never server contract types.
+
 ## State Management
 
 Workspace UI state (folder selection, record selection, grid sort/filter/page, column visibility) lives in a **Zustand store** at `src/renderer/src/stores/workspace-ui-store.ts`. Read the `stores/CLAUDE.md` before modifying workspace state or adding new shared UI state.
