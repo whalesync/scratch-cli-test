@@ -1,6 +1,6 @@
 {
   "scripts": {
     "setup": "set -eu; ROOT=\"${CONDUCTOR_ROOT_PATH:-}\"; if [ \"${CONDUCTOR_IS_LOCAL:-1}\" = \"1\" ]; then export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; nvm use; fi; if [ -n \"$ROOT\" ] && [ -d \"$ROOT\" ]; then for f in client/.env client/.env.local server/.env; do [ -f \"$ROOT/$f\" ] && cp \"$ROOT/$f\" \"$f\"; done; fi; if [ -n \"$ROOT\" ] && [ -d \"$ROOT/local\" ] && [ ! -e local ]; then ln -s \"$ROOT/local\" local; fi; yarn install",
-    "run": "yarn dev"
+    "run": "set -u; export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; nvm use >/dev/null; trap 'kill 0' EXIT INT TERM HUP; yarn dev & ( (cd scratch-git-2 && cargo build --bin scratchmd) && (cd scratch-desktop && yarn dev) ) & wait"
   }
 }
