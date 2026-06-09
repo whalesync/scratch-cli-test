@@ -135,11 +135,22 @@ flowchart TB
   Admin -. "authorizes provisioning + minting" .-> SUser
 ```
 
-- `whalesyncUserId` keeps shadow users distinct from native Scratch signups and makes provisioning idempotent.
+- `whalesyncUserId` is the idempotency key for provisioning and the link to the Whalesync identity. It does **not** force a Whalesync user to be a separate Scratch account — see [Email reconciliation](#email-reconciliation-dev-10331).
 - **Synthetic Clerk ID.** Scratch's `User.clerkId` is `@unique` and is populated by the existing creation routine, so each shadow user is given a generated one — prefixed `ws_`, concretely `ws_<whalesyncUserId>` — to differentiate it from a real Clerk ID (Clerk issues `user_…`). The prefix doubles as a discriminator: any server code that would otherwise call Clerk for a user can skip those whose `clerkId` starts with `ws_`, since they don't exist in Scratch's Clerk app. Deriving it from the Whalesync UUID keeps it unique and idempotent. The existing routine stamps the same `clerkId` on the auto-created Organization.
 - A `WHALESYNC_SESSION` token type lets these browser tokens get a short (10-minute) TTL, **bypass the API rate limiter**, and be revoked in bulk without touching a user's CLI/desktop tokens. v1 does **not** enforce `ApiToken.scopes`; the token type itself is the flag.
 - Provisioning reuses the **same** path Scratch runs today on first Clerk login (`getOrCreateUserFromClerk` → create User + Organization + default Workbook in `spinner/server/src/users/users.service.ts`). The only difference is the trigger: an explicit admin call instead of a JWT side effect.
-- 1 Whalesync user → 1 shadow user → 1 auto-created Scratch org. Cross-user workbook sharing is out of scope for v1.
+- 1 Whalesync user → 1 Scratch user → 1 Scratch org. Cross-user workbook sharing is out of scope for v1.
+
+### Email reconciliation (DEV-10331)
+
+Provisioning reconciles the incoming Whalesync email against the existing Scratch user base instead of forcing a separate account. The original v1 stop-gap stored shadow users with a `ws:`-prefixed email to dodge the `@unique` `User.email` constraint; [DEV-10331](https://linear.app/whalesync/issue/DEV-10331) **replaces** that prefix with real reconciliation. `getOrCreateShadowUserFromWhalesync` resolves the incoming `(whalesyncUserId, normalized email)` in order:
+
+1. **Already linked.** A Scratch user with this `whalesyncUserId` exists → reuse it (idempotent), refreshing `name`/`email` if changed. The email refresh is collision-safe (written only when no other user owns it) and organically strips any leftover `ws:` prefix from a pre-reconciliation shadow user.
+2. **Adopt by email.** An existing Scratch user owns the email and is **not** linked to any Whalesync user → link it by setting `whalesyncUserId`. The adopted user keeps its real `clerkId` (native Clerk login), email, organization, and workbooks — it becomes a dual-identity (native + Whalesync) account rather than a duplicate. A native Scratch user and the Whalesync user who shares their address are now **one** account. This link fires a dedicated `whalesync_account_linked` PostHog event carrying the Whalesync user id (it does not re-fire `account_user_created`, and does not reclassify the user as a shadow user).
+3. **Email linked to a different Whalesync user.** Two distinct Whalesync users share one address. The `@unique` email and `@unique` whalesyncUserId both forbid adopting, so we create a fresh shadow user with a **null email** and log a warning (surfaced, not silently swallowed). Rare.
+4. **Create fresh.** Nobody owns the email → create a shadow user with the real, un-prefixed email and a synthetic `ws_<whalesyncUserId>` clerkId.
+
+**No backfill migration is needed.** The shadow-user provisioning path has only ever run in local development — the Whalesync (Bottlenose/Dusky) wiring that calls it is not yet complete — so there are no `ws:`-prefixed rows in any shared environment to convert. Any leftover `ws:` rows in a local database are un-prefixed organically by the collision-safe refresh path (case 1) the next time that user provisions a session. If the `ws:` stop-gap ever does reach a shared environment before this lands, a one-time data migration would be the way to convert it — un-prefixing where the address is free and leaving genuine collisions for an explicit, reviewed merge (never merging users in SQL).
 
 ## The two Bottlenose → Scratch channels
 
@@ -331,7 +342,7 @@ If we did not want any Scratch token in the browser at all, Bottlenose could pro
 | Token scopes                               | ✅ Resolved | `ApiToken.scopes` not enforced in v1; the `WHALESYNC_SESSION` token type is the flag.                        |
 | Rate limiting                              | ✅ Resolved | `WHALESYNC_SESSION` tokens bypass `ApiRateLimitGuard`.                                                       |
 | Scratch base URL (per environment)         | ✅ Resolved | Bottlenose: env var sourced from a GCP secret. Dusky: baked in at Docker build time.                         |
-| Native + shadow user with the same email   | ✅ Resolved | Keep two separate Scratch users in v1; nothing keys on email.                                                |
+| Native + shadow user with the same email   | ✅ Resolved | **Reconcile by email** ([DEV-10331](https://linear.app/whalesync/issue/DEV-10331)): adopt/link the existing user instead of duplicating. Superseded the original "keep separate / `ws:` prefix" stop-gap. See [Email reconciliation](#email-reconciliation-dev-10331). |
 | Token storage in browser                   | 🔶 Open     | In-memory bearer (leaning, given the 10-min TTL) vs httpOnly cookie.                                         |
 | Admin-token transport & rotation           | 🔶 Open     | `X-Scratch-Admin-Token` header proposed; confirm + define rotation window.                                   |
 | Eager vs lazy shadow-user provisioning     | 🔶 Open     | Lazy-on-first-session proposed.                                                                              |
@@ -349,7 +360,7 @@ Decisions captured from review (folded into the design above and the [Decision s
 - **Token TTL → 10 minutes.** Dusky refreshes before expiry and on `401`; Bottlenose caches per Whalesync user.
 - **Token scopes → not enforced in v1.** `ApiToken.scopes` is left unenforced; the `WHALESYNC_SESSION` token type is the flag that drives TTL, rate-limit bypass, and bulk revocation.
 - **Scratch base URL → configuration, not response.** Bottlenose reads it from an env var sourced from a GCP secret; Dusky bakes it in at Docker build time.
-- **Email collisions → keep separate.** A native Scratch user and a Whalesync user with the same email remain two distinct Scratch users in v1; nothing keys on email.
+- **Email collisions → reconcile (superseded).** The original v1 decision kept a native Scratch user and a same-email Whalesync user as two distinct accounts (via a `ws:` email prefix). [DEV-10331](https://linear.app/whalesync/issue/DEV-10331) **replaced** this: provisioning now adopts/links an existing user that owns the email, falling back to a real un-prefixed email when none does. See [Email reconciliation](#email-reconciliation-dev-10331).
 - **Rate limiting → bypass for session tokens.** `WHALESYNC_SESSION` tokens are exempt from `ApiRateLimitGuard` so Dusky's polling isn't throttled.
 - **Org/team → shadow org per user.** Each shadow user gets its own auto-created Scratch org; cross-user workbook sharing is out of scope for the initial release.
 - **Shadow-user Clerk ID → synthetic `ws_` value.** Each shadow user gets `clerkId = ws_<whalesyncUserId>` to satisfy the `@unique` `clerkId` column and to distinguish it from a real Clerk ID; server code can skip Clerk calls for `ws_`-prefixed users.

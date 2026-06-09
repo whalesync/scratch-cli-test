@@ -215,49 +215,175 @@ export class UsersService {
   }
 
   /**
-   * Ensures a Scratch shadow user exists for the given Whalesync user, creating it on first call.
-   * Idempotent on `whalesyncUserId`. Reuses the same provisioning core as native sign-up
-   * ({@link createUserWithOrgAndDefaultWorkbook}), with two shadow-specific differences:
+   * Looks up a user by their (already-normalized) email. `User.email` is `@unique` and is stored
+   * lowercased + trimmed by the `user_email_normalize` DB trigger, so callers must pass the email in
+   * that same normalized form (`email.trim().toLowerCase()`) for the lookup to match.
+   */
+  public async findByEmail(normalizedEmail: string): Promise<UserCluster.User | null> {
+    return this.db.client.user.findUnique({
+      where: { email: normalizedEmail },
+      include: UserCluster._validator.include,
+    });
+  }
+
+  /**
+   * Ensures a Scratch user exists for the given Whalesync user, reconciling against the existing
+   * Scratch user base by email. Idempotent on `whalesyncUserId`. The incoming email is normalized
+   * (lowercased + trimmed) to match the `user_email_normalize` DB trigger, then resolved in order:
    *
-   * - A synthetic `ws_<whalesyncUserId>` clerkId satisfies the `@unique` clerkId column and marks the
-   *   user as Whalesync-provisioned (server code can skip Clerk calls for `ws_`-prefixed users).
-   * - The email is stored with a `ws:` prefix so a shadow user never collides with a native Scratch
-   *   user that has the same address on the `@unique` email column. The value is pre-normalized
-   *   (lowercased + trimmed) to match the DB email-normalization trigger and avoid redundant updates.
+   * 1. **Already linked.** A Scratch user with this `whalesyncUserId` already exists → reuse it,
+   *    refreshing `name`/`email` if they changed (the email refresh is collision-safe and also
+   *    organically strips the legacy `ws:` prefix from pre-reconciliation shadow users).
+   * 2. **Adopt by email.** An existing Scratch user owns this email and is *not* linked to any
+   *    Whalesync user → link it by setting `whalesyncUserId`, rather than creating a duplicate. The
+   *    adopted user keeps its real `clerkId`, email, organization and workbooks — it simply becomes
+   *    reachable from the Whalesync identity too. This merges a native Scratch account with the
+   *    Whalesync user that shares its address (the behavior the `ws:` prefix used to suppress).
+   * 3. **Email already linked to a *different* Whalesync user.** A genuine collision: two distinct
+   *    Whalesync users share one address. The `@unique` email + `@unique` whalesyncUserId both forbid
+   *    adopting, so we create a fresh shadow user with a **null email** (we cannot claim an address
+   *    another identity owns) and log a warning. Rare; surfaced rather than silently swallowed.
+   * 4. **Create fresh.** Nobody owns the email → create a shadow user with the real, un-prefixed email
+   *    and a synthetic `ws_<whalesyncUserId>` clerkId.
    *
-   * Slack sign-up notifications and invite redemption are intentionally skipped for shadow users;
-   * PostHog identify is kept so the shadow-user person properties exist for analytics exclusion.
+   * The synthetic `ws_<whalesyncUserId>` clerkId (cases 3–4) satisfies the `@unique` clerkId column
+   * and marks a purely-Whalesync user so server code can skip Clerk calls for `ws_`-prefixed users.
+   * Slack sign-up notifications and invite redemption are intentionally skipped for shadow users.
+   * PostHog identify is fired only for genuinely new users (cases 3–4); the adopt path (case 2) does
+   * not re-identify, since the user already exists and was identified at native sign-up.
    */
   public async getOrCreateShadowUserFromWhalesync(
     whalesyncUserId: string,
     email: string,
     name?: string,
   ): Promise<UserCluster.User> {
-    const normalizedShadowEmail = `ws:${email.trim().toLowerCase()}`;
+    const normalizedEmail = email.trim().toLowerCase();
 
-    const existingShadowUser = await this.findByWhalesyncUserId(whalesyncUserId);
-    if (existingShadowUser) {
-      const nameChanged = !!name && name !== existingShadowUser.name;
-      const emailChanged = normalizedShadowEmail !== existingShadowUser.email;
-      if (nameChanged || emailChanged) {
-        await this.db.client.user.update({
-          where: { id: existingShadowUser.id },
-          data: { name, email: normalizedShadowEmail },
-        });
-      }
-      return existingShadowUser;
+    // 1. Already linked to this Whalesync identity (idempotent on whalesyncUserId).
+    const alreadyLinkedUser = await this.findByWhalesyncUserId(whalesyncUserId);
+    if (alreadyLinkedUser) {
+      return this.refreshLinkedUserNameAndEmailIfChanged(alreadyLinkedUser, name, normalizedEmail);
     }
 
+    // 2/3. Reconcile against any existing Scratch user that already owns this email.
+    const userOwningEmail = await this.findByEmail(normalizedEmail);
+    if (userOwningEmail) {
+      const emailIsLinkedToDifferentWhalesyncUser =
+        !!userOwningEmail.whalesyncUserId && userOwningEmail.whalesyncUserId !== whalesyncUserId;
+
+      if (emailIsLinkedToDifferentWhalesyncUser) {
+        // 3. Two distinct Whalesync users share one address — cannot adopt or claim the email.
+        WSLogger.warn({
+          source: 'UsersService',
+          message:
+            'Whalesync email already linked to a different Whalesync user; provisioning a shadow user with no email',
+          whalesyncUserId,
+          conflictingWhalesyncUserId: userOwningEmail.whalesyncUserId,
+          conflictingUserId: userOwningEmail.id,
+        });
+        const shadowUserWithoutEmail = await this.createUserWithOrgAndDefaultWorkbook({
+          clerkId: `ws_${whalesyncUserId}`,
+          whalesyncUserId,
+          name,
+          // email omitted: the address is owned by another identity and the column is @unique.
+        });
+        this.postHogService.identifyNewUser(shadowUserWithoutEmail);
+        return shadowUserWithoutEmail;
+      }
+
+      // 2. Owned by a native (unlinked) Scratch user — adopt it into the Whalesync identity.
+      return this.adoptExistingUserIntoWhalesyncIdentity(userOwningEmail, whalesyncUserId);
+    }
+
+    // 4. Nobody owns the email — create a fresh shadow user with the real, un-prefixed email.
     const newShadowUser = await this.createUserWithOrgAndDefaultWorkbook({
       clerkId: `ws_${whalesyncUserId}`,
       whalesyncUserId,
       name,
-      email: normalizedShadowEmail,
+      email: normalizedEmail,
     });
 
     this.postHogService.identifyNewUser(newShadowUser);
 
     return newShadowUser;
+  }
+
+  /**
+   * Links an existing, not-yet-linked Scratch user to a Whalesync identity by setting its
+   * `whalesyncUserId` (the "adopt by email" path). Deliberately touches ONLY `whalesyncUserId`:
+   * the user's real `clerkId` (their native Clerk login), email, organization, and workbooks are
+   * preserved, so an adopted account becomes dual-identity (native + Whalesync) rather than being
+   * overwritten. Fires a dedicated `whalesync_account_linked` PostHog event (with the Whalesync id)
+   * rather than `identifyNewUser` — the user already exists and was identified at native sign-up, so
+   * re-firing `account_user_created` would be wrong; this is a link, not a creation. Also posts a
+   * Slack notification: linking a native account to Whalesync is rare and worth surfacing to the team.
+   */
+  private async adoptExistingUserIntoWhalesyncIdentity(
+    existingUser: UserCluster.User,
+    whalesyncUserId: string,
+  ): Promise<UserCluster.User> {
+    WSLogger.info({
+      source: 'UsersService',
+      message: 'Adopting an existing Scratch user into a Whalesync identity by email match',
+      userId: existingUser.id,
+      whalesyncUserId,
+    });
+    const linkedUser = await this.db.client.user.update({
+      where: { id: existingUser.id },
+      data: { whalesyncUserId },
+      include: UserCluster._validator.include,
+    });
+
+    this.postHogService.trackWhalesyncAccountLinked(linkedUser, whalesyncUserId);
+    await this.slackNotificationService.sendMessage(
+      SlackFormatters.whalesyncAccountLinked(linkedUser, whalesyncUserId),
+    );
+
+    return linkedUser;
+  }
+
+  /**
+   * Refreshes an already-linked user's `name`/`email` from the latest Whalesync values, writing only
+   * the fields that changed. The email update is collision-safe: because `User.email` is `@unique`,
+   * the new address is written only when no *other* Scratch user already owns it (otherwise the
+   * update is skipped with a warning, leaving the existing value intact). This is also what strips
+   * the legacy `ws:` prefix from shadow users provisioned before reconciliation — the first time they
+   * reappear their stored `ws:<addr>` no longer matches the incoming `<addr>`, so it is rewritten.
+   */
+  private async refreshLinkedUserNameAndEmailIfChanged(
+    linkedUser: UserCluster.User,
+    incomingName: string | undefined,
+    normalizedIncomingEmail: string,
+  ): Promise<UserCluster.User> {
+    const nameChanged = !!incomingName && incomingName !== linkedUser.name;
+    const emailChanged = normalizedIncomingEmail !== linkedUser.email;
+
+    let emailUpdateIsSafe = false;
+    if (emailChanged) {
+      const userOwningIncomingEmail = await this.findByEmail(normalizedIncomingEmail);
+      emailUpdateIsSafe = !userOwningIncomingEmail || userOwningIncomingEmail.id === linkedUser.id;
+      if (!emailUpdateIsSafe) {
+        WSLogger.warn({
+          source: 'UsersService',
+          message: 'Skipping shadow-user email refresh: the incoming email is owned by a different Scratch user',
+          userId: linkedUser.id,
+          whalesyncUserId: linkedUser.whalesyncUserId,
+        });
+      }
+    }
+
+    if (!nameChanged && !(emailChanged && emailUpdateIsSafe)) {
+      return linkedUser;
+    }
+
+    return this.db.client.user.update({
+      where: { id: linkedUser.id },
+      data: {
+        ...(nameChanged ? { name: incomingName } : {}),
+        ...(emailChanged && emailUpdateIsSafe ? { email: normalizedIncomingEmail } : {}),
+      },
+      include: UserCluster._validator.include,
+    });
   }
 
   /**

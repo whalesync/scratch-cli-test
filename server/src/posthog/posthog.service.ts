@@ -130,6 +130,27 @@ export class PostHogService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Fires when an existing Scratch user is linked (adopted) to a Whalesync identity by the
+   * email-reconciliation path (`UsersService.getOrCreateShadowUserFromWhalesync`) — i.e. a native
+   * Scratch account and the Whalesync user that shares its address became one account. This is a
+   * link, not a creation, so it is a dedicated event rather than another ACCOUNT_USER_CREATED.
+   *
+   * The `whalesync_user_id` is recorded both as an event property and `$set` on the person so the
+   * link is queryable. `is_whalesync_shadow_user` is deliberately left untouched (false): an adopted
+   * user is a real native user, not a pure shadow user, and must not be excluded from growth funnels.
+   */
+  public trackWhalesyncAccountLinked(user: User, whalesyncUserId: string): void {
+    this.captureEvent(PostHogEventName.WHALESYNC_ACCOUNT_LINKED, user, {
+      whalesync_user_id: whalesyncUserId,
+      email: user.email,
+      role: user.role,
+      $set: {
+        whalesync_user_id: whalesyncUserId,
+      },
+    });
+  }
+
   /*******************************************************
    * Workbook events
    *******************************************************/
@@ -462,6 +483,13 @@ export class PostHogService implements OnModuleDestroy {
 
 export enum PostHogEventName {
   ACCOUNT_USER_CREATED = 'account_user_created',
+  /**
+   * DEV-10331: an existing Scratch user was linked (adopted) to a Whalesync identity by the
+   * email-reconciliation path — a native account and the same-email Whalesync user became one.
+   * Distinct from ACCOUNT_USER_CREATED (creation, not linking). Properties:
+   * { whalesync_user_id, email, role } and a `$set` of `whalesync_user_id` on the person.
+   */
+  WHALESYNC_ACCOUNT_LINKED = 'whalesync_account_linked',
   CONNECTOR_ACCOUNT_CREATED = 'connector_created',
   CONNECTOR_ACCOUNT_UPDATED = 'connector_updated',
   CONNECTOR_ACCOUNT_REMOVED = 'connector_deleted',

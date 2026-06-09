@@ -110,11 +110,14 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     });
   }
 
-  // 1 + 2 — provision + mint, ws: email prefix + normalization, coexistence with a native email
-  it('provisions a shadow user with a synthetic clerkId, ws:-prefixed normalized email, and a 10-min token', async () => {
+  // 1 + 2 — provision + mint, real (un-prefixed) normalized email, 10-min token
+  it('provisions a shadow user with a synthetic clerkId, a real normalized email, and a 10-min token', async () => {
     const whalesyncUserId = randomUUID();
+    // Unique address so it cannot collide with any existing user (post-reconciliation we adopt on a
+    // collision rather than coexist — see the adoption test below).
+    const email = `ada-${whalesyncUserId}@example.com`;
     const before = Date.now();
-    const session = await createSession(whalesyncUserId, '  Ada@Example.COM  ', 'Ada Lovelace');
+    const session = await createSession(whalesyncUserId, `  ${email.toUpperCase()}  `, 'Ada Lovelace');
 
     expect(session.scratchUserId).toBeTruthy();
     expect(session.apiToken).toBeTruthy();
@@ -125,17 +128,15 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
     expect(ttlMs).toBeLessThan(1000 * 60 * 12);
 
     // The minted token authenticates as the shadow user, and /users/current exposes the synthetic
-    // clerkId and the ws:-prefixed, normalized email — so these are asserted over HTTP and hold in
-    // both local and remote/deployed (API-only) modes.
+    // clerkId and the real, normalized (un-prefixed) email — asserted over HTTP so it holds in both
+    // local and remote/deployed (API-only) modes.
     const whoami = await fetchCurrentUser(session.apiToken);
     expect(whoami.status).toBe(200);
     expect(whoami.data.id).toBe(session.scratchUserId);
     expect(whoami.data.clerkId).toBe(`ws_${whalesyncUserId}`);
     expect(whoami.data.isAdmin).toBe(false); // role === USER
-    // ws: prefix applied AND lowercased/trimmed by the DB email-normalization trigger.
-    expect(whoami.data.email).toBe('ws:ada@example.com');
-    // A native user with the un-prefixed email can coexist (the whole point of the prefix).
-    expect(whoami.data.email).not.toBe('ada@example.com');
+    // Real address, NOT ws:-prefixed, lowercased/trimmed by the DB email-normalization trigger.
+    expect(whoami.data.email).toBe(email.toLowerCase());
 
     if (prismaForDbRowAssertions) {
       // Token type is not exposed over HTTP; assert it directly when a matching DB is available.
@@ -144,6 +145,54 @@ describeOrSkip('Whalesync shadow-user internal endpoints', () => {
       expect(tokenRow?.userId).toBe(session.scratchUserId);
     }
   });
+
+  // 2b — reconciliation: an existing Scratch user that owns the email is adopted, not duplicated.
+  // Requires a local DB matching the target server (to seed the pre-existing native user directly),
+  // so it is skipped in API-only mode. Gated on isApiOnlyMode (known at registration time) rather
+  // than prismaForDbRowAssertions (assigned later, in beforeAll).
+  (isApiOnlyMode ? it.skip : it)(
+    'adopts an existing Scratch user that owns the email instead of creating a duplicate',
+    async () => {
+      const prisma = prismaForDbRowAssertions;
+      if (!prisma) return; // narrowing for TS; the it/it.skip guard already gates execution
+
+      const whalesyncUserId = randomUUID();
+      const email = `adopt-${whalesyncUserId}@example.com`;
+      const nativeUserId = `usr_test_${randomUUID()}`;
+      const nativeClerkId = `user_test_${randomUUID()}`;
+
+      // Seed a pre-existing native Scratch user (real Clerk login, not linked to any Whalesync user).
+      await prisma.user.create({ data: { id: nativeUserId, clerkId: nativeClerkId, email } });
+
+      try {
+        // Provision a Whalesync session for the SAME email under a brand-new whalesyncUserId.
+        const session = await createSession(whalesyncUserId, email, 'Ada Lovelace');
+
+        // Adopted: the session resolves to the existing native user, not a freshly-created shadow user.
+        expect(session.scratchUserId).toBe(nativeUserId);
+
+        // The adopted user keeps its real clerkId (native login preserved) and is now Whalesync-linked.
+        const whoami = await fetchCurrentUser(session.apiToken);
+        expect(whoami.status).toBe(200);
+        expect(whoami.data.id).toBe(nativeUserId);
+        expect(whoami.data.clerkId).toBe(nativeClerkId); // NOT ws_<id>
+
+        const linkedRow = await prisma.user.findUnique({ where: { id: nativeUserId } });
+        expect(linkedRow?.whalesyncUserId).toBe(whalesyncUserId);
+        expect(linkedRow?.clerkId).toBe(nativeClerkId);
+        expect(linkedRow?.email).toBe(email);
+
+        // Exactly one user owns the email — no duplicate shadow user was created.
+        const usersOwningEmail = await prisma.user.count({ where: { email } });
+        expect(usersOwningEmail).toBe(1);
+      } finally {
+        // afterEach deprovisions by whalesyncUserId; also clear the seed directly in case adoption
+        // failed and the row never got linked (so it would otherwise leak).
+        await prisma.apiToken.deleteMany({ where: { userId: nativeUserId } });
+        await prisma.user.deleteMany({ where: { id: nativeUserId } });
+      }
+    },
+  );
 
   // 3 — idempotency: same user, additive token
   it('is idempotent on whalesyncUserId and mints an additional token each call', async () => {

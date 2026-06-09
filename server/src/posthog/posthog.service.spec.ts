@@ -57,7 +57,7 @@ describe('PostHogService.identifyNewUser', () => {
       id: 'usr_shadow',
       clerkId: 'ws_wsu-123',
       whalesyncUserId: 'wsu-123',
-      email: 'ws:shadow@example.com',
+      email: 'shadow@example.com',
     });
 
     service.identifyNewUser(shadowUser);
@@ -77,5 +77,38 @@ describe('PostHogService.identifyNewUser', () => {
     const identifyProps = identifyProperties(mockClient);
     expect(identifyProps.is_whalesync_shadow_user).toBe(false);
     expect(identifyProps.whalesync_user_id).toBeNull();
+  });
+});
+
+describe('PostHogService.trackWhalesyncAccountLinked', () => {
+  let service: PostHogService;
+  let mockClient: MockPostHogClient;
+
+  beforeEach(() => {
+    const configService = {
+      getPostHogApiKey: () => undefined,
+      getPostHogHost: () => undefined,
+      isPosthogAnaltyicsEnabled: () => false,
+    } as unknown as ScratchConfigService;
+    service = new PostHogService(configService);
+
+    mockClient = { identify: jest.fn(), capture: jest.fn() };
+    (service as unknown as { postHog: MockPostHogClient }).postHog = mockClient;
+  });
+
+  it('fires a whalesync_account_linked event carrying the whalesync id and $sets it on the person', () => {
+    const adoptedNativeUser = makeUser({ id: 'usr_native', email: 'ada@example.com' });
+
+    service.trackWhalesyncAccountLinked(adoptedNativeUser, 'wsu-123');
+
+    const linkEvent = capturedEvents(mockClient).find((event) => event.event === 'whalesync_account_linked');
+    expect(linkEvent).toBeDefined();
+    expect(linkEvent?.properties.whalesync_user_id).toBe('wsu-123');
+    // The link is also recorded on the person record so it is queryable.
+    expect(linkEvent?.properties.$set).toEqual({ whalesync_user_id: 'wsu-123' });
+    // Linking is not creation and not re-identification — no identify() call, and the adopted user is
+    // NOT reclassified as a shadow user (it stays a real native user for growth analytics).
+    expect(mockClient.identify).not.toHaveBeenCalled();
+    expect(linkEvent?.properties.is_whalesync_shadow_user).toBeUndefined();
   });
 });

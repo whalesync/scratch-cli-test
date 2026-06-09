@@ -32,4 +32,9 @@ export class SlackFormatters {
     const adminInfo = approvedBy.email || approvedBy.name || approvedBy.id;
     return `✅ *Waitlist Approved*\n👤 ${userInfo} was approved by ${adminInfo}`;
   }
+
+  static whalesyncAccountLinked(user: UserCluster.User, whalesyncUserId: string): string {
+    const userInfo = user.email || user.name || user.id;
+    return `🔗 *Whalesync account linked*\n👤 ${userInfo} (${user.id})\n🐳 Whalesync user: ${whalesyncUserId}`;
+  }
 }
