@@ -31,6 +31,7 @@ import { WSLogger } from 'src/logger';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import { gcsKeyForPatchUpload } from 'src/publish-plan/apply-patches.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -281,17 +282,37 @@ export class UploadPatchController {
 
   /**
    * Resolve the current `refs/heads/main` SHA for the connection's repo,
-   * via the scratch-git service. Returns `null` only when the branch is
-   * truly absent (fresh repo, never published) — any other failure mode
-   * (network, server error) propagates as the underlying exception so we
-   * never silently treat "lookup failed" as "fresh". The configService is
-   * kept on the constructor signature so DI graph drift in tests is loud.
+   * via the scratch-git service. Returns `null` only when the `main` branch is
+   * absent *on an existing repo* (repo created but never published) — scratch-git
+   * answers that with `{ sha: null }`, not a 404.
+   *
+   * A 404 is different: it means the connection has no repository on this
+   * scratch-git instance at all (never initialized/pulled here — e.g. a fresh
+   * dev/Conductor workspace whose repo store is empty while the shared DB still
+   * references the connection). Publishing cannot proceed in that state — the
+   * ApplyPatches worker would hit the same missing repo when it commits to
+   * `dirty` — so we fail fast at the boundary with an actionable 409 instead of
+   * letting the raw `ScratchGitNotFoundError` surface as an opaque HTTP 500.
+   * Any other failure mode (network, scratch-git 5xx) still propagates so we
+   * never silently treat "lookup failed" as "fresh". The configService is kept
+   * on the constructor signature so DI graph drift in tests is loud.
    */
   private async lookupRemoteHead(connectorAccountId: string): Promise<string | null> {
     if (!this.configService) {
       throw new Error('ScratchConfigService unavailable — DI graph drift');
     }
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
-    return this.scratchGitService.getBranchHead(repoId, MAIN_BRANCH);
+    try {
+      return await this.scratchGitService.getBranchHead(repoId, MAIN_BRANCH);
+    } catch (err) {
+      if (err instanceof ScratchGitNotFoundError) {
+        throw new ConflictException(
+          `No repository exists on the server for this connection (${repoId}). It has not been ` +
+            `pulled or initialized on this server, so there is nothing to publish onto. Pull the ` +
+            `connection on this server before publishing.`,
+        );
+      }
+      throw err;
+    }
   }
 }

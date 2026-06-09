@@ -15,6 +15,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { ExperimentsService } from 'src/experiments/experiments.service';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import type { RepoId } from 'src/scratch-git/scratch-git.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
@@ -234,6 +235,51 @@ describe('UploadPatchController', () => {
       const result = await controller.commit(makeReq(), WORKBOOK_ID, body);
       expect(result.stalenessWarning).toBeUndefined();
       expect(bullEnqueuerService.enqueueApplyPatchesJob).toHaveBeenCalledTimes(1);
+    });
+
+    it('translates a missing-repo 404 from the branch-head lookup into a clear ConflictException, not an opaque 500', async () => {
+      // scratch-git answers a non-existent repo with a 404 (not `{ sha: null }`),
+      // which the client surfaces as ScratchGitNotFoundError. The staleness gate
+      // must convert that into an actionable refusal instead of letting it bubble
+      // up as a generic HTTP 500. Repro for the upload-patch-commit-500 bug: a
+      // Conductor workspace whose scratch-git repo store is empty while the shared
+      // DB still references the connection.
+      scratchGitService.getBranchHead.mockRejectedValue(
+        new ScratchGitNotFoundError(
+          `/api/repo/manage/${REPO_ID}/branch-head?branch=main`,
+          '{"data":{"error":"File not found"}}',
+        ),
+      );
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        baseHead: LOCAL_MAIN_SHA,
+        refuseIfStale: true,
+      };
+      let caught: unknown;
+      try {
+        await controller.commit(makeReq(), WORKBOOK_ID, body);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(ConflictException);
+      const payload = (caught as ConflictException).getResponse() as { message: string };
+      expect(payload.message).toMatch(/No repository exists on the server/);
+      // No side effects: the publish is refused before any job/audit row.
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
+      expect(auditLogService.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('still propagates non-404 branch-head failures (so "lookup failed" is never treated as "fresh")', async () => {
+      scratchGitService.getBranchHead.mockRejectedValue(new Error('scratch-git 500'));
+      const body: UploadPatchCommitDto = {
+        uploadId: UPLOAD_ID,
+        connectorAccountId: CONNECTOR_ID,
+        baseHead: LOCAL_MAIN_SHA,
+        refuseIfStale: true,
+      };
+      await expect(controller.commit(makeReq(), WORKBOOK_ID, body)).rejects.toThrow('scratch-git 500');
+      expect(bullEnqueuerService.enqueueApplyPatchesJob).not.toHaveBeenCalled();
     });
   });
 
