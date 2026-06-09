@@ -77,4 +77,45 @@ describe('tableViewColumnPaths', () => {
     } as unknown as TableView;
     expect(tableViewColumnPaths(view)).toEqual(['properties.Asked for Intro?.checkbox']);
   });
+
+  it('drills an object column to its selected subfield leaf (e.g. WordPress title.raw)', () => {
+    // A WordPress `title` field is an object `{ raw, rendered }`; the view exposes
+    // both as subfields and preselects `raw`. The grid renders — and diffs — at the
+    // selected subfield leaf, so the column path must drill to `title.raw`. Keying
+    // by the un-drilled `title` left the whole object as one leaf, which made a
+    // subfield cell's diff show the full JSON object as its "before" value.
+    const view = {
+      name: 'default',
+      cols: [
+        {
+          kind: 'col',
+          path: 'title',
+          name: 'Title',
+          subfields: [
+            { relativePath: 'raw', name: 'Raw', type: 'richtext' },
+            { relativePath: 'rendered', name: 'Rendered', type: 'richtext', readonly: true },
+          ],
+          selectedSubfield: 0,
+        },
+        { kind: 'col', path: 'slug', name: 'Slug', type: 'string' },
+      ],
+    } as unknown as TableView;
+    expect(tableViewColumnPaths(view)).toEqual(['title.raw', 'slug']);
+  });
+
+  it('renders an object column at its root path when no subfield is selected', () => {
+    const view = {
+      name: 'default',
+      cols: [
+        {
+          kind: 'col',
+          path: 'title',
+          name: 'Title',
+          subfields: [{ relativePath: 'raw', name: 'Raw', type: 'richtext' }],
+          // selectedSubfield omitted → renders the root object
+        },
+      ],
+    } as unknown as TableView;
+    expect(tableViewColumnPaths(view)).toEqual(['title']);
+  });
 });
