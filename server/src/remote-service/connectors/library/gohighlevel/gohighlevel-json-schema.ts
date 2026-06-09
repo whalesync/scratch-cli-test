@@ -1,6 +1,15 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  X_SCRATCH_AGENT_INSTRUCTIONS,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+  type TablePropertyType,
+  type TableView,
+  type TableViewBannerGroup,
+  type TableViewCol,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { GenericFieldType } from './gohighlevel-entities';
 import {
   GoHighLevelCustomFieldDefinition,
   GoHighLevelObjectDefinition,
@@ -19,48 +28,117 @@ const readonlyOptionalString = (description?: string): TSchema =>
 
 /**
  * Build a one-paragraph, agent-readable description of a model's custom fields.
- * The record stores values as a raw `{ id, <valueKey> }` array, so this mapping
- * is the only place an agent (or a human reading schema.json) can learn what
- * each `id` means without a separate API call.
- *
- * @param valueKey `value` for contacts, `fieldValue` for opportunities.
+ * Values are reshaped on pull into a keyed `custom_fields` object (short key →
+ * value), so this mapping documents each short key's meaning, type, and options
+ * for an agent (or a human reading schema.json) without a separate API call.
  */
-function buildCustomFieldsAgentInstructions(
-  definitions: GoHighLevelCustomFieldDefinition[],
-  valueKey: 'value' | 'fieldValue',
-): string {
+function buildCustomFieldsAgentInstructions(definitions: GoHighLevelCustomFieldDefinition[]): string {
   if (definitions.length === 0) {
-    return `Custom field values are stored verbatim as a \`{ id, ${valueKey} }\` array. This location has no custom fields defined for this object.`;
+    return "Custom field values are stored under the `custom_fields` object, keyed by each field's short key. This location has no custom fields defined for this object.";
   }
   const fieldLines = definitions.map((definition) => {
     const optionsSuffix =
       definition.picklistOptions && definition.picklistOptions.length > 0
         ? `, options: ${definition.picklistOptions.join(' | ')}`
         : '';
-    return `- ${definition.name ?? '(unnamed)'} (id: ${definition.id}, key: ${definition.fieldKey ?? '?'}, type: ${definition.dataType ?? '?'}${optionsSuffix})`;
+    const shortKey = definition.fieldKey ? customFieldShortKey(definition.fieldKey) : '?';
+    return `- ${definition.name ?? '(unnamed)'} (custom_fields key: ${shortKey}, id: ${definition.id}, fieldKey: ${definition.fieldKey ?? '?'}, type: ${definition.dataType ?? '?'}${optionsSuffix})`;
   });
   return (
-    `Custom field values are stored verbatim as an array of { id, ${valueKey} } objects, exactly as the HighLevel API returns them. ` +
-    `Each \`id\` maps to one of the location custom-field definitions below; the \`${valueKey}\` shape depends on the field type. ` +
+    "Custom field values are stored under the `custom_fields` object, keyed by each field's short key (the part of its fieldKey after the first `.`). " +
+    'Each short key maps to one of the location custom-field definitions below; the value shape depends on the field type. ' +
     'Custom-field definitions for this location:\n' +
     fieldLines.join('\n')
   );
 }
 
 /**
- * The `customFields` property: a faithful `{ id, <valueKey> }` array annotated
- * with the discovered field definitions.
+ * The short key used inside a record's `custom_fields` object: the part of the
+ * HighLevel `fieldKey` after the first `.` (e.g. `contact.scratch_text` →
+ * `scratch_text`). Returns the whole string when there is no dot.
  */
-function customFieldsArrayProperty(
-  definitions: GoHighLevelCustomFieldDefinition[],
-  valueKey: 'value' | 'fieldValue',
-): TSchema {
+function customFieldShortKey(fieldKey: string): string {
+  const dotIndex = fieldKey.indexOf('.');
+  return dotIndex === -1 ? fieldKey : fieldKey.slice(dotIndex + 1);
+}
+
+/**
+ * Build the `custom_fields` property: a keyed object with one typed sub-property
+ * per discovered custom-field definition (keyed by its short key), so the client
+ * auto-expands each into its own column. No x-scratch-* extension on this object
+ * → the column builder expands the sub-properties; `additionalProperties: true`
+ * keeps any field the definitions omitted. Definitions without a `fieldKey` are
+ * skipped (no short key to derive).
+ */
+function buildCustomFieldsObjectProperty(definitions: GoHighLevelCustomFieldDefinition[]): TSchema {
+  const fieldProperties: Record<string, TSchema> = {};
+  for (const definition of definitions) {
+    if (!definition.fieldKey) continue;
+    const optionsDescription =
+      definition.picklistOptions && definition.picklistOptions.length > 0
+        ? `${definition.name ?? definition.fieldKey} (options: ${definition.picklistOptions.join(' | ')})`
+        : definition.name;
+    fieldProperties[customFieldShortKey(definition.fieldKey)] = schemaForObjectFieldDataType({
+      dataType: definition.dataType,
+      name: definition.name,
+      description: optionsDescription,
+    });
+  }
   return Type.Optional(
-    Type.Array(Type.Object({ id: Type.String(), [valueKey]: Type.Unknown() }), {
-      description: `Custom field values as { id, ${valueKey} } pairs (see agent instructions for field definitions).`,
-      [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(definitions, valueKey),
+    Type.Object(fieldProperties, {
+      additionalProperties: true,
+      description: "Custom field values, keyed by each field's short key (see agent instructions for definitions).",
     }),
   );
+}
+
+/**
+ * Default view for a standard entity (Contacts / Opportunities): one column per
+ * top-level schema property (derived from the schema keys, never hardcoded),
+ * EXCLUDING `custom_fields`, followed by a "Custom Fields" banner group that
+ * gathers one column per discovered custom-field definition
+ * (`custom_fields.<shortKey>`). Each column's `readonly` is propagated from the
+ * property's `x-scratch-readonly` flag, so the UI blocks edits to server-computed
+ * fields (id, timestamps, locationId) that publish would drop anyway.
+ */
+function buildStandardEntityDefaultView(
+  properties: Record<string, TSchema>,
+  definitions: GoHighLevelCustomFieldDefinition[],
+): TableView {
+  const cols: (TableViewCol | TableViewBannerGroup)[] = [];
+  for (const key of Object.keys(properties)) {
+    if (key === 'custom_fields') continue;
+    const propertySchema = properties[key] as Record<string, unknown>;
+    const title = typeof propertySchema.title === 'string' ? propertySchema.title : key;
+    cols.push({
+      kind: 'col',
+      path: key,
+      name: title,
+      type: tablePropertyTypeForObjectField(
+        typeof propertySchema.dataType === 'string' ? propertySchema.dataType : undefined,
+      ),
+      // Propagate the schema's read-only flag so the UI blocks edits to
+      // server-computed fields (id, dateAdded/dateUpdated, locationId, …); they're
+      // dropped on publish, so an edit would just be silently lost.
+      readonly: propertySchema[X_SCRATCH_READONLY] === true,
+    });
+  }
+
+  const customFieldCols: TableViewCol[] = [];
+  for (const definition of definitions) {
+    if (!definition.fieldKey) continue;
+    customFieldCols.push({
+      kind: 'col',
+      path: `custom_fields.${customFieldShortKey(definition.fieldKey)}`,
+      name: definition.name ?? customFieldShortKey(definition.fieldKey),
+      type: tablePropertyTypeForObjectField(definition.dataType),
+    });
+  }
+  if (customFieldCols.length > 0) {
+    cols.push({ kind: 'banner-group', name: 'Custom Fields', cols: customFieldCols });
+  }
+
+  return { name: 'Default', cols };
 }
 
 // --- Contacts -------------------------------------------------------------
@@ -71,8 +149,8 @@ function customFieldsArrayProperty(
  * System fields are enumerated and typed; `additionalProperties: true` keeps any
  * field we did not enumerate (so the stored record stays a faithful copy of the
  * API response). Custom fields are discovered dynamically from the Locations
- * customFields API and surfaced through the `customFields` array's
- * agent-instructions annotation.
+ * customFields API and reshaped on pull into a keyed `custom_fields` object (one
+ * typed sub-property per definition) so each renders as its own column.
  */
 export function buildContactsJsonTableSpec(
   id: EntityId,
@@ -106,13 +184,16 @@ export function buildContactsJsonTableSpec(
     tags: Type.Optional(Type.Array(Type.String())),
     dateAdded: readonlyOptionalString('ISO 8601 creation timestamp'),
     dateUpdated: readonlyOptionalString('ISO 8601 last-updated timestamp'),
-    customFields: customFieldsArrayProperty(contactCustomFieldDefinitions, 'value'),
+    custom_fields: buildCustomFieldsObjectProperty(contactCustomFieldDefinitions),
   };
 
   const schema = Type.Object(properties, {
     $id: 'gohighlevel/contacts',
     title: 'Contacts',
     additionalProperties: true,
+    // Field short-key→name/type/options reference for agents, kept at the schema
+    // ROOT so it does not turn `custom_fields` into an opaque leaf column.
+    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(contactCustomFieldDefinitions),
   });
 
   return {
@@ -122,7 +203,8 @@ export function buildContactsJsonTableSpec(
     schema,
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['contactName'],
-    basePath: [],
+    basePath: ['Standard Objects'],
+    defaultView: buildStandardEntityDefaultView(properties, contactCustomFieldDefinitions),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -131,8 +213,10 @@ export function buildContactsJsonTableSpec(
 
 /**
  * Build the Opportunities JSON table spec. Custom fields are discovered from the
- * Locations customFields API (the `opportunity` model). `pipelineId`/`contactId`
- * are annotated as foreign keys into the Pipelines/Contacts tables.
+ * Locations customFields API (the `opportunity` model) and reshaped on pull into
+ * a keyed `custom_fields` object (one typed sub-property per definition).
+ * `pipelineId`/`contactId` are annotated as foreign keys into the
+ * Pipelines/Contacts tables.
  */
 export function buildOpportunitiesJsonTableSpec(
   id: EntityId,
@@ -182,13 +266,16 @@ export function buildOpportunitiesJsonTableSpec(
     notes: Type.Optional(Type.Array(Type.Unknown(), { [X_SCRATCH_READONLY]: true })),
     tasks: Type.Optional(Type.Array(Type.Unknown(), { [X_SCRATCH_READONLY]: true })),
     calendarEvents: Type.Optional(Type.Array(Type.Unknown(), { [X_SCRATCH_READONLY]: true })),
-    customFields: customFieldsArrayProperty(opportunityCustomFieldDefinitions, 'fieldValue'),
+    custom_fields: buildCustomFieldsObjectProperty(opportunityCustomFieldDefinitions),
   };
 
   const schema = Type.Object(properties, {
     $id: 'gohighlevel/opportunities',
     title: 'Opportunities',
     additionalProperties: true,
+    // Field short-key→name/type/options reference for agents, kept at the schema
+    // ROOT so it does not turn `custom_fields` into an opaque leaf column.
+    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(opportunityCustomFieldDefinitions),
   });
 
   return {
@@ -198,7 +285,8 @@ export function buildOpportunitiesJsonTableSpec(
     schema,
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
-    basePath: [],
+    basePath: ['Standard Objects'],
+    defaultView: buildStandardEntityDefaultView(properties, opportunityCustomFieldDefinitions),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -243,7 +331,7 @@ export function buildPipelinesJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     schema,
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['name'],
-    basePath: [],
+    basePath: ['Standard Objects'],
     generatedAt: new Date().toISOString(),
   };
 }
@@ -272,6 +360,113 @@ function buildObjectFieldsAgentInstructions(fields: GoHighLevelObjectField[]): s
   );
 }
 
+/** Short key used inside a record's `properties` bag (the field key without the object-key prefix). */
+function objectFieldShortKey(fieldKey: string, objectKey: string): string {
+  const prefix = `${objectKey}.`;
+  return fieldKey.startsWith(prefix) ? fieldKey.slice(prefix.length) : fieldKey;
+}
+
+/**
+ * Permissive (nullable) schema for one HighLevel field, typed from its dataType.
+ * Structurally typed on the only three properties it reads, so both
+ * `GoHighLevelObjectField` (custom objects) and `GoHighLevelCustomFieldDefinition`
+ * (contact/opportunity custom fields) satisfy it.
+ */
+function schemaForObjectFieldDataType(field: { dataType?: string; name?: string; description?: string }): TSchema {
+  const annotations: Record<string, unknown> = {};
+  if (field.name) annotations.title = field.name;
+  if (field.description) annotations.description = field.description;
+  switch ((field.dataType ?? '').toUpperCase()) {
+    case 'NUMERICAL':
+    case 'FLOAT':
+    case 'MONETORY':
+      return Type.Union([Type.Number(), Type.Null()], annotations);
+    case 'CHECKBOX':
+    case 'MULTIPLE_OPTIONS':
+      return Type.Union([Type.Array(Type.Unknown()), Type.Null()], annotations);
+    default:
+      return Type.Union([Type.String(), Type.Null()], annotations);
+  }
+}
+
+/**
+ * Build the `properties` sub-schema for an object: one typed sub-property per
+ * discovered field (keyed by the record's short key), so the client renders each
+ * as its own column. No x-scratch-* extension on this object → the column builder
+ * auto-expands the sub-properties; `additionalProperties: true` keeps any field
+ * the definition omitted. Values are still stored verbatim from the API.
+ */
+function buildObjectPropertiesSchema(fields: GoHighLevelObjectField[], objectKey: string): TSchema {
+  const fieldProperties: Record<string, TSchema> = {};
+  for (const field of fields) {
+    if (!field.fieldKey) continue;
+    fieldProperties[objectFieldShortKey(field.fieldKey, objectKey)] = schemaForObjectFieldDataType(field);
+  }
+  return Type.Object(fieldProperties, {
+    additionalProperties: true,
+    description:
+      'Custom-object field values, stored verbatim from the HighLevel API (one sub-property per object field).',
+  });
+}
+
+/** Map a HighLevel object-field dataType to a table-view column type hint. */
+function tablePropertyTypeForObjectField(dataType: string | undefined): TablePropertyType {
+  switch ((dataType ?? '').toUpperCase()) {
+    case 'NUMERICAL':
+    case 'FLOAT':
+    case 'MONETORY':
+      return 'number';
+    case 'DATE':
+      return 'date';
+    case 'CHECKBOX':
+    case 'MULTIPLE_OPTIONS':
+      return 'object';
+    default:
+      return 'string';
+  }
+}
+
+/**
+ * Default view for an object table. Fields are split by GHL's `standard` flag:
+ * **standard** fields (the built-in schema of a standard object, e.g. the
+ * Businesses object's `name`/`phone`/`email`) render as plain columns, while
+ * **custom** fields (`standard: false`, the user-defined ones) are gathered under
+ * a "Custom Fields" banner group (GHL's own term). System columns (id,
+ * owner/followers, location, timestamps) sit around them. Columns come from the
+ * schema; this view only orders + groups them.
+ */
+function buildCustomObjectDefaultView(objectKey: string, fields: GoHighLevelObjectField[]): TableView {
+  const standardCols: TableViewCol[] = [];
+  const customFieldCols: TableViewCol[] = [];
+  for (const field of fields) {
+    if (!field.fieldKey) continue;
+    const key = objectFieldShortKey(field.fieldKey, objectKey);
+    const col: TableViewCol = {
+      kind: 'col',
+      path: `properties.${key}`,
+      name: field.name ?? key,
+      type: tablePropertyTypeForObjectField(field.dataType),
+    };
+    // `standard === true` → built-in object field (flat); otherwise a custom field.
+    (field.standard === true ? standardCols : customFieldCols).push(col);
+  }
+
+  const cols: (TableViewCol | TableViewBannerGroup)[] = [{ kind: 'col', path: 'id', readonly: true }, ...standardCols];
+  if (customFieldCols.length > 0) {
+    cols.push({ kind: 'banner-group', name: 'Custom Fields', cols: customFieldCols });
+  }
+  cols.push(
+    { kind: 'col', path: 'owner' },
+    { kind: 'col', path: 'followers' },
+    { kind: 'col', path: 'locationId', readonly: true },
+    { kind: 'col', path: 'createdAt', readonly: true },
+    { kind: 'col', path: 'updatedAt', readonly: true },
+    { kind: 'col', path: 'dateAdded', readonly: true },
+    { kind: 'col', path: 'dateUpdated', readonly: true },
+  );
+  return { name: 'Default', cols };
+}
+
 /**
  * Build the JSON table spec for a custom/standard object discovered via the
  * Objects API. The schema is permissive (`additionalProperties: true`) and the
@@ -284,17 +479,13 @@ export function buildCustomObjectJsonTableSpec(
   fields: GoHighLevelObjectField[],
 ): BaseJsonTableSpec {
   const displayName = objectDefinition.labels?.plural ?? objectDefinition.labels?.singular ?? id.wsId;
+  const objectKey = objectDefinition.key ?? id.remoteId[0] ?? '';
 
   const properties: Record<string, TSchema> = {
     id: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Record ID' }),
-    properties: Type.Object(
-      {},
-      {
-        additionalProperties: true,
-        description: 'Field values keyed by field key (see agent instructions for field definitions).',
-        [X_SCRATCH_AGENT_INSTRUCTIONS]: buildObjectFieldsAgentInstructions(fields),
-      },
-    ),
+    // Each discovered object field becomes a typed sub-property of `properties`,
+    // so the client renders one column per field (see buildObjectPropertiesSchema).
+    properties: buildObjectPropertiesSchema(fields, objectKey),
     owner: Type.Optional(Type.Array(Type.String(), { description: 'Owner user IDs' })),
     followers: Type.Optional(Type.Array(Type.String(), { description: 'Follower user IDs' })),
     locationId: readonlyOptionalString('Sub-account (Location)'),
@@ -309,6 +500,9 @@ export function buildCustomObjectJsonTableSpec(
     $id: `gohighlevel/${id.wsId}`,
     title: displayName,
     additionalProperties: true,
+    // Field id→name/type/options reference for agents, kept at the schema ROOT so
+    // it does not turn `properties` into an opaque leaf column.
+    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildObjectFieldsAgentInstructions(fields),
   });
 
   return {
@@ -317,23 +511,60 @@ export function buildCustomObjectJsonTableSpec(
     name: displayName,
     schema,
     idColumnRemoteId: idPath('id'),
-    basePath: [],
+    // Human-defined custom objects (`custom_objects.*`) → /Custom Objects/; the
+    // standard objects-API objects (the built-in `business`/Companies) → /Standard
+    // Objects/ with the other built-ins.
+    basePath: objectKey.startsWith('custom_objects.') ? ['Custom Objects'] : ['Standard Objects'],
+    // View layer: standard fields stay flat; custom fields group under "Custom Fields".
+    defaultView: buildCustomObjectDefaultView(objectKey, fields),
     generatedAt: new Date().toISOString(),
   };
 }
 
 // --- Generic location-scoped list entities --------------------------------
 
+/** Map a generic entity field's OpenAPI primitive class to a permissive, read-only schema. */
+function genericFieldTypeToSchema(type: GenericFieldType, key: string): TSchema {
+  const annotations = { [X_SCRATCH_READONLY]: true, description: key };
+  switch (type) {
+    case 'string':
+      return Type.Union([Type.String(), Type.Null()], annotations);
+    case 'number':
+      return Type.Union([Type.Number(), Type.Null()], annotations);
+    case 'boolean':
+      return Type.Union([Type.Boolean(), Type.Null()], annotations);
+    case 'array':
+      return Type.Union([Type.Array(Type.Unknown()), Type.Null()], annotations);
+    case 'object':
+      return Type.Union([Type.Object({}, { additionalProperties: true }), Type.Null()], annotations);
+    default:
+      return Type.Union([Type.Unknown(), Type.Null()], annotations);
+  }
+}
+
 /**
- * Build a permissive JSON table spec for a generic location-scoped list entity
- * (Users, Conversations, Products, …). We don't enumerate per-entity fields:
- * the record is stored verbatim (`additionalProperties: true`) and only the id
- * column is typed. `idField` is `id` for most, `_id` for products/proposals/blogs.
+ * Build the JSON table spec for a generic location-scoped list entity
+ * (Users, Conversations, Products, …). These entities have no field-metadata
+ * endpoint, so columns come from a **static field list enumerated from the
+ * HighLevel OpenAPI** (`GOHIGHLEVEL_ENTITY_FIELDS`, passed in as `fields`) — that
+ * way the table view shows real fields, not just the id. The record is still
+ * stored verbatim (`additionalProperties: true`) so anything the OpenAPI omitted
+ * passes through. Every field is read-only (these tables are pull-only).
+ * `idField` is `id` for most, `_id` for products/proposals/blogs.
  */
-export function buildGenericEntityJsonTableSpec(id: EntityId, displayName: string, idField: string): BaseJsonTableSpec {
+export function buildGenericEntityJsonTableSpec(
+  id: EntityId,
+  displayName: string,
+  idField: string,
+  fields?: ReadonlyArray<{ key: string; type: GenericFieldType }>,
+): BaseJsonTableSpec {
   const properties: Record<string, TSchema> = {
     [idField]: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Record ID' }),
   };
+  for (const field of fields ?? []) {
+    if (field.key in properties) continue;
+    properties[field.key] = genericFieldTypeToSchema(field.type, field.key);
+  }
 
   const schema = Type.Object(properties, {
     $id: `gohighlevel/${id.wsId}`,
@@ -348,7 +579,7 @@ export function buildGenericEntityJsonTableSpec(id: EntityId, displayName: strin
     schema,
     idColumnRemoteId: idPath(idField),
     titleColumnRemoteId: ['name'],
-    basePath: [],
+    basePath: ['Standard Objects'],
     generatedAt: new Date().toISOString(),
   };
 }

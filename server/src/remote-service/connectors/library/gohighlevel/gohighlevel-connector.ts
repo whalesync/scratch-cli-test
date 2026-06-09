@@ -24,6 +24,7 @@ import {
 } from '../../types';
 import { GoHighLevelApiClient, GoHighLevelError } from './gohighlevel-api-client';
 import {
+  GOHIGHLEVEL_ENTITY_FIELDS,
   GOHIGHLEVEL_LOCATION_LIST_ENTITIES,
   GOHIGHLEVEL_LOCATION_LIST_ENTITY_BY_WS_ID,
   GoHighLevelLocationListEntityConfig,
@@ -38,6 +39,8 @@ import {
 import { GOHIGHLEVEL_LOGO_DATA_URI } from './gohighlevel-logo';
 import {
   GoHighLevelContactsDownloadProgress,
+  GoHighLevelCustomFieldDefinition,
+  GoHighLevelCustomFieldKeyMaps,
   GoHighLevelObjectRecordsDownloadProgress,
   GoHighLevelOpportunitiesDownloadProgress,
 } from './gohighlevel-types';
@@ -51,6 +54,9 @@ const STANDARD_OBJECT_KEYS_HANDLED_ELSEWHERE = new Set<string>(['contact', 'oppo
 
 /** Display group for discovered custom objects in the table picker. */
 const CUSTOM_OBJECTS_PARENT_PATH = 'Custom Objects';
+const STANDARD_OBJECTS_PARENT_PATH = 'Standard Objects';
+/** Human-defined custom objects are keyed `custom_objects.*`; standard objects-API objects (e.g. `business`) are not. */
+const isCustomObjectKey = (objectKey: string): boolean => objectKey.startsWith('custom_objects.');
 
 /** HighLevel's max page size for the search endpoints. */
 const CONTACTS_PAGE_LIMIT = 100;
@@ -74,23 +80,18 @@ interface GoHighLevelContactPullOptions extends PullRecordFilesOptions {
 /**
  * Connector for HighLevel (GoHighLevel).
  *
- * Implemented (all read-only):
- *   - Auth via a **Private Integration Token** (Settings -> Private Integrations
- *     in a HighLevel sub-account) — an API-key-style bearer token scoped to one
- *     Location. OAuth (with the agency -> location token exchange) is deferred.
- *   - **Contacts** — dynamic schema (system fields + custom-field definitions
- *     from the Locations customFields API) + pull via `POST /contacts/search`
- *     with the `searchAfter` cursor.
- *   - **Opportunities** — dynamic schema (incl. opportunity custom fields and
- *     pipeline/contact foreign keys) + pull via `GET /opportunities/search` with
- *     the `startAfter`/`startAfterId` cursor.
- *   - **Pipelines** — static schema + single `GET /opportunities/pipelines`.
+ * Auth: a **Private Integration Token** (Settings -> Private Integrations in a
+ * HighLevel sub-account) — an API-key-style bearer token scoped to one Location.
+ * OAuth (with the agency -> location token exchange) is deferred.
  *
- * Not yet implemented (throw a clear error rather than silently no-op'ing):
- *   - Writes (create/update/delete) for every table.
- *
- * Registered with `visible: false`, so it appears only in development builds
- * (see `client/src/hooks/use-connectors.ts`).
+ * Tables (grouped on disk into `/Standard Objects/` and `/Custom Objects/`):
+ *   - **Contacts** / **Opportunities** — dynamic schema (system fields + per-Location
+ *     custom fields from the Locations customFields API, surfaced as a keyed
+ *     `custom_fields` object); **full CRUD**. Opportunities carry pipeline/contact FKs.
+ *   - **Custom Objects** + the standard `business`/Companies object — discovered from
+ *     the Objects API; **full CRUD** via the records API.
+ *   - **Pipelines** and a set of location-scoped reference tables (Calendars, Forms,
+ *     Products, Users, …) — read-only pull.
  *
  * API docs: https://marketplace.gohighlevel.com/docs/
  */
@@ -99,9 +100,7 @@ export class GoHighLevelConnector extends Connector {
   static readonly displayName = 'HighLevel';
   static readonly metadata = connectorMetadata({
     displayName: 'HighLevel',
-    // Dev-only for now: visible:false hides it from production, but the client
-    // shows it in development builds so we can connect and iterate.
-    visible: false,
+    visible: true,
     table: 'object',
     tables: 'objects',
     record: 'record',
@@ -249,7 +248,7 @@ export class GoHighLevelConnector extends Connector {
         // the wsId is a sanitized, path-safe slug of it.
         id: { wsId: sanitizeForTableWsId(objectKey), remoteId: [objectKey] },
         displayName,
-        parentPath: CUSTOM_OBJECTS_PARENT_PATH,
+        parentPath: isCustomObjectKey(objectKey) ? CUSTOM_OBJECTS_PARENT_PATH : STANDARD_OBJECTS_PARENT_PATH,
         metadata: { description: objectDefinition.description ?? `${displayName} records`, objectKey },
       });
     }
@@ -276,7 +275,12 @@ export class GoHighLevelConnector extends Connector {
       default: {
         const listEntityConfig = GOHIGHLEVEL_LOCATION_LIST_ENTITY_BY_WS_ID.get(id.wsId);
         if (listEntityConfig) {
-          return buildGenericEntityJsonTableSpec(id, listEntityConfig.displayName, listEntityConfig.idField);
+          return buildGenericEntityJsonTableSpec(
+            id,
+            listEntityConfig.displayName,
+            listEntityConfig.idField,
+            GOHIGHLEVEL_ENTITY_FIELDS[id.wsId],
+          );
         }
         // Otherwise it's a discovered custom object.
         const objectKey = this.objectKeyFromId(id);
@@ -329,12 +333,28 @@ export class GoHighLevelConnector extends Connector {
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
     switch (tableSpec.id.wsId) {
-      case CONTACTS_TABLE_WS_ID:
-        await this.fetchByIds(ids, (id) => this.client.getContact(id), callback, true);
+      case CONTACTS_TABLE_WS_ID: {
+        const { idToShortKey } = this.buildCustomFieldKeyMaps(await this.client.getContactCustomFieldDefinitions());
+        await this.fetchByIds(
+          ids,
+          (id) => this.client.getContact(id),
+          callback,
+          true,
+          (record) => this.reshapeCustomFieldsArrayToObject(record, idToShortKey, 'value'),
+        );
         break;
-      case OPPORTUNITIES_TABLE_WS_ID:
-        await this.fetchByIds(ids, (id) => this.client.getOpportunity(id), callback, false);
+      }
+      case OPPORTUNITIES_TABLE_WS_ID: {
+        const { idToShortKey } = this.buildCustomFieldKeyMaps(await this.client.getOpportunityCustomFieldDefinitions());
+        await this.fetchByIds(
+          ids,
+          (id) => this.client.getOpportunity(id),
+          callback,
+          false,
+          (record) => this.reshapeCustomFieldsArrayToObject(record, idToShortKey, 'fieldValue'),
+        );
         break;
+      }
       case PIPELINES_TABLE_WS_ID: {
         // Pipelines have no get-by-id endpoint, so re-fetch all and filter.
         const requestedIds = new Set(ids);
@@ -379,12 +399,24 @@ export class GoHighLevelConnector extends Connector {
    */
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const wsId = tableSpec.id.wsId;
+    // Resolve the custom-field short-key → id map ONCE per call (not per file) for
+    // the Contacts/Opportunities branches, so the keyed `custom_fields` object can
+    // be written back as the `{ id, field_value }` array the API expects.
+    const { idToShortKey, shortKeyToId } = await this.fetchCustomFieldKeyMaps(wsId);
     const results: ConnectorFile[] = [];
     for (const file of files) {
       if (wsId === CONTACTS_TABLE_WS_ID) {
-        results.push((await this.client.createContact(this.buildContactPayload(file))) as ConnectorFile);
+        const created = (await this.client.createContact(
+          this.buildContactPayload(file, shortKeyToId),
+        )) as ConnectorFile;
+        this.reshapeCustomFieldsArrayToObject(created, idToShortKey, 'value');
+        results.push(created);
       } else if (wsId === OPPORTUNITIES_TABLE_WS_ID) {
-        results.push((await this.client.createOpportunity(this.buildOpportunityPayload(file))) as ConnectorFile);
+        const created = (await this.client.createOpportunity(
+          this.buildOpportunityPayload(file, shortKeyToId),
+        )) as ConnectorFile;
+        this.reshapeCustomFieldsArrayToObject(created, idToShortKey, 'fieldValue');
+        results.push(created);
       } else if (this.isCustomObjectTable(wsId)) {
         const objectKey = this.objectKeyFromId(tableSpec.id);
         results.push(
@@ -408,6 +440,11 @@ export class GoHighLevelConnector extends Connector {
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
     const wsId = tableSpec.id.wsId;
+    // Resolve the custom-field short-key → id map ONCE per call (not per file) for
+    // the Contacts/Opportunities branches. The sparse `changedFields[i].custom_fields`
+    // object carries only the edited sub-keys, so the resulting `customFields` array
+    // re-sends only those fields (HighLevel merges by id on update).
+    const { idToShortKey, shortKeyToId } = await this.fetchCustomFieldKeyMaps(wsId);
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -420,9 +457,11 @@ export class GoHighLevelConnector extends Connector {
       }
       let updated: Record<string, unknown> | null = null;
       if (wsId === CONTACTS_TABLE_WS_ID) {
-        updated = await this.client.updateContact(recordId, this.buildContactPayload(changed));
+        updated = await this.client.updateContact(recordId, this.buildContactPayload(changed, shortKeyToId));
+        if (updated) this.reshapeCustomFieldsArrayToObject(updated, idToShortKey, 'value');
       } else if (wsId === OPPORTUNITIES_TABLE_WS_ID) {
-        updated = await this.client.updateOpportunity(recordId, this.buildOpportunityPayload(changed));
+        updated = await this.client.updateOpportunity(recordId, this.buildOpportunityPayload(changed, shortKeyToId));
+        if (updated) this.reshapeCustomFieldsArrayToObject(updated, idToShortKey, 'fieldValue');
       } else if (this.isCustomObjectTable(wsId)) {
         const objectKey = this.objectKeyFromId(tableSpec.id);
         updated = await this.client.updateObjectRecord(objectKey, recordId, this.buildObjectRecordPayload(file));
@@ -507,10 +546,15 @@ export class GoHighLevelConnector extends Connector {
     const includeAppointments = options.includeAppointments === true;
     const deepFetch = includeNotes || includeTasks || includeAppointments;
 
+    // Discover the custom-field definitions once so each contact's verbatim
+    // `customFields` array can be reshaped into the keyed `custom_fields` object.
+    const { idToShortKey } = this.buildCustomFieldKeyMaps(await this.client.getContactCustomFieldDefinitions());
+
     for await (const page of this.client.searchContacts(CONTACTS_PAGE_LIMIT, resumeSearchAfter)) {
       const files: ConnectorFile[] = [];
       for (const contact of page.contacts) {
         const record = this.stripPaginationCursor(contact);
+        this.reshapeCustomFieldsArrayToObject(record, idToShortKey, 'value');
         if (deepFetch) {
           await this.attachContactSubEntities(record, includeNotes, includeTasks, includeAppointments);
         }
@@ -544,11 +588,21 @@ export class GoHighLevelConnector extends Connector {
   ): Promise<void> {
     const { startAfter, startAfterId } = progress as GoHighLevelOpportunitiesDownloadProgress;
 
+    // Discover the opportunity custom-field definitions once so each record's
+    // verbatim `customFields` array (value key `fieldValue`) can be reshaped into
+    // the keyed `custom_fields` object.
+    const { idToShortKey } = this.buildCustomFieldKeyMaps(await this.client.getOpportunityCustomFieldDefinitions());
+
     for await (const page of this.client.searchOpportunities(OPPORTUNITIES_PAGE_LIMIT, { startAfter, startAfterId })) {
       const connectorProgress: JsonSafeObject = {};
       if (page.startAfter !== undefined) connectorProgress.startAfter = page.startAfter;
       if (page.startAfterId !== undefined) connectorProgress.startAfterId = page.startAfterId;
-      await callback({ files: page.opportunities as ConnectorFile[], connectorProgress });
+      const files = page.opportunities.map((opportunity) => {
+        const record: Record<string, unknown> = { ...opportunity };
+        this.reshapeCustomFieldsArrayToObject(record, idToShortKey, 'fieldValue');
+        return record as ConnectorFile;
+      });
+      await callback({ files, connectorProgress });
     }
   }
 
@@ -640,12 +694,15 @@ export class GoHighLevelConnector extends Connector {
   /**
    * Fetch records one-by-one by ID and flush to the callback in batches.
    * `stripCursor` removes the contacts-only `searchAfter` transport field.
+   * `transformRecord` (when given) mutates each fetched record in-place before it
+   * is buffered (e.g. reshaping Contacts/Opportunities custom fields).
    */
   private async fetchByIds(
     ids: string[],
     fetchOne: (id: string) => Promise<Record<string, unknown> | null>,
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
     stripCursor: boolean,
+    transformRecord?: (record: Record<string, unknown>) => void,
   ): Promise<void> {
     const BATCH_SIZE = 20;
     const buffer: ConnectorFile[] = [];
@@ -653,7 +710,9 @@ export class GoHighLevelConnector extends Connector {
     for (const id of ids) {
       const record = await fetchOne(id);
       if (record) {
-        buffer.push(stripCursor ? this.stripPaginationCursor(record) : (record as ConnectorFile));
+        const file = stripCursor ? this.stripPaginationCursor(record) : (record as ConnectorFile);
+        if (transformRecord) transformRecord(file);
+        buffer.push(file);
       }
       if (buffer.length >= BATCH_SIZE) {
         await callback({ files: buffer.splice(0) });
@@ -674,6 +733,83 @@ export class GoHighLevelConnector extends Connector {
     const record: Record<string, unknown> = { ...contact };
     delete record.searchAfter;
     return record;
+  }
+
+  /**
+   * The short key used inside a record's `custom_fields` object: the part of the
+   * HighLevel `fieldKey` after the first `.` (e.g. `contact.scratch_text` →
+   * `scratch_text`). Returns the whole string when there is no dot. Must match
+   * `customFieldShortKey` in gohighlevel-json-schema.ts.
+   */
+  private customFieldShortKey(fieldKey: string): string {
+    const dotIndex = fieldKey.indexOf('.');
+    return dotIndex === -1 ? fieldKey : fieldKey.slice(dotIndex + 1);
+  }
+
+  /**
+   * Build the id↔short-key maps from a location's custom-field definitions, used
+   * to reshape custom-field values between the stored keyed `custom_fields`
+   * object and the `{ id, ... }` array the HighLevel API reads/writes.
+   */
+  private buildCustomFieldKeyMaps(definitions: GoHighLevelCustomFieldDefinition[]): GoHighLevelCustomFieldKeyMaps {
+    const idToShortKey = new Map<string, string>();
+    const shortKeyToId = new Map<string, string>();
+    for (const definition of definitions) {
+      if (!definition.fieldKey) continue;
+      const shortKey = this.customFieldShortKey(definition.fieldKey);
+      idToShortKey.set(definition.id, shortKey);
+      shortKeyToId.set(shortKey, definition.id);
+    }
+    return { idToShortKey, shortKeyToId };
+  }
+
+  /**
+   * Fetch the short-key → id map for a table's custom-field definitions, used to
+   * write the keyed `custom_fields` object back as the API's `{ id, field_value }`
+   * array. Only Contacts/Opportunities have custom fields; any other table gets an
+   * empty map (its branch doesn't consult it).
+   */
+  /**
+   * Resolve BOTH custom-field key maps once for a write: `shortKeyToId` (to write
+   * the keyed `custom_fields` object back as the `{ id, field_value }` array the API
+   * expects) and `idToShortKey` (to reshape the API's array-shaped RESPONSE record
+   * back into the keyed `custom_fields` object, so the persisted record matches the
+   * pulled shape — otherwise the file reverts to an array and every field shows as
+   * edited).
+   */
+  private async fetchCustomFieldKeyMaps(wsId: string): Promise<GoHighLevelCustomFieldKeyMaps> {
+    if (wsId === CONTACTS_TABLE_WS_ID) {
+      return this.buildCustomFieldKeyMaps(await this.client.getContactCustomFieldDefinitions());
+    }
+    if (wsId === OPPORTUNITIES_TABLE_WS_ID) {
+      return this.buildCustomFieldKeyMaps(await this.client.getOpportunityCustomFieldDefinitions());
+    }
+    return { idToShortKey: new Map<string, string>(), shortKeyToId: new Map<string, string>() };
+  }
+
+  /**
+   * Reshape a record's verbatim `customFields` array (`{ id, <readValueKey> }`)
+   * into the keyed `custom_fields` object (`{ <shortKey>: value }`) in-place, then
+   * drop the original array. An unknown id keys by the id itself (no data loss);
+   * a record with no `customFields` array is left untouched. `readValueKey` is
+   * `value` for contacts, `fieldValue` for opportunities.
+   */
+  private reshapeCustomFieldsArrayToObject(
+    record: Record<string, unknown>,
+    idToShortKey: Map<string, string>,
+    readValueKey: 'value' | 'fieldValue',
+  ): void {
+    if (!Array.isArray(record.customFields)) return;
+    const customFieldsObject: Record<string, unknown> = {};
+    for (const entry of record.customFields) {
+      if (!entry || typeof entry !== 'object') continue;
+      const customField = entry as Record<string, unknown>;
+      if (typeof customField.id !== 'string') continue;
+      const key = idToShortKey.get(customField.id) ?? customField.id;
+      customFieldsObject[key] = customField[readValueKey];
+    }
+    record.custom_fields = customFieldsObject;
+    delete record.customFields;
   }
 
   private throwUnknownTable(wsId: string): never {
@@ -700,22 +836,40 @@ export class GoHighLevelConnector extends Connector {
   }
 
   /**
-   * Contacts write payload: drop the id (identity, not writable) and map
-   * `customFields` from the read shape `{ id, value }` to the write shape
-   * `{ id, field_value }`. Other fields are sent as-is (the API rejects invalid
-   * ones); `locationId` is injected by the client on create.
+   * Contacts write payload: drop the id (identity, not writable) and transform the
+   * keyed `custom_fields` object (`{ <shortKey>: value }`) into the API write shape
+   * `customFields: [{ id, field_value }]` via `shortKeyToId`. Other fields are sent
+   * as-is (the API rejects invalid ones); `locationId` is injected by the client on
+   * create.
    */
-  private buildContactPayload(source: Record<string, unknown>): Record<string, unknown> {
-    return this.buildWritePayloadWithCustomFields(source, 'value');
+  private buildContactPayload(
+    source: Record<string, unknown>,
+    shortKeyToId: Map<string, string>,
+  ): Record<string, unknown> {
+    return this.buildWritePayloadWithCustomFields(source, shortKeyToId);
   }
 
   /**
-   * Opportunities write payload: same as contacts but the read value key is
-   * `fieldValue`. On create the API also requires pipelineId/name/status/contactId
-   * (the user must supply them); `locationId` is injected by the client.
+   * Opportunities write payload: same custom-field transform as contacts; the keyed
+   * `custom_fields` object stores plain values, so the contacts/opportunities read
+   * value-key asymmetry only matters on pull, not here. On create the API also
+   * requires pipelineId/name/status/contactId (the user must supply them);
+   * `locationId` is injected by the client.
    */
-  private buildOpportunityPayload(source: Record<string, unknown>): Record<string, unknown> {
-    return this.buildWritePayloadWithCustomFields(source, 'fieldValue');
+  private buildOpportunityPayload(
+    source: Record<string, unknown>,
+    shortKeyToId: Map<string, string>,
+  ): Record<string, unknown> {
+    const payload = this.buildWritePayloadWithCustomFields(source, shortKeyToId);
+    // Strip read-only hydrated sub-objects: HighLevel returns these on read but
+    // does not accept them on write. Critically, sending the hydrated `contact`
+    // object alongside a changed top-level `contactId` makes HighLevel SILENTLY
+    // IGNORE the `contactId` change (the FK re-parent no-ops while publish reports
+    // success). `notes`/`tasks`/`calendarEvents` are opt-in deep-fetch hydration.
+    for (const hydratedReadOnlyKey of ['contact', 'notes', 'tasks', 'calendarEvents']) {
+      delete payload[hydratedReadOnlyKey];
+    }
+    return payload;
   }
 
   /**
@@ -734,31 +888,29 @@ export class GoHighLevelConnector extends Connector {
   }
 
   /**
-   * Shared builder for Contacts/Opportunities: clone the source, drop the id,
-   * and transform a `customFields` array from `{ id, <readValueKey> }` to the
-   * write shape `{ id, field_value }` (preserving `key` when present).
+   * Shared builder for Contacts/Opportunities: clone the source, drop the id, and
+   * transform the keyed `custom_fields` object (`{ <shortKey>: value }`) into the
+   * HighLevel write shape `customFields: [{ id, field_value }]`. An unknown short
+   * key falls back to using the key itself as the id (no data loss). When
+   * `custom_fields` is absent the payload simply has no `customFields`. HighLevel
+   * merges `customFields` by id on update, so a sparse object (one changed field)
+   * is a valid partial write.
    */
   private buildWritePayloadWithCustomFields(
     source: Record<string, unknown>,
-    readValueKey: 'value' | 'fieldValue',
+    shortKeyToId: Map<string, string>,
   ): Record<string, unknown> {
     const payload: Record<string, unknown> = { ...source };
     delete payload.id;
-    if (Array.isArray(payload.customFields)) {
-      payload.customFields = payload.customFields.map((entry) => this.toWriteCustomField(entry, readValueKey));
+    const customFieldsObject = payload.custom_fields;
+    delete payload.custom_fields;
+    if (customFieldsObject && typeof customFieldsObject === 'object' && !Array.isArray(customFieldsObject)) {
+      payload.customFields = Object.entries(customFieldsObject as Record<string, unknown>).map(([shortKey, value]) => ({
+        id: shortKeyToId.get(shortKey) ?? shortKey,
+        field_value: value,
+      }));
     }
     return payload;
-  }
-
-  /** Map one custom-field value object to the HighLevel write shape. */
-  private toWriteCustomField(entry: unknown, readValueKey: 'value' | 'fieldValue'): unknown {
-    if (!entry || typeof entry !== 'object') return entry;
-    const source = entry as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    if (typeof source.id === 'string') out.id = source.id;
-    if (typeof source.key === 'string') out.key = source.key;
-    out.field_value = source[readValueKey];
-    return out;
   }
 }
 

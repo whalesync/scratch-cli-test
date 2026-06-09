@@ -27,6 +27,7 @@ and BOTH for MIXED (delete the unused one).
 
 ## Metadata
 - **Type:** STATIC | DYNAMIC | STATIC · custom fields supported (mixed)
+- **Template version:** 2026-06-09 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
 - **Last run:** <YYYY-MM-DD> · scratchmd + gstack · Tester: <name>
 
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
@@ -43,6 +44,7 @@ At-a-glance progress through the build journey, so anyone can see where this con
 | 5 | **Full write CRUD** (create + edit + delete exercised, push) | ⬜ | |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
 | 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
+| 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | |
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
@@ -114,6 +116,17 @@ Max records (or fields) per API request, **per operation** — services often di
 - **Mechanism:** <how a `since` pull is expressed — e.g. `If-Modified-Since` header / `updated_since` param / cursor> and **how the new watermark is derived** (server time captured before the first page? max record timestamp?). Note idempotency (mid-run edits re-pulled next time).
 - **Deletions:** <how deletes are detected on an incremental run — tombstone/deleted endpoint, or "not supported">.
 
+## Endpoints (what the connector calls)
+**Super-concise** — distil only the endpoints THIS connector actually hits; do NOT paste the vendor's full API reference / OpenAPI dump. One row per (entity/area × op); add a note only where a quirk matters.
+
+| Entity / area | Op | Method + path | Note (only if it matters) |
+|---|---|---|---|
+| `<Entity>` | list | `<GET /…>` | `<pagination / limit cap>` |
+| `<Entity>` | get / create / update / delete | `<GET/POST/PUT/DELETE /…[/{id}]>` | `<scoping-param / value-key / required-on-create>` |
+| `<schema discovery>` | discover | `<GET /…>` | `<custom-field defs / object schema source>` |
+
+<Cross-cutting: base host, mandatory headers, auth model, any global write quirks — one line each.>
+
 ## Foreign keys / associations
 One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *different* parent (move the record parent→parent) → `files accept` → `upload` → `publish` → confirm it re-parented in the service. **Read** = a service-side link pulls back as the correct id/value.
 
@@ -142,3 +155,8 @@ Direct URLs to common screens so the agent jumps straight there instead of click
 | <Entity1> list | `<https://.../...>` |
 | <Entity1> create form | `<https://.../...>` |
 | <Entity2> list | `<https://...>` |
+
+## Template changelog
+**Very concise — one line per template version.** When you change the template's *structure* (add/rename/remove a section, table column, or required rule), bump `Template version` (Metadata) to today's date and add an entry here describing what changed. Each connector's STATE.md reconciles to the newest version on its next `/connector-build` run (apply every entry newer than the STATE.md's `Template version`). Don't log typo/wording fixes — only structural changes a STATE.md would need to mirror.
+
+- **2026-06-09** — Baseline. Sections: Test account · Metadata (+ Template version) · Milestones (**8-row**, incl. "View(s) built") · Objects (3 tables) · Entities×Ops / Field-types×Ops · Endpoints · Bulk limits/pagination · Incremental polling · Foreign keys · Edge cases · Gotchas · Open issues · UI quick-links · Template changelog.

@@ -1,0 +1,76 @@
+<!-- Plain-language, append-only journal of every operation actually performed on the
+     GoHighLevel connector. One op per line: [hh:mm:ss] [type] description — literal call.
+     Tags: [Service UI] / [Service API] / [Scratch CLI] / [Manual Edits]. Mask tokens. -->
+
+# GoHighLevel connector — activity log
+
+## 2026-06-09 — deep pass on branch ghl-impr
+
+Setup + account ID:
+[13:10:33] [Manual Edits] Decrypted the GHL PIT from coa_Avlneqisk5 (AES-256-GCM, ENCRYPTION_MASTER_KEY) — replicated src/utils/encryption.ts decrypt; got apiKey=pit-… + locationId 57eAggUmMecWhpP8kkis
+[13:10:33] [Service API] Found the web-app login email — GET /locations/57eAggUmMecWhpP8kkis → location "WhaleSync", email joel@whalesync.com (added to STATE.md)
+
+Enumeration (the full surface):
+[13:10:33] [Service API] Enumerated custom fields — GET /locations/{id}/customFields → ZERO existed; objects → business, opportunity, contact, custom_objects.posts; counts Contacts 6 / Opps 3 / Pipelines 2 / Users 2 / Proposals 0 / Workflows 0
+[13:10:33] [Service API] Seeded all 13 custom-field dataTypes — POST /locations/{id}/customFields (201 each). Findings: EMAIL is NOT a valid dataType (422); FLOAT + TIME exist; TIME needs dateTimeValidation; option types take options:[]
+
+Harness + pull-all:
+[13:10:33] [Scratch CLI] Created fresh workspace + connection — scratchmd workspaces create "ghl-test" → wkb_v8Sy6Oy7I9; connections add --service GOHIGHLEVEL --param apiKey=pit-… --param locationId=… → coa_m4Gwt30pFK (Health OK)
+[13:10:33] [Scratch CLI] Linked + pulled ALL 18 tables — scratchmd linked add/pull each → all "Pull completed" (conversations/blogs included; my direct-API 404/422 were wrong-endpoint guesses, not connector bugs)
+
+Custom-field write round-trip (API evidence; CLI publish GCS-gated):
+[13:10:33] [Manual Edits] Wrote 12 custom-field values into Contacts/ivan-dimitrov.json (one per type, skip FILE_UPLOAD)
+[13:10:33] [Scratch CLI] files accept OK; **files upload → 500 (GCS reauth gate — gcloud ADC expired)**; publish no-op
+[13:10:33] [Service API] Proved the write via PUT /contacts/3MNJodIs74s23TcFT4M8 {customFields:[{id,field_value}]} → 200; GET-back confirms 11/12 land exactly; TIME lossy ("14:30"→"01:30:00")
+
+BLOCKED on two human gates: (1) HighLevel browser login (joel@whalesync.com) for UI seeding/confirmation; (2) gcloud ADC reauth (`gcloud auth application-default login`) for the CLI publish path.
+
+## 2026-06-09 (cont.) — gates cleared → push-✅ via CLI publish
+
+Both gates cleared (HighLevel login testing@whalesync.com + gcloud reauth + server restart):
+[14:26:45] [Scratch CLI] Custom-field Edit→Push CONFIRMED — set TEXT field to CLIPUB-141835 in Contacts/ivan-dimitrov.json → files accept/upload/publish → GHL API confirms value landed
+[14:26:45] [Scratch CLI] Contacts New→Push CONFIRMED — new contact file → publish → remote id 93nVhfcmkv8YbxBJWSZO flowed back; GET /contacts/{id} confirms (email search lagged — eventually-consistent)
+[14:26:45] [Scratch CLI] Contacts Delete→Push CONFIRMED — rm file → publish → GET-by-id 400 (gone)
+[14:26:45] [Service API] FK isolation — direct PUT /opportunities/{id} contactId AND pipelineId both 200 + land (GHL allows opp re-parent)
+[14:26:45] [Scratch CLI] Opportunity FK CLI-move CONFIRMED — edited ONLY top-level contactId → publish → GHL re-parented (Ivan→ScratchBrowser). ⚠️ Editing the hydrated nested `contact` object too makes GHL ignore contactId → filed as a connector fix (strip hydrated objects on write).
+[15:11:04] [Scratch CLI] Opportunities full CRUD via CLI publish — New (id T7a27…)/Edit (name+monetaryValue)/Delete, each confirmed in GHL
+[15:11:04] [Scratch CLI] Custom Object (Posts) full CRUD via CLI publish — New (id 6a27…)/Edit (slug)/Delete, confirmed via GET /objects/custom_objects.posts/records/{id}
+[15:11:04] [Manual Edits] Applied connector fix — buildOpportunityPayload now strips hydrated read-only sub-objects (contact/notes/tasks/calendarEvents) so contactId FK re-parent is robust — gohighlevel-connector.ts (build+eslint clean; needs server restart to go live)
+[15:11:04] [Scratch CLI] Pass-2 edge cases via CLI publish — emoji 🎯/unicode SURVIVE (GHL preserves, vs Zoho strips), 2000-char long string survives, null-clear removes the field. All confirmed in GHL.
+[15:11:04] [Scratch CLI] Re-init the live clone to cli-v4/ghl-test for parallel observation (registry → /Users/ijd/repos/spinner/local/cli-v4/ghl-test)
+[15:11:04] [Service API] Finding: Forms/Surveys list returns only {id,locationId,name} (no structure); Products/Proposals/Blogs use _id; 6 entities empty (0 records in location)
+
+## 2026-06-09 (cont.) — generic-entity schema fix (Ivan flagged id-only columns)
+
+[15:39:33] [Service API] Confirmed root cause — buildGenericEntityJsonTableSpec only declared the id property, so the desktop table view showed only id for all 13 read-only entities (data was there verbatim via additionalProperties). These entities have NO field-metadata API (ENDPOINTS.md "Schema source": static from OpenAPI).
+[15:39:33] [Service API] Extracted static field lists from GHL's published OpenAPI (github GoHighLevel/highlevel-api-docs) for all 13 entities — Calendars 40, Products 17, Users 13, Conversations 11, Calendar Groups 6, Forms/Surveys genuinely 3 (id,name,locationId).
+[15:39:33] [Manual Edits] Added GOHIGHLEVEL_ENTITY_FIELDS map (OpenAPI-derived) + GenericFieldType to gohighlevel-entities.ts; buildGenericEntityJsonTableSpec now types the columns from it (read-only, additionalProperties kept); fetchJsonTableSpec passes it. Build + lint clean; verified via dist: calendar_groups→6 cols, products→17, users→13.
+[15:57:01] [Scratch CLI] Deleted connection + recreated (per Ivan) to regenerate table specs. Mid-op the local internet dropped → new connection went FAILED + all pulls failed (ECONNREFUSED to GHL/github/google; DNS fine). NOT the code/PIT — transient network. After it recovered: recreated connection coa_QJiXjIC7DU (Health OK), re-linked 18, re-init clone, re-pulled all 18 ✓.
+[15:57:01] [Scratch CLI] ✅ Generic-schema fix verified live — regenerated schema.json: Calendar Groups 6 cols (was 1), Calendars 56, Products 17, Users 13, Forms 3. Desktop table view now shows real columns.
+
+## 2026-06-09 (cont.) — seeding + custom-object coverage + docs
+
+[16:15:22] [Service API] Filled empty Companies table — POST /objects/business/records ×4 (Acme/Globex/Initech/Umbrella; short property keys e.g. `name`, not `business.name`) → re-pulled → 4 records in clone.
+[16:15:22] [Service API] Confirmed via OpenAPI the other empties have NO create API — Campaigns/Workflows no POST, Proposals only send-endpoints, blogs API creates posts not authors/categories. Marked UI-build-only + seeding UNTESTED in STATE.md.
+[16:15:22] [Service API] Created a fresh custom object **Pet** (`custom_objects.scratchpet`, primary field pet_name) via POST /objects/ → connector auto-discovered it (listTables).
+[16:15:22] [Scratch CLI] Full CRUD on Pet via CLI publish — New (id 6a28115f…, pet_name=Rex)/Edit(→Rex the Great)/Delete, each confirmed via GET /objects/custom_objects.scratchpet/records/{id}.
+[16:15:22] [Manual Edits] Deleted the 146-line ENDPOINTS.md; distilled it into a concise "Endpoints" section in STATE.md. Added the Endpoints-section convention to SKILL.md + coverage-template.md, and a static-vs-dynamic schema-sourcing rule. Updated entities.ts comment ref.
+[18:00:32] [Manual Edits] Grouped record paths into type folders — built-in entities → basePath ['Standard Objects'] (buildContacts/Opportunities/Pipelines/GenericEntity JsonTableSpec); human-defined custom objects (custom_objects.*) → ['Custom Objects'], standard business object → ['Standard Objects'] (buildCustomObjectJsonTableSpec, by key prefix). Picker parentPath split too. Build + lint clean.
+[18:00:32] [Scratch CLI] Deleted old workspace wkb_v8Sy6Oy7I9; created fresh wkb_nhfjSR3XU5 + connection coa_jmwDAmfxcN; linked + pulled all 19 tables; re-init clone at cli-v4/ghl-test. Verified: /highlevel/Standard Objects/{17 built-ins incl. Companies} + /highlevel/Custom Objects/{Pets, Posts}.
+[18:22:29] [Manual Edits] Custom-object fields now declared as typed schema sub-properties of `properties` (buildObjectPropertiesSchema + schemaForObjectFieldDataType + objectFieldShortKey in gohighlevel-json-schema.ts); agent-instructions moved to schema root so `properties` isn't a leaf → client auto-expands one column per field. Build + lint clean.
+[18:22:29] [Scratch CLI] Deleted workspace wkb_nhfjSR3XU5; recreated wkb_sVcZ0BPYyU / coa_XEOBxV8izJ; pulled all 19; re-init clone. Verified schema: Posts→properties.slug, Pets→properties.pet_name, Companies→10 named sub-fields, all under properties with additionalProperties:true and no x-scratch on the bag.
+[18:35:25] [Manual Edits] Added a defaultView for object tables — buildCustomObjectDefaultView gathers the object's field columns under a "Properties" TableViewBannerGroup (gohighlevel-json-schema.ts), system cols around it. Build + lint clean.
+[18:35:25] [Scratch CLI] Deleted workspace wkb_sVcZ0BPYyU; recreated wkb_9VVcgU2sJj / coa_BFEzZWWbDg; pulled all 19; re-init clone. Verified Posts views/default.json: group "Properties" = [slug, content], system cols outside. Desktop now shows the Properties banner.
+
+## 2026-06-09 (cont.) — custom fields → keyed sub-properties (fixes the TIME-collateral bug)
+
+[19:28:15] [Service API] Diagnosed: editing one contact custom field re-sent the whole `customFields` array (arrays diff atomically) incl. the TIME field, whose read-back value GHL rejects on write ("Please enter a valid time", 400). Confirmed GHL merges customFields by id (partial write of one field → 200, others intact).
+[19:28:15] [Manual Edits] Reshaped Contacts/Opportunities custom fields array → keyed `custom_fields` object of typed sub-properties (gohighlevel-json-schema.ts + gohighlevel-connector.ts, via a focused sub-agent): pull maps [{id,value|fieldValue}]→{shortKey:value} (id→key from field defs), publish maps back {shortKey:value}→[{id,field_value}]. Added "Custom Properties" defaultView banner-group for contacts/opps; renamed the custom-object group "Properties"→"Custom Properties". Build + lint clean.
+[19:28:15] [Scratch CLI] Verified live (fresh wkb_FCfLzF2Syy): contact pulls with keyed custom_fields (no array); edited ONLY scratch_text → publish CLEAN (no time error), GHL shows scratch_text changed + TIME field untouched (23:30:00, still present). Per-field diff confirmed. Views: Contacts "Custom Properties"=[13 fields], Posts "Custom Properties"=[slug, content].
+
+## 2026-06-09 (cont.) — fix: custom-field write RESPONSE was reverting the file to an array
+
+[20:11:19] [Manual Edits] Bug (Ivan): after editing one custom field + publishing, the file reverted to the `customFields` array and all fields showed as edited. Cause: create/update return the GHL response record, which still carries the array — it was pushed un-reshaped, so the persisted record's shape mismatched the keyed pulled shape. Fix: `fetchCustomFieldShortKeyToIdMap`→`fetchCustomFieldKeyMaps` (returns both maps); createRecords/updateRecords now reshape the RETURNED record (`reshapeCustomFieldsArrayToObject`, value/fieldValue) before persisting. Lint clean; watch-mode server reloaded OK (no yarn build — that collides with the running watch on dist/ and kills the server).
+[20:11:19] [Scratch CLI] Verified (valid test, absolute scratchmd path): edit scratch_text → publish → "Published", GHL updated (REVERTTEST), file STAYS keyed (no array), `files unpublished` empty, TIME untouched (23:30:00). (An earlier "pass" was a false positive — a relative `$SM` path stopped resolving after `cd` into the workspace, so accept/upload/publish silently never ran. Lesson: use an absolute scratchmd path when cd'ing into the clone.)
+[20:19:18] [Manual Edits] View-group fix (Ivan): (1) renamed the field group "Custom Properties"→"Custom Fields" (GHL's term, not an invented one); (2) the objects API flags each field `standard` (business.* = true, custom_objects.* = false) — buildCustomObjectDefaultView now keeps STANDARD fields flat and groups only custom (standard:false) ones, so the Businesses/Companies object's name/phone/email no longer mislabel as custom. Added `standard?` to GoHighLevelObjectField. Lint clean; verified via dist: Companies→flat name/phone (no group), Pets→"Custom Fields"[pet_name].
+[23:17:39] [Manual Edits] Read-only fix (Ivan): dateAdded/dateUpdated (+ id, locationId) were editable in the desktop though publish drops them. Cause: the schema marked them `x-scratch-readonly:true`, but buildStandardEntityDefaultView only set the VIEW col `readonly` on `id` — and the grid honors the col's readonly when a defaultView exists. Fix: derive each col's `readonly` from the property's x-scratch-readonly. Verified via dist: id/dateAdded/dateUpdated/locationId → readonly true, email/firstName → false. (buildCustomObjectDefaultView already set readonly on its system cols.) Added a SKILL.md Stage-A rule: label every read-only field x-scratch-readonly (esp. server timestamps) AND propagate it into the default view's columns.
