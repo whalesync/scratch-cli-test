@@ -14,7 +14,7 @@ import { ExperimentsService } from '../experiments/experiments.service';
 import { UserFlag } from '../experiments/flags';
 import { Connector } from '../remote-service/connectors/connector';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, ConnectorFile } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { pickByShape } from './diff-utils';
@@ -829,23 +829,55 @@ export class PublishPlanRunService {
       });
       return false;
     } catch (err) {
+      // Resolve the failure into the service's own user-facing reason. For HTTP
+      // connectors `extractConnectorErrorDetails` digs the validation message
+      // out of the error response body (e.g. Pipedrive's "Validation failed:
+      // Expected 'number' as value for organization custom field ..."), instead
+      // of the opaque "Request failed with status code 400" that `err.message`
+      // carries. This is the same machinery the pull path already uses.
+      const connectorErrorDetails = this.extractPublishErrorDetailsForUser(connector, err);
+
       WSLogger.warn({
         source: 'PublishRunService.processBatch',
         message: `Batch failed (size=${entries.length})`,
-        error: err,
+        // Log the sanitized, connector-extracted details — NEVER the raw error.
+        // A raw AxiosError serializes to a >100KB blob that GCP truncates, and
+        // it leaks request headers (including the API token) into Cloud Logging.
+        error: {
+          message: connectorErrorDetails.userFriendlyMessage,
+          description: connectorErrorDetails.description,
+          context: connectorErrorDetails.additionalContext,
+        },
         workbookId,
         data: { planId, phase, entryIds: entries.map((e) => e.id) },
       });
 
-      // failed-batch
+      // failed-batch — persist the user-facing reason so the review UI surfaces
+      // it on the record instead of a bare HTTP status code.
       await this.db.client.publishPlanOperation.updateMany({
         where: { id: { in: entries.map((e) => e.id) } },
         data: {
           status: 'failed-batch',
-          error: err instanceof Error ? err.message : String(err),
+          error: connectorErrorDetails.userFriendlyMessage,
         },
       });
       return true;
+    }
+  }
+
+  /**
+   * Resolve a publish-dispatch failure into the connector's user-facing error
+   * details. Delegates to {@link Connector.extractConnectorErrorDetails}, which
+   * for HTTP connectors reads the service's own validation message out of the
+   * error response body. Defensive: a failure *inside* extraction must never
+   * mask the original publish failure, so it falls back to the raw message.
+   */
+  private extractPublishErrorDetailsForUser(connector: Connector, err: unknown): ConnectorErrorDetails {
+    try {
+      return connector.extractConnectorErrorDetails(err);
+    } catch {
+      const rawErrorMessage = err instanceof Error ? err.message : String(err);
+      return { userFriendlyMessage: rawErrorMessage, description: rawErrorMessage };
     }
   }
 

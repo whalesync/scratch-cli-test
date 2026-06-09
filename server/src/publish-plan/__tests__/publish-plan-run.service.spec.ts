@@ -30,6 +30,12 @@ function makeMockConnector() {
     updateRecords: jest.fn().mockResolvedValue(undefined),
     createRecords: jest.fn().mockResolvedValue([]),
     deleteRecords: jest.fn().mockResolvedValue(undefined),
+    // Default passthrough: surface the raw message. Tests that exercise the
+    // failure path override this to assert the extracted, user-facing reason
+    // (e.g. a service's validation message) is what gets persisted/logged.
+    extractConnectorErrorDetails: jest.fn((error: unknown) => ({
+      userFriendlyMessage: error instanceof Error ? error.message : String(error),
+    })),
   } as unknown as jest.Mocked<Connector>;
 }
 
@@ -382,6 +388,48 @@ describe('PublishPlanRunService', () => {
       // changedFields passed to connector should contain the TRANSFORMED value,
       // not the raw @/ pseudo-ref from the DB
       expect(cfArg).toEqual([{ author: 'author_remote_456' }]);
+    });
+  });
+
+  describe('connector error surfacing on batch failure', () => {
+    it('persists the connector-extracted user-facing reason, not the raw HTTP error', async () => {
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'Organizations/9x-updated.json',
+          content: { id: 'rec_1', custom_fields: { numberField: 'Custom field' } },
+          changedFields: { custom_fields: { numberField: 'Custom field' } },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+
+      // The dispatch rejects with an opaque axios message...
+      const rawAxiosError = new Error('Request failed with status code 400');
+      jest.mocked(connector.updateRecords).mockRejectedValue(rawAxiosError);
+
+      // ...but the connector knows how to read the service's real reason out of
+      // the 400 response body. That extracted message is what users should see.
+      const serviceValidationMessage =
+        "Validation failed: custom_fields: Expected 'number' as value for organization custom field 'numberField'";
+      jest.mocked(connector.extractConnectorErrorDetails).mockReturnValue({
+        userFriendlyMessage: serviceValidationMessage,
+        additionalContext: { status: 400 },
+      });
+
+      await service.runPipeline(PLAN_ID);
+
+      // The runner asks the connector to interpret the raw error...
+      expect(connector.extractConnectorErrorDetails).toHaveBeenCalledWith(rawAxiosError);
+
+      // ...and persists the extracted reason (not "Request failed with status
+      // code 400") onto the failed-batch operation, which the review UI shows.
+      const failedBatchCall = jest
+        .mocked(db.client.publishPlanOperation.updateMany)
+        .mock.calls.find((call) => (call[0] as { data?: { status?: string } }).data?.status === 'failed-batch');
+      expect(failedBatchCall).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const failedData = (failedBatchCall![0] as { data: { status: string; error: string } }).data;
+      expect(failedData.error).toBe(serviceValidationMessage);
     });
   });
 });
