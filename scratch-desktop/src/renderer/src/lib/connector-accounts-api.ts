@@ -1,53 +1,24 @@
-import {
+import type {
   ConnectorAccount,
-  ConnectorSettingDefinition,
   CreateConnectorAccountDto,
-  EntityId,
-  TableDiscoveryMode,
+  TableList,
+  TablePreview,
+  TableSchemaPreview,
+  TableSearchResult,
+  TestConnectionResponse,
   UpdateConnectorAccountDto,
 } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
-export interface TestConnectionResponse {
-  success: boolean;
-  message?: string;
-}
-
-export interface TablePreview {
-  id: EntityId;
-  displayName: string;
-  disabled?: boolean;
-  disabledCreates?: boolean;
-  disabledUpdates?: boolean;
-  disabledDeletes?: boolean;
-  parentPath?: string;
-  disabledReason?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface TableList {
-  tables: TablePreview[];
-  discoveryMode: TableDiscoveryMode;
-  supportsFilters: boolean;
-  supportsFieldSelection: boolean;
-  advancedSettings: ConnectorSettingDefinition[];
-}
-
-export interface TableSearchResult {
-  tables: TablePreview[];
-  hasMore: boolean;
-}
-
-export interface TableSchemaPreview {
-  id: EntityId;
-  slug: string;
-  name: string;
-  schema: Record<string, unknown>;
-  idColumnRemoteId: string;
-  titleColumnRemoteId?: string[];
-  mainContentColumnRemoteId?: string[];
-  slugFieldPath?: string;
-}
+// TablePreview, TableList, TableSearchResult, TableSchemaPreview, TestConnectionResponse
+// are the shared contract — re-exported so existing importers keep working.
+export type {
+  TableList,
+  TablePreview,
+  TableSchemaPreview,
+  TableSearchResult,
+  TestConnectionResponse,
+} from '@spinner/shared-types';
 
 export function isTableFullyLocked(table: TablePreview | undefined): boolean {
   return Boolean(table?.disabledCreates && table?.disabledUpdates && table?.disabledDeletes);

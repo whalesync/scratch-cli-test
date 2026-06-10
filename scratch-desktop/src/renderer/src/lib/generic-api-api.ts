@@ -1,18 +1,8 @@
-import type { GenericApiFolderOptions } from '@spinner/shared-types';
+import type { GenericApiAiPromptResponse, ProbeEndpointResponse } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
-export interface GenericApiAiPromptResponse {
-  version: string;
-  text: string;
-}
-
-export interface ProbeEndpointResponse {
-  probe: GenericApiFolderOptions['probe'];
-  recordsWalked: number;
-  page1RecordCount: number;
-  page2RecordCount: number;
-  page2Status: 'ok' | 'no-pagination';
-}
+// Re-exported so existing importers keep working.
+export type { GenericApiAiPromptResponse, ProbeEndpointResponse } from '@spinner/shared-types';
 
 export const genericApiApi = {
   getAiPrompt: async (apiType: 'rest' | 'graphql'): Promise<GenericApiAiPromptResponse> => {

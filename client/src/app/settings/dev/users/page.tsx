@@ -120,13 +120,15 @@ export default function UsersDevPage() {
                         <Table.Td>
                           <Group>
                             {user.clerkId}
-                            <Anchor
-                              href={clerkUserUrl(user.clerkId, getBuildFlavor())}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <StyledLucideIcon Icon={HatGlassesIcon} size={16} />
-                            </Anchor>
+                            {user.clerkId && (
+                              <Anchor
+                                href={clerkUserUrl(user.clerkId, getBuildFlavor())}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <StyledLucideIcon Icon={HatGlassesIcon} size={16} />
+                              </Anchor>
+                            )}
                           </Group>
                         </Table.Td>
                       )}

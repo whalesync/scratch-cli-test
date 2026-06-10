@@ -1,5 +1,6 @@
 import { UserDetails } from '@/types/server-entities/dev-tools';
-import { UpdateSettingsDto, User } from '@/types/server-entities/users';
+import { User } from '@/types/server-entities/users';
+import type { UpdateSettingsDto } from '@spinner/shared-types';
 import {
   ChangeUserOrganizationDto,
   ConnectorAccountId,

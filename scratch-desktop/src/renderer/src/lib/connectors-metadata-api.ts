@@ -1,30 +1,10 @@
-import { AuthMethod, ConnectorSettingDefinition } from '@spinner/shared-types';
+import type { ConnectorMetadata } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
-/** Server `ConnectorMetadata` shape returned by `GET /connectors/metadata`. */
-export interface ConnectorMetadataEntry {
-  displayName: string;
-  logo: string;
-  visible: boolean;
-  incrementalPull: boolean;
-  incrementalPullInstructions: string | null;
-  supportedAuthMethods: AuthMethod[];
-  defaultAuthMethod: AuthMethod;
-  oauth?: { label: string; privateLabel?: string };
-  credentialFields?: Partial<Record<AuthMethod, ConnectorSettingDefinition[]>>;
-  userProvidedParamsLabel?: string;
-  setupGuide?: { label: string; url: string };
-  table: string;
-  tables: string;
-  record: string;
-  records: string;
-  base: string | null;
-  bases: string | null;
-  pushOperationName: string;
-  pullOperationName: string;
-}
-
-export type ConnectorsMetadataMap = Record<string, ConnectorMetadataEntry>;
+// `ConnectorMetadata` is the shared contract. `ConnectorMetadataEntry` is kept as
+// an alias so existing importers keep working.
+export type ConnectorMetadataEntry = ConnectorMetadata;
+export type ConnectorsMetadataMap = Record<string, ConnectorMetadata>;
 
 export const connectorsMetadataApi = {
   getAll: async (): Promise<ConnectorsMetadataMap> => {

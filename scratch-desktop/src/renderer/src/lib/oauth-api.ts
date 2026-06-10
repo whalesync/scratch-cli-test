@@ -1,19 +1,10 @@
-import { OAuthInitiateOptionsDto } from '@spinner/shared-types';
+import type {
+  OAuthCallbackRequest,
+  OAuthCallbackResponse,
+  OAuthInitiateOptionsDto,
+  OAuthInitiateResponse,
+} from '@spinner/shared-types';
 import { API_CONFIG } from './api';
-
-export interface OAuthInitiateResponse {
-  authUrl: string;
-}
-
-export interface OAuthCallbackRequest {
-  code: string;
-  state: string;
-  realmId?: string;
-}
-
-export interface OAuthCallbackResponse {
-  connectorAccountId: string;
-}
 
 export const oAuthApi = {
   initiate: async (service: string, options: OAuthInitiateOptionsDto): Promise<OAuthInitiateResponse> => {

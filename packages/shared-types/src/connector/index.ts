@@ -4,4 +4,5 @@ export * from './fieldtypes';
 export * from './generic-api-paste-validator';
 export * from './json-schema';
 export * from './metadata';
+export * from './table-list';
 export * from './table-view';

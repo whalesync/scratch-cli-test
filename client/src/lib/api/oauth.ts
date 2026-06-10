@@ -1,21 +1,11 @@
-import { OAuthInitiateOptionsDto } from '@spinner/shared-types';
+import type {
+  OAuthCallbackRequest,
+  OAuthCallbackResponse,
+  OAuthInitiateOptionsDto,
+  OAuthInitiateResponse,
+} from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
-
-export interface OAuthInitiateResponse {
-  authUrl: string;
-  state: string;
-}
-
-export interface OAuthCallbackRequest {
-  code: string;
-  state: string;
-  realmId?: string;
-}
-
-export interface OAuthCallbackResponse {
-  connectorAccountId: string;
-}
 
 export const oAuthApi = {
   /**

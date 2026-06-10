@@ -111,7 +111,7 @@ const getStatusLabel = (status: EffectiveState): string => {
   }
 };
 
-const formatDuration = (processedOn?: Date | null, finishedOn?: Date | null): string => {
+const formatDuration = (processedOn?: string | Date | null, finishedOn?: string | Date | null): string => {
   if (!processedOn) return '-';
   if (!finishedOn) return '-';
 
@@ -126,7 +126,7 @@ const formatDuration = (processedOn?: Date | null, finishedOn?: Date | null): st
   return `${minutes}m ${remainingSeconds}s`;
 };
 
-const formatTimestamp = (date?: Date | null): string => {
+const formatTimestamp = (date?: string | Date | null): string => {
   if (!date) return '-';
   return new Date(date).toLocaleString(undefined, {
     month: 'short',

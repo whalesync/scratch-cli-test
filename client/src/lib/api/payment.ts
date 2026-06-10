@@ -1,9 +1,10 @@
-import {
+import type {
+  CreateCheckoutSessionBody,
   CreateCheckoutSessionResponse,
   CreateCustomerPortalUrlResponse,
   CreatePortalDto,
-} from '@/types/server-entities/payment';
-import { CreateCheckoutSessionBody, SubscriptionPlan } from '@spinner/shared-types';
+  SubscriptionPlan,
+} from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 

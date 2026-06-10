@@ -1,32 +1,15 @@
-import { GenericApiFolderOptions } from '@spinner/shared-types';
+import type { GenericApiAiPromptResponse, ProbeEndpointResponse, ReprobeResponse } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
-export interface GenericApiAiPromptResponse {
-  version: string;
-  text: string;
-}
-
-export interface ProbeEndpointResponse {
-  probe: GenericApiFolderOptions['probe'];
-  recordsWalked: number;
-  page1RecordCount: number;
-  page2RecordCount: number;
-  page2Status: 'ok' | 'no-pagination';
-}
-
-export interface ReprobeDiff {
-  idPathChanged: boolean;
-  paginationStrategyChanged: boolean;
-  schemaFieldsAdded: string[];
-  schemaFieldsRemoved: string[];
-}
-
-export interface ReprobeResponse {
-  applied: boolean;
-  diff: ReprobeDiff;
-  newProbe: GenericApiFolderOptions['probe'];
-}
+// GenericApiAiPromptResponse, ProbeEndpointResponse, ReprobeResponse, ReprobeDiff
+// are the shared contract — re-exported so existing importers keep working.
+export type {
+  GenericApiAiPromptResponse,
+  ProbeEndpointResponse,
+  ReprobeDiff,
+  ReprobeResponse,
+} from '@spinner/shared-types';
 
 export const genericApiApi = {
   getAiPrompt: async (apiType: 'rest' | 'graphql'): Promise<GenericApiAiPromptResponse> => {

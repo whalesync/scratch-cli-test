@@ -1,18 +1,15 @@
-import type { PublishPlanEntity, PublishPlanOperationEntity, PublishPlanRecordsResponse } from '@spinner/shared-types';
+import type {
+  PlanJobResponse,
+  PublishPlanEntity,
+  PublishPlanOperationEntity,
+  PublishPlanRecordsResponse,
+  RepoFileResponse,
+  RunJobResponse,
+} from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
-export interface PlanJobResponse {
-  jobId: string | number | null;
-  pipelineId: string | null;
-}
-
-export interface RunJobResponse {
-  jobId: string | number | null;
-}
-
-export interface RepoFileResponse {
-  content: string;
-}
+// Re-exported so existing importers keep working.
+export type { PlanJobResponse, RepoFileResponse, RunJobResponse } from '@spinner/shared-types';
 
 export const publishApi = {
   /**

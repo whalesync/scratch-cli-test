@@ -7,7 +7,9 @@ import {
   DeleteWorkbookResponseDto,
   DirtyFile,
   DirtyFileCountResponse,
+  GitFile,
   GitGcResponse,
+  GitIndexDump,
   GitObjectCountsResponse,
   HasDirtyFilesResponse,
   PublishPlanBuildDto,
@@ -15,6 +17,7 @@ import {
   PublishPlanOperationEntity,
   PublishPlanRecordsResponse,
   PublishPlanRunDto,
+  StripPrefixConnectionResult,
   TestTransformerDto,
   TestTransformerResponse,
   TransformerConfig,
@@ -31,40 +34,17 @@ import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
 export type WorkbookSortBy = 'name' | 'createdAt' | 'updatedAt';
-
-export interface StripPrefixConnectionResult {
-  connectorAccountId: string;
-  displayName: string;
-  repoId: string;
-  case: string;
-  foldersUpdated: number;
-  error?: string;
-}
 export type WorkbookSortOrder = 'asc' | 'desc';
 
-export interface GitFile {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-}
-
-export interface GitIndexFile {
-  folder: string;
-  filename: string;
-  remoteId: string | null;
-}
-
-export interface GitIndexReference {
-  sourceFolder: string;
-  sourceFilename: string;
-  targetTableId: string;
-  targetRemoteId: string;
-}
-
-export interface GitIndexDump {
-  files: GitIndexFile[];
-  references: GitIndexReference[];
-}
+// GitFile, GitIndexFile, GitIndexReference, GitIndexDump, StripPrefixConnectionResult
+// are the shared contract — re-exported so existing importers keep working.
+export type {
+  GitFile,
+  GitIndexDump,
+  GitIndexFile,
+  GitIndexReference,
+  StripPrefixConnectionResult,
+} from '@spinner/shared-types';
 
 export const workbookApi = {
   list: async (

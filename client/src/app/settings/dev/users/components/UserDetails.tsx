@@ -176,11 +176,13 @@ export const UserDetailsCard = ({
           <Stack>
             <Group align="center" gap="xs">
               <LabelValuePair label="Clerk ID" value={details.user.clerkId} canCopy />
-              <Tooltip label="View in Clerk">
-                <Anchor href={clerkUserUrl(details.user.clerkId, getBuildFlavor())} target="_blank" rel="noreferrer">
-                  <StyledLucideIcon Icon={HatGlassesIcon} size={16} />
-                </Anchor>
-              </Tooltip>
+              {details.user.clerkId && (
+                <Tooltip label="View in Clerk">
+                  <Anchor href={clerkUserUrl(details.user.clerkId, getBuildFlavor())} target="_blank" rel="noreferrer">
+                    <StyledLucideIcon Icon={HatGlassesIcon} size={16} />
+                  </Anchor>
+                </Tooltip>
+              )}
             </Group>
             <Group align="center" gap="xs">
               {details.user.stripeCustomerId ? (

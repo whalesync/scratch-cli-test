@@ -4,6 +4,7 @@ import {
   DataFolderId,
   MappingTypeTraceResponse,
   PreviewRecordResponse,
+  RunSyncResponse,
   SaveSyncBody,
   Sync,
   SyncId,
@@ -16,12 +17,6 @@ import {
 } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
-
-interface RunSyncResponse {
-  success: boolean;
-  jobId: string;
-  message: string;
-}
 
 export const syncApi = {
   create: async (workbookId: WorkbookId, body: SaveSyncBody): Promise<Sync> => {
