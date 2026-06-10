@@ -1,0 +1,7 @@
+/**
+ * Copper CRM logo — inline PNG data URI (32×32). Inlined so the connector renders
+ * without the static.scratch.md CDN (the hosted `.svg` URL 404'd → broken icon);
+ * for production, upload an asset there and swap the URL.
+ */
+export const COPPER_LOGO_DATA_URI =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACdElEQVR4AayWQ7ccQRiGZ31X8ytmH9u2NrFt27addGzb5ia2s4mTa/NJ1enrLvTgPecZdH/l+hDwKyoPCAq6ChzBY0G8IL+Q+MJnTqFN0N6j/4FDgp2CTAE+ySxsE4pm4DjBCkGugAjJLewjLpJVvxYQI17LPv0OXlHwV0CMkX1WtK/cPni0kwiZztz/tlcbBJ2mQ/8l0GcRtJro+ziUd6LAvSxYGbYSbj6BjCy49wIGLnN5/B5+J8Dey9B8vLEPOZZn6623Xa7w4WuKdf8lVB1Y8r7haMjJdd+lZcCkzTbvCJWewE7j4F3mwL9kipWXB22neO0SU0rZ5MPINaZd2Fk6wumDTIvx8C+JMnrw0msnt72ggDL68U/eFVOwCgYKQydabj3Fo9VHvXYzHZQasBRD/13l5XO0Bj0XeFclNXqd19Y5j1LTt5km4AQKkwhKjt5EqX5LvLbz96CUdFH9BB7LCcRrDT5/R6nBy722dYbD15+U0d3nNreODxSmU5RkZqPUTEdt33AUbD4N5x/C8kNQY4htAvnmCeTno9Tx27EKzfnmI0hMRamkNKg7PBYTiDdfwsfv0erIDfsAVQbC3F3WS6h3w7XH0Eq6p3MOqmoCTbNxcOc5bD9ndUN9IGo0GtIyMerrD1h/Akatcb1jxnY4dRfSs+BPItQbYQ5E1lC87CARSV7gEattdWPQXzI6fQ+bPMez4pDtjuz0n46rDJD+7aZbm2SdMHuntVj1VEb4KUg6TpcxQO2eSalu6G49yY/7rbCVZHb3ajfVLcdktuswTT6LriT7P3o2Sge0WT6YOyaYaeIfFbpmUDO4hkrnlP7dcwArMme6I5nCTQAAAABJRU5ErkJggg==';

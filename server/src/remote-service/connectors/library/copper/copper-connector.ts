@@ -21,7 +21,9 @@ import {
   TablePreview,
 } from '../../types';
 import { CopperApiClient, CopperError } from './copper-api-client';
+import { reshapeCustomFieldsArrayToObject, reshapeCustomFieldsObjectToArray } from './copper-custom-fields';
 import { buildCopperJsonTableSpec } from './copper-json-schema';
+import { COPPER_LOGO_DATA_URI } from './copper-logo';
 import { COPPER_ENTITY_CONFIG, COPPER_ENTITY_TYPES, CopperDownloadProgress, CopperEntityType } from './copper-types';
 
 const LOG_SOURCE = 'CopperConnector';
@@ -46,10 +48,9 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     displayName: 'Copper',
     table: 'entity',
     tables: 'entities',
-    logo: 'https://static.scratch.md/connector-icons/copper.svg',
-    // Hidden from the production connector picker until v1 is validated end-to-end;
-    // still selectable in local dev (use-connectors.ts shows all connectors when NODE_ENV=development).
-    visible: false,
+    logo: COPPER_LOGO_DATA_URI,
+    // Validated end-to-end (all 6 entities full CRUD + custom-field reshape + FK move) — visible in production.
+    visible: true,
     credentialFields: {
       user_provided_params: [
         { key: 'apiKey', type: 'password', label: 'API Key', placeholder: 'Enter your Copper API key', required: true },
@@ -111,7 +112,9 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
 
     for await (const batch of this.client.listEntities(entityType, undefined, startPage)) {
       await callback({
-        files: batch.records as ConnectorFile[],
+        // Reshape each record's verbatim custom_fields array → keyed object so
+        // every custom field is an editable column (see copper-custom-fields.ts).
+        files: batch.records.map(reshapeCustomFieldsArrayToObject) as ConnectorFile[],
         connectorProgress: { nextPage: batch.nextPage },
       });
     }
@@ -136,7 +139,7 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
 
       const record = await this.client.getEntity(entityType, numericId);
       if (record) {
-        buffer.push(record as ConnectorFile);
+        buffer.push(reshapeCustomFieldsArrayToObject(record) as ConnectorFile);
       }
 
       if (buffer.length >= PULL_BY_IDS_BATCH_SIZE) {
@@ -161,9 +164,13 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     const results: ConnectorFile[] = [];
 
     for (const file of files) {
-      const body = stripReadonlyFields(file, readonlyKeys);
+      // Strip read-only system fields, then reshape the keyed custom_fields
+      // object back into the [{custom_field_definition_id, value}] array Copper expects.
+      const body = reshapeCustomFieldsObjectToArray(stripReadonlyFields(file, readonlyKeys));
       const created = await this.client.createEntity(entityType, body);
-      results.push(created as ConnectorFile);
+      // Reshape Copper's array response back to the keyed object so the persisted
+      // record keeps the editable shape (and the new id flows back in).
+      results.push(reshapeCustomFieldsArrayToObject(created) as ConnectorFile);
     }
 
     return results;
@@ -188,9 +195,11 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
       }
 
       const changed = changedFields?.[i];
-      const body = changed ? stripReadonlyFields(changed, readonlyKeys) : stripReadonlyFields(file, readonlyKeys);
+      const stripped = changed ? stripReadonlyFields(changed, readonlyKeys) : stripReadonlyFields(file, readonlyKeys);
+      // Reshape any keyed custom_fields object back to Copper's array shape.
+      const body = reshapeCustomFieldsObjectToArray(stripped);
       const updated = await this.client.updateEntity(entityType, parseInt(id, 10), body);
-      results.push(updated as ConnectorFile);
+      results.push(reshapeCustomFieldsArrayToObject(updated) as ConnectorFile);
     }
 
     return results;

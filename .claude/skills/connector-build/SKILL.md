@@ -92,6 +92,13 @@ Do this **before** pulling/pushing anything. The browser is not optional: create
    - **(d) None of the above** → **provision a new account** ([Stage A0](#stage-a0--provision-the-test-account)).
 5. Announce detected position + chosen account in one line, then continue from the earliest gap.
 
+### Adopting a human-built connector (code exists, no STATE.md)
+A common starting state: a developer already built part (or all) of the connector but never ran this skill — so there's **substantial code but no STATE.md** (e.g. Affinity). Don't treat it as greenfield, and **don't trust the code as tested.** Reverse-engineer the doc *from the code* first:
+1. **Cold-read every connector file** and fill the STATE.md from what the code actually does — Objects tables, entity/field matrix, paths, auth, endpoints, FK, incremental, default view — citing the source, not a test run. Pull the linked issue(s) too (it states the *intended* next step, e.g. "add publishing").
+2. **Mark all coverage `⬜`.** Existing code is **not** evidence of a passing round-trip; only a live CLI+service confirmation earns a ✅. A fresh adoption starts unverified even where code clearly exists — say so in a one-line note rather than inferring green.
+3. **Seed the TODOs section** (below) from the gaps the code reveals — write methods stubbed/throwing, fields not marked read-only, entities in types but not in `listTables`, no default view, incremental not wired — plus the linked issue's asks.
+4. Then run the normal passes (browser preflight → harness → Stage C…), now driven by the doc you just wrote.
+
 ---
 
 ## Step 1 — Classify the connector (decides what you iterate over)
@@ -103,6 +110,17 @@ Read `listTables()`: hardcoded entity list ⇒ **static**; tables discovered fro
 - **Mixed** (HubSpot, Copper, Pipedrive, Attio): standard entities **plus** custom objects/fields → do both. Mark `Type: STATIC · custom fields supported (mixed)`.
 
 **Where each schema comes from (decide per object family):** **dynamic** data (user-defined objects/fields) → build the schema from the service's **discovery endpoint** at runtime; **static** data (fixed system entities/fields with **no** schema/describe endpoint) → enumerate the fields from the **API docs / OpenAPI** and **hardcode** them in the connector (the sanctioned exception to "discover dynamically"). If a discovery endpoint already returns the static fields *alongside* the dynamic ones, use that one endpoint for both; only hardcode when the static schema is **not exposed by any endpoint**. A static entity whose generic builder emits only an `id` column (no field metadata) is the tell that this enumeration was skipped. See [docs/connector-build.md → Schema & structure](/docs/connector-build.md).
+
+### Check for prior art in Whalesync (the legacy product) — research, don't copy
+Whalesync (this company's older sync product) may already have a connector for this service. **If it does, research it for domain knowledge** — the entity surface, field quirks, pagination, rate limits, and gotchas it learned the hard way are a real head start. But treat it as **reference, never a template**, with two hard caveats:
+- **iApp-based connectors are low-value references.** Some Whalesync connectors are built on **iApp**, a *generic* third-party integration platform, not a direct integration. **Spinner does direct integrations only**, so an iApp connector tells you little about the real API surface — don't mirror its shape; verify everything against the service's own API.
+- **Always target the newest API/SDK, even if Whalesync uses an older one.** A Whalesync connector may be pinned to an old API version or client. Don't inherit that — build the Spinner connector on the service's **latest API version + official/maintained SDK or CLI**, and record the currency verdict in the STATE.md Endpoints "API version & client" line.
+
+**Where it is:** Whalesync is a **sibling repo** of spinner — same parent folder, i.e. `../whalesync` (e.g. `/Users/ijd/repos/whalesync`). Connectors live at **`api/bottlenose/src/connectors/`**: direct ones as `<service>-connector/`, iApp ones under `iapp-connectors/<service>-connector/`. **If `../whalesync` isn't there, don't guess** — ask the user for its path, *or* to confirm this is a new connector you shouldn't look for in Whalesync.
+
+**The Whalesync connector inventory is fixed (these don't change) — only look for these; anything not listed has no Whalesync connector, so don't waste time searching:**
+- **Direct integrations** (worth researching): affinity, airtable, bubble, github, hubspot, memberstack, notion, postgres, salesforce, shopify, stripe, supabase, webflow, wix, wordpress (.com), wordpressorg (.org self-hosted), youtube.
+- **iApp-based** (generic-platform → low-value reference, see caveat above): apollo, attio, close, copper, dynamics-crm, outreach, pipedrive, sheets (Google Sheets), zoho.
 
 ---
 
@@ -242,6 +260,19 @@ If there's no real structural grouping, **don't add groups** — a clean flat vi
 
 ---
 
+## OAuth — the final milestone
+
+Run this **last**, only once everything else is green. All testing is done with an **API key** (`user_provided_params`, CLI-connectable); OAuth isn't needed to prove the connector. This is a **pre-release** step and the **only milestone human collaboration completes** — unlike the autonomous stages above, you do it *with* the user, since they own the developer account, approvals, and billing.
+
+**Goal — either outcome completes Milestone 9:** stand up an OAuth client **with the user via the gstack browser**, **or**, if it's gated/hard, **document exactly what it would take**. Many flows need a developer account, a registered "app", specific scopes, or vendor review — record what you find either way.
+
+1. **Research** the service's OAuth: dev account / app registration needed? scopes? review/approval? Capture the authorize + token URLs and that the redirect URI must be Scratch's callback (`REDIRECT_URI`, e.g. `https://test.scratch.md/oauth/callback`).
+2. **Drive the browser + instruct the user.** `$B goto` the developer console; post a crisp, numbered set of instructions, `/read` them, and use the browser to navigate/fill where you can. **Pause at every human gate** (dev-account signup, billing, app review, captcha/2FA) with a one-line ask + `/read`, per the [autonomy contract](#when-blocked-alert-the-developer-out-loud).
+3. **Capture** the client id/secret → `server/.env` (`<SERVICE>_CLIENT_ID`/`_SECRET`); record *where they live* in STATE.md, never the secret. The connector-code half (OAuthProvider + wiring) is the CONNECTOR_GUIDE **[Server — OAuth](/server/src/remote-service/connectors/CONNECTOR_GUIDE.md)** checklist — link it, don't restate.
+4. **Record + flip Milestone 9** in the STATE.md OAuth section. If blocked (approval pending, paid dev account, …), write the requirements + blocker and mark it **documented (not built)** — an acceptable completion for *this* milestone only.
+
+---
+
 ## Recovery — when stuck, nuke and recreate the workspace
 
 Local state (dirty branch, accepted-patches, SQLite index, partial pulls) can wedge. Don't fight it — the service and the server git are the source of truth.
@@ -263,7 +294,7 @@ Re-confirm with a pull + a service-API check before resuming. Log a reproducible
 
 - **`server/src/remote-service/connectors/library/<connector>/STATE.md`** — *this* connector's resumable coverage matrix + its own edge cases. One per connector. (What's been covered.)
 - **`server/src/remote-service/connectors/library/<connector>/LOG.md`** — *this* connector's human-readable **activity log**: one line per operation actually performed, so a human can review exactly what was done. One per connector. (What was done, step by step — see [The activity log](#the-activity-log--logmd).)
-- **[`docs/connector-build.md`](/docs/connector-build.md)** — the **cross-connector playbook**: tricks and problems seen across *all* connectors, so each new run starts forewarned. Read at Step 0, appended in Stage E. One global file.
+- **[`docs/connector-build.md`](/docs/connector-build.md)** — the **cross-connector playbook**: tricks and problems seen across *all* connectors, so each new run starts forewarned. Read at Step 0, appended in Stage E. One global file. It also holds the **Connector summary table** (per-connector feature support) — **update the relevant cell whenever a connector's auth/feature support changes, and add a row for every connector you review.**
 
 ## The coverage doc — `STATE.md`
 
@@ -284,12 +315,15 @@ One per connector at `server/src/remote-service/connectors/library/<connector>/S
    **(c) Scoped / non-top-level entities** — entities that are **not directly fetchable as a top-level entity**, for either reason: **(i) scoped to another entity** and reached only through it — CRM **notes fetched per-user** (`GET /users/{id}/notes`), ClickUp **comments per task** — so they ride the parent's **deep fetch**, embedded into the parent record; or **(ii) weird in some other way** that blocks top-level treatment — e.g. only reachable via search/export with no list endpoint, requires an unsupported auth/scope, returned only as a side-effect of another call, or a shape that can't be a standalone record. Each gets a row: what blocks top-level fetch, how we'd reach it (parent deep-fetch / special path), `Status` built/planned. Still first-class data we want — never silently dropped.
 
    Every object lands in exactly one table; every unbuilt one carries a `Status` and a one-line plan. "Tasks work" is not coverage of "ClickUp".
-5. A **Milestones** table near the top — an 8-row "where are we" tracker so anyone can see the connector's progress at a glance, each row ✅/🔄/⬜: **(1) account ready** (registered/logged into the web app) → **(2) connected** (health OK) → **(3) first fetch** (≥1 record pulled) → **(4) all entities seeded & fetched** → **(5) full write CRUD** (create+edit+delete pushed) → **(6) foreign keys tested** (CLI move parent→parent) → **(7) edge cases & quirks tested** → **(8) view(s) built** (default view with fields grouped logically — see [Building views](#building-views--group-by-existing-mechanics-never-invent)).
+5. A **Milestones** table near the top — a 9-row "where are we" tracker so anyone can see the connector's progress at a glance, each row ✅/🔄/⬜: **(1) account ready** (registered/logged into the web app) → **(2) connected** (health OK) → **(3) first fetch** (≥1 record pulled) → **(4) all entities seeded & fetched** → **(5) full write CRUD** (create+edit+delete pushed) → **(6) foreign keys tested** (CLI move parent→parent) → **(7) edge cases & quirks tested** → **(8) view(s) built** (default view with fields grouped logically — see [Building views](#building-views--group-by-existing-mechanics-never-invent)) → **(9) OAuth** (final/pre-release — create the OAuth client with the user via the browser, or document what it requires; see [OAuth — the final milestone](#oauth--the-final-milestone)).
+
+   Directly beneath the table, a **TODOs** section: a short, living checklist of known pending tasks — gaps surfaced while [adopting human-built code](#adopting-a-human-built-connector-code-exists-no-statemd), unfinished entities/fields, deferred edge cases, and follow-up issues — checked off as they land. It complements Milestones (coarse progress) and Open issues (only broken ❌ cells with Linear links).
 6. The coverage matrix (entities×ops for static, field-types×ops for dynamic, both for mixed), edge cases, gotchas.
 7. A **Foreign keys / associations** table — one row per FK (`field → target table`) with **Read** and **Write via CLI (move parent→parent)** columns (see [Stage D](#stage-d--foreign-keys--associations)).
 8. A **Bulk operation limits / pagination** table — max records (or fields) per request, with a **row per operation (read / create / update / delete)** since services often cap them differently, plus the pagination mechanism (page/offset/cursor) and any hard ceiling that forces a bulk API. If the service has **per-entity** limits (rare), note them here *and* in that entity's row. Keep org-wide rate/quota limits (daily credits, concurrency, token throttle) separate — they're not bulk-size caps.
 9. An **Incremental polling** section next to it — whether the service supports it, the driver/last-modified field, how a `since` pull is expressed (header/param/cursor) and how the new watermark is derived, and how deletions are detected (or that they aren't).
 10. An **Endpoints** section — a **super-concise** reference of the API endpoints the connector actually calls: a scannable table, **one row per (entity/area × operation)** — entity, op (list/get/create/update/delete + sub-resources), method + path, and a terse note **only** where it matters (param quirk, value-key, limit cap). It's the connector's API surface at a glance. **Distil only what *this* connector calls** — do NOT paste the vendor's full reference / OpenAPI dump (that bloats the doc and mixes object endpoints with mechanics); keep it tight enough to read on one screen. (A sprawling standalone `ENDPOINTS.md` is an anti-pattern — fold it into this section.)
+   - **Lead the section with an "API version & client" line — it answers "are we current?" at a glance** (this is exactly what a "review / is it up to date" task asks for). State three things, and **research the service's current offering to fill them** (don't assume the code is current just because it works): **(a) API version** — the version this connector targets (path prefix like `/v2`, or a date-based `Attio-Version: 2026-…` header) and **whether it's the latest the service offers**; if not, name the newest and what upgrading would take, and note any **required version header** the connector must send. **(b) Client/SDK** — whether the connector talks to the service via an **official SDK, a third-party SDK, or a hand-rolled HTTP client** (`createApiClient`/axios). **If it uses an SDK, list the version we pin vs the newest published** (e.g. `attio-sdk 1.2.0` vs newest `2.0.1` → ⚠️ behind) and flag if a major is behind; **if hand-rolled, say so and note whether an official/community SDK exists** that we're deliberately not using (hand-rolled axios is the house default across connectors — not using a vendor SDK is fine, but record that the choice was made, not missed). **(c) Currency verdict** — one phrase: `up to date` / `behind (detail)`. Keep it to a few lines above the endpoint table.
 11. A **UI quick-links** section at the bottom — direct URLs to common service screens (login, API-key/token settings, billing/cancel-trial, each entity's list + create form) so future browser passes jump straight there instead of clicking through the UI. **Record a link the moment you discover it** (e.g. you find the clients table at `x.com/ui/clients` → add it). Reusing these is a big time-saver across runs.
 
 Keep `Last run` current; flip `⬜`→`✅` only with confirmation. Legend: ✅ verified in service · ⬜ not yet · ➖ N/A · ❌ broken.
@@ -302,12 +336,13 @@ Keep `Last run` current; flip `⬜`→`✅` only with confirmation. Legend: ✅ 
 
 One per connector at `server/src/remote-service/connectors/library/<connector>/LOG.md`; a **plain-language, append-only journal** of every operation you actually performed, so a human can review what was done **without** re-reading the transcript or opening the code. STATE.md says *what's covered*; LOG.md says *what was done, in order*.
 
-**Append a line the moment you perform an operation** — don't batch it at the end. Every line is one operation: a **`[hh:mm:ss]` wall-clock time**, then exactly one of four type tags, then a human description and the **literal** call/command/edit. **Date lives in the section header (`## yyyy-mm-dd — …`), time on each row** — so a reader can reconstruct the timeline and how long things took:
+**Append a line the moment you perform an operation** — don't batch it at the end. Every line is one operation: a **`[hh:mm:ss]` wall-clock time**, then exactly one of five type tags, then a human description and the **literal** call/command/edit. **Date lives in the section header (`## yyyy-mm-dd — …`), time on each row** — so a reader can reconstruct the timeline and how long things took:
 
 - **`[Service UI]`** — something you did in the service's web UI via the gstack browser (sign up, create a record, flip a status, verify a result).
 - **`[Service API]`** — a direct call to the service's own API (the actual `curl …` / request), used to seed or to verify a write landed.
 - **`[Scratch CLI]`** — a `scratchmd …` command (the actual command line).
-- **`[Manual Edits]`** — edits you made to local record files on disk, or local/DB state changes (which file, what changed).
+- **`[Manual Edits]`** — **a change you made to a local *record* file on disk** (the JSON record you edit to drive an Edit→Push / New→Push / Delete→Push), or a local/DB state change (e.g. flipping `cliCanPublish`). Name the record file and what changed. **This tag is ONLY for record-data / local-state mutations — NOT for reading code, web research, or writing the STATE.md/LOG.md docs** (those are `[Research]`). If you didn't mutate a record file or local/DB state, it isn't a `[Manual Edits]` line.
+- **`[Research]`** — investigation and documentation that isn't an operation against the service or a record file: cold-reading the connector code, reading the API docs, web research on API version / SDK currency, tracing the publish pipeline, and **authoring the STATE.md / LOG.md docs themselves**. A pure desk review (code review with no live ops) is *entirely* `[Research]` lines. Note what you looked at and the conclusion.
 
 Group the lines under a **high-level task heading** (a short description ending in `:`), with a blank line between groups. Date in the `## yyyy-mm-dd` header; `[hh:mm:ss]` on every row (get it from `date '+%H:%M:%S'`). Format:
 

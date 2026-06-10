@@ -45,6 +45,7 @@ import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
 import { WixOAuthProvider } from './providers/wix-oauth.provider';
 import { YouTubeOAuthProvider } from './providers/youtube-oauth.provider';
+import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
 import { OAuthStatePayload } from './types';
 
 /**
@@ -75,6 +76,7 @@ export class OAuthService {
     private readonly youTubeProvider: YouTubeOAuthProvider,
     private readonly quickbooksProvider: QuickBooksOAuthProvider,
     private readonly linearProvider: LinearOAuthProvider,
+    private readonly zohoProvider: ZohoOAuthProvider,
     private readonly posthogService: PostHogService,
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly scratchGitService: ScratchGitService,
@@ -89,6 +91,7 @@ export class OAuthService {
     this.providers.set('YOUTUBE', this.youTubeProvider);
     this.providers.set('QUICKBOOKS', this.quickbooksProvider);
     this.providers.set('LINEAR', this.linearProvider);
+    this.providers.set('ZOHO', this.zohoProvider);
   }
 
   /**
@@ -141,6 +144,7 @@ export class OAuthService {
       connectorAccountId: options.connectorAccountId,
       shopDomain,
       quickbooksSandbox: options.quickbooksSandbox,
+      zohoDataCenter: options.zohoDataCenter,
       codeVerifier,
       ts: Date.now(),
     };
@@ -150,6 +154,7 @@ export class OAuthService {
       clientId: options.connectionMethod === 'OAUTH_CUSTOM' ? options.customClientId : undefined,
       shopDomain,
       codeChallenge,
+      dataCenter: options.zohoDataCenter,
     });
 
     return { authUrl };
@@ -211,18 +216,39 @@ export class OAuthService {
       }
     }
 
-    // Exchange authorization code for access token (with overrides for custom OAuth)
-    const tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, {
-      clientId: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientId : undefined,
-      clientSecret: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientSecret : undefined,
-      shopDomain: statePayload.shopDomain,
-      codeVerifier: statePayload.codeVerifier,
-    });
+    // Exchange authorization code for access token (with overrides for custom OAuth).
+    // Token-exchange failures (bad/expired code, region mismatch, redirect-uri
+    // mismatch) are the provider's fault to explain — surface their message as a
+    // 400 so the user sees the reason instead of a generic 500.
+    let tokenResponse: OAuthTokenResponse;
+    try {
+      tokenResponse = await provider.exchangeCodeForTokens(callbackData.code, {
+        clientId: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientId : undefined,
+        clientSecret: statePayload.connectionMethod === 'OAUTH_CUSTOM' ? statePayload.customClientSecret : undefined,
+        shopDomain: statePayload.shopDomain,
+        codeVerifier: statePayload.codeVerifier,
+        dataCenter: statePayload.zohoDataCenter,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'token exchange failed';
+      WSLogger.warn({
+        source: 'OAuthService.handleOAuthCallback',
+        message: `${service} OAuth callback failed: ${message}`,
+      });
+      throw new BadRequestException(message);
+    }
 
     // QuickBooks sends realmId (company ID) as a query parameter on the callback URL.
     // Store it in workspace_id so createOAuthAccount can persist it in extras.
     if (service.toLowerCase() === 'quickbooks' && callbackData.realmId) {
       tokenResponse.workspace_id = callbackData.realmId;
+    }
+
+    // Zoho is multi-datacenter: persist the user-selected DC (in workspace_id →
+    // oauthWorkspaceId) so token refreshes route to the right accounts host and
+    // the connector can derive the regional API domain.
+    if (service.toUpperCase() === Service.ZOHO && statePayload.zohoDataCenter) {
+      tokenResponse.workspace_id = statePayload.zohoDataCenter;
     }
 
     if (existingConnectorAccount) {
@@ -292,7 +318,11 @@ export class OAuthService {
       throw new BadRequestException(`No OAuth provider found for service: ${account.service}`);
     }
 
-    const tokenResponse = await provider.refreshTokens(decryptedCredentials.oauthRefreshToken);
+    // Multi-region providers (Zoho) need the stored data center to refresh
+    // against the correct regional accounts host (persisted in oauthWorkspaceId).
+    const tokenResponse = await provider.refreshTokens(decryptedCredentials.oauthRefreshToken, {
+      dataCenter: decryptedCredentials.oauthWorkspaceId,
+    });
 
     // Update the credentials
     decryptedCredentials.oauthAccessToken = tokenResponse.access_token;

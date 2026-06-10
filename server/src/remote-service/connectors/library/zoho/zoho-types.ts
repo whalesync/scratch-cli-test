@@ -95,6 +95,14 @@ export interface ZohoFieldMetadata {
   field_label?: string;
   data_type: string;
   json_type?: string;
+  /**
+   * `true` for user-created fields, `false` for Zoho's built-in standard fields.
+   * This is the authoritative standard-vs-custom signal (the field-level
+   * `generated_type` is empty; that property is module-level). Drives the
+   * "Custom Fields" grouping in the default view. `created_source` ('default' vs
+   * 'user') carries the same distinction but `custom_field` is the clean boolean.
+   */
+  custom_field?: boolean;
   /** True for system-computed/locked fields (formula, rollup, audit, etc.). */
   read_only?: boolean;
   field_read_only?: boolean;

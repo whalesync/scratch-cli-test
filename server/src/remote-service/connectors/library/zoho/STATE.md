@@ -18,9 +18,10 @@ At-a-glance progress through the connector-build journey. Status: ✅ done · �
 | 2 | **Connected** (connection healthy) | ✅ | `coa_N9FksXhWpG`, Health OK |
 | 3 | **First fetch** (pulled ≥1 record) | ✅ | full + incremental pull confirmed |
 | 4 | **All entities seeded & fetched** | ✅ | **20 tables** seeded + pulled into wkb `wkb_K7rI94Db0y` (core CRM + inventory + support + Stage History via UI + **Users**). Remaining unfetched are pure-system read-only tables (email-analytics family, Visits, Functions, Locking) that need live system events to populate. |
-| 5 | **Full write CRUD** (create + edit + delete via manual edit + CLI publish) | 🔄 | **Edit→Push CLI-publish confirmed** (the Butt FK move). New→Push + Delete→Push via the CLI-publish flow still to do (existing create/delete coverage is connector-spec *evidence*, which does not meet the ✅ standard) |
-| 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | `Contacts.Account_Name` re-parented Benton→Chanay via **manual edit + CLI publish**, confirmed in Zoho. Other FK rows have connector-write evidence; repeat the CLI-move to fully tick them. |
-| 7 | **Edge cases & quirks tested** | 🔄 | found: emoji→`?`, datetime tz, unicode, null-clear, picklist=label, subform line-items, token-throttle, `multireminder`/`ALARM` types; more Pass-2 cases remain |
+| 5 | **Full write CRUD** (create + edit + delete via manual edit + CLI publish) | ✅ | **4 modules full CRUD via CLI publish (2026-06-10):** Leads, Contacts, Accounts, Deals each New→Push (id flow-back) + Edit→Push + Delete→Push (204), all confirmed in the Zoho API. Field types Edit→Push'd: text/picklist/integer/currency/boolean/textarea/date/email/phone/url/datetime. Other modules share the same generic write path. |
+| 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | **3 FK fields re-parented via manual edit + CLI publish** (confirmed in Zoho): `Contacts.Account_Name` (null→A→B + earlier Benton→Chanay), `Deals.Account_Name` (→A→B), `Deals.Contact_Name` (→A→B). Only `*.Owner` (ownerlookup) remains connector-spec-only. |
+| 7 | **Edge cases & quirks tested** | 🔄 | Confirmed via CLI: emoji→`?` (BMP unicode survives), datetime tz, picklist=label, **Event Start≤End rule** (lone `Start_DateTime` update → `INVALID_DATA`; send Start+End together; all-day events zero the time). Also from prior runs: null-clear, subform line-items, token-throttle, `multireminder`/`ALARM`. Remaining: large arrays, pagination at scale, multiselectpicklist/percent (edition-gated). |
+| 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics) | 🔄 | **Code built + view generation confirmed on LIVE data; desktop banner-span + populated-banner still pending.** `buildZohoJsonTableSpec` ships a `defaultView`: record id first, **standard fields flat**, **user custom fields grouped under a "Custom Fields" banner** — split on the field-level **`custom_field`** boolean (confirmed live; field-level `generated_type` is empty — that's module-level). Col `readonly` from `x-scratch-readonly`; col `type` from `data_type`. Unit-tested (`zoho-default-view.spec.ts`, 7 cases). **Live (2026-06-10):** re-pulled Leads on the running branch server → `…/Leads/views/default.json` generated with **44 flat cols, id first (readonly), `Full_Name`/`Owner` read-only propagated, `Website`→`url`, lookups→`object`, banner correctly omitted (green-field org has 0 custom fields)**. ⬜ Still need to see a **populated** "Custom Fields" banner — green-field org can't add custom fields (edition gate), so confirm against a higher-edition org or Copper. Users table left view-less (small, read-only, no custom fields → flat is correct). |
 
 ## Test accounts (two — pick by what you need)
 **① GREEN-FIELD org (primary — full CRUD).** Created 2026-06-08 specifically because ② is over its storage cap.
@@ -33,13 +34,19 @@ At-a-glance progress through the connector-build journey. Status: ✅ done · �
 - **Credentials (gitignored):** `~/.zoho-scratch-test.json` (US DC).
 
 - **Server-side creds:** decrypt `ConnectorAccount.encryptedCredentials` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`; `server/tools/decrypt-credentials.js`).
-- **Scratch side:** No live workbook/connection stood up — the Scratch server stack (3010/3100/3101) was **not running**, and `yarn dev` must not run in this worktree. Connector logic is exercised by the **live-API integration spec** (`server/test/integration/zoho-connector.spec.ts`) that drives the real `ZohoConnector` and reads back via the Zoho API (skill-endorsed fallback). Full `scratchmd` accept→upload→publish remains pending a running server stack (connector-agnostic plumbing; not a connector blocker).
-- **Auth method:** `user_provided_params` (zohoClientId / zohoClientSecret / zohoRefreshToken / zohoDataCenter). CLI-connectable; OAuth-redirect provider not wired.
+- **Scratch side:** workbook `wkb_K7rI94Db0y` / connection `coa_N9FksXhWpG` (see Milestones). Connector logic is also exercised by the **live-API integration spec** (`server/test/integration/zoho-connector.spec.ts`) that drives the real `ZohoConnector` and reads back via the Zoho API. ⚠️ **Reconcile note:** an earlier revision of this bullet said "no live workbook/connection stood up; server stack not running, integration-spec only" — that contradicts Milestones 4–6, which assert a live workbook, pulls, and CLI `accept→upload→publish` moves *confirmed in Zoho* (the Butt FK move). The milestone evidence is the more specific/recent, so the "stack never ran" claim is treated as stale; verify which is true on the next live run before trusting the connection id.
+- **Auth method:** **OAuth-redirect now wired** (`ZohoOAuthProvider`, 2026-06-10) **+** `user_provided_params` (zohoClientId / zohoClientSecret / zohoRefreshToken / zohoDataCenter). `supportedAuthMethods: ['oauth','user_provided_params']`; the user picks their data center in the connect form (multi-DC: the accounts host + API host derive from it; the DC is persisted in `oauthWorkspaceId`). `user_provided_params` (Self Client) stays as a fallback; CLI is param-only (OAuth-redirect needs the web app's browser flow).
+- **OAuth client ownership:** the system Zoho OAuth app **"Scratch (local dev)"** (Server-based) is owned by **`team@whalesync.com`** (⚠️ a **PROD** Zoho account, registered in the **US** console **`https://api-console.zoho.com`**, with **Multi-DC enabled** for EU). Redirect URI `http://localhost:3000/oauth/callback`. Its Client ID / Secret live in `server/.env` as `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET` (never committed). For production a deployed `REDIRECT_URI` + a multi-DC client would be registered.
+- **OAuth validated live (2026-06-10) — both data centers:** via the Scratch web app's **"Connect with Zoho"** flow, authorize → Zoho consent → callback → token exchange → connection created **healthy** for **US** (`coa_qje5xBH4n1`, prod team@whalesync.com — since deleted) **and EU** (`coa_gi9Lhx8YzU`, DC=EU, health OK, access+refresh tokens stored). `linked available` over the OAuth token listed all modules (dynamic discovery via the OAuth access token works). Confirms the OAuth branch in `createConnector`, the regional API-host derivation from the stored DC, and multi-DC routing end-to-end.
+- **Multi-DC notes / gotchas:**
+  - A Zoho OAuth client is **single-DC by default**; to authorize an account in another region you must **enable Multi-DC** on the client in the API console. Once enabled, the EU accounts server accepts the **same `client_id`/secret** (verified: a dummy-code probe to `accounts.zoho.eu` returns `invalid_code`, not `invalid_client`). (If a future client issues a **per-DC secret**, the token exchange would fail `invalid_client` and we'd need per-DC secret config.)
+  - **The data center the user picks in the connect form must match the account they authorize.** A mismatch makes Zoho reject the code with `invalid_code` (it returns this as **HTTP 200 with `{error}`**, not a 4xx). This previously surfaced as a generic *"Internal server error"*; fixed 2026-06-10 — `ZohoOAuthProvider.requestToken` + `OAuthService.handleOAuthCallback` now surface a `400` with the reason and an explicit "the selected Data Center likely doesn't match the account" hint. **Follow-up:** the DC field is free-text (`ConnectorSettingDefinition` has no select type) — a dropdown would prevent the typo entirely.
 - **Provenance:** ② reused the existing browser session; ① provisioned by /connector-build on 2026-06-08 (user did signup + phone verification; agent drove the Self Client + token exchange).
 
 ## Metadata
 - **Type:** DYNAMIC — modules (tables) discovered from `/settings/modules`, fields from `/settings/fields`. Custom *objects* would surface automatically on an edition that provides them (mixed-capable), but the model is fundamentally dynamic.
-- **Last run:** 2026-06-08 · live-API integration spec + gstack browser · Tester: Ivan (via /connector-build)
+- **Template version:** 2026-06-09 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every Template changelog entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
+- **Last run:** 2026-06-10 · scratchmd CLI publish + Zoho API + gstack browser · Tester: Ivan
 
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken · 🚧 blocked by an external gate (see Gotchas).
 
@@ -59,14 +66,14 @@ Enumerated live from `/settings/modules` (26 modules total). `api_supported && !
 
 Confirmed via the live-API integration spec (`zoho-connector.spec.ts`, **14/14 passed** on the green-field EU org with `ZOHO_ALLOW_CREATE=1`). Full create→read→update→delete is proven on Leads, plus FK-create on Contacts/Accounts and a datetime round-trip on Events.
 
-> ⚠️ **Push-column ✅ standard:** a green ✅ for Create→Push / Edit→Push / Delete certifies the **canonical path — a manual edit to the record file + the CLI publish flow** (`files accept`→`upload`→`publish`), confirmed in the service. So far **only `Contacts` Edit→Push is CLI-publish-confirmed** (the Butt FK move). The other push ✅ in this table are **connector-method/integration-spec evidence** (strong, but not the CLI-publish standard) — they'll be upgraded as each is driven through the CLI. Pull/Create-via-UI ✅ are fully met.
+> ⚠️ **Push-column ✅ standard:** a green ✅ for Create→Push / Edit→Push / Delete certifies the **canonical path — a manual edit to the record file + the CLI publish flow** (`files accept`→`upload`→`publish`), confirmed in the service. **CLI-publish-confirmed so far: `Leads` (New + Edit + Delete→Push, 2026-06-10) and `Contacts` Edit→Push (the Butt FK move).** The remaining push ✅ in this table are **connector-method/integration-spec evidence** (strong, but not the CLI-publish standard) — they'll be upgraded as each is driven through the CLI (the generic write path is shared, so Leads' green run covers the mechanism). Pull/Create-via-UI ✅ are fully met.
 
 | Entity (api_name) | Scratch table | Pull | Create→Push | Edit→Push | Delete | FK | Status |
 |---|---|:--:|:--:|:--:|:--:|:--:|---|
-| Leads | Leads | ✅ | ✅ | ✅ | ✅ | ✅ | built |
-| Contacts | Contacts | ✅ | ✅ | ✅ | ✅ | ✅ | built |
-| Accounts | Accounts | ✅ | ✅ | ⬜ | ✅ | ➖ | built (created as FK target) |
-| Deals | Deals | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | built (schema built; pull/write path generic) |
+| Leads | Leads | ✅ | ✅ | ✅ | ✅ | ✅ | built — **full CRUD CLI-publish-confirmed** (2026-06-10) |
+| Contacts | Contacts | ✅ | ✅ | ✅ | ✅ | ✅ | built — **full CRUD + FK CLI-confirmed** |
+| Accounts | Accounts | ✅ | ✅ | ✅ | ✅ | ➖ | built — **full CRUD CLI-confirmed** |
+| Deals | Deals | ✅ | ✅ | ✅ | ✅ | ✅ | built — **full CRUD + FK (Account_Name, Contact_Name) CLI-confirmed** |
 | Tasks | Tasks | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | built (schema built) |
 | Events (Meetings) | Events | ✅ | ✅ | ⬜ | ✅ | ⬜ | built (datetime/tz round-trip confirmed) |
 | Calls | Calls | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | built (schema built) |
@@ -105,17 +112,17 @@ Edit/New→Push ✅ = round-tripped through `createRecords`/`updateRecords` this
 |---|---|:--:|:--:|:--:|---|
 | text | Leads.Last_Name | ✅ | ✅ | ✅ | `length` → `x-scratch-max-length`; 2000-char string round-tripped |
 | textarea | Leads.Description | ✅ | ✅ | ✅ | unicode (テスト/ünïcödé) survives; **emoji→`?`** (Zoho utf8, see Edge cases) |
-| email | Leads.Email | ✅ | ⬜ | ✅ | format: email |
-| phone | Leads.Phone | ✅ | ⬜ | ✅ | |
-| website (url) | Leads.Website | ✅ | ⬜ | ✅ | format: uri |
+| email | Leads.Email / Contacts.Email | ✅ | ✅ | ✅ | format: email; CLI Edit→Push confirmed |
+| phone | Leads.Phone / Contacts.Phone | ✅ | ✅ | ✅ | CLI Edit→Push confirmed |
+| website (url) | Leads.Website / Accounts.Website | ✅ | ✅ | ✅ | format: uri; CLI Edit→Push confirmed |
 | picklist (single-select) | Leads.Lead_Source | ✅ | ✅ | ✅ | **value stored as the literal label** (`"Cold Call"`) — no id-vs-label trap |
 | boolean | Leads.Email_Opt_Out | ✅ | ✅ | ✅ | |
 | integer | Leads.No_of_Employees | ✅ | ✅ | ✅ | null-clear round-tripped too |
 | bigint | (record id, big counters) | ✅ | ➖ | ➖ | stored as **string** to preserve >2^53 precision; ids read-only |
 | double | Events.* (double) | ✅ | ⬜ | ⬜ | number-or-null |
 | currency | Leads.Annual_Revenue / Deals.Amount | ✅ | ✅ | ✅ | number |
-| date | Contacts.Date_of_Birth | ✅ | ⬜ | ✅ | format: date; `1990-07-15` round-tripped exactly |
-| datetime | Events.Start_DateTime | ✅ | ⬜ | ✅ | **tz fidelity confirmed** — UTC write read back in org offset, identical instant |
+| date | Contacts.Date_of_Birth | ✅ | ✅ | ✅ | format: date; CLI Edit→Push confirmed (1985-03-20→1990-11-05) |
+| datetime | Events.Start_DateTime | ✅ | ✅ | ✅ | **tz fidelity confirmed** — UTC write read back in org offset, identical instant |
 | lookup (FK, single) | Contacts.Account_Name → Accounts | ✅ | ✅ | ✅ | `{id,name}` verbatim; write reduces to `{id}` — both directions confirmed |
 | ownerlookup (FK → users) | *.Owner | ✅ | ⬜ | ✅ | linkedTableId `users`; `{id,name,email}`; id is write key; auto-set on create |
 | userlookup (FK → users) | (same family as ownerlookup) | ✅ | ⬜ | ⬜ | linkedTableId `users` |
@@ -148,20 +155,40 @@ Separate org-wide **daily API-credit + concurrency** quotas apply (edition-based
 - **Mechanism:** an incremental pull sends `If-Modified-Since: <ISO 8601>` on the records list, so Zoho returns only records changed since. The **new watermark is the server `Date` response header, captured *before* the first page request** — so anything modified mid-run is simply re-pulled next time (idempotent, no gap). `If-Modified-Since` with nothing changed returns `204 No Content` → empty page, no watermark regression.
 - **Deletions:** tombstoned via `GET /{module}/deleted?type=all` + `If-Modified-Since` (`listDeletedRecordIds`), so deletes propagate on incremental runs — not just creates/updates.
 
+## Endpoints (what the connector calls)
+**Super-concise** — only what `zoho-api-client.ts` actually hits (Zoho CRM v8 REST). One row per (area × op).
+
+| Entity / area | Op | Method + path | Note (only if it matters) |
+|---|---|---|---|
+| OAuth token | mint | `POST {accountsDomain}/oauth/v2/token` | `grant_type=refresh_token`; **not** under `/crm/v8`; per-DC `accountsDomain`; response `api_domain` is authoritative host; token-mint rate cap (see Gotchas) |
+| Connection test | get | `GET /users?type=CurrentUser` | lightweight always-available probe |
+| Module discovery | list | `GET /settings/modules` | value-key `modules[]`; `api_supported && !subform` ⇒ table |
+| Field discovery | get | `GET /settings/fields?module={m}` | value-key `fields[]`; drives schema; **no fields endpoint for `users`** (curated schema) |
+| `{module}` | list | `GET /{module}` | value-key `data[]`; `page_token` cursor; `per_page` ≤ **200**; `fields=` ≤ **50/req** (wide modules split+merged by id); `If-Modified-Since` ⇒ incremental; 204 = empty/not-modified |
+| `{module}` | get one | `GET /{module}/{id}?fields=…` | single-record fetch (by-id pull / subform hydrate path); 204/404 ⇒ null |
+| `{module}/deleted` | list deletes | `GET /{module}/deleted?type=all` | `page`/`per_page` pagination; `If-Modified-Since`; tombstones for incremental |
+| `users` | list | `GET /users?type=AllUsers` | `page`/`per_page` pagination; value-key `users[]`; synthetic read-only table |
+| `{module}` | create | `POST /{module}` `{data:[…]}` | ≤ **100**/req; parallel `data[]` results; per-record errors thrown, not swallowed |
+| `{module}` | update | `PUT /{module}` `{data:[…]}` | ≤ **100**/req; each record carries `id` |
+| `{module}` | delete | `DELETE /{module}?ids=a,b,…&wf_trigger=false` | ≤ **100** ids/req; ignores not-found |
+
+Cross-cutting: base host `{api_domain}/crm/v8` (`api_domain` from token response, else per-DC `defaultApiDomain` in `ZOHO_DATA_CENTER_HOSTS`, 8 DCs: US/EU/IN/AU/JP/CA/CN/SA). Auth header `Authorization: Zoho-oauthtoken {token}` on every CRM call. Process-wide token cache keyed by `sha256(dataCenter:clientId:refreshToken)`; 429 ⇒ retry honoring `Retry-After`.
+
 ## Foreign keys / associations
 **Tested = set via the CLI** — edit the FK field to point at a *different* parent (move parent→parent) → `files accept` → `upload` → `publish` → confirm the record re-parented in the service. **Read** = a service-side link pulls back as the correct `{id,name}`. (The connector-spec column records what the live-API integration spec proved through `createRecords`/`updateRecords`; it's strong evidence of the write shape but is not the full CLI publish path.)
 
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Connector-spec write | Notes |
 |---|:--:|:--:|:--:|---|
-| `Contacts.Account_Name` → `Accounts` | ✅ | ✅ | ✅ | **CLI move confirmed** — manually edited `Contacts/butt-sample.json` Account_Name Benton→Chanay → accept/upload/publish → re-parented in Zoho (id `…093`) |
-| `Deals.Contact_Name` → `Contacts` | ✅ | ⬜ | ⬜ | |
-| `Deals.Account_Name` → `Accounts` | ✅ | ⬜ | ⬜ | |
+| `Contacts.Account_Name` → `Accounts` | ✅ | ✅ | ✅ | CLI move confirmed twice — `butt-sample` Benton→Chanay, and `qa-contact-a` null→A→B (2026-06-10) |
+| `Deals.Contact_Name` → `Contacts` | ✅ | ✅ | ✅ | **CLI re-parent confirmed** — `Deals/benton` Contact_Name →A then A→B (2026-06-10) |
+| `Deals.Account_Name` → `Accounts` | ✅ | ✅ | ✅ | **CLI re-parent confirmed** — `Deals/benton` Account_Name →A then A→B (2026-06-10) |
 | `*.Owner` (ownerlookup) → `users` | ✅ | ⬜ | ✅ | set owner by user id; auto-populated on create |
 
-- ✅ **CLI move done** for `Contacts.Account_Name` (the canonical FK test). Remaining FK rows show connector-spec write evidence only; repeat the CLI-move for them to earn their ✅.
+- ✅ **CLI moves confirmed** for `Contacts.Account_Name`, `Deals.Account_Name`, `Deals.Contact_Name` (all re-parented via manual edit + CLI publish, confirmed in Zoho). Only `*.Owner` (ownerlookup) remains a connector-spec-only write.
 - No separate association endpoint — Zoho FKs are plain fields on the record (`{id,name}`). Polymorphic `Parent_Id` (Notes/Attachments) is verbatim, no FK.
 
 ## Edge cases discovered
+- **Event `Start_DateTime`/`End_DateTime` must be updated together (Zoho rule).** Updating `Start_DateTime` alone → `400 INVALID_DATA` "start datetime of the event should be greater than the end datetime" (it's compared against the *unchanged* End). Send both together → OK. Reproduced on the raw API too (not a connector bug — the connector correctly leaves the failed write in `files unpublished`). Also: **all-day events zero the time** (Zoho stores `00:00:00` regardless of the time sent). A sparse-update connector that sends only the changed field will hit this whenever a user edits just one of an Event's paired datetimes — worth a note if Events get heavier write support.
 - **Emoji / astral chars → `?` (SERVICE-side, not the connector).** Zoho stores text fields as 3-byte `utf8` (not `utf8mb4`): BMP unicode (`テスト`, `ünïcödé`) round-trips intact, but 4-byte/astral characters like `🎯` are replaced with `?` by Zoho on write. Confirmed both through the connector **and** a raw-`fetch` probe (same result), so it's the service. The connector still stores verbatim what Zoho returns — no action needed beyond awareness.
 - **`multi_module_lookup` naming gap (code).** Zoho's real `data_type` is `multi_module_lookup` (underscored), but `zoho-json-schema.ts` switches on `multimodulelookup` (no underscores). The underscored value falls through to the `default` branch — still stored verbatim/null (safe) but logs an "Unrecognized data_type" warning on every Notes schema build, and the explicit case is dead. Low-severity; storing verbatim is the intended outcome either way.
 - **Niche reminder/recurrence data_types vary by org/module — `ALARM`, `RRULE`, `multireminder`.** Tasks/Events reminder + recurrence fields use opaque metadata types that differ across editions (the US org's Events used `ALARM`/`RRULE`; the EU org's used `multireminder` on `Remind_At`/`Remind_Participants`). All fell through to the `default` verbatim branch (+ a per-field warn on every schema build). **Fixed this run:** added `multi_module_lookup`/`ALARM`/`RRULE`/`multireminder` cases so they're typed verbatim (Unknown|Null) without the warning. Storing verbatim was always the intended behavior — this just silences the noise and documents intent.

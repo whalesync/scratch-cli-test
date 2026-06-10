@@ -12,6 +12,7 @@ export type OAuthStatePayload = {
   connectorAccountId?: string; // used to identify the connector account to reauthorize
   shopDomain?: string;
   quickbooksSandbox?: boolean;
+  zohoDataCenter?: string; // Zoho multi-DC: US | EU | IN | AU | JP | CA | CN | SA
   codeVerifier?: string;
   ts: number;
 };

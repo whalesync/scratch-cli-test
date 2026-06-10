@@ -51,6 +51,11 @@ export class OAuthInitiateOptionsDto {
   @IsBoolean()
   @IsOptional()
   quickbooksSandbox?: boolean;
+
+  /** Zoho multi-datacenter selection (US | EU | IN | AU | JP | CA | CN | SA). */
+  @IsString()
+  @IsOptional()
+  zohoDataCenter?: string;
 }
 
 export type ValidatedOAuthInitiateOptionsDto = Required<
@@ -66,4 +71,5 @@ export type ValidatedOAuthInitiateOptionsDto = Required<
     | 'connectorAccountId'
     | 'shopDomain'
     | 'quickbooksSandbox'
+    | 'zohoDataCenter'
   >;

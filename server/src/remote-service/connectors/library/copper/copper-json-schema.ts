@@ -1,6 +1,8 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { customFieldColumnKey } from './copper-custom-fields';
+import { buildCopperDefaultView } from './copper-default-view';
 import { COPPER_ENTITY_CONFIG, CopperCustomFieldDefinition, CopperEntityType } from './copper-types';
 
 /**
@@ -9,10 +11,15 @@ import { COPPER_ENTITY_CONFIG, CopperCustomFieldDefinition, CopperEntityType } f
  * Copper has no system-field metadata endpoint, so the system fields below are
  * declared statically (the "hardcode only when the API offers no introspection"
  * rule). User-defined custom fields ARE discovered dynamically via
- * `GET /custom_field_definitions`; they live on each record as the verbatim
- * `custom_fields: [{ custom_field_definition_id, value }]` array and are stored
- * as-is. (Expanding each custom field into its own editable column — and the
- * `Connect`/computed read-only handling — is the R1 contract-test follow-up.)
+ * `GET /custom_field_definitions`.
+ *
+ * Copper returns custom-field values as a verbatim
+ * `custom_fields: [{ custom_field_definition_id, value }]` array, but a Scratch
+ * view can't make an array element an editable column. So the connector reshapes
+ * that array into a keyed object (`{ cf_<id>: value }`, see
+ * {@link reshapeCustomFieldsArrayToObject}) and this schema declares one typed
+ * sub-property per definition — one editable column each — gathered under a
+ * "Custom Fields" banner in the {@link buildCopperDefaultView default view}.
  */
 
 // --- Field helpers ---
@@ -50,13 +57,81 @@ const contactArray = (valueKey: string): TSchema =>
 
 const tagsSchema = (): TSchema => Type.Array(Type.String());
 
-const customFieldsSchema = (): TSchema =>
-  Type.Array(
-    Type.Object({
-      custom_field_definition_id: Type.Number(),
-      value: Type.Unknown(),
+/** Copper custom-field data types that Copper computes / won't accept on write. */
+function isReadonlyCopperCustomField(definition: CopperCustomFieldDefinition): boolean {
+  return definition.is_computed === true || definition.data_type === 'Connect';
+}
+
+/** Permissive (nullable) schema for one Copper custom field, typed from its `data_type`. */
+function schemaForCopperCustomFieldDataType(definition: CopperCustomFieldDefinition): TSchema {
+  const annotations: Record<string, unknown> = { title: definition.name };
+  if (definition.available_options && definition.available_options.length > 0) {
+    annotations.description = `${definition.name} (options: ${definition.available_options
+      .map((option) => option.name)
+      .join(' | ')})`;
+  }
+  if (isReadonlyCopperCustomField(definition)) annotations[X_SCRATCH_READONLY] = true;
+
+  switch (definition.data_type) {
+    case 'Checkbox':
+      return Type.Union([Type.Boolean(), Type.Null()], annotations);
+    case 'Float':
+    case 'Currency':
+    case 'Percentage':
+      return Type.Union([Type.Number(), Type.Null()], annotations);
+    case 'MultiSelect':
+      return Type.Union([Type.Array(Type.Unknown()), Type.Null()], annotations);
+    case 'String':
+    case 'Text':
+    case 'URL':
+      return Type.Union([Type.String(), Type.Null()], annotations);
+    // Dropdown (option id), Date (epoch) and Connect (relation reference) are
+    // stored verbatim — permissive, exact value shapes confirmed in Pass 2.
+    default:
+      return Type.Union([Type.Unknown(), Type.Null()], annotations);
+  }
+}
+
+/**
+ * Build the keyed `custom_fields` object property: one typed sub-property per
+ * discovered definition (keyed by `cf_<id>`), so the client renders each as its
+ * own column. No `x-scratch-*` extension on the object → the column builder
+ * expands the sub-properties; `additionalProperties: true` keeps any custom
+ * field a definition omitted (stored verbatim).
+ */
+function buildCustomFieldsObjectProperty(definitions: CopperCustomFieldDefinition[]): TSchema {
+  const fieldProperties: Record<string, TSchema> = {};
+  for (const definition of definitions) {
+    fieldProperties[customFieldColumnKey(definition.id)] = schemaForCopperCustomFieldDataType(definition);
+  }
+  return Type.Optional(
+    Type.Object(fieldProperties, {
+      additionalProperties: true,
+      description: 'Custom field values, keyed by `cf_<definitionId>` (see agent instructions for the legend).',
     }),
   );
+}
+
+/** Agent-readable legend: each custom field's column key, name, type and options. */
+function buildCustomFieldsAgentInstructions(definitions: CopperCustomFieldDefinition[]): string {
+  if (definitions.length === 0) {
+    return 'Custom field values are stored under the `custom_fields` object, keyed by `cf_<definitionId>`. This account has no custom fields defined.';
+  }
+  const fieldLines = definitions.map((definition) => {
+    const optionsSuffix =
+      definition.available_options && definition.available_options.length > 0
+        ? `, options: ${definition.available_options.map((option) => option.name).join(' | ')}`
+        : '';
+    const readonlySuffix = isReadonlyCopperCustomField(definition) ? ', read-only' : '';
+    return `- ${definition.name} (custom_fields key: ${customFieldColumnKey(definition.id)}, definition id: ${definition.id}, type: ${definition.data_type}${optionsSuffix}${readonlySuffix})`;
+  });
+  return (
+    'Custom field values are stored under the `custom_fields` object, keyed by `cf_<definitionId>`. ' +
+    'Each key maps to one Copper custom-field definition below; the value shape depends on the field type. ' +
+    'Custom-field definitions for this account:\n' +
+    fieldLines.join('\n')
+  );
+}
 
 /** Polymorphic parent reference used by Tasks and Projects (`{ id, type }`). */
 const relatedResourceSchema = (): TSchema =>
@@ -95,7 +170,6 @@ function peopleProperties(): Record<string, TSchema> {
     socials: contactArray('url'),
     websites: contactArray('url'),
     tags: tagsSchema(),
-    custom_fields: customFieldsSchema(),
     date_last_contacted: readonly(nullableNumber()),
     interaction_count: readonly(nullableNumber()),
     leads_converted_from: readonly(Type.Unknown()),
@@ -117,7 +191,6 @@ function companiesProperties(): Record<string, TSchema> {
     websites: contactArray('url'),
     tags: tagsSchema(),
     primary_contact_id: foreignKey('people'),
-    custom_fields: customFieldsSchema(),
     interaction_count: readonly(nullableNumber()),
     ...sharedReadonlyDateFields(),
   };
@@ -142,7 +215,6 @@ function opportunitiesProperties(): Record<string, TSchema> {
     tags: tagsSchema(),
     monetary_value: nullableNumber(),
     win_probability: nullableNumber(),
-    custom_fields: customFieldsSchema(),
     interaction_count: readonly(nullableNumber()),
     date_last_contacted: readonly(nullableNumber()),
     ...sharedReadonlyDateFields(),
@@ -173,7 +245,6 @@ function leadsProperties(): Record<string, TSchema> {
     monetary_value: nullableNumber(),
     status: nullableString(),
     status_id: nullableNumber(),
-    custom_fields: customFieldsSchema(),
     interaction_count: readonly(nullableNumber()),
     date_last_contacted: readonly(nullableNumber()),
     ...sharedReadonlyDateFields(),
@@ -193,7 +264,6 @@ function tasksProperties(): Record<string, TSchema> {
     status: nullableString(),
     details: nullableString(),
     tags: tagsSchema(),
-    custom_fields: customFieldsSchema(),
     ...sharedReadonlyDateFields(),
   };
 }
@@ -207,7 +277,6 @@ function projectsProperties(): Record<string, TSchema> {
     status: nullableString(),
     details: nullableString(),
     tags: tagsSchema(),
-    custom_fields: customFieldsSchema(),
     ...sharedReadonlyDateFields(),
   };
 }
@@ -223,9 +292,10 @@ const ENTITY_PROPERTY_BUILDERS: Record<CopperEntityType, () => Record<string, TS
 
 /**
  * Build a {@link BaseJsonTableSpec} for a Copper entity. The discovered custom
- * field definitions are surfaced to agents as an id→name legend on the
- * `custom_fields` array (so an LLM editing the file knows what each
- * `custom_field_definition_id` means) without reshaping the stored data.
+ * field definitions become one typed sub-property each on the keyed
+ * `custom_fields` object (so each renders as its own editable column), an
+ * id→name legend at the schema root for agents, and a "Custom Fields" banner
+ * group in the default view.
  */
 export function buildCopperJsonTableSpec(
   id: EntityId,
@@ -235,19 +305,16 @@ export function buildCopperJsonTableSpec(
   const config = COPPER_ENTITY_CONFIG[entityType];
   const properties = ENTITY_PROPERTY_BUILDERS[entityType]();
 
-  if (customFieldDefinitions.length > 0 && properties.custom_fields) {
-    const legend = customFieldDefinitions.map((def) => `${def.id}=${def.name} (${def.data_type})`).join(', ');
-    properties.custom_fields = {
-      ...properties.custom_fields,
-      [X_SCRATCH_AGENT_INSTRUCTIONS]:
-        `Each entry's custom_field_definition_id maps to: ${legend}. ` +
-        `Connect-type and computed custom fields are read-only.`,
-    };
-  }
+  // Custom fields are reshaped from Copper's array into a keyed object on pull
+  // (see copper-custom-fields.ts); declare one typed sub-property per definition.
+  properties.custom_fields = buildCustomFieldsObjectProperty(customFieldDefinitions);
 
   const schema = Type.Object(properties, {
     $id: `copper/${entityType}`,
     title: config.displayName,
+    // Field key→name/type/options legend for agents, at the schema ROOT so it
+    // does not turn `custom_fields` into an opaque leaf column.
+    [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(customFieldDefinitions),
   });
 
   return {
@@ -258,6 +325,8 @@ export function buildCopperJsonTableSpec(
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: [config.titleField],
     basePath: [],
+    // System fields flat; custom fields grouped under a "Custom Fields" banner.
+    defaultView: buildCopperDefaultView(properties, customFieldDefinitions),
     generatedAt: new Date().toISOString(),
   };
 }

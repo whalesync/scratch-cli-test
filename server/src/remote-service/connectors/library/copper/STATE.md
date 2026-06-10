@@ -18,9 +18,24 @@
 
 ## Metadata
 - **Type:** STATIC (CRM) · custom fields supported (mixed)
-- **Last run:** 2026-06-05 · scratchmd + gstack browser · Tester: Ivan
+- **Template version:** 2026-06-09 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](coverage-template.md#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
+- **Last run:** 2026-06-10 · scratchmd CLI publish + Copper API + gstack browser · Tester: Ivan
 
 Legend: ✅ verified in Copper · ⬜ not yet · ➖ N/A · ❌ broken.
+
+## Milestones — where this connector is in the build
+At-a-glance progress through the build journey. Status: ✅ done · 🔄 in progress · ⬜ not started.
+
+| # | Milestone | Status | Notes |
+|---|---|:--:|---|
+| 1 | **Account ready** (registered / logged into the service web app) | ✅ | Copper account `612378`, login `ivan@whalesync.com` (Business trial). |
+| 2 | **Connected** (connection created, health OK) | ✅ | `coa_v21ua3Q7ct` on wkb `wkb_lsWnc2smsb`, `user_provided_params` (apiKey+email). |
+| 3 | **First fetch** (pulled ≥1 record) | ✅ | Companies pulled; `id 76658947` landed verbatim. |
+| 4 | **All entities seeded & fetched** | ✅ | All 6 entities pulled; Leads/Opportunities/Tasks/Projects also seeded via CLI New→Push (2026-06-10). |
+| 5 | **Full write CRUD** (create + edit + delete pushed) | ✅ | **All 6 entities have full CRUD via CLI publish** — Pull+Create+Edit+Delete confirmed in the Copper API (Companies/People + Leads/Opportunities/Tasks/Projects, 2026-06-10). Plus all 10 custom-field types Edit/New→Push (see Custom fields). |
+| 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | `Companies.primary_contact_id`→People: **true re-parent B→C confirmed** via manual edit + CLI publish (+ read ✅). Found Copper's related-person eligibility rule (see Gotchas). Opportunities FKs still ⬜. |
+| 7 | **Edge cases & quirks tested** (Pass 2) | 🔄 | Done: custom-field reshape round-trip (all 10 types), emoji/unicode SURVIVE (utf8mb4, unlike Zoho), 2006-char string, tags array, Copper Date=epoch, custom_fields PUT-merge, one-bad-value-fails-whole-record, related-person FK rule, Opp `company_id` create-only, filename-slug. Remaining: pagination at scale, incremental (not supported in v1), pipeline-stage transitions, Lead→contact conversion, Connect custom field. |
+| 8 | **View(s) built** (default view, grouped by existing mechanics) | ✅ | **Built + fully validated LIVE.** Every entity ships a `defaultView`: system fields flat (record id first, readonly propagated from `x-scratch-readonly`), **custom fields grouped under a "Custom Fields" banner**. Required reshaping the verbatim `custom_fields` array → keyed `{cf_<id>: value}` object (a view can't make an array element editable — see Structural facts / Edge cases). Unit-tested. **Live (2026-06-10):** seeded 10 custom-field types → re-pulled Companies → `…/Companies/views/default.json` shows a **populated "Custom Fields" banner (10 cols, correct names + type hints)**, records reshaped `[]`→`{cf_<id>: …}`, and the reshape **publish round-trip is confirmed** (all 10 types written + read back + per-field merge). |
 
 ## Objects / entity types — what the connector exposes
 Best-case future-state contract (`Status` = built/planned), not just what's wired today. Copper is a CRM with a **fixed** set of record entities plus **custom fields** (mixed); it has **no custom objects**.
@@ -38,12 +53,12 @@ The six writable record entities (built) + read-only reference entities (planned
 
 | Entity | Scratch table | Pull | Create | Edit | Delete | FK | Status |
 |---|---|:--:|:--:|:--:|:--:|:--:|---|
-| Companies | record | ✅ | ✅ | ✅ | ⬜ | ✅ | **built**, verified |
-| People | record | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); ops untested |
-| Opportunities | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
-| Leads | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
-| Tasks | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
-| Projects | record | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
+| Companies | record | ✅ | ✅ | ✅ | ✅ | ✅ | **built**, full CRUD + FK + 10 custom-field types verified |
+| People | record | ✅ | ✅ | ✅ | ✅ | ➖ | **built**, CRUD verified (`company_id` read-only) |
+| Opportunities | record | ✅ | ✅ | ✅ | ✅ | ➖ | **built**, CRUD verified (`company_id` set-on-create only) |
+| Leads | record | ✅ | ✅ | ✅ | ✅ | ➖ | **built**, CRUD verified |
+| Tasks | record | ✅ | ✅ | ✅ | ✅ | ➖ | **built**, CRUD verified |
+| Projects | record | ✅ | ✅ | ✅ | ✅ | ➖ | **built**, CRUD verified |
 | Users | read-only reference (`GET /users/search`) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only; `assignee_id` references them) |
 | Activities | top-level but **read-only** system rows (no `date_modified`) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only; deferred in v1) |
 | Pipelines / Customer Sources / Loss Reasons / Contact Types | reference/config that other entities link to | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only reference) |
@@ -57,19 +72,19 @@ The six writable record entities (built) + read-only reference entities (planned
 - **Filename = name-slug, not the remote id** (`scratchpull-testco-0605.json`); the `id` lives **inside** the file; new records get their `id` after publish.
 - **FKs are plain id fields** on the record (e.g. `primary_contact_id` → People) — **no separate association endpoint** for those; only Related Items associations use a dedicated path.
 - **`assignee_id` is a Copper User id**, not a linked Scratch table — leave it a plain number.
-- **Custom-field values live in an array** `custom_fields: [{ custom_field_definition_id, value }]` (addressed by definition id), not flat top-level keys. Stored verbatim.
+- **Custom-field values live in an array** `custom_fields: [{ custom_field_definition_id, value }]` (addressed by definition id), not flat top-level keys. The connector **reshapes this array ↔ a keyed object `{cf_<id>: value}`** (pull/publish) so each custom field is an editable column (see [Custom fields](#custom-fields-mixed--reshaped-to-per-field-columns-round-trip-untested)); the array is what Copper stores/returns and what we publish back.
 - **No system-field metadata endpoint** — system fields are hardcoded per entity; only *custom* fields are discovered dynamically.
 
 ## Entities × Operations
 
 | Entity | Pull | Create→Pull | Edit→Push | New→Push | Delete | FK | Service-UI create path |
 |--------|:----:|:-----------:|:---------:|:--------:|:------:|----|------------------------|
-| Companies | ✅ | ✅ | ✅ | ✅ | ⬜ | ✅ `primary_contact_id`→People | Companies list → **Add Company** split-button → **Add Company** menu item → "Add a New Company" modal → Name (required) → **Save** |
-| People | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | People list → add Person (untested) |
-| Opportunities | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | (Pipelines/Opportunities — untested) |
-| Leads | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | (untested) |
-| Tasks | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | (untested) |
-| Projects | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | (untested) |
+| Companies | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `primary_contact_id`→People (re-parent B→C) | Companies list → **Add Company** split-button → **Add Company** menu item → "Add a New Company" modal → Name (required) → **Save** |
+| People | ✅ | ✅ | ✅ | ⬜ | ⬜ | ➖ `company_id` read-only (Related Items) | People list → add Person |
+| Opportunities | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ company_id/primary_contact_id (untested; generic FK code) | New→Push w/ `name` only (no pipeline_id required); CRUD confirmed 2026-06-10 |
+| Leads | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | New→Push w/ `name` only; CRUD confirmed 2026-06-10 |
+| Tasks | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ `related_resource` (untested) | New→Push w/ `name` only (no related_resource required); CRUD confirmed 2026-06-10 |
+| Projects | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | New→Push w/ `name` only; CRUD confirmed 2026-06-10 |
 
 ### Evidence (Companies, 2026-06-05)
 - **Create→Pull:** "ScratchPull TestCo 0605" created in Copper UI → `linked pull` → `id 76658947` landed verbatim.
@@ -77,20 +92,91 @@ The six writable record entities (built) + read-only reference entities (planned
 - **New→Push:** "Scratch Created Co 0605" created locally → published → Copper `id 76658976`, remote id flowed back into the file.
 - **FK:** company 76658976 `primary_contact_id` → person `dadad` (183382759), confirmed via Copper API.
 
-## Custom fields (mixed) — untested
+## Custom fields (mixed) — reshaped to per-field columns; all 10 writable types round-tripped ✅
 Custom fields are **columns on each entity** (a field belongs to an entity), *not* entities — Copper has no custom *objects*. Discovered dynamically via `GET /custom_field_definitions`.
-- Copper supports `custom_fields[]` per record. Add a custom field in Copper → pull → edit → push round-trip. ⬜
+
+**Shape (changed 2026-06-10 — `copper-custom-fields.ts`):** Copper returns values as the verbatim array `custom_fields: [{ custom_field_definition_id, value }]`, but a Scratch view can't make an array element an editable column (paths are dot-path only; arrays are leaves on read, clobbered on write — see Edge cases). So the connector **reshapes the array → a keyed object `custom_fields: { cf_<definitionId>: value }` on pull** (one typed sub-property → one editable column each, gathered under the "Custom Fields" banner) and **reshapes it back to the array on publish**. Key = `cf_<id>` (rename-stable, collision-free, path-safe). The id→name/type legend lives at the **schema root** via `x-scratch-agent-instructions`. This is the GoHighLevel pattern; it round-trips loss-lessly, so external fidelity is preserved.
+
+- Copper `data_type` values the connector knows about (`copper-types.ts`): `String`, `Text`, `Dropdown`, `MultiSelect`, `Date`, `Checkbox`, `Float`, `URL`, `Connect`, `Currency`, `Percentage`. `Connect` + computed (`is_computed`) are **read-only** (marked on the sub-property + the view column).
+
+| Custom-field type | Seeded | Pull (cf_<id>) | Edit→Push | Notes |
+|---|:--:|:--:|:--:|---|
+| String | ✅ | ✅ | ✅ | id 751653 |
+| Text | ✅ | ✅ | ✅ | id 751654; 2006-char value round-tripped |
+| Dropdown | ✅ | ✅ | ✅ | id 751655; value = **option id** (number) |
+| MultiSelect | ✅ | ✅ | ✅ | id 751656; value = **array of option ids** |
+| Date | ✅ | ✅ | ✅ | id 751657; value = **UNIX TIMESTAMP** (ISO → 422) |
+| Checkbox | ✅ | ✅ | ✅ | id 751658; bool |
+| Float | ✅ | ✅ | ✅ | id 751659; number |
+| URL | ✅ | ✅ | ✅ | id 751660; string |
+| Currency | ✅ | ✅ | ✅ | id 751661; number |
+| Percentage | ✅ | ✅ | ✅ | id 751662; number |
+| Connect | ⬜ | ⬜ | ➖ | **UI-only create** (API `422 Invalid data type`); read-only in connector |
+| computed (`is_computed`) | ➖ | ➖ | ➖ | read-only by design; no generic create path |
+
+- **All 10 writable types round-tripped via CLI publish (2026-06-10)**, confirmed in the Copper API; merge + per-field diff proven. Seeded via `POST /custom_field_definitions` (API create works — see Gotchas). Only `Connect` (UI-only, read-only) remains ⬜.
 
 ## Foreign keys / associations
-- `Companies.primary_contact_id` → `people` (`x-scratch-foreign-key`): write ✅ / read ⬜
-- `Companies.assignee_id` (Copper User) — plain number, not a linked table. ➖
-- No special association endpoint observed (FKs are plain id fields on the record).
+One row per FK. **Tested = set via the CLI** (edit FK to a *different* parent → accept→upload→publish → confirm re-parent in Copper). **Read** = a service-side link pulls back as the correct id.
+
+| FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
+|---|:--:|:--:|---|
+| `Companies.primary_contact_id` → `people` | ✅ | ✅ | **True re-parent confirmed 2026-06-10** — company dadas (76645470) moved B(183582749)→C(183582757) via manual edit + CLI publish, confirmed in Copper API; read pulls back the id. ⚠️ See the **related-person rule** gotcha — the target person must be eligible (related/free), or Copper 422s the whole write. |
+| `Opportunities.company_id` → `companies` | ✅ | ➖ | **Set-on-create only** — settable on New→Push (confirmed company A landed), but Copper **silently ignores `company_id` *updates*** (200, no change — reproduced on the raw API too, even with `company_name`). So a CLI re-parent is a no-op; not a connector defect. |
+| `Opportunities.primary_contact_id` → `people` | ⬜ | ⬜ | untested (likely the related-person + possibly create-only constraints) |
+| `People.company_id` → `companies` | ⬜ | ➖ | **read-only in v1** — set via Related Items, not a normal update (schema marks it `x-scratch-readonly`). |
+- `*.assignee_id` (Copper User id) — plain number, **not** a linked Scratch table. ➖
+- No special association endpoint for plain-id FKs. Related Items (the only association endpoint) is **not implemented** in v1 (`People.company_id` rides on it → read-only).
+- ⚠️ **Related-person rule (Copper data-integrity):** `Companies.primary_contact_id` only accepts a person Copper considers **related/eligible** to *that* company. Moving to a freshly-created (free) person works and auto-relates them; pointing it at a person already tied to a *different* company is rejected with **`422 "Data integrity error"`** — confirmed it's Copper, not the connector (a raw API `PUT` 422s identically). The connector sends the value correctly and the failed write **stays in `files unpublished`** (so the CLI's "Published" line is not proof — check `unpublished`). Likely applies to other person/company FK fields too.
+
+## Endpoints (what the connector calls)
+Base host `https://api.copper.com/developer_api/v1`. Auth = three headers together: `X-PW-AccessToken: <apiKey>`, `X-PW-Application: developer_api`, `X-PW-UserEmail: <email>`. `<entity>` ∈ `people | companies | opportunities | leads | tasks | projects`.
+
+| Entity / area | Op | Method + path | Note (only if it matters) |
+|---|---|---|---|
+| connection test | test | `GET /account` | lightest authed call; 401 → bad token/email. |
+| custom fields | discover | `GET /custom_field_definitions` | drives the dynamic schema; id→name/type legend. |
+| `<entity>` | list | `POST /<entity>/search` | offset pagination (`page_number`/`page_size`); body sorts `date_modified asc`. `page_size` cap **200**; search returns at most **100,000** records (warns at ceiling). |
+| `<entity>` | get | `GET /<entity>/{id}` | used for re-pull-by-id after publish; 404 → null (deleted). |
+| `<entity>` | create | `POST /<entity>` | response carries the assigned `id`. Read-only fields stripped before send. |
+| `<entity>` | update | `PUT /<entity>/{id}` | sparse — Copper applies only the fields present in the body (uses `changedFields`). |
+| `<entity>` | delete | `DELETE /<entity>/{id}` | 404 ignored (already deleted). |
+
+- **Rate limit:** registry `rateLimiterSpec { points: 3, duration: 1 }` (≈3 req/s); honours `429` + `Retry-After` header on retry.
+- **Activities** entity exists in Copper but is **not** called (deferred — read-only, no `date_modified`).
+
+## Bulk operation limits / pagination
+The connector wires **one request per record** for all writes (`getBatchSize() === 1`) — Copper's bulk create/update is a beta capped at ~10 records and not wired in v1; there is no bulk delete anywhere.
+
+| Operation | Max per request | Mechanism (endpoint / cursor) | Notes |
+|---|---|---|---|
+| Read (list) | 200 records/page | `POST /<entity>/search`, offset `page_number`/`page_size` | Hard ceiling: search returns ≤100,000 total per table (`COPPER_SEARCH_RECORD_CEILING`) → warns + skips remainder. Re-pull-by-id batches 20 ids client-side (still 1 GET each). |
+| Create | 1 record/request | `POST /<entity>` | Bulk (~10) exists as Copper beta but not wired (`getBatchSize()=1`). |
+| Update | 1 record/request | `PUT /<entity>/{id}` | sparse update via `changedFields`. |
+| Delete | 1 id/request | `DELETE /<entity>/{id}` | no bulk delete in Copper. |
+
+- Org-wide rate limit (separate from bulk size): ≈3 req/s (`points:3, duration:1`); `429` retried per `Retry-After`.
+
+## Incremental polling
+- **Supported:** **NO** (v1 ships full-scan pull only; `incrementalPullSupport` not implemented — "incremental is a fast-follow" per `copper-connector.ts`).
+- **Mechanism:** none wired. The pieces exist for a future implementation: every entity has a read-only `date_modified` field and `/search` accepts `sort_by`/`sort_direction` (currently `date_modified asc`, so records created mid-pull land on a later page and aren't missed). A `since` filter would use `minimum_modified_date` / `maximum_modified_date` on the search body (not yet used). Pull progress checkpoints `nextPage` for **resume**, not incremental watermarking.
+- **Deletions:** not detected (no tombstone/deleted endpoint used).
 
 ## Edge cases discovered
 - **Filename = name-slug, not remote id.** Records save as e.g. `scratchpull-testco-0605.json`; the Copper `id` lives **inside** the file. New local records get their `id` filled in after publish.
-- (continue probing: custom_fields, Opportunities pipeline stages, Lead→contact conversion, tags/socials arrays)
+- **A view can't make an array element an editable column → custom_fields is reshaped.** Scratch column paths are plain object dot-paths: on read, an array is a leaf (`getByPath` bails on non-objects); on write, an array path is replaced with `{}` (`setByPath`), so edits into an array don't round-trip; schema auto-columns recurse only into `type:'object'`. Copper's `custom_fields` array therefore can't be per-field-editable as-is — the connector reshapes it to a keyed `{cf_<id>: value}` object (and back on publish). Same reason GoHighLevel reshapes its `customFields` array. (Confirmed in `scratch-desktop` getByPath/setByPath + `build-column-definitions.ts`.)
+- **Emoji / astral chars SURVIVE on Copper (contrast Zoho).** Wrote `🎯` into a system text field (`details`), a custom String, and a `tags` array → all round-tripped intact through Copper (utf8mb4). This is the opposite of Zoho (which replaces emoji with `?`). BMP unicode (テスト/ünïcödé) and a 2006-char custom Text value also round-trip cleanly.
+- **Custom-field value shapes (verified live):** Dropdown = the **option id** (number); MultiSelect = **array of option ids**; Checkbox = bool; Float/Currency/Percentage = number; URL/String/Text = string; **Date = UNIX TIMESTAMP (epoch s), not an ISO string** (ISO → `422`). Stored verbatim under `cf_<id>`.
+- **`custom_fields` round-trip + merge confirmed (2026-06-10):** all 10 writable types Edit→Push'd (distinct values) and read back under `cf_<id>`; a single-field edit (Float) sent only that field and Copper kept the other 9 → keyed-object per-field diff + Copper merge proven end-to-end. (See Gotchas for Date-epoch, one-bad-value-fails-record, related-person rule.)
+- (continue probing: Opportunities pipeline stages, Lead→contact conversion, socials arrays, pagination at scale, Connect custom field via UI)
 
 ## Gotchas
+- ⚠️ **`primary_contact_id` needs a *related/eligible* person (Copper data-integrity rule).** Setting `Companies.primary_contact_id` to a person who isn't related to *that* company (e.g. one already tied to a different company) is rejected with **`422 "Data integrity error"`**, and Copper fails the **whole** record write. A freshly-created free person is accepted (and auto-related). Confirmed it's Copper, not the connector — a raw API `PUT primary_contact_id=<unrelated>` 422s identically. The connector surfaces it correctly: the patch **stays in `files unpublished`** (don't trust the CLI "Published" line — check `unpublished`).
+- ⚠️ **Some Copper FK fields are set-on-create-only.** `Opportunities.company_id` is settable on create but Copper **silently ignores updates** to it (raw API `PUT` returns 200 with no change). A CLI "move" of such a field is a harmless no-op, not a connector bug — distinguish create-only vs updatable per FK field.
+- ⚠️ **Copper Date custom fields want a UNIX TIMESTAMP (epoch seconds), not an ISO string.** Writing `"2026-06-15"` → `422 "Data integrity error"` (fails the whole record); `1781481600` → OK. Stored verbatim (a number) on read.
+- ✅ **Copper's API CAN create custom-field definitions** — `POST /custom_field_definitions` works (200) for every type *except* `Connect` (`422 "Invalid data type 'Connect'"` → UI-only). This contradicts the old "custom fields are UI-only" assumption; seed via API (fast), not the UI.
+- **Copper `PUT` MERGES `custom_fields` by definition id** — a sparse update (one field) leaves the others intact, so the keyed-object per-field diff is safe (verified: edited one of 10, the other 9 survived).
+- **One bad custom-field value fails the ENTIRE record write** (Copper returns a single `422 "Data integrity error"` with no field name). When a `custom_fields` publish 422s, bisect the values (per-field `PUT`) to find the culprit — don't assume the connector mis-shaped the array.
 - `linked publish` no-ops silently without a prior `files upload` (prints "completed" but nothing ships). Use `files accept → files upload → files publish`.
 - A Scratch pull replays pending accepted patches over `main` and can mask a failed push — confirm in the Copper API, not the pull.
 - `files publish` is 403'd unless `User.settings.cliCanPublish = true`.
@@ -98,3 +184,19 @@ Custom fields are **columns on each entity** (a field belongs to an entity), *no
 
 ## Open issues
 - (none filed)
+
+## UI quick-links (time-savers for the gstack browser)
+Direct URLs to common Copper screens so a browser pass jumps straight there. Copper app is hosted at `https://app.copper.com`. Fill in exact paths on the next browser pass.
+
+| Where | URL |
+|-------|-----|
+| Service login | `https://app.copper.com/login` |
+| API key settings | `https://app.copper.com/companies/<org>/app#/settings/api-keys` (Settings → Integrations → API Keys) — confirm exact path on a browser pass |
+| Billing / cancel trial | `<https://app.copper.com/.../settings/billing>` — to fill (trial cancel-by ~2026-06-18) |
+| People list | `<https://app.copper.com/.../contacts/people>` — to confirm |
+| Companies list | `<https://app.copper.com/.../contacts/companies>` — verified entity exists; exact path to confirm |
+| Opportunities list | `<https://app.copper.com/.../opportunities>` — to confirm |
+| Leads list | `<https://app.copper.com/.../leads>` — to confirm |
+| Tasks list | `<https://app.copper.com/.../tasks>` — to confirm |
+| Projects list | `<https://app.copper.com/.../projects>` — to confirm |
+| Company create form | Companies list → **Add Company** split-button → **Add Company** menu item → "Add a New Company" modal (see Gotchas: split-button + survey-toast quirks) |

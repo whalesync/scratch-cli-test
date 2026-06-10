@@ -27,7 +27,7 @@ and BOTH for MIXED (delete the unused one).
 
 ## Metadata
 - **Type:** STATIC | DYNAMIC | STATIC · custom fields supported (mixed)
-- **Template version:** 2026-06-09 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
+- **Template version:** 2026-06-10 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
 - **Last run:** <YYYY-MM-DD> · scratchmd + gstack · Tester: <name>
 
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
@@ -45,6 +45,13 @@ At-a-glance progress through the build journey, so anyone can see where this con
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
 | 7 | **Edge cases & quirks tested** (Pass 2 tricky parts) | ⬜ | |
 | 8 | **View(s) built** (default view; fields grouped by *existing* service mechanics — e.g. custom fields, plugin fields, real-vs-meta) | ⬜ | |
+| 9 | **OAuth** (final / pre-release — OAuth client created with the user, *or* requirements documented) | ⬜ | API-key covers all testing; this is the last step |
+
+## TODOs — known pending tasks
+Living checklist of what's left: gaps found while adopting human-built code, unfinished entities/fields, deferred edge cases, and follow-up issues. Check items off as they land. Coarser than the coverage matrix; broader than **Open issues** (which is only for broken ❌ cells with Linear links).
+
+- [ ] <pending task> <(link issue if any)>
+- [ ] <…>
 
 ## Objects / entity types — what the connector exposes  (REQUIRED for every connector — three tables)
 These describe the **best-case future state** (everything we want to sync), not just what's built — the `Status` column tracks built/planned. Enumerate the service's full object surface from its API, then sort every object into exactly one table. List custom *objects* in table 2; custom *fields* are columns (field-types section), not entities.
@@ -119,6 +126,11 @@ Max records (or fields) per API request, **per operation** — services often di
 ## Endpoints (what the connector calls)
 **Super-concise** — distil only the endpoints THIS connector actually hits; do NOT paste the vendor's full API reference / OpenAPI dump. One row per (entity/area × op); add a note only where a quirk matters.
 
+**API version & client** (answer first — "are we up to date?"; research the service's current offering, don't assume the code is current):
+- **API version:** `<v2 / date-based Attio-Version: 2026-…>` — latest the service offers? `<YES | NO — newest is <X>; upgrading needs <…>>`. Required version header? `<none | Header: value>`.
+- **Client / SDK:** `<hand-rolled axios (createApiClient) | official SDK <name> | third-party SDK <name>>` — if an SDK: pinned `<x.y.z>` vs newest published `<a.b.c>` → `<✅ current | ⚠️ behind (major/minor)>`. If hand-rolled: note any official/community SDK that exists and that we deliberately don't use it (house default).
+- **Currency verdict:** `<up to date | behind — detail>`.
+
 | Entity / area | Op | Method + path | Note (only if it matters) |
 |---|---|---|---|
 | `<Entity>` | list | `<GET /…>` | `<pagination / limit cap>` |
@@ -144,6 +156,14 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 ## Open issues
 - (link Linear issues for ❌ cells)
 
+## OAuth (final milestone — create the client with the user, or document what it takes)
+API-key (`user_provided_params`) connection covers all testing; OAuth is a pre-release nicety done *with* the user. Fill this in when you reach Milestone 9.
+- **Requires:** <dev account? app registration? review/approval? specific scopes?>
+- **Endpoints:** authorize `<url>` · token `<url>` · redirect URI = Scratch callback `REDIRECT_URI` (`<https://test.scratch.md/oauth/callback>`)
+- **App / client:** <where the app is registered; client id/secret in `server/.env` as `<SERVICE>_CLIENT_ID`/`_SECRET` — never paste the secret here>
+- **Status:** <not started | documented (requirements only) | client created | provider wired (CONNECTOR_GUIDE → Server — OAuth)>
+- **Blockers:** <approval pending / paid dev account / none>
+
 ## UI quick-links (time-savers for the gstack browser)
 Direct URLs to common screens so the agent jumps straight there instead of clicking through the UI. Fill these in as you discover them during a browser pass (e.g. you find the clients table is at `x.com/ui/clients` → record it here).
 
@@ -151,6 +171,7 @@ Direct URLs to common screens so the agent jumps straight there instead of click
 |-------|-----|
 | Service login | `<https://...>` |
 | API key / token settings | `<https://...>` |
+| OAuth app / developer console | `<https://...>` |
 | Billing / cancel trial | `<https://...>` |
 | <Entity1> list | `<https://.../...>` |
 | <Entity1> create form | `<https://.../...>` |
@@ -159,4 +180,5 @@ Direct URLs to common screens so the agent jumps straight there instead of click
 ## Template changelog
 **Very concise — one line per template version.** When you change the template's *structure* (add/rename/remove a section, table column, or required rule), bump `Template version` (Metadata) to today's date and add an entry here describing what changed. Each connector's STATE.md reconciles to the newest version on its next `/connector-build` run (apply every entry newer than the STATE.md's `Template version`). Don't log typo/wording fixes — only structural changes a STATE.md would need to mirror.
 
+- **2026-06-10** — Added Milestone 9 **OAuth** (final / pre-release) and an **OAuth** section (requires / endpoints / app-client location / status / blockers); added an OAuth-app row to UI quick-links. Added a **TODOs — known pending tasks** section directly below Milestones. **Endpoints** section now leads with an **"API version & client"** block (API version + is-it-latest + required version header; SDK/hand-rolled client + pinned-vs-newest version; currency verdict).
 - **2026-06-09** — Baseline. Sections: Test account · Metadata (+ Template version) · Milestones (**8-row**, incl. "View(s) built") · Objects (3 tables) · Entities×Ops / Field-types×Ops · Endpoints · Bulk limits/pagination · Incremental polling · Foreign keys · Edge cases · Gotchas · Open issues · UI quick-links · Template changelog.

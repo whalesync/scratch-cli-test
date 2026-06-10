@@ -89,3 +89,36 @@ Foreign-key CLI move (milestone #6 — manual edit + CLI publish, the green-✅ 
 [23:38:26] [Manual Edits] Re-parented Contact "Butt (Sample)" Benton→Chanay — edited Account_Name.id in "Zoho CRM (EU)/Contacts/butt-sample.json" (cloned wkb)
 [23:38:26] [Scratch CLI] Pushed via the 3-step flow — scratchmd files accept "…/butt-sample.json" && files upload && files publish → Published 1 connection
 [23:38:26] [Service API] Confirmed in Zoho — GET /Contacts/1001416000000554181 → Account_Name {name:"Chanay (Sample)", id:…093} ✅ re-parented
+
+## 2026-06-10 — default view (Milestone 8)
+
+Built the Zoho module default view (custom fields grouped):
+[00:31:00] [Service API] Confirmed the per-field standard-vs-custom signal on live metadata — GET /crm/v8/settings/fields?module=Leads → each field carries custom_field:boolean (field-level generated_type is empty; that's module-level). Green-field org has 0 custom fields on Leads.
+[00:31:30] [Manual Edits] Added buildZohoDefaultView — new zoho/zoho-default-view.ts: record id first, standard fields flat, user custom fields (custom_field===true) under a "Custom Fields" banner group; col readonly read from the schema's x-scratch-readonly; col type mapped from data_type. Wired into buildZohoJsonTableSpec (defaultView) and added custom_field?:boolean to ZohoFieldMetadata.
+[00:32:00] [Scratch CLI] Verified — eslint clean + jest zoho-default-view.spec.ts (+ zoho-json-schema.spec.ts) 25 passed. Desktop banner-span confirmation deferred to the live pass.
+
+## 2026-06-10 — default view confirmed on live data
+
+[13:20:00] [Scratch CLI] Re-pulled Leads (dfd_hPf7cY2rgp) on wkb_K7rI94Db0y → generated …/Leads/views/default.json: 44 flat cols, id first (readonly, string), Full_Name/Owner read-only propagated, Website→url, lookups→object, "Custom Fields" banner correctly omitted (green-field org has 0 custom fields). View generation confirmed against the running branch server.
+
+## 2026-06-10 — Leads full CRUD via CLI publish (Milestone 5) + field-type Edit→Push
+
+[14:48:00] [Manual Edits + Scratch CLI] New→Push: wrote Leads/qa-new-lead-0610.json (Last_Name/Company/Email/Lead_Source, no id) → accept/upload/publish → Zoho id 1001416000000590001 flowed back.
+[14:49:00] [Service API] Confirmed create — GET /crm/v8/Leads/…590001 → Last_Name/Company/Email/Lead_Source landed ✅.
+[14:51:00] [Scratch CLI + Service API] Delete→Push: rm file → accept/upload/publish → GET …590001 → 204 ✅ deleted.
+[14:55:00] [Manual Edits + Scratch CLI + Service API] Edit→Push on Leads/garcia.json (…559006): changed 6 field types (text Last_Name, picklist Lead_Source, integer No_of_Employees, currency Annual_Revenue, boolean Email_Opt_Out, textarea Description w/ テスト/ünïcödé) → publish → Zoho API: 6/6 round-tripped ✅ (unicode survives; no emoji used since Zoho strips it).
+
+## 2026-06-10 — deep pass: multi-module CRUD + FK moves + field-types + edge cases
+
+[15:10:00] [Service API] Seeded FK targets — 2 Accounts (A …592001, B …593001) + 2 Contacts (A …594001, B …589003) via POST. Re-pulled Accounts/Contacts/Deals (folders were empty in this clone; now 13/13/11 records).
+FK CLI-moves (manual edit + CLI publish, confirmed in Zoho API):
+[15:14:00] [Manual Edits + Scratch CLI + Service API] Deals/benton Account_Name re-parented →A then A→B ✅✅.
+[15:16:00] [Manual Edits + Scratch CLI + Service API] Deals/benton Contact_Name re-parented →A then A→B ✅✅.
+[15:30:00] [Manual Edits + Scratch CLI + Service API] Contacts/qa-contact-a Account_Name null→A then A→B ✅✅.
+Per-module CRUD via CLI publish (Contacts/Accounts/Deals — Leads done earlier):
+[15:20:00] [Manual Edits + Scratch CLI] New→Push 1 record per module (Account/Contact/Deal w/ date/email/phone/picklist/currency/FK) → ids flowed back (…598001/…599001/…597001); confirmed in API.
+[15:24:00] [Manual Edits + Scratch CLI + Service API] Edit→Push 8/8 field types: Contact date(Date_of_Birth)/email/phone, Deal picklist(Stage)/date(Closing_Date)/currency(Amount), Account phone/url(Website) — all ✅.
+[15:26:00] [Scratch CLI + Service API] Delete→Push all 3 → 204 ✅. → 4 Zoho modules now have full CRUD via CLI.
+Edge cases:
+[15:32:00] [Manual Edits + Scratch CLI + Service API] Emoji edge case: Contact Last_Name "QA Emoji 🎯 ünïcödé" → Zoho returns "QA Emoji ? ünïcödé" (emoji→?, BMP unicode survives) ✅ confirmed via CLI publish.
+[15:40:00] [Manual Edits + Scratch CLI + Service API] datetime Edit→Push (Events.Start_DateTime): lone Start update → INVALID_DATA "start datetime should be greater than end datetime" (Zoho Event rule — connector left it unpublished, correct); sending Start+End together → ✅ moved to 2026-09-20. (All-day events zero the time.)

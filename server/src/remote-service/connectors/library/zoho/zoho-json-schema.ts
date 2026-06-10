@@ -9,6 +9,7 @@ import {
 } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { buildZohoDefaultView } from './zoho-default-view';
 import { ZohoFieldMetadata } from './zoho-types';
 
 const LOG_SOURCE = 'ZohoJsonSchema';
@@ -258,6 +259,8 @@ export function buildZohoJsonTableSpec(
     schema,
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: titleField ? [titleField] : undefined,
+    // Standard fields flat; user-created custom fields grouped under a banner.
+    defaultView: buildZohoDefaultView(fields, properties),
     generatedAt: new Date().toISOString(),
   };
 }

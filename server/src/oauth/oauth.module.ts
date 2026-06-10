@@ -16,6 +16,7 @@ import { SupabaseOAuthProvider } from './providers/supabase-oauth.provider';
 import { WebflowOAuthProvider } from './providers/webflow-oauth.provider';
 import { WixOAuthProvider } from './providers/wix-oauth.provider';
 import { YouTubeOAuthProvider } from './providers/youtube-oauth.provider';
+import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
 
 @Module({
   imports: [ConfigModule, DbModule, PosthogModule, CredentialEncryptionModule, UserModule, ScratchGitModule],
@@ -31,6 +32,7 @@ import { YouTubeOAuthProvider } from './providers/youtube-oauth.provider';
     YouTubeOAuthProvider,
     QuickBooksOAuthProvider,
     LinearOAuthProvider,
+    ZohoOAuthProvider,
   ],
   exports: [OAuthService],
 })

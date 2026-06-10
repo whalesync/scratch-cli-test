@@ -119,25 +119,37 @@ export class ZohoApiClient {
   private apiDomain: string;
   private readonly rateLimiter?: RateLimiter;
   private readonly http: AxiosInstance;
+  /**
+   * Pre-minted access token for the OAuth-redirect auth path. When set, the
+   * OAuthService owns the token lifecycle (refresh + persistence), so this
+   * client skips its own refresh-token mint and uses this token directly. The
+   * API host comes from the data center's `defaultApiDomain` (set below).
+   */
+  private readonly oauthAccessToken?: string;
 
-  constructor(credentials: ZohoConnectorCredentials, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(credentials: ZohoConnectorCredentials, opts?: { rateLimiter?: RateLimiter; oauthAccessToken?: string }) {
     this.credentials = credentials;
     const hosts = ZOHO_DATA_CENTER_HOSTS[credentials.dataCenter];
     this.accountsDomain = hosts.accountsDomain;
     this.apiDomain = hosts.defaultApiDomain;
     this.rateLimiter = opts?.rateLimiter;
+    this.oauthAccessToken = opts?.oauthAccessToken;
     this.http = axios.create({ timeout: 60_000 });
   }
 
   // --- Auth ---
 
   /**
-   * Return a valid access token from the process-wide cache, minting a new one
-   * from the refresh token only when the cached one is missing or within 60s of
-   * expiry. Concurrent first-time callers share a single in-flight mint so a
-   * burst of parallel jobs issues one token request, not one per job.
+   * Return a valid access token. In the OAuth-redirect path the token is
+   * pre-minted by the OAuthService (which handles refresh + persistence), so we
+   * return it directly. Otherwise (Self-Client params) return a token from the
+   * process-wide cache, minting a new one from the refresh token only when the
+   * cached one is missing or within 60s of expiry. Concurrent first-time callers
+   * share a single in-flight mint so a burst of parallel jobs issues one token
+   * request, not one per job.
    */
   private async getAccessToken(): Promise<string> {
+    if (this.oauthAccessToken) return this.oauthAccessToken;
     const cacheKey = zohoTokenCacheKey(this.credentials);
     const cached = sharedAccessTokenByCredential.get(cacheKey);
     if (cached && Date.now() < cached.expiresAtMs) {

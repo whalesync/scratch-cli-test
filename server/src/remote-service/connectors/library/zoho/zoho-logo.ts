@@ -1,0 +1,7 @@
+/**
+ * Zoho CRM logo — inline PNG data URI (28×28). Inlined so the connector renders
+ * without the static.scratch.md CDN (the hosted `.svg` URL 404'd → broken icon);
+ * for production, upload an asset there and swap the URL.
+ */
+export const ZOHO_LOGO_DATA_URI =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y+mAAABBVBMVEVHcEz////////////////////////////////////9/fz/////////////////+vj97Ovi7u7N6tqy3sWT0K3////////////////73Nz5zs72vb3zpaXxjY7rdHTabzwbnlQFmUgBlUA4q2rr9PH////////2tbbvgYLpSErnNDHkJCblGx7kEhaOVDFxwZO/OCpuiGdOtoDqWVz////znJz3+/vv9vj1mSxAn4v6shv6tyXzrBH99eZKir0GiWkvd7fT4fD7wk/6sAr+79ANZrIhbbS50Ob/+e781YX95beCq9SkwN793J2dvd2Tt9n7z3gbarN2oc3CqmBId5rjri6OnJccIfVeAAAASXRSTlMAAQcRJUJrk8Dn/bFJCUjR+f////+mMnzJ///////////////9QLj////////////////////R7v///////v/////////////wZtWe1AAAAbhJREFUeAFlzsViFUEUhOG/uue6ovFscFvxArw6vsfdHaI3k/E5dNy+7ZEqsUNoD+akCYEIBkk3VRQJBWB11tNf2xlGZ5R2tAfMrY03Bu+MCF3Un6mxtpg0McAGvaWhL/GcL/Kz3jvAsChnW3Y+9y53A0sbXmYECCQRrK0owTfz0ZBATpJFnca/s6nAnVOe+cZo5ABrL6du1XXlx/53U6hY2ayj2nkDW/t0HQZsS8ZmViPUvZHWuKLPIcXEYD1NHNsGnKAbcvaTYMJh3wDNKQzNMOtxmBH4pTCs641h/98LDjltQGtJanavOiQlHNLVl0XpUWS3GkqsHYaHNS+B5KzXImhy2ACwRhg+jgiMwzyBD8OySoAWh1UERhjmAtYP1X1xJu5DP7MIo6Uk0Z0/BKsLzbbvZqdiektPXWTNqD0BW5uvyuzUaas3OROHWTzMnKdePx8T1EWVD1IFBWHWv9euPL3G4GyYUpblLI2tQbPZXGnfb7HiybOmOxd3SmDyJ4J+HG/26rf95jciqOxtiOkAyUWVWSH5759tqQQBOmfx7YGHKs9+nrHnpbU3OxN2hjAwq4Xtwdj2H1ML0e6EHvclAAAAAElFTkSuQmCC';

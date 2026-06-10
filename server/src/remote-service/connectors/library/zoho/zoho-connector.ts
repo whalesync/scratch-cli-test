@@ -27,6 +27,7 @@ import {
   ZOHO_MODIFIED_TIME_FIELD,
   ZOHO_USERS_TABLE_ID,
 } from './zoho-json-schema';
+import { ZOHO_LOGO_DATA_URI } from './zoho-logo';
 import {
   categoryForModule,
   normalizeZohoDataCenter,
@@ -56,14 +57,28 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
     displayName: 'Zoho CRM',
     table: 'module',
     tables: 'modules',
-    logo: 'https://static.scratch.md/connector-icons/zoho.svg',
-    // Hidden from the connection picker until v1 is complete (users table, live
-    // create/delete, Tier 2). Flip to true (or remove) to expose it.
-    visible: false,
+    logo: ZOHO_LOGO_DATA_URI,
+    // Validated end-to-end (4-module CRUD + FK moves + OAuth-redirect with multi-DC) — visible in production.
+    visible: true,
     incrementalPull: true,
-    userProvidedParamsLabel: 'OAuth Credentials',
+    // One-click OAuth (the system Zoho app) is the preferred path; the
+    // user-provided Self-Client params remain available as a fallback.
+    oauth: { label: 'Connect with Zoho' },
+    userProvidedParamsLabel: 'Self Client (manual refresh token)',
     setupGuide: { label: 'How to get Zoho credentials', url: 'https://www.zoho.com/crm/developer/docs/api/v8/' },
     credentialFields: {
+      // OAuth path: the user only picks their data center; the authorize/token
+      // hosts (accounts.zoho.<dc>) and the API host (zohoapis.<dc>) derive from it.
+      oauth: [
+        {
+          key: 'zohoDataCenter',
+          type: 'string',
+          label: 'Data Center',
+          description: 'Your Zoho region. Must match the account you authorize with.',
+          placeholder: 'US | EU | IN | AU | JP | CA | CN | SA',
+          required: true,
+        },
+      ],
       user_provided_params: [
         { key: 'zohoClientId', type: 'string', label: 'Client ID', placeholder: '1000.XXXXXXXX', required: true },
         { key: 'zohoClientSecret', type: 'password', label: 'Client Secret', required: true },
@@ -84,7 +99,7 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
   /** Cache of the field api_names to request when pulling each module. */
   private readonly pullFieldNamesCache = new Map<string, string[]>();
 
-  constructor(credentials: ZohoConnectorCredentials, opts?: { rateLimiter?: RateLimiter }) {
+  constructor(credentials: ZohoConnectorCredentials, opts?: { rateLimiter?: RateLimiter; oauthAccessToken?: string }) {
     super();
     this.client = new ZohoApiClient(credentials, opts);
   }
@@ -369,11 +384,34 @@ connectorRegistry.register({
   service: Service.ZOHO,
   metadata: ZohoConnector.metadata,
   advancedSettings: [],
-  supportedAuthMethods: ['user_provided_params'],
+  // Only OAuth is offered in the web UI (the modal renders auth methods from this
+  // list, and the default is the first entry). The Self-Client (`user_provided_params`)
+  // path is intentionally NOT listed so it's hidden from users — but it still works:
+  // the connection-create endpoint doesn't gate on `supportedAuthMethods`, and
+  // `createConnector` (below) handles the param branch. That keeps CLI/`scratchmd`
+  // connections (which can't do OAuth-redirect) and existing param connections working
+  // for the connector-build skill + tests. Keep `credentialFields.user_provided_params`
+  // for those callers.
+  supportedAuthMethods: ['oauth'],
   // Zoho concurrency is 5–25 in-flight depending on edition; 10 req/s is safe.
   rateLimiterSpec: { points: 10, duration: 1 },
-  // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount?.id ?? 'default');
+
+    // OAuth path (system or custom Zoho app). The OAuthService owns the token
+    // lifecycle — fetch a fresh access token per instantiation; the regional API
+    // host is derived from the stored data center (persisted in oauthWorkspaceId).
+    if (ctx.connectorAccount?.authType === 'OAUTH') {
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      const dataCenter = normalizeZohoDataCenter(ctx.decryptedCredentials?.oauthWorkspaceId ?? undefined);
+      WSLogger.info({ source: LOG_SOURCE, message: 'Instantiating Zoho connector (OAuth)' });
+      return new ZohoConnector(
+        { clientId: '', clientSecret: '', refreshToken: '', dataCenter },
+        { rateLimiter, oauthAccessToken: accessToken },
+      );
+    }
+
+    // User-provided Self-Client params (manual long-lived refresh token).
     const credentials = ctx.decryptedCredentials;
     if (!credentials?.zohoClientId || !credentials.zohoClientSecret || !credentials.zohoRefreshToken) {
       throw new ConnectorInstantiationError(
@@ -381,8 +419,7 @@ connectorRegistry.register({
         Service.ZOHO,
       );
     }
-    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount?.id ?? 'default');
-    WSLogger.info({ source: LOG_SOURCE, message: 'Instantiating Zoho connector' });
+    WSLogger.info({ source: LOG_SOURCE, message: 'Instantiating Zoho connector (user params)' });
     return new ZohoConnector(
       {
         clientId: credentials.zohoClientId,

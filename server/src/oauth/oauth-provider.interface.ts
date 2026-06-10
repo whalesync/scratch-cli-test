@@ -1,11 +1,16 @@
 export interface OAuthProvider {
   /**
-   * Generate OAuth authorization URL for the service
+   * Generate OAuth authorization URL for the service.
+   *
+   * `dataCenter` is for multi-region providers (e.g. Zoho's US/EU/IN/… data
+   * centers) whose authorize/token hosts differ per region; it's the analog of
+   * Shopify's `shopDomain`, selected by the user in the connect form and threaded
+   * through the OAuth state.
    */
   generateAuthUrl(
     userId: string,
     state: string,
-    overrides?: { clientId?: string; shopDomain?: string; codeChallenge?: string },
+    overrides?: { clientId?: string; shopDomain?: string; codeChallenge?: string; dataCenter?: string },
   ): string;
 
   /**
@@ -13,13 +18,20 @@ export interface OAuthProvider {
    */
   exchangeCodeForTokens(
     code: string,
-    overrides?: { clientId?: string; clientSecret?: string; shopDomain?: string; codeVerifier?: string },
+    overrides?: {
+      clientId?: string;
+      clientSecret?: string;
+      shopDomain?: string;
+      codeVerifier?: string;
+      dataCenter?: string;
+    },
   ): Promise<OAuthTokenResponse>;
 
   /**
-   * Refresh access token using refresh token
+   * Refresh access token using refresh token. `opts.dataCenter` lets a
+   * multi-region provider route the refresh to the correct regional host.
    */
-  refreshTokens(refreshToken: string): Promise<OAuthTokenResponse>;
+  refreshTokens(refreshToken: string, opts?: { dataCenter?: string }): Promise<OAuthTokenResponse>;
 
   /**
    * Get the service name
