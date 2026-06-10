@@ -1,10 +1,10 @@
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { TestConnectionResponse } from '@/types/server-entities/connector-accounts';
 import {
   ConnectorAccount,
   CreateConnectorAccountDto,
+  TestConnectionResponse,
   UpdateConnectorAccountDto,
   WorkbookId,
 } from '@spinner/shared-types';

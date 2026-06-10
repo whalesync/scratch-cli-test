@@ -1,4 +1,4 @@
-import { User } from '../types/user';
+import type { User } from '@spinner/shared-types';
 import { sanitizeDeepLinkSource } from './deep-link-source';
 
 export enum PostHogEvents {

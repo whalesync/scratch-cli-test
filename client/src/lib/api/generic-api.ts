@@ -2,15 +2,6 @@ import type { GenericApiAiPromptResponse, ProbeEndpointResponse, ReprobeResponse
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
-// GenericApiAiPromptResponse, ProbeEndpointResponse, ReprobeResponse, ReprobeDiff
-// are the shared contract — re-exported so existing importers keep working.
-export type {
-  GenericApiAiPromptResponse,
-  ProbeEndpointResponse,
-  ReprobeDiff,
-  ReprobeResponse,
-} from '@spinner/shared-types';
-
 export const genericApiApi = {
   getAiPrompt: async (apiType: 'rest' | 'graphql'): Promise<GenericApiAiPromptResponse> => {
     try {

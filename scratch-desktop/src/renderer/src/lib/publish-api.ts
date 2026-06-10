@@ -8,9 +8,6 @@ import type {
 } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
-// Re-exported so existing importers keep working.
-export type { PlanJobResponse, RepoFileResponse, RunJobResponse } from '@spinner/shared-types';
-
 export const publishApi = {
   /**
    * Build a publish plan for one connection. Returns `{ jobId, pipelineId }`

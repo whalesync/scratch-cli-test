@@ -1,7 +1,12 @@
-import { ConnectorAccount, CreateConnectorAccountDto, UpdateConnectorAccountDto } from '@spinner/shared-types';
+import {
+  ConnectorAccount,
+  CreateConnectorAccountDto,
+  TestConnectionResponse,
+  UpdateConnectorAccountDto,
+} from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
-import { connectorAccountsApi, TestConnectionResponse } from '../lib/connector-accounts-api';
+import { connectorAccountsApi } from '../lib/connector-accounts-api';
 
 const SWR_KEY_PREFIX = 'connector-accounts';
 

@@ -1,4 +1,4 @@
-import { JobEntity } from '../../types/server-entities/job';
+import { Job } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
@@ -8,10 +8,10 @@ export const jobApi = {
     offset?: number,
     workbookId?: string,
     filter?: { type?: string; syncId?: string; dataFolderId?: string },
-  ): Promise<JobEntity[]> => {
+  ): Promise<Job[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<JobEntity[]>('/jobs', {
+      const res = await axios.get<Job[]>('/jobs', {
         params: {
           limit,
           offset,
@@ -28,10 +28,10 @@ export const jobApi = {
     }
   },
 
-  getJobsStatus: async (jobIds: string[]): Promise<JobEntity[]> => {
+  getJobsStatus: async (jobIds: string[]): Promise<Job[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.post<JobEntity[]>('/jobs/bulk-status', { jobIds });
+      const res = await axios.post<Job[]>('/jobs/bulk-status', { jobIds });
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to fetch bulk job status');
@@ -39,10 +39,10 @@ export const jobApi = {
     }
   },
 
-  getActiveJobsByWorkbook: async (workbookId: string): Promise<JobEntity[]> => {
+  getActiveJobsByWorkbook: async (workbookId: string): Promise<Job[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<JobEntity[]>(`/jobs/workbook/${workbookId}/active`);
+      const res = await axios.get<Job[]>(`/jobs/workbook/${workbookId}/active`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to fetch active jobs for workspace');
@@ -71,10 +71,10 @@ export const jobApi = {
     }
   },
 
-  getJobsByRunId: async (runId: string): Promise<JobEntity[]> => {
+  getJobsByRunId: async (runId: string): Promise<Job[]> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<JobEntity[]>(`/jobs/run/${runId}`);
+      const res = await axios.get<Job[]>(`/jobs/run/${runId}`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to fetch jobs for run');

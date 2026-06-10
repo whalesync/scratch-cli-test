@@ -19,14 +19,7 @@ import {
   suppressFolderMutations,
   unsuppressFolderMutations,
 } from '@/stores/workbook-websocket-store';
-import {
-  isTableFullyLocked,
-  settingAppliesToTable,
-  TableList,
-  TablePreview,
-  TableSchemaPreview,
-  TableSearchResult,
-} from '@/types/server-entities/table-list';
+import { isTableFullyLocked, settingAppliesToTable } from '@/types/server-entities/table-list';
 import {
   Alert,
   Box,
@@ -54,6 +47,10 @@ import type {
   ConnectorSettingDefinition,
   DataFolderId,
   DataFolderOptions,
+  TableList,
+  TablePreview,
+  TableSchemaPreview,
+  TableSearchResult,
   WorkbookId,
 } from '@spinner/shared-types';
 import { TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';

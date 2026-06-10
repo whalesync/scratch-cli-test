@@ -4,14 +4,7 @@ import { CapabilityIcons } from '@/components/icons/CapabilityIcons';
 import { ConnectorIcon } from '@/components/icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import {
-  connectorAccountsApi,
-  isTableFullyLocked,
-  type TableList,
-  type TablePreview,
-  type TableSchemaPreview,
-  type TableSearchResult,
-} from '@/lib/connector-accounts-api';
+import { connectorAccountsApi, isTableFullyLocked } from '@/lib/connector-accounts-api';
 import { dataFoldersApi } from '@/lib/data-folders-api';
 import { genericApiApi } from '@/lib/generic-api-api';
 import {
@@ -35,7 +28,14 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import type { ConnectorAccount, DataFolderOptions } from '@spinner/shared-types';
+import type {
+  ConnectorAccount,
+  DataFolderOptions,
+  TableList,
+  TablePreview,
+  TableSchemaPreview,
+  TableSearchResult,
+} from '@spinner/shared-types';
 import { TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
 import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

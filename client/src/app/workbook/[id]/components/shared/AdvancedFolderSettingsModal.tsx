@@ -10,7 +10,7 @@ import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { isTableFullyLocked, settingAppliesToTable, TableList } from '@/types/server-entities/table-list';
+import { isTableFullyLocked, settingAppliesToTable } from '@/types/server-entities/table-list';
 import {
   Autocomplete,
   Checkbox,
@@ -25,7 +25,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import type { ConnectorSettingDefinition, DataFolder, DataFolderOptions } from '@spinner/shared-types';
+import type { ConnectorSettingDefinition, DataFolder, DataFolderOptions, TableList } from '@spinner/shared-types';
 import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import useSWR from 'swr';

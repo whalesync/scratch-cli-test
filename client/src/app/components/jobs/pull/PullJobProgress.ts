@@ -29,7 +29,6 @@ export type PullFilesProgress = {
 };
 
 import type { FolderError } from '@spinner/shared-types';
-export type { FolderError } from '@spinner/shared-types';
 
 // Pull linked folder files progress (single folder from pull-linked-folder-files job)
 export type PullLinkedFolderFilesProgress = {

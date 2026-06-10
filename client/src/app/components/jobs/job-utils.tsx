@@ -1,5 +1,5 @@
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { JobEntity } from '@/types/server-entities/job';
+import { Job } from '@spinner/shared-types';
 import { CheckIcon, CircleIcon, CircleXIcon, DotIcon } from 'lucide-react';
 import { TableStatus } from './publish/PublishJobProgress';
 
@@ -11,10 +11,7 @@ import { TableStatus } from './publish/PublishJobProgress';
  * So an in_progress table in a failed job is considered failed.
  *
  */
-export const getTerminalTableStatus = (
-  tableStatus: TableStatus,
-  jobStatus: JobEntity['state'] | undefined,
-): TableStatus => {
+export const getTerminalTableStatus = (tableStatus: TableStatus, jobStatus: Job['state'] | undefined): TableStatus => {
   // If the job is in a non-active terminal state (canceled or failed),
   // pending and in-progress tables are effectively canceled/stopped.
   const isJobStopped = jobStatus === 'canceled' || jobStatus === 'failed';

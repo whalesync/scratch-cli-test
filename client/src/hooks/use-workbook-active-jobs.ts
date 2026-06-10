@@ -1,7 +1,6 @@
 import { selectJobsForConnector, selectJobsForDataFolder, useActiveJobsStore } from '@/stores/active-jobs-store';
-import { DataFolder, DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { DataFolder, DataFolderId, Job, WorkbookId } from '@spinner/shared-types';
 import { useCallback, useEffect } from 'react';
-import { JobEntity } from '../types/server-entities/job';
 
 // TODO: refactor callers to just use useActiveJobsStore directly?
 export function useWorkbookActiveJobs(workbookId: WorkbookId | undefined) {
@@ -19,14 +18,14 @@ export function useWorkbookActiveJobs(workbookId: WorkbookId | undefined) {
   }, [workbookId, subscribe, unsubscribe]);
 
   const getJobsForDataFolder = useCallback(
-    (dataFolderId: DataFolderId): JobEntity[] => {
+    (dataFolderId: DataFolderId): Job[] => {
       return selectJobsForDataFolder(activeJobs, dataFolderId);
     },
     [activeJobs],
   );
 
   const getJobsForConnector = useCallback(
-    (connectorAccountId: string, dataFolders: DataFolder[]): JobEntity[] => {
+    (connectorAccountId: string, dataFolders: DataFolder[]): Job[] => {
       return selectJobsForConnector(activeJobs, connectorAccountId, dataFolders);
     },
     [activeJobs],

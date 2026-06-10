@@ -1,8 +1,14 @@
 import { useState } from 'react';
 
-import { workbookApi, type GitIndexDump } from '@/lib/api/workbook';
+import { workbookApi } from '@/lib/api/workbook';
 import { notifications } from '@mantine/notifications';
-import type { GitGcResponse, GitObjectCountsResponse, WorkbookId } from '@spinner/shared-types';
+import type {
+  GitGcResponse,
+  GitIndexDump,
+  GitObjectCountsResponse,
+  StripPrefixConnectionResult,
+  WorkbookId,
+} from '@spinner/shared-types';
 
 export function useGitActions() {
   const [indexData, setIndexData] = useState<GitIndexDump | null>(null);
@@ -28,9 +34,7 @@ export function useGitActions() {
     connectorAccountId: string;
   } | null>(null);
 
-  const [stripPrefixData, setStripPrefixData] = useState<
-    import('@/lib/api/workbook').StripPrefixConnectionResult[] | null
-  >(null);
+  const [stripPrefixData, setStripPrefixData] = useState<StripPrefixConnectionResult[] | null>(null);
   const [stripPrefixModalOpen, setStripPrefixModalOpen] = useState(false);
 
   const handleViewIndex = async (workbookId: WorkbookId, connectorAccountId: string) => {

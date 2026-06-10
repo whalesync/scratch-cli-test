@@ -1,6 +1,6 @@
-import { GitFile, workbookApi } from '@/lib/api/workbook';
+import { workbookApi } from '@/lib/api/workbook';
 import { Anchor, Button, Code, Group, Loader, Modal, ScrollArea, Select, Stack, Text, ThemeIcon } from '@mantine/core';
-import { WorkbookId } from '@spinner/shared-types';
+import { GitFile, WorkbookId } from '@spinner/shared-types';
 import { ArrowUpIcon, FileIcon, FolderIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 

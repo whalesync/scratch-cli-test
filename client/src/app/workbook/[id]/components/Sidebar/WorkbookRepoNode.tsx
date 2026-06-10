@@ -2,10 +2,10 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
-import { type GitFile, workbookApi } from '@/lib/api/workbook';
+import { workbookApi } from '@/lib/api/workbook';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Box, Collapse, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
-import type { WorkbookId } from '@spinner/shared-types';
+import type { GitFile, WorkbookId } from '@spinner/shared-types';
 import { ChevronDownIcon, ChevronRightIcon, FileJsonIcon, FolderIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';

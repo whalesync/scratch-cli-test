@@ -1,7 +1,7 @@
+import type { User } from '@spinner/shared-types';
 import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { identifyUser, initPostHog, trackAppExited, trackAppStarted, trackPageView } from '../lib/posthog';
-import { User } from '../types/user';
 
 interface PostHogProviderProps {
   user: User | null;

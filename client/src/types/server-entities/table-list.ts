@@ -1,9 +1,5 @@
 import type { ConnectorSettingDefinition, TablePreview } from '@spinner/shared-types';
 
-// TablePreview, TableList, TableSearchResult, TableSchemaPreview are the shared
-// contract — re-exported so existing importers keep working.
-export type { TableList, TablePreview, TableSchemaPreview, TableSearchResult } from '@spinner/shared-types';
-
 // A table is read-only at the connector level when it disables creates, updates,
 // and deletes. In that case the UI forces the per-folder readOnly option ON.
 export function isTableFullyLocked(table: TablePreview | undefined): boolean {

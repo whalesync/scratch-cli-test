@@ -1,7 +1,7 @@
 'use client';
 
-import type { GitIndexDump } from '@/lib/api/workbook';
 import { Badge, Button, Group, Modal, ScrollArea, Stack, Table, Tabs } from '@mantine/core';
+import type { GitIndexDump } from '@spinner/shared-types';
 
 interface GitIndexModalProps {
   opened: boolean;

@@ -1,14 +1,12 @@
-import { JobEntity } from '../../types/server-entities/job';
+import { Job } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
 export const progressApi = {
-  getJobProgress: async <TPublicProgress extends object = object>(
-    jobId: string,
-  ): Promise<JobEntity<TPublicProgress>> => {
+  getJobProgress: async <TPublicProgress extends object = object>(jobId: string): Promise<Job<TPublicProgress>> => {
     try {
       const axios = API_CONFIG.getAxiosInstance();
-      const res = await axios.get<JobEntity<TPublicProgress>>(`/jobs/${jobId}/progress`);
+      const res = await axios.get<Job<TPublicProgress>>(`/jobs/${jobId}/progress`);
       return res.data;
     } catch (error) {
       handleAxiosError(error, 'Failed to fetch job progress');

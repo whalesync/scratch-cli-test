@@ -1,9 +1,6 @@
 import type { GenericApiAiPromptResponse, ProbeEndpointResponse } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
-// Re-exported so existing importers keep working.
-export type { GenericApiAiPromptResponse, ProbeEndpointResponse } from '@spinner/shared-types';
-
 export const genericApiApi = {
   getAiPrompt: async (apiType: 'rest' | 'graphql'): Promise<GenericApiAiPromptResponse> => {
     const axios = API_CONFIG.getAxiosInstance();

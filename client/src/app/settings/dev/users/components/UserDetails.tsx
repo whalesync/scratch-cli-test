@@ -7,8 +7,6 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { ToolIconButton } from '@/app/components/ToolIconButton';
 import { devToolsApi } from '@/lib/api/dev-tools';
-import { UserDetails } from '@/types/server-entities/dev-tools';
-import { User } from '@/types/server-entities/users';
 import { getBuildFlavor } from '@/utils/build';
 import {
   Accordion,
@@ -25,7 +23,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { ConnectorAccountId, IdPrefixes } from '@spinner/shared-types';
+import { ConnectorAccountId, IdPrefixes, User, UserDetails } from '@spinner/shared-types';
 import {
   BuildingIcon,
   CreditCardIcon,

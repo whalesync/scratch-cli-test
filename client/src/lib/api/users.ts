@@ -1,5 +1,4 @@
-import { User } from '@/types/server-entities/users';
-import type { UpdateSettingsDto } from '@spinner/shared-types';
+import type { UpdateSettingsDto, User } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 

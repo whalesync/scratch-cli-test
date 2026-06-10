@@ -10,16 +10,6 @@ import type {
 } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
-// TablePreview, TableList, TableSearchResult, TableSchemaPreview, TestConnectionResponse
-// are the shared contract — re-exported so existing importers keep working.
-export type {
-  TableList,
-  TablePreview,
-  TableSchemaPreview,
-  TableSearchResult,
-  TestConnectionResponse,
-} from '@spinner/shared-types';
-
 export function isTableFullyLocked(table: TablePreview | undefined): boolean {
   return Boolean(table?.disabledCreates && table?.disabledUpdates && table?.disabledDeletes);
 }

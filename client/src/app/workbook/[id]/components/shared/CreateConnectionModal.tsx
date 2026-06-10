@@ -28,11 +28,11 @@ import {
   TextInput,
   UnstyledButton,
 } from '@mantine/core';
-import { ConnectorSettingDefinition, OAuthInitiateOptionsDto } from '@spinner/shared-types';
+import { AuthMethod, ConnectorSettingDefinition, OAuthInitiateOptionsDto } from '@spinner/shared-types';
 import { Check } from 'lucide-react';
 import { useState } from 'react';
 
-import { AuthMethod, useConnectors } from '@/hooks/use-connectors';
+import { useConnectors } from '@/hooks/use-connectors';
 import type { ConnectorAccount } from '@spinner/shared-types';
 import { GenericApiConnectionModal } from './GenericApiConnectionModal';
 

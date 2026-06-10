@@ -11,7 +11,6 @@ import { jobApi } from '@/lib/api/job';
 import { workbookApi } from '@/lib/api/workbook';
 import { useSyncStore } from '@/stores/sync-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
-import { JobEntity } from '@/types/server-entities/job';
 import { timeAgo } from '@/utils/helpers';
 import { getJobDescription, getJobType, getTypeLabel, JobType, publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import { RouteUrls } from '@/utils/route-urls';
@@ -34,7 +33,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
-import type { WorkbookId } from '@spinner/shared-types';
+import type { Job, WorkbookId } from '@spinner/shared-types';
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -71,7 +70,7 @@ const getTypeColor = (jobType: JobType): string => {
   }
 };
 
-type EffectiveState = JobEntity['state'] | 'completed-with-warnings';
+type EffectiveState = Job['state'] | 'completed-with-warnings';
 
 const getStatusColor = (status: EffectiveState): string => {
   switch (status) {
@@ -137,7 +136,7 @@ const formatTimestamp = (date?: string | Date | null): string => {
 };
 
 /** Derive the effective state for a job, checking sync table-level failures and warnings in progress. */
-const getEffectiveState = (job: JobEntity): EffectiveState => {
+const getEffectiveState = (job: Job): EffectiveState => {
   if (job.state !== 'completed') return job.state;
   const progress = job.publicProgress as Record<string, unknown> | undefined;
   if (!progress?.tables || !Array.isArray(progress.tables)) return job.state;
@@ -152,7 +151,7 @@ const getEffectiveState = (job: JobEntity): EffectiveState => {
   return job.state;
 };
 
-const getJobKey = (job: JobEntity): string => `${job.bullJobId}`;
+const getJobKey = (job: Job): string => `${job.bullJobId}`;
 
 // NOTE! We don't really paginate, we just increase the page size when the user wants to see more. Feel free to improve this.
 const INITIAL_PAGE_SIZE = 50;
@@ -423,7 +422,7 @@ function JobRow({
   isCanceling,
   onCancel,
 }: {
-  job: JobEntity;
+  job: Job;
   isActive: boolean;
   isExpanded: boolean;
   onToggle: () => void;
@@ -561,7 +560,7 @@ function JobRow({
   );
 }
 
-function ExpandedJobDetails({ job, isDevToolsEnabled }: { job: JobEntity; isDevToolsEnabled: boolean }) {
+function ExpandedJobDetails({ job, isDevToolsEnabled }: { job: Job; isDevToolsEnabled: boolean }) {
   const jobType = getJobType(job.type);
   const [rawData, setRawData] = useState<object | null>(null);
   const [rawLoading, setRawLoading] = useState(false);
@@ -684,7 +683,7 @@ function formatCount(count: number): string {
   return count.toString();
 }
 
-function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: JobEntity; isDevToolsEnabled: boolean }) {
+function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: Job; isDevToolsEnabled: boolean }) {
   const { isAdmin } = useScratchPadUser();
   const params = useParams<{ id: string }>();
   const workbookId = params.id as WorkbookId;

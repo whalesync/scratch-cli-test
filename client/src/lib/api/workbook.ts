@@ -36,16 +36,6 @@ import { handleAxiosError } from './error';
 export type WorkbookSortBy = 'name' | 'createdAt' | 'updatedAt';
 export type WorkbookSortOrder = 'asc' | 'desc';
 
-// GitFile, GitIndexFile, GitIndexReference, GitIndexDump, StripPrefixConnectionResult
-// are the shared contract — re-exported so existing importers keep working.
-export type {
-  GitFile,
-  GitIndexDump,
-  GitIndexFile,
-  GitIndexReference,
-  StripPrefixConnectionResult,
-} from '@spinner/shared-types';
-
 export const workbookApi = {
   list: async (
     connectorAccountId?: string,

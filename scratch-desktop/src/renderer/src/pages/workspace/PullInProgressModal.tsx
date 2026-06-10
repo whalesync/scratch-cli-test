@@ -1,8 +1,9 @@
 import { Badge, Box, Center, Group, Loader, Modal, Progress, ScrollArea, Stack, Table } from '@mantine/core';
+import type { Job } from '@spinner/shared-types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text12Regular, Text13Regular } from '../../components/base/text';
 import { useCurrentUser } from '../../hooks/use-current-user';
-import { jobApi, type JobStatus } from '../../lib/job-api';
+import { jobApi } from '../../lib/job-api';
 import { JobRawJsonButton } from './JobRawJsonButton';
 
 type PullProgress = {
@@ -22,11 +23,11 @@ type PullProgress = {
   deletedCount?: number;
 };
 
-function isTerminalState(state: JobStatus['state']): boolean {
+function isTerminalState(state: Job['state']): boolean {
   return state === 'completed' || state === 'failed' || state === 'canceled' || state === 'unknown';
 }
 
-function statusColor(state: PullProgress['status'] | JobStatus['state']): string {
+function statusColor(state: PullProgress['status'] | Job['state']): string {
   switch (state) {
     case 'completed':
       return 'green';
@@ -46,7 +47,7 @@ function statusColor(state: PullProgress['status'] | JobStatus['state']): string
   }
 }
 
-function getConnectionLabel(job: JobStatus, progress?: PullProgress): string {
+function getConnectionLabel(job: Job, progress?: PullProgress): string {
   return progress?.connectionName ?? progress?.folderName ?? job.bullJobId ?? '—';
 }
 
@@ -73,7 +74,7 @@ export function PullInProgressModal({
   const { user } = useCurrentUser();
   const [phase, setPhase] = useState<'loading' | 'polling' | 'downloading' | 'done' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<JobStatus[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [trackedJobIds, setTrackedJobIds] = useState<string[]>([]);
   const pollingIntervalRef = useRef<number | null>(null);
   const showJobDebug = user?.isAdmin === true;
@@ -107,7 +108,7 @@ export function PullInProgressModal({
       .then((activeJobs) => {
         if (cancelled) return;
         const pullJobs = activeJobs.filter(
-          (j: JobStatus) => j.type === 'RefreshRecords' || j.type === 'pull-linked-folder-files',
+          (j: Job) => j.type === 'RefreshRecords' || j.type === 'pull-linked-folder-files',
         );
         if (pullJobs.length === 0) {
           // No active pull jobs — skip straight to done

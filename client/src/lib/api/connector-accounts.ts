@@ -1,10 +1,14 @@
 import {
   ApiQuotaResponse,
+  ConnectorAccount,
+  CreateConnectorAccountDto,
   RevealCredentialsResponse,
+  TableList,
+  TableSchemaPreview,
+  TableSearchResult,
   TestConnectionResponse,
-} from '@/types/server-entities/connector-accounts';
-import { ConnectorAccount, CreateConnectorAccountDto, UpdateConnectorAccountDto } from '@spinner/shared-types';
-import { TableList, TableSchemaPreview, TableSearchResult } from '../../types/server-entities/table-list';
+  UpdateConnectorAccountDto,
+} from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 

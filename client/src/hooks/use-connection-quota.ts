@@ -1,6 +1,6 @@
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { ApiQuotaResponse } from '@/types/server-entities/connector-accounts';
+import { ApiQuotaResponse } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
 

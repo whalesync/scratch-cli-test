@@ -1,7 +1,8 @@
+import type { User } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
 import { usersApi } from '../lib/users-api';
-import { User, UserSetting, UserSettingValue } from '../types/user';
+import { UserSetting, UserSettingValue } from '../types/user';
 
 const SWR_KEY = '/users/current';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes

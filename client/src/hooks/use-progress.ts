@@ -1,10 +1,10 @@
-import { JobEntity } from '@/types/server-entities/job';
+import { Job } from '@spinner/shared-types';
 import { useState } from 'react';
 import useSWR from 'swr';
 import { progressApi } from '../lib/api/progress';
 
 type JobResult<TPublicProgress extends object = object> = {
-  job?: JobEntity<TPublicProgress>;
+  job?: Job<TPublicProgress>;
   error?: Error;
   isLoading: boolean;
   mutate: () => unknown;
@@ -14,7 +14,7 @@ export const useJob = <TPublicProgress extends object>(
   jobId: string | null,
   continuePolling = false,
 ): JobResult<TPublicProgress> => {
-  const { data, error, isLoading, mutate } = useSWR<JobEntity<TPublicProgress>, Error>(
+  const { data, error, isLoading, mutate } = useSWR<Job<TPublicProgress>, Error>(
     jobId ? `progress-${jobId}` : null,
     () => {
       if (!jobId) {

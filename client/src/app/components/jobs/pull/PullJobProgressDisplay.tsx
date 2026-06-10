@@ -2,21 +2,19 @@ import { Text13Regular } from '@/app/components/base/text';
 import { getTerminalTableStatus } from '@/app/components/jobs/job-utils';
 import { TableStatus } from '@/app/components/jobs/publish/PublishJobProgress';
 import {
-  FolderError,
   PullProgress,
   isPullFilesProgress,
   isPullLinkedFolderFilesProgress,
 } from '@/app/components/jobs/pull/PullJobProgress';
 import { SyncStatus } from '@/app/components/jobs/SyncStatus/sync-status';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
-import { JobEntity } from '@/types/server-entities/job';
 import { Alert, Stack } from '@mantine/core';
-import { Service } from '@spinner/shared-types';
+import { FolderError, Job, Service } from '@spinner/shared-types';
 import { AlertCircle } from 'lucide-react';
 import { FC } from 'react';
 
 type Props = {
-  job?: JobEntity<PullProgress>;
+  job?: Job<PullProgress>;
 };
 
 export const PullJobProgressDisplay: FC<Props> = (props) => {

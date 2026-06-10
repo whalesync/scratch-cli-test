@@ -1,7 +1,8 @@
 import { Badge, Box, Center, Group, Loader, Modal, Progress, ScrollArea, Stack, Table, Text } from '@mantine/core';
+import type { Job } from '@spinner/shared-types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '../../hooks/use-current-user';
-import { jobApi, type JobStatus } from '../../lib/job-api';
+import { jobApi } from '../../lib/job-api';
 import { workspacesApi } from '../../lib/workspaces-api';
 import { JobRawJsonButton } from './JobRawJsonButton';
 
@@ -22,11 +23,11 @@ type PullProgress = {
   deletedCount?: number;
 };
 
-function isTerminalState(state: JobStatus['state']): boolean {
+function isTerminalState(state: Job['state']): boolean {
   return state === 'completed' || state === 'failed' || state === 'canceled' || state === 'unknown';
 }
 
-function statusColor(state: PullProgress['status'] | JobStatus['state']): string {
+function statusColor(state: PullProgress['status'] | Job['state']): string {
   switch (state) {
     case 'completed':
       return 'green';
@@ -46,7 +47,7 @@ function statusColor(state: PullProgress['status'] | JobStatus['state']): string
   }
 }
 
-function getConnectionLabel(job: JobStatus, progress?: PullProgress): string {
+function getConnectionLabel(job: Job, progress?: PullProgress): string {
   return progress?.connectionName ?? progress?.folderName ?? job.bullJobId ?? '—';
 }
 
@@ -78,7 +79,7 @@ export function PullFoldersModal({
   const [error, setError] = useState<string | null>(null);
   const [emptyMessage, setEmptyMessage] = useState<string>(emptyStateMessage);
   const [jobIds, setJobIds] = useState<string[]>([]);
-  const [jobs, setJobs] = useState<JobStatus[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const pollingIntervalRef = useRef<number | null>(null);
   const showJobDebug = user?.isAdmin === true;
 

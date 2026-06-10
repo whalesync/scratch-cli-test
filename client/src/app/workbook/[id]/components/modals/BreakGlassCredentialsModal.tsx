@@ -1,7 +1,6 @@
 'use client';
 
 import { connectorAccountsApi } from '@/lib/api/connector-accounts';
-import { RevealCredentialsResponse } from '@/types/server-entities/connector-accounts';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
@@ -18,6 +17,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { RevealCredentialsResponse } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
 import { AlertTriangleIcon, CheckIcon, CopyIcon, KeyRoundIcon } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';

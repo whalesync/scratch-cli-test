@@ -14,10 +14,11 @@ import {
   Table,
   Text,
 } from '@mantine/core';
+import type { Job } from '@spinner/shared-types';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ValidationStat } from '../../../../shared/validation-types';
-import { jobApi, type JobStatus } from '../../lib/job-api';
+import { jobApi } from '../../lib/job-api';
 import {
   trackPublishCompleted,
   trackPublishReviewOnWeb,
@@ -100,7 +101,7 @@ interface PublishChangesModalProps {
   onViewProblems?: (folderPath: string) => void;
 }
 
-function isTerminalState(state: JobStatus['state']): boolean {
+function isTerminalState(state: Job['state']): boolean {
   return state === 'completed' || state === 'failed' || state === 'canceled' || state === 'unknown';
 }
 
@@ -169,7 +170,7 @@ function modeTitle(mode: PublishMode): string {
   }
 }
 
-function statusColor(state: JobStatus['state']): string {
+function statusColor(state: Job['state']): string {
   switch (state) {
     case 'completed':
       return 'green';
@@ -205,12 +206,12 @@ interface PublishPipelineProgress {
   blockedDirtyDrift?: { connectorAccountId: string; dirtyCount: number };
 }
 
-function hasPublishFailures(job: JobStatus | undefined): boolean {
+function hasPublishFailures(job: Job | undefined): boolean {
   const progress = job?.publicProgress as PublishPipelineProgress | undefined;
   return (progress?.failedCount ?? 0) > 0;
 }
 
-function getPublishFailureMessage(job: JobStatus): string {
+function getPublishFailureMessage(job: Job): string {
   const progress = job.publicProgress as PublishPipelineProgress | undefined;
   const failedCount = progress?.failedCount ?? 0;
   const currentPhase = progress?.currentPhase;
@@ -268,7 +269,7 @@ function computePhaseRows(progress: PublishPipelineProgress) {
   });
 }
 
-function ConnectionPublishRow({ connection, job }: { connection: ConnectionPublishState; job: JobStatus | undefined }) {
+function ConnectionPublishRow({ connection, job }: { connection: ConnectionPublishState; job: Job | undefined }) {
   const progress = job?.publicProgress as PublishPipelineProgress | undefined;
   const total = progress?.totalCount ?? 0;
   const processed = progress?.processedCount ?? 0;
@@ -431,7 +432,7 @@ export function PublishChangesModal({
    * job finishes. This replaces the per-job + page-level pollers that used
    * to race each other against the rate-limited bulk-status endpoint.
    */
-  const pendingWaitsRef = useRef<Map<string, (status: JobStatus) => void>>(new Map());
+  const pendingWaitsRef = useRef<Map<string, (status: Job) => void>>(new Map());
   const [mode, setMode] = useState<PublishMode>('approval');
   const [initializing, setInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -444,7 +445,7 @@ export function PublishChangesModal({
   const [checkFailed, setCheckFailed] = useState<UploadCheckFailed | null>(null);
   const [stalenessBannerDismissed, setStalenessBannerDismissed] = useState(false);
   const [publishConnections, setPublishConnections] = useState<ConnectionPublishState[]>([]);
-  const [jobs, setJobs] = useState<JobStatus[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [publishErrorDetails, setPublishErrorDetails] = useState<string[]>([]);
   const [closing, setClosing] = useState(false);
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
@@ -812,11 +813,11 @@ export function PublishChangesModal({
     void trackPublishReviewOnWeb(workspaceId);
   }, [workspaceId]);
 
-  const pollJobToTerminal = useCallback((jobId: string): Promise<JobStatus> => {
+  const pollJobToTerminal = useCallback((jobId: string): Promise<Job> => {
     // Register the job in the shared pending-waits map. The single poller in
     // the useEffect below resolves this Promise on the tick that observes
     // the job in a terminal state.
-    return new Promise<JobStatus>((resolve) => {
+    return new Promise<Job>((resolve) => {
       pendingWaitsRef.current.set(jobId, resolve);
     });
   }, []);

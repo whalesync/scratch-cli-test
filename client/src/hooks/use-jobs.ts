@@ -1,8 +1,8 @@
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
+import { Job } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
 import { jobApi } from '../lib/api/job';
-import { JobEntity } from '../types/server-entities/job';
 
 export const useJobs = (
   limit?: number,
@@ -10,7 +10,7 @@ export const useJobs = (
   workbookId?: string,
   filter?: { type?: string; syncId?: string; dataFolderId?: string },
 ) => {
-  const { data, error, isLoading, mutate } = useSWR<JobEntity[], Error>(
+  const { data, error, isLoading, mutate } = useSWR<Job[], Error>(
     `jobs-${limit}-${offset}-${workbookId || 'all'}-${filter?.type || 'all'}-${filter?.syncId || 'all'}-${filter?.dataFolderId || 'all'}`,
     () => jobApi.getJobs(limit, offset, workbookId, filter),
     {

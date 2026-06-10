@@ -1,15 +1,14 @@
 import { jobApi } from '@/lib/api/job';
 import { syncApi } from '@/lib/api/sync';
 import { trackRunSync } from '@/lib/posthog';
-import { JobEntity } from '@/types/server-entities/job';
-import { Sync, SyncId, WorkbookId } from '@spinner/shared-types';
+import { Job, Sync, SyncId, WorkbookId } from '@spinner/shared-types';
 import { create } from 'zustand';
 import { useActiveJobsStore } from './active-jobs-store';
 
 interface SyncStoreState {
   syncs: Sync[];
   activeJobs: Record<SyncId, string>; // Maps SyncId to JobId
-  jobStatuses: Record<string, JobEntity>; // Maps JobId to JobEntity
+  jobStatuses: Record<string, Job>; // Maps JobId to Job
   isPolling: boolean;
   isLoading: boolean;
   workbookId: WorkbookId | null;
@@ -56,7 +55,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
             state: 'active',
             type: 'sync',
             dbJobId: jobId,
-          } as JobEntity,
+          } as Job,
         },
       }));
 
@@ -80,7 +79,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         return;
       }
 
-      const updates: Record<string, JobEntity> = {};
+      const updates: Record<string, Job> = {};
       const finishedSyncIds: SyncId[] = [];
       let shouldRefreshSyncs = false;
 

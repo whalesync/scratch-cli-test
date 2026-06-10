@@ -1,15 +1,14 @@
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { jobApi } from '@/lib/api/job';
-import { JobEntity } from '@/types/server-entities/job';
 import { getJobDescription, getJobType, getTypeLabel } from '@/utils/job-helpers';
 import { RouteUrls } from '@/utils/route-urls';
-import { DataFolder, DataFolderId, WorkbookId } from '@spinner/shared-types';
+import { DataFolder, DataFolderId, Job, WorkbookId } from '@spinner/shared-types';
 import Link from 'next/link';
 import React from 'react';
 import { create } from 'zustand';
 
 interface ActiveJobsStoreState {
-  activeJobs: JobEntity[];
+  activeJobs: Job[];
   workbookId: WorkbookId | null;
   isPolling: boolean;
   isLoading: boolean;
@@ -215,7 +214,7 @@ async function notifyCompletedJobs(workbookId: string, disappearedIds: string[])
  * - pull-linked-folder-files: single folderId
  * - sync-data-folders: tables[].id
  */
-export function getDataFolderIdsFromJob(job: JobEntity): string[] {
+export function getDataFolderIdsFromJob(job: Job): string[] {
   // Prefer the canonical dataFolderId from the database
   if (job.dataFolderId) {
     return [job.dataFolderId];
@@ -242,7 +241,7 @@ export function getDataFolderIdsFromJob(job: JobEntity): string[] {
   return [];
 }
 
-export function selectJobsForDataFolder(activeJobs: JobEntity[], dataFolderId: DataFolderId): JobEntity[] {
+export function selectJobsForDataFolder(activeJobs: Job[], dataFolderId: DataFolderId): Job[] {
   return activeJobs.filter((job) => {
     const folderIds = getDataFolderIdsFromJob(job);
     return folderIds.includes(dataFolderId);
@@ -250,10 +249,10 @@ export function selectJobsForDataFolder(activeJobs: JobEntity[], dataFolderId: D
 }
 
 export function selectJobsForConnector(
-  activeJobs: JobEntity[],
+  activeJobs: Job[],
   connectorAccountId: string,
   dataFolders: DataFolder[],
-): JobEntity[] {
+): Job[] {
   const folderIdsForConnector = new Set(
     dataFolders.filter((f) => f.connectorAccountId === connectorAccountId).map((f) => f.id),
   );

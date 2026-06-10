@@ -1,9 +1,5 @@
 import type { User, UserExperimentFlags } from '@spinner/shared-types';
 
-// User, UserExperimentFlags, SubscriptionInfo are the shared contract — re-exported
-// here so existing `@/types/server-entities/users` importers keep working.
-export type { SubscriptionInfo, User, UserExperimentFlags } from '@spinner/shared-types';
-
 export function isExperimentEnabled(experiment: keyof UserExperimentFlags, user: User | null): boolean {
   return user?.experimentalFlags?.[experiment] === true;
 }

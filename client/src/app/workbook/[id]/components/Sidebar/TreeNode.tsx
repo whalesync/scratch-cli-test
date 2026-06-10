@@ -25,6 +25,7 @@ import {
   type DataFolderId,
   type DataFolderOptions,
   type FileRefEntity,
+  type Job,
   type WorkbookId,
 } from '@spinner/shared-types';
 import {
@@ -318,7 +319,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
 
   // Targeted Zustand selector — only re-renders when THIS connector's jobs change
   const connectorJobsSelector = useCallback(
-    (s: { activeJobs: import('@/types/server-entities/job').JobEntity[] }) => {
+    (s: { activeJobs: Job[] }) => {
       if (!connectorAccount) return [];
       return selectJobsForConnector(s.activeJobs, connectorAccount.id, workbook?.dataFolders ?? []);
     },

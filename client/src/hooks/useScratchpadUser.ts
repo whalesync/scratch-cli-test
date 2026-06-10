@@ -1,9 +1,10 @@
 import { API_CONFIG } from '@/lib/api/config';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { usersApi } from '@/lib/api/users';
-import { User, UserSetting, UserSettingValue } from '@/types/server-entities/users';
+import { UserSetting, UserSettingValue } from '@/types/server-entities/users';
 import { RouteUrls } from '@/utils/route-urls';
 import { useAuth, useUser } from '@clerk/nextjs';
+import { User } from '@spinner/shared-types';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import useSWR from 'swr';

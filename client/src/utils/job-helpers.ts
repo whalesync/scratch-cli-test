@@ -1,5 +1,4 @@
-import { JobEntity } from '@/types/server-entities/job';
-import { JobType as JobTypeConstant, PublishPlanStatus } from '@spinner/shared-types';
+import { Job, JobType as JobTypeConstant, PublishPlanStatus } from '@spinner/shared-types';
 import pluralize from 'pluralize';
 
 export type JobType = 'sync' | 'publish' | 'pull' | 'rehost' | 'unknown';
@@ -57,7 +56,7 @@ export const publishPlanStatusBadgeColor = (status: PublishPlanStatus): string =
   }
 };
 
-export const getJobDescription = (job: JobEntity): string => {
+export const getJobDescription = (job: Job): string => {
   const jobType = getJobType(job.type);
   const progress =
     job.publicProgress && typeof job.publicProgress === 'object'

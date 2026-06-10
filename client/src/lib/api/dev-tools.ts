@@ -1,5 +1,3 @@
-import { UserDetails } from '@/types/server-entities/dev-tools';
-import { User } from '@/types/server-entities/users';
 import type { UpdateSettingsDto } from '@spinner/shared-types';
 import {
   ChangeUserOrganizationDto,
@@ -9,6 +7,8 @@ import {
   EmailTemplatePayload,
   GetAllJobsResponseDto,
   ScratchPlanType,
+  User,
+  UserDetails,
 } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';

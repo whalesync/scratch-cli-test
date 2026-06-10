@@ -1,4 +1,4 @@
-import { User } from '../types/user';
+import type { User } from '@spinner/shared-types';
 import { API_CONFIG } from './api';
 
 export const usersApi = {

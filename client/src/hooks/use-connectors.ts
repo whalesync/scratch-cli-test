@@ -2,8 +2,6 @@ import { AuthMethod } from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
 import { useConnectorsMetadata } from './use-connectors-metadata';
 
-export type { AuthMethod } from '@spinner/shared-types';
-
 /**
  * A utility hook for interacting with connectors, driven entirely by the metadata API.
  */

@@ -1,8 +1,6 @@
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { devToolsApi } from '@/lib/api/dev-tools';
-import { UserDetails } from '@/types/server-entities/dev-tools';
-import { User } from '@/types/server-entities/users';
-import { ScratchPlanType } from '@spinner/shared-types';
+import { ScratchPlanType, User, UserDetails } from '@spinner/shared-types';
 import { useState } from 'react';
 import { useScratchPadUser } from './useScratchpadUser';
 
