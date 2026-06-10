@@ -1,5 +1,5 @@
 import { Schedule } from '@prisma/client';
-import { IncrementalPullSupport, WorkbookId, Workspace } from '@spinner/shared-types';
+import { IncrementalPullSupport, WorkbookId, WorkbookManager, Workspace } from '@spinner/shared-types';
 import { WorkbookCluster } from '../../db/cluster-types';
 import { DataFolderEntity } from './data-folder.entity';
 
@@ -26,6 +26,7 @@ export const WorkspaceEntity = {
       updatedAt: workbook.updatedAt.toISOString(),
       version: workbook.version,
       isPendingDelete: workbook.isPendingDelete,
+      managedBy: (workbook.managedBy as WorkbookManager | null) ?? null,
       userId: workbook.userId ?? null,
       organizationId: workbook.organizationId,
       dataFolders: workbook.dataFolders?.map(

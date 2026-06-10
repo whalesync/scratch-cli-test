@@ -3,6 +3,7 @@ import type { CreateWorkbookDto } from '../../dto/workbook/create-workbook.dto';
 import type { DeleteWorkbookResponseDto } from '../../dto/workbook/delete-workbook.dto';
 import type { WorkbookListQuery } from '../../dto/workbook/list-workbooks-query.dto';
 import type { UpdateWorkbookDto } from '../../dto/workbook/update-workbook.dto';
+import type { WorkbookManager } from '../../enums/enums';
 import type { Http } from '../http';
 
 export type WorkbookSortBy = NonNullable<WorkbookListQuery['sortBy']>;
@@ -24,8 +25,9 @@ export function createWorkspacesApi(http: Http) {
       connectorAccountId?: string,
       sortBy: WorkbookSortBy = 'createdAt',
       sortOrder: WorkbookSortOrder = 'desc',
+      managedBy?: WorkbookManager,
     ): Promise<Workspace[]> => {
-      const params: WorkbookListQuery = { connectorAccountId, sortBy, sortOrder };
+      const params: WorkbookListQuery = { connectorAccountId, sortBy, sortOrder, managedBy };
       const res = await http.get<Workspace[]>('/workbook', { params, fallbackMessage: 'Failed to fetch workspaces' });
       return res.data;
     },

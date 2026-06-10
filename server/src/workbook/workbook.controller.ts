@@ -73,7 +73,7 @@ export class WorkbookController {
 
   @Get()
   async findAll(@Query() query: WorkbookListQueryDto, @Req() req: RequestWithUser): Promise<Workspace[]> {
-    const { connectorAccountId, sortBy, sortOrder } = query;
+    const { connectorAccountId, sortBy, sortOrder, managedBy } = query;
     let workbooks: WorkbookCluster.Workbook[] = [];
     if (connectorAccountId) {
       workbooks = await this.service.findAllForConnectorAccount(
@@ -81,9 +81,10 @@ export class WorkbookController {
         userToActor(req.user),
         sortBy,
         sortOrder,
+        managedBy,
       );
     } else {
-      workbooks = await this.service.findAllForUser(userToActor(req.user), sortBy, sortOrder);
+      workbooks = await this.service.findAllForUser(userToActor(req.user), sortBy, sortOrder, managedBy);
     }
 
     const workbookIds = workbooks.map((s) => s.id as WorkbookId);

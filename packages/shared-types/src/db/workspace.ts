@@ -1,3 +1,4 @@
+import { WorkbookManager } from '../enums/enums';
 import { WorkbookId } from '../ids';
 import { DataFolder } from './data-folder';
 
@@ -15,6 +16,9 @@ export interface Workspace {
   updatedAt: string;
   version: number;
   isPendingDelete: boolean;
+  // Which external app owns and manages this workspace, if any. `null` means a
+  // standalone Scratch workbook; `ws_crm` means it is managed by Whalesync's CRM Bridge.
+  managedBy: WorkbookManager | null;
   dataFolders?: DataFolder[];
   userId: string | null;
   organizationId: string;

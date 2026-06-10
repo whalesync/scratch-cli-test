@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { WorkbookManager } from '../../enums/enums';
 
 /**
  * Query parameters for `GET /workbook` (the workbook list endpoint used by the
@@ -16,6 +17,10 @@ export const workbookListQuerySchema = z.object({
   connectorAccountId: z.string().optional(),
   sortBy: z.enum(['name', 'createdAt', 'updatedAt']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
+  // Filter the list to workbooks managed by a specific app (e.g. `ws_crm` for
+  // Whalesync's CRM Bridge). Omit to return all workbooks regardless of manager.
+  // The enum enforces the valid values at the API boundary.
+  managedBy: z.nativeEnum(WorkbookManager).optional(),
 });
 
 export type WorkbookListQuery = z.infer<typeof workbookListQuerySchema>;

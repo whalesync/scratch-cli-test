@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import type { WorkbookId } from '@spinner/shared-types';
+import { WorkbookManager, type WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
@@ -155,6 +155,28 @@ describe('WorkbookService', () => {
       await expect(service.create({ name: 'Test Workbook' }, ACTOR)).rejects.toThrow(InternalServerErrorException);
 
       expect(dbService.client.workbook.delete).toHaveBeenCalledWith({ where: { id: WORKBOOK_ID } });
+    });
+
+    it('persists the managing app when one is supplied (e.g. ws_crm from Whalesync)', async () => {
+      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createMockWorkbook(2));
+
+      await service.create({ name: 'CRM Workbook', managedBy: WorkbookManager.WS_CRM }, ACTOR);
+
+      const [createArgs] = (dbService.client.workbook.create as jest.Mock).mock.calls[0] as [
+        { data: { managedBy: WorkbookManager | null } },
+      ];
+      expect(createArgs.data.managedBy).toBe(WorkbookManager.WS_CRM);
+    });
+
+    it('defaults the managing app to null for a standalone Scratch workbook (none supplied)', async () => {
+      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createMockWorkbook(2));
+
+      await service.create({ name: 'Test Workbook' }, ACTOR);
+
+      const [createArgs] = (dbService.client.workbook.create as jest.Mock).mock.calls[0] as [
+        { data: { managedBy: WorkbookManager | null } },
+      ];
+      expect(createArgs.data.managedBy).toBeNull();
     });
   });
 

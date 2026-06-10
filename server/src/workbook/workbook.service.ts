@@ -10,6 +10,7 @@ import {
   UpdateWorkbookDto,
   ValidatedCreateWorkbookDto,
   WorkbookId,
+  WorkbookManager,
 } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -71,7 +72,7 @@ export class WorkbookService {
   ) {}
 
   async create(createWorkbookDto: ValidatedCreateWorkbookDto, actor: Actor): Promise<WorkbookCluster.Workbook> {
-    const { name } = createWorkbookDto;
+    const { name, managedBy } = createWorkbookDto;
 
     const workbookId = createWorkbookId();
 
@@ -81,6 +82,7 @@ export class WorkbookService {
         userId: actor.userId,
         organizationId: actor.organizationId,
         name: name ?? `New workbook`,
+        managedBy: managedBy ?? null,
         version: 2,
         workspacePermissions: {
           create: {
@@ -416,6 +418,7 @@ export class WorkbookService {
     actor: Actor,
     sortBy: 'name' | 'createdAt' | 'updatedAt' = 'createdAt',
     sortOrder: 'asc' | 'desc' = 'desc',
+    managedBy?: WorkbookManager,
   ): Promise<WorkbookCluster.Workbook[]> {
     return this.db.client.workbook.findMany({
       where: {
@@ -425,6 +428,7 @@ export class WorkbookService {
             connectorAccountId,
           },
         },
+        ...(managedBy ? { managedBy } : {}),
       },
       orderBy: {
         [sortBy]: sortOrder,
@@ -437,6 +441,7 @@ export class WorkbookService {
     actor: Actor,
     sortBy: 'name' | 'createdAt' | 'updatedAt' = 'createdAt',
     sortOrder: 'asc' | 'desc' = 'desc',
+    managedBy?: WorkbookManager,
   ): Promise<WorkbookCluster.Workbook[]> {
     return this.db.client.workbook.findMany({
       where: {
@@ -445,6 +450,7 @@ export class WorkbookService {
             userId: actor.userId,
           },
         },
+        ...(managedBy ? { managedBy } : {}),
       },
       orderBy: {
         [sortBy]: sortOrder,
