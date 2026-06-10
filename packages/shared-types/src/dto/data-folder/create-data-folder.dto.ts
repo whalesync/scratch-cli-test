@@ -1,59 +1,24 @@
-import { IsArray, IsBoolean, IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 import type { WorkbookId } from '../../ids';
 
-export class CreateDataFolderDto {
-  @IsNotEmpty()
-  @IsString()
-  name?: string;
+export const createDataFolderSchema = z.object({
+  name: z.string().min(1),
+  workbookId: z.string().min(1),
+  connectorAccountId: z.string().optional(),
+  tableId: z.array(z.string()).optional(),
+  parentFolderId: z.string().optional(),
+  filter: z.string().optional(),
+  options: z.record(z.string(), z.unknown()).optional(),
+  idFieldOverride: z.string().optional(),
+  nameFieldOverride: z.array(z.string()).optional(),
+  triggerPull: z.boolean().optional(),
+});
 
-  @IsNotEmpty()
-  @IsString()
-  workbookId?: WorkbookId;
+// `workbookId` is validated as a string but carries the branded `WorkbookId` type for consumers.
+export type CreateDataFolderDto = Omit<z.infer<typeof createDataFolderSchema>, 'workbookId'> & {
+  workbookId: WorkbookId;
+};
 
-  @IsOptional()
-  @IsString()
-  connectorAccountId?: string;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  tableId?: string[];
-
-  @IsOptional()
-  @IsString()
-  parentFolderId?: string;
-
-  @IsOptional()
-  @IsString()
-  filter?: string;
-
-  @IsOptional()
-  @IsObject()
-  options?: Record<string, unknown>;
-
-  @IsOptional()
-  @IsString()
-  idFieldOverride?: string;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  nameFieldOverride?: string[];
-
-  @IsOptional()
-  @IsBoolean()
-  triggerPull?: boolean;
-}
-
-export type ValidatedCreateDataFolderDto = Required<Pick<CreateDataFolderDto, 'name' | 'workbookId'>> &
-  Pick<
-    CreateDataFolderDto,
-    | 'connectorAccountId'
-    | 'tableId'
-    | 'parentFolderId'
-    | 'filter'
-    | 'options'
-    | 'idFieldOverride'
-    | 'nameFieldOverride'
-    | 'triggerPull'
-  >;
+// Required fields (`name`, `workbookId`) are already required by the schema, so the
+// "validated" variant is just the DTO itself; kept for backwards-compatible imports.
+export type ValidatedCreateDataFolderDto = CreateDataFolderDto;

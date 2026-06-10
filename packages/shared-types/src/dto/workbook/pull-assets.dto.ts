@@ -1,16 +1,12 @@
-import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class PullAssetsDto {
-  @IsArray()
-  @IsString({ each: true })
-  dataFolderIds!: string[];
-
+export const pullAssetsSchema = z.object({
+  dataFolderIds: z.array(z.string()),
   /** When true, files are stored in Scratch (GCS). When false, only metadata and content hash are saved. */
-  @IsOptional()
-  @IsBoolean()
-  rehost?: boolean;
-}
+  rehost: z.boolean().optional(),
+});
 
+export type PullAssetsDto = z.infer<typeof pullAssetsSchema>;
 export type ValidatedPullAssetsDto = PullAssetsDto;
 
 export interface PullAssetsResponseDto {

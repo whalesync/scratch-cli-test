@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 import { FileDetailsEntity } from '../../file-types';
 import { DataFolderId } from '../../ids';
 
@@ -8,38 +8,28 @@ export interface FileDetailsResponseDto {
 
 export type ValidatedFileDetailsResponseDto = Required<FileDetailsResponseDto>;
 
-export class CreateFileDto {
+export const createFileSchema = z.object({
   /** Name of the file (with extension) */
-  @IsString()
-  @IsNotEmpty()
-  name?: string;
-
+  name: z.string().min(1),
   /** ID of the parent folder, or null for workbook root */
-  @IsString()
-  @IsOptional()
+  parentFolderId: z.string().nullable().optional(),
+  content: z.string().nullable().optional(),
+  useTemplate: z.boolean().optional(),
+});
+
+// `parentFolderId` is validated as a string but carries the branded `DataFolderId` type for consumers.
+export type CreateFileDto = Omit<z.infer<typeof createFileSchema>, 'parentFolderId'> & {
   parentFolderId?: DataFolderId | null;
-
-  @IsString()
-  @IsOptional()
-  content?: string | null;
-
-  @IsOptional()
-  useTemplate?: boolean;
-}
+};
 
 export type ValidatedCreateFileDto = Required<Pick<CreateFileDto, 'name'>> &
   Pick<CreateFileDto, 'parentFolderId' | 'content' | 'useTemplate'>;
 
-export class UpdateFileDto {
+export const updateFileSchema = z.object({
   /** New name for the file (with extension) */
-  @IsString()
-  @IsNotEmpty()
-  @IsOptional()
-  name?: string;
+  name: z.string().min(1).optional(),
+  content: z.string().nullable().optional(),
+});
 
-  @IsString()
-  @IsOptional()
-  content?: string | null;
-}
-
+export type UpdateFileDto = z.infer<typeof updateFileSchema>;
 export type ValidatedUpdateFileDto = UpdateFileDto;

@@ -1,9 +1,8 @@
-import { IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class CreateWorkbookDto {
-  @IsOptional()
-  @IsString()
-  name?: string;
-}
+export const createWorkbookSchema = z.object({
+  name: z.string().optional(),
+});
 
+export type CreateWorkbookDto = z.infer<typeof createWorkbookSchema>;
 export type ValidatedCreateWorkbookDto = CreateWorkbookDto;

@@ -18,11 +18,9 @@ import {
 } from '@nestjs/common';
 import type { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import {
-  CreateFileDto,
   FileDetailsResponseDto,
   FileRefEntity,
   ListFilesResponseDto,
-  UpdateFileDto,
   ValidatedCreateFileDto,
 } from '@spinner/shared-types';
 import archiver from 'archiver';
@@ -34,6 +32,7 @@ import { WSLogger } from '../logger';
 import { ApiRateLimitGuard } from '../rate-limiter/api-rate-limit.guard';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { userToActor } from '../users/types';
+import { CreateFileDto, UpdateFileDto } from './dto/files.dto';
 import { FilesService } from './files.service';
 import { WorkbookService } from './workbook.service';
 

@@ -20,7 +20,6 @@ import type {
   ValidatedUpdateDataFolderDto,
   WorkbookId,
 } from '@spinner/shared-types';
-import { CreateDataFolderDto, UpdateDataFolderDto } from '@spinner/shared-types';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
@@ -32,6 +31,7 @@ import { userToActor } from '../users/types';
 import { SchemaField } from '../utils/schema-helpers';
 import { BullEnqueuerService } from '../worker-enqueuer/bull-enqueuer.service';
 import { DataFolderService } from './data-folder.service';
+import { CreateDataFolderDto, UpdateDataFolderDto } from './dto/data-folder.dto';
 import { WorkbookService } from './workbook.service';
 
 @Controller('data-folder')

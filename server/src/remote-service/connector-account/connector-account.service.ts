@@ -386,7 +386,7 @@ export class ConnectorAccountService {
         displayName: updateDto.displayName,
         encryptedCredentials: encryptedCredentials as unknown as Prisma.InputJsonValue,
         modifier: updateDto.modifier,
-        extras,
+        extras: extras as Prisma.InputJsonValue | undefined,
         healthStatus: null,
         healthStatusLastCheckedAt: null,
       },

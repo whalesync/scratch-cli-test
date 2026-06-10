@@ -1,10 +1,8 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class UpdateWorkbookDto {
-  @IsString()
-  @IsOptional()
-  @IsNotEmpty()
-  name?: string;
-}
+export const updateWorkbookSchema = z.object({
+  name: z.string().min(1).optional(),
+});
 
+export type UpdateWorkbookDto = z.infer<typeof updateWorkbookSchema>;
 export type ValidatedUpdateWorkbookDto = UpdateWorkbookDto;

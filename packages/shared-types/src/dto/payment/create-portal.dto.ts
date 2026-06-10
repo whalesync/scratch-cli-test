@@ -1,19 +1,13 @@
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 import { ScratchPlanType } from '../../subscription';
 
-export class CreatePortalDto {
-  @IsString()
-  @IsOptional()
-  portalType?: 'cancel_subscription' | 'update_subscription' | 'manage_payment_methods';
+export const createPortalSchema = z.object({
+  portalType: z.enum(['cancel_subscription', 'update_subscription', 'manage_payment_methods']).optional(),
+  returnPath: z.string().optional(),
+  planType: z.nativeEnum(ScratchPlanType).optional(),
+});
 
-  @IsString()
-  @IsOptional()
-  returnPath?: string;
-
-  @IsEnum(ScratchPlanType)
-  @IsOptional()
-  planType?: ScratchPlanType;
-}
+export type CreatePortalDto = z.infer<typeof createPortalSchema>;
 
 export type CreateCustomerPortalUrlResponse = {
   url: string;

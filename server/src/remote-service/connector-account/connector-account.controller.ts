@@ -14,17 +14,13 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import {
-  CreateConnectorAccountDto,
-  UpdateConnectorAccountDto,
-  WorkbookId,
-  type ValidatedCreateConnectorAccountDto,
-} from '@spinner/shared-types';
+import { WorkbookId, type ValidatedCreateConnectorAccountDto } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../../auth/types';
 import { checkWorkspacePermissions } from '../../users/permissions';
 import { userToActor } from '../../users/types';
 import { ConnectorAccountService } from './connector-account.service';
+import { CreateConnectorAccountDto, UpdateConnectorAccountDto } from './dto/connector-account.dto';
 import { ApiQuotaResponse } from './entities/api-quota.entity';
 import { ConnectorAccount } from './entities/connector-account.entity';
 import { RevealCredentialsResponse } from './entities/reveal-credentials.entity';

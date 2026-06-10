@@ -12,19 +12,14 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type {
-  CreateScheduleDto,
-  Schedule,
-  UpdateScheduleDto,
-  ValidatedCreateScheduleDto,
-  WorkbookId,
-} from '@spinner/shared-types';
+import type { Schedule, ValidatedCreateScheduleDto, WorkbookId } from '@spinner/shared-types';
 import { ScheduleAction } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
+import { CreateScheduleDto, UpdateScheduleDto } from './dto/schedule.dto';
 import { ScheduleService } from './schedule.service';
 
 @Controller('workbooks/:workbookId/schedules')

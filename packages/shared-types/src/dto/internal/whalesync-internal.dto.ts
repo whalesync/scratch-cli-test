@@ -1,13 +1,16 @@
 // Contracts for the internal, admin-only Whalesync → Scratch channel (`/internal/whalesync/*`).
-// The server's DTO classes implement the request interface with class-validator decorators.
+// Request bodies are validated server-side via the shared zod schema (createZodDto bridge).
+import { z } from 'zod';
 
 // ── Request DTOs ──────────────────────────────────────────────────────────────
 
-export interface WhalesyncShadowUserDto {
-  whalesyncUserId: string;
-  email: string;
-  name?: string;
-}
+export const whalesyncShadowUserSchema = z.object({
+  whalesyncUserId: z.string().min(1),
+  email: z.string().min(1),
+  name: z.string().optional(),
+});
+
+export type WhalesyncShadowUserDto = z.infer<typeof whalesyncShadowUserSchema>;
 
 // ── Response Entities ─────────────────────────────────────────────────────────
 

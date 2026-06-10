@@ -1,14 +1,14 @@
-import { IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 import { FileDetailsEntity, FileOrFolderRefEntity } from '../../file-types';
-import { DataFolderId } from '../../ids';
+import type { DataFolderId } from '../../ids';
 
-export class ListFileDto {
+export const listFileSchema = z.object({
   /** ID of the folder to list contents of. Defaults to workbook root (null). */
-  @IsOptional()
-  @IsString()
-  folderId?: DataFolderId;
-}
+  folderId: z.string().optional(),
+});
 
+// `folderId` is validated as a string but carries the branded `DataFolderId` type.
+export type ListFileDto = Omit<z.infer<typeof listFileSchema>, 'folderId'> & { folderId?: DataFolderId };
 export type ValidatedListFileDto = ListFileDto;
 
 export interface ListFilesResponseDto {

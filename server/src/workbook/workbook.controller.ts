@@ -25,14 +25,6 @@ import type {
   WorkspaceInviteId,
   WorkspacePermissionId,
 } from '@spinner/shared-types';
-import {
-  AddWorkspacePermissionDto,
-  CreateWorkbookDto,
-  PullAssetsDto,
-  PullFilesDto,
-  UpdateWorkbookDto,
-  UpdateWorkspacePermissionDto,
-} from '@spinner/shared-types';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
@@ -41,6 +33,14 @@ import { WorkspacePermissionRole, userToActor } from '../users/types';
 import { UsersService } from '../users/users.service';
 import { DataFolderService } from './data-folder.service';
 import { WorkbookListQueryDto } from './dto/list-workbooks-query.dto';
+import {
+  AddWorkspacePermissionDto,
+  CreateWorkbookDto,
+  PullAssetsDto,
+  PullFilesDto,
+  UpdateWorkbookDto,
+  UpdateWorkspacePermissionDto,
+} from './dto/workbook.dto';
 import { WorkspaceEntity, WorkspaceInviteEntity, WorkspacePermissionEntity } from './entities';
 
 import { WorkbookCluster } from 'src/db/cluster-types';

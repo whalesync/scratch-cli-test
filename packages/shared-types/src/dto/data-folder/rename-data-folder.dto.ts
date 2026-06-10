@@ -1,9 +1,8 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class RenameDataFolderDto {
-  @IsNotEmpty()
-  @IsString()
-  name?: string;
-}
+export const renameDataFolderSchema = z.object({
+  name: z.string().min(1),
+});
 
-export type ValidatedRenameDataFolderDto = Required<Pick<RenameDataFolderDto, 'name'>>;
+export type RenameDataFolderDto = z.infer<typeof renameDataFolderSchema>;
+export type ValidatedRenameDataFolderDto = RenameDataFolderDto;

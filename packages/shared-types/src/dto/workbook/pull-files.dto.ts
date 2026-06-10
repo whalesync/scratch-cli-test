@@ -1,21 +1,16 @@
-import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class PullFilesDto {
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  dataFolderIds?: string[];
-
+export const pullFilesSchema = z.object({
+  dataFolderIds: z.array(z.string()).optional(),
   /**
    * Requested pull mode. Omitted → `'full'` (the safe default matching
    * pre-incremental behavior). `'incremental'` is opt-in; per-folder demotion
    * to full still happens at job execution time (capability, bootstrap).
    */
-  @IsOptional()
-  @IsIn(['full', 'incremental'])
-  mode?: 'full' | 'incremental';
-}
+  mode: z.enum(['full', 'incremental']).optional(),
+});
 
+export type PullFilesDto = z.infer<typeof pullFilesSchema>;
 export type ValidatedPullFilesDto = PullFilesDto;
 
 export interface PullFilesResponseDto {

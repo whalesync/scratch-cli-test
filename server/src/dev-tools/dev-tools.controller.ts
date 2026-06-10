@@ -22,12 +22,9 @@ import type {
   GetAllJobsResponseDto,
 } from '@spinner/shared-types';
 import {
-  ChangeUserOrganizationDto,
   createSubscriptionId,
   ScratchPlanType,
   SyncId,
-  UpdateDevSubscriptionDto,
-  UpdateSettingsDto,
   ValidatedChangeUserOrganizationDto,
   ValidatedUpdateSettingsDto,
   WorkbookId,
@@ -55,7 +52,9 @@ import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { DbJobStatus, dbJobToJobEntity } from '../job/entities/job.entity';
 import { JobService } from '../job/job.service';
+import { UpdateSettingsDto } from '../users/dto/update-settings.dto';
 import { DevToolsService, WorkbookExportJson } from './dev-tools.service';
+import { ChangeUserOrganizationDto, UpdateDevSubscriptionDto } from './dto/dev-tools.dto';
 import { UserDetail } from './entities/user-detail.entity';
 
 interface SyncDataFoldersRequestBody {

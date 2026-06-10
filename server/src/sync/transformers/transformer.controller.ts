@@ -11,12 +11,13 @@ import {
 } from '@nestjs/common';
 import {
   Service,
-  TestTransformerDto,
   TestTransformerResponse,
+  TransformerConfig,
   TransformerMetadata,
   WorkbookId,
 } from '@spinner/shared-types';
 import get from 'lodash/get';
+import { TestTransformerDto } from './dto/test-transformer.dto';
 
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
@@ -62,10 +63,12 @@ export class TransformerController {
         return { success: false, value: null, error: `Path '${dto.path}' not found in file` };
       }
 
-      // 3. Get Transformer
-      const transformer = getTransformer(dto.transformerConfig.type);
+      // 3. Get Transformer. The schema validates `transformerConfig` as a generic
+      // object; the shared DTO type carries the branded `TransformerConfig` shape.
+      const transformerConfig = dto.transformerConfig as TransformerConfig;
+      const transformer = getTransformer(transformerConfig.type);
       if (!transformer) {
-        return { success: false, value: null, error: `Transformer type '${dto.transformerConfig.type}' not found` };
+        return { success: false, value: null, error: `Transformer type '${transformerConfig.type}' not found` };
       }
 
       // 4. Transform — this preview endpoint only needs sourceValue/sourceRecord;
@@ -85,7 +88,7 @@ export class TransformerController {
           getOrCreateDestinationAssetMapping: () => Promise.reject(new Error('Not available in preview')),
           matchDestinationAssetByHash: () => Promise.resolve([]),
         },
-        options: dto.transformerConfig.options ?? {},
+        options: transformerConfig.options ?? {},
         phase: 'DATA',
       };
 

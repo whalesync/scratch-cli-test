@@ -1,9 +1,8 @@
-import { IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class MoveDataFolderDto {
-  @IsOptional()
-  @IsString()
-  parentFolderId?: string | null;
-}
+export const moveDataFolderSchema = z.object({
+  parentFolderId: z.string().nullable().optional(),
+});
 
-export type ValidatedMoveDataFolderDto = Pick<MoveDataFolderDto, 'parentFolderId'>;
+export type MoveDataFolderDto = z.infer<typeof moveDataFolderSchema>;
+export type ValidatedMoveDataFolderDto = MoveDataFolderDto;

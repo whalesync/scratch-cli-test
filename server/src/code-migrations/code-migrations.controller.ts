@@ -17,7 +17,6 @@ import type {
   AvailableMigrationsResponse,
   MigrationDescriptor,
   MigrationResult,
-  RunMigrationDto,
   SyncId,
   ValidatedRunMigrationDto,
   WorkbookId,
@@ -38,6 +37,7 @@ import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
+import { RunMigrationDto } from './dto/code-migrations.dto';
 import {
   accumulate,
   AuditLogEntry,

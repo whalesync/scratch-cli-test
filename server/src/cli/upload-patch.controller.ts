@@ -14,9 +14,7 @@ import {
   UploadPatchBlockedDirtyResponseDto,
   UploadPatchBlockedStaleResponseDto,
   UploadPatchCheckFailedResponseDto,
-  UploadPatchCommitDto,
   UploadPatchCommitResponseDto,
-  UploadPatchInitDto,
   UploadPatchInitResponseDto,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -36,6 +34,7 @@ import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.serv
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
+import { UploadPatchCommitDto, UploadPatchInitDto } from './dto/upload-patch.dto';
 
 const PRESIGNED_PUT_TTL_SECONDS = 60 * 60; // 1 hour — well under the 24h cap noted in the plan
 

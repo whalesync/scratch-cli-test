@@ -1,14 +1,12 @@
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { z } from 'zod';
 
 // ── /cli/v1/workbooks/:id/upload-patch/init ───────────────────────────────
 
-export class UploadPatchInitDto {
-  @IsString()
-  @IsOptional()
-  @MaxLength(64)
-  connectorAccountId?: string;
-}
+export const uploadPatchInitSchema = z.object({
+  connectorAccountId: z.string().max(64).optional(),
+});
 
+export type UploadPatchInitDto = z.infer<typeof uploadPatchInitSchema>;
 export type ValidatedUploadPatchInitDto = Required<Pick<UploadPatchInitDto, 'connectorAccountId'>>;
 
 export interface UploadPatchInitResponseDto {
@@ -20,17 +18,9 @@ export interface UploadPatchInitResponseDto {
 
 // ── /cli/v1/workbooks/:id/upload-patch/commit ─────────────────────────────
 
-export class UploadPatchCommitDto {
-  @IsString()
-  @IsOptional()
-  @MaxLength(128)
-  uploadId?: string;
-
-  @IsString()
-  @IsOptional()
-  @MaxLength(64)
-  connectorAccountId?: string;
-
+export const uploadPatchCommitSchema = z.object({
+  uploadId: z.string().max(128).optional(),
+  connectorAccountId: z.string().max(64).optional(),
   /**
    * Optional client-known commit SHA at the time the user computed the diff.
    * If provided and the server's `main` has moved past it, behavior depends
@@ -41,11 +31,7 @@ export class UploadPatchCommitDto {
    *   - `refuseIfStale` falsy: patches apply anyway, response carries a soft
    *     `stalenessWarning` so the caller can show a non-blocking banner.
    */
-  @IsString()
-  @IsOptional()
-  @MaxLength(64)
-  baseHead?: string;
-
+  baseHead: z.string().max(64).optional(),
   /**
    * Strict-mode flag. When `true`, the server compares `baseHead` against the
    * current `refs/heads/main` SHA for this connection's repo and refuses with
@@ -54,10 +40,7 @@ export class UploadPatchCommitDto {
    * symmetric with pull's `blocked_unreviewed` UX. Default `false` keeps the
    * legacy soft-warning behavior for back-compat.
    */
-  @IsBoolean()
-  @IsOptional()
-  refuseIfStale?: boolean;
-
+  refuseIfStale: z.boolean().optional(),
   /**
    * Strict-mode flag for the DEV-10316 dirty gate. When `true` (and the
    * `desktop_dirty_gate_enabled` kill switch is on), the server refuses the
@@ -70,10 +53,7 @@ export class UploadPatchCommitDto {
    * log, so a refusal leaves zero side effects. Default `false` keeps the
    * legacy behavior — only updated desktop/CLI clients send it.
    */
-  @IsBoolean()
-  @IsOptional()
-  refuseIfDirty?: boolean;
-
+  refuseIfDirty: z.boolean().optional(),
   /**
    * Two-pass probe flag. When `true`, the server runs the gates (including the
    * `refuseIfDirty` dirty check) and returns `{ jobId: null }` WITHOUT
@@ -83,10 +63,10 @@ export class UploadPatchCommitDto {
    * dirty connection blocks the whole publish with nothing uploaded. Default
    * `false` performs the real apply.
    */
-  @IsBoolean()
-  @IsOptional()
-  checkOnly?: boolean;
-}
+  checkOnly: z.boolean().optional(),
+});
+
+export type UploadPatchCommitDto = z.infer<typeof uploadPatchCommitSchema>;
 
 export type ValidatedUploadPatchCommitDto = Required<Pick<UploadPatchCommitDto, 'uploadId' | 'connectorAccountId'>> & {
   baseHead?: string;

@@ -1,23 +1,16 @@
-import { IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
-import { DecryptedCredentials } from '../../connector/credentials';
+import { z } from 'zod';
+import type { DecryptedCredentials } from '../../connector/credentials';
 
-export class UpdateConnectorAccountDto {
-  @IsString()
-  @IsNotEmpty()
-  @IsOptional()
-  readonly displayName?: string;
+export const updateConnectorAccountSchema = z.object({
+  displayName: z.string().min(1).optional(),
+  userProvidedParams: z.record(z.string(), z.unknown()).optional(),
+  modifier: z.string().optional(),
+  extras: z.record(z.string(), z.unknown()).optional(),
+});
 
-  @IsObject()
-  @IsOptional()
-  readonly userProvidedParams?: Partial<DecryptedCredentials>;
-
-  @IsString()
-  @IsOptional()
-  readonly modifier?: string;
-
-  @IsObject()
-  @IsOptional()
-  readonly extras?: Record<string, any>;
-}
+// `userProvidedParams` is validated as an object but typed as `Partial<DecryptedCredentials>`.
+export type UpdateConnectorAccountDto = Omit<z.infer<typeof updateConnectorAccountSchema>, 'userProvidedParams'> & {
+  userProvidedParams?: Partial<DecryptedCredentials>;
+};
 
 export type ValidatedUpdateConnectorAccountDto = UpdateConnectorAccountDto;

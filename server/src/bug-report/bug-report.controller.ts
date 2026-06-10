@@ -8,12 +8,13 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { CreateBugReportDto, ValidatedCreateBugReportDto } from '@spinner/shared-types';
+import { ValidatedCreateBugReportDto } from '@spinner/shared-types';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import { ExperimentsService } from '../experiments/experiments.service';
 import { UserFlag } from '../experiments/flags';
 import { BugReportService } from './bug-report.service';
+import { CreateBugReportDto } from './dto/create-bug-report.dto';
 
 @Controller('bugs')
 @UseGuards(ScratchAuthGuard)

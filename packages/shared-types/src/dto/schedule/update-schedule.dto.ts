@@ -1,17 +1,10 @@
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class UpdateScheduleDto {
-  @IsOptional()
-  @IsString()
-  name?: string;
+export const updateScheduleSchema = z.object({
+  name: z.string().optional(),
+  cronExpression: z.string().optional(),
+  enabled: z.boolean().optional(),
+});
 
-  @IsOptional()
-  @IsString()
-  cronExpression?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  enabled?: boolean;
-}
-
+export type UpdateScheduleDto = z.infer<typeof updateScheduleSchema>;
 export type ValidatedUpdateScheduleDto = UpdateScheduleDto;

@@ -1,19 +1,12 @@
-import { IsArray, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { z } from 'zod';
 
-export class RunMigrationDto {
-  @IsString()
-  migration?: string;
+export const runMigrationSchema = z.object({
+  migration: z.string(),
+  qty: z.number().int().min(1).optional(),
+  ids: z.array(z.string()).optional(),
+});
 
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  qty?: number;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  ids?: string[];
-}
+export type RunMigrationDto = z.infer<typeof runMigrationSchema>;
 
 export type ValidatedRunMigrationDto = Required<Pick<RunMigrationDto, 'migration'>> &
   Pick<RunMigrationDto, 'qty' | 'ids'>;

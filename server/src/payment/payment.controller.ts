@@ -11,12 +11,13 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { CreateCheckoutSessionResponse, CreateCustomerPortalUrlResponse, CreatePortalDto } from '@spinner/shared-types';
+import { CreateCheckoutSessionResponse, CreateCustomerPortalUrlResponse } from '@spinner/shared-types';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { isErr } from 'src/types/results';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { CreatePortalDto } from './dto/create-portal.dto';
 import { getPlanTypeFromString } from './plans';
 import { StripePaymentService } from './stripe-payment.service';
 

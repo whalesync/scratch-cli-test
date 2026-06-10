@@ -1,5 +1,4 @@
-import { RunMigrationDto, type AvailableMigrationsResponse, type MigrationResult } from '@spinner/shared-types';
-import { validateHelper } from '../../utils/validate-helper';
+import type { AvailableMigrationsResponse, MigrationResult, RunMigrationDto } from '@spinner/shared-types';
 import { API_CONFIG } from './config';
 import { handleAxiosError } from './error';
 
@@ -16,7 +15,6 @@ export const codeMigrationsApi = {
 
   runMigration: async (request: RunMigrationDto): Promise<MigrationResult> => {
     try {
-      await validateHelper(Object.assign(new RunMigrationDto(), request));
       const axios = API_CONFIG.getAxiosInstance();
       const res = await axios.post<MigrationResult>('/code-migrations/run', request);
       return res.data;

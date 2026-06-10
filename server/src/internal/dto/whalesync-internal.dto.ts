@@ -1,5 +1,5 @@
-import type { WhalesyncShadowUserDto as IWhalesyncShadowUserDto } from '@spinner/shared-types';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { whalesyncShadowUserSchema } from '@spinner/shared-types';
+import { createZodDto } from 'nestjs-zod';
 
 // Response shapes are pure contracts and live in shared-types; re-export them so controllers can
 // import everything for these endpoints from one place.
@@ -11,19 +11,6 @@ export type {
 
 /**
  * Body for `POST /internal/whalesync/sessions` and `POST /internal/whalesync/users`.
- * `whalesyncUserId` and `email` are required; `name` is optional. The global ValidationPipe enforces
- * these via the class-validator decorators below.
+ * NestJS bridge for the shared zod schema; the global ZodValidationPipe enforces it.
  */
-export class WhalesyncShadowUserDto implements IWhalesyncShadowUserDto {
-  @IsString()
-  @IsNotEmpty()
-  whalesyncUserId!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  email!: string;
-
-  @IsString()
-  @IsOptional()
-  name?: string;
-}
+export class WhalesyncShadowUserDto extends createZodDto(whalesyncShadowUserSchema) {}

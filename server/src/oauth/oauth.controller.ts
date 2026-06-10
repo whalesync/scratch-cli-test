@@ -8,10 +8,11 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { OAuthInitiateOptionsDto, ValidatedOAuthInitiateOptionsDto } from '@spinner/shared-types';
+import type { ValidatedOAuthInitiateOptionsDto } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { userToActor } from '../users/types';
+import { OAuthInitiateOptionsDto } from './dto/oauth-initiate-options.dto';
 import type { OAuthCallbackRequest, OAuthInitiateResponse } from './oauth.service';
 import { OAuthService } from './oauth.service';
 

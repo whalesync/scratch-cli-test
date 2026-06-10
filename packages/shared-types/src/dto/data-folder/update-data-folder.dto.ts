@@ -1,13 +1,9 @@
-import { IsObject, IsOptional, IsString } from 'class-validator';
+import { z } from 'zod';
 
-export class UpdateDataFolderDto {
-  @IsOptional()
-  @IsString()
-  filter?: string | null;
+export const updateDataFolderSchema = z.object({
+  filter: z.string().nullable().optional(),
+  options: z.record(z.string(), z.unknown()).optional(),
+});
 
-  @IsOptional()
-  @IsObject()
-  options?: Record<string, unknown>;
-}
-
-export type ValidatedUpdateDataFolderDto = Pick<UpdateDataFolderDto, 'filter' | 'options'>;
+export type UpdateDataFolderDto = z.infer<typeof updateDataFolderSchema>;
+export type ValidatedUpdateDataFolderDto = UpdateDataFolderDto;
