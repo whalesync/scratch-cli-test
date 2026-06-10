@@ -15,6 +15,7 @@
   ],
   "scripts": {
     "dev": "turbo dev --filter=!scratch-desktop",
+    "dev:backend": "turbo dev --filter=server --filter=scratch-git-2 --filter=@spinner/shared-types",
     "build": "yarn install && turbo build",
     "migrate": "turbo migrate",
     "lint": "turbo lint",
