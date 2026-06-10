@@ -1,4 +1,4 @@
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { FileRefEntity, WorkbookId } from '@spinner/shared-types';
 import { useRouter } from 'next/navigation';
@@ -19,7 +19,7 @@ export function RemoveFileModal({ opened, onClose, file, workbookId, onSuccess }
   const handleRemove = async () => {
     setLoading(true);
     try {
-      await workbookApi.deleteFile(workbookId, file.path);
+      await scratchApiClient.files.deleteFileByPath(workbookId, file.path);
       onSuccess?.();
       onClose();
       router.refresh();

@@ -1,7 +1,6 @@
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { progressApi } from '@/lib/api/progress';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { publishPlanStatusBadgeColor } from '@/utils/job-helpers';
 import {
   Badge,
@@ -95,7 +94,7 @@ export function PublishPlansList({
   const fetchPublishPlans = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await workbookApi.listPublishPlans(workbookId);
+      const data = await scratchApiClient.publish.listPublishPlans(workbookId);
       setPublishPlans(data);
     } catch (error) {
       console.error(error);
@@ -127,11 +126,11 @@ export function PublishPlansList({
       const accounts = connectorAccounts ?? [];
       let anyChanges = false;
       if (accounts.length === 0) {
-        const res = await workbookApi.planPublishV2(workbookId, undefined, runAfterPlan);
+        const res = await scratchApiClient.publish.viaWorkbookRoute.planJob(workbookId, undefined, runAfterPlan);
         if (res.jobId) anyChanges = true;
       } else {
         for (const ca of accounts) {
-          const res = await workbookApi.planPublishV2(workbookId, ca.id, runAfterPlan);
+          const res = await scratchApiClient.publish.viaWorkbookRoute.planJob(workbookId, ca.id, runAfterPlan);
           if (res.jobId) anyChanges = true;
         }
       }
@@ -156,7 +155,7 @@ export function PublishPlansList({
   const handlePlanOne = async (connectorAccountId: string, runAfterPlan: boolean) => {
     setIsPlanning(true);
     try {
-      const res = await workbookApi.planPublishV2(workbookId, connectorAccountId, runAfterPlan);
+      const res = await scratchApiClient.publish.viaWorkbookRoute.planJob(workbookId, connectorAccountId, runAfterPlan);
       if (!res.jobId) {
         notifications.show({ title: 'Notice', message: 'No changes detected', color: 'yellow' });
       } else {
@@ -176,7 +175,7 @@ export function PublishPlansList({
   const handleRun = async (publishPlanId: string, executeSinglePhase?: boolean) => {
     setRunningId(publishPlanId);
     try {
-      await workbookApi.runPublishV2(workbookId, publishPlanId, executeSinglePhase);
+      await scratchApiClient.publish.viaWorkbookRoute.runJob(workbookId, publishPlanId, executeSinglePhase);
       notifications.show({
         title: 'Success',
         message: executeSinglePhase ? `Running 1 phase` : 'Running all phases',
@@ -195,7 +194,7 @@ export function PublishPlansList({
     if (!publishPlan.activeJobId) return;
     setCancelingId(publishPlan.id);
     try {
-      const result = await progressApi.cancelJob(publishPlan.activeJobId);
+      const result = await scratchApiClient.progress.cancelJob(publishPlan.activeJobId);
       if (result.success) {
         notifications.show({ title: 'Canceled', message: 'Cancellation signal sent', color: 'orange' });
         setTimeout(fetchPublishPlans, 1000);
@@ -616,7 +615,7 @@ export function PublishPlansList({
                               px={6}
                               onClick={async () => {
                                 if (confirm('Are you sure you want to delete this publish plan?')) {
-                                  await workbookApi.deletePublishPlan(workbookId, p.id);
+                                  await scratchApiClient.publish.deletePublishPlan(workbookId, p.id);
                                   fetchPublishPlans();
                                 }
                               }}

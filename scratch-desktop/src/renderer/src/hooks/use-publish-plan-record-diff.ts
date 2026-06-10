@@ -1,5 +1,5 @@
 import useSWR from 'swr';
-import { publishApi } from '../lib/publish-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 
 /**
  * Three modes for the record diff on a publish plan:
@@ -45,8 +45,8 @@ export function usePublishPlanRecordDiff(
       }
       const refs = refsForMode(mode, planId);
       const [originalRes, modifiedRes] = await Promise.allSettled([
-        publishApi.getRepoFile(workbookId, filePath, refs.original, connectorAccountId),
-        publishApi.getRepoFile(workbookId, filePath, refs.modified, connectorAccountId),
+        scratchApiClient.git.getRepoFileOrNull(workbookId, filePath, refs.original, connectorAccountId),
+        scratchApiClient.git.getRepoFileOrNull(workbookId, filePath, refs.modified, connectorAccountId),
       ]);
       return {
         original: originalRes.status === 'fulfilled' ? (originalRes.value?.content ?? null) : null,
@@ -91,8 +91,8 @@ export function usePublishPlanPostDiffersFromCurrent(
         throw new Error('workbookId, planId, filePath, and connectorAccountId are required');
       }
       const [postRes, currentRes] = await Promise.allSettled([
-        publishApi.getRepoFile(workbookId, filePath, `main_plan_${planId}`, connectorAccountId),
-        publishApi.getRepoFile(workbookId, filePath, 'main', connectorAccountId),
+        scratchApiClient.git.getRepoFileOrNull(workbookId, filePath, `main_plan_${planId}`, connectorAccountId),
+        scratchApiClient.git.getRepoFileOrNull(workbookId, filePath, 'main', connectorAccountId),
       ]);
       const post = postRes.status === 'fulfilled' ? (postRes.value?.content ?? null) : null;
       const current = currentRes.status === 'fulfilled' ? (currentRes.value?.content ?? null) : null;

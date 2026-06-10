@@ -1,7 +1,7 @@
 'use client';
 
-import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import { ActionIcon, Box, Loader, Modal, Text, Tooltip, useMantineColorScheme } from '@mantine/core';
@@ -21,7 +21,8 @@ interface DataFolderSchemaModalProps {
 export function DataFolderSchemaModal({ opened, onClose, folder, mode = 'view' }: DataFolderSchemaModalProps) {
   const { colorScheme } = useMantineColorScheme();
 
-  const fetchFn = mode === 'refresh' ? dataFolderApi.refreshSchema : dataFolderApi.getSchema;
+  const fetchFn =
+    mode === 'refresh' ? scratchApiClient.dataFolders.refreshSchema : scratchApiClient.dataFolders.getSchema;
   const {
     data: schema,
     isLoading: loading,

@@ -1,5 +1,5 @@
 import { SWR_KEYS } from '@/lib/api/keys';
-import { scheduleApi } from '@/lib/api/schedule';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Schedule, WorkbookId } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
@@ -18,7 +18,7 @@ export const useSchedules = (workbookId: WorkbookId | null): UseSchedulesReturn 
       if (!workbookId) {
         throw new Error('workbookId is required');
       }
-      return scheduleApi.list(workbookId);
+      return scratchApiClient.schedule.list(workbookId);
     },
     {
       revalidateOnFocus: false,

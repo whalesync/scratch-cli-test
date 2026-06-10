@@ -2,7 +2,7 @@
 
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { useTransformerMetadata } from '@/hooks/use-transformer-metadata';
-import { syncApi } from '@/lib/api/sync';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
@@ -253,7 +253,7 @@ export function TransformerConfigModal({
     if (!currentConfigs.every(isTransformerConfigComplete)) return;
     setTypeTraceLoading(true);
     try {
-      const result = await syncApi.validateMappingType(mappingContext.workbookId, {
+      const result = await scratchApiClient.sync.validateMappingType(mappingContext.workbookId, {
         sourceFolderId: mappingContext.sourceFolderId,
         destFolderId: mappingContext.destFolderId,
         sourceColumnId: mappingContext.sourceField,

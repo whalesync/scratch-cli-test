@@ -9,7 +9,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDirtyFiles } from '@/hooks/use-dirty-files';
 import { useFileByPath } from '@/hooks/use-file-path';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { findDataFolderForFile } from '@/utils/data-folder-helpers';
 import { RouteUrls } from '@/utils/route-urls';
@@ -166,7 +166,13 @@ const ReviewFileRow = memo(function ReviewFileRow({ file, workbookId, onDiscard 
       e.stopPropagation();
       setIsPublishing(true);
       try {
-        const result = await workbookApi.planPublishV2(workbookId, file.connectorAccountId, true, undefined, file.path);
+        const result = await scratchApiClient.publish.viaWorkbookRoute.planJob(
+          workbookId,
+          file.connectorAccountId,
+          true,
+          undefined,
+          file.path,
+        );
         if (result?.jobId) {
           useActiveJobsStore.getState().trackJobIds([result.jobId]);
           useActiveJobsStore.getState().refreshJobs();
@@ -377,7 +383,7 @@ export default function ReviewPage() {
         confirmLabel: 'Discard',
         variant: 'danger',
         onConfirm: async () => {
-          await workbookApi.discardChanges(workbookId, filePath);
+          await scratchApiClient.git.discardChanges(workbookId, filePath);
           refresh();
           mutate(SWR_KEYS.dirtyFiles.hasDirty(workbookId));
         },

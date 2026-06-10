@@ -1,5 +1,5 @@
 import { Text12Regular } from '@/app/components/base/text';
-import { API_CONFIG } from '@/lib/api/config';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Button, Group, Modal, Stack, TextInput } from '@mantine/core';
 import type { FileRefEntity, WorkbookId } from '@spinner/shared-types';
@@ -29,14 +29,7 @@ export function RenameFileModal({ opened, onClose, workbookId, file, onSuccess }
 
     setIsSubmitting(true);
     try {
-      const axios = API_CONFIG.getAxiosInstance();
-      await axios.patch(
-        `/workbooks/${workbookId}/files/by-path`,
-        { name: newName.trim() },
-        {
-          params: { path: file.path },
-        },
-      );
+      await scratchApiClient.files.renameFileByPath(workbookId, file.path, newName.trim());
 
       onSuccess?.(newName.trim());
       handleClose();

@@ -6,7 +6,7 @@ import { LabelValuePair } from '@/app/components/LabelValuePair';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { ToolIconButton } from '@/app/components/ToolIconButton';
-import { devToolsApi } from '@/lib/api/dev-tools';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { getBuildFlavor } from '@/utils/build';
 import {
   Accordion,
@@ -78,7 +78,7 @@ export const UserDetailsCard = ({
       onConfirm: async () => {
         try {
           setSaving(true);
-          await devToolsApi.changeUserOrganization({
+          await scratchApiClient.devTools.changeUserOrganization({
             userId: details.user.id,
             newOrganizationId: newOrgId.trim(),
             deleteOldOrganization: deleteOldOrg,
@@ -115,7 +115,7 @@ export const UserDetailsCard = ({
       }
       try {
         setLoadingCredentials((prev) => ({ ...prev, [connectionId]: true }));
-        const result = await devToolsApi.getConnectionCredentials(connectionId as ConnectorAccountId);
+        const result = await scratchApiClient.devTools.getConnectionCredentials(connectionId as ConnectorAccountId);
         setCredentialsMap((prev) => ({ ...prev, [connectionId]: result.credentials }));
       } catch (error) {
         console.error('Failed to get credentials', error);
@@ -134,7 +134,7 @@ export const UserDetailsCard = ({
     async (key: string) => {
       try {
         setSaving(true);
-        await devToolsApi.updateUserSettings(details.user.id, { updates: { [key]: null } });
+        await scratchApiClient.devTools.updateUserSettings(details.user.id, { updates: { [key]: null } });
         ScratchpadNotifications.success({
           title: 'Setting removed successfully',
           message: 'The setting has been removed successfully',

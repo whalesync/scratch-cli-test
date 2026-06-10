@@ -3,8 +3,8 @@
 import MainContent from '@/app/components/layouts/MainContent';
 import { useJobsDevTools } from '@/hooks/use-jobs-dev-tools';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { jobApi } from '@/lib/api/job';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { formatDate, timeAgo } from '@/utils/helpers';
 import {
   ActionIcon,
@@ -204,7 +204,7 @@ export default function JobsDevPage() {
   const handleCancelJob = async (bullJobId: string) => {
     setCancelingJobIds((prev) => new Set(prev).add(bullJobId));
     try {
-      await jobApi.cancelJob(bullJobId);
+      await scratchApiClient.job.cancelJob(bullJobId);
       await mutate();
     } catch {
       notifications.show({
@@ -553,7 +553,7 @@ function JobTreeRows({
 
 function JobRawModal({ jobId, onClose }: { jobId: string | null; onClose: () => void }) {
   const { data, isLoading } = useSWR(jobId ? SWR_KEYS.jobs.raw(jobId) : null, () =>
-    jobId ? jobApi.getJobRaw(jobId) : null,
+    jobId ? scratchApiClient.job.getJobRaw(jobId) : null,
   );
 
   return (

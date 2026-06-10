@@ -1,5 +1,4 @@
-import { jobApi } from '@/lib/api/job';
-import { syncApi } from '@/lib/api/sync';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackRunSync } from '@/lib/posthog';
 import { Job, Sync, SyncId, WorkbookId } from '@spinner/shared-types';
 import { create } from 'zustand';
@@ -31,7 +30,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   fetchSyncs: async (workbookId: WorkbookId) => {
     try {
       set({ workbookId, isLoading: true }); // Verify we have it
-      const syncs = await syncApi.list(workbookId);
+      const syncs = await scratchApiClient.sync.list(workbookId);
       set({ syncs, isLoading: false });
     } catch (error) {
       console.error('Failed to fetch syncs:', error);
@@ -43,7 +42,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     try {
       set({ workbookId }); // Ensure it's set
       trackRunSync(syncId, workbookId);
-      const { jobId } = await syncApi.run(workbookId, syncId);
+      const { jobId } = await scratchApiClient.sync.run(workbookId, syncId);
       useActiveJobsStore.getState().trackJobIds([jobId]);
 
       set((state) => ({
@@ -85,7 +84,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
       // Bulk fetch statuses
       try {
-        const jobs = await jobApi.getJobsStatus(jobIds);
+        const jobs = await scratchApiClient.job.getJobsStatus(jobIds);
 
         for (const job of jobs) {
           if (!job.dbJobId) continue;

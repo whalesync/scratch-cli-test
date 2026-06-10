@@ -2,7 +2,7 @@
 
 import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
-import { oAuthApi } from '@/lib/api/oauth';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { RouteUrls } from '@/utils/route-urls';
 import { Alert, Container, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import { Service } from '@spinner/shared-types';
@@ -83,7 +83,7 @@ export default function OAuthCallbackPage() {
 
         // QuickBooks includes realmId as a query parameter on the callback
         const realmId = searchParams.get('realmId') || undefined;
-        const result = await oAuthApi.callback(service, { code, state, realmId });
+        const result = await scratchApiClient.oauth.callback(service, { code, state, realmId });
 
         setState({
           status: 'success',

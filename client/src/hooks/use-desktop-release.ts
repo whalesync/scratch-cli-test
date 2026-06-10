@@ -1,5 +1,5 @@
-import { desktopReleaseApi } from '@/lib/api/desktop-release';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { DesktopReleaseResponse } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
@@ -18,7 +18,7 @@ export interface UseDesktopReleaseReturn {
 export const useDesktopRelease = (): UseDesktopReleaseReturn => {
   const { data, error, isLoading, mutate } = useSWR<DesktopReleaseResponse, Error>(
     SWR_KEYS.desktopRelease.latest(),
-    () => desktopReleaseApi.getLatest(),
+    () => scratchApiClient.desktopRelease.getLatest(),
     {
       revalidateOnFocus: false,
     },

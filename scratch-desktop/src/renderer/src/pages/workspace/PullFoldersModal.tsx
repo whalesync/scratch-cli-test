@@ -1,9 +1,8 @@
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Badge, Box, Center, Group, Loader, Modal, Progress, ScrollArea, Stack, Table, Text } from '@mantine/core';
 import type { Job } from '@spinner/shared-types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '../../hooks/use-current-user';
-import { jobApi } from '../../lib/job-api';
-import { workspacesApi } from '../../lib/workspaces-api';
 import { JobRawJsonButton } from './JobRawJsonButton';
 
 type PullProgress = {
@@ -113,7 +112,7 @@ export function PullFoldersModal({
 
     let cancelled = false;
 
-    workspacesApi
+    scratchApiClient.workspaces
       .pullFiles(workspaceId, dataFolderIds, pullMode)
       .then((result) => {
         if (cancelled) return;
@@ -149,7 +148,7 @@ export function PullFoldersModal({
 
     const poll = async () => {
       try {
-        const statuses = await jobApi.getJobsStatus(jobIds);
+        const statuses = await scratchApiClient.job.getJobsStatus(jobIds);
         if (cancelled) return;
 
         const byId = new Map(statuses.map((job) => [job.bullJobId ?? '', job]));

@@ -1,6 +1,6 @@
 import type { PublishPlanEntity } from '@spinner/shared-types';
 import useSWR from 'swr';
-import { publishApi } from '../lib/publish-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 
 /**
  * Polls the publish plans list for a workbook every 2 seconds while the
@@ -12,7 +12,7 @@ export function usePublishPlans(workbookId: string | undefined, options?: { refr
     workbookId ? ['publish-plans', workbookId] : null,
     () => {
       if (!workbookId) throw new Error('workbookId is required');
-      return publishApi.listPublishPlans(workbookId);
+      return scratchApiClient.publish.listPublishPlans(workbookId);
     },
     { refreshInterval: options?.refreshInterval ?? 2000 },
   );

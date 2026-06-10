@@ -3,8 +3,8 @@ import { Text12Book, Text13Regular, TextTitle4 } from '@/components/base/text';
 import { useConnectorAccounts } from '@/hooks/use-connector-accounts';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { connectorAccountsApi, isTableFullyLocked } from '@/lib/connector-accounts-api';
-import { dataFoldersApi } from '@/lib/data-folders-api';
+import { isTableFullyLocked } from '@/lib/connector-table-helpers';
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Divider, Group, Loader, Modal, Stack, Switch, Text, Textarea, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { DataFolder, DataFolderOptions, TableList } from '@spinner/shared-types';
@@ -130,7 +130,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder, workbookI
     opened && folder.connectorAccountId ? ['tables', workbookId, folder.connectorAccountId] : null,
     () => {
       if (!folder.connectorAccountId) throw new Error('connectorAccountId is required');
-      return connectorAccountsApi.listTables(workbookId, folder.connectorAccountId);
+      return scratchApiClient.connectorAccounts.listTables(workbookId, folder.connectorAccountId);
     },
     { revalidateOnFocus: false },
   );
@@ -153,7 +153,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder, workbookI
   const hasFieldSelect = useMemo(() => advancedSettings.some((s) => s.type === 'field-select'), [advancedSettings]);
   const { data: schemaData } = useSWR<Record<string, unknown>>(
     opened && hasFieldSelect ? ['folder-schema', folder.id] : null,
-    () => dataFoldersApi.getSchema(folder.id),
+    () => scratchApiClient.dataFolders.getSchema(folder.id),
     { revalidateOnFocus: false },
   );
   const {
@@ -232,7 +232,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder, workbookI
   const handleSave = async () => {
     setLoading(true);
     try {
-      await dataFoldersApi.update(folder.id, {
+      await scratchApiClient.dataFolders.update(folder.id, {
         filter: filter.trim() || null,
         options: buildOptions(),
       });

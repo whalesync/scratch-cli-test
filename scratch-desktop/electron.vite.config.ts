@@ -12,6 +12,10 @@ const sharedTypesTransformSrc = resolve('../packages/shared-types/src/transform/
 // is its own lean module so the main process can import it without bundling the
 // rest of the barrel. Like `/transform`, register it BEFORE the barrel alias.
 const sharedTypesFormatSrc = resolve('../packages/shared-types/src/format/index.ts');
+// The `@spinner/shared-types/api-client` subpath (the shared REST client + its axios dep) is
+// intentionally NOT in the barrel so the server never bundles axios. Like `/transform` and
+// `/format`, register it BEFORE the barrel alias so the more specific import matches first.
+const sharedTypesApiClientSrc = resolve('../packages/shared-types/src/api-client/index.ts');
 
 export default defineConfig({
   main: {
@@ -20,6 +24,7 @@ export default defineConfig({
         // Same as renderer: bundle from source so main never requires node_modules/@spinner/shared-types/dist.
         '@spinner/shared-types/transform': sharedTypesTransformSrc,
         '@spinner/shared-types/format': sharedTypesFormatSrc,
+        '@spinner/shared-types/api-client': sharedTypesApiClientSrc,
         '@spinner/shared-types': sharedTypesSrc,
       },
     },
@@ -43,6 +48,7 @@ export default defineConfig({
         '@': resolve('src/renderer/src'),
         '@spinner/shared-types/transform': sharedTypesTransformSrc,
         '@spinner/shared-types/format': sharedTypesFormatSrc,
+        '@spinner/shared-types/api-client': sharedTypesApiClientSrc,
         '@spinner/shared-types': sharedTypesSrc,
       },
     },

@@ -3,7 +3,7 @@ import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { Info } from '@/app/components/InfoPanel';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { paymentApi } from '@/lib/api/payment';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { stringToEnum } from '@/utils/helpers';
 import { RouteUrls } from '@/utils/route-urls';
 import { ScratchPlanType } from '@spinner/shared-types';
@@ -17,7 +17,9 @@ async function goToPaymentCheckoutUrl(args: { planType: string | string[] | unde
     const planType: ScratchPlanType = stringToEnum(rawplanType, ScratchPlanType, ScratchPlanType.PRO_PLAN);
     // Generate a URL and redirect to it.
     // This will either be a link to create a new subscription, or to update the current subscription if it exists.
-    const result = await paymentApi.createCheckoutSession(planType, { returnPath: RouteUrls.billingPageUrl });
+    const result = await scratchApiClient.payment.createCheckoutSession(planType, {
+      returnPath: RouteUrls.billingPageUrl,
+    });
     window.location.replace(result.url);
   }
 }

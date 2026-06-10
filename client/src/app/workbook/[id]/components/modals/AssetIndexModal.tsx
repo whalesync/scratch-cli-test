@@ -1,6 +1,6 @@
 'use client';
 
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Anchor, Badge, Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { ImageIcon } from 'lucide-react';
@@ -62,7 +62,7 @@ function isExpired(urlExpiresAt: string | null): boolean {
 export function AssetIndexModal({ opened, onClose, workbookId, dataFolderId }: AssetIndexModalProps) {
   const { data: rows, isLoading } = useSWR(
     opened ? ['asset-index', workbookId, dataFolderId] : null,
-    () => workbookApi.listAssetIndex(workbookId, dataFolderId) as Promise<AssetEntry[]>,
+    () => scratchApiClient.publish.listAssetIndex(workbookId, dataFolderId) as Promise<AssetEntry[]>,
   );
 
   const expiredCount = useMemo(() => rows?.filter((r) => isExpired(r.urlExpiresAt)).length ?? 0, [rows]);

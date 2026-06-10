@@ -1,7 +1,7 @@
 'use client';
 
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Button, Checkbox, Group, Modal, Stack, TextInput } from '@mantine/core';
 import type { DataFolder, WorkbookId } from '@spinner/shared-types';
 import { useEffect, useState } from 'react';
@@ -31,7 +31,7 @@ export function NewFileModal({ opened, onClose, folder, workbookId, onSuccess }:
 
     setLoading(true);
     try {
-      await workbookApi.createDataFolderFile(folder.id, fileName, useTemplate, workbookId);
+      await scratchApiClient.dataFolders.createDataFolderFile(folder.id, fileName, useTemplate, workbookId);
 
       ScratchpadNotifications.success({
         title: 'File Created',

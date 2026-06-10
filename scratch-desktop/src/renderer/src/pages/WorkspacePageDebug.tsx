@@ -22,9 +22,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useConfirmModal } from '../components/ConfirmModal';
 import { LiveCommandOutput } from '../components/LiveCommandOutput';
-import { API_CONFIG } from '../lib/api';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
-import { workspacesApi } from '../lib/workspaces-api';
+import { scratchApiClient, setScratchApiActiveWorkspacePath } from '../lib/scratch-api-client';
 
 interface SyncValidationResult {
   syncName: string;
@@ -82,7 +81,10 @@ export function WorkspacePageDebug() {
     try {
       setLoading(true);
       setError(null);
-      const [data, localWorkspaces] = await Promise.all([workspacesApi.detail(id), listLocalWorkspaces()]);
+      const [data, localWorkspaces] = await Promise.all([
+        scratchApiClient.workspaces.detail(id),
+        listLocalWorkspaces(),
+      ]);
       const localWorkspace = localWorkspaces.find((entry) => entry.id === id) ?? null;
       setWorkspace(data);
       setLocalPath(localWorkspace?.path ?? null);
@@ -433,9 +435,9 @@ export function WorkspacePageDebug() {
   }, [fetchWorkspace]);
 
   useEffect(() => {
-    API_CONFIG.setActiveWorkspacePath(localPath);
+    setScratchApiActiveWorkspacePath(localPath);
     return () => {
-      API_CONFIG.setActiveWorkspacePath(null);
+      setScratchApiActiveWorkspacePath(null);
     };
   }, [localPath]);
 

@@ -1,7 +1,6 @@
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
-import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackDiscardChanges, trackPullFiles } from '@/lib/posthog';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
@@ -13,9 +12,9 @@ import {
   WorkbookId,
   Workspace,
 } from '@spinner/shared-types';
+import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useCallback, useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
-import { dataFolderApi } from '../lib/api/data-folder';
 
 export interface UseWorkbookReturn {
   workbook: Workspace | undefined;
@@ -46,7 +45,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
       if (!id) {
         throw new Error('Workbook ID is required');
       }
-      return workbookApi.detail(id);
+      return scratchApiClient.workspaces.detail(id);
     },
     {
       revalidateOnFocus: false,
@@ -72,7 +71,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
       if (!id) {
         return;
       }
-      await workbookApi.update(id, updateDto);
+      await scratchApiClient.workspaces.update(id, updateDto);
       globalMutate(SWR_KEYS.workbook.list());
       globalMutate(SWR_KEYS.workbook.detail(id));
     },
@@ -105,7 +104,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
         options,
         triggerPull,
       };
-      const dataFolder = await dataFolderApi.create(dto);
+      const dataFolder = await scratchApiClient.dataFolders.create(dto);
       return dataFolder;
     },
     [id],
@@ -117,7 +116,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
     }
     trackDiscardChanges(id);
     try {
-      await workbookApi.discardChanges(id);
+      await scratchApiClient.git.discardChanges(id);
       // TODO: this notification is just overkill for now, we shouldn't need it at all once the UI is more reactive
       ScratchpadNotifications.info({ message: 'All unpublished changes have been discarded' });
     } catch (error) {
@@ -142,7 +141,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
         return;
       }
       try {
-        const result = await workbookApi.pullAssets(id, dataFolderIds, options);
+        const result = await scratchApiClient.workspaces.pullAssets(id, dataFolderIds, options);
         if (result.jobIds?.length) {
           useActiveJobsStore.getState().trackJobIds(result.jobIds);
         }
@@ -167,7 +166,7 @@ export const useWorkbook = (id: WorkbookId | null): UseWorkbookReturn => {
       }
       trackPullFiles(id, opts?.mode);
       try {
-        const result = await workbookApi.pullFiles(id, folderIds, opts?.mode);
+        const result = await scratchApiClient.workspaces.pullFiles(id, folderIds, opts?.mode);
         if (result.jobIds?.length) {
           useActiveJobsStore.getState().trackJobIds(result.jobIds);
         }

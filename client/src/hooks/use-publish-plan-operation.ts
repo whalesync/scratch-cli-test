@@ -1,5 +1,5 @@
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { PublishPlanOperationEntity, WorkbookId } from '@spinner/shared-types';
 import useSWR from 'swr';
 
@@ -25,7 +25,7 @@ export function usePublishPlanOperation(
       if (!workbookId || !planId || !filePath || !phase) {
         throw new Error('workbookId, planId, filePath, and phase are required');
       }
-      return workbookApi.listPublishPlanOperations(workbookId, planId, { filePath, phase, pageSize: 1 });
+      return scratchApiClient.publish.listPublishPlanOperations(workbookId, planId, { filePath, phase, pageSize: 1 });
     },
   );
 

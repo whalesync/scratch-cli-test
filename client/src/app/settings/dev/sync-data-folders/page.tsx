@@ -1,7 +1,7 @@
 'use client';
 
 import MainContent from '@/app/components/layouts/MainContent';
-import { API_CONFIG } from '@/lib/api/config';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Alert, Button, Card, Code, Group, Stack, Text, TextInput, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { AlertCircle, CheckCircle2, FolderSync, FolderSyncIcon, Play } from 'lucide-react';
@@ -44,16 +44,13 @@ export default function SyncDataFoldersDevPage() {
     setError(null);
 
     try {
-      const response = await API_CONFIG.getAxiosInstance().post<JobResult>('/dev-tools/jobs/sync-data-folders', {
-        workbookId: workbookId.trim(),
-        syncId: syncId.trim(),
-      });
+      const result = await scratchApiClient.devTools.syncDataFolders(workbookId.trim(), syncId.trim());
 
-      setLastResult(response.data);
+      setLastResult(result);
 
       notifications.show({
         title: 'Job queued',
-        message: `Sync data folders job queued with ID: ${response.data.jobId}`,
+        message: `Sync data folders job queued with ID: ${result.jobId}`,
         color: 'green',
       });
     } catch (err) {

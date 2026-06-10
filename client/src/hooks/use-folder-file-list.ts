@@ -1,7 +1,7 @@
-import { isUnauthorizedError } from '@/lib/api/error';
-import { filesApi } from '@/lib/api/files';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { DataFolderId, FileOrFolderRefEntity, ListFilesResponseDto, WorkbookId } from '@spinner/shared-types';
+import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useMemo } from 'react';
 import useSWR from 'swr';
 
@@ -27,7 +27,7 @@ export const useFolderFileList = (
       if (!workbookId || !folderId) {
         throw new Error('workbookId and folderId are required');
       }
-      return filesApi.listFilesByFolder(workbookId, folderId);
+      return scratchApiClient.files.listFilesByFolder(workbookId, folderId);
     },
     {
       revalidateOnFocus: false,

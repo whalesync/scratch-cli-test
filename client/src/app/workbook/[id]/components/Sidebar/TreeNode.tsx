@@ -8,9 +8,7 @@ import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
-import { dataFolderApi } from '@/lib/api/data-folder';
-import { filesApi } from '@/lib/api/files';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackPullFilesFromSource } from '@/lib/posthog';
 import { selectJobsForConnector, useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
@@ -673,7 +671,7 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const handleDownloadAll = async () => {
     setContextMenu(null);
     try {
-      await filesApi.downloadFolder(workbookId, folder.id);
+      await scratchApiClient.files.downloadFolder(workbookId, folder.id);
     } catch {
       notifications.show({ title: 'Download failed', message: 'Could not download files', color: 'red' });
     }
@@ -1025,7 +1023,7 @@ function FileNode({ file, onSuccess, linkedFolderId }: FileNodeProps) {
   const handlePullFromSource = useCallback(async () => {
     if (!linkedFolderId) return;
     try {
-      const result = await dataFolderApi.pullFiles(linkedFolderId, params.id as WorkbookId, [file.path]);
+      const result = await scratchApiClient.dataFolders.pullFiles(linkedFolderId, params.id as WorkbookId, [file.path]);
       if (result?.jobId) {
         useActiveJobsStore.getState().trackJobIds([result.jobId]);
         useActiveJobsStore.getState().refreshJobs();
@@ -1345,7 +1343,7 @@ function ScratchFolderNode({ workbookId, connectorAccountId }: ScratchFolderNode
 
   const { data: entries, isLoading } = useSWR(
     isExpanded ? ['repo-files', workbookId, '.scratch', connectorAccountId] : null,
-    () => workbookApi.listRepoFiles(workbookId, 'dirty', '.scratch', connectorAccountId),
+    () => scratchApiClient.git.listRepoFiles(workbookId, 'dirty', '.scratch', connectorAccountId),
   );
 
   return (
@@ -1472,7 +1470,7 @@ function ScratchSubdirNode({
 
   const { data: entries, isLoading } = useSWR(
     isExpanded ? ['repo-files', workbookId, path, connectorAccountId] : null,
-    () => workbookApi.listRepoFiles(workbookId, 'dirty', path, connectorAccountId),
+    () => scratchApiClient.git.listRepoFiles(workbookId, 'dirty', path, connectorAccountId),
   );
 
   return (

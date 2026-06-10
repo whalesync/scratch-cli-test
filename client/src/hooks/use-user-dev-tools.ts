@@ -1,5 +1,5 @@
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
-import { devToolsApi } from '@/lib/api/dev-tools';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { ScratchPlanType, User, UserDetails } from '@spinner/shared-types';
 import { useState } from 'react';
 import { useScratchPadUser } from './useScratchpadUser';
@@ -23,7 +23,7 @@ export const useUserDevTools = () => {
       setResults([]);
       setCurrentUserDetails(undefined);
       setIsLoading(true);
-      const response = await devToolsApi.searchUsers(query);
+      const response = await scratchApiClient.devTools.searchUsers(query);
       setResults(response);
     } catch (error) {
       setError(error as Error);
@@ -35,7 +35,7 @@ export const useUserDevTools = () => {
   const retrieveUserDetails = async (userId: string) => {
     try {
       setIsLoading(true);
-      const response = await devToolsApi.getUserDetails(userId);
+      const response = await scratchApiClient.devTools.getUserDetails(userId);
       setCurrentUserDetails(response);
     } catch (error) {
       setError(error as Error);
@@ -47,7 +47,7 @@ export const useUserDevTools = () => {
   const updateActiveUserSubscription = async (newPlan: ScratchPlanType) => {
     try {
       setIsLoading(true);
-      await devToolsApi.updateUserSubscription(newPlan);
+      await scratchApiClient.devTools.updateUserSubscription(newPlan);
       await refreshCurrentUser();
       ScratchpadNotifications.success({ message: `Your subscription was successfully updated to ${newPlan}` });
     } catch (error) {
@@ -60,7 +60,7 @@ export const useUserDevTools = () => {
   const forceExpireActiveUserSubscription = async () => {
     try {
       setIsLoading(true);
-      await devToolsApi.forceExpireSubscription();
+      await scratchApiClient.devTools.forceExpireSubscription();
       await refreshCurrentUser();
       ScratchpadNotifications.success({ message: `Your subscription was successfully expired` });
     } catch (error) {
@@ -73,7 +73,7 @@ export const useUserDevTools = () => {
   const forceCancelActiveUserSubscription = async () => {
     try {
       setIsLoading(true);
-      await devToolsApi.forceCancelSubscription();
+      await scratchApiClient.devTools.forceCancelSubscription();
       await refreshCurrentUser();
       ScratchpadNotifications.success({ message: `Your subscription was marked for cancellation` });
     } catch (error) {

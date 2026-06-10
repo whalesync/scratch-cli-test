@@ -1,6 +1,6 @@
 import type { PublishPlanRecordsResponse } from '@spinner/shared-types';
 import useSWR from 'swr';
-import { publishApi } from '../lib/publish-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 
 /**
  * Returns the records page for a publish plan, paginated server-side, filtered
@@ -28,7 +28,7 @@ export function usePublishPlanRecords(
       if (!workbookId || !planId) {
         throw new Error('workbookId and planId are required');
       }
-      return publishApi.listPublishPlanRecords(workbookId, planId, {
+      return scratchApiClient.publish.listPublishPlanRecords(workbookId, planId, {
         page: options.page,
         pageSize: options.pageSize,
         dataFolderId: options.dataFolderId,

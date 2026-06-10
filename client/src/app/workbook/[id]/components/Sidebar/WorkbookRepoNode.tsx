@@ -2,7 +2,7 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Box, Collapse, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
 import type { GitFile, WorkbookId } from '@spinner/shared-types';
@@ -108,7 +108,7 @@ function WorkbookRepoRepoDirNode({ workbookId, dirPath, name, depth, branch }: C
 
   const { data: files, isLoading } = useSWR(
     isExpanded ? ['config-repo-files', workbookId, branch, dirPath] : null,
-    () => workbookApi.listRepoFiles(workbookId, branch, dirPath, undefined, true).then(sortGitFiles),
+    () => scratchApiClient.git.listRepoFiles(workbookId, branch, dirPath, undefined, true).then(sortGitFiles),
     { revalidateOnFocus: false },
   );
 
@@ -182,7 +182,7 @@ export function WorkbookRepoNode({ workbookId }: WorkbookRepoNodeProps) {
 
   const { data: files, isLoading } = useSWR(
     isExpanded ? ['config-repo-files', workbookId, branch, ''] : null,
-    () => workbookApi.listRepoFiles(workbookId, branch, '', undefined, true).then(sortGitFiles),
+    () => scratchApiClient.git.listRepoFiles(workbookId, branch, '', undefined, true).then(sortGitFiles),
     { revalidateOnFocus: false },
   );
 

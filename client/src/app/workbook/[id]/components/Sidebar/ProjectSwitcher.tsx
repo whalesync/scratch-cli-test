@@ -4,8 +4,7 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text13Medium, Text13Regular } from '@/app/components/base/text';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useWorkbooks } from '@/hooks/use-workbooks';
-import { usersApi } from '@/lib/api/users';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Box, Button, Group, Menu, Modal, Stack, TextInput, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
@@ -80,7 +79,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
     (workbookId: WorkbookId) => {
       setMenuOpened(false);
       // Update last workbook in the background (don't await)
-      usersApi.updateLastWorkbook(workbookId).catch(console.error);
+      scratchApiClient.users.updateLastWorkbook(workbookId).catch(console.error);
       router.push(`/workbook/${workbookId}/files`);
     },
     [router],
@@ -152,7 +151,7 @@ export function ProjectSwitcher({ currentWorkbook }: ProjectSwitcherProps) {
 
     setIsImporting(true);
     try {
-      const result = await workbookApi.importWorkbookJson(parsed);
+      const result = await scratchApiClient.devTools.importWorkbookJson(parsed);
       closeImportModal();
       router.push(`/workbook/${result.workbookId}/files`);
     } catch (error) {

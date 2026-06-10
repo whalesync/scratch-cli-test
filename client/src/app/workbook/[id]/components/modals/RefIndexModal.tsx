@@ -1,6 +1,6 @@
 'use client';
 
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { WorkbookId } from '@spinner/shared-types';
 import { LinkIcon } from 'lucide-react';
@@ -24,7 +24,7 @@ interface RefIndexModalProps {
 export function RefIndexModal({ opened, onClose, workbookId }: RefIndexModalProps) {
   const { data: rows, isLoading } = useSWR(
     opened ? ['ref-index', workbookId] : null,
-    () => workbookApi.listRefIndex(workbookId) as Promise<RefIndexEntry[]>,
+    () => scratchApiClient.publish.listRefIndex(workbookId) as Promise<RefIndexEntry[]>,
   );
 
   return (

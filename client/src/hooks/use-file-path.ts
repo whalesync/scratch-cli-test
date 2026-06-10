@@ -1,7 +1,7 @@
-import { isUnauthorizedError } from '@/lib/api/error';
-import { filesApi } from '@/lib/api/files';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { FileDetailsResponseDto, UpdateFileDto, WorkbookId } from '@spinner/shared-types';
+import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useCallback, useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 
@@ -28,7 +28,7 @@ export const useFileByPath = (workbookId: WorkbookId | null, path: string | null
       if (!workbookId || !path) {
         throw new Error('workbookId and path are required');
       }
-      return filesApi.getFileByPath(workbookId, path);
+      return scratchApiClient.files.getFileByPath(workbookId, path);
     },
     {
       revalidateOnFocus: false,
@@ -46,7 +46,7 @@ export const useFileByPath = (workbookId: WorkbookId | null, path: string | null
         throw new Error('Workbook ID and file ID are required');
       }
 
-      await filesApi.updateFileByPath(workbookId, path, dto);
+      await scratchApiClient.files.updateFileByPath(workbookId, path, dto);
 
       // Revalidate this file
       await mutate();
@@ -62,7 +62,7 @@ export const useFileByPath = (workbookId: WorkbookId | null, path: string | null
       throw new Error('Workbook ID and file ID are required');
     }
 
-    await filesApi.deleteFileByPath(workbookId, path);
+    await scratchApiClient.files.deleteFileByPath(workbookId, path);
 
     // Clear this file from cache
     globalMutate(SWR_KEYS.files.detail(workbookId, path), undefined, { revalidate: false });

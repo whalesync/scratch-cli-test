@@ -9,7 +9,7 @@ import { ConnectorIcon } from '../components/ConnectorIcon';
 import { StyledLucideIcon } from '../components/icons/StyledLucideIcon';
 import { getConnectorLogoUrl, useConnectorsMetadata } from '../hooks/use-connectors-metadata';
 import { trackCancelPickParentFolder, trackFirstRunDownload } from '../lib/posthog';
-import { workspacesApi } from '../lib/workspaces-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 
 function WorkspaceServiceIcons({ workspace }: { workspace: Workspace }) {
   const { data: connectorsMetadata } = useConnectorsMetadata();
@@ -47,7 +47,7 @@ export function WelcomePage() {
   useEffect(() => {
     void (async () => {
       try {
-        const workspaces = await workspacesApi.list();
+        const workspaces = await scratchApiClient.workspaces.list(undefined, 'updatedAt', 'desc');
         if (workspaces.length === 0) {
           void navigate('/', { replace: true });
           return;

@@ -1,12 +1,12 @@
 import { notifications } from '@mantine/notifications';
 import { Workspace } from '@spinner/shared-types';
+import { isConnectionError as isServerConnectionError } from '@spinner/shared-types/api-client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { listLocalWorkspaces } from '../lib/local-workspaces';
 import { logPerf } from '../lib/perf';
 import { trackCancelPickParentFolder, trackDownloadWorkspace } from '../lib/posthog';
-import { workspacesApi } from '../lib/workspaces-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 
 export interface UseWorkspacesResult {
   workspaces: Workspace[];
@@ -42,7 +42,10 @@ export function useWorkspaces(): UseWorkspacesResult {
         setError(null);
         setIsConnectionError(false);
       }
-      const [data, localWorkspaces] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
+      const [data, localWorkspaces] = await Promise.all([
+        scratchApiClient.workspaces.list(undefined, 'updatedAt', 'desc'),
+        listLocalWorkspaces(),
+      ]);
       setWorkspaces(data);
       setDownloadedWorkspaceIds(new Set(localWorkspaces.map((workspace) => workspace.id)));
       setLocalFileCountById(new Map(localWorkspaces.map((w) => [w.id, w.fileCount])));

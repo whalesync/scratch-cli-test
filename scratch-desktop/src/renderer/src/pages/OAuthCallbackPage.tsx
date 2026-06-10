@@ -1,9 +1,9 @@
 import { ButtonPrimaryLight } from '@/components/base/buttons';
 import { Text13Regular } from '@/components/base/text';
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Alert, Center, Loader, Stack } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { oAuthApi } from '../lib/oauth-api';
 
 interface OAuthCallbackState {
   status: 'loading' | 'success' | 'error';
@@ -68,7 +68,7 @@ export function OAuthCallbackPage() {
           return;
         }
 
-        const result = await oAuthApi.callback(decodedService, {
+        const result = await scratchApiClient.oauth.callback(decodedService, {
           code,
           state: stateParam,
           realmId,

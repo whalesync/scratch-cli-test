@@ -1,5 +1,5 @@
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
-import { jobApi } from '@/lib/api/job';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { getJobDescription, getJobType, getTypeLabel } from '@/utils/job-helpers';
 import { RouteUrls } from '@/utils/route-urls';
 import { DataFolder, DataFolderId, Job, WorkbookId } from '@spinner/shared-types';
@@ -76,7 +76,7 @@ export const useActiveJobsStore = create<ActiveJobsStoreState>((set, get) => ({
     if (!workbookId) return;
 
     try {
-      const jobs = await jobApi.getActiveJobsByWorkbook(workbookId);
+      const jobs = await scratchApiClient.job.getActiveJobsByWorkbook(workbookId);
 
       // Guard: workbookId may have changed during the fetch
       if (get().workbookId !== workbookId) return;
@@ -155,7 +155,7 @@ export const useActiveJobsStore = create<ActiveJobsStoreState>((set, get) => ({
 // --- Standalone helpers ---
 
 async function notifyCompletedJobs(workbookId: string, disappearedIds: string[]) {
-  const finishedJobs = await jobApi.getJobsStatus(disappearedIds);
+  const finishedJobs = await scratchApiClient.job.getJobsStatus(disappearedIds);
 
   for (const job of finishedJobs) {
     const jobType = getJobType(job.type);

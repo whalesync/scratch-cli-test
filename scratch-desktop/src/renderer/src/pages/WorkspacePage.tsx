@@ -1,6 +1,8 @@
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Alert, Box, Center, Group, Loader, Modal, Stack } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Workspace } from '@spinner/shared-types';
+import { isConnectionError as isServerConnectionError } from '@spinner/shared-types/api-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
@@ -9,13 +11,10 @@ import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
 import { useClaudeChatEnabled } from '../hooks/use-claude-chat-enabled';
 import { useReviewStats } from '../hooks/use-review-stats';
 import { useValidation } from '../hooks/use-validation';
-import { API_CONFIG } from '../lib/api';
-import { isServerConnectionError } from '../lib/is-server-connection-error';
-import { jobApi } from '../lib/job-api';
 import { CloudSyncWarning, listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
 import { trackDeepLinkProcessed, trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
-import { workspacesApi } from '../lib/workspaces-api';
+import { setScratchApiActiveWorkspacePath } from '../lib/scratch-api-client';
 import { useWorkspaceUiStore } from '../stores/workspace-ui-store';
 import { CloudSyncWarningBanner } from './workspace/CloudSyncWarningBanner';
 import { PublishChangesModal } from './workspace/PublishChangesModal';
@@ -194,7 +193,10 @@ export function WorkspacePage() {
           setError(null);
           setConnectionError(false);
         }
-        const [data, localWorkspaces] = await Promise.all([workspacesApi.detail(id), listLocalWorkspaces()]);
+        const [data, localWorkspaces] = await Promise.all([
+          scratchApiClient.workspaces.detail(id),
+          listLocalWorkspaces(),
+        ]);
         const localWorkspace = localWorkspaces.find((entry) => entry.id === id) ?? null;
         const nextLocalPath = localWorkspace?.path ?? null;
 
@@ -379,7 +381,7 @@ export function WorkspacePage() {
         // Pull locks can be stale (job finished but lock wasn't cleared).
         if (snapshot.hasPullLock) {
           try {
-            const activeJobs = await jobApi.getActiveJobs(workspaceId);
+            const activeJobs = await scratchApiClient.job.getActiveJobsByWorkbook(workspaceId);
             const activePullJobs = activeJobs.filter(
               (j) => j.type === 'RefreshRecords' || j.type === 'pull-linked-folder-files',
             );
@@ -435,7 +437,7 @@ export function WorkspacePage() {
   }, [id, workspaceId, fetchWorkspace, handleDataRefresh]);
 
   useEffect(() => {
-    API_CONFIG.setActiveWorkspacePath(localPath);
+    setScratchApiActiveWorkspacePath(localPath);
     if (localPath) {
       window.scratchDesktop.logSession(localPath, 'start');
     }
@@ -443,7 +445,7 @@ export function WorkspacePage() {
       if (localPath) {
         window.scratchDesktop.logSession(localPath, 'end');
       }
-      API_CONFIG.setActiveWorkspacePath(null);
+      setScratchApiActiveWorkspacePath(null);
     };
   }, [localPath]);
 

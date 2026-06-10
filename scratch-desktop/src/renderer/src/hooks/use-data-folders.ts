@@ -1,7 +1,7 @@
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import { DataFolderGroup } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
-import { dataFoldersApi } from '../lib/data-folders-api';
 
 const SWR_KEY_PREFIX = 'data-folders';
 
@@ -10,7 +10,7 @@ export function useDataFolders(workbookId: string | undefined) {
     workbookId ? [SWR_KEY_PREFIX, workbookId] : null,
     () => {
       if (!workbookId) throw new Error('workbookId is required');
-      return dataFoldersApi.list(workbookId);
+      return scratchApiClient.dataFolders.list(workbookId);
     },
     { revalidateOnFocus: false },
   );

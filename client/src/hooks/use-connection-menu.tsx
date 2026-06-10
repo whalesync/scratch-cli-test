@@ -12,8 +12,7 @@ import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoMod
 import type { ContextMenuItem } from '@/app/workbook/[id]/components/shared/ContextMenu';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useGitActions } from '@/hooks/use-git-actions';
-import { connectorAccountsApi } from '@/lib/api/connector-accounts';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { initiateOAuth } from '@/utils/oauth';
 import { useDisclosure } from '@mantine/hooks';
@@ -104,7 +103,7 @@ export function useConnectionMenu(
       variant: 'danger',
       onConfirm: async () => {
         try {
-          await connectorAccountsApi.reset(workbookId, cId);
+          await scratchApiClient.connectorAccounts.reset(workbookId, cId);
           window.location.reload();
         } catch {
           notifications.show({ title: 'Error', message: 'Failed to reset connection', color: 'red' });
@@ -115,7 +114,7 @@ export function useConnectionMenu(
 
   const handleCopyGitCloneCommand = async () => {
     try {
-      const { gitCloneCommand } = await workbookApi.getConnectionGitUrl(cId);
+      const { gitCloneCommand } = await scratchApiClient.devTools.getConnectionGitUrl(cId);
       await navigator.clipboard.writeText(gitCloneCommand);
       notifications.show({
         title: 'Copied',

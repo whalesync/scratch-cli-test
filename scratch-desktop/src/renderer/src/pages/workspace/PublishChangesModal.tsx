@@ -1,3 +1,4 @@
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import {
   Alert,
   Anchor,
@@ -18,7 +19,6 @@ import type { Job } from '@spinner/shared-types';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ValidationStat } from '../../../../shared/validation-types';
-import { jobApi } from '../../lib/job-api';
 import {
   trackPublishCompleted,
   trackPublishReviewOnWeb,
@@ -26,7 +26,6 @@ import {
   trackPublishUploadCompleted,
   trackPublishUploadStarted,
 } from '../../lib/posthog';
-import { publishApi } from '../../lib/publish-api';
 
 interface UnreviewedChangeEntry {
   connectionName: string;
@@ -842,7 +841,7 @@ export function PublishChangesModal({
         updateConn({ status: 'planning' });
         // DEV-10316: pass the post-upload dirty HEAD so the server aborts the
         // plan build if the staging area drifted while the user reviewed.
-        const plan = await publishApi.startPlanJob(wbId, conn.connectionId, expectedBaseDirtyHead);
+        const plan = await scratchApiClient.publish.viaCliRoute.planJob(wbId, conn.connectionId, expectedBaseDirtyHead);
         if (!plan.jobId || !plan.pipelineId) {
           updateConn({ status: 'plan-no-diff' });
           return null;
@@ -866,7 +865,7 @@ export function PublishChangesModal({
         }
 
         updateConn({ status: 'running' });
-        const run = await publishApi.startRunJob(wbId, plan.pipelineId);
+        const run = await scratchApiClient.publish.viaCliRoute.runJob(wbId, plan.pipelineId);
         if (!run.jobId) {
           updateConn({ status: 'failed', failureMessage: 'run-job did not return a job id' });
           return null;
@@ -909,7 +908,7 @@ export function PublishChangesModal({
       // Re-check for unreviewed edits in the window between upload and this
       // click — a file watcher or another window could have introduced new
       // local edits that aren't in the server's dirty branch. The renderer
-      // publishes directly via HTTP (`publishApi.startPlanJob` / `startRunJob`),
+      // publishes directly via HTTP (`scratchApiClient.publish.viaCliRoute.planJob` / `startRunJob`),
       // bypassing the CLI's `run_publish` pre-flight, so this gate is the only
       // backstop for that race. Flip back to approval mode so the user can
       // accept/discard, which will trigger a fresh upload before they retry.
@@ -1016,7 +1015,7 @@ export function PublishChangesModal({
       }
 
       try {
-        const statuses = await jobApi.getJobsStatus(activeJobIds);
+        const statuses = await scratchApiClient.job.getJobsStatus(activeJobIds);
         if (cancelled) return;
         const byId = new Map(statuses.map((s) => [s.bullJobId ?? '', s]));
         const hydrated = activeJobIds.map(

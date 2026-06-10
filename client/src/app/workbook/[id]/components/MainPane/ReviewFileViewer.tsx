@@ -4,10 +4,8 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useFileByPath } from '@/hooks/use-file-path';
-import { filesApi } from '@/lib/api/files';
-import { jobApi } from '@/lib/api/job';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useActiveJobsStore } from '@/stores/active-jobs-store';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
 import { findDataFolderForFile } from '@/utils/data-folder-helpers';
@@ -59,7 +57,7 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
       setWasJobActive(false);
       const finishedJobId = publishJobId;
       setPublishJobId(null);
-      jobApi.getJobsStatus([finishedJobId]).then((jobs) => {
+      scratchApiClient.job.getJobsStatus([finishedJobId]).then((jobs) => {
         if (jobs[0]?.state === 'completed') {
           router.push(`/workbook/${workbookId}/review`);
         }
@@ -76,11 +74,17 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
   // Fetch resolved FK references for both branches
   const { data: mainRefs } = useSWR(
     showReferences && filePath ? SWR_KEYS.files.resolveReferences(workbookId, filePath, 'main') : null,
-    () => (filePath ? filesApi.resolveReferences(workbookId, filePath, 'main').then((r) => r.references) : undefined),
+    () =>
+      filePath
+        ? scratchApiClient.files.resolveReferences(workbookId, filePath, 'main').then((r) => r.references)
+        : undefined,
   );
   const { data: dirtyRefs } = useSWR(
     showReferences && filePath ? SWR_KEYS.files.resolveReferences(workbookId, filePath, 'dirty') : null,
-    () => (filePath ? filesApi.resolveReferences(workbookId, filePath, 'dirty').then((r) => r.references) : undefined),
+    () =>
+      filePath
+        ? scratchApiClient.files.resolveReferences(workbookId, filePath, 'dirty').then((r) => r.references)
+        : undefined,
   );
 
   // Confirm dialog
@@ -137,7 +141,7 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
       onConfirm: async () => {
         setIsDiscarding(true);
         try {
-          await workbookApi.discardChanges(workbookId, filePath);
+          await scratchApiClient.git.discardChanges(workbookId, filePath);
           // Refresh the file data
           await refreshFile();
           // Navigate back to review page since this file is no longer modified
@@ -165,7 +169,13 @@ export function ReviewFileViewer({ workbookId, filePath, connectorAccountId }: R
       }
 
       // Publish just this file directly using planPublishV2 with runAfterPlan=true and filePath properly set
-      const result = await workbookApi.planPublishV2(workbookId, folder.connectorAccountId, true, undefined, filePath);
+      const result = await scratchApiClient.publish.viaWorkbookRoute.planJob(
+        workbookId,
+        folder.connectorAccountId,
+        true,
+        undefined,
+        filePath,
+      );
 
       if (result?.jobId) {
         setPublishJobId(result.jobId);

@@ -4,9 +4,8 @@ import { CapabilityIcons } from '@/components/icons/CapabilityIcons';
 import { ConnectorIcon } from '@/components/icons/ConnectorIcon';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { connectorAccountsApi, isTableFullyLocked } from '@/lib/connector-accounts-api';
-import { dataFoldersApi } from '@/lib/data-folders-api';
-import { genericApiApi } from '@/lib/generic-api-api';
+import { isTableFullyLocked } from '@/lib/connector-table-helpers';
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import {
   Alert,
   Badge,
@@ -154,7 +153,7 @@ export function ChooseTablesModal({
 }: ChooseTablesModalProps) {
   const { data, isLoading, isValidating } = useSWR<TableList>(
     opened ? ['connector-tables', workbookId, connectorAccount.id] : null,
-    () => connectorAccountsApi.listTables(workbookId, connectorAccount.id),
+    () => scratchApiClient.connectorAccounts.listTables(workbookId, connectorAccount.id),
     { revalidateOnFocus: false, revalidateOnReconnect: false },
   );
   const discoveryMode = data?.discoveryMode ?? TableDiscoveryMode.LIST;
@@ -173,7 +172,7 @@ export function ChooseTablesModal({
     opened && isSearchMode && debouncedSearchTerm
       ? ['connector-tables-search', workbookId, connectorAccount.id, debouncedSearchTerm]
       : null,
-    () => connectorAccountsApi.searchTables(workbookId, connectorAccount.id, debouncedSearchTerm),
+    () => scratchApiClient.connectorAccounts.searchTables(workbookId, connectorAccount.id, debouncedSearchTerm),
     { revalidateOnFocus: false, revalidateOnReconnect: false, keepPreviousData: true },
   );
 
@@ -378,7 +377,7 @@ export function ChooseTablesModal({
       const tableKey = table.id.remoteId.join('/');
       if (loadedTableSchemas.has(tableKey) || schemasLoading.has(tableKey)) continue;
       setSchemasLoading((prev) => new Set(prev).add(tableKey));
-      connectorAccountsApi
+      scratchApiClient.connectorAccounts
         .getTableSchema(workbookId, connectorAccount.id, table.id.remoteId.join(','))
         .then((result) => {
           setLoadedTableSchemas((prev) => new Map(prev).set(tableKey, result));
@@ -446,7 +445,7 @@ export function ChooseTablesModal({
     // If there are folders to remove, check for dirty files and show confirmation
     if (pendingFoldersToRemove.length > 0 && !showConfirmation) {
       try {
-        const dirtyFiles = await dataFoldersApi.getDirtyFiles(workbookId);
+        const dirtyFiles = await scratchApiClient.dataFolders.getDirtyFiles(workbookId);
         const folderPaths = new Set(pendingFoldersToRemove.map((f) => (f.path ?? f.name).replace(/^\//, '')));
         const dirtyInRemovedFolders = dirtyFiles.filter((file) =>
           Array.from(folderPaths).some((folderPath) => {
@@ -487,7 +486,11 @@ export function ChooseTablesModal({
           // has pagination strategy, idPath, and inferred schema for pulls.
           if (connectorAccount.service === 'GENERIC_API') {
             try {
-              const probeResult = await genericApiApi.probeEndpoint(workbookId, connectorAccount.id, table.id.wsId);
+              const probeResult = await scratchApiClient.generic.probeEndpoint(
+                workbookId,
+                connectorAccount.id,
+                table.id.wsId,
+              );
               options.genericApi = { endpointId: table.id.wsId, probe: probeResult.probe };
             } catch (probeErr) {
               const axiosData = (probeErr as { response?: { data?: { message?: unknown } } })?.response?.data;
@@ -514,7 +517,7 @@ export function ChooseTablesModal({
             options: Object.keys(options).length > 0 ? options : undefined,
             triggerPull,
           };
-          await dataFoldersApi.create(createDto);
+          await scratchApiClient.dataFolders.create(createDto);
           succeeded++;
         } catch (err) {
           const axiosData = (err as { response?: { data?: { message?: unknown } } })?.response?.data;
@@ -547,13 +550,13 @@ export function ChooseTablesModal({
           } else {
             delete opts.readOnly;
           }
-          await dataFoldersApi.update(folder.id, { filter: newFilter, options: opts });
+          await scratchApiClient.dataFolders.update(folder.id, { filter: newFilter, options: opts });
         }
       }
 
       // Remove unselected tables
       for (const folder of pendingFoldersToRemove) {
-        await dataFoldersApi.delete(folder.id);
+        await scratchApiClient.dataFolders.delete(folder.id);
       }
 
       await refreshFolders();

@@ -6,8 +6,7 @@ import { Text12Regular } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { getHumanReadableErrorMessage } from '@/lib/api/error';
-import { syncApi } from '@/lib/api/sync';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useSyncStore } from '@/stores/sync-store';
 import { timeAgo } from '@/utils/helpers';
 import { RouteUrls } from '@/utils/route-urls';
@@ -15,6 +14,7 @@ import { ActionIcon, Box, Group, Menu, Modal, Paper, ScrollArea, Tooltip } from 
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import type { SyncId, ValidateSyncMappingTypesResponse, WorkbookId } from '@spinner/shared-types';
+import { getHumanReadableErrorMessage } from '@spinner/shared-types/api-client';
 import {
   BracesIcon,
   CheckIcon,
@@ -203,7 +203,7 @@ export function SyncToolbar({
       variant: 'danger',
       onConfirm: async () => {
         try {
-          await syncApi.delete(workbookId, syncId);
+          await scratchApiClient.sync.delete(workbookId, syncId);
           await fetchSyncs(workbookId);
           notifications.show({
             title: 'Sync deleted',
@@ -228,7 +228,7 @@ export function SyncToolbar({
     setValidateResult(null);
     openValidateResultModal();
     try {
-      const result = await syncApi.validateSyncMappingTypes(workbookId, syncId as SyncId);
+      const result = await scratchApiClient.sync.validateSyncMappingTypes(workbookId, syncId as SyncId);
       setValidateResult(result);
     } catch (error) {
       setValidateResult({

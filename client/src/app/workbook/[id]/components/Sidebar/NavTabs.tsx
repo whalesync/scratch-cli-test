@@ -5,7 +5,7 @@ import { Text12Regular, Text13Regular } from '@/app/components/base/text';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { isExperimentEnabled } from '@/types/server-entities/users';
 import { Badge, Box, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import type { WorkbookId } from '@spinner/shared-types';
@@ -42,7 +42,7 @@ export function NavTabs() {
   const { activeJobs } = useWorkbookActiveJobs(workbookId);
   const { data: dirtyStatus } = useSWR(
     SWR_KEYS.dirtyFiles.hasDirty(workbookId),
-    () => workbookApi.hasDirtyFiles(workbookId),
+    () => scratchApiClient.git.hasDirtyFiles(workbookId),
     { refreshInterval: 10000 },
   );
   const hasDirty = dirtyStatus?.dirty ?? false;

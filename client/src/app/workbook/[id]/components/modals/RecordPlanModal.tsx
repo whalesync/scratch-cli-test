@@ -1,6 +1,6 @@
 'use client';
 
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
 import { unifiedMergeView } from '@codemirror/merge';
 import { EditorView, lineNumbers } from '@codemirror/view';
@@ -228,9 +228,9 @@ export function RecordPlanModal({ opened, onClose, workbookId, publishPlanId, fi
     try {
       // Fetch master, dirty, and entries in parallel
       const [masterRes, dirtyRes, allEntries] = await Promise.allSettled([
-        workbookApi.getRepoFile(workbookId, filePath, 'main'),
-        workbookApi.getRepoFile(workbookId, filePath, 'dirty'),
-        workbookApi.listPublishPlanOperations(workbookId, publishPlanId, { pageSize: 200 }),
+        scratchApiClient.git.getRepoFile(workbookId, filePath, 'main'),
+        scratchApiClient.git.getRepoFile(workbookId, filePath, 'dirty'),
+        scratchApiClient.publish.listPublishPlanOperations(workbookId, publishPlanId, { pageSize: 200 }),
       ]);
 
       setMasterJson(masterRes.status === 'fulfilled' ? formatJson(masterRes.value.content) : '');

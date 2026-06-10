@@ -1,5 +1,5 @@
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { dataFoldersApi } from '@/lib/data-folders-api';
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import type { DataFolder } from '@spinner/shared-types';
 import { useState } from 'react';
@@ -25,7 +25,7 @@ export function RemoveTableModal({
   const handleRemove = async () => {
     setLoading(true);
     try {
-      await dataFoldersApi.delete(folder.id);
+      await scratchApiClient.dataFolders.delete(folder.id);
       await refresh();
       invalidateWorkspaceLevelData?.();
       onClose();

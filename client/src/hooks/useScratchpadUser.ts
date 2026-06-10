@@ -1,6 +1,6 @@
 import { API_CONFIG } from '@/lib/api/config';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { usersApi } from '@/lib/api/users';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { UserSetting, UserSettingValue } from '@/types/server-entities/users';
 import { RouteUrls } from '@/utils/route-urls';
 import { useAuth, useUser } from '@clerk/nextjs';
@@ -31,7 +31,7 @@ export const useScratchPadUser = (): ScratchPadUser => {
     data: user,
     isLoading,
     mutate,
-  } = useSWR(SWR_KEYS.users.activeUser(), usersApi.activeUser, {
+  } = useSWR(SWR_KEYS.users.activeUser(), scratchApiClient.users.activeUser, {
     refreshInterval: 1000 * 60 * 5, // 5 minutes
     onSuccess: (data) => {
       /// update our static config when the values change
@@ -64,7 +64,7 @@ export const useScratchPadUser = (): ScratchPadUser => {
         return;
       }
 
-      await usersApi.updateSettings({
+      await scratchApiClient.users.updateSettings({
         updates: {
           [key]: value,
         },
@@ -81,7 +81,7 @@ export const useScratchPadUser = (): ScratchPadUser => {
         return;
       }
 
-      await usersApi.updateSettings({
+      await scratchApiClient.users.updateSettings({
         updates: {
           [key]: null,
         },

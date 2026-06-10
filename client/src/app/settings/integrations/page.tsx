@@ -5,7 +5,7 @@ import { ConfigSection } from '@/app/components/ConfigSection';
 import MainContent from '@/app/components/layouts/MainContent';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { usersApi } from '@/lib/api/users';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { ActionIcon, CopyButton, Group, PasswordInput, Stack, Switch, Tooltip } from '@mantine/core';
 import { BlocksIcon, CheckIcon, CopyIcon, KeyIcon, RefreshCwIcon } from 'lucide-react';
 import { useState } from 'react';
@@ -21,7 +21,7 @@ export default function IntegrationsSettingsPage() {
   const generateToken = async () => {
     setIsGenerating(true);
     try {
-      await usersApi.generateApiToken();
+      await scratchApiClient.users.generateApiToken();
       await refreshCurrentUser();
     } finally {
       setIsGenerating(false);
@@ -45,7 +45,7 @@ export default function IntegrationsSettingsPage() {
   const handleToggleCliPublish = async (checked: boolean) => {
     setIsUpdatingPublish(true);
     try {
-      await usersApi.updateSettings({ updates: { cliCanPublish: checked } });
+      await scratchApiClient.users.updateSettings({ updates: { cliCanPublish: checked } });
       await refreshCurrentUser();
     } finally {
       setIsUpdatingPublish(false);

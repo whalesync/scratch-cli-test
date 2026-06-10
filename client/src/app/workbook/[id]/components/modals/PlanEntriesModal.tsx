@@ -1,6 +1,6 @@
 'use client';
 
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
@@ -127,7 +127,7 @@ export function PlanEntriesModal({
   const fetchOperations = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await workbookApi.listPublishPlanOperations(workbookId, publishPlanId, {
+      const result = await scratchApiClient.publish.listPublishPlanOperations(workbookId, publishPlanId, {
         page,
         pageSize,
         phase: phaseFilter || undefined,

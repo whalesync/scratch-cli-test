@@ -1,7 +1,7 @@
 import type { User } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
-import { usersApi } from '../lib/users-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 import { UserSetting, UserSettingValue } from '../types/user';
 
 const SWR_KEY = '/users/current';
@@ -17,7 +17,7 @@ export interface CurrentUser {
 }
 
 export function useCurrentUser(): CurrentUser {
-  const { data, isLoading, error, mutate } = useSWR<User, Error>(SWR_KEY, usersApi.currentUser, {
+  const { data, isLoading, error, mutate } = useSWR<User, Error>(SWR_KEY, scratchApiClient.users.activeUser, {
     refreshInterval: REFRESH_INTERVAL_MS,
     revalidateOnFocus: true,
   });
@@ -29,7 +29,7 @@ export function useCurrentUser(): CurrentUser {
   const updateUserSetting = useCallback(
     async (key: UserSetting, value: UserSettingValue) => {
       if (!data) return;
-      await usersApi.updateSettings({ [key]: value });
+      await scratchApiClient.users.updateSettings({ updates: { [key]: value } });
       await mutate();
     },
     [data, mutate],

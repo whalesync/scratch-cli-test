@@ -1,4 +1,5 @@
 import { Alert, Center, Loader, Stack } from '@mantine/core';
+import { isConnectionError as isServerConnectionError } from '@spinner/shared-types/api-client';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { HashRouter, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { SWRConfig } from 'swr';
@@ -7,9 +8,8 @@ import { DeepLinkBridge } from './components/DeepLinkBridge';
 import { Layout } from './components/Layout';
 import { ServerConnectionSplash } from './components/ServerConnectionSplash';
 import { useCurrentUser } from './hooks/use-current-user';
-import { isServerConnectionError } from './lib/is-server-connection-error';
 import { listLocalWorkspaces } from './lib/local-workspaces';
-import { workspacesApi } from './lib/workspaces-api';
+import { scratchApiClient } from './lib/scratch-api-client';
 import { LoginPage } from './pages/LoginPage';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
 import { CliInstallProvider } from './providers/CliInstallProvider';
@@ -91,7 +91,10 @@ function StartupRedirect({ children }: { children: React.ReactNode }) {
         if (storedId) {
           // Validate the stored workspace is accessible and downloaded locally before navigating.
           try {
-            const [, localWorkspaces] = await Promise.all([workspacesApi.detail(storedId), listLocalWorkspaces()]);
+            const [, localWorkspaces] = await Promise.all([
+              scratchApiClient.workspaces.detail(storedId),
+              listLocalWorkspaces(),
+            ]);
             const isDownloaded = localWorkspaces.some((entry) => entry.id === storedId);
             console.log(
               '[StartupRedirect] stored-ID branch: isDownloaded:',
@@ -116,7 +119,10 @@ function StartupRedirect({ children }: { children: React.ReactNode }) {
         // No stored ID (or just cleared) — show welcome when there are remote workspaces but nothing downloaded yet.
         // Cross-check registry IDs against the remote list (same logic as useWorkspaces) so stale/orphaned
         // registry entries from other accounts don't count as "downloaded".
-        const [workspaces, localRegistry] = await Promise.all([workspacesApi.list(), listLocalWorkspaces()]);
+        const [workspaces, localRegistry] = await Promise.all([
+          scratchApiClient.workspaces.list(undefined, 'updatedAt', 'desc'),
+          listLocalWorkspaces(),
+        ]);
         const remoteIds = new Set<string>(workspaces.map((ws) => ws.id));
         const downloadedCount = localRegistry.filter((entry) => remoteIds.has(entry.id)).length;
         console.log(

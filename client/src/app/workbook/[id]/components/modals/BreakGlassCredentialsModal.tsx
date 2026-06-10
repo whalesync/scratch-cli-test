@@ -1,6 +1,6 @@
 'use client';
 
-import { connectorAccountsApi } from '@/lib/api/connector-accounts';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
 import { EditorView } from '@codemirror/view';
 import {
@@ -60,7 +60,7 @@ export function BreakGlassCredentialsModal({
     setIsLoading(true);
     setError(null);
     try {
-      const response = await connectorAccountsApi.revealCredentials(workbookId, connectionId);
+      const response = await scratchApiClient.connectorAccounts.revealCredentials(workbookId, connectionId);
       setData(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to reveal credentials');

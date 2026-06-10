@@ -1,10 +1,12 @@
-import { connectorsMetadataApi, type ConnectorsMetadataMap } from '@/lib/connectors-metadata-api';
+import { scratchApiClient } from '@/lib/scratch-api-client';
+import type { ConnectorMetadata, Service } from '@spinner/shared-types';
 import useSWR from 'swr';
+type ConnectorsMetadataMap = Record<Service, ConnectorMetadata>;
 
 const SWR_KEY = 'connectors/metadata';
 
 export function useConnectorsMetadata() {
-  return useSWR<ConnectorsMetadataMap, Error>(SWR_KEY, () => connectorsMetadataApi.getAll(), {
+  return useSWR<ConnectorsMetadataMap, Error>(SWR_KEY, () => scratchApiClient.connectorsMetadata.getAll(), {
     revalidateOnFocus: false,
   });
 }

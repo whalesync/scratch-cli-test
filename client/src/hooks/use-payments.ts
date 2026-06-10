@@ -1,9 +1,9 @@
-import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { paymentApi } from '@/lib/api/payment';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackClickManageSubscription, trackClickNewPlanCheckout } from '@/lib/posthog';
 import { RouteUrls } from '@/utils/route-urls';
 import { ScratchPlanType, SubscriptionPlan } from '@spinner/shared-types';
+import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useCallback, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
@@ -11,7 +11,7 @@ export const usePayments = () => {
   const [portalRedirectInProgress, setPortalRedirectInProgress] = useState(false);
   const [portalRedirectError, setPortalRedirectError] = useState<string | null>(null);
   const { data, error, isLoading } = useSWR<SubscriptionPlan[], Error>(SWR_KEYS.billing.plans(), () =>
-    paymentApi.listPlans(),
+    scratchApiClient.payment.listPlans(),
   );
 
   const sortedPlans = useMemo(() => {
@@ -30,7 +30,9 @@ export const usePayments = () => {
     async (planType: ScratchPlanType) => {
       try {
         setPortalRedirectInProgress(true);
-        const result = await paymentApi.createCheckoutSession(planType, { returnPath: RouteUrls.billingPageUrl });
+        const result = await scratchApiClient.payment.createCheckoutSession(planType, {
+          returnPath: RouteUrls.billingPageUrl,
+        });
         trackClickNewPlanCheckout(planType);
         window.location.replace(result.url);
       } catch (error) {
@@ -45,7 +47,7 @@ export const usePayments = () => {
     async (planType: ScratchPlanType, returnPath: string) => {
       try {
         setPortalRedirectInProgress(true);
-        const result = await paymentApi.createCustomerPortalUrl({
+        const result = await scratchApiClient.payment.createCustomerPortalUrl({
           portalType: 'update_subscription',
           planType,
           returnPath,
@@ -65,7 +67,10 @@ export const usePayments = () => {
     async (returnPath: string) => {
       try {
         setPortalRedirectInProgress(true);
-        const result = await paymentApi.createCustomerPortalUrl({ portalType: 'cancel_subscription', returnPath });
+        const result = await scratchApiClient.payment.createCustomerPortalUrl({
+          portalType: 'cancel_subscription',
+          returnPath,
+        });
         trackClickManageSubscription();
         window.location.replace(result.url);
       } catch (error) {
@@ -81,7 +86,7 @@ export const usePayments = () => {
     async (returnPath: string) => {
       try {
         setPortalRedirectInProgress(true);
-        const result = await paymentApi.createCustomerPortalUrl({ returnPath });
+        const result = await scratchApiClient.payment.createCustomerPortalUrl({ returnPath });
         trackClickManageSubscription();
         window.location.replace(result.url);
       } catch (error) {

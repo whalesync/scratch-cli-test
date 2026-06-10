@@ -1,7 +1,12 @@
+import { isConnectionError } from '@spinner/shared-types/api-client';
 import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { API_CONFIG } from '../lib/api';
-import { isServerConnectionError } from '../lib/is-server-connection-error';
 import { logPerf } from '../lib/perf';
+import {
+  getScratchApiBaseUrl,
+  scratchApiClient,
+  setScratchApiToken,
+  setScratchApiUnauthorizedHandler,
+} from '../lib/scratch-api-client';
 
 const TOKEN_EXPIRY_WARNING_DAYS = 7;
 
@@ -34,23 +39,6 @@ export function useAuth(): AuthContextValue {
   return ctx;
 }
 
-interface InitiateResponse {
-  userCode?: string;
-  pollingCode?: string;
-  verificationUrl?: string;
-  expiresIn?: number;
-  interval?: number;
-  error?: string;
-}
-
-interface PollResponse {
-  status: 'pending' | 'approved' | 'denied' | 'expired';
-  apiToken?: string;
-  userEmail?: string;
-  tokenExpiresAt?: string;
-  error?: string;
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -67,20 +55,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // On any 401 from authenticated requests, clear creds and bounce to LoginPage
   useEffect(() => {
-    API_CONFIG.setUnauthorizedHandler(() => {
+    setScratchApiUnauthorizedHandler(() => {
       void (async () => {
         try {
           await window.scratchAuth.clearCredentials();
         } catch (e) {
           console.debug('Failed to clear credentials after 401', e);
         }
-        API_CONFIG.setStaticToken(null);
+        setScratchApiToken(null);
         setIsAuthenticated(false);
         setEmail(null);
         setExpiringSoon(false);
       })();
     });
-    return () => API_CONFIG.setUnauthorizedHandler(null);
+    return () => setScratchApiUnauthorizedHandler(null);
   }, []);
 
   // Check for existing credentials on mount
@@ -100,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (expired) {
             await window.scratchAuth.clearCredentials();
           } else {
-            API_CONFIG.setStaticToken(creds.apiToken);
+            setScratchApiToken(creds.apiToken);
             startTransition(() => {
               setEmail(creds.email);
               setIsAuthenticated(true);
@@ -130,7 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const expired = await window.scratchAuth.isTokenExpired();
         if (expired) {
           await window.scratchAuth.clearCredentials();
-          API_CONFIG.setStaticToken(null);
+          setScratchApiToken(null);
           setIsAuthenticated(false);
           setEmail(null);
         }
@@ -162,11 +150,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     try {
-      const apiUrl = API_CONFIG.getApiUrl();
-      const unauthAxios = API_CONFIG.getUnauthenticatedAxiosInstance();
+      const apiUrl = getScratchApiBaseUrl();
 
-      // Initiate auth
-      const { data: initResp } = await unauthAxios.post<InitiateResponse>('/cli/v1/auth/initiate');
+      // Initiate auth (unauthenticated device-code path — no Authorization header)
+      const initResp = await scratchApiClient.auth.initiateDeviceCode();
 
       if (initResp.error || !initResp.userCode || !initResp.pollingCode || !initResp.verificationUrl) {
         setAuthFlow((prev) => ({
@@ -178,6 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const userCode = initResp.userCode;
+      const pollingCode = initResp.pollingCode;
       const cliAuthorizeUrl = `${initResp.verificationUrl}?code=${userCode}&client=desktop`;
       let verificationUrlWithCode: string;
       if (opts?.signUp) {
@@ -207,9 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (abortController.signal.aborted) break;
 
         try {
-          const { data: pollResp } = await unauthAxios.post<PollResponse>('/cli/v1/auth/poll', {
-            pollingCode: initResp.pollingCode,
-          });
+          const pollResp = await scratchApiClient.auth.pollDeviceCode({ pollingCode });
 
           switch (pollResp.status) {
             case 'approved': {
@@ -225,7 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 serverUrl: apiUrl,
               });
 
-              API_CONFIG.setStaticToken(pollResp.apiToken);
+              setScratchApiToken(pollResp.apiToken);
               setEmail(pollResp.userEmail ?? null);
               setIsAuthenticated(true);
               setAuthFlow({
@@ -270,7 +256,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }));
       }
     } catch (e) {
-      if (isServerConnectionError(e)) {
+      if (isConnectionError(e)) {
         setAuthFlow({
           active: false,
           userCode: null,
@@ -287,7 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await window.scratchAuth.clearCredentials();
-    API_CONFIG.setStaticToken(null);
+    setScratchApiToken(null);
     setIsAuthenticated(false);
     setEmail(null);
     setExpiringSoon(false);

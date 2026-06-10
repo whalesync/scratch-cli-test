@@ -2,7 +2,7 @@
 
 import { ButtonPrimarySolid } from '@/app/components/base/buttons';
 import MainContent from '@/app/components/layouts/MainContent';
-import { devToolsApi } from '@/lib/api/dev-tools';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Select, Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { EMAIL_TEMPLATE_PAYLOADS, EmailTemplate } from '@spinner/shared-types';
@@ -31,7 +31,7 @@ export default function EmailTestingDevPage() {
 
     setSending(true);
     try {
-      const res = await devToolsApi.sendTestEmail(selectedTemplate, recipientEmail, dynamicData);
+      const res = await scratchApiClient.devTools.sendTestEmail(selectedTemplate, recipientEmail, dynamicData);
       if (res.success) {
         notifications.show({ title: 'Email sent', message: `Test email sent to ${recipientEmail}`, color: 'green' });
       } else {

@@ -2,7 +2,7 @@
 
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { API_CONFIG } from '@/lib/api/config';
+import { setScratchApiClientTokenProvider } from '@/lib/api/scratch-api-client';
 import { trackUserSignIn } from '@/lib/posthog';
 import { RouteUrls } from '@/utils/route-urls';
 import { useAuth, useUser } from '@clerk/nextjs';
@@ -60,7 +60,7 @@ export const ScratchPadUserProvider = ({ children }: { children: ReactNode }): J
 
 /**
  * This provider handles combining Clerk auth with Scratch auth.
- * It registers a token provider on API_CONFIG so every API request fetches a fresh JWT on-demand,
+ * It registers a token provider on the shared API client so every request fetches a fresh JWT on-demand,
  * and periodically checks session validity to detect sign-outs.
  */
 export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.Element => {
@@ -74,7 +74,7 @@ export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.El
   const loadToken = useCallback(async () => {
     /*
      * Check session validity by calling getToken(). The actual token is fetched
-     * on-demand by the token provider registered on API_CONFIG, so we don't need
+     * on-demand by the token provider registered on the shared API client, so we don't need
      * to store it here — this is purely for sign-out detection.
      */
     const newToken = await getToken();
@@ -93,10 +93,10 @@ export const ClerkAuthContextProvider = (props: { children: ReactNode }): JSX.El
   // Register the token provider so every API request fetches a fresh token on-demand
   useEffect(() => {
     if (isLoaded && isSignedIn) {
-      API_CONFIG.setTokenProvider(() => getToken());
+      setScratchApiClientTokenProvider(() => getToken());
     }
     return () => {
-      API_CONFIG.setTokenProvider(null);
+      setScratchApiClientTokenProvider(null);
     };
   }, [isLoaded, isSignedIn, getToken]);
 

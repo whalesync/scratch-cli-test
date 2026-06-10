@@ -1,7 +1,7 @@
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Job } from '@spinner/shared-types';
 import { useState } from 'react';
 import useSWR from 'swr';
-import { progressApi } from '../lib/api/progress';
 
 type JobResult<TPublicProgress extends object = object> = {
   job?: Job<TPublicProgress>;
@@ -20,7 +20,7 @@ export const useJob = <TPublicProgress extends object>(
       if (!jobId) {
         throw new Error('jobId is required');
       }
-      return progressApi.getJobProgress<TPublicProgress>(jobId);
+      return scratchApiClient.progress.getJobProgress<TPublicProgress>(jobId);
     },
     {
       refreshInterval: continuePolling ? 1000 : 0, // Poll every second if continuePolling is true
@@ -59,7 +59,7 @@ export const useJobWithCancellation = <TPublicProgress extends object>(
 
     setIsCancelling(true);
     try {
-      const result = await progressApi.cancelJob(jobId);
+      const result = await scratchApiClient.progress.cancelJob(jobId);
       if (result.success) {
         setCancellationRequested(true);
         // Continue polling to see when the job actually stops

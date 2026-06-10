@@ -1,7 +1,7 @@
 'use client';
 
 import MainContent from '@/app/components/layouts/MainContent';
-import { codeMigrationsApi } from '@/lib/api/code-migrations';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Alert, Button, Card, Group, NumberInput, Select, Stack, Text, Textarea, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type { MigrationDescriptor } from '@spinner/shared-types';
@@ -32,7 +32,7 @@ export default function MigrationsDevPage() {
 
   const loadAvailableMigrations = async () => {
     try {
-      const response = await codeMigrationsApi.getAvailableMigrations();
+      const response = await scratchApiClient.codeMigrations.getAvailableMigrations();
       setAvailableMigrations(response.migrations);
     } catch (error) {
       console.error('Failed to load migrations:', error);
@@ -84,7 +84,7 @@ export default function MigrationsDevPage() {
     setIsRunning(true);
 
     try {
-      const result = await codeMigrationsApi.runMigration({
+      const result = await scratchApiClient.codeMigrations.runMigration({
         migration: selectedMigration,
         qty: qty ? Number(qty) : undefined,
         ids: idsArray.length > 0 ? idsArray : undefined,

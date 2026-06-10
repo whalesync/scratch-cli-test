@@ -3,7 +3,7 @@
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useSyncStore } from '@/stores/sync-store';
 import { Box, Group, ScrollArea, Stack, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -38,7 +38,7 @@ export function SyncsList({ workbookId }: SyncsListProps) {
   const handlePushSyncsToGit = async () => {
     setIsPushingToGit(true);
     try {
-      const result = await workbookApi.pushSyncsToGit(workbookId);
+      const result = await scratchApiClient.sync.pushSyncsToGit(workbookId);
       notifications.show({
         title: 'Syncs pushed to git',
         message: `${result.count} sync${result.count !== 1 ? 's' : ''} written to the workbook repo`,

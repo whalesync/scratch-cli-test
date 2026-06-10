@@ -11,7 +11,6 @@ import {
 } from '@/hooks/use-connectors-metadata';
 import { useSubscription } from '@/hooks/use-subscription';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { ScratchpadApiError } from '@/lib/api/error';
 import { isExperimentEnabled } from '@/types/server-entities/users';
 import { initiateOAuth } from '@/utils/oauth';
 import {
@@ -29,6 +28,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { AuthMethod, ConnectorSettingDefinition, OAuthInitiateOptionsDto } from '@spinner/shared-types';
+import { ScratchpadApiError } from '@spinner/shared-types/api-client';
 import { Check } from 'lucide-react';
 import { useState } from 'react';
 

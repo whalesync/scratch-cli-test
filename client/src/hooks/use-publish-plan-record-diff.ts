@@ -1,4 +1,4 @@
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { WorkbookId } from '@spinner/shared-types';
 import useSWR from 'swr';
 
@@ -34,8 +34,8 @@ export function usePublishPlanRecordDiff(
       const originalRef = `main_pre_plan_${planId}`;
       const modifiedRef = mode === 'old-vs-new' ? `main_plan_${planId}` : `dirty_plan_${planId}`;
       const [originalRes, modifiedRes] = await Promise.allSettled([
-        workbookApi.getRepoFile(workbookId, filePath, originalRef, connectorAccountId),
-        workbookApi.getRepoFile(workbookId, filePath, modifiedRef, connectorAccountId),
+        scratchApiClient.git.getRepoFile(workbookId, filePath, originalRef, connectorAccountId),
+        scratchApiClient.git.getRepoFile(workbookId, filePath, modifiedRef, connectorAccountId),
       ]);
       return {
         original: originalRes.status === 'fulfilled' ? (originalRes.value?.content ?? null) : null,

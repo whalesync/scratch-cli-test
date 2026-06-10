@@ -1,14 +1,12 @@
-import axios, { AxiosInstance } from 'axios';
-
 /**
- * Singleton providing base configuration values for all the API calls.
+ * App-local configuration singleton. The REST layer now lives in the shared client
+ * (`@/lib/api/scratch-api-client`); what remains here is the API base URL and the snapshot
+ * WebSocket token, which the WebSocket layer (`stores/workbook-websocket-store.ts`) still owns
+ * locally — WebSocket support is intentionally not part of the shared client yet.
  */
 class ApiConfig {
   private apiUrl: string;
-  private tokenProvider: (() => Promise<string | null>) | null = null;
   private snapshotWebsocketToken: string | null;
-  // Axios instance calls to the API server
-  private apiAxiosInstance: AxiosInstance | null = null;
 
   constructor() {
     this.apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3010';
@@ -17,35 +15,6 @@ class ApiConfig {
 
   public getApiUrl() {
     return this.apiUrl;
-  }
-
-  public setTokenProvider(provider: (() => Promise<string | null>) | null) {
-    this.tokenProvider = provider;
-  }
-
-  /**
-   * Get or create an axios instance configured with base URL and auth headers.
-   * The request interceptor calls the token provider on every request to get a fresh token.
-   */
-  public getAxiosInstance(): AxiosInstance {
-    if (!this.apiAxiosInstance) {
-      this.apiAxiosInstance = axios.create({
-        baseURL: this.apiUrl,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      // Add async request interceptor to fetch a fresh token per request
-      this.apiAxiosInstance.interceptors.request.use(async (config) => {
-        const token = await this.tokenProvider?.();
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-        return config;
-      });
-    }
-    return this.apiAxiosInstance;
   }
 
   getApiServerHealthUrl() {

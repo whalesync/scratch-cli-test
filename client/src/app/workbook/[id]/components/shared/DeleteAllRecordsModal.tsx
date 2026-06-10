@@ -1,4 +1,4 @@
-import { dataFolderApi } from '@/lib/api/data-folder';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
@@ -35,7 +35,7 @@ export function DeleteAllRecordsModal({ opened, onClose, folder, workbookId, onS
     try {
       // Use folder path if available, fallback to folder name
       // TODO: quick fix to unblock test. We probably just need path.
-      await dataFolderApi.deleteAllRecords(workbookId, folder.path || folder.name);
+      await scratchApiClient.dataFolders.deleteAllRecords(workbookId, folder.path || folder.name);
 
       notifications.show({
         title: `Deleted all records in folder ${folder.name}`,

@@ -5,7 +5,7 @@ import { Text13Regular, Text16Medium, TextMono12Regular } from '@/app/components
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useFolderFileList } from '@/hooks/use-folder-file-list';
-import { genericApiApi } from '@/lib/api/generic-api';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Box, Group, Stack } from '@mantine/core';
 import type { DataFolder, WorkbookId } from '@spinner/shared-types';
 import { FolderIcon, RefreshCw } from 'lucide-react';
@@ -23,7 +23,7 @@ export function TableDetail({ folder, workbookId }: TableDetailProps) {
   const handleReprobe = async () => {
     setIsReprobing(true);
     try {
-      const result = await genericApiApi.reprobe(workbookId, folder.id);
+      const result = await scratchApiClient.generic.reprobe(workbookId, folder.id);
       if (!result.applied) {
         ScratchpadNotifications.warning({
           title: 'Re-probe needs confirmation',

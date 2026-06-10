@@ -1,4 +1,4 @@
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import {
   Autocomplete,
   Badge,
@@ -119,7 +119,7 @@ export function TestTransformerModal({ opened, onClose, workbookId, file }: Test
     if (opened) {
       setFetchingPaths(true);
       setPaths([]); // Clear previous paths
-      workbookApi
+      scratchApiClient.git
         .getRepoFile(workbookId, file.path)
         .then((res) => {
           try {
@@ -155,7 +155,7 @@ export function TestTransformerModal({ opened, onClose, workbookId, file }: Test
     setIsLoading(true);
     setResult(null);
     try {
-      const response = await workbookApi.testTransformer(workbookId, {
+      const response = await scratchApiClient.sync.testTransformer(workbookId, {
         workbookId,
         fileId: file.path, // Using path as ID for now as per server implementation
         path: values.path,

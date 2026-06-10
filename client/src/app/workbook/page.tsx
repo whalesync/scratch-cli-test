@@ -4,8 +4,7 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { Text13Medium, Text13Regular, TextTitle2 } from '@/app/components/base/text';
 import { FullPageLoader } from '@/app/components/FullPageLoader';
 import { useWorkbooks } from '@/hooks/use-workbooks';
-import { usersApi } from '@/lib/api/users';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Box, Center, Divider, Group, Stack, TextInput, UnstyledButton } from '@mantine/core';
 import type { Workspace } from '@spinner/shared-types';
 import { ChevronRightIcon, PlusIcon } from 'lucide-react';
@@ -26,7 +25,7 @@ export default function WorkbookPickerPage() {
   const hasWorkbooks = workbooks && workbooks.length > 0;
 
   const handleSelectWorkbook = async (workbook: Workspace) => {
-    usersApi.updateLastWorkbook(workbook.id).catch(console.error);
+    scratchApiClient.users.updateLastWorkbook(workbook.id).catch(console.error);
     router.push(`/workbook/${workbook.id}/files`);
   };
 
@@ -34,7 +33,7 @@ export default function WorkbookPickerPage() {
     const name = projectName.trim() || 'My workspace';
     setIsCreating(true);
     try {
-      const newWorkbook = await workbookApi.create({ name });
+      const newWorkbook = await scratchApiClient.workspaces.create({ name });
       router.push(`/workbook/${newWorkbook.id}/files`);
     } catch (error) {
       console.error('Failed to create project:', error);

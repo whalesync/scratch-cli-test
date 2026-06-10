@@ -1,5 +1,5 @@
-import { connectorAccountsApi } from '@/lib/api/connector-accounts';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { ApiQuotaResponse } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
@@ -30,7 +30,7 @@ export const useConnectionQuota = (
       if (!workbookId || !connectionId) {
         throw new Error('workbookId and connectionId are required');
       }
-      return connectorAccountsApi.getQuota(workbookId, connectionId);
+      return scratchApiClient.connectorAccounts.getQuota(workbookId, connectionId);
     },
     {
       revalidateOnFocus: false,

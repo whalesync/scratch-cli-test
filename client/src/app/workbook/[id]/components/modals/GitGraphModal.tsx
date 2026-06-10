@@ -1,4 +1,4 @@
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { BranchUserApi } from '@gitgraph/core';
 import { Gitgraph, templateExtend, TemplateName } from '@gitgraph/react';
 import type { ReactSvgElement } from '@gitgraph/react/lib/types';
@@ -85,7 +85,7 @@ export const GitGraphModal = ({
   const fetchGraph = async () => {
     setLoading(true);
     try {
-      const graphData = await workbookApi.getGraph(workbookId, connectorAccountId, useConfigRepo);
+      const graphData = await scratchApiClient.git.getGraph(workbookId, connectorAccountId, useConfigRepo);
       setData(graphData as GraphData);
     } catch (e) {
       console.error(e);

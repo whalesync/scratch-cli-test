@@ -1,5 +1,5 @@
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { DirtyFile, WorkbookId } from '@spinner/shared-types';
 import useSWR from 'swr';
 
@@ -17,7 +17,7 @@ export const useDirtyFiles = (workbookId: WorkbookId | null): UseDirtyFilesRetur
       if (!workbookId) {
         throw new Error('workbookId is required');
       }
-      return workbookApi.getStatus(workbookId);
+      return scratchApiClient.git.getStatus(workbookId);
     },
     {
       revalidateOnFocus: false,

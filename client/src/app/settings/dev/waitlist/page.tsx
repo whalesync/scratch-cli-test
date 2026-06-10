@@ -3,8 +3,8 @@
 import { ButtonPrimarySolid } from '@/app/components/base/buttons';
 import { Text13Regular, Text16Regular } from '@/app/components/base/text';
 import MainContent from '@/app/components/layouts/MainContent';
-import { devToolsApi } from '@/lib/api/dev-tools';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Stack, Table } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { ListChecksIcon } from 'lucide-react';
@@ -16,12 +16,12 @@ export default function WaitlistDevPage() {
     data: pendingUsers,
     isLoading,
     mutate,
-  } = useSWR(SWR_KEYS.devTools.waitlistPending(), devToolsApi.getWaitlistPending);
+  } = useSWR(SWR_KEYS.devTools.waitlistPending(), scratchApiClient.devTools.getWaitlistPending);
 
   const handleApprove = useCallback(
     async (userId: string) => {
       try {
-        await devToolsApi.approveWaitlistUser(userId);
+        await scratchApiClient.devTools.approveWaitlistUser(userId);
         notifications.show({ title: 'User approved', message: 'User has been granted access', color: 'green' });
         await mutate();
       } catch {

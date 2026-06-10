@@ -5,7 +5,7 @@ import { Text12Regular } from '@/app/components/base/text';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useReviewToolbarStore } from '@/stores/review-toolbar-store';
 import { useWorkbookUIStore, WorkbookModals } from '@/stores/workbook-ui-store';
 import { RouteUrls } from '@/utils/route-urls';
@@ -39,7 +39,7 @@ export function ReviewSubToolbar({ workbookId }: ReviewSubToolbarProps) {
 
   const { data: dirtyStatus, mutate: mutateDirtyStatus } = useSWR(
     SWR_KEYS.dirtyFiles.hasDirty(workbookId as WorkbookId),
-    () => workbookApi.hasDirtyFiles(workbookId as WorkbookId),
+    () => scratchApiClient.git.hasDirtyFiles(workbookId as WorkbookId),
   );
   const { mutate } = useSWRConfig();
   const hasDirty = dirtyStatus?.dirty ?? false;

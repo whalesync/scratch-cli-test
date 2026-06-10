@@ -1,7 +1,7 @@
-import { isUnauthorizedError } from '@/lib/api/error';
-import { filesApi } from '@/lib/api/files';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { DataFolderId, FileOrFolderRefEntity, ListFilesResponseDto, WorkbookId } from '@spinner/shared-types';
+import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useCallback, useMemo } from 'react';
 import useSWRInfinite from 'swr/infinite';
 
@@ -40,7 +40,7 @@ export const useFolderFileListPaginated = (
         throw new Error('workbookId and folderId are required');
       }
       const cursor = key[key.length - 1] || undefined;
-      return filesApi.listFilesByFolder(workbookId, folderId, { cursor, limit: pageSize });
+      return scratchApiClient.files.listFilesByFolder(workbookId, folderId, { cursor, limit: pageSize });
     },
     [workbookId, folderId, pageSize],
   );

@@ -2,7 +2,7 @@
 
 import { Text13Regular, TextMono12Regular } from '@/app/components/base/text';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { json } from '@codemirror/lang-json';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -29,7 +29,7 @@ export function ScratchFileViewer({ workbookId, filePath, connectorAccountId, us
     isLoading,
     error,
   } = useSWR<string, Error>(SWR_KEYS.files.repoFile(workbookId, filePath, connectorAccountId, useConfigRepo), () =>
-    workbookApi
+    scratchApiClient.git
       .getRepoFile(workbookId, filePath, useConfigRepo ? 'main' : 'dirty', connectorAccountId, useConfigRepo)
       .then((r) => r?.content ?? ''),
   );

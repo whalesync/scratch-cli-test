@@ -1,5 +1,5 @@
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { PublishPlanEntity, WorkbookId } from '@spinner/shared-types';
 import useSWR from 'swr';
 
@@ -10,7 +10,7 @@ export function usePublishPlan(workbookId: WorkbookId | undefined, planId: strin
       if (!workbookId || !planId) {
         throw new Error('workbookId and planId are required');
       }
-      return workbookApi.getPublishPlan(workbookId, planId);
+      return scratchApiClient.publish.getPublishPlan(workbookId, planId);
     },
   );
 

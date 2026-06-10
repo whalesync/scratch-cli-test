@@ -4,7 +4,7 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { DeleteConfirmDialog, useDeleteConfirmDialog } from '@/app/components/modals/DeleteConfirmDialog';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackDeleteWorkbook } from '@/lib/posthog';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { RouteUrls } from '@/utils/route-urls';
@@ -57,7 +57,7 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
     setExportJson(null);
     setExportModalOpen(true);
     try {
-      const data = await workbookApi.exportWorkbookJson(workbookId);
+      const data = await scratchApiClient.devTools.exportWorkbookJson(workbookId);
       setExportJson(JSON.stringify(data, null, 2));
     } catch (e) {
       notifications.show({ title: 'Error', message: 'Failed to export workspace', color: 'red' });
@@ -76,7 +76,7 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
       variant: 'danger',
       onConfirm: async () => {
         try {
-          await workbookApi.resetWorkbook(workbookId);
+          await scratchApiClient.git.resetWorkbook(workbookId);
           window.location.reload();
         } catch (e) {
           notifications.show({
@@ -99,7 +99,7 @@ export function DebugMenu({ workbookId }: DebugMenuProps) {
       onConfirm: async () => {
         try {
           trackDeleteWorkbook(workbookId);
-          await workbookApi.delete(workbookId);
+          await scratchApiClient.workspaces.delete(workbookId);
           await mutate(() => true, undefined, { revalidate: false });
           router.push(RouteUrls.workbookPickerPageUrl);
         } catch (e) {

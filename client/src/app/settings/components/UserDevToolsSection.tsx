@@ -4,7 +4,7 @@ import { Text12Book, Text12Regular, Text13Regular } from '@/app/components/base/
 import { ConfigSection } from '@/app/components/ConfigSection';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { usersApi } from '@/lib/api/users';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { getSessionId, getSessionRecordingStatus, getSessionReplayUrl } from '@/lib/posthog';
 import { FLAGS, LocalStorageFlag } from '@/utils/flags-dev';
 import { BUILD_VERSION } from '@/version';
@@ -199,7 +199,7 @@ export const ApiKeySection = () => {
   const generateToken = async () => {
     setIsGenerating(true);
     try {
-      await usersApi.generateApiToken();
+      await scratchApiClient.users.generateApiToken();
       await refreshCurrentUser(); // Refresh user data to get the new token
     } finally {
       setIsGenerating(false);

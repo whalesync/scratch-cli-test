@@ -7,8 +7,7 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useJobs } from '@/hooks/use-jobs';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { jobApi } from '@/lib/api/job';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useSyncStore } from '@/stores/sync-store';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { timeAgo } from '@/utils/helpers';
@@ -569,7 +568,7 @@ function ExpandedJobDetails({ job, isDevToolsEnabled }: { job: Job; isDevToolsEn
   const loadRawData = useCallback(() => {
     if (!job.bullJobId || rawData) return;
     setRawLoading(true);
-    jobApi
+    scratchApiClient.job
       .getJobRaw(job.bullJobId)
       .then((data) => {
         const record = data as Record<string, unknown>;
@@ -690,7 +689,7 @@ function ExpandedPublishJobDetails({ job, isDevToolsEnabled }: { job: Job; isDev
   const isJobActive = ACTIVE_STATES.has(job.state);
   const { data: publishPlan, isLoading: loading } = useSWR(
     job.bullJobId ? ['publish-plan', workbookId, job.bullJobId] : null,
-    () => (job.bullJobId ? workbookApi.getPublishPlanByJobId(workbookId, job.bullJobId) : undefined),
+    () => (job.bullJobId ? scratchApiClient.publish.getPublishPlanByJobId(workbookId, job.bullJobId) : undefined),
     { refreshInterval: isJobActive ? 2000 : 0 },
   );
   const [operationsModalPublishPlanId, setOperationsModalPublishPlanId] = useState<string | null>(null);

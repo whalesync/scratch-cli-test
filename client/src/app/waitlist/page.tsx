@@ -4,7 +4,7 @@ import { ButtonPrimarySolid } from '@/app/components/base/buttons';
 import { Text13Regular, Text16Medium, TextTitle2 } from '@/app/components/base/text';
 import { AuthLayout } from '@/app/components/layouts/AuthLayout';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { usersApi } from '@/lib/api/users';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { RouteUrls } from '@/utils/route-urls';
 import { Stack } from '@mantine/core';
 import Link from 'next/link';
@@ -21,7 +21,7 @@ export default function WaitlistPage() {
   const handleRequestAccess = useCallback(async () => {
     setLoading(true);
     try {
-      await usersApi.requestAccess();
+      await scratchApiClient.users.requestAccess();
       setRequested(true);
     } finally {
       setLoading(false);

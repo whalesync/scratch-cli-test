@@ -1,6 +1,6 @@
 import type { PublishPlanEntity } from '@spinner/shared-types';
 import useSWR from 'swr';
-import { publishApi } from '../lib/publish-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 
 /**
  * Fetches a single publish plan with its author + connector account relations.
@@ -13,7 +13,7 @@ export function usePublishPlan(workbookId: string | undefined, planId: string | 
       if (!workbookId || !planId) {
         throw new Error('workbookId and planId are required');
       }
-      return publishApi.getPublishPlan(workbookId, planId);
+      return scratchApiClient.publish.getPublishPlan(workbookId, planId);
     },
   );
 

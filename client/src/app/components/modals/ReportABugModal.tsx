@@ -2,7 +2,7 @@
 
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { bugReportApi } from '@/lib/api/bug-report';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { getSessionId, getSessionReplayUrl } from '@/lib/posthog';
 import { useLayoutManagerStore } from '@/stores/layout-manager-store';
 import { isExperimentEnabled } from '@/types/server-entities/users';
@@ -87,7 +87,7 @@ export function ReportABugModal() {
     if (!form.validate().hasErrors) {
       try {
         setIsSubmitting(true);
-        const { link } = await bugReportApi.report({
+        const { link } = await scratchApiClient.bugReport.report({
           title: form.values.title,
           userDescription: form.values.description,
           sessionId: getSessionId(),

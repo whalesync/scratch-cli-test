@@ -2,8 +2,7 @@ import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/app/components/bas
 import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
-import { ScratchpadApiError } from '@/lib/api/error';
-import { genericApiApi } from '@/lib/api/generic-api';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import {
   ActionIcon,
   Alert,
@@ -30,6 +29,7 @@ import {
   isGenericApiConnectorExtras,
   validatePastedConfig,
 } from '@spinner/shared-types';
+import { ScratchpadApiError } from '@spinner/shared-types/api-client';
 import { Copy, Plus, Settings, Sparkles, Trash2 } from 'lucide-react';
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 
@@ -296,7 +296,7 @@ export const GenericApiConnectionModal = (props: GenericApiConnectionModalProps)
 
   const handleGetAiPrompt = async () => {
     try {
-      const { text } = await genericApiApi.getAiPrompt(apiType);
+      const { text } = await scratchApiClient.generic.getAiPrompt(apiType);
       await navigator.clipboard.writeText(buildAiPromptWithContext(text));
       ScratchpadNotifications.success({
         title: 'AI prompt copied',

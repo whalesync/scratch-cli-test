@@ -1,6 +1,5 @@
-import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi, WorkbookSortBy, WorkbookSortOrder } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { RouteUrls } from '@/utils/route-urls';
 import {
   CreateWorkbookDto,
@@ -9,6 +8,8 @@ import {
   WorkbookId,
   Workspace,
 } from '@spinner/shared-types';
+import type { WorkbookSortBy, WorkbookSortOrder } from '@spinner/shared-types/api-client';
+import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useCallback, useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 
@@ -39,7 +40,7 @@ export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksRet
   const { mutate } = useSWRConfig();
   const { data, error, isLoading } = useSWR<Workspace[], Error>(
     SWR_KEYS.workbook.list(sortBy, sortOrder),
-    () => workbookApi.list(connectorAccountId, sortBy, sortOrder),
+    () => scratchApiClient.workspaces.list(connectorAccountId, sortBy, sortOrder),
     {
       revalidateOnReconnect: true,
     },
@@ -47,7 +48,7 @@ export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksRet
 
   const createWorkbook = useCallback(
     async (dto: CreateWorkbookDto): Promise<Workspace> => {
-      const newWorkbook = await workbookApi.create(dto);
+      const newWorkbook = await scratchApiClient.workspaces.create(dto);
       mutate(SWR_KEYS.workbook.listKeyMatcher());
       return newWorkbook;
     },
@@ -56,7 +57,7 @@ export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksRet
 
   const updateWorkbook = useCallback(
     async (id: WorkbookId, updateDto: UpdateWorkbookDto): Promise<Workspace> => {
-      const updatedWorkbook = await workbookApi.update(id, updateDto);
+      const updatedWorkbook = await scratchApiClient.workspaces.update(id, updateDto);
       mutate(SWR_KEYS.workbook.listKeyMatcher());
       mutate(SWR_KEYS.workbook.detail(id));
       return updatedWorkbook;
@@ -66,7 +67,7 @@ export const useWorkbooks = (options: UseWorkbooksOptions = {}): UseWorkbooksRet
 
   const deleteWorkbook = useCallback(
     async (id: WorkbookId, options?: { force?: boolean }): Promise<DeleteWorkbookResponseDto> => {
-      const result = await workbookApi.delete(id, options);
+      const result = await scratchApiClient.workspaces.delete(id, options);
       // Revalidate the list so the row immediately reflects either the pending state
       // (default async path) or removal (force path).
       mutate(SWR_KEYS.workbook.listKeyMatcher());

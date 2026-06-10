@@ -1,6 +1,6 @@
 'use client';
 
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useEffect, useState } from 'react';
@@ -31,7 +31,7 @@ export function MoveRepoModal({ opened, onClose, connectorAccountId, currentRepo
     if (!trimmed || trimmed === currentRepoPath) return;
     setIsMoving(true);
     try {
-      await workbookApi.moveRepo(connectorAccountId, trimmed);
+      await scratchApiClient.devTools.moveRepo(connectorAccountId, trimmed);
       notifications.show({ title: 'Success', message: `Repo moved to ${trimmed}`, color: 'green' });
       onClose();
       onSuccess?.();

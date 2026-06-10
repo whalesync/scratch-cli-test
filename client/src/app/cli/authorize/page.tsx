@@ -5,7 +5,7 @@ import { Text13Book, Text13Regular, TextTitle2 } from '@/app/components/base/tex
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { LoaderWithMessage } from '@/app/components/LoaderWithMessage';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { verifyCliDeviceAuth } from '@/lib/api/cli-auth';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Alert, Container, PinInput, Stack } from '@mantine/core';
 import { CheckCircleIcon, CircleXIcon, TerminalIcon } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
@@ -60,7 +60,7 @@ export default function CliAuthorizePage() {
     setErrorMessage('');
 
     try {
-      const result = await verifyCliDeviceAuth(formattedCode);
+      const result = await scratchApiClient.cliAuth.verifyCliDeviceAuth(formattedCode);
 
       if (result.success) {
         setState('success');

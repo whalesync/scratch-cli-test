@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { notifications } from '@mantine/notifications';
 import type {
   GitGcResponse,
@@ -39,7 +39,7 @@ export function useGitActions() {
 
   const handleViewIndex = async (workbookId: WorkbookId, connectorAccountId: string) => {
     try {
-      const result = await workbookApi.dumpIndex(workbookId, connectorAccountId);
+      const result = await scratchApiClient.git.dumpIndex(workbookId, connectorAccountId);
       setIndexData(result);
       setIndexModalOpen(true);
     } catch {
@@ -50,7 +50,7 @@ export function useGitActions() {
   const handleBuildIndex = async (workbookId: WorkbookId, connectorAccountId: string) => {
     setIsBuildingIndex(true);
     try {
-      const result = await workbookApi.buildIndex(workbookId, connectorAccountId);
+      const result = await scratchApiClient.git.buildIndex(workbookId, connectorAccountId);
       notifications.show({ title: 'Success', message: `Index built: ${result.count} files`, color: 'green' });
     } catch {
       notifications.show({ title: 'Error', message: 'Failed to build index', color: 'red' });
@@ -62,7 +62,7 @@ export function useGitActions() {
   const handleBuildPublishPlan = async (workbookId: WorkbookId, connectorAccountId: string, connectionName: string) => {
     setIsBuildingPublishPlan(true);
     try {
-      const result = (await workbookApi.gitServiceProxy(
+      const result = (await scratchApiClient.git.gitServiceProxy(
         workbookId,
         connectorAccountId,
         'api/repo/publish-plan/:repoId/build',
@@ -88,7 +88,7 @@ export function useGitActions() {
   const handleGetObjectCounts = async (workbookId: WorkbookId, connectorAccountId?: string) => {
     setIsLoadingObjectCounts(true);
     try {
-      const result = await workbookApi.getObjectCounts(workbookId, connectorAccountId);
+      const result = await scratchApiClient.git.getObjectCounts(workbookId, connectorAccountId);
       setObjectCountsData(result);
       setObjectCountsModalOpen(true);
     } catch {
@@ -101,7 +101,7 @@ export function useGitActions() {
   const handleRunGc = async (workbookId: WorkbookId, aggressive: boolean, connectorAccountId?: string) => {
     setIsGcing(true);
     try {
-      const result = await workbookApi.runGitGc(workbookId, aggressive, connectorAccountId);
+      const result = await scratchApiClient.git.runGitGc(workbookId, aggressive, connectorAccountId);
       setGcData(result);
       setGcModalOpen(true);
       notifications.show({ title: 'Success', message: 'Git GC complete', color: 'green' });
@@ -115,7 +115,7 @@ export function useGitActions() {
   const handleRebase = async (workbookId: WorkbookId, connectorAccountId?: string) => {
     setIsRebasing(true);
     try {
-      await workbookApi.rebaseDirty(workbookId, connectorAccountId);
+      await scratchApiClient.git.rebaseDirty(workbookId, connectorAccountId);
       notifications.show({ title: 'Success', message: 'Rebase complete', color: 'green' });
     } catch {
       notifications.show({ title: 'Error', message: 'Failed to rebase', color: 'red' });
@@ -126,7 +126,7 @@ export function useGitActions() {
 
   const handleStripPrefix = async (workbookId: WorkbookId, connectorAccountId: string) => {
     try {
-      const result = await workbookApi.stripConnectionPrefix(workbookId, connectorAccountId);
+      const result = await scratchApiClient.git.stripConnectionPrefix(workbookId, connectorAccountId);
       setStripPrefixData(result.results);
       setStripPrefixModalOpen(true);
       notifications.show({ title: 'Success', message: 'Strip prefix complete', color: 'green' });
@@ -137,7 +137,7 @@ export function useGitActions() {
 
   const handleStripAllPrefixes = async (workbookId: WorkbookId) => {
     try {
-      const result = await workbookApi.stripConnectionPrefix(workbookId);
+      const result = await scratchApiClient.git.stripConnectionPrefix(workbookId);
       setStripPrefixData(result.results);
       setStripPrefixModalOpen(true);
       const errors = result.results.filter((r) => r.error).length;

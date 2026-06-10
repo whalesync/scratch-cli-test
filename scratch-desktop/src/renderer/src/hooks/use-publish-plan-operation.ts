@@ -1,6 +1,6 @@
 import type { PublishPlanOperationEntity } from '@spinner/shared-types';
 import useSWR from 'swr';
-import { publishApi } from '../lib/publish-api';
+import { scratchApiClient } from '../lib/scratch-api-client';
 
 /**
  * Fetches the single operation that matches `(planId, filePath, phase)`. The
@@ -22,7 +22,7 @@ export function usePublishPlanOperation(
     if (!workbookId || !planId) {
       throw new Error('workbookId and planId are required');
     }
-    return publishApi.listPublishPlanOperations(workbookId, planId, { filePath, phase, pageSize: 1 });
+    return scratchApiClient.publish.listPublishPlanOperations(workbookId, planId, { filePath, phase, pageSize: 1 });
   });
 
   return { operation: data?.data?.[0] ?? null, error, isLoading };

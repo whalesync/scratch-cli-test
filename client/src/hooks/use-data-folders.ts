@@ -1,9 +1,8 @@
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { DataFolder, DataFolderGroup, DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { useCallback, useMemo } from 'react';
 import useSWR from 'swr';
-import { dataFolderApi } from '../lib/api/data-folder';
 import { useActiveWorkbook } from './use-active-workbook';
 
 export interface UseDataFoldersReturn {
@@ -31,7 +30,7 @@ export const useDataFolders = (overrideWorkbookId?: WorkbookId): UseDataFoldersR
       if (!workbookId) {
         throw new Error('workbookId is required');
       }
-      return workbookApi.listDataFolders(workbookId);
+      return scratchApiClient.dataFolders.list(workbookId);
     },
     {
       revalidateOnFocus: false,
@@ -45,7 +44,7 @@ export const useDataFolders = (overrideWorkbookId?: WorkbookId): UseDataFoldersR
   const deleteFolder = useCallback(
     async (dataFolderId: DataFolderId) => {
       if (!workbookId) return;
-      await dataFolderApi.delete(dataFolderId);
+      await scratchApiClient.dataFolders.delete(dataFolderId);
       await mutate();
     },
     [workbookId, mutate],

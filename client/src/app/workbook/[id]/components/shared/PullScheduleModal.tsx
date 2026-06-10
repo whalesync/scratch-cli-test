@@ -7,7 +7,7 @@ import { ScratchpadNotifications } from '@/app/components/ScratchpadNotification
 import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useDevTools } from '@/hooks/use-dev-tools';
-import { scheduleApi } from '@/lib/api/schedule';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Select, Stack } from '@mantine/core';
 import type { DataFolder, Schedule } from '@spinner/shared-types';
 import { ScheduleAction } from '@spinner/shared-types';
@@ -79,17 +79,17 @@ export function PullScheduleModal({ opened, onClose, folder }: PullScheduleModal
   ): Promise<void> => {
     if (value === MANUAL_ONLY) {
       if (existing) {
-        await scheduleApi.delete(folder.workbookId, existing.id);
+        await scratchApiClient.schedule.delete(folder.workbookId, existing.id);
       }
       return;
     }
     if (existing) {
       if (existing.cronExpression !== value) {
-        await scheduleApi.update(folder.workbookId, existing.id, { cronExpression: value });
+        await scratchApiClient.schedule.update(folder.workbookId, existing.id, { cronExpression: value });
       }
       return;
     }
-    await scheduleApi.create(folder.workbookId, {
+    await scratchApiClient.schedule.create(folder.workbookId, {
       name,
       action,
       entityId: folder.id,

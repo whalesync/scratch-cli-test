@@ -1,10 +1,10 @@
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Center, Loader, Modal, ScrollArea, Stack, Tooltip } from '@mantine/core';
 import { Bug } from 'lucide-react';
 import { useState } from 'react';
 import { IconButtonGhost } from '../../components/base/buttons';
 import { Text13Regular, TextMono12Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
-import { jobApi } from '../../lib/job-api';
 
 interface JobRawJsonButtonProps {
   jobId?: string | null;
@@ -27,7 +27,7 @@ export function JobRawJsonButton({ jobId }: JobRawJsonButtonProps) {
     setJobData(null);
 
     try {
-      const rawJob = await jobApi.getJobRaw(jobId);
+      const rawJob = await scratchApiClient.job.getJobRaw(jobId);
       setJobData(rawJob);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load raw job JSON');

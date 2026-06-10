@@ -6,10 +6,7 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
-import { getHumanReadableErrorMessage } from '@/lib/api/error';
-import { scheduleApi } from '@/lib/api/schedule';
-import { syncApi } from '@/lib/api/sync';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useSyncStore } from '@/stores/sync-store';
 import { DocsUrls } from '@/utils/docs-urls';
 import { json } from '@codemirror/lang-json';
@@ -54,6 +51,7 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { getTransformerLabel, ScheduleAction, TransformerTypes } from '@spinner/shared-types';
+import { getHumanReadableErrorMessage } from '@spinner/shared-types/api-client';
 import CodeMirror from '@uiw/react-codemirror';
 import {
   AlertCircle,
@@ -383,7 +381,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const ensureSchemaPaths = async (folderId: string) => {
     if (!folderId || schemaCache[folderId]) return;
     try {
-      const paths = await workbookApi.getSchemaPaths(folderId);
+      const paths = await scratchApiClient.dataFolders.getSchemaPaths(folderId);
       setSchemaCache((prev) => ({ ...prev, [folderId]: paths }));
     } catch (error) {
       console.error('Error fetching schema paths:', error);
@@ -458,7 +456,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     setEditorMode('visual');
 
     // Fetch the SYNC schedule for this entity
-    scheduleApi
+    scratchApiClient.schedule
       .findByEntity(workbookId, ScheduleAction.SYNC, syncId)
       .then((syncSchedule) => {
         setSchedule(syncSchedule?.cronExpression ?? '');
@@ -578,7 +576,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
                 destinationColumnId: activePair.matchingDestinationField,
               }
             : undefined;
-        const response = await syncApi.previewRecord(
+        const response = await scratchApiClient.sync.previewRecord(
           workbookId,
           activePair.sourceId as DataFolderId,
           activePair.destId as DataFolderId,
@@ -694,7 +692,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
       };
 
       if (isNew) {
-        const newSync = await syncApi.create(workbookId, payload);
+        const newSync = await scratchApiClient.sync.create(workbookId, payload);
         await fetchSyncs(workbookId);
         notifications.show({
           title: 'Sync created',
@@ -703,7 +701,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         });
         router.push(`/workbook/${workbookId}/syncs/${newSync.id}`);
       } else {
-        await syncApi.update(workbookId, syncId, payload);
+        await scratchApiClient.sync.update(workbookId, syncId, payload);
         await fetchSyncs(workbookId);
         setLastSavedState(getCurrentStateSnapshot());
         notifications.show({
@@ -738,7 +736,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
         }
       }
 
-      const response = await syncApi.syncOneRecord(
+      const response = await scratchApiClient.sync.syncOneRecord(
         workbookId,
         syncId as SyncId,
         selectedPreviewFile,
@@ -792,7 +790,7 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const handleCopyAiContext = async () => {
     setAiContextCopying(true);
     try {
-      const { markdown } = await syncApi.getAiContext(workbookId);
+      const { markdown } = await scratchApiClient.sync.getAiContext(workbookId);
       await navigator.clipboard.writeText(markdown);
       notifications.show({ message: 'Copied AI context to clipboard', color: 'green' });
     } catch {

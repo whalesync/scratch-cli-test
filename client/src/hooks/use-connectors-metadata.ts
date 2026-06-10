@@ -1,5 +1,5 @@
-import { connectorsMetadataApi } from '@/lib/api/connectors-metadata';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { ConnectorMetadata, Service } from '@spinner/shared-types';
 import capitalize from 'lodash/capitalize';
 import useSWR from 'swr';
@@ -7,7 +7,7 @@ import useSWR from 'swr';
 export const useConnectorsMetadata = () => {
   const { data, error, isLoading } = useSWR<Record<Service, ConnectorMetadata>, Error>(
     SWR_KEYS.connectorsMetadata.all(),
-    () => connectorsMetadataApi.getAll(),
+    () => scratchApiClient.connectorsMetadata.getAll(),
   );
 
   return {

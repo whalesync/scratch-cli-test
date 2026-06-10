@@ -1,5 +1,5 @@
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import {
   AddWorkspacePermissionDto,
   WorkbookId,
@@ -29,7 +29,7 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
       if (!workbookId) {
         throw new Error('workbookId is required');
       }
-      return workbookApi.listPermissions(workbookId);
+      return scratchApiClient.permissions.listPermissions(workbookId);
     },
     {
       revalidateOnFocus: false,
@@ -47,7 +47,7 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
       if (!workbookId) {
         throw new Error('workbookId is required');
       }
-      return workbookApi.listInvites(workbookId);
+      return scratchApiClient.permissions.listInvites(workbookId);
     },
     {
       revalidateOnFocus: false,
@@ -61,7 +61,7 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
   const addPermission = useCallback(
     async (dto: AddWorkspacePermissionDto) => {
       if (!workbookId) return;
-      await workbookApi.addPermission(workbookId, dto);
+      await scratchApiClient.permissions.addPermission(workbookId, dto);
       await Promise.all([mutate(), mutateInvites()]);
     },
     [workbookId, mutate, mutateInvites],
@@ -70,7 +70,7 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
   const removePermission = useCallback(
     async (permissionId: WorkspacePermissionId) => {
       if (!workbookId) return;
-      await workbookApi.removePermission(workbookId, permissionId);
+      await scratchApiClient.permissions.removePermission(workbookId, permissionId);
       await mutate();
     },
     [workbookId, mutate],
@@ -79,7 +79,7 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
   const removeInvite = useCallback(
     async (inviteId: WorkspaceInviteId) => {
       if (!workbookId) return;
-      await workbookApi.deleteInvite(workbookId, inviteId);
+      await scratchApiClient.permissions.deleteInvite(workbookId, inviteId);
       await mutateInvites();
     },
     [workbookId, mutateInvites],

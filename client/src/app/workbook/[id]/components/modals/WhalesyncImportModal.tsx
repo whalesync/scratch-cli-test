@@ -5,7 +5,7 @@ import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { ButtonPrimarySolid, ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '@/app/components/base/text';
-import { syncApi } from '@/lib/api/sync';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackWhalesyncImport } from '@/lib/posthog';
 import { useSyncStore } from '@/stores/sync-store';
 import { Alert, Box, Group, PasswordInput, Stack, TextInput } from '@mantine/core';
@@ -123,7 +123,7 @@ export function WhalesyncImportModal({ opened, onClose, workbookId }: WhalesyncI
     setLoading(true);
     setError(null);
     try {
-      const result = await syncApi.importPreview(workbookId, {
+      const result = await scratchApiClient.sync.importPreview(workbookId, {
         whalesyncApiToken: apiToken.trim(),
         coreBaseId,
       });
@@ -146,7 +146,7 @@ export function WhalesyncImportModal({ opened, onClose, workbookId }: WhalesyncI
     try {
       for (let i = 0; i < preview.syncs.length; i++) {
         setSavingProgress(i + 1);
-        await syncApi.create(workbookId, preview.syncs[i]);
+        await scratchApiClient.sync.create(workbookId, preview.syncs[i]);
       }
       await fetchSyncs(workbookId);
       trackWhalesyncImport(workbookId, preview.syncs.length);

@@ -1,6 +1,6 @@
 'use client';
 
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Group, Modal, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { WorkbookId } from '@spinner/shared-types';
 import { DatabaseIcon } from 'lucide-react';
@@ -24,7 +24,7 @@ interface FileIndexModalProps {
 export function FileIndexModal({ opened, onClose, workbookId }: FileIndexModalProps) {
   const { data: rows, isLoading } = useSWR(
     opened ? ['file-index', workbookId] : null,
-    () => workbookApi.listFileIndex(workbookId) as Promise<FileIndexEntry[]>,
+    () => scratchApiClient.publish.listFileIndex(workbookId) as Promise<FileIndexEntry[]>,
   );
 
   return (

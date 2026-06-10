@@ -1,4 +1,4 @@
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Anchor, Button, Code, Group, Loader, Modal, ScrollArea, Select, Stack, Text, ThemeIcon } from '@mantine/core';
 import { GitFile, WorkbookId } from '@spinner/shared-types';
 import { ArrowUpIcon, FileIcon, FolderIcon } from 'lucide-react';
@@ -31,7 +31,7 @@ export const GitFileBrowserModal = ({
     async (path: string, br: string) => {
       setLoading(true);
       try {
-        const list = await workbookApi.listRepoFiles(workbookId, br, path, connectorAccountId, useConfigRepo);
+        const list = await scratchApiClient.git.listRepoFiles(workbookId, br, path, connectorAccountId, useConfigRepo);
         setFiles(
           list.sort((a: GitFile, b: GitFile) => {
             if (a.type === b.type) return a.name.localeCompare(b.name);
@@ -55,7 +55,7 @@ export const GitFileBrowserModal = ({
       const filePath = path ? `${path}/${filename}` : filename;
       setLoading(true);
       try {
-        const res = await workbookApi.getRepoFile(workbookId, filePath, br, connectorAccountId, useConfigRepo);
+        const res = await scratchApiClient.git.getRepoFile(workbookId, filePath, br, connectorAccountId, useConfigRepo);
         setFileContent(res.content);
       } catch (err) {
         console.error(err);

@@ -8,7 +8,7 @@ import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useGitActions } from '@/hooks/use-git-actions';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import {
   ActionIcon,
   Badge,
@@ -389,7 +389,7 @@ export default function WorkbooksDevPage() {
     setIsLoading(true);
     setLoadError(false);
     try {
-      const result = await workbookApi.adminListWorkbooks({
+      const result = await scratchApiClient.devTools.adminListWorkbooks({
         search: debouncedSearch || undefined,
         services: serviceFilter.length ? serviceFilter : undefined,
         serviceMode: serviceFilter.length > 1 ? serviceMode : undefined,

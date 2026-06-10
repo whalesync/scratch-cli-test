@@ -1,5 +1,5 @@
-import { devToolsApi } from '@/lib/api/dev-tools';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { GetAllJobsResponseDto } from '@spinner/shared-types';
 import useSWR from 'swr';
 
@@ -17,7 +17,7 @@ export const useJobsDevTools = (params?: {
 }) => {
   const { data, error, isLoading, mutate } = useSWR<GetAllJobsResponseDto, Error>(
     SWR_KEYS.jobs.allJobs(params?.limit, params?.offset, params?.statuses, params?.userId),
-    () => devToolsApi.getAllJobs(params),
+    () => scratchApiClient.devTools.getAllJobs(params),
     {
       refreshInterval: params?.autoRefresh ? DEFAULT_REFRESH_INTERVAL : 0,
       revalidateOnFocus: false,

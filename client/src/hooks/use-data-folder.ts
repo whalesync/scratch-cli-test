@@ -1,5 +1,5 @@
-import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { DataFolder, DataFolderId } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
@@ -23,7 +23,7 @@ export const useDataFolder = (dataFolderId: DataFolderId | null): UseDataFolderR
       if (!dataFolderId) {
         throw new Error('dataFolderId is required');
       }
-      return dataFolderApi.findOne(dataFolderId);
+      return scratchApiClient.dataFolders.findOne(dataFolderId);
     },
     {
       revalidateOnFocus: false,
@@ -44,7 +44,7 @@ export const useDataFolder = (dataFolderId: DataFolderId | null): UseDataFolderR
         throw new Error('Filter cannot be empty');
       }
 
-      await dataFolderApi.update(dataFolderId, { filter });
+      await scratchApiClient.dataFolders.update(dataFolderId, { filter });
       await mutate();
     },
     [dataFolderId, mutate],

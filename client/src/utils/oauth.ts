@@ -1,4 +1,4 @@
-import { oAuthApi } from '@/lib/api/oauth';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { OAuthInitiateOptionsDto, Service } from '@spinner/shared-types';
 
 /**
@@ -9,7 +9,7 @@ import { OAuthInitiateOptionsDto, Service } from '@spinner/shared-types';
 export const initiateOAuth = async (service: Service, options: OAuthInitiateOptionsDto): Promise<void> => {
   try {
     // Get the OAuth URL from the server (service is now included in state parameter)
-    const response = await oAuthApi.initiate(service, options);
+    const response = await scratchApiClient.oauth.initiate(service, options);
 
     // Redirect the user to the OAuth provider
     window.location.href = response.authUrl;

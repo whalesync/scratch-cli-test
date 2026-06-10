@@ -10,7 +10,7 @@ import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { API_CONFIG } from '@/lib/api/config';
-import { usersApi } from '@/lib/api/users';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { ActionIcon, Anchor, Badge, Box, Code, Collapse, CopyButton, Group, Stack, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import type { WorkbookId } from '@spinner/shared-types';
@@ -105,7 +105,7 @@ function DownloadApiKeyButton() {
     try {
       let token = user?.apiToken;
       if (!token) {
-        const result = await usersApi.generateApiToken();
+        const result = await scratchApiClient.users.generateApiToken();
         token = result.apiToken;
         await refreshCurrentUser();
       }

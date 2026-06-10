@@ -16,8 +16,8 @@ import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { useConnectorAccounts } from '../../hooks/use-connector-accounts';
 import { usePublishPlans } from '../../hooks/use-publish-plans';
 import { absoluteDate, relativeTime } from '../../lib/date-format';
-import { publishApi } from '../../lib/publish-api';
 import { formatPhaseCount, jobStatusBadgeColor, publishPlanStatusBadgeColor } from '../../lib/publish-plan-status';
+import { scratchApiClient } from '../../lib/scratch-api-client';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 
 const PHASE_COL_BORDER = '1px solid var(--mantine-color-gray-2)';
@@ -53,7 +53,7 @@ export function PublishPlansList({ workspaceId, connectionFilter }: PublishPlans
     if (!confirmed) return;
     setDeletingId(plan.id);
     try {
-      await publishApi.deletePublishPlan(workspaceId, plan.id);
+      await scratchApiClient.publish.deletePublishPlan(workspaceId, plan.id);
       await refresh();
     } catch (err) {
       console.debug('Failed to delete publish plan', err);

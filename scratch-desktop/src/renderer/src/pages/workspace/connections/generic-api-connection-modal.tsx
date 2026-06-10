@@ -1,6 +1,6 @@
 import { ButtonPrimaryLight, ButtonSecondaryOutline } from '@/components/base/buttons';
 import { useConnectorAccounts } from '@/hooks/use-connector-accounts';
-import { genericApiApi } from '@/lib/generic-api-api';
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import {
   ActionIcon,
   Alert,
@@ -285,7 +285,7 @@ export function GenericApiConnectionModal({
 
   const handleGetAiPrompt = async () => {
     try {
-      const { text } = await genericApiApi.getAiPrompt(apiType);
+      const { text } = await scratchApiClient.generic.getAiPrompt(apiType);
       await navigator.clipboard.writeText(buildAiPromptWithContext(text));
       notifications.show({
         title: 'AI prompt copied',

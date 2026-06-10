@@ -1,3 +1,4 @@
+import { scratchApiClient } from '@/lib/scratch-api-client';
 import {
   ConnectorAccount,
   CreateConnectorAccountDto,
@@ -6,7 +7,6 @@ import {
 } from '@spinner/shared-types';
 import { useCallback } from 'react';
 import useSWR from 'swr';
-import { connectorAccountsApi } from '../lib/connector-accounts-api';
 
 const SWR_KEY_PREFIX = 'connector-accounts';
 
@@ -15,7 +15,7 @@ export function useConnectorAccounts(workbookId: string | undefined) {
     workbookId ? [SWR_KEY_PREFIX, workbookId] : null,
     () => {
       if (!workbookId) throw new Error('workbookId is required');
-      return connectorAccountsApi.list(workbookId);
+      return scratchApiClient.connectorAccounts.list(workbookId);
     },
     { revalidateOnFocus: false },
   );
@@ -27,7 +27,7 @@ export function useConnectorAccounts(workbookId: string | undefined) {
   const createConnectorAccount = useCallback(
     async (dto: CreateConnectorAccountDto): Promise<ConnectorAccount> => {
       if (!workbookId) throw new Error('No workbook ID');
-      const result = await connectorAccountsApi.create(workbookId, dto);
+      const result = await scratchApiClient.connectorAccounts.create(workbookId, dto);
       await mutate();
       return result;
     },
@@ -37,7 +37,7 @@ export function useConnectorAccounts(workbookId: string | undefined) {
   const updateConnectorAccount = useCallback(
     async (id: string, dto: UpdateConnectorAccountDto): Promise<ConnectorAccount> => {
       if (!workbookId) throw new Error('No workbook ID');
-      const result = await connectorAccountsApi.update(workbookId, id, dto);
+      const result = await scratchApiClient.connectorAccounts.update(workbookId, id, dto);
       await mutate();
       return result;
     },
@@ -47,7 +47,7 @@ export function useConnectorAccounts(workbookId: string | undefined) {
   const deleteConnectorAccount = useCallback(
     async (id: string): Promise<void> => {
       if (!workbookId) throw new Error('No workbook ID');
-      await connectorAccountsApi.delete(workbookId, id);
+      await scratchApiClient.connectorAccounts.delete(workbookId, id);
       await mutate();
     },
     [workbookId, mutate],
@@ -56,7 +56,7 @@ export function useConnectorAccounts(workbookId: string | undefined) {
   const testConnection = useCallback(
     async (id: string): Promise<TestConnectionResponse> => {
       if (!workbookId) throw new Error('No workbook ID');
-      return connectorAccountsApi.test(workbookId, id);
+      return scratchApiClient.connectorAccounts.test(workbookId, id);
     },
     [workbookId],
   );

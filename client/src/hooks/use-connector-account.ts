@@ -1,6 +1,5 @@
-import { connectorAccountsApi } from '@/lib/api/connector-accounts';
-import { isUnauthorizedError } from '@/lib/api/error';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import {
   ConnectorAccount,
   CreateConnectorAccountDto,
@@ -8,6 +7,7 @@ import {
   UpdateConnectorAccountDto,
   WorkbookId,
 } from '@spinner/shared-types';
+import { isUnauthorizedError } from '@spinner/shared-types/api-client';
 import { useMemo } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { ScratchpadNotifications } from '../app/components/ScratchpadNotifications';
@@ -25,14 +25,14 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
     if (!workbookId) {
       throw new Error('workbookId is required');
     }
-    return connectorAccountsApi.list(workbookId);
+    return scratchApiClient.connectorAccounts.list(workbookId);
   });
 
   const createConnectorAccount = async (dto: CreateConnectorAccountDto): Promise<ConnectorAccount> => {
     if (!workbookId) {
       throw new Error('Workbook ID is required to create a connector account');
     }
-    const newAccount = await connectorAccountsApi.create(workbookId, dto);
+    const newAccount = await scratchApiClient.connectorAccounts.create(workbookId, dto);
     mutate(SWR_KEYS.connectorAccounts.list(workbookId));
     return newAccount;
   };
@@ -41,7 +41,7 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
     if (!workbookId) {
       throw new Error('Workbook ID is required to update a connector account');
     }
-    const updated = await connectorAccountsApi.update(workbookId, id, dto);
+    const updated = await scratchApiClient.connectorAccounts.update(workbookId, id, dto);
     mutate(SWR_KEYS.connectorAccounts.list(workbookId));
     mutate(SWR_KEYS.connectorAccounts.detail(workbookId, id));
     return updated;
@@ -51,7 +51,7 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
     if (!workbookId) {
       throw new Error('Workbook ID is required to delete a connector account');
     }
-    await connectorAccountsApi.delete(workbookId, id);
+    await scratchApiClient.connectorAccounts.delete(workbookId, id);
     mutate(SWR_KEYS.connectorAccounts.list(workbookId));
     mutate(SWR_KEYS.workbook.detail(workbookId as WorkbookId));
     mutate(SWR_KEYS.dataFolders.list(workbookId as WorkbookId));
@@ -62,7 +62,7 @@ export const useConnectorAccounts = (workbookId: string | undefined) => {
       throw new Error('Workbook ID is required to test a connection');
     }
     try {
-      const r = await connectorAccountsApi.test(workbookId, con.id);
+      const r = await scratchApiClient.connectorAccounts.test(workbookId, con.id);
       mutate(SWR_KEYS.connectorAccounts.detail(workbookId, con.id));
       mutate(SWR_KEYS.connectorAccounts.list(workbookId));
       if (r.health == 'ok') {
@@ -113,7 +113,7 @@ export const useConnectorAccount = (workbookId: string | undefined, id?: string)
       if (!workbookId || !id) {
         throw new Error('workbookId and id are required');
       }
-      return connectorAccountsApi.detail(workbookId, id);
+      return scratchApiClient.connectorAccounts.detail(workbookId, id);
     },
   );
 

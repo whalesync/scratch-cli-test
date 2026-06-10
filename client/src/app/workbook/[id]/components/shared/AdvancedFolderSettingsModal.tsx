@@ -6,9 +6,8 @@ import { ModalWrapper } from '@/app/components/ModalWrapper';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDataFolders } from '@/hooks/use-data-folders';
-import { connectorAccountsApi } from '@/lib/api/connector-accounts';
-import { dataFolderApi } from '@/lib/api/data-folder';
 import { SWR_KEYS } from '@/lib/api/keys';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { isTableFullyLocked, settingAppliesToTable } from '@/types/server-entities/table-list';
 import {
@@ -218,7 +217,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
       if (!workbookId || !folder.connectorAccountId) {
         throw new Error('listTables fetcher requires a workbookId and connectorAccountId');
       }
-      return connectorAccountsApi.listTables(workbookId, folder.connectorAccountId);
+      return scratchApiClient.connectorAccounts.listTables(workbookId, folder.connectorAccountId);
     },
     { revalidateOnFocus: false },
   );
@@ -279,7 +278,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   );
   const { data: schemaData } = useSWR<Record<string, unknown>>(
     opened && hasFieldSelect ? SWR_KEYS.dataFolders.schema(folder.id, 'view') : null,
-    () => dataFolderApi.getSchema(folder.id),
+    () => scratchApiClient.dataFolders.getSchema(folder.id),
     { revalidateOnFocus: false },
   );
   const {
@@ -353,7 +352,7 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder }: Advance
   const handleSave = async () => {
     setLoading(true);
     try {
-      await dataFolderApi.update(folder.id, {
+      await scratchApiClient.dataFolders.update(folder.id, {
         filter: filter.trim() || null,
         options: buildOptions(),
       });

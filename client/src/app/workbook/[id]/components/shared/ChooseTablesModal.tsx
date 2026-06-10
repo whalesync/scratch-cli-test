@@ -8,12 +8,8 @@ import { ConnectorIcon } from '@/app/components/Icons/ConnectorIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useWorkbook } from '@/hooks/use-workbook';
-import { connectorAccountsApi } from '@/lib/api/connector-accounts';
-import { dataFolderApi } from '@/lib/api/data-folder';
-import { ScratchpadApiError } from '@/lib/api/error';
-import { genericApiApi } from '@/lib/api/generic-api';
 import { SWR_KEYS } from '@/lib/api/keys';
-import { workbookApi } from '@/lib/api/workbook';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import {
   resetFolderMutationSuppression,
   suppressFolderMutations,
@@ -54,6 +50,7 @@ import type {
   WorkbookId,
 } from '@spinner/shared-types';
 import { TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
+import { ScratchpadApiError } from '@spinner/shared-types/api-client';
 import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
@@ -238,7 +235,7 @@ interface ChooseTablesModalProps {
 export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccount }: ChooseTablesModalProps) {
   const { data, isLoading, isValidating } = useSWR<TableList>(
     opened ? SWR_KEYS.connectorAccounts.tables(workbookId, connectorAccount.id) : null,
-    () => connectorAccountsApi.listTables(workbookId, connectorAccount.id),
+    () => scratchApiClient.connectorAccounts.listTables(workbookId, connectorAccount.id),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
@@ -262,7 +259,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     opened && isSearchMode && debouncedSearchTerm
       ? SWR_KEYS.connectorAccounts.searchTables(workbookId, connectorAccount.id, debouncedSearchTerm)
       : null,
-    () => connectorAccountsApi.searchTables(workbookId, connectorAccount.id, debouncedSearchTerm),
+    () => scratchApiClient.connectorAccounts.searchTables(workbookId, connectorAccount.id, debouncedSearchTerm),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
@@ -585,7 +582,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
 
       setSchemasLoading((prev) => new Set(prev).add(tableKey));
 
-      connectorAccountsApi
+      scratchApiClient.connectorAccounts
         .getTableSchema(workbookId, connectorAccount.id, table.id.remoteId.join(','))
         .then((result) => {
           setLoadedTableSchemas((prev) => new Map(prev).set(tableKey, result));
@@ -718,7 +715,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
     // If there are folders to remove, check for dirty files and show confirmation
     if (pendingFoldersToRemove.length > 0 && !showConfirmation) {
       try {
-        const dirtyFiles = await workbookApi.getStatus(workbookId);
+        const dirtyFiles = await scratchApiClient.git.getStatus(workbookId);
 
         const folderPaths = new Set(pendingFoldersToRemove.map((f) => (f.path ?? f.name).replace(/^\//, '')));
         const dirtyInRemovedFolders = dirtyFiles.filter((file) => {
@@ -758,7 +755,11 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         // endpoint UUID from extras.endpoints — set by the connector class.
         if (connectorAccount.service === 'GENERIC_API') {
           try {
-            const probeResult = await genericApiApi.probeEndpoint(workbookId, connectorAccount.id, table.id.wsId);
+            const probeResult = await scratchApiClient.generic.probeEndpoint(
+              workbookId,
+              connectorAccount.id,
+              table.id.wsId,
+            );
             options = {
               ...options,
               genericApi: { endpointId: table.id.wsId, probe: probeResult.probe },
@@ -799,7 +800,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
         const filterChanged = newFilter !== existingFilter;
         const optionsChanged = JSON.stringify(newOptions) !== JSON.stringify(folder.options ?? {});
         if (filterChanged || optionsChanged) {
-          await dataFolderApi.update(folder.id, {
+          await scratchApiClient.dataFolders.update(folder.id, {
             filter: newFilter,
             options: newOptions,
           });
@@ -809,7 +810,7 @@ export function ChooseTablesModal({ opened, onClose, workbookId, connectorAccoun
       // Remove unselected tables
       const toRemove = showConfirmation ? foldersToRemove : pendingFoldersToRemove;
       for (const folder of toRemove) {
-        await dataFolderApi.delete(folder.id);
+        await scratchApiClient.dataFolders.delete(folder.id);
       }
 
       setShowConfirmation(false);

@@ -5,7 +5,7 @@ import { Text13Regular, TextTitle2 } from '@/app/components/base/text';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { LoaderWithMessage } from '@/app/components/LoaderWithMessage';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { approveMcpAuthorization } from '@/lib/api/mcp-auth';
+import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { Alert, Container, Stack } from '@mantine/core';
 import { CheckCircleIcon, CircleXIcon, ShieldCheckIcon } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
@@ -61,7 +61,7 @@ export default function McpAuthorizePage() {
     setErrorMessage('');
 
     try {
-      const result = await approveMcpAuthorization(stateParam);
+      const result = await scratchApiClient.mcpAuth.approveMcpAuthorization(stateParam);
       setConsentState('success');
 
       // Redirect back to Claude with the authorization code
