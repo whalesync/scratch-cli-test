@@ -250,6 +250,8 @@ resource "google_cloud_run_v2_service" "api_service" {
           "WIX_CLIENT_SECRET",
           "SUPABASE_CLIENT_ID",
           "SUPABASE_CLIENT_SECRET",
+          "ZOHO_CLIENT_ID",
+          "ZOHO_CLIENT_SECRET",
         ]
         content {
           name = env.value
@@ -497,6 +499,8 @@ resource "google_cloud_run_v2_service" "cron_service" {
           "WIX_CLIENT_SECRET",
           "SUPABASE_CLIENT_ID",
           "SUPABASE_CLIENT_SECRET",
+          "ZOHO_CLIENT_ID",
+          "ZOHO_CLIENT_SECRET",
         ]
         content {
           name = env.value
@@ -728,6 +732,8 @@ resource "google_cloud_run_v2_service" "worker_service" {
           "WIX_CLIENT_SECRET",
           "SUPABASE_CLIENT_ID",
           "SUPABASE_CLIENT_SECRET",
+          "ZOHO_CLIENT_ID",
+          "ZOHO_CLIENT_SECRET",
         ]
         content {
           name = env.value
