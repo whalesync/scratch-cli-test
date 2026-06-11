@@ -26,6 +26,7 @@ export interface UserExperimentFlags {
 export interface User {
   id: string;
   clerkId: string | null;
+  whalesyncUserId: string | null;
   createdAt: string;
   updatedAt: string;
   isAdmin: boolean;

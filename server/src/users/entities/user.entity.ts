@@ -16,6 +16,7 @@ export class User {
   createdAt: Date;
   updatedAt: Date;
   clerkId: string | null;
+  whalesyncUserId: string | null;
   stripeCustomerId: string | null;
   isAdmin: boolean;
   id: string;
@@ -50,6 +51,7 @@ export class User {
     this.createdAt = user.createdAt;
     this.updatedAt = user.updatedAt;
     this.clerkId = user.clerkId;
+    this.whalesyncUserId = user.whalesyncUserId;
     this.isAdmin = user.role === UserRole.ADMIN;
     this.name = user.name || undefined;
     this.email = user.email || undefined;

@@ -370,7 +370,23 @@ export class DevToolsController {
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
+        { id: { contains: search, mode: 'insensitive' } },
         { organization: { name: { contains: search, mode: 'insensitive' } } },
+        // Match workbooks whose organization has a user matching the search term
+        // (email / name / user ID), so searching a user surfaces every workbook in their org.
+        {
+          organization: {
+            users: {
+              some: {
+                OR: [
+                  { email: { contains: search, mode: 'insensitive' } },
+                  { name: { contains: search, mode: 'insensitive' } },
+                  { id: { contains: search, mode: 'insensitive' } },
+                ],
+              },
+            },
+          },
+        },
       ];
     }
     if (serviceList.length > 0) {

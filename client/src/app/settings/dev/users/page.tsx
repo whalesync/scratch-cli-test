@@ -58,7 +58,7 @@ export default function UsersDevPage() {
       <MainContent.BasicHeader title="User Management" Icon={UsersIcon} />
       <MainContent.Body>
         <Stack>
-          <Text16Regular>Search for users by ID, email, name, or Clerk ID</Text16Regular>
+          <Text16Regular>Search for users by ID, email, name, Clerk ID, or Whalesync ID</Text16Regular>
 
           <Group>
             <TextInput

@@ -39,6 +39,13 @@ import {
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { clerkUserUrl, posthogPersonUrl, stripeCustomerUrl } from '../utils';
 
+/**
+ * A Whalesync "shadow" user: provisioned from Whalesync (has a `whalesyncUserId`) and backed by a
+ * synthetic `ws_`-prefixed Clerk ID rather than a real Clerk account.
+ */
+const isWhalesyncShadowUser = (user: User): boolean =>
+  !!user.whalesyncUserId && (user.clerkId?.startsWith('ws_') ?? false);
+
 export const UserDetailsCard = ({
   details,
   onClose,
@@ -157,7 +164,14 @@ export const UserDetailsCard = ({
     <Card withBorder shadow="sm" radius="xs">
       <Card.Section withBorder inheritPadding py="xs">
         <Group justify="space-between">
-          <TextTitle2>User Details: {details.user.name}</TextTitle2>
+          <Group gap="sm" align="center">
+            <TextTitle2>User Details: {details.user.name}</TextTitle2>
+            {isWhalesyncShadowUser(details.user) && (
+              <Badge color="devTool" icon={HatGlassesIcon}>
+                Whalesync Shadow User
+              </Badge>
+            )}
+          </Group>
           <CloseButton onClick={onClose} />
         </Group>
       </Card.Section>
@@ -182,6 +196,11 @@ export const UserDetailsCard = ({
                 </Tooltip>
               )}
             </Group>
+            {details.user.whalesyncUserId ? (
+              <LabelValuePair label="Whalesync ID" value={details.user.whalesyncUserId} canCopy />
+            ) : (
+              <LabelValuePair label="Whalesync ID" value="—" />
+            )}
             <Group align="center" gap="xs">
               {details.user.stripeCustomerId ? (
                 <LabelValuePair label="Stripe Customer ID" value={details.user.stripeCustomerId} canCopy />

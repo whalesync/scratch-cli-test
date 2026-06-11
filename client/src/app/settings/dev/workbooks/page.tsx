@@ -9,8 +9,10 @@ import { useDataFolders } from '@/hooks/use-data-folders';
 import { useGitActions } from '@/hooks/use-git-actions';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
+import { RouteUrls } from '@/utils/route-urls';
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Center,
@@ -27,9 +29,10 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
+import { useClipboard, useDebouncedValue } from '@mantine/hooks';
 import { AdminWorkbookConnectionDto, AdminWorkbookDto, WorkbookId } from '@spinner/shared-types';
 import { BookOpenIcon, FolderIcon, MoreVerticalIcon, ScissorsIcon } from 'lucide-react';
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
 const PAGE_SIZE_OPTIONS = ['1', '10', '20', '25', '100', '1000'];
@@ -314,16 +317,33 @@ function WorkbookRow({
   onShowConnections: (w: AdminWorkbookDto) => void;
   onStripAllPrefixes: (workbookId: WorkbookId) => void;
 }) {
+  const clipboard = useClipboard({ timeout: 1500 });
+
   return (
     <Table.Tr>
       <Table.Td>
-        <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
-          {workbook.id}
-        </Text>
+        <Tooltip label={clipboard.copied ? 'Copied!' : 'Click to copy ID'}>
+          <Text
+            size="xs"
+            c={clipboard.copied ? 'green' : 'dimmed'}
+            style={{ fontFamily: 'monospace', cursor: 'pointer' }}
+            onClick={() => clipboard.copy(workbook.id)}
+          >
+            {workbook.id}
+          </Text>
+        </Tooltip>
       </Table.Td>
       <Table.Td>
         <Group gap="xs" wrap="nowrap">
-          <Text size="sm">{workbook.name ?? '(unnamed)'}</Text>
+          <Anchor
+            component={Link}
+            href={RouteUrls.workbookPageUrl(workbook.id)}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="sm"
+          >
+            {workbook.name ?? '(unnamed)'}
+          </Anchor>
           {workbook.isPendingDelete && (
             <Badge color="red" size="sm" variant="light">
               Pending Deletion
@@ -455,7 +475,7 @@ export default function WorkbooksDevPage() {
           <Group gap="sm" align="flex-end">
             <TextInput
               label="Search"
-              placeholder="Workspace or org name..."
+              placeholder="Name, workbook ID, org, or user email..."
               value={search}
               onChange={(e) => setSearch(e.currentTarget.value)}
               style={{ flex: 1, maxWidth: 360 }}

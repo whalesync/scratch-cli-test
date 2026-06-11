@@ -446,6 +446,7 @@ export class UsersService {
         OR: [
           { id: { contains: query, mode: 'insensitive' } },
           { clerkId: { contains: query, mode: 'insensitive' } },
+          { whalesyncUserId: { contains: query, mode: 'insensitive' } },
           { stripeCustomerId: { contains: query, mode: 'insensitive' } },
           { name: { contains: query, mode: 'insensitive' } },
           { email: { contains: query, mode: 'insensitive' } },
