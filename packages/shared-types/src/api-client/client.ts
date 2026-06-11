@@ -19,6 +19,7 @@ import { createPermissionsApi } from './resources/permissions';
 import { createProgressApi } from './resources/progress';
 import { createPublishApi } from './resources/publish';
 import { createScheduleApi } from './resources/schedule';
+import { createSchemaApi } from './resources/schema';
 import { createSyncApi } from './resources/sync';
 import { createTransformerMetadataApi } from './resources/transformer-metadata';
 import { createUsersApi } from './resources/users';
@@ -60,6 +61,7 @@ export function createScratchApiClient(config: ScratchApiClientConfig) {
     progress: createProgressApi(http),
     publish: createPublishApi(http),
     schedule: createScheduleApi(http),
+    schema: createSchemaApi(http),
     sync: createSyncApi(http),
     transformerMetadata: createTransformerMetadataApi(http),
     users: createUsersApi(http),

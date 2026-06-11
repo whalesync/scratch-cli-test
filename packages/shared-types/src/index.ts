@@ -64,6 +64,8 @@ export * from './dto/publish-plan/publish-job-responses.dto';
 export * from './dto/publish-plan/publish-plan.dto';
 export * from './dto/schedule/create-schedule.dto';
 export * from './dto/schedule/update-schedule.dto';
+export * from './dto/schema/create-schema-responses.dto';
+export * from './dto/schema/create-schema.dto';
 export * from './dto/scratch-git/scratch-git.dto';
 export * from './dto/sync/run-sync.dto';
 export * from './dto/sync/sync-api';

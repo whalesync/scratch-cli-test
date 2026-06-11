@@ -35,6 +35,7 @@ import { ConnectorAccountModule } from './remote-service/connector-account/conne
 import { ConnectorsModule } from './remote-service/connectors/connectors.module';
 import { ShopifyWebhooksModule } from './remote-service/connectors/library/shopify/controllers/shopify-webhooks.module';
 import { ScheduleModule } from './schedule/schedule.module';
+import { SchemaBuilderModule } from './schema-builder/schema-builder.module';
 import { ScratchGitModule } from './scratch-git/scratch-git.module';
 import { SlackNotificationModule } from './slack/slack-notification.module';
 import { SyncModule } from './sync/sync.module';
@@ -71,6 +72,7 @@ import { WorkerModule } from './worker/workers.module';
     JobModule,
     PublishPlanModule,
     ScheduleModule,
+    SchemaBuilderModule,
     ShopifyWebhooksModule,
     McpModule,
     ...(ScratchConfigService.isAPIService()

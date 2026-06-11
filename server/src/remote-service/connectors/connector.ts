@@ -1,14 +1,18 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import {
   ConnectorSettingDefinition,
+  CreateFieldResult,
+  CreateTableResult,
   DataFolderOptions,
   IncrementalPullSupport,
+  SchemaCreationCapabilities,
   TableDiscoveryMode,
 } from '@spinner/shared-types';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { getServiceDisplayName } from './display-names';
+import { NormalizedCreateFieldsPlan, NormalizedCreateTablePlan } from './schema-creation.types';
 import {
   BaseJsonTableSpec,
   ConnectorErrorDetails,
@@ -240,6 +244,48 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
   supportsFieldSelection(): boolean {
     return false;
   }
+
+  /**
+   * Whether this connector can create new tables/fields on the remote service
+   * (the create-schema API, DEV-10378). Defaults to `false`; connectors that
+   * implement `createTable`/`createFields` override this to `true`. The
+   * create-schema endpoints return a `not_supported` result when this is false.
+   */
+  supportsSchemaCreation(): boolean {
+    return false;
+  }
+
+  /**
+   * Declarative, connector-agnostic description of what this connector can
+   * create — which logical field kinds it supports, whether it mandates a
+   * primary/title field (Notion, Webflow), and any name-length limits. The
+   * generic create-schema validator consumes this to fail fast, so a connector's
+   * rules live here rather than being hardcoded in the server or any frontend.
+   *
+   * Optional: connectors that support schema creation should implement it;
+   * `undefined` means "no extra declared constraints beyond the generic ones".
+   */
+  getSchemaCreationCapabilities?(): SchemaCreationCapabilities;
+
+  /**
+   * Create one table and its fields on the remote service. The connector decides
+   * internally whether its API creates the table and fields in a single call or
+   * in multiple calls. ForeignKey targets in `plan.fields` are already resolved
+   * to concrete remote table ids by the server; `plan.deferredFkFields` (cyclic
+   * cross-table FKs) are NOT created here — the server adds them via
+   * {@link createFields} once every table exists.
+   *
+   * Optional; the default throws. Implement alongside `supportsSchemaCreation()`.
+   */
+  createTable?(plan: NormalizedCreateTablePlan): Promise<CreateTableResult>;
+
+  /**
+   * Add fields to an existing remote table. Also used for the deferred cyclic-FK
+   * pass after all tables in a multi-table create have been created.
+   *
+   * Optional; the default throws. Implement alongside `supportsSchemaCreation()`.
+   */
+  createFields?(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]>;
 
   /**
    * Get the batch size for a given operation.
