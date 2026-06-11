@@ -1,7 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import type { DataFolderOptions, EntityId, TableView } from '@spinner/shared-types';
 import { PostgresColumnType, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
-import { get, set, unset } from 'lodash';
+import { get, set, toPath, unset } from 'lodash';
 import { JsonSafeObject } from 'src/utils/objects';
 
 // Re-export from shared-types for backwards compatibility
@@ -89,9 +89,132 @@ export function clearRecordId(record: Record<string, unknown>, idPath: IdPath): 
  * Build a fresh object containing only the id at its id path. Used to
  * construct id-only stubs for connector update/delete filters where the full
  * record body isn't needed (the connector reads the id leaf from the stub).
+ *
+ * Limitation (pre-existing, shared with the retired publish-from-git
+ * service): a flat column name that itself contains lodash path
+ * metacharacters (a Postgres PK literally named `"user.id"`) is not
+ * representable in a fresh stub — `set` nests it. The proper fix is
+ * bracket-escaping such names at `idPath(...)` construction time in the
+ * connector that owns them.
  */
 export function recordWithId(idPath: IdPath, value: string | number): Record<string, unknown> {
   return set({}, idPath, value);
+}
+
+/**
+ * Read the value used for pending-publish / recreate **sentinel detection**.
+ * A sentinel can live in two places: at the full id path (the server sync
+ * writes `scratch_pending_publish_<uuid>` at the leaf), or — for a nested id
+ * path only — as a string replacing the entire path-root object (the CLI's
+ * revert-recreate shape: `replace_pk_with_recreate_sentinel` in
+ * scratch-git-2/src/cli/commands/files.rs swaps Attio's whole `id` triple for
+ * `"scratch_pending_recreate_<old_id>"` because the triple's inner shape is
+ * server-generated). Returns the leaf value when present, otherwise the
+ * path-root value when it is a string. For a flat id path this is exactly
+ * `readRecordId`.
+ */
+export function readRecordIdForSentinelDetection(record: Record<string, unknown>, idPath: IdPath): unknown {
+  const valueAtFullIdPath = get(record, idPath);
+  if (valueAtFullIdPath !== undefined) return valueAtFullIdPath;
+  const idPathSegments = toPath(idPath);
+  if (idPathSegments.length <= 1) return valueAtFullIdPath;
+  const valueAtIdPathRoot = record[idPathSegments[0]];
+  return typeof valueAtIdPathRoot === 'string' ? valueAtIdPathRoot : valueAtFullIdPath;
+}
+
+/**
+ * Return a copy of `record` with the value at its id path removed, including
+ * both sentinel shapes (leaf value, or sentinel string occupying the path
+ * root — see `readRecordIdForSentinelDetection`). Ancestor objects left empty
+ * by the removal are pruned so the connector never receives a husk like
+ * `id: {}`. Clones only the objects along the id path — O(path depth), not
+ * O(record size) — and never mutates the input.
+ */
+export function recordWithIdCleared(record: Record<string, unknown>, idPath: IdPath): Record<string, unknown> {
+  const recordCopy = { ...record };
+  // Literal-own-key first, mirroring how lodash `get` (used by every id READ
+  // in the pipeline) resolves a path: an existing own key named exactly like
+  // the path wins over path traversal. Without this, a sentinel detected at a
+  // literal dotted key (a Postgres PK named `"user.id"`) could not be cleared.
+  if (Object.prototype.hasOwnProperty.call(recordCopy, idPath)) {
+    delete recordCopy[idPath];
+    return recordCopy;
+  }
+  const idPathSegments = toPath(idPath);
+  if (idPathSegments.length === 0) return recordCopy;
+
+  // Root-sentinel shape: a nested path whose root holds a non-object (the
+  // CLI's recreate sentinel string) — drop the root key entirely.
+  if (idPathSegments.length > 1) {
+    const valueAtIdPathRoot = recordCopy[idPathSegments[0]];
+    if (typeof valueAtIdPathRoot !== 'object' || valueAtIdPathRoot === null) {
+      delete recordCopy[idPathSegments[0]];
+      return recordCopy;
+    }
+  }
+
+  // Walk down to the leaf's parent, shallow-cloning each level so the caller's
+  // record (and anything sharing its nested objects) is untouched.
+  const clonedObjectsAlongPath: Record<string, unknown>[] = [recordCopy];
+  let parentOfNextSegment = recordCopy;
+  for (let i = 0; i < idPathSegments.length - 1; i++) {
+    const childAtSegment = parentOfNextSegment[idPathSegments[i]];
+    if (typeof childAtSegment !== 'object' || childAtSegment === null || Array.isArray(childAtSegment)) {
+      // Path doesn't resolve to an object chain — nothing to clear.
+      return recordCopy;
+    }
+    const childCopy = { ...(childAtSegment as Record<string, unknown>) };
+    parentOfNextSegment[idPathSegments[i]] = childCopy;
+    clonedObjectsAlongPath.push(childCopy);
+    parentOfNextSegment = childCopy;
+  }
+  delete parentOfNextSegment[idPathSegments[idPathSegments.length - 1]];
+
+  // Prune ancestors the removal left empty (deepest first).
+  for (let i = clonedObjectsAlongPath.length - 1; i >= 1; i--) {
+    if (Object.keys(clonedObjectsAlongPath[i]).length === 0) {
+      delete clonedObjectsAlongPath[i - 1][idPathSegments[i - 1]];
+    } else {
+      break;
+    }
+  }
+  return recordCopy;
+}
+
+/**
+ * Return a copy of `record` with `value` written at its id path. Clones only
+ * the objects along the id path — O(path depth), not O(record size) — and
+ * never mutates the input. An existing literal own key named exactly like
+ * the path wins over path traversal (mirroring lodash `get`/`set` on objects
+ * that already carry the literal key). A non-object intermediate (e.g. a
+ * sentinel string occupying the path root) is replaced by a fresh object;
+ * an ARRAY intermediate is also replaced (id paths never index into arrays —
+ * arrays are leaves throughout Scratch).
+ */
+export function recordWithIdWritten(
+  record: Record<string, unknown>,
+  idPath: IdPath,
+  value: string | number,
+): Record<string, unknown> {
+  const recordCopy = { ...record };
+  if (Object.prototype.hasOwnProperty.call(recordCopy, idPath)) {
+    recordCopy[idPath] = value;
+    return recordCopy;
+  }
+  const idPathSegments = toPath(idPath);
+  if (idPathSegments.length === 0) return recordCopy;
+  let parentOfNextSegment = recordCopy;
+  for (let i = 0; i < idPathSegments.length - 1; i++) {
+    const childAtSegment = parentOfNextSegment[idPathSegments[i]];
+    const childCopy =
+      typeof childAtSegment === 'object' && childAtSegment !== null && !Array.isArray(childAtSegment)
+        ? { ...(childAtSegment as Record<string, unknown>) }
+        : {};
+    parentOfNextSegment[idPathSegments[i]] = childCopy;
+    parentOfNextSegment = childCopy;
+  }
+  parentOfNextSegment[idPathSegments[idPathSegments.length - 1]] = value;
+  return recordCopy;
 }
 
 export type BaseJsonTableSpec = {

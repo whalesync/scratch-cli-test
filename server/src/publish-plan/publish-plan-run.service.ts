@@ -14,7 +14,17 @@ import { ExperimentsService } from '../experiments/experiments.service';
 import { UserFlag } from '../experiments/flags';
 import { Connector } from '../remote-service/connectors/connector';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, ConnectorErrorDetails, ConnectorFile } from '../remote-service/connectors/types';
+import {
+  BaseJsonTableSpec,
+  ConnectorErrorDetails,
+  ConnectorFile,
+  readRecordId,
+  readRecordIdAsString,
+  readRecordIdForSentinelDetection,
+  recordWithId,
+  recordWithIdCleared,
+  recordWithIdWritten,
+} from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 import { pickByShape } from './diff-utils';
@@ -1025,14 +1035,19 @@ export class PublishPlanRunService {
       // PKs and corrupts `main_plan_{planId}`. See
       // `docs/publish-pk-stringification-bug.md` for the full write-up.
       const recordObj = resolvedContent as Record<string, unknown>;
-      const existingId = recordObj[idField];
+      // `idField` is a lodash-style dot path (nested for e.g. Attio's
+      // `id.record_id`), so it must be read/written with path helpers — a
+      // plain property access silently misses nested ids. The sentinel-aware
+      // read also catches the CLI's revert-recreate shape, where a sentinel
+      // string replaces the whole id-path root object.
+      const existingId = readRecordIdForSentinelDetection(recordObj, idField);
       const needsIdFill =
         existingId === undefined ||
         existingId === null ||
         (typeof existingId === 'string' &&
           (isScratchPendingPublishId(existingId) || isScratchPendingRecreateId(existingId)));
       if (needsIdFill) {
-        resolvedContent = { ...recordObj, [idField]: remoteId } as ParsedContent;
+        resolvedContent = recordWithIdWritten(recordObj, idField, remoteId) as ParsedContent;
       }
 
       // Skip no-op edits where changedFields is an empty object
@@ -1076,8 +1091,9 @@ export class PublishPlanRunService {
     // wrong path.
     if (useReturned && persistedContents) {
       for (let i = 0; i < persistedContents.length; i++) {
-        const persistedId = (persistedContents[i] as Record<string, unknown> | undefined)?.[idField];
-        const inputId = (entriesWithOps[i].resolvedContent as Record<string, unknown>)[idField];
+        const persistedRow = persistedContents[i] as Record<string, unknown> | undefined;
+        const persistedId = persistedRow ? readRecordId(persistedRow, idField) : undefined;
+        const inputId = readRecordId(entriesWithOps[i].resolvedContent as Record<string, unknown>, idField);
         // Only compare when both sides have a primitive PK. `null`/`undefined`
         // → skip (the connector didn't echo an id for this row, treat as
         // benign). Anything that isn't string|number is a misuse — narrowing
@@ -1166,21 +1182,20 @@ export class PublishPlanRunService {
     const rawOps: ParsedContent[] = [];
     for (const e of entries) {
       if (!e.content) continue;
-      const entryContent = { ...(e.content as Record<string, unknown>) };
-      const idValue = entryContent[idField];
+      // Sentinel-aware read: handles both the leaf shape (server sync writes
+      // `scratch_pending_publish_<uuid>` at the full id path) and the CLI's
+      // revert-recreate shape (`scratch_pending_recreate_<old_id>` as a
+      // string replacing the whole id-path root object).
+      const idValue = readRecordIdForSentinelDetection(e.content as Record<string, unknown>, idField);
       // Strip temporary IDs (sync-pending-publish + revert-recreate). For
       // recreate sentinels, capture the encoded prior id so we can later
       // upsert the (prior → new) remap row.
       const priorRecreateId = parseScratchPendingRecreateId(idValue);
-      if (priorRecreateId !== null) {
-        delete entryContent[idField];
-        priorRemoteIdPerOp.push(priorRecreateId);
-      } else if (isScratchPendingPublishId(idValue)) {
-        delete entryContent[idField];
-        priorRemoteIdPerOp.push(null);
-      } else {
-        priorRemoteIdPerOp.push(null);
-      }
+      const hasSentinelId = priorRecreateId !== null || isScratchPendingPublishId(idValue);
+      const entryContent = hasSentinelId
+        ? recordWithIdCleared(e.content as Record<string, unknown>, idField)
+        : { ...(e.content as Record<string, unknown>) };
+      priorRemoteIdPerOp.push(priorRecreateId);
       rawOps.push(entryContent as ParsedContent);
     }
 
@@ -1220,15 +1235,18 @@ export class PublishPlanRunService {
       const { entry, resolvedOp, priorRemoteId } = entriesWithOps[i];
       const returned = returnedRecords[i] || resolvedOp; // Fallback if connector doesn't return
 
-      // Update File Index
-      const realId = returned[idField];
-      if (realId && (typeof realId === 'string' || typeof realId === 'number')) {
+      // Update File Index. Path-aware read: for a nested id path (Attio's
+      // `id.record_id`) a plain property access returns undefined, which
+      // silently skipped the index row — making the freshly-created record
+      // impossible to update/delete in later publishes.
+      const realId = readRecordIdAsString(returned as Record<string, unknown>, idField);
+      if (realId !== null && realId !== '') {
         const { folderPath, filename } = parsePath(entry.filePath);
         fileIndexUpdates.push({
           workbookId,
           folderPath,
           filename,
-          recordId: String(realId),
+          recordId: realId,
         });
 
         // Revert-create success: record the (prior → new) mapping so future
@@ -1241,19 +1259,27 @@ export class PublishPlanRunService {
             connectorAccountId,
             folder: folderPath,
             priorRemoteId,
-            newRemoteId: String(realId),
+            newRemoteId: realId,
           });
         }
-      } else if (realId) {
-        WSLogger.error({
-          source: 'PublishRunService.dispatchCreateBatch',
-          message: 'Unexpected ID type in publish create batch',
-          workbookId,
-          filePath: entry.filePath,
-          idField,
-          idType: typeof realId,
-          id: JSON.stringify(realId),
-        });
+      } else {
+        // No usable id: `readRecordIdAsString` returns null for non-scalar
+        // or non-finite values, and the empty string is rejected by the
+        // guard above. Surface the raw value so a connector returning an
+        // unusable id is loud instead of silently unindexed (which is
+        // exactly how the nested-id bug stayed hidden).
+        const rawValueAtIdPath = readRecordId(returned as Record<string, unknown>, idField);
+        if (rawValueAtIdPath !== undefined && rawValueAtIdPath !== null) {
+          WSLogger.error({
+            source: 'PublishRunService.dispatchCreateBatch',
+            message: 'Unusable record id in publish create batch — record not indexed',
+            workbookId,
+            filePath: entry.filePath,
+            idField,
+            idType: typeof rawValueAtIdPath,
+            id: JSON.stringify(rawValueAtIdPath),
+          });
+        }
       }
 
       // Update Refs
@@ -1296,12 +1322,19 @@ export class PublishPlanRunService {
     repoId: string,
   ): Promise<void> {
     const idField = tableSpec.idColumnRemoteId;
-    const filters: { [key: string]: string }[] = [];
+    const filters: ConnectorFile[] = [];
     const validEntries: PublishOperation[] = [];
 
     for (const entry of entries) {
       if (entry.remoteRecordId) {
-        filters.push({ [idField]: entry.remoteRecordId });
+        // Path-aware id stub: a nested id path (Attio's `id.record_id`) must
+        // produce `{ id: { record_id: … } }`, not a flat `"id.record_id"`
+        // key the connector's extractor can't see. For single-segment paths
+        // (every other connector) this is identical to the old
+        // `{ [idField]: id }` literal. (A flat column name that itself
+        // contains path metacharacters is not representable here — see the
+        // limitation note on `recordWithId`.)
+        filters.push(recordWithId(idField, entry.remoteRecordId) as ConnectorFile);
         validEntries.push(entry);
       }
     }

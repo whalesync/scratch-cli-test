@@ -93,6 +93,9 @@ describe('PublishPlanRunService', () => {
   let fileIndexService: jest.Mocked<FileIndexService>;
   let fileReferenceService: jest.Mocked<FileReferenceService>;
   let refResolverService: jest.Mocked<RefResolverService>;
+  let schemaService: jest.Mocked<SchemaHelperService>;
+  let experimentsService: jest.Mocked<ExperimentsService>;
+  let recreatedIdMapService: jest.Mocked<RecreatedIdMapService>;
 
   beforeEach(async () => {
     db = makeDbMock();
@@ -126,7 +129,7 @@ describe('PublishPlanRunService', () => {
       decryptCredentials: jest.fn().mockResolvedValue({ apiKey: 'test' }),
     } as unknown as jest.Mocked<CredentialEncryptionService>;
 
-    const schemaService = {
+    schemaService = {
       getTableSpec: jest.fn().mockResolvedValue({
         name: 'Articles',
         idColumnRemoteId: 'id',
@@ -143,16 +146,15 @@ describe('PublishPlanRunService', () => {
       }),
     } as unknown as jest.Mocked<SchemaHelperService>;
 
-    const experimentsService = {
+    experimentsService = {
       // Flag-off by default in these tests — they assert against the
       // sent-payload commit path, not the connector-returned-rows path.
       getBooleanFlag: jest.fn().mockResolvedValue(false),
     } as unknown as jest.Mocked<ExperimentsService>;
 
-    // Recreate flow isn't exercised by these tests; default the lookups to
-    // empty + the upsert to a noop so dispatchCreateBatch's new code path
-    // doesn't trip a missing-method when the connector flow happens to run.
-    const recreatedIdMapService = {
+    // Recreate flow defaults: lookups empty + upsert noop; the recreate
+    // sentinel tests assert against this mock directly.
+    recreatedIdMapService = {
       upsert: jest.fn().mockResolvedValue(undefined),
       resolveLatest: jest.fn().mockResolvedValue(null),
       resolveLatestBatch: jest.fn().mockResolvedValue(new Map()),
@@ -242,6 +244,566 @@ describe('PublishPlanRunService', () => {
       entries.map(() => ({ status: 'success', phase: 'edit', _count: 1 })),
     );
   }
+
+  /**
+   * Sets the table spec's `idColumnRemoteId` for both schema lookups. Used by
+   * the flat-vs-nested id-path tests; `'id'` matches every flat-id connector,
+   * `'id.record_id'` matches Attio's nested id triple.
+   */
+  function setTableSpecIdColumnRemoteId(idColumnRemoteIdDotPath: string) {
+    const tableSpecWithIdPath = {
+      name: 'Articles',
+      idColumnRemoteId: idColumnRemoteIdDotPath,
+      schema: {},
+      id: { wsId: 'articles', remoteId: ['base1', 'tbl1'] },
+      slug: 'articles',
+    };
+    jest.mocked(schemaService.getTableSpec).mockResolvedValue(tableSpecWithIdPath as never);
+    jest.mocked(schemaService.getTableSpecById).mockResolvedValue(tableSpecWithIdPath as never);
+  }
+
+  /**
+   * Sets up DB mocks so `runPipeline` processes the given entries in the given
+   * phase. Generalization of `setupEditPhaseEntries` for create/delete.
+   */
+  function setupPhaseEntries(
+    phase: 'edit' | 'create' | 'delete',
+    entries: Array<{
+      id: string;
+      filePath: string;
+      content: Record<string, unknown> | null;
+      changedFields?: Record<string, unknown> | null;
+      remoteRecordId?: string | null;
+    }>,
+  ) {
+    db.client.publishPlanOperation.count.mockImplementation((args: { where: { phase?: string; status?: string } }) => {
+      if (args?.where?.phase === phase) return Promise.resolve(entries.length);
+      return Promise.resolve(0);
+    });
+
+    db.client.publishPlanOperation.findMany.mockImplementation(
+      (args: {
+        where?: { phase?: string; status?: string };
+        distinct?: string[];
+        select?: Record<string, boolean>;
+      }) => {
+        if (args?.distinct) {
+          return Promise.resolve([{ dataFolderId: DATA_FOLDER_ID }]);
+        }
+        if (args?.where?.phase === phase && args?.where?.status === 'pending') {
+          return Promise.resolve(
+            entries.map((e) => ({
+              ...e,
+              planId: PLAN_ID,
+              phase,
+              dataFolderId: DATA_FOLDER_ID,
+              status: 'pending',
+              error: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            })),
+          );
+        }
+        if (args?.where?.status === 'failed-batch') {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([]);
+      },
+    );
+
+    db.client.publishPlanOperation.groupBy.mockResolvedValue(
+      entries.map(() => ({ status: 'success', phase, _count: 1 })),
+    );
+  }
+
+  describe('remote-id path handling (flat vs nested idColumnRemoteId)', () => {
+    describe('dispatchCreateBatch — FileIndex row extraction', () => {
+      it('flat id path: indexes the created record by its top-level string id (regression for every flat-id connector)', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: 'rec_created_9', title: 'T' }]);
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'articles/new.json', content: { title: 'T' }, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
+          { workbookId: WORKBOOK_ID, folderPath: 'articles', filename: 'new.json', recordId: 'rec_created_9' },
+        ]);
+      });
+
+      it('flat id path: coerces a numeric id (e.g. Postgres serial) to a string index key', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: 42, title: 'T' }]);
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'articles/new.json', content: { title: 'T' }, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
+          { workbookId: WORKBOOK_ID, folderPath: 'articles', filename: 'new.json', recordId: '42' },
+        ]);
+      });
+
+      it('nested id path: indexes the created record by the id nested inside the id object (the Attio bug)', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        jest
+          .mocked(connector.createRecords)
+          .mockResolvedValue([{ id: { workspace_id: 'ws1', record_id: 'uuid-nested-1' }, values: {} }]);
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'Companies/new.json', content: { values: {} }, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([
+          { workbookId: WORKBOOK_ID, folderPath: 'Companies', filename: 'new.json', recordId: 'uuid-nested-1' },
+        ]);
+      });
+
+      it('writes no index row (and does not throw) when the value at the id path is not a scalar', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: { unexpected: 'object' }, title: 'T' }]);
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'articles/new.json', content: { title: 'T' }, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(fileIndexService.upsertBatch).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('dispatchCreateBatch — pending-publish sentinel stripping', () => {
+      it('flat id path: strips the sentinel id before the connector create and does not mutate the entry content', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        const entryContentWithSentinelId = { id: 'scratch_pending_publish_abc123', title: 'T' };
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'articles/new.json', content: entryContentWithSentinelId, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(connector.createRecords).toHaveBeenCalledTimes(1);
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations[0]).toEqual({ title: 'T' });
+        // The shared plan-entry content must not be mutated by the strip.
+        expect(entryContentWithSentinelId.id).toBe('scratch_pending_publish_abc123');
+      });
+
+      it('nested id path: strips the sentinel at the nested path and does not mutate the shared nested id object', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        const sharedNestedIdObject = { workspace_id: 'ws1', record_id: 'scratch_pending_publish_xyz' };
+        const entryContentWithSentinelId = { id: sharedNestedIdObject, values: { a: 1 } };
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'Companies/new.json', content: entryContentWithSentinelId, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(connector.createRecords).toHaveBeenCalledTimes(1);
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations[0]).toEqual({ id: { workspace_id: 'ws1' }, values: { a: 1 } });
+        // Deep-clone guard: stripping through a shallow copy would have
+        // deleted record_id from this shared object too.
+        expect(sharedNestedIdObject.record_id).toBe('scratch_pending_publish_xyz');
+      });
+
+      it('flat id path: a real (non-sentinel) id passes through to the connector unchanged', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('create', [
+          {
+            id: 'op_1',
+            filePath: 'articles/new.json',
+            content: { id: 'rec_real_1', title: 'T' },
+            remoteRecordId: null,
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations[0]).toEqual({ id: 'rec_real_1', title: 'T' });
+      });
+
+      it('a record with no id field at all (the normal CLI create) passes through untouched', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        const contentWithoutAnyId = { values: { name: 'fresh' } };
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'Companies/new.json', content: contentWithoutAnyId, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations[0]).toEqual({ values: { name: 'fresh' } });
+      });
+
+      it('nested id path: stripping the only leaf prunes the empty id husk from the payload', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        setupPhaseEntries('create', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/new.json',
+            content: { id: { record_id: 'scratch_pending_publish_solo' }, values: { a: 1 } },
+            remoteRecordId: null,
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        // No `id: {}` husk left behind for the connector to choke on.
+        expect(operations[0]).toEqual({ values: { a: 1 } });
+      });
+    });
+
+    describe('dispatchCreateBatch — revert-recreate sentinel (RecreatedIdMap remap)', () => {
+      it('flat id path: strips the recreate sentinel and upserts the (prior → new) remap row', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: 'rec_new_1', title: 'T' }]);
+        setupPhaseEntries('create', [
+          {
+            id: 'op_1',
+            filePath: 'articles/reverted.json',
+            content: { id: 'scratch_pending_recreate_old_1', title: 'T' },
+            remoteRecordId: null,
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations[0]).toEqual({ title: 'T' });
+        expect(recreatedIdMapService.upsert).toHaveBeenCalledWith({
+          workbookId: WORKBOOK_ID,
+          connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          folder: 'articles',
+          priorRemoteId: 'old_1',
+          newRemoteId: 'rec_new_1',
+        });
+      });
+
+      it('nested id path, ROOT sentinel shape (what the CLI revert actually writes): detected, stripped, and remapped', async () => {
+        // scratch-git-2's `replace_pk_with_recreate_sentinel` swaps the whole
+        // nested id object for a sentinel STRING at the path root:
+        // `{ id: "scratch_pending_recreate_<old>" }` — not at the leaf.
+        setTableSpecIdColumnRemoteId('id.record_id');
+        jest
+          .mocked(connector.createRecords)
+          .mockResolvedValue([{ id: { workspace_id: 'ws1', record_id: 'uuid-new-2' }, values: {} }]);
+        setupPhaseEntries('create', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/reverted.json',
+            content: { id: 'scratch_pending_recreate_uuid-old-2', values: { a: 1 } },
+            remoteRecordId: null,
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations[0]).toEqual({ values: { a: 1 } });
+        expect(recreatedIdMapService.upsert).toHaveBeenCalledWith({
+          workbookId: WORKBOOK_ID,
+          connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          folder: 'Companies',
+          priorRemoteId: 'uuid-old-2',
+          newRemoteId: 'uuid-new-2',
+        });
+      });
+
+      it('nested id path, LEAF sentinel shape: detected, stripped, and remapped', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: { record_id: 'uuid-new-3' }, values: {} }]);
+        setupPhaseEntries('create', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/reverted.json',
+            content: { id: { record_id: 'scratch_pending_recreate_uuid-old-3' }, values: { a: 1 } },
+            remoteRecordId: null,
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations[0]).toEqual({ values: { a: 1 } });
+        expect(recreatedIdMapService.upsert).toHaveBeenCalledWith({
+          workbookId: WORKBOOK_ID,
+          connectorAccountId: CONNECTOR_ACCOUNT_ID,
+          folder: 'Companies',
+          priorRemoteId: 'uuid-old-3',
+          newRemoteId: 'uuid-new-3',
+        });
+      });
+
+      it('keeps op arrays aligned when a null-content entry sits before the sentinel entry', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: 'rec_aligned', title: 'T' }]);
+        setupPhaseEntries('create', [
+          { id: 'op_0', filePath: 'articles/empty.json', content: null, remoteRecordId: null },
+          {
+            id: 'op_1',
+            filePath: 'articles/reverted.json',
+            content: { id: 'scratch_pending_recreate_old_a', title: 'T' },
+            remoteRecordId: null,
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        // Only the non-null entry reaches the connector, and the remap row
+        // pairs the sentinel's prior id with THAT entry's returned id.
+        const [, operations] = jest.mocked(connector.createRecords).mock.calls[0];
+        expect(operations).toHaveLength(1);
+        expect(recreatedIdMapService.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({ priorRemoteId: 'old_a', newRemoteId: 'rec_aligned' }),
+        );
+      });
+    });
+
+    describe('dispatchCreateBatch — id-value boundary cases', () => {
+      it('an empty-string id from the connector is not indexed', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: '', title: 'T' }]);
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'articles/new.json', content: { title: 'T' }, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(fileIndexService.upsertBatch).not.toHaveBeenCalled();
+      });
+
+      it('a numeric 0 id from the connector IS indexed (truthiness must not drop a legal id)', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        jest.mocked(connector.createRecords).mockResolvedValue([{ id: 0, title: 'T' }]);
+        setupPhaseEntries('create', [
+          { id: 'op_1', filePath: 'articles/new.json', content: { title: 'T' }, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(fileIndexService.upsertBatch).toHaveBeenCalledWith([expect.objectContaining({ recordId: '0' })]);
+      });
+    });
+
+    describe('dispatchUpdateBatch — id already present is left untouched', () => {
+      it('flat id path: a native integer id is passed to the connector with its type preserved (no fill, no stringification)', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('edit', [
+          {
+            id: 'op_1',
+            filePath: 'articles/a1.json',
+            content: { id: 42, title: 'New' },
+            changedFields: { title: 'New' },
+            remoteRecordId: '42',
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, files] = jest.mocked(connector.updateRecords).mock.calls[0];
+        expect(files[0].id).toBe(42);
+      });
+
+      it('nested id path: a present nested id is passed through unchanged', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        const presentNestedId = { workspace_id: 'ws1', record_id: 'uuid-present' };
+        setupPhaseEntries('edit', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/c1.json',
+            content: { id: presentNestedId, values: { name: 'New' } },
+            changedFields: { values: { name: 'New' } },
+            remoteRecordId: 'uuid-present',
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, files] = jest.mocked(connector.updateRecords).mock.calls[0];
+        expect(files[0].id).toEqual(presentNestedId);
+      });
+    });
+
+    describe('dispatchDeleteBatch — entries without a remote id', () => {
+      it('skips entries with no remoteRecordId and only cleans up the deleted ones', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('delete', [
+          { id: 'op_1', filePath: 'articles/never-published.json', content: null, remoteRecordId: null },
+          { id: 'op_2', filePath: 'articles/published.json', content: null, remoteRecordId: 'rec_pub_1' },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, filters] = jest.mocked(connector.deleteRecords).mock.calls[0];
+        expect(filters).toEqual([{ id: 'rec_pub_1' }]);
+        // Local cleanup (refs) must align with what was actually deleted.
+        expect(db.client.fileReference.deleteMany).toHaveBeenCalledWith({
+          where: { workbookId: WORKBOOK_ID, sourceFilePath: { in: ['articles/published.json'] } },
+        });
+      });
+
+      it('does not call the connector at all when no entry has a remote id', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('delete', [
+          { id: 'op_1', filePath: 'articles/never-published.json', content: null, remoteRecordId: null },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(connector.deleteRecords).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('dispatchUpdateBatch — identity assertion with connector-returned rows (flag on)', () => {
+      beforeEach(() => {
+        jest.mocked(experimentsService.getBooleanFlag).mockResolvedValue(true);
+        jest.mocked(db.client.user.findUnique).mockResolvedValue({ id: 'user_test' });
+      });
+
+      it('nested id path: commits the connector-returned row when ids match at the nested path', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        jest
+          .mocked(connector.updateRecords)
+          .mockResolvedValue([{ id: { record_id: 'uuid-match' }, values: { name: 'Server Normalized' } }] as never);
+        setupPhaseEntries('edit', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/c1.json',
+            content: { id: { record_id: 'uuid-match' }, values: { name: 'New' } },
+            changedFields: { values: { name: 'New' } },
+            remoteRecordId: 'uuid-match',
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const mainCommit = scratchGitService.commitFilesToBranch.mock.calls.find(([, branch]) => branch === 'main');
+        expect(mainCommit).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const committedContent = JSON.parse(mainCommit![2][0].content) as Record<string, unknown>;
+        expect(committedContent).toMatchObject({ values: { name: 'Server Normalized' } });
+      });
+
+      it('nested id path: falls back to the sent payload when the connector echoes a different id (misorder guard now works for nested ids)', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        jest
+          .mocked(connector.updateRecords)
+          .mockResolvedValue([{ id: { record_id: 'uuid-SOMEONE-ELSE' }, values: { name: 'Wrong Row' } }] as never);
+        setupPhaseEntries('edit', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/c1.json',
+            content: { id: { record_id: 'uuid-mine' }, values: { name: 'New' } },
+            changedFields: { values: { name: 'New' } },
+            remoteRecordId: 'uuid-mine',
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const mainCommit = scratchGitService.commitFilesToBranch.mock.calls.find(([, branch]) => branch === 'main');
+        expect(mainCommit).toBeDefined();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const committedContent = JSON.parse(mainCommit![2][0].content) as Record<string, unknown>;
+        // The misordered echo must NOT be committed under this file's path.
+        expect(committedContent).toMatchObject({ values: { name: 'New' } });
+      });
+    });
+
+    describe('dispatchDeleteBatch — id filter shape', () => {
+      it('flat id path: passes the same flat `{ id }` stub as before (regression for every flat-id connector)', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('delete', [
+          { id: 'op_1', filePath: 'articles/gone.json', content: null, remoteRecordId: 'rec_del_1' },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(connector.deleteRecords).toHaveBeenCalledTimes(1);
+        const [, filters] = jest.mocked(connector.deleteRecords).mock.calls[0];
+        expect(filters).toEqual([{ id: 'rec_del_1' }]);
+      });
+
+      it('nested id path: builds a nested id stub the connector extractor can read, not a flat dotted key', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        setupPhaseEntries('delete', [
+          { id: 'op_1', filePath: 'Companies/gone.json', content: null, remoteRecordId: 'uuid-del-1' },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(connector.deleteRecords).toHaveBeenCalledTimes(1);
+        const [, filters] = jest.mocked(connector.deleteRecords).mock.calls[0];
+        expect(filters).toEqual([{ id: { record_id: 'uuid-del-1' } }]);
+        expect(filters[0]).not.toHaveProperty(['id.record_id']);
+      });
+    });
+
+    describe('dispatchUpdateBatch — id backfill into content', () => {
+      it('flat id path: fills a missing id from the resolved remote id before the connector update', async () => {
+        setTableSpecIdColumnRemoteId('id');
+        setupPhaseEntries('edit', [
+          {
+            id: 'op_1',
+            filePath: 'articles/a1.json',
+            content: { title: 'New' },
+            changedFields: { title: 'New' },
+            remoteRecordId: 'rec_fill_1',
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, files] = jest.mocked(connector.updateRecords).mock.calls[0];
+        expect(files[0]).toMatchObject({ id: 'rec_fill_1', title: 'New' });
+      });
+
+      it('nested id path: fills a missing id at the nested path (not as a flat dotted key)', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        setupPhaseEntries('edit', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/c1.json',
+            content: { values: { name: 'New' } },
+            changedFields: { values: { name: 'New' } },
+            remoteRecordId: 'uuid-fill-1',
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        const [, files] = jest.mocked(connector.updateRecords).mock.calls[0];
+        expect(files[0]).toMatchObject({ id: { record_id: 'uuid-fill-1' }, values: { name: 'New' } });
+        expect(files[0]).not.toHaveProperty(['id.record_id']);
+      });
+
+      it('nested id path: falls back to the FileIndex when the plan row has no remote id (publish-created record)', async () => {
+        setTableSpecIdColumnRemoteId('id.record_id');
+        jest.mocked(fileIndexService.getRecordId).mockResolvedValue('uuid-from-index');
+        setupPhaseEntries('edit', [
+          {
+            id: 'op_1',
+            filePath: 'Companies/c1.json',
+            content: { values: { name: 'New' } },
+            changedFields: { values: { name: 'New' } },
+            remoteRecordId: null,
+          },
+        ]);
+
+        await service.runPipeline(PLAN_ID);
+
+        expect(fileIndexService.getRecordId).toHaveBeenCalledWith(WORKBOOK_ID, 'Companies', 'c1.json');
+        const [, files] = jest.mocked(connector.updateRecords).mock.calls[0];
+        expect(files[0]).toMatchObject({ id: { record_id: 'uuid-from-index' } });
+      });
+    });
+  });
 
   describe('dispatchUpdateBatch with changedFields', () => {
     it('passes deep changedFields to connector.updateRecords', async () => {
