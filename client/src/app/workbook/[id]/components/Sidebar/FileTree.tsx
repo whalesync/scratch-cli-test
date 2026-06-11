@@ -9,7 +9,7 @@ import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import type { ConnectorAccount, FileDiffStatus, Workspace } from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { ReviewConnectionNode } from './ReviewTreeNode';
 import { ConnectionNode, EmptyConnectionNode } from './TreeNode';
 import { WorkbookRepoNode } from './WorkbookRepoNode';
@@ -94,9 +94,22 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     return connectorAccounts.filter((account) => !connectorIdsWithFolders.has(account.id));
   }, [connectorAccounts, dataFolderGroups]);
 
-  // Auto-expand all connection nodes on initial load
+  // Auto-expand all connection nodes once, on the first render where connection
+  // data is available. This must run at most once per mount: using
+  // `expandedNodes.size === 0` alone as the trigger is wrong because that
+  // condition is also true the instant a user collapses the *last* expanded
+  // connection — which would silently re-expand everything (DEV bug: collapsing
+  // the second of two connections re-opened the first). The ref guards against
+  // that by marking initialization complete as soon as the data has loaded,
+  // whether or not we actually expanded anything.
+  const hasRunInitialConnectionAutoExpand = useRef(false);
   useEffect(() => {
-    if ((sortedGroups.length > 0 || emptyConnectorAccounts.length > 0) && expandedNodes.size === 0) {
+    if (hasRunInitialConnectionAutoExpand.current) return;
+    if (sortedGroups.length === 0 && emptyConnectorAccounts.length === 0) return; // wait for data to load
+    hasRunInitialConnectionAutoExpand.current = true;
+    // Respect any previously persisted expand/collapse state; only auto-expand
+    // when the user has no saved state at all (e.g. a brand-new workbook).
+    if (expandedNodes.size === 0) {
       const allConnectionIds = [
         ...sortedGroups.map((group) => `connection-${group.dataFolders[0]?.connectorAccountId ?? group.name}`),
         ...emptyConnectorAccounts.map((account) => `connection-${account.id}`),
