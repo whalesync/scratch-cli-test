@@ -17,21 +17,24 @@ WORKDIR /app
 COPY ./yarn.lock /app/yarn.lock
 COPY ./package.json /app/package.json
 
-# Copy and build shared-types package
+# Copy the workspace member manifests needed to resolve the install, plus the
+# shared-types source so it can be built below.
 COPY ./packages/shared-types/package.json /app/packages/shared-types/package.json
 COPY ./packages/shared-types/tsconfig.json /app/packages/shared-types/tsconfig.json
 COPY ./packages/shared-types/src/ /app/packages/shared-types/src/
-
-WORKDIR /app/packages/shared-types/
-RUN yarn install --immutable
-RUN yarn build
-
-# Copy and install client dependencies
-WORKDIR /app
 COPY ./client/package.json /app/client/package.json
 
-WORKDIR /app/client
-RUN yarn install --immutable
+# Install the whole workspace from the root so the committed root yarn.lock is
+# honored — this is what makes the image reproducible. Run from /app (the
+# workspace root), NOT from inside a member dir, or yarn re-resolves the member
+# in isolation and rewrites the lock. Use --frozen-lockfile (the Yarn 1 flag
+# that fails the build if the lockfile would change); --immutable is a Yarn
+# Berry flag that Yarn 1.x silently ignores, so it does NOT enforce the lock.
+RUN yarn install --frozen-lockfile
+
+# Build shared-types
+WORKDIR /app/packages/shared-types/
+RUN yarn build
 
 # Stage 2: Build the application
 FROM node:22.22.2-alpine3.23 AS builder
