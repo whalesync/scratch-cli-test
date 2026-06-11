@@ -9,7 +9,7 @@ export const useClerkAppearance = (): ClerkAppearanceRegistry['theme'] => {
       colorPrimary: theme.colors.blue[9],
       colorDanger: theme.colors.red[9],
       colorSuccess: theme.colors.green[9],
-      colorInputText: theme.colors.gray[11],
+      colorInputForeground: theme.colors.gray[11],
       colorText: theme.colors.gray[11],
       colorTextSecondary: theme.colors.gray[10],
     },
