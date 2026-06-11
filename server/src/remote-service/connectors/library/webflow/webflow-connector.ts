@@ -1,5 +1,5 @@
 import { TObject, TSchema } from '@sinclair/typebox';
-import { connectorMetadata, IncrementalPullSupport } from '@spinner/shared-types';
+import { connectorMetadata, IncrementalPullSupport, isScratchPendingPublishId } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -793,6 +793,44 @@ export class WebflowConnector extends Connector {
       extractUrl: (item) => (typeof item['url'] === 'string' ? item['url'] : undefined),
       resolveFieldValue: defaultResolveFieldValue,
     });
+  }
+
+  /**
+   * Resolve an `@asset/` reference into the object shape a Webflow Image/File field
+   * expects on write. Webflow does not accept a bare URL string (the base
+   * implementation's default) — it requires an object that is either `{ fileId }`
+   * (reference an asset already on this site) or `{ url }` (re-host from a public URL).
+   *
+   * Cross-site asset sync (e.g. Sandbox → Prod) flows through here for the
+   * `match_asset_by_hash` / `source_asset_to_dest_asset` transformers. The publish
+   * `asset-upload` phase runs before the edit phase: it uploads the destination asset
+   * to the target site and writes the minted Webflow fileId back onto the Asset row.
+   * So by the time we resolve the reference, a successfully-uploaded asset has a real
+   * (non-pending) `remoteAssetId` — we reference it by `{ fileId }`, which keeps publish
+   * idempotent (Webflow re-ingests nothing on subsequent publishes). Only when the
+   * asset is still a pending-publish placeholder (upload skipped or not yet run) do we
+   * fall back to handing Webflow a public URL to re-host.
+   *
+   * The stale source `fileId` that broke cross-site sync is never reproduced here: this
+   * resolver only ever sees the destination Asset row.
+   */
+  override resolveAssetReference(asset: {
+    remoteAssetId: string;
+    rehostedUrl: string | null;
+    url: string | null;
+  }): unknown {
+    if (!isScratchPendingPublishId(asset.remoteAssetId)) {
+      // Pre-uploaded to the destination site by the asset-upload phase. Reference it
+      // by fileId — but Webflow REQUIRES the url alongside the fileId (it rejects a
+      // bare { fileId } with "Expected value to have a 'url' field"), so include the
+      // destination asset's own url (set on the Asset row by the upload write-back).
+      const destinationUrl = asset.url ?? asset.rehostedUrl;
+      return destinationUrl ? { fileId: asset.remoteAssetId, url: destinationUrl } : { fileId: asset.remoteAssetId };
+    }
+    // Not yet uploaded: hand Webflow a public URL. Prefer the permanent rehosted (GCS)
+    // URL over the possibly-expiring source URL.
+    const publicUrl = asset.rehostedUrl ?? asset.url;
+    return publicUrl ? { url: publicUrl } : null;
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {

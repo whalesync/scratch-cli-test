@@ -93,7 +93,9 @@ describe('sourceAssetToDestAssetTransformer', () => {
       expect(result).toEqual({ success: true, value: `@asset/${dbId}` });
     });
 
-    it('should resolve an existing published asset with raw ID', async () => {
+    it('should resolve an existing published asset with an @asset/ ref', async () => {
+      // Even an already-published destination asset emits an @asset/ pseudo-ref now, so
+      // publish-time resolveAssetReference builds the connector-specific write shape.
       const dbId = nextAssetDbId();
       const lookup = createLookupTools({
         att_1: {
@@ -101,7 +103,7 @@ describe('sourceAssetToDestAssetTransformer', () => {
         },
       });
       const result = await sourceAssetToDestAssetTransformer.transform(createContext('att_1', lookup));
-      expect(result).toEqual({ success: true, value: 'webflow_img_456' });
+      expect(result).toEqual({ success: true, value: `@asset/${dbId}` });
     });
 
     it('should use @asset/ prefix for existing but unpublished asset (pending publish ID)', async () => {
@@ -174,7 +176,8 @@ describe('sourceAssetToDestAssetTransformer', () => {
         att_2: { result: { destinationAssetId: dbId2, destinationAssetRemoteId: tempId, isNew: true } },
       });
       const result = await sourceAssetToDestAssetTransformer.transform(createContext(['att_1', 'att_2'], lookup));
-      expect(result).toEqual({ success: true, value: ['webflow_img_123', `@asset/${dbId2}`] });
+      // Both published and new assets emit @asset/ refs (resolved per-connector at publish).
+      expect(result).toEqual({ success: true, value: [`@asset/${dbId1}`, `@asset/${dbId2}`] });
     });
 
     it('should fail if any array element cannot be resolved', async () => {

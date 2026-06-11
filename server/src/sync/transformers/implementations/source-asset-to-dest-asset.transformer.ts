@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { isScratchPendingPublishId, SourceAssetToDestAssetOptions, TransformerTypes } from '@spinner/shared-types';
+import { SourceAssetToDestAssetOptions, TransformerTypes } from '@spinner/shared-types';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
 import { AssetMappingResult, FieldTransformer, TransformContext, TransformResult } from '../transformer.types';
@@ -154,12 +154,12 @@ export const sourceAssetToDestAssetTransformer: FieldTransformer = {
         throw err;
       }
 
-      // Use @asset/ pseudo-reference (keyed by Asset DB id) for new assets or assets with
-      // pending publish IDs, otherwise use the raw destination remote asset ID.
-      const ref =
-        mapping.isNew || isScratchPendingPublishId(mapping.destinationAssetRemoteId)
-          ? `@asset/${mapping.destinationAssetId}`
-          : mapping.destinationAssetRemoteId;
+      // Always emit an @asset/ pseudo-ref (keyed by Asset DB id). Resolution at publish
+      // routes through the connector's resolveAssetReference, which builds the
+      // connector-specific write shape from the Asset row (e.g. Webflow needs
+      // { fileId, url }, not a raw remote-id string). doesElementMatch still recognizes a
+      // destination that already holds the raw remote id, so unchanged values are skipped.
+      const ref = `@asset/${mapping.destinationAssetId}`;
       resolved.push(ref);
 
       // Check if the existing destination value already matches

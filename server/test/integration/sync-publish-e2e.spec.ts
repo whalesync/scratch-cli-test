@@ -949,14 +949,15 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     // Verify asset references in each synced file
     // =====================================================================
 
-    // post-asset-0: [alpha (new → @asset/), beta (existing → wp_img_42)]
+    // post-asset-0: [alpha (new → @asset/), beta (existing → @asset/)]
     const post0Content = vfs.getAllFiles(DIRTY_BRANCH).get('dest-posts/post-asset-0.json');
     expect(post0Content).toBeDefined();
     const post0 = JSON.parse(post0Content!) as Record<string, unknown>;
     const post0Images = post0.images as string[];
     expect(post0Images).toHaveLength(2);
     expect(post0Images[0]).toMatch(/^@asset\//); // alpha — new, gets @asset/ ref
-    expect(post0Images[1]).toBe(existingDestRemoteId); // beta — existing, gets raw ID
+    // beta — existing/published, now ALSO an @asset/ ref (resolved to its remote id at publish)
+    expect(post0Images[1]).toBe(`@asset/${existingDestAssetId}`);
 
     // post-asset-1: [gamma (new → @asset/)]
     const post1Content = vfs.getAllFiles(DIRTY_BRANCH).get('dest-posts/post-asset-1.json');
@@ -973,14 +974,16 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     const post2Images = post2.images as unknown[];
     expect(post2Images).toEqual([]);
 
-    // post-asset-3: [beta (existing → wp_img_42), gamma (new → @asset/)]
+    // post-asset-3: [beta (existing → @asset/), gamma (new → @asset/)]
     const post3Content = vfs.getAllFiles(DIRTY_BRANCH).get('dest-posts/post-asset-3.json');
     expect(post3Content).toBeDefined();
     const post3 = JSON.parse(post3Content!) as Record<string, unknown>;
     const post3Images = post3.images as string[];
     expect(post3Images).toHaveLength(2);
-    expect(post3Images[0]).toBe(existingDestRemoteId); // beta — existing
+    expect(post3Images[0]).toBe(`@asset/${existingDestAssetId}`); // beta — existing, now an @asset/ ref
     expect(post3Images[1]).toMatch(/^@asset\//); // gamma — new
+    // beta resolves to the same destination asset in every post (idempotent)
+    expect(post3Images[0]).toBe(post0Images[1]);
 
     // =====================================================================
     // Verify: @asset/ refs for alpha and gamma point to the same dest asset

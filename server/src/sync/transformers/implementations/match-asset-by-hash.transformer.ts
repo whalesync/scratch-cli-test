@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { isScratchPendingPublishId, MatchAssetByHashOptions, TransformerTypes } from '@spinner/shared-types';
+import { MatchAssetByHashOptions, TransformerTypes } from '@spinner/shared-types';
 import get from 'lodash/get';
 import { WSLogger } from '../../../logger';
 import { registerTransformer } from '../transformer-registry';
@@ -163,11 +163,13 @@ export const matchAssetByHashTransformer: FieldTransformer = {
           typedOptions.destinationDataFolderId,
         );
 
-        const ref =
-          mapping.isNew || isScratchPendingPublishId(mapping.destinationAssetRemoteId)
-            ? `@asset/${mapping.destinationAssetId}`
-            : mapping.destinationAssetRemoteId;
-        resolved.push(ref);
+        // Always emit an @asset/ pseudo-ref (keyed by Asset DB id). Resolution at
+        // publish routes through the connector's resolveAssetReference, which builds the
+        // connector-specific write shape from the Asset row (Webflow needs { fileId, url };
+        // a raw remote-id string would be the wrong shape). The Asset row carries the
+        // destination remote id + url once uploaded, so this stays correct whether or not
+        // the asset has been published yet.
+        resolved.push(`@asset/${mapping.destinationAssetId}`);
       } catch (err) {
         if (err instanceof Error && err.message === 'ASSET_NOT_FOUND') {
           const msg = `Source asset "${assetId}" not found. Pull the source table again so all assets are indexed.`;
