@@ -3546,6 +3546,29 @@ mod publish_results_formatting {
             .unwrap()
             .contains("fetch_origin"));
     }
+
+    #[test]
+    fn row_failures_keep_status_published_with_run_job_warning() {
+        let outcomes = vec![PublishConnectionOutcome::PublishedWithRowFailures {
+            name: "Postgres".into(),
+            failed_count: 3,
+            warning:
+                "3 record(s) were rejected by the destination connector and were not published."
+                    .into(),
+        }];
+        // Human path also runs (printed during cargo test) to exercise the warning branch.
+        print_publish_results(&outcomes, 100, false).unwrap();
+        let json = parse_json_output(&outcomes);
+        // DEV-10243: per-row connector rejections surface as a non-fatal warning,
+        // NOT a "failed" status — but never a clean success either.
+        assert_eq!(json["connections"][0]["status"], "published");
+        assert_eq!(json["connections"][0]["warning"]["phase"], "run-job");
+        assert_eq!(json["connections"][0]["warning"]["failedCount"], 3);
+        assert!(json["connections"][0]["warning"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("rejected"));
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,15 @@ export type PublishPublicProgress = {
   lastSyncError?: string;
   errorCount: number;
   /**
+   * DEV-10243: count of operations the destination connector rejected (rows
+   * marked `failed-batch` during the run). Set on the terminal `completed`
+   * checkpoint so the CLI/desktop can detect a per-row failure even though the
+   * BullMQ job itself still ends `completed`. Both consumers read it as
+   * `failedCount ?? 0`, so it stays optional and the other checkpoint literals
+   * don't need to set it.
+   */
+  failedCount?: number;
+  /**
    * DEV-10316 publish-time TOCTOU abort. Set (with `status: 'failed'`) when the
    * connection's dirty HEAD drifted past the client's `expectedBaseDirtyHead`
    * since upload, so the plan was aborted before building. The desktop modal
@@ -291,6 +300,9 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           backfillsPlanned: runResult.totalByPhase?.backfill ?? 0,
           renameFilesPlanned: runResult.totalByPhase?.['rename-files'] ?? 0,
           ...latestErrorInfo,
+          // DEV-10243: surface per-row connector rejections (failed-batch) so the
+          // CLI/desktop don't read this terminal `completed` checkpoint as a clean success.
+          failedCount: runResult.failedCount ?? 0,
         },
         jobProgress: {},
         connectorProgress: {},

@@ -639,20 +639,20 @@ describeIfPostgres(
     // Drives the failure path documented in DEV-10175 and the matching Rust
     // unit test (`reconcile_keeps_patch_when_server_main_did_not_advance`).
     //
-    // Quirk worth knowing: the Postgres connector currently SWALLOWS per-row
-    // constraint violations rather than failing the run-job. So a publish
-    // that hits a VARCHAR(20) overflow comes back as `status: "published"`,
-    // exit code 0, with no warning — but `main` does not advance, the patch
-    // does not drop from `accepted-patches.json`, and the Postgres row is
-    // unchanged. The user's only signal is that `files unpublished` keeps
-    // reporting the path as still-pending.
+    // Quirk worth knowing: the Postgres connector SWALLOWS per-row constraint
+    // violations rather than failing the run-job. So a publish that hits a
+    // VARCHAR(20) overflow comes back with exit code 0 — `main` does not
+    // advance, the patch does not drop from `accepted-patches.json`, and the
+    // Postgres row is unchanged. As of DEV-10243 the publish no longer reports
+    // a clean `"published"`: the run-job's `failedCount` is surfaced to the CLI
+    // as a `phase: "run-job"` entry in `warnings[]` (exit stays 0), and
+    // `files unpublished` still reports the path as still-pending.
     //
     // This describe block locks in that behavior so a future change to the
-    // connector (surfacing the per-row failure as a run-job error, or to a
-    // `warnings[]` payload, or as a non-zero exit) will trip these tests
-    // and force an intentional update — not a silent change in user-visible
-    // behavior. The recovery test at the end proves the workspace is still
-    // recoverable after the silent drop.
+    // connector (e.g. flipping the per-row failure to a non-zero exit) will
+    // trip these tests and force an intentional update — not a silent change
+    // in user-visible behavior. The recovery test at the end proves the
+    // workspace is still recoverable after the dropped row.
     let workspaceId: string;
     let workspaceDir: string;
     let connDirName: string;
@@ -809,56 +809,44 @@ describeIfPostgres(
       }
     }, 60_000);
 
-    it("triggers a publish whose row will be silently dropped by the connector", async () => {
-      // Drives the actual publish so the assertion-style tests below
-      // (patch preserved, main unmoved, worktree retains edit, Postgres
-      // unchanged) have post-publish state to observe. Intentionally NOT
-      // asserting the publish exit code or status here — that's DEV-10243's
-      // job. See the `.skip`'d test immediately below for the assertion
-      // we'd like to make once the reporting gap is closed.
-      try {
-        cli.json(["files", "publish"], { cwd: workspaceDir });
-      } catch (err) {
-        hasFailed = true;
-        throw err;
-      }
-    }, 180_000);
-
-    // SKIPPED — pending DEV-10243.
+    // DEV-10243: the run-job that rejects every row now surfaces the failure to
+    // the CLI as a non-fatal `warnings[]` entry (Option 1) instead of a silent
+    // `"published"`. Before the fix the per-row throw was caught by the server's
+    // `processBatch`, the plan ended `CompletedWithErrors`, but the BullMQ job
+    // still reported `completed` — so `poll_job` saw success and the CLI printed
+    // a clean `"published"`. The fix copies the plan's `failedCount` onto the
+    // run-job's `publicProgress`; the CLI reads it and emits a `phase: "run-job"`
+    // warning. Publish still exits 0 (the edits are recoverable), so `cli.json`
+    // returning at all proves exit 0.
     //
-    // The intended assertion is that `files publish` exits non-zero with
-    // `status: "failed"` and a `failedConnections` entry of `phase: "run-job"`
-    // when the destination connector rejects every row in the batch (e.g.,
-    // VARCHAR(20) overflow, type mismatch, FK violation). Today this is
-    // unreachable: per-row connector throws are caught by `processBatch`,
-    // the plan ends as `CompletedWithErrors`, but the BullMQ job wrapper
-    // marks the job `status: "completed"` regardless — so the CLI's
-    // `poll_job` sees success and prints `"published"`. See DEV-10243 for
-    // the full root-cause trace and the proposed fix (Option 1: surface
-    // `failedCount` in `JobProgress` and map to a `warnings[]` entry).
-    //
-    // Once DEV-10243 lands, delete the running test above, un-skip this
-    // one, and flip the assertion to whichever shape the fix chose:
-    //   - Option 1 (exit 0 + warning): publishResult.warnings.length > 0
-    //     and a per-row failure detail.
-    //   - Option 2 (exit non-zero):    expectError: true, status "failed",
-    //     failedConnections has one entry with phase "run-job".
-    //
-    // The other tests in this block already lock in the recoverable
-    // workspace state that the silent-drop leaves behind, so they don't
-    // depend on this assertion landing.
-    it.skip("publish reports the per-row failure to the CLI (DEV-10243)", async () => {
+    // This is also the single publish that the state-assertion tests below
+    // (patch preserved, main unmoved, worktree retains edit, Postgres unchanged)
+    // observe — running it here once leaves exactly the recoverable state they
+    // check.
+    it("publish reports the per-row failure to the CLI (DEV-10243)", async () => {
       try {
         const publishResult = cli.json<{
           status: string;
           publishedConnections: string[];
           failedConnections: Array<unknown>;
-          warnings: Array<unknown>;
+          warnings: Array<{
+            name: string;
+            status: string;
+            warning: { phase: string; message: string; failedCount: number };
+          }>;
         }>(["files", "publish"], { cwd: workspaceDir });
 
-        expect(publishResult.status).toBe("failed");
-        expect(publishResult.publishedConnections).not.toContain(connDirName);
-        expect(publishResult.failedConnections.length).toBeGreaterThan(0);
+        // Never a clean silent success: exit 0 + a run-job warning.
+        expect(publishResult.status).toBe("published");
+        expect(publishResult.failedConnections).toHaveLength(0);
+        expect(publishResult.warnings.length).toBeGreaterThan(0);
+
+        const warning = publishResult.warnings.find(
+          (w) => w.name === connDirName,
+        );
+        expect(warning).toBeDefined();
+        expect(warning?.warning.phase).toBe("run-job");
+        expect(warning?.warning.failedCount).toBeGreaterThan(0);
       } catch (err) {
         hasFailed = true;
         throw err;
@@ -867,14 +855,15 @@ describeIfPostgres(
 
     it("silent drop preserves the patch in accepted-patches.json (DEV-10175 + re-anchor no-op detection)", () => {
       try {
-        // The DEV-10175 fix says: a failed run-job must NOT clear pending
-        // edits. The silent-drop variant also reaches the correct outcome,
-        // via a different code path: `reconcile_accepted_after_publish`
-        // DOES run (the run-job "succeeded"), but `re_anchor_patches` sees
-        // that the patch's intended outcome still differs from `new_main`'s
-        // blob (because the connector didn't actually write the new value)
-        // and preserves the entry. `files unpublished` is the user-visible
-        // signal that something didn't actually land.
+        // The DEV-10175 fix says: a dropped row must NOT clear pending edits.
+        // The dropped-row variant reaches the correct outcome via re-anchor:
+        // `reconcile_accepted_after_publish` DOES run (the run-job reported
+        // `completed`, so `poll_job` returned Ok — the new DEV-10243 warning is
+        // raised only after reconcile), but `re_anchor_patches` sees that the
+        // patch's intended outcome still differs from `new_main`'s blob (the
+        // connector didn't actually write the new value) and preserves the
+        // entry. `files unpublished` is the user-visible signal that something
+        // didn't land.
         const afterFail = readAcceptedPatches(workspaceDir, connDirName);
         expect(afterFail.patches).toHaveLength(1);
         const entry = afterFail.patches[0];
@@ -896,10 +885,10 @@ describeIfPostgres(
 
     it("silent drop leaves refs/heads/main unmoved", () => {
       try {
-        // No commit was created server-side, so origin/main didn't advance,
-        // so reconcile (which doesn't run on this path anyway) had nothing
-        // to fast-forward to. The local ref must still point at the
-        // pre-publish snapshot.
+        // No commit was created server-side (every row was rejected), so
+        // origin/main didn't advance and reconcile had nothing to
+        // fast-forward to. The local ref must still point at the pre-publish
+        // snapshot.
         const connWorktree = path.join(workspaceDir, connDirName);
         const postPublishMainHash = execFileSync(
           "git",

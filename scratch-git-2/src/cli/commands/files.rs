@@ -1082,6 +1082,20 @@ enum PublishConnectionOutcome {
     /// surface this as a warning, not a failure — the user's edits made it to
     /// the server, and `scratchmd files download` recovers the local state.
     PublishedWithReconcileWarning { name: String, warning: String },
+    /// Plan + run completed server-side, but the destination connector rejected
+    /// one or more rows during the run-job (DEV-10243). A VARCHAR overflow /
+    /// type mismatch / FK violation is caught by the server's `processBatch`,
+    /// recorded as `failed-batch`, and surfaced as `failedCount` on the run-job's
+    /// terminal `publicProgress` — but the BullMQ job still reports `completed`,
+    /// so `poll_job` returns Ok. We treat this as a non-fatal warning (exit 0,
+    /// status stays `published`): the rejected rows did not land, but the
+    /// accepted edit survives in `accepted-patches.json` and is listed by
+    /// `scratchmd files unpublished`, so the user can recover.
+    PublishedWithRowFailures {
+        name: String,
+        failed_count: u64,
+        warning: String,
+    },
     /// Plan-job returned no work (server-side diff was empty).
     NoDiff { name: String },
     /// Plan-job / run-job / poll failed before the publish landed. `phase`
@@ -1230,18 +1244,26 @@ async fn publish_single_connection(
             };
         }
     };
-    if let Some(run_job_id) = run.job_id.as_deref() {
-        if let Err(e) = crate::api::poll_job(client, run_job_id).await {
-            if verbose {
-                eprintln!(" failed");
+    // Number of rows the destination connector rejected during the run-job
+    // (DEV-10243). The run-job still ends `completed` even when every row was
+    // rejected, so the only signal is `failedCount` on its terminal progress.
+    let run_job_failed_count = if let Some(run_job_id) = run.job_id.as_deref() {
+        match crate::api::poll_job(client, run_job_id).await {
+            Ok(progress) => progress.public_progress.map_or(0, |p| p.failed_count),
+            Err(e) => {
+                if verbose {
+                    eprintln!(" failed");
+                }
+                return PublishConnectionOutcome::Failed {
+                    name,
+                    phase: "run-job",
+                    message: e.to_string(),
+                };
             }
-            return PublishConnectionOutcome::Failed {
-                name,
-                phase: "run-job",
-                message: e.to_string(),
-            };
         }
-    }
+    } else {
+        0
+    };
     if verbose {
         eprintln!(" done");
     }
@@ -1261,6 +1283,24 @@ async fn publish_single_connection(
         return PublishConnectionOutcome::PublishedWithReconcileWarning {
             name,
             warning: format!("post-publish refresh failed: {e}. Run `scratchmd files download` to sync local state."),
+        };
+    }
+
+    // DEV-10243: the run-job "completed" but the connector rejected some rows.
+    // Surface a non-fatal warning so the publish never reports a clean success
+    // when nothing (or only part) of the batch actually landed. Checked AFTER
+    // reconcile so the patch-preserving re-anchor still runs (the rejected rows'
+    // accepted patches must survive in `accepted-patches.json` — see DEV-10175).
+    // On the rare double-fault (reconcile also failed) the reconcile warning
+    // above wins; the row-failure state is still recoverable via `files unpublished`.
+    if run_job_failed_count > 0 {
+        return PublishConnectionOutcome::PublishedWithRowFailures {
+            name,
+            failed_count: run_job_failed_count,
+            warning: format!(
+                "{run_job_failed_count} record(s) were rejected by the destination connector and were not published. \
+                 Run `scratchmd files unpublished` to see which records still need publishing."
+            ),
         };
     }
 
@@ -1565,6 +1605,10 @@ fn print_publish_results(
                 published.push(name.as_str());
                 warnings.push(outcome);
             }
+            PublishConnectionOutcome::PublishedWithRowFailures { name, .. } => {
+                published.push(name.as_str());
+                warnings.push(outcome);
+            }
             PublishConnectionOutcome::NoDiff { name } => skipped_no_diff.push(name.as_str()),
             PublishConnectionOutcome::Failed { .. } => failed.push(outcome),
         }
@@ -1666,6 +1710,9 @@ fn print_publish_results(
         if let PublishConnectionOutcome::PublishedWithReconcileWarning { name, warning } = outcome {
             eprintln!("Warning ({}): {}", name, warning);
         }
+        if let PublishConnectionOutcome::PublishedWithRowFailures { name, warning, .. } = outcome {
+            eprintln!("Warning ({}): {}", name, warning);
+        }
     }
 
     Ok(())
@@ -1684,6 +1731,15 @@ fn publish_outcome_to_json(outcome: &PublishConnectionOutcome) -> serde_json::Va
                 "warning": { "phase": "reconcile", "message": warning },
             })
         }
+        PublishConnectionOutcome::PublishedWithRowFailures {
+            name,
+            failed_count,
+            warning,
+        } => serde_json::json!({
+            "name": name,
+            "status": "published",
+            "warning": { "phase": "run-job", "message": warning, "failedCount": failed_count },
+        }),
         PublishConnectionOutcome::NoDiff { name } => serde_json::json!({
             "name": name,
             "status": "no_diff",

@@ -321,6 +321,12 @@ pub struct JobPublicProgress {
     /// `expectedBaseDirtyHead`. Absent on non-apply jobs / while running.
     #[serde(rename = "dirtyHead", default)]
     pub dirty_head: Option<String>,
+    /// DEV-10243: number of operations the destination connector rejected during
+    /// a publish run-job (rows the server marked `failed-batch`). The job itself
+    /// still ends `completed`, so this is the only signal that some rows didn't
+    /// land. `0`/absent on jobs that had no per-row failures.
+    #[serde(rename = "failedCount", default)]
+    pub failed_count: u64,
 }
 
 /// Response from endpoints that start a background job.
