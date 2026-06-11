@@ -4,7 +4,9 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
   X_SCRATCH_READONLY,
+  type CreateFieldSpec,
 } from '@spinner/shared-types';
+import { type NormalizedCreateFieldsPlan, type NormalizedCreateTablePlan } from '../../../schema-creation.types';
 import { BaseJsonTableSpec, ConnectorFile, EntityId, PullRecordFilesOptions, idPath } from '../../../types';
 import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
 import { PostgresConnector } from '../postgres-connector';
@@ -41,6 +43,10 @@ const mockSelectByIds = jest.fn();
 const mockInsertMany = jest.fn();
 const mockUpdateMany = jest.fn();
 const mockDeleteMany = jest.fn();
+const mockCreateSchemaIfNotExists = jest.fn();
+const mockCreateTable = jest.fn();
+const mockAddColumns = jest.fn();
+const mockFindTablePrimaryKeyColumn = jest.fn();
 const mockDispose = jest.fn();
 
 jest.mock('../../pg-common/knex-pg-client', () => {
@@ -58,6 +64,10 @@ jest.mock('../../pg-common/knex-pg-client', () => {
       insertMany: mockInsertMany,
       updateMany: mockUpdateMany,
       deleteMany: mockDeleteMany,
+      createSchemaIfNotExists: mockCreateSchemaIfNotExists,
+      createTable: mockCreateTable,
+      addColumns: mockAddColumns,
+      findTablePrimaryKeyColumn: mockFindTablePrimaryKeyColumn,
       dispose: mockDispose,
     })),
     KnexPGClientError: class KnexPGClientError extends Error {
@@ -528,6 +538,233 @@ describe('PostgresConnector incremental pulls', () => {
       expect(result).toEqual({});
       const [, , , , , , , modifiedSinceColumn] = selectAllCall();
       expect(modifiedSinceColumn).toBeUndefined();
+    });
+  });
+});
+
+function textField(name: string, extra: Partial<CreateFieldSpec> = {}): CreateFieldSpec {
+  return { name, fieldType: { kind: 'text' }, ...extra };
+}
+
+type CreateTableCallArgs = [schema: string, tableName: string, fields: unknown[], fkResolutions: Map<string, unknown>];
+
+function createTableCall(index = 0): CreateTableCallArgs {
+  return mockCreateTable.mock.calls[index] as CreateTableCallArgs;
+}
+
+describe('PostgresConnector schema creation', () => {
+  let connector: PostgresConnector;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDispose.mockResolvedValue(undefined);
+    connector = new PostgresConnector({ connectionString: 'postgres://test' });
+  });
+
+  it('declares schema-creation support and capabilities', () => {
+    expect(connector.supportsSchemaCreation()).toBe(true);
+
+    const capabilities = connector.getSchemaCreationCapabilities();
+    expect(capabilities.supportedFieldKinds).toHaveLength(12);
+    expect(capabilities.requiresPrimaryField).toBe(false);
+    expect(capabilities.maxTableNameLength).toBe(63);
+    expect(capabilities.maxFieldNameLength).toBe(63);
+  });
+
+  describe('createTable', () => {
+    it('creates a public-schema table and returns per-field created results', async () => {
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateTablePlan = {
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name'), textField('email')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(mockCreateSchemaIfNotExists).not.toHaveBeenCalled();
+      expect(mockCreateTable).toHaveBeenCalledTimes(1);
+      const [schema, tableName, fields] = createTableCall();
+      expect(schema).toBe('public');
+      expect(tableName).toBe('users');
+      expect(fields).toHaveLength(2);
+      expect(result).toMatchObject({
+        ref: 't1',
+        name: 'users',
+        status: 'created',
+        remoteTableId: ['public', 'users'],
+      });
+      expect(result.fields).toEqual([
+        { name: 'name', status: 'created', remoteFieldId: 'name' },
+        { name: 'email', status: 'created', remoteFieldId: 'email' },
+      ]);
+      expect(mockDispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates a non-public schema before the table', async () => {
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: ['scratch_e2e'],
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(mockCreateSchemaIfNotExists).toHaveBeenCalledWith('scratch_e2e');
+      expect(createTableCall()[0]).toBe('scratch_e2e');
+      expect(result.remoteTableId).toEqual(['scratch_e2e', 'users']);
+    });
+
+    it('introspects a foreign-key target primary key and passes it to the client', async () => {
+      mockFindTablePrimaryKeyColumn.mockResolvedValue({ column: 'id', dataType: 'uuid' });
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateTablePlan = {
+        ref: 'posts',
+        name: 'posts',
+        fields: [
+          textField('title'),
+          {
+            name: 'author_id',
+            fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: ['public', 'users'] } },
+          },
+        ],
+        deferredFkFields: [],
+      };
+
+      await connector.createTable(plan);
+
+      expect(mockFindTablePrimaryKeyColumn).toHaveBeenCalledWith('public', 'users');
+      const foreignKeyResolutions = createTableCall()[3];
+      expect(foreignKeyResolutions.get('author_id')).toEqual({
+        kind: 'resolved',
+        targetTableQualified: 'public.users',
+        targetPkColumn: 'id',
+        targetPkType: 'uuid',
+      });
+    });
+
+    it('flags an unresolvable foreign-key target rather than creating it', async () => {
+      mockFindTablePrimaryKeyColumn.mockResolvedValue(null);
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateTablePlan = {
+        ref: 'posts',
+        name: 'posts',
+        fields: [
+          {
+            name: 'author_id',
+            fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: ['public', 'authors'] } },
+          },
+        ],
+        deferredFkFields: [],
+      };
+
+      await connector.createTable(plan);
+
+      const foreignKeyResolutions = createTableCall()[3] as Map<string, { kind: string; reason: string }>;
+      expect(foreignKeyResolutions.get('author_id')?.kind).toBe('unresolvable');
+      expect(foreignKeyResolutions.get('author_id')?.reason).toMatch(/no primary key/i);
+    });
+
+    it('marks the table partial and surfaces skipped field reasons', async () => {
+      mockCreateTable.mockResolvedValue({ skippedFields: new Map([['tags', 'allowMultiple not supported']]) });
+      const plan: NormalizedCreateTablePlan = {
+        ref: 't1',
+        name: 'users',
+        fields: [
+          textField('name'),
+          {
+            name: 'tags',
+            fieldType: {
+              kind: 'foreignKey',
+              target: { existingRemoteTableId: ['public', 'tags'] },
+              allowMultiple: true,
+            },
+          },
+        ],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(result.status).toBe('partial');
+      expect(result.fields).toContainEqual({ name: 'name', status: 'created', remoteFieldId: 'name' });
+      expect(result.fields).toContainEqual({ name: 'tags', status: 'skipped', error: 'allowMultiple not supported' });
+    });
+
+    it('returns a failed result (no throw) when the DDL errors', async () => {
+      mockCreateTable.mockRejectedValue(Object.assign(new Error('relation already exists'), { code: '42P07' }));
+      const plan: NormalizedCreateTablePlan = {
+        ref: 't1',
+        name: 'users',
+        fields: [textField('name')],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toBeDefined();
+      expect(result.fields).toEqual([{ name: 'name', status: 'failed' }]);
+      expect(mockDispose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('createFields', () => {
+    it('adds each field with a separate client call (per-field isolation)', async () => {
+      mockAddColumns.mockResolvedValue({ skippedFields: new Map() });
+      const plan: NormalizedCreateFieldsPlan = {
+        remoteTableId: ['public', 'users'],
+        fields: [textField('bio'), textField('nickname')],
+      };
+
+      const results = await connector.createFields(plan);
+
+      expect(mockAddColumns).toHaveBeenCalledTimes(2);
+      expect(results).toEqual([
+        { name: 'bio', status: 'created', remoteFieldId: 'bio' },
+        { name: 'nickname', status: 'created', remoteFieldId: 'nickname' },
+      ]);
+    });
+
+    it('isolates a per-field failure from the rest', async () => {
+      mockAddColumns
+        .mockResolvedValueOnce({ skippedFields: new Map() })
+        .mockRejectedValueOnce(Object.assign(new Error('duplicate column'), { code: '42701' }));
+      const plan: NormalizedCreateFieldsPlan = {
+        remoteTableId: ['public', 'users'],
+        fields: [textField('ok'), textField('dupe')],
+      };
+
+      const results = await connector.createFields(plan);
+
+      expect(results[0]).toEqual({ name: 'ok', status: 'created', remoteFieldId: 'ok' });
+      expect(results[1].status).toBe('failed');
+      expect(results[1].error).toBeDefined();
+    });
+
+    it('surfaces a skipped field reason from the client', async () => {
+      mockAddColumns.mockResolvedValue({ skippedFields: new Map([['tags', 'allowMultiple not supported']]) });
+      const plan: NormalizedCreateFieldsPlan = {
+        remoteTableId: ['public', 'users'],
+        fields: [
+          {
+            name: 'tags',
+            fieldType: {
+              kind: 'foreignKey',
+              target: { existingRemoteTableId: ['public', 'tags'] },
+              allowMultiple: true,
+            },
+          },
+        ],
+      };
+
+      const results = await connector.createFields(plan);
+
+      expect(results).toEqual([{ name: 'tags', status: 'skipped', error: 'allowMultiple not supported' }]);
     });
   });
 });

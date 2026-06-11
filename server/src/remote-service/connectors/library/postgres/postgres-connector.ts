@@ -12,12 +12,20 @@ import {
   IncrementalPullSupport,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_MAX_LENGTH,
+  type CreateFieldResult,
+  type CreateTableResult,
+  type SchemaCreationCapabilities,
 } from '@spinner/shared-types';
 import { JsonSafeObject } from 'src/utils/objects';
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
+import {
+  type NormalizedCreateFieldsPlan,
+  type NormalizedCreateTablePlan,
+  type ResolvedCreateFieldSpec,
+} from '../../schema-creation.types';
 import { Service } from '../../service-constants';
 import {
   idPath,
@@ -38,11 +46,13 @@ import {
   mapPgType,
   PG_TEXT_TYPES,
   pgIncrementalPullSupport,
+  POSTGRES_SCHEMA_CREATION_CAPABILITIES,
   POSTGRES_SYSTEM_SCHEMA_PATTERNS,
   POSTGRES_SYSTEM_SCHEMAS,
   resolvePgModifiedAtField,
   TableName,
   validateWhereFilter,
+  type ForeignKeyResolutions,
   type InformationSchemaColumn,
 } from '../pg-common';
 import { buildPgDefaultView } from '../pg-common/pg-default-view';
@@ -65,6 +75,9 @@ const READONLY_FLAG = 'x-scratch-readonly';
 const CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
 
 const TITLE_COLUMN_CANDIDATES = ['name', 'title', 'display_name', 'label'];
+
+/** Schema used when a create-schema request does not specify a `remoteParentId`. */
+const DEFAULT_POSTGRES_SCHEMA = 'public';
 
 export class PostgresConnector extends Connector {
   readonly service = Service.POSTGRES;
@@ -414,6 +427,158 @@ export class PostgresConnector extends Connector {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   getBatchSize(_operation: 'create' | 'update' | 'delete'): number {
     return getPostgresPublishBatchSize();
+  }
+
+  // -------------------------------------------------------------------------
+  // Schema creation (create-schema API — DEV-10381)
+  // -------------------------------------------------------------------------
+
+  override supportsSchemaCreation(): boolean {
+    return true;
+  }
+
+  override getSchemaCreationCapabilities(): SchemaCreationCapabilities {
+    return POSTGRES_SCHEMA_CREATION_CAPABILITIES;
+  }
+
+  /**
+   * Create one table (with an auto-generated `id` primary key) and its
+   * non-deferred fields in a single `CREATE TABLE`. ForeignKey targets are
+   * already resolved to existing tables by the server; here we introspect each
+   * target's primary-key column so the FK references it with a matching type.
+   * Creates are NOT idempotent — re-running creates a second table (or fails with
+   * "already exists").
+   */
+  override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
+    const schema = plan.remoteParentId?.[0] ?? DEFAULT_POSTGRES_SCHEMA;
+    const tableName = plan.name;
+    try {
+      return await this.withPgClient(async (client) => {
+        if (schema !== DEFAULT_POSTGRES_SCHEMA) {
+          await client.createSchemaIfNotExists(schema);
+        }
+        const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields);
+        const { skippedFields } = await client.createTable(schema, tableName, plan.fields, foreignKeyResolutions);
+        const fields = this.buildFieldResults(plan.fields, skippedFields);
+        return {
+          ref: plan.ref,
+          name: tableName,
+          status: skippedFields.size > 0 ? 'partial' : 'created',
+          remoteTableId: [schema, tableName],
+          fields,
+        };
+      });
+    } catch (error) {
+      return {
+        ref: plan.ref,
+        name: tableName,
+        status: 'failed',
+        fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
+        error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+      };
+    }
+  }
+
+  /**
+   * Add fields to an existing table — one `ALTER TABLE … ADD COLUMN` per field so
+   * a single bad field fails in isolation rather than rolling back the rest. Also
+   * used by the server to add deferred cyclic/self foreignKey fields after every
+   * table in a multi-table create exists.
+   */
+  override async createFields(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]> {
+    const [schema, tableName] = this.splitRemoteTableId(plan.remoteTableId);
+    return this.withPgClient(async (client) => {
+      const foreignKeyResolutions = await this.resolveForeignKeyTargets(client, plan.fields);
+      const results: CreateFieldResult[] = [];
+      for (const field of plan.fields) {
+        try {
+          const { skippedFields } = await client.addColumns(schema, tableName, [field], foreignKeyResolutions);
+          const skipReason = skippedFields.get(field.name);
+          results.push(
+            skipReason !== undefined
+              ? { name: field.name, status: 'skipped', error: skipReason }
+              : { name: field.name, status: 'created', remoteFieldId: field.name },
+          );
+        } catch (error) {
+          results.push({
+            name: field.name,
+            status: 'failed',
+            error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+          });
+        }
+      }
+      return results;
+    });
+  }
+
+  /**
+   * Build the per-field result list for a created table: each requested field is
+   * `created` (its column name is the stable remote field id) unless it was
+   * skipped (an unresolvable/allowMultiple foreign key, or the reserved `id`
+   * name), in which case the reason is surfaced.
+   */
+  private buildFieldResults(
+    fields: ResolvedCreateFieldSpec[],
+    skippedFields: Map<string, string>,
+  ): CreateFieldResult[] {
+    return fields.map((field) => {
+      const skipReason = skippedFields.get(field.name);
+      if (skipReason !== undefined) {
+        return { name: field.name, status: 'skipped', error: skipReason };
+      }
+      return { name: field.name, status: 'created', remoteFieldId: field.name };
+    });
+  }
+
+  /**
+   * For every single-valued foreignKey field, introspect its (already server-
+   * resolved) target table's primary-key column + type so the FK column matches.
+   * A target with no usable primary key yields an `unresolvable` reason that the
+   * builder turns into a per-field skip.
+   */
+  private async resolveForeignKeyTargets(
+    client: KnexPGClient,
+    fields: ResolvedCreateFieldSpec[],
+  ): Promise<ForeignKeyResolutions> {
+    const resolutions: ForeignKeyResolutions = new Map();
+    for (const field of fields) {
+      const fieldType = field.fieldType;
+      if (fieldType.kind !== 'foreignKey' || fieldType.allowMultiple) {
+        continue;
+      }
+      if (!('existingRemoteTableId' in fieldType.target)) {
+        // The server resolves every {ref} target before dispatch; a lingering ref is a bug.
+        resolutions.set(field.name, {
+          kind: 'unresolvable',
+          reason: `foreign key "${field.name}" target was not resolved to an existing table`,
+        });
+        continue;
+      }
+      const [targetSchema, targetTable] = this.splitRemoteTableId(fieldType.target.existingRemoteTableId);
+      const primaryKey = await client.findTablePrimaryKeyColumn(targetSchema, targetTable);
+      if (primaryKey === null) {
+        resolutions.set(field.name, {
+          kind: 'unresolvable',
+          reason: `couldn't create foreign key "${field.name}": the linked table "${targetSchema}.${targetTable}" has no primary key to reference`,
+        });
+        continue;
+      }
+      resolutions.set(field.name, {
+        kind: 'resolved',
+        targetTableQualified: `${targetSchema}.${targetTable}`,
+        targetPkColumn: primaryKey.column,
+        targetPkType: primaryKey.dataType,
+      });
+    }
+    return resolutions;
+  }
+
+  /** Split a `[schema, table]` remoteId (defaulting the schema to `public` for a bare `[table]`). */
+  private splitRemoteTableId(remoteTableId: string[]): [schema: string, table: string] {
+    if (remoteTableId.length >= 2) {
+      return [remoteTableId[0], remoteTableId[1]];
+    }
+    return [DEFAULT_POSTGRES_SCHEMA, remoteTableId[0]];
   }
 
   // -------------------------------------------------------------------------

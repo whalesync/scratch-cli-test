@@ -13,6 +13,15 @@ export {
   type TableName,
 } from './knex-pg-types';
 export {
+  AUTO_PK_COLUMN,
+  POSTGRES_MAX_IDENTIFIER_LENGTH,
+  POSTGRES_SCHEMA_CREATION_CAPABILITIES,
+  buildAddColumnsQuery,
+  buildCreateTableQuery,
+  type ForeignKeyResolution,
+  type ForeignKeyResolutions,
+} from './pg-create-schema';
+export {
   PG_INCREMENTAL_CLOCK_SKEW_MS,
   applyPgClockSkew,
   assertModifiedAtColumnExists,

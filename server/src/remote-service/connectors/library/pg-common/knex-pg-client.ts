@@ -8,7 +8,9 @@
  */
 import knex, { type Knex } from 'knex';
 import pg from 'pg';
+import { type ResolvedCreateFieldSpec } from '../../schema-creation.types';
 import {
+  isGeneratedColumn,
   type InformationSchemaCatalog,
   type InformationSchemaColumn,
   type PostgresEnumValue,
@@ -16,6 +18,7 @@ import {
   type PostgresUserDefinedType,
   type TableName,
 } from './knex-pg-types';
+import { buildAddColumnsQuery, buildCreateTableQuery, type ForeignKeyResolutions } from './pg-create-schema';
 
 // 🚨🚨 Global impact alert 🚨🚨
 // PG library usually parses 'numeric' as a string to preserve arbitrary precision.
@@ -316,6 +319,88 @@ export class KnexPGClient {
       [tableName, schema],
     );
     return result.rows[0]?.oid ?? null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Schema creation (DDL)
+  // -------------------------------------------------------------------------
+
+  /** Create a schema if it does not already exist (idempotent, non-destructive). */
+  async createSchemaIfNotExists(schema: string): Promise<void> {
+    await this.knex.schema.createSchemaIfNotExists(schema);
+  }
+
+  /**
+   * Create a table with an auto-generated primary key plus one column per field.
+   * Runs in a transaction so the table and its foreign-key constraints land
+   * atomically. Returns the per-field skip reasons (a field that could not become
+   * a column — e.g. an unresolvable foreign key) keyed by field name; every other
+   * field became a column.
+   */
+  async createTable(
+    schema: string,
+    tableName: string,
+    fields: ResolvedCreateFieldSpec[],
+    fkResolutions: ForeignKeyResolutions,
+  ): Promise<{ skippedFields: Map<string, string> }> {
+    const skippedFields = new Map<string, string>();
+    await this.knex.transaction(async (trx) => {
+      await buildCreateTableQuery(trx, schema, tableName, fields, fkResolutions, skippedFields);
+    });
+    return { skippedFields };
+  }
+
+  /**
+   * Add columns to an existing table via `ALTER TABLE … ADD COLUMN`. Compiles
+   * once to discover which fields became columns, then executes only when at
+   * least one real column remains — so a call containing only skipped fields
+   * (e.g. a lone unresolvable foreign key) returns the reasons without issuing an
+   * empty ALTER.
+   */
+  async addColumns(
+    schema: string,
+    tableName: string,
+    fields: ResolvedCreateFieldSpec[],
+    fkResolutions: ForeignKeyResolutions,
+  ): Promise<{ skippedFields: Map<string, string> }> {
+    const skippedFields = new Map<string, string>();
+    buildAddColumnsQuery(this.knex, schema, tableName, fields, fkResolutions, skippedFields).toSQL();
+    if (skippedFields.size < fields.length) {
+      await buildAddColumnsQuery(this.knex, schema, tableName, fields, fkResolutions);
+    }
+    return { skippedFields };
+  }
+
+  /**
+   * Resolve the primary-key column a foreign key should reference, plus its
+   * native type, for an existing table. Mirrors `pickPrimaryKey`: prefers the
+   * single PK candidate, then an auto-generated one. Returns null when the table
+   * has no usable primary key to reference.
+   */
+  async findTablePrimaryKeyColumn(
+    schema: string,
+    tableName: string,
+  ): Promise<{ column: string; dataType: string } | null> {
+    const [candidates, columns] = await Promise.all([
+      this.findPrimaryColumnCandidates(schema, tableName),
+      this.findAllColumnsInTable(schema, tableName),
+    ]);
+    if (candidates.length === 0) {
+      return null;
+    }
+    const columnByName = new Map(columns.map((column) => [column.column_name, column]));
+    const chosenColumn =
+      candidates.length === 1
+        ? candidates[0]
+        : (candidates.find((name) => {
+            const column = columnByName.get(name);
+            return column !== undefined && isGeneratedColumn(column);
+          }) ?? candidates[0]);
+    const column = columnByName.get(chosenColumn);
+    if (column === undefined) {
+      return null;
+    }
+    return { column: chosenColumn, dataType: column.data_type };
   }
 
   // -------------------------------------------------------------------------

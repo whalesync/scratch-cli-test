@@ -661,9 +661,17 @@ lint, 29 schema-builder tests.
 
 **Deferred (not implemented this pass)**
 
-- **No connector implements `supportsSchemaCreation()`** — by design (#4). In
-  production `/tables` and `/fields` return `not_supported`; the dispatch +
-  materialize path is exercised only by a test stub.
+- **No connector implements `supportsSchemaCreation()`** — by design (#4) _for the
+  API-contract pass_. At the time, `/tables` and `/fields` returned `not_supported`
+  in production and the dispatch + materialize path was exercised only by a test
+  stub. **Update (DEV-10381):** the **Postgres connector now implements the seam** —
+  `supportsSchemaCreation` / `getSchemaCreationCapabilities` / `createTable` /
+  `createFields` in `connectors/library/postgres` backed by a pure DDL builder in
+  `connectors/library/pg-common/pg-create-schema.ts` (logical type → native column,
+  auto-generated `id` PK, real `ON DELETE SET NULL` foreign keys, all 12 kinds). So
+  `/tables` and `/fields` now execute real DDL against a Postgres connection
+  (`materializeLocally` then creates the local folder). Other connectors still
+  return `not_supported` until they opt in.
 - **Concurrency precondition (#7)** — the `materializeLocally` / `/fields` lock gate
   was **not** implemented; it was flagged "NEEDS FURTHER REVIEW" and the exact
   gating is unsettled.
