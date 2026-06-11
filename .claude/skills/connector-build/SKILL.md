@@ -70,8 +70,16 @@ A parallel run that silently stalls wastes time. Whenever you hit a gate above �
 ## Prerequisite — browser preflight (HARD GATE, before any testing)
 
 Do this **before** pulling/pushing anything. The browser is not optional: create-in-service and UI-link discovery require it, so a CLI-only run does **not** finish a connector.
+
+**Two browser drivers are on the table — gstack is the DEFAULT.** Use gstack unless the **user explicitly asked** to use the Chrome extension.
+- **gstack `$B`** (default) — an **isolated headless browser per agent**. Always use this unless told otherwise. It's the default because parallel/autonomous runs need isolation: each agent gets its own browser, zero collisions.
+- **Claude-for-Chrome extension** (`mcp__claude-in-chrome__*`) — **only when the user explicitly requests it** ("use the Chrome extension"). It drives the user's **real, logged-in Chrome** (handy for an attended single run that needs existing logins), but it's a **shared** browser with no hard isolation. The user must connect it first via `/chrome` (the agent can't trigger it). **CRITICAL — every time you use it: create your OWN tab with `tabs_create_mcp` and drive only that tab id.** Never `tabs_context_mcp createIfEmpty` and reuse whatever tab is there — two agents race onto the same tab and stomp each other (booking.com → Airbnb mid-action is the symptom). Because there's no real isolation, **don't pick it for parallel runs** — those stay on gstack.
+
+**gstack path (default):**
 1. Launch/verify the gstack browser: `$B connect` then `$B status` → must show `Mode: headed`.
 2. `$B goto` the service and `snapshot` — confirm you are **logged in** (authenticated UI, not a login wall).
+
+**Chrome-extension path (only if the user asked):** load the tools via ToolSearch → `tabs_create_mcp` to make **your own** tab → `navigate` it to the service → `read_page`/`screenshot` to confirm you're **logged in**. Drive only that tab id for the rest of the run.
 
 **If the browser won't start, the service won't load, or you're not logged in and can't get logged in** (and the user isn't available to log in), **STOP and exit early**: post a one-line warning naming exactly what failed (e.g. "Browser preflight failed: gstack headed mode won't start" / "Not logged into Acme — need a login"), `/read` it, and do not proceed with a partial CLI-only pass. Resume once the gate clears.
 
@@ -169,6 +177,25 @@ Reached only when Step 0 found no usable account.
 > **Worktree split:** run the **desktop app and CLI from the *main* checkout** (build them once — they don't change per branch) and run **only the server from the branch worktree** (which has the connector code under test), so you never rebuild the app/CLI per worktree.
 >
 > **Clones sync through the SERVER, not the filesystem.** The desktop app's download and any `scratchmd workspaces init -o <dir>` clone are **separate git checkouts** of the same workspace. A hand-edit in one folder is invisible to the other — and to the app's UI — until it's **published to the server and pulled** by the other; the desktop app does **not** live-watch raw on-disk edits. So: edit **in-app** or via the **CLI publish flow** (`files accept`→`upload`→`publish`), then **pull/refresh** the other clone. (Note: `workspaces init -o <dir>` re-points the CLI's `workspaces.yaml` entry for that wkb to `<dir>` — so the CLI and desktop can end up on different folders.)
+
+### B0 — Worktree check: are you a parallel session? (decide this FIRST, before the CLI setup)
+
+**One command decides who runs the server — you or the human:**
+```bash
+[ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ] && echo MAIN || echo WORKTREE
+```
+
+- **`MAIN`** (the repo's primary checkout) → **you are NOT a parallel session — do nothing special.** The human runs the server themselves (`cd server && yarn dev`) on the default `:3010` (Redis `:6379`), and `scratchmd` uses its default target (no `--scratch-url`). **Skip all the parallel machinery — don't even read `/start-parallel-session`.** Go straight to step 1 below.
+
+- **`WORKTREE`** (a linked git worktree — e.g. a Conductor worktree) → **assume this MUST be its own parallel session** (that's what a worktree is *for*), so **you own the server here.** Set it up *before* the rest of Stage B:
+  1. **Pick your session index `N` by inspecting taken ports.** Each session's server is `3010+N` and Redis `6379+N`; a **taken `3010+N` means a sibling session already holds `N`** — so the lowest free one is yours:
+     ```bash
+     for N in $(seq 1 16); do lsof -nP -iTCP:$((3010+N)) -sTCP:LISTEN >/dev/null 2>&1 || { echo "free N=$N"; break; }; done
+     ```
+  2. **Run `/start-parallel-session <N>`** (read that skill *now* that you know you need it). It starts the **monolith server on `3010+N` in a background shell — so it dies with this session** — plus an isolated Redis on `6379+N` (its own queue + worker running **this** worktree's branch code), while sharing Postgres / scratch-git / the gstack browser with every other session.
+  3. **Carry `--scratch-url http://localhost:$((3010+N))` on every `scratchmd` call** (or drop the per-cwd `scratchmd.config.yaml` it writes) so the CLI hits **your** server, never the default `:3010` or a sibling's.
+
+  **Net:** *worktree* ⇒ the **agent runs the server** (it dies with the session) and always passes the `--scratch-url` port; *main checkout* ⇒ the **human runs the server** and you use the default. The rest of Stage B (build/auth CLI, create workspace, pull) is identical either way — except a worktree session prefixes every `scratchmd` with its `--scratch-url`.
 
 1. **Build + auth the CLI.** `cd scratch-git-2 && cargo build --release --bin scratchmd`; `scratchmd auth status`. **Also build the debug binary** (`cargo build --bin scratchmd`, no `--release`): the **Scratch desktop app invokes `scratch-git-2/target/debug/scratchmd`**, so if only the release binary exists the desktop "Download workspace" fails with `scratchmd binary not found … target/debug/scratchmd`. Build both.
 2. **Create the workspace (ASAP).** `scratchmd workspaces create "<name>"` → returns `wkb_<id>`. Tell the developer the name/id so they can open it in the desktop app. **Use a name with NO spaces** (and ideally lower-kebab, e.g. `zoho-crm`, not `Zoho CRM`) — every choosable name that becomes a **folder-path segment** (workspace name, connection `--name`) ends up in on-disk paths, and spaces force quoting/escaping on every `cd`, `files accept "…"`, and shell glob. Same rule for the connection display name.

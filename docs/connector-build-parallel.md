@@ -185,3 +185,22 @@ Then run `/connector-build <connector>` as normal. Its pulls/publishes are enque
 ## Why this matches the skill
 
 The [`/connector-build` skill](/.claude/skills/connector-build/SKILL.md) already says: build the **CLI + desktop from `main`** (branch-independent), run **only the server from the branch worktree**. This plan extends that one step: because the **worker** also runs branch connector code, the per-session server must be a **monolith with an isolated queue** — not just an API process pointed at a shared worker. Everything else (scratch-git, CLI, Postgres, browser) is shared exactly as the skill intends.
+
+---
+
+## Decision: picked approach — `/start-parallel-session N` (Option A, automated)
+
+**Picked.** The per-session setup above is automated as the [`/start-parallel-session`](/.claude/skills/start-parallel-session/SKILL.md) skill, which implements **Option A** (one Redis per session, zero code change). An agent runs `/start-parallel-session <N>` from inside its branch worktree; the skill:
+
+1. Computes `server_port = 3010 + N` and `redis_host_port = 6379 + N` from the single index `N` (**N ≥ 1**; N=0 is the shared default stack).
+2. **Starts the per-session Redis itself** via `docker run`, idempotently: `docker rm -f spinner-redis-<N>` then a foreground `--rm` container run inside a **background shell** so its lifetime tracks the session.
+3. Starts the **monolith** server (`SERVICE_TYPE=monolith`) from this worktree's `server/` with `PORT`/`REDIS_PORT` pointed at that Redis — its own queue + worker running this branch's connector code.
+4. Targets every `scratchmd` call at this server with `--scratch-url http://localhost:<3010+N>` (or a per-cwd `scratchmd.config.yaml`).
+
+**What we corrected vs. the first sketch of the idea** — each of these would have silently broken it, and they are now baked into the skill:
+
+- **`SCRATCH_URL` exported once per shell does NOT work for an agent.** The Claude Code Bash tool starts a fresh shell per call, so env vars don't persist. The skill instructs the **full `--scratch-url` on every call** (the agent's stated preference), or a `scratchmd.config.yaml` in the cwd. Note the config key is **`settings.scratchServerUrl`** ([project_config.rs:11-14](/scratch-git-2/src/cli/config/project_config.rs#L11-L14)) — the earlier `server_url` in §"CLI" of this doc is imprecise.
+- **"Docker dies when the agent closes" is best-effort, not guaranteed.** A container is owned by `dockerd`, not a child of the agent. Foreground `--rm` in a background shell gives die-on-*graceful*-close; a `kill -9` of the session can leak it. So the real guarantee is **idempotent restart** (`docker rm -f` before each run + a free-port check) plus an explicit teardown — not lifecycle coupling.
+- **`server/.env` is gitignored and loaded from the cwd** ([scratch-config.module.ts:9](/server/src/config/scratch-config.module.ts#L9)); a fresh worktree has none and the server throws on missing required vars. The skill symlinks/copies the main checkout's `server/.env` into the session, and the inline `PORT`/`REDIS_PORT` override its values (dotenv does not clobber pre-set process env).
+
+**When this is NOT the right approach:** if the branch carries un-merged **DB migrations**, the shared Postgres is unsafe — use a fully separate stack ([Option C](#option-c--fully-separate-stacks-own-postgres--own-redis-per-session)) instead. Connector work rarely adds migrations, so Option A is the default. Land **Option B** (`REDIS_DB` index) later if running a container per session becomes a nuisance; the skill can switch to it with no change to its interface.
