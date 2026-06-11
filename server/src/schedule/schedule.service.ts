@@ -12,7 +12,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { Actor } from 'src/users/types';
 import { ScheduleEntity } from './entities/schedule.entity';
-import { isPullAction, SCHEDULE_MIN_INTERVAL_MINUTES } from './schedule.types';
+import { isConnectionPullAction, isPullAction, SCHEDULE_MIN_INTERVAL_MINUTES } from './schedule.types';
 
 @Injectable()
 export class ScheduleService {
@@ -160,6 +160,12 @@ export class ScheduleService {
         select: { id: true },
       });
       return folder !== null;
+    } else if (isConnectionPullAction(action)) {
+      const connectorAccount = await this.db.client.connectorAccount.findFirst({
+        where: { id: entityId, workbookId },
+        select: { id: true },
+      });
+      return connectorAccount !== null;
     } else if (action === 'SYNC') {
       // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): existence check via id-only select; no mappings read.
       const sync = await this.db.client.sync.findFirst({
@@ -191,6 +197,14 @@ export class ScheduleService {
       }
       if (isPullAction(action) && !folder.connectorAccountId) {
         throw new BadRequestException(`DataFolder ${entityId} is not a linked folder (no connector account)`);
+      }
+    } else if (isConnectionPullAction(action)) {
+      const connectorAccount = await this.db.client.connectorAccount.findFirst({
+        where: { id: entityId, workbookId },
+        select: { id: true },
+      });
+      if (!connectorAccount) {
+        throw new BadRequestException(`ConnectorAccount ${entityId} not found in workbook ${workbookId}`);
       }
     } else if (action === 'SYNC') {
       // eslint-disable-next-line no-restricted-syntax -- TODO(DEV-10008): existence check via id-only select; no mappings read.

@@ -1,6 +1,7 @@
 'use client';
 
 import { Text12Medium, Text12Regular } from '@/app/components/base/text';
+import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useSchedules } from '@/hooks/use-schedules';
 import { useSyncStore } from '@/stores/sync-store';
@@ -22,6 +23,10 @@ const getActionLabel = (action: ScheduleAction): string => {
       return 'Full Pull';
     case 'INCREMENTAL_PULL':
       return 'Incremental Pull';
+    case 'CONNECTION_FULL_PULL':
+      return 'Full Pull (connection)';
+    case 'CONNECTION_INCREMENTAL_PULL':
+      return 'Incremental Pull (connection)';
     case 'PUBLISH':
       return 'Publish';
     case 'SYNC':
@@ -35,8 +40,10 @@ const getActionColor = (action: ScheduleAction): string => {
   switch (action) {
     case 'PULL':
     case 'FULL_PULL':
+    case 'CONNECTION_FULL_PULL':
       return 'var(--mantine-color-cyan-5)';
     case 'INCREMENTAL_PULL':
+    case 'CONNECTION_INCREMENTAL_PULL':
       return 'var(--mantine-color-blue-5)';
     case 'PUBLISH':
       return 'var(--mantine-color-green-5)';
@@ -53,6 +60,8 @@ const actionToJobType = (action: ScheduleAction): string => {
     case 'PULL':
     case 'FULL_PULL':
     case 'INCREMENTAL_PULL':
+    case 'CONNECTION_FULL_PULL':
+    case 'CONNECTION_INCREMENTAL_PULL':
       return 'pull';
     case 'PUBLISH':
       return 'publish';
@@ -70,6 +79,7 @@ export function ScheduledRunsView() {
   const syncs = useSyncStore((state) => state.syncs);
   const fetchSyncs = useSyncStore((state) => state.fetchSyncs);
   const { folders } = useDataFolders();
+  const { connectorAccounts } = useConnectorAccounts(workbookId);
 
   useEffect(() => {
     if (syncs.length === 0) {
@@ -150,6 +160,7 @@ export function ScheduledRunsView() {
                 workbookId={workbookId}
                 syncs={syncs}
                 folders={folders}
+                connectorAccounts={connectorAccounts ?? []}
               />
             ))}
           </Table.Tbody>
@@ -164,20 +175,24 @@ function ScheduleRow({
   workbookId,
   syncs,
   folders,
+  connectorAccounts,
 }: {
   schedule: Schedule;
   workbookId: WorkbookId;
   syncs: { id: string; displayName: string }[];
   folders: { id: string; name: string; path: string | null }[];
+  connectorAccounts: { id: string; displayName: string }[];
 }) {
-  const entityInfo = resolveEntity(schedule, workbookId, syncs, folders);
+  const entityInfo = resolveEntity(schedule, workbookId, syncs, folders, connectorAccounts);
 
   const recentRunsParams: Record<string, string> = {
     type: actionToJobType(schedule.action),
   };
   if (schedule.action === 'SYNC') {
     recentRunsParams.syncId = schedule.entityId;
-  } else {
+  } else if (!isConnectionPullAction(schedule.action)) {
+    // Connection pull schedules target a connector account, not a single folder,
+    // so there is no dataFolderId to filter the recent-runs view by.
     recentRunsParams.dataFolderId = schedule.entityId;
   }
 
@@ -262,17 +277,31 @@ function ScheduleRow({
   );
 }
 
+/** Connection-wide pull schedules target a ConnectorAccount, not a single DataFolder. */
+function isConnectionPullAction(action: ScheduleAction): boolean {
+  return action === 'CONNECTION_FULL_PULL' || action === 'CONNECTION_INCREMENTAL_PULL';
+}
+
 function resolveEntity(
   schedule: Schedule,
   workbookId: string,
   syncs: { id: string; displayName: string }[],
   folders: { id: string; name: string; path: string | null }[],
+  connectorAccounts: { id: string; displayName: string }[],
 ): { name: string; href: string | null } {
   if (schedule.action === 'SYNC') {
     const sync = syncs.find((s) => s.id === schedule.entityId);
     return {
       name: sync?.displayName || schedule.entityId.slice(0, 8),
       href: `/workbook/${workbookId}/syncs/${schedule.entityId}`,
+    };
+  }
+
+  if (isConnectionPullAction(schedule.action)) {
+    const connectorAccount = connectorAccounts.find((account) => account.id === schedule.entityId);
+    return {
+      name: connectorAccount ? `${connectorAccount.displayName} (all tables)` : schedule.entityId.slice(0, 8),
+      href: null,
     };
   }
 

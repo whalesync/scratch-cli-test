@@ -10,7 +10,12 @@ import { DataFolderService } from 'src/workbook/data-folder.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { ScheduleService } from './schedule.service';
-import { actionToJobType, SCHEDULE_DEBOUNCE_WINDOW_MS, scheduleActionToPullMode } from './schedule.types';
+import {
+  actionToJobType,
+  isConnectionPullAction,
+  SCHEDULE_DEBOUNCE_WINDOW_MS,
+  scheduleActionToPullMode,
+} from './schedule.types';
 
 @Injectable()
 export class SchedulerService {
@@ -122,6 +127,18 @@ export class SchedulerService {
 
   /** Check if a job of the same type was recently created for the same entity. */
   private async wasRecentlyTriggered(schedule: Schedule): Promise<boolean> {
+    // Connection-wide pull schedules are not debounced per-entity. Their job covers
+    // many folders (no single `dataFolderId` to key on), and the debounce is
+    // unnecessary here: `atomicClaim` advances `nextRunAt` by a full cron interval
+    // (≥ the debounce window) so the same schedule can't re-fire within the window,
+    // multi-instance double-claim is prevented by `atomicClaim`, two schedules due
+    // at once are serialized (not dropped) by the `isWorkbookBusy` deferral, and the
+    // connection/per-table modes are mutually exclusive so no folder is ever covered
+    // by both a connection and a table schedule simultaneously.
+    if (isConnectionPullAction(schedule.action)) {
+      return false;
+    }
+
     const jobType = actionToJobType(schedule.action);
     const cutoff = new Date(Date.now() - SCHEDULE_DEBOUNCE_WINDOW_MS);
 
@@ -195,6 +212,36 @@ export class SchedulerService {
           });
         }
         break;
+      case 'CONNECTION_FULL_PULL':
+      case 'CONNECTION_INCREMENTAL_PULL': {
+        // entityId is a ConnectorAccountId. Fan out to every linked table in the
+        // connection and enqueue a single pull job for the whole set — the same
+        // behavior as the "Pull All Tables" menu action, but driven by the schedule.
+        const linkedFolderIdsInConnection = (
+          await this.db.client.dataFolder.findMany({
+            where: { workbookId, connectorAccountId: schedule.entityId },
+            select: { id: true },
+          })
+        ).map((folder) => folder.id as DataFolderId);
+
+        if (linkedFolderIdsInConnection.length === 0) {
+          WSLogger.info({
+            source: 'SchedulerService.enqueueJob',
+            message: `Connection pull schedule ${schedule.id} has no linked tables for connector account ${schedule.entityId}. Skipping.`,
+          });
+          break;
+        }
+
+        await this.bullEnqueuerService.enqueuePullLinkedFolderFilesJob(
+          workbookId,
+          actor,
+          linkedFolderIdsInConnection,
+          undefined,
+          runContext,
+          scheduleActionToPullMode(schedule.action),
+        );
+        break;
+      }
       case 'PUBLISH': {
         if (!schedule.entityId) {
           WSLogger.info({

@@ -140,9 +140,9 @@ describe('ConnectorAccountService', () => {
 
       await service.remove(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
 
-      // Schedules deleted for folder IDs
+      // Schedules deleted for folder IDs and the connection-wide schedule (account id)
       expect(dbService.client.schedule.deleteMany).toHaveBeenCalledWith({
-        where: { entityId: { in: ['df_1', 'df_2'] } },
+        where: { entityId: { in: ['df_1', 'df_2', ACCOUNT_ID] } },
       });
       // Publish plans deleted
       expect(dbService.client.publishPlan.deleteMany).toHaveBeenCalledWith({
@@ -169,8 +169,10 @@ describe('ConnectorAccountService', () => {
 
       await service.remove(WORKBOOK_ID, ACCOUNT_ID, ACTOR);
 
-      // No schedules to delete
-      expect(dbService.client.schedule.deleteMany).not.toHaveBeenCalled();
+      // No per-table schedules, but the connection-wide schedule (account id) is still cleaned up
+      expect(dbService.client.schedule.deleteMany).toHaveBeenCalledWith({
+        where: { entityId: { in: [ACCOUNT_ID] } },
+      });
       // Publish plans still deleted (may exist without folders)
       expect(dbService.client.publishPlan.deleteMany).toHaveBeenCalled();
       // DataFolders deleteMany still called (no-op)

@@ -527,12 +527,12 @@ export class ConnectorAccountService {
 
     const folderIds = dataFolders.map((f) => f.id);
 
-    // Delete schedules targeting these folders (no FK cascade to DataFolder)
-    if (folderIds.length > 0) {
-      await this.db.client.schedule.deleteMany({
-        where: { entityId: { in: folderIds } },
-      });
-    }
+    // Delete schedules for this connection (no FK cascade to DataFolder or ConnectorAccount):
+    // per-table pull/publish schedules key off a folder id, while connection-wide pull
+    // schedules (CONNECTION_FULL_PULL / CONNECTION_INCREMENTAL_PULL) key off the account id.
+    await this.db.client.schedule.deleteMany({
+      where: { entityId: { in: [...folderIds, id] } },
+    });
 
     // Delete publish plans for this connection (no FK cascade to ConnectorAccount)
     await this.db.client.publishPlan.deleteMany({

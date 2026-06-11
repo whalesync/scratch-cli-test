@@ -10,6 +10,8 @@ const SCHEDULE_ACTION_TO_JOB_TYPE: Record<string, JobType> = {
   PULL: JobType.PullLinkedFolderFiles, // @deprecated — equivalent to FULL_PULL
   FULL_PULL: JobType.PullLinkedFolderFiles,
   INCREMENTAL_PULL: JobType.PullLinkedFolderFiles,
+  CONNECTION_FULL_PULL: JobType.PullLinkedFolderFiles,
+  CONNECTION_INCREMENTAL_PULL: JobType.PullLinkedFolderFiles,
   PUBLISH: JobType.Publish,
   SYNC: JobType.SyncDataFolders,
 };
@@ -24,25 +26,40 @@ export function actionToJobType(action: string): JobType {
 }
 
 /**
- * True for the three pull-type schedule actions (`PULL`, `FULL_PULL`,
+ * True for the three table-level pull-type schedule actions (`PULL`, `FULL_PULL`,
  * `INCREMENTAL_PULL`) which all target a linked DataFolder and enqueue a
  * `PullLinkedFolderFiles` job. Used by schedule CRUD to validate the entity.
+ * Connection-wide pull actions are NOT included — use {@link isConnectionPullAction}.
  */
 export function isPullAction(action: string): boolean {
   return action === 'PULL' || action === 'FULL_PULL' || action === 'INCREMENTAL_PULL';
 }
 
 /**
- * Resolves the pull mode for a pull-type schedule action. `PULL` and `FULL_PULL`
- * are equivalent at runtime (legacy `PULL` is kept for runtime tolerance until the
- * enum value is dropped); only `INCREMENTAL_PULL` requests an incremental pull.
- * Throws for non-pull actions — callers must only invoke this for pull schedules.
+ * True for the two connection-wide pull-type schedule actions
+ * (`CONNECTION_FULL_PULL`, `CONNECTION_INCREMENTAL_PULL`). These target a
+ * ConnectorAccount (entityId is a ConnectorAccountId) and, when they fire, fan out
+ * to every linked DataFolder in that connection. Used by schedule CRUD to validate
+ * the entity and by the scheduler to enqueue the fan-out pull job.
+ */
+export function isConnectionPullAction(action: string): boolean {
+  return action === 'CONNECTION_FULL_PULL' || action === 'CONNECTION_INCREMENTAL_PULL';
+}
+
+/**
+ * Resolves the pull mode for a pull-type schedule action (table-level or
+ * connection-wide). `PULL` and `FULL_PULL` are equivalent at runtime (legacy
+ * `PULL` is kept for runtime tolerance until the enum value is dropped); only the
+ * `*_INCREMENTAL_PULL` actions request an incremental pull. Throws for non-pull
+ * actions — callers must only invoke this for pull schedules.
  */
 export function scheduleActionToPullMode(action: string): 'full' | 'incremental' {
   switch (action) {
     case 'INCREMENTAL_PULL':
+    case 'CONNECTION_INCREMENTAL_PULL':
       return 'incremental';
     case 'FULL_PULL':
+    case 'CONNECTION_FULL_PULL':
     case 'PULL':
       return 'full';
     default:

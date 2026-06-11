@@ -78,6 +78,8 @@ describe('SchedulerService', () => {
         // Default the workbook lookup to "not pending deletion" so the scheduler
         // proceeds to the existing busy/claim logic.
         workbook: { findUnique: jest.fn().mockResolvedValue({ isPendingDelete: false }) },
+        // Used by connection-wide pull schedules to fan out to the connection's tables.
+        dataFolder: { findMany: jest.fn().mockResolvedValue([]) },
       },
     } as unknown as jest.Mocked<DbService>;
 
@@ -215,6 +217,88 @@ describe('SchedulerService', () => {
       expect(WSLogger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ message: expect.stringContaining('missing path or connectorAccountId') }),
       );
+    });
+  });
+
+  describe('CONNECTION pull actions', () => {
+    const CONNECTOR_ACCOUNT_ID = 'ca_test-conn';
+    const CONNECTION_FOLDER_IDS = ['dfd_table-a', 'dfd_table-b'];
+
+    function mockConnectionFolders(ids: string[]): void {
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue(ids.map((id) => ({ id })));
+    }
+
+    it('fans out a CONNECTION_FULL_PULL to every linked table with mode "full"', async () => {
+      const schedule = makeSchedule({ action: 'CONNECTION_FULL_PULL', entityId: CONNECTOR_ACCOUNT_ID });
+      scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+      scheduleService.atomicClaim.mockResolvedValue(schedule);
+      scheduleService.entityExists.mockResolvedValue(true);
+      mockConnectionFolders(CONNECTION_FOLDER_IDS);
+
+      await service.evaluateSchedules();
+
+      expect(dbService.client.dataFolder.findMany).toHaveBeenCalledWith({
+        where: { workbookId: WORKBOOK_ID, connectorAccountId: CONNECTOR_ACCOUNT_ID },
+        select: { id: true },
+      });
+      expect(bullEnqueuerService.enqueuePullLinkedFolderFilesJob).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        expect.objectContaining({ userId: USER_ID, organizationId: ORG_ID }),
+        CONNECTION_FOLDER_IDS,
+        undefined,
+        expect.objectContaining({ trigger: 'scheduler' }),
+        'full',
+      );
+    });
+
+    it('fans out a CONNECTION_INCREMENTAL_PULL to every linked table with mode "incremental"', async () => {
+      const schedule = makeSchedule({ action: 'CONNECTION_INCREMENTAL_PULL', entityId: CONNECTOR_ACCOUNT_ID });
+      scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+      scheduleService.atomicClaim.mockResolvedValue(schedule);
+      scheduleService.entityExists.mockResolvedValue(true);
+      mockConnectionFolders(CONNECTION_FOLDER_IDS);
+
+      await service.evaluateSchedules();
+
+      expect(bullEnqueuerService.enqueuePullLinkedFolderFilesJob).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        expect.anything(),
+        CONNECTION_FOLDER_IDS,
+        undefined,
+        expect.objectContaining({ trigger: 'scheduler' }),
+        'incremental',
+      );
+    });
+
+    it('skips (logs) a connection pull schedule with no linked tables', async () => {
+      const schedule = makeSchedule({ action: 'CONNECTION_FULL_PULL', entityId: CONNECTOR_ACCOUNT_ID });
+      scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+      scheduleService.atomicClaim.mockResolvedValue(schedule);
+      scheduleService.entityExists.mockResolvedValue(true);
+      mockConnectionFolders([]);
+
+      await service.evaluateSchedules();
+
+      expect(bullEnqueuerService.enqueuePullLinkedFolderFilesJob).not.toHaveBeenCalled();
+      expect(WSLogger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('has no linked tables') }),
+      );
+    });
+
+    it('does not per-entity debounce connection pull schedules (no dbJob.findFirst lookup)', async () => {
+      const schedule = makeSchedule({ action: 'CONNECTION_FULL_PULL', entityId: CONNECTOR_ACCOUNT_ID });
+      scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+      scheduleService.atomicClaim.mockResolvedValue(schedule);
+      scheduleService.entityExists.mockResolvedValue(true);
+      mockConnectionFolders(CONNECTION_FOLDER_IDS);
+      // Even with a recent job present, the connection schedule still fires because
+      // the per-entity debounce is intentionally skipped for connection actions.
+      (dbService.client.dbJob.findFirst as jest.Mock).mockResolvedValue({ id: 'job_recent' });
+
+      await service.evaluateSchedules();
+
+      expect(dbService.client.dbJob.findFirst).not.toHaveBeenCalled();
+      expect(bullEnqueuerService.enqueuePullLinkedFolderFilesJob).toHaveBeenCalled();
     });
   });
 });

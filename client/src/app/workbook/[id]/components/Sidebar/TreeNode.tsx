@@ -62,13 +62,13 @@ import { TestTransformerModal } from '../modals/TestTransformerModal';
 import { AdvancedFolderSettingsModal } from '../shared/AdvancedFolderSettingsModal';
 import { ChooseTablesModal } from '../shared/ChooseTablesModal';
 import { ConnectionContextMenu } from '../shared/ConnectionContextMenu';
+import { ConnectionPullScheduleModal } from '../shared/ConnectionPullScheduleModal';
 import { ContextMenu, type ContextMenuItem } from '../shared/ContextMenu';
 import { DataFolderInfoModal } from '../shared/DataFolderInfoModal';
 import { DataFolderSchemaModal } from '../shared/DataFolderSchemaModal';
 import { DeleteAllRecordsModal } from '../shared/DeleteAllRecordsModal';
 import { NewFileModal } from '../shared/NewFileModal';
 import { PullAssetsModal } from '../shared/PullAssetsModal';
-import { PullScheduleModal } from '../shared/PullScheduleModal';
 import { RemoveFileModal } from '../shared/RemoveFileModal';
 import { RemoveTableModal } from '../shared/RemoveTableModal';
 import { RenameFileModal } from '../shared/RenameFileModal';
@@ -344,6 +344,10 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
   // Inline "Choose tables" link (separate from the context menu's modal)
   const [inlineChooseTablesOpen, { open: openChooseTables, close: closeInlineChooseTables }] = useDisclosure(false);
 
+  // Connection-level pull schedule dialog (DEV-10396)
+  const [connectionPullScheduleOpen, { open: openConnectionPullSchedule, close: closeConnectionPullSchedule }] =
+    useDisclosure(false);
+
   // Pull handler - pull only the tables belonging to this connection
   const connectionFolderIds = useMemo(() => group.dataFolders.map((f) => f.id), [group.dataFolders]);
   // Incremental is the default pull; the backend safely falls back to a full pull
@@ -529,6 +533,7 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
                 ]
               : [{ label: 'Pull All Tables', icon: CloudDownloadIcon, onClick: handlePullAllFull }]),
             { label: 'Pull All Assets', icon: ImageIcon, onClick: openPullAssetsModal },
+            { label: 'Pull Schedule', icon: ClockIcon, onClick: openConnectionPullSchedule },
           ]}
           extraItemsAfter={[
             {
@@ -567,6 +572,17 @@ export function ConnectionNode({ group, workbookId, connectorAccount }: Connecti
         onConfirm={handlePullAllAssetsConfirm}
         title={`Pull All Assets — ${group.name}`}
       />
+
+      {/* Connection-level Pull Schedule Modal (DEV-10396) */}
+      {connectorAccount && (
+        <ConnectionPullScheduleModal
+          opened={connectionPullScheduleOpen}
+          onClose={closeConnectionPullSchedule}
+          workbookId={workbookId}
+          connectorAccount={connectorAccount}
+          dataFolders={group.dataFolders}
+        />
+      )}
     </>
   );
 }
@@ -636,7 +652,6 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const [refreshSchemaModalOpened, { open: openRefreshSchemaModal, close: closeRefreshSchemaModal }] =
     useDisclosure(false);
   const [settingsOpened, { open: openSettings, close: closeSettings }] = useDisclosure(false);
-  const [pullScheduleOpened, { open: openPullSchedule, close: closePullSchedule }] = useDisclosure(false);
   const [assetIndexOpened, { open: openAssetIndex, close: closeAssetIndex }] = useDisclosure(false);
   const [infoModalOpened, { open: openInfoModal, close: closeInfoModal }] = useDisclosure(false);
 
@@ -898,7 +913,6 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
             { label: 'View Schema', icon: FileJsonIcon, onClick: openSchemaModal },
             { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },
-            { label: 'Pull Schedule', icon: ClockIcon, onClick: openPullSchedule },
             { label: 'Pull Assets', icon: ImageIcon, onClick: openPullAssets },
             ...(isDevToolsEnabled
               ? [{ label: 'Asset Index', icon: ImageIcon, onClick: openAssetIndex, devtool: true }]
@@ -935,9 +949,6 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
         workbookId={workbookId}
         onSuccess={handleRefreshTable}
       />
-
-      {/* Pull Schedule Modal */}
-      <PullScheduleModal opened={pullScheduleOpened} onClose={closePullSchedule} folder={folder} />
 
       {/* Advanced Folder Settings Modal */}
       <AdvancedFolderSettingsModal opened={settingsOpened} onClose={closeSettings} folder={folder} />

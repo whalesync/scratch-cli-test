@@ -54,6 +54,10 @@ enum ScheduleAction {
   PULL
   FULL_PULL
   INCREMENTAL_PULL
+  /// Connection-wide full pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection.
+  CONNECTION_FULL_PULL
+  /// Connection-wide incremental pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection.
+  CONNECTION_INCREMENTAL_PULL
   PUBLISH
   SYNC
 }
@@ -783,10 +787,11 @@ model Schedule {
   /// Human-readable label, e.g. "Hourly Airtable pull"
   name String
 
-  /// The operation to perform: PULL, PUBLISH, or SYNC
+  /// The operation to perform: PULL, PUBLISH, SYNC, or a connection-wide pull.
   action ScheduleAction
 
-  /// Polymorphic reference to the target entity (DataFolderId for PULL/PUBLISH, SyncId for SYNC).
+  /// Polymorphic reference to the target entity: DataFolderId for PULL/FULL_PULL/INCREMENTAL_PULL/PUBLISH,
+  /// SyncId for SYNC, ConnectorAccountId for CONNECTION_FULL_PULL/CONNECTION_INCREMENTAL_PULL.
   /// No FK constraint — validated at the application level.
   entityId String
 

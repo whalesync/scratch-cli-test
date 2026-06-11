@@ -63,6 +63,10 @@ export enum ScheduleAction {
   PULL = 'PULL',
   FULL_PULL = 'FULL_PULL',
   INCREMENTAL_PULL = 'INCREMENTAL_PULL',
+  /** Connection-wide full pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection. */
+  CONNECTION_FULL_PULL = 'CONNECTION_FULL_PULL',
+  /** Connection-wide incremental pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection. */
+  CONNECTION_INCREMENTAL_PULL = 'CONNECTION_INCREMENTAL_PULL',
   PUBLISH = 'PUBLISH',
   SYNC = 'SYNC',
 }
