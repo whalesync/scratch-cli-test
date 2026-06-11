@@ -7,7 +7,7 @@ import { isTableFullyLocked } from '@/lib/connector-table-helpers';
 import { scratchApiClient } from '@/lib/scratch-api-client';
 import { Divider, Group, Loader, Modal, Stack, Switch, Text, Textarea, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type { DataFolder, DataFolderOptions, TableList } from '@spinner/shared-types';
+import { settingAppliesToTable, type DataFolder, type DataFolderOptions, type TableList } from '@spinner/shared-types';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import useSWR from 'swr';
 import { ConnectorSettingField } from './connector-setting-field';
@@ -138,16 +138,35 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder, workbookI
   const supportsFilters = tableList?.supportsFilters ?? false;
   const advancedSettings = useMemo(() => tableList?.advancedSettings ?? [], [tableList?.advancedSettings]);
 
+  // Look up this folder's TablePreview to detect connector-level lockout and to
+  // scope per-table settings (forTableWsIds). Defined above the settings memos
+  // so they can filter by it.
+  const tablePreview = useMemo(() => {
+    if (!tableList || folder.tableId.length === 0) return undefined;
+    const key = folder.tableId.join('/');
+    return tableList.tables.find((t) => t.id.remoteId.join('/') === key);
+  }, [tableList, folder.tableId]);
+  const fullyLocked = isTableFullyLocked(tablePreview);
+
   // The last-modified-field picker belongs to the Incremental Pull section; all
   // other advanced settings are connector-specific and render under their own
-  // "<Connector> Settings" section.
+  // "<Connector> Settings" section. Both are scoped by `forTableWsIds` so a
+  // setting can target specific tables (settingAppliesToTable; omitted = all).
+  // buildOptions and the init effect still iterate the full advancedSettings
+  // list, so a previously-saved value on a now-hidden setting is preserved.
   const incrementalPullFieldSettings = useMemo(
-    () => advancedSettings.filter((s) => s.key === INCREMENTAL_PULL_FIELD_SETTING_KEY),
-    [advancedSettings],
+    () =>
+      advancedSettings.filter(
+        (s) => s.key === INCREMENTAL_PULL_FIELD_SETTING_KEY && settingAppliesToTable(s, tablePreview?.id.wsId),
+      ),
+    [advancedSettings, tablePreview],
   );
   const connectorSpecificSettings = useMemo(
-    () => advancedSettings.filter((s) => s.key !== INCREMENTAL_PULL_FIELD_SETTING_KEY),
-    [advancedSettings],
+    () =>
+      advancedSettings.filter(
+        (s) => s.key !== INCREMENTAL_PULL_FIELD_SETTING_KEY && settingAppliesToTable(s, tablePreview?.id.wsId),
+      ),
+    [advancedSettings, tablePreview],
   );
 
   const hasFieldSelect = useMemo(() => advancedSettings.some((s) => s.type === 'field-select'), [advancedSettings]);
@@ -174,13 +193,6 @@ export function AdvancedFolderSettingsModal({ opened, onClose, folder, workbookI
       return format !== undefined && allowedFormats.includes(format);
     });
   };
-
-  const tablePreview = useMemo(() => {
-    if (!tableList || folder.tableId.length === 0) return undefined;
-    const key = folder.tableId.join('/');
-    return tableList.tables.find((t) => t.id.remoteId.join('/') === key);
-  }, [tableList, folder.tableId]);
-  const fullyLocked = isTableFullyLocked(tablePreview);
 
   useEffect(() => {
     if (opened) {

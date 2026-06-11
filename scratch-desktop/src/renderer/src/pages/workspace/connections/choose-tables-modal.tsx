@@ -35,7 +35,7 @@ import type {
   TableSchemaPreview,
   TableSearchResult,
 } from '@spinner/shared-types';
-import { TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
+import { settingAppliesToTable, TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
 import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
@@ -954,25 +954,27 @@ export function ChooseTablesModal({
                   )}
 
                   {!entry.isRemoved &&
-                    advancedSettings.map((setting) => {
-                      const fieldNames = schemaFields.map((f) => f.path.join('.'));
-                      return (
-                        <ConnectorSettingField
-                          key={setting.key}
-                          setting={setting}
-                          value={connectorOptions.get(entry.tableKey)?.[setting.key]}
-                          onChange={(val) => {
-                            setConnectorOptions((prev) => {
-                              const next = new Map(prev);
-                              const current = next.get(entry.tableKey) ?? {};
-                              next.set(entry.tableKey, { ...current, [setting.key]: val });
-                              return next;
-                            });
-                          }}
-                          fieldOptions={fieldNames}
-                        />
-                      );
-                    })}
+                    advancedSettings
+                      .filter((setting) => settingAppliesToTable(setting, tableLookup.get(entry.tableKey)?.id.wsId))
+                      .map((setting) => {
+                        const fieldNames = schemaFields.map((f) => f.path.join('.'));
+                        return (
+                          <ConnectorSettingField
+                            key={setting.key}
+                            setting={setting}
+                            value={connectorOptions.get(entry.tableKey)?.[setting.key]}
+                            onChange={(val) => {
+                              setConnectorOptions((prev) => {
+                                const next = new Map(prev);
+                                const current = next.get(entry.tableKey) ?? {};
+                                next.set(entry.tableKey, { ...current, [setting.key]: val });
+                                return next;
+                              });
+                            }}
+                            fieldOptions={fieldNames}
+                          />
+                        );
+                      })}
                 </Stack>
               </Box>
             );

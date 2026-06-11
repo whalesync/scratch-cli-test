@@ -23,6 +23,7 @@ and BOTH for MIXED (delete the unused one).
 - **API key / credentials:** *omitted here.* Where to find them: decrypt `ConnectorAccount.encryptedCredentials` for `<coa_id>` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`; see `server/tools/decrypt-credentials.js`), or regenerate in the service's settings (<path>).
 - **Scratch side:** workbook `<wkb_id>` / connection `<coa_id>` · local workspace `<path>`
 - **Auth method:** `<user_provided_params | oauth>` <— user_provided_params is CLI-connectable; oauth must be done in the web app>
+- **OAuth account (if OAuth):** <the account that owns / authorizes the OAuth client + connection, e.g. `team@whalesync.com` — never a secret. Omit for creds-only connectors.>
 - **Provenance:** <user-provided | reused existing browser session | created by the skill on <date>>
 
 ## Metadata
@@ -116,6 +117,12 @@ Max records (or fields) per API request, **per operation** — services often di
 | Update | <N> records/request | <endpoint> | |
 | Delete | <N> ids/request | <endpoint> | |
 
+**Batch-breaking fields** — fields whose edit needs its **own dedicated API call** (a separate add/remove or sub-resource endpoint), so they **cannot** be combined into the main (batched) update; a publish that touches one splits into ≥2 calls. Per field ask: *"if I change only this, does it go through the normal update, or a different endpoint?"*
+
+| Field | Entity | Why it can't batch (separate endpoint) |
+|---|---|---|
+| `<field>` | `<Entity>` | `<e.g. needs POST/DELETE /…/{id}/followers — rejected on the normal update>` |
+
 <Note any org-wide rate/quota limits (daily credits, concurrency, token-endpoint throttle) separately — they're independent of bulk size.>
 
 ## Incremental polling
@@ -180,5 +187,5 @@ Direct URLs to common screens so the agent jumps straight there instead of click
 ## Template changelog
 **Very concise — one line per template version.** When you change the template's *structure* (add/rename/remove a section, table column, or required rule), bump `Template version` (Metadata) to today's date and add an entry here describing what changed. Each connector's STATE.md reconciles to the newest version on its next `/connector-build` run (apply every entry newer than the STATE.md's `Template version`). Don't log typo/wording fixes — only structural changes a STATE.md would need to mirror.
 
-- **2026-06-10** — Added Milestone 9 **OAuth** (final / pre-release) and an **OAuth** section (requires / endpoints / app-client location / status / blockers); added an OAuth-app row to UI quick-links. Added a **TODOs — known pending tasks** section directly below Milestones. **Endpoints** section now leads with an **"API version & client"** block (API version + is-it-latest + required version header; SDK/hand-rolled client + pinned-vs-newest version; currency verdict).
+- **2026-06-10** — Added Milestone 9 **OAuth** (final / pre-release) and an **OAuth** section (requires / endpoints / app-client location / status / blockers); added an OAuth-app row to UI quick-links. Added a **TODOs — known pending tasks** section directly below Milestones. Added an **OAuth account** field to the Test account section (the account owning/authorizing the OAuth connection lives here, not in the cross-connector summary table). **Endpoints** section now leads with an **"API version & client"** block (API version + is-it-latest + required version header; SDK/hand-rolled client + pinned-vs-newest version; currency verdict). Added a **batch-breaking fields** sub-table to **Bulk operation limits / pagination** (fields that need a dedicated add/remove or sub-resource call and so can't be combined into the normal batched update).
 - **2026-06-09** — Baseline. Sections: Test account · Metadata (+ Template version) · Milestones (**8-row**, incl. "View(s) built") · Objects (3 tables) · Entities×Ops / Field-types×Ops · Endpoints · Bulk limits/pagination · Incremental polling · Foreign keys · Edge cases · Gotchas · Open issues · UI quick-links · Template changelog.

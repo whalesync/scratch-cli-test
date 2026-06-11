@@ -460,7 +460,16 @@ export class GoHighLevelConnector extends Connector {
         updated = await this.client.updateContact(recordId, this.buildContactPayload(changed, shortKeyToId));
         if (updated) this.reshapeCustomFieldsArrayToObject(updated, idToShortKey, 'value');
       } else if (wsId === OPPORTUNITIES_TABLE_WS_ID) {
-        updated = await this.client.updateOpportunity(recordId, this.buildOpportunityPayload(changed, shortKeyToId));
+        // `followers` rides separately (the update endpoint rejects it), so a
+        // followers-only edit leaves an empty update payload — skip the PUT in that
+        // case and just reconcile followers through their dedicated endpoints.
+        const opportunityPayload = this.buildOpportunityPayload(changed, shortKeyToId);
+        if (Object.keys(opportunityPayload).length > 0) {
+          updated = await this.client.updateOpportunity(recordId, opportunityPayload);
+        }
+        if ('followers' in changed) {
+          await this.reconcileOpportunityFollowers(recordId, extractFollowerUserIds(changed.followers));
+        }
         if (updated) this.reshapeCustomFieldsArrayToObject(updated, idToShortKey, 'fieldValue');
       } else if (this.isCustomObjectTable(wsId)) {
         const objectKey = this.objectKeyFromId(tableSpec.id);
@@ -869,7 +878,29 @@ export class GoHighLevelConnector extends Connector {
     for (const hydratedReadOnlyKey of ['contact', 'notes', 'tasks', 'calendarEvents']) {
       delete payload[hydratedReadOnlyKey];
     }
+    // `followers` is NOT an updatable property on the opportunity update endpoint
+    // (it 422s "property followers should not exist"). It's reconciled separately
+    // through the dedicated add/remove endpoints — see reconcileOpportunityFollowers.
+    delete payload.followers;
     return payload;
+  }
+
+  /**
+   * Reconcile an opportunity's followers to a desired set. HighLevel doesn't accept
+   * `followers` on the update endpoint, so we read the current followers, diff against
+   * the desired set, and apply only the delta through the dedicated add/remove
+   * endpoints. Converges idempotently (safe to re-run — re-adding an existing follower
+   * or removing an absent one is a no-op on our side).
+   */
+  private async reconcileOpportunityFollowers(opportunityId: string, desiredFollowerUserIds: string[]): Promise<void> {
+    const currentOpportunity = await this.client.getOpportunity(opportunityId);
+    const currentFollowerUserIds = extractFollowerUserIds(currentOpportunity?.followers);
+    const desiredFollowerUserIdSet = new Set(desiredFollowerUserIds);
+    const currentFollowerUserIdSet = new Set(currentFollowerUserIds);
+    const followerUserIdsToAdd = desiredFollowerUserIds.filter((userId) => !currentFollowerUserIdSet.has(userId));
+    const followerUserIdsToRemove = currentFollowerUserIds.filter((userId) => !desiredFollowerUserIdSet.has(userId));
+    await this.client.addOpportunityFollowers(opportunityId, followerUserIdsToAdd);
+    await this.client.removeOpportunityFollowers(opportunityId, followerUserIdsToRemove);
   }
 
   /**
@@ -912,6 +943,26 @@ export class GoHighLevelConnector extends Connector {
     }
     return payload;
   }
+}
+
+/**
+ * Normalize an opportunity `followers` value to a list of user-id strings.
+ * HighLevel returns followers as an array of user-id strings; tolerate the
+ * occasional `{ id }` / `{ _id }` object shape defensively, and treat anything
+ * else (null / undefined / non-array) as no followers.
+ */
+function extractFollowerUserIds(followersValue: unknown): string[] {
+  if (!Array.isArray(followersValue)) return [];
+  const followerUserIds: string[] = [];
+  for (const follower of followersValue) {
+    if (typeof follower === 'string') {
+      followerUserIds.push(follower);
+    } else if (follower && typeof follower === 'object') {
+      const candidate = (follower as Record<string, unknown>).id ?? (follower as Record<string, unknown>)._id;
+      if (typeof candidate === 'string') followerUserIds.push(candidate);
+    }
+  }
+  return followerUserIds;
 }
 
 connectorRegistry.register({

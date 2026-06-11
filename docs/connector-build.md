@@ -11,15 +11,16 @@ At-a-glance feature support across the connectors this skill has reviewed. **Kee
 
 **Legend:** ✅ available and implemented · ❌ not available · 🟠 (orange dash) available but not implemented — *we should implement it*.
 
-Columns — auth support: **OAuth** (OAuth flow) · **Creds** (API key / user-provided params).
+Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-provided params), using the legend above. **Visible** — 👁️ shown in the product vs 🔒 hidden / dev-only (`metadata.visible`). **Last Run** — date this skill last reviewed the connector (date only). (The OAuth account used for the connection is recorded in each connector's `STATE.md`, not here.)
 
-| Connector | OAuth | Creds |
-|---|:--:|:--:|
-| [Affinity](../server/src/remote-service/connectors/library/affinity/STATE.md) | ❌ | ✅ |
-| [Attio](../server/src/remote-service/connectors/library/attio/STATE.md) | 🟠 | ✅ |
-| [Copper](../server/src/remote-service/connectors/library/copper/STATE.md) | 🟠 | ✅ |
-| [GoHighLevel](../server/src/remote-service/connectors/library/gohighlevel/STATE.md) | 🟠 | ✅ |
-| [Zoho CRM](../server/src/remote-service/connectors/library/zoho/STATE.md) | ✅ | ❌ |
+| Connector | OAuth | Creds | Visible | Last Run |
+|---|:--:|:--:|:--:|:--:|
+| [Affinity](../server/src/remote-service/connectors/library/affinity/STATE.md) | ❌ | ✅ | 👁️ | 2026-06-10 |
+| [Attio](../server/src/remote-service/connectors/library/attio/STATE.md) | 🟠 | ✅ | 👁️ | 2026-06-10 |
+| [ClickUp](../server/src/remote-service/connectors/library/clickup/STATE.md) | 🟠 | ✅ | 🔒 | 2026-06-10 |
+| [Copper](../server/src/remote-service/connectors/library/copper/STATE.md) | 🟠 | ✅ | 👁️ | 2026-06-10 |
+| [GoHighLevel](../server/src/remote-service/connectors/library/gohighlevel/STATE.md) | 🟠 | ✅ | 👁️ | 2026-06-10 |
+| [Zoho CRM](../server/src/remote-service/connectors/library/zoho/STATE.md) | ✅ | ❌ | 👁️ | 2026-06-10 |
 
 > **Zoho — OAuth only for customers.** Zoho has no API key; the only customer login is OAuth. A `user_provided_params` ("Self Client") path exists but is **test/CLI-only** (hidden from the web UI via `supportedAuthMethods: ['oauth']`) and is itself a *manual OAuth* refresh-token, not a real creds login — so **Creds = ❌**.
 

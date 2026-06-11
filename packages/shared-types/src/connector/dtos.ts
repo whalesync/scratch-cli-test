@@ -46,3 +46,15 @@ export interface ConnectorSettingDefinition {
    */
   forTableWsIds?: string[];
 }
+
+/**
+ * A connector setting applies to a table when it declares no `forTableWsIds`
+ * whitelist, or the table's wsId is in that whitelist. A scoped setting whose
+ * table wsId can't be resolved is hidden (we can't confirm it applies). Shared
+ * by the web client and the desktop app so the per-table filter is identical.
+ */
+export function settingAppliesToTable(setting: ConnectorSettingDefinition, tableWsId: string | undefined): boolean {
+  if (!setting.forTableWsIds || setting.forTableWsIds.length === 0) return true;
+  if (!tableWsId) return false;
+  return setting.forTableWsIds.includes(tableWsId);
+}

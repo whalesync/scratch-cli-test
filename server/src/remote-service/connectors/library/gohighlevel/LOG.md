@@ -4,6 +4,19 @@
 
 # GoHighLevel connector — activity log
 
+## 2026-06-10 — opportunity followers (built-but-untested TODO → verified)
+
+Cleared the followers TODO via CLI publish (opp `VbhtTZuBBsTPrVduE9p5`; harness recovered — the local server had no repo for `coa_yPWo8whEMY`, so re-pulled + made a fresh clone at `local/cli-v4/ghl-fresh/ghl-test`):
+[23:25:28] [Service API] Baseline — GET /opportunities/VbhtTZuBBsTPrVduE9p5 → followers ['EtHf…']
+[23:28:25] [Manual Edits] opp1 followers ['EtHf…'] → [] — opp1-in-ivans-1st-pipeline-edited.json
+[23:28:30] [Scratch CLI] accept + upload + publish (remove) — files accept "…opp1…" && upload && publish → Published 1 connection
+[23:28:45] [Service API] PASS — GET opp → followers [] (remove via Scratch; the original 422 is fixed)
+[23:28:58] [Manual Edits] opp1 followers [] → ['j1Ge3…' Joel]; published → GHL still [] (didn't add)
+[23:30:10] [Service API] Probed directly — POST /opportunities/{id}/followers {followers:['j1Ge3…']} → 201 but followersAdded:[[]] (no-op); EtHf adds fine (followersAdded:[['EtHf…']]). Joel is a valid location ADMIN → GHL silently refuses an ineligible follower (201, nothing added).
+[23:31:33] [Scratch CLI] ADD EtHf via publish (after reset GHL→[] + re-pull) → PASS, GHL followers ['EtHf…']
+[23:32:02] [Manual Edits] opp1 name → "Opp1 MIXED name+followers test" AND followers → []; accept+upload+publish
+[23:32:15] [Service API] PASS — GET opp → name updated AND followers [] (mixed edit: PUT + follower-reconcile both landed)
+
 ## 2026-06-09 — deep pass on branch ghl-impr
 
 Setup + account ID:

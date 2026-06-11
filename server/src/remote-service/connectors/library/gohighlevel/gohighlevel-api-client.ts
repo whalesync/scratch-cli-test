@@ -443,6 +443,25 @@ export class GoHighLevelApiClient {
     return response.data.opportunity ?? null;
   }
 
+  /**
+   * Add followers to an opportunity. HighLevel manages followers ONLY through this
+   * dedicated endpoint — `followers` is not an updatable property on
+   * `PUT /opportunities/{id}` (sending it there 422s "property followers should not
+   * exist"). Body is `{ followers: [userId, ...] }`. No-op for an empty list.
+   */
+  async addOpportunityFollowers(opportunityId: string, followerUserIds: string[]): Promise<void> {
+    if (followerUserIds.length === 0) return;
+    await this.post(`/opportunities/${encodeURIComponent(opportunityId)}/followers`, { followers: followerUserIds });
+  }
+
+  /** Remove followers from an opportunity via the dedicated DELETE endpoint (see addOpportunityFollowers). */
+  async removeOpportunityFollowers(opportunityId: string, followerUserIds: string[]): Promise<void> {
+    if (followerUserIds.length === 0) return;
+    await this.delete(`/opportunities/${encodeURIComponent(opportunityId)}/followers`, {
+      data: { followers: followerUserIds },
+    });
+  }
+
   /** Delete an opportunity. Ignores 404. */
   async deleteOpportunity(opportunityId: string): Promise<void> {
     try {
