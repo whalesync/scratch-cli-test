@@ -17,6 +17,7 @@ import {
   BaseJsonTableSpec,
   ConnectorErrorDetails,
   ConnectorFile,
+  CreateDestination,
   EntityId,
   PullRecordFilesOptions,
   PullRecordFilesResult,
@@ -102,6 +103,21 @@ export abstract class Connector<T extends string = string, TConnectorProgress ex
    * @throws Error if the tables cannot be listed.
    */
   abstract listTables(): Promise<TablePreview[]>;
+
+  /**
+   * List the locations where the user can create a new table on the remote
+   * service — e.g. Airtable bases, Postgres schemas, Notion pages. Each entry is
+   * a minimal `{ id, name }`: `id` is the remote identifier the create-table flow
+   * uses as the new table's parent, `name` is the label shown in the picker.
+   *
+   * Optional: only connectors that support creating tables implement it. The
+   * REST layer returns a `not supported` error when a connector leaves it
+   * undefined.
+   *
+   * @returns The create destinations, unsorted (the REST layer sorts by name).
+   * @throws Error if the destinations cannot be listed.
+   */
+  listCreateDestinations?(): Promise<CreateDestination[]>;
 
   /**
    * Search for tables by name. Only used when tableDiscoveryMode is SEARCH.

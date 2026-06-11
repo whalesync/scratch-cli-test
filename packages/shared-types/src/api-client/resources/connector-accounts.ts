@@ -1,4 +1,9 @@
-import type { TableList, TableSchemaPreview, TableSearchResult } from '../../connector/table-list';
+import type {
+  CreateDestinationList,
+  TableList,
+  TableSchemaPreview,
+  TableSearchResult,
+} from '../../connector/table-list';
 import type { ConnectorAccount } from '../../db';
 import type {
   ApiQuotaResponse,
@@ -67,6 +72,18 @@ export function createConnectorAccountsApi(http: Http) {
       const res = await http.get<TableList>(`/workbooks/${workbookId}/connections/${connectorAccountId}/tables`, {
         fallbackMessage: 'Failed to list tables',
       });
+      return res.data;
+    },
+
+    /** GET `/workbooks/:id/connections/:connectionId/create-destinations` — list where a new table can be created. (web + desktop) */
+    listCreateDestinations: async (
+      workbookId: string,
+      connectorAccountId: string,
+    ): Promise<CreateDestinationList> => {
+      const res = await http.get<CreateDestinationList>(
+        `/workbooks/${workbookId}/connections/${connectorAccountId}/create-destinations`,
+        { fallbackMessage: 'Failed to list create destinations' },
+      );
       return res.data;
     },
 

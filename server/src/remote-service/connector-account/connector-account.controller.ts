@@ -14,7 +14,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { WorkbookId, type ValidatedCreateConnectorAccountDto } from '@spinner/shared-types';
+import { CreateDestinationList, WorkbookId, type ValidatedCreateConnectorAccountDto } from '@spinner/shared-types';
 import { ScratchAuthGuard } from '../../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../../auth/types';
 import { checkWorkspacePermissions } from '../../users/permissions';
@@ -73,6 +73,17 @@ export class ConnectorAccountController {
     const actor = userToActor(req.user);
     checkWorkspacePermissions(actor, workbookId as WorkbookId);
     return this.service.listTables(connectorAccountId, actor);
+  }
+
+  @Get(':connectorAccountId/create-destinations')
+  async listCreateDestinations(
+    @Param('workbookId') workbookId: string,
+    @Param('connectorAccountId') connectorAccountId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<CreateDestinationList> {
+    const actor = userToActor(req.user);
+    checkWorkspacePermissions(actor, workbookId as WorkbookId);
+    return this.service.listCreateDestinations(connectorAccountId, actor);
   }
 
   @Get(':connectorAccountId/tables/search')

@@ -10,6 +10,7 @@ import type { Service } from '@spinner/shared-types';
 import {
   ConnectorAccountId,
   createConnectorAccountId,
+  CreateDestinationList,
   GenericApiConnectorExtras,
   isGenericApiConnectorExtras,
   ShopifyConnectorExtras,
@@ -669,6 +670,47 @@ export class ConnectorAccountService {
         supportsFieldSelection: connector.supportsFieldSelection(),
         advancedSettings: getServiceAdvancedSettings(account.service),
       };
+    } catch (error) {
+      throw exceptionForConnectorError(error, connector);
+    }
+  }
+
+  /**
+   * List the places a new table can be created for a connection (e.g. Airtable
+   * bases, Postgres schemas, Notion pages). Returns the destinations sorted
+   * alphabetically by name. Throws a 400 when the connector does not support
+   * creating tables.
+   */
+  async listCreateDestinations(connectorAccountId: string, actor: Actor): Promise<CreateDestinationList> {
+    const account = await this.findOneById(connectorAccountId, actor);
+
+    await this.assertGenericConnectorEnabled(account.service, actor);
+
+    let connector: Connector;
+    try {
+      connector = await this.connectorsService.getConnector({
+        service: account.service,
+        connectorAccount: account,
+        decryptedCredentials: account,
+        userId: actor.userId,
+      });
+    } catch (error) {
+      throw new InternalServerErrorException(error instanceof Error ? error.message : String(error), {
+        cause: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
+
+    if (!connector.listCreateDestinations) {
+      throw new BadRequestException(
+        `${getServiceDisplayName(account.service)} does not support listing table create destinations`,
+      );
+    }
+
+    try {
+      const destinations = await connector
+        .listCreateDestinations()
+        .then((destinations) => destinations.sort((a, b) => a.name.localeCompare(b.name)));
+      return { destinations };
     } catch (error) {
       throw exceptionForConnectorError(error, connector);
     }

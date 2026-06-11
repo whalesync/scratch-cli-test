@@ -1,12 +1,12 @@
 import { TSchema } from '@sinclair/typebox';
-import type { DataFolderOptions, EntityId, TableView } from '@spinner/shared-types';
+import type { CreateDestination, DataFolderOptions, EntityId, TableView } from '@spinner/shared-types';
 import { PostgresColumnType, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import { get, set, toPath, unset } from 'lodash';
 import { JsonSafeObject } from 'src/utils/objects';
 
 // Re-export from shared-types for backwards compatibility
 export { PostgresColumnType };
-export type { EntityId };
+export type { CreateDestination, EntityId };
 
 export type TablePreview = {
   id: EntityId;

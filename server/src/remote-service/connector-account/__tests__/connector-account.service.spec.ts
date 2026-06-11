@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { ConnectorAccount } from '@prisma/client';
 import type { ConnectorAccountId, WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
@@ -59,6 +59,7 @@ describe('ConnectorAccountService', () => {
       client: {
         connectorAccount: {
           findUnique: jest.fn(),
+          findFirst: jest.fn(),
           delete: jest.fn().mockResolvedValue({}),
         },
         dataFolder: {
@@ -227,6 +228,51 @@ describe('ConnectorAccountService', () => {
         message: 'Deleted connection Test Connection',
         entityId: ACCOUNT_ID,
       });
+    });
+  });
+
+  describe('listCreateDestinations', () => {
+    it('returns the connector destinations sorted alphabetically by name', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findFirst as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      const mockConnector = {
+        listCreateDestinations: jest.fn().mockResolvedValue([
+          { id: 'app_z', name: 'Zebra base' },
+          { id: 'app_a', name: 'Apple base' },
+        ]),
+      };
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue(mockConnector);
+
+      const result = await service.listCreateDestinations(ACCOUNT_ID, ACTOR);
+
+      expect(result).toEqual({
+        destinations: [
+          { id: 'app_a', name: 'Apple base' },
+          { id: 'app_z', name: 'Zebra base' },
+        ],
+      });
+      expect(mockConnector.listCreateDestinations).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws BadRequestException when the connector does not implement listCreateDestinations', async () => {
+      const account = createMockAccount();
+      (dbService.client.connectorAccount.findFirst as jest.Mock).mockResolvedValue(account);
+      (credentialEncryptionService.decryptCredentials as jest.Mock).mockResolvedValue({});
+
+      // A connector without the optional method (e.g. a read-only connector).
+      (connectorsService.getConnector as jest.Mock).mockResolvedValue({});
+
+      await expect(service.listCreateDestinations(ACCOUNT_ID, ACTOR)).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws NotFoundException when the account is not found', async () => {
+      (dbService.client.connectorAccount.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.listCreateDestinations(ACCOUNT_ID, ACTOR)).rejects.toThrow(NotFoundException);
+
+      expect(connectorsService.getConnector).not.toHaveBeenCalled();
     });
   });
 

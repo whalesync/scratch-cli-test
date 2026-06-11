@@ -23,6 +23,7 @@ import {
   BaseJsonTableSpec,
   ConnectorErrorDetails,
   ConnectorFile,
+  CreateDestination,
   EntityId,
   PullRecordFilesOptions,
   PullRecordFilesResult,
@@ -247,6 +248,21 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
     const response = await this.searchDataSources({ query: searchTerm });
     const tables = response.results.map((ds) => this.schemaParser.parseDataSourceTablePreview(ds));
     return { tables, hasMore: response.has_more };
+  }
+
+  /**
+   * A new Notion database is created as a child of a page, so the create
+   * destinations are the pages the integration can see. We reuse the schema
+   * parser's page-title extraction so the labels match the table picker.
+   */
+  override async listCreateDestinations(): Promise<CreateDestination[]> {
+    const response = await this.client.search({
+      filter: { property: 'object', value: 'page' },
+      page_size: 100,
+    });
+    return response.results
+      .filter((result): result is PageObjectResponse => result.object === 'page' && 'properties' in result)
+      .map((page) => ({ id: page.id, name: this.schemaParser.parsePageTablePreview(page).displayName }));
   }
 
   /**

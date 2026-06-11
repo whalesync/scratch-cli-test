@@ -36,6 +36,23 @@ export interface TableSearchResult {
   hasMore: boolean;
 }
 
+/**
+ * A location where a connector can create a new table for the user — an
+ * Airtable base, a Postgres schema, a Notion page, etc. The `id` is the remote
+ * identifier the create-table flow passes back as the new table's parent; `name`
+ * is the human-readable label shown in the picker. Intentionally minimal; add
+ * fields here as the create-table UX needs them.
+ */
+export interface CreateDestination {
+  id: string;
+  name: string;
+}
+
+/** Response for `GET .../connections/:id/create-destinations`. */
+export interface CreateDestinationList {
+  destinations: CreateDestination[];
+}
+
 /** Response for `GET .../connections/:id/tables/schema` (client-facing view of a table spec). */
 export interface TableSchemaPreview {
   id: EntityId;

@@ -46,6 +46,31 @@ function buildTableSpec(): BaseJsonTableSpec {
   };
 }
 
+describe('AirtableConnector.listCreateDestinations', () => {
+  let connector: AirtableConnector;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    connector = new AirtableConnector('test-api-key');
+  });
+
+  it('returns each base as an { id, name } create destination', async () => {
+    mockListBases.mockResolvedValue({
+      bases: [
+        { id: 'appOne', name: 'Marketing', permissionLevel: 'create' },
+        { id: 'appTwo', name: 'Sales', permissionLevel: 'edit' },
+      ],
+    });
+
+    const destinations = await connector.listCreateDestinations();
+
+    expect(destinations).toEqual([
+      { id: 'appOne', name: 'Marketing' },
+      { id: 'appTwo', name: 'Sales' },
+    ]);
+  });
+});
+
 describe('AirtableConnector.updateRecords', () => {
   let connector: AirtableConnector;
 

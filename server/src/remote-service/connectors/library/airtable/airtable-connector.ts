@@ -17,6 +17,7 @@ import {
   BaseJsonTableSpec,
   ConnectorErrorDetails,
   ConnectorFile,
+  CreateDestination,
   EntityId,
   findLastModifiedFieldName,
   PullRecordFilesOptions,
@@ -146,6 +147,12 @@ export class AirtableConnector extends Connector {
       tables.push(...baseSchema.tables.map((table) => this.schemaParser.parseTablePreview(base, table)));
     }
     return tables;
+  }
+
+  /** A new Airtable table lives inside a base, so the create destinations are the user's bases. */
+  override async listCreateDestinations(): Promise<CreateDestination[]> {
+    const bases = await this.client.listBases();
+    return bases.bases.map((base) => ({ id: base.id, name: base.name }));
   }
 
   /**

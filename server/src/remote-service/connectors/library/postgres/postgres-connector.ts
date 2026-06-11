@@ -32,6 +32,7 @@ import {
   type BaseJsonTableSpec,
   type ConnectorErrorDetails,
   type ConnectorFile,
+  type CreateDestination,
   type EntityId,
   type PullRecordFilesOptions,
   type PullRecordFilesResult,
@@ -164,6 +165,22 @@ export class PostgresConnector extends Connector {
       ]);
 
       return tables.map((t) => this.parseTable(t, tablesWithUnique, tablesWithAutoGenPK));
+    });
+  }
+
+  /**
+   * A new Postgres table is created inside a schema, so the create destinations
+   * are the database's non-system schemas. Mirrors the schema exclusions used by
+   * {@link listTables} (the fixed system schemas plus the `pg_*` pattern).
+   */
+  override async listCreateDestinations(): Promise<CreateDestination[]> {
+    return this.withPgClient(async (client) => {
+      const schemas = await client.findAllSchemas();
+      return schemas
+        .filter(
+          (schema) => !POSTGRES_SYSTEM_SCHEMAS.includes(schema.schema_name) && !schema.schema_name.startsWith('pg_'),
+        )
+        .map((schema) => ({ id: schema.schema_name, name: schema.schema_name }));
     });
   }
 
