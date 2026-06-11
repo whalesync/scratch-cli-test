@@ -8,9 +8,11 @@ import {
   PullAssetsResponseDto,
   PullFilesResponseDto,
   UpdateWorkbookDto,
+  UpdateWorkbookSettingsDto,
   ValidatedCreateWorkbookDto,
   WorkbookId,
   WorkbookManager,
+  WorkbookSettings,
 } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
@@ -540,6 +542,29 @@ export class WorkbookService {
     });
 
     return updatedWorkbook;
+  }
+
+  /**
+   * Merge a patch into a workbook's `settings` map. Keys present in `dto.updates` are
+   * added or overwritten; keys whose patched value is `null` are deleted; every other
+   * existing key is left untouched. Mirrors {@link UsersService.updateUserSettings}.
+   */
+  async updateWorkbookSettings(workbook: WorkbookCluster.Workbook, dto: UpdateWorkbookSettingsDto): Promise<void> {
+    const existingSettings = (workbook.settings ?? {}) as WorkbookSettings;
+
+    let updatedSettings: Record<string, string | number | boolean | null> = {
+      ...existingSettings,
+      ...dto.updates,
+    };
+
+    // filter out null values as those should remove the key from the settings object
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    updatedSettings = Object.fromEntries(Object.entries(updatedSettings).filter(([_, value]) => value !== null));
+
+    await this.db.client.workbook.update({
+      where: { id: workbook.id },
+      data: { settings: updatedSettings },
+    });
   }
 
   async pullFiles(

@@ -3,6 +3,7 @@ import { InternalServerErrorException, NotFoundException } from '@nestjs/common'
 import { WorkbookManager, type WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
+import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
@@ -54,6 +55,7 @@ describe('WorkbookService', () => {
         workbook: {
           create: jest.fn(),
           findFirst: jest.fn(),
+          update: jest.fn().mockResolvedValue({}),
           delete: jest.fn().mockResolvedValue({}),
         },
         connectorAccount: {
@@ -326,6 +328,82 @@ describe('WorkbookService', () => {
       (dbService.client.workbook.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.delete(WORKBOOK_ID, ACTOR)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updateWorkbookSettings', () => {
+    // Builds the minimal workbook shape `updateWorkbookSettings` reads (id + the
+    // existing settings map). Cast to the full cluster type — the method only ever
+    // touches these two fields.
+    function workbookWithSettings(
+      existingSettings: Record<string, string | number | boolean> | null,
+    ): WorkbookCluster.Workbook {
+      return { id: WORKBOOK_ID, settings: existingSettings } as unknown as WorkbookCluster.Workbook;
+    }
+
+    // Reads back the `settings` object that was actually persisted to the DB so each
+    // test asserts against the merged result the column would end up holding.
+    function settingsPersistedToDb(): Record<string, string | number | boolean> {
+      const [updateArgs] = (dbService.client.workbook.update as jest.Mock).mock.calls[0] as [
+        { where: { id: WorkbookId }; data: { settings: Record<string, string | number | boolean> } },
+      ];
+      return updateArgs.data.settings;
+    }
+
+    it('merges supplied keys over existing settings and leaves untouched keys intact (partial update)', async () => {
+      const workbook = workbookWithSettings({ keptUntouchedKey: 'original', overwrittenKey: 'old' });
+
+      await service.updateWorkbookSettings(workbook, { updates: { overwrittenKey: 'new', addedKey: 42 } });
+
+      // Only the keys named in `updates` change; `keptUntouchedKey` survives the patch.
+      expect(settingsPersistedToDb()).toEqual({
+        keptUntouchedKey: 'original',
+        overwrittenKey: 'new',
+        addedKey: 42,
+      });
+    });
+
+    it('removes a key when its patched value is null (null is the delete sentinel, never stored)', async () => {
+      const workbook = workbookWithSettings({ keptKey: 'stays', removedKey: 'goes' });
+
+      await service.updateWorkbookSettings(workbook, { updates: { removedKey: null } });
+
+      const persistedSettings = settingsPersistedToDb();
+      expect(persistedSettings).toEqual({ keptKey: 'stays' });
+      expect(persistedSettings).not.toHaveProperty('removedKey');
+    });
+
+    it('applies a delete (null) and an add in the same patch', async () => {
+      const workbook = workbookWithSettings({ keptKey: 'stays', removedKey: 'goes' });
+
+      await service.updateWorkbookSettings(workbook, { updates: { removedKey: null, addedKey: true } });
+
+      expect(settingsPersistedToDb()).toEqual({ keptKey: 'stays', addedKey: true });
+    });
+
+    it('treats a null settings column (never written before) as an empty map', async () => {
+      const workbook = workbookWithSettings(null);
+
+      await service.updateWorkbookSettings(workbook, { updates: { firstKey: 'value' } });
+
+      expect(settingsPersistedToDb()).toEqual({ firstKey: 'value' });
+    });
+
+    it('deleting a key that is not present is a no-op rather than an error', async () => {
+      const workbook = workbookWithSettings({ existingKey: 1 });
+
+      await service.updateWorkbookSettings(workbook, { updates: { neverThereKey: null } });
+
+      expect(settingsPersistedToDb()).toEqual({ existingKey: 1 });
+    });
+
+    it('persists against the workbook id', async () => {
+      const workbook = workbookWithSettings({});
+
+      await service.updateWorkbookSettings(workbook, { updates: { anyKey: 'anyValue' } });
+
+      const [updateArgs] = (dbService.client.workbook.update as jest.Mock).mock.calls[0] as [{ where: { id: string } }];
+      expect(updateArgs.where).toEqual({ id: WORKBOOK_ID });
     });
   });
 

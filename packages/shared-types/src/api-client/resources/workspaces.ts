@@ -2,6 +2,7 @@ import type { Workspace } from '../../db';
 import type { CreateWorkbookDto } from '../../dto/workbook/create-workbook.dto';
 import type { DeleteWorkbookResponseDto } from '../../dto/workbook/delete-workbook.dto';
 import type { WorkbookListQuery } from '../../dto/workbook/list-workbooks-query.dto';
+import type { UpdateWorkbookSettingsDto } from '../../dto/workbook/update-workbook-settings.dto';
 import type { UpdateWorkbookDto } from '../../dto/workbook/update-workbook.dto';
 import type { WorkbookManager } from '../../enums/enums';
 import type { Http } from '../http';
@@ -47,6 +48,12 @@ export function createWorkspacesApi(http: Http) {
         fallbackMessage: 'Failed to update workspace',
       });
       return res.data;
+    },
+
+    updateSettings: async (id: string, dto: UpdateWorkbookSettingsDto): Promise<void> => {
+      await http.patch(`/workbook/${id}/settings`, dto, {
+        fallbackMessage: 'Failed to update workspace settings',
+      });
     },
 
     delete: async (id: string, options?: { force?: boolean }): Promise<DeleteWorkbookResponseDto> => {

@@ -27,6 +27,9 @@ export const WorkspaceEntity = {
       version: workbook.version,
       isPendingDelete: workbook.isPendingDelete,
       managedBy: (workbook.managedBy as WorkbookManager | null) ?? null,
+      // `settings` is a nullable JSON column; coalesce to an empty map so every client
+      // always receives an object rather than null.
+      settings: (workbook.settings as Record<string, string | number | boolean> | null) ?? {},
       userId: workbook.userId ?? null,
       organizationId: workbook.organizationId,
       dataFolders: workbook.dataFolders?.map(

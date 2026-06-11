@@ -58,6 +58,7 @@ export * from './dto/workbook/list-files.dto';
 export * from './dto/workbook/list-workbooks-query.dto';
 export * from './dto/workbook/pull-assets.dto';
 export * from './dto/workbook/pull-files.dto';
+export * from './dto/workbook/update-workbook-settings.dto';
 export * from './dto/workbook/update-workbook.dto';
 
 export * from './dto/publish-plan/publish-job-responses.dto';

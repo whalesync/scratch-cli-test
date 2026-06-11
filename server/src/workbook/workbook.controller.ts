@@ -39,6 +39,7 @@ import {
   PullAssetsDto,
   PullFilesDto,
   UpdateWorkbookDto,
+  UpdateWorkbookSettingsDto,
   UpdateWorkspacePermissionDto,
 } from './dto/workbook.dto';
 import { WorkspaceEntity, WorkspaceInviteEntity, WorkspacePermissionEntity } from './entities';
@@ -123,6 +124,18 @@ export class WorkbookController {
     await this.service.assertWritableWorkbook(actor, id);
     const dto = updateWorkbookDto;
     return WorkspaceEntity.from(await this.service.update(id, dto, actor));
+  }
+
+  @Patch(':id/settings')
+  @HttpCode(204)
+  async updateSettings(
+    @Param('id') id: WorkbookId,
+    @Body() updateSettingsDto: UpdateWorkbookSettingsDto,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    const actor = userToActor(req.user);
+    const workbook = await this.service.assertWritableWorkbook(actor, id);
+    await this.service.updateWorkbookSettings(workbook, updateSettingsDto);
   }
 
   @Post(':id/pull-files')

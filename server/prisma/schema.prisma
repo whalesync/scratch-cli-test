@@ -185,6 +185,10 @@ model Workbook {
   // managed by Whalesync's CRM Bridge (via dusky), which constrains its config.
   managedBy WorkbookManager?
 
+  // Arbitrary client-supplied config metadata as a flat key/value map. Patched via a
+  // merge (null values delete keys), never wholesale-replaced. See WorkbookSettings.
+  settings Json? @default("{}") // WorkbookSettings object
+
   user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId         String?
   organizationId String

@@ -9,6 +9,11 @@ import { DataFolder } from './data-folder';
 /// Begin "keep in sync" section
 ///
 
+/** Arbitrary client-supplied config metadata stored on a workbook as a flat key/value map. */
+export interface WorkbookSettings {
+  [key: string]: string | number | boolean;
+}
+
 export interface Workspace {
   id: WorkbookId;
   name: string | null;
@@ -19,6 +24,9 @@ export interface Workspace {
   // Which external app owns and manages this workspace, if any. `null` means a
   // standalone Scratch workbook; `ws_crm` means it is managed by Whalesync's CRM Bridge.
   managedBy: WorkbookManager | null;
+  // Arbitrary client-supplied config metadata as a flat key/value map. Updated via a
+  // merge patch (PATCH /workbook/:id/settings); null values in a patch delete the key.
+  settings?: WorkbookSettings;
   dataFolders?: DataFolder[];
   userId: string | null;
   organizationId: string;
