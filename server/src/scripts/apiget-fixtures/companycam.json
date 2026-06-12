@@ -51,6 +51,12 @@
       "url": "https://api.companycam.com/v2/checklists?page=1&per_page=100"
     },
     {
+      "id": "ep_companycam_documents",
+      "name": "Documents",
+      "method": "GET",
+      "url": "https://api.companycam.com/v2/documents?page=1&per_page=100"
+    },
+    {
       "id": "ep_companycam_checklist_templates",
       "name": "ChecklistTemplates",
       "method": "GET",

@@ -17,7 +17,6 @@
  * now flipped so all users see it in production.
  */
 
-import { Type } from '@sinclair/typebox';
 import {
   connectorMetadata,
   DataFolderOptions,
@@ -61,6 +60,7 @@ import {
   Strategy,
 } from './apiget';
 import { applyOverridesToSettings } from './apply-overrides';
+import { inferredSchemaToTableSchema } from './generic-api-schema-to-typebox';
 
 /**
  * Per-page resume state checkpointed to Redis by the pull job. The connector
@@ -545,23 +545,18 @@ function toStrategyOrUndefined(detected: GenericApiFolderOptions['probe']['detec
 
 /**
  * Build a BaseJsonTableSpec from the persisted probe. The connector stores
- * `inferredSchema` as a plain JSON Schema object; we wrap it with TypeBox so
- * the downstream framework gets the TSchema shape it expects. The wrap is
- * defensive — we don't try to round-trip TypeBox's symbol-keyed metadata,
- * just hand it a `Type.Object` that reproduces the property shape.
+ * `inferredSchema` as a plain JSON Schema object (TypeBox's symbol-keyed
+ * metadata doesn't survive a Prisma `Json` column); here we reconstruct a
+ * `TSchema` whose `properties` carry the inferred fields so the frontends get
+ * real columns. (An empty persisted schema — e.g. a table probed while it had
+ * zero records — still yields an empty object; re-probe once records exist.)
  */
 function buildBaseJsonTableSpec(
   id: EntityId,
   folderOpts: GenericApiFolderOptions,
   displayName?: string,
 ): BaseJsonTableSpec {
-  // We trust inferredSchema is the shape from generic-api-schema-inference.ts.
-  // Wrap with TypeBox so the result is a TSchema.
-  const schema = Type.Object({}, { description: 'Generic API record (v1 has no per-field schema UI)' });
-  // Stash the raw inferred JSON Schema on the TSchema as a non-symbol prop so
-  // downstream views can introspect it if they want (without round-tripping
-  // through TypeBox's brand symbols). This is a tactical bridge for v1.
-  (schema as unknown as Record<string, unknown>)._rawInferredSchema = folderOpts.probe.inferredSchema;
+  const schema = inferredSchemaToTableSchema(folderOpts.probe.inferredSchema, 'Generic API record');
 
   const labelOrFallback = displayName && displayName !== '' ? displayName : id.wsId;
   return {

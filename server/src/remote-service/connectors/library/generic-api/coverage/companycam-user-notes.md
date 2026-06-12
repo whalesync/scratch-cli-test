@@ -6,7 +6,7 @@ CompanyCam works with Scratch's generic API connector (read-only). Here's the sh
 In CompanyCam: click your **profile menu → Access Tokens** (`https://app.companycam.com/access_tokens`) → **+ New Token** → leave "read only" unchecked → **Create Token**, then copy it. You need an **Admin** role; it's available on all plans. That token is long-lived — paste it into Scratch when adding the connection. (Use this personal Access Token, not the OAuth option.)
 
 ## What you can pull ✅
-Each of these is a table you can add and pull: **Projects, Photos, Users, Groups, Tags, Videos, Webhooks, Checklists.**
+Each of these is a table you can add and pull: **Projects, Photos, Users, Groups, Tags, Videos, Webhooks, Checklists, Documents** (the "Files" tab).
 
 Everything comes back exactly as CompanyCam's API returns it. Pulls page through all records automatically, and re-pulling is safe.
 
@@ -24,7 +24,8 @@ When adding the connection in Scratch, pick **REST**, enter your Access Token, a
     { "name": "Tags",       "method": "GET", "url": "https://api.companycam.com/v2/tags?page=1&per_page=100" },
     { "name": "Videos",     "method": "GET", "url": "https://api.companycam.com/v2/videos?page=1&per_page=100" },
     { "name": "Webhooks",   "method": "GET", "url": "https://api.companycam.com/v2/webhooks?page=1&per_page=100" },
-    { "name": "Checklists", "method": "GET", "url": "https://api.companycam.com/v2/checklists?page=1&per_page=100" }
+    { "name": "Checklists", "method": "GET", "url": "https://api.companycam.com/v2/checklists?page=1&per_page=100" },
+    { "name": "Documents",  "method": "GET", "url": "https://api.companycam.com/v2/documents?page=1&per_page=100" }
   ]
 }
 ```
@@ -32,7 +33,7 @@ When adding the connection in Scratch, pick **REST**, enter your Access Token, a
 No extra options are needed for CompanyCam — Scratch auto-detects the paging. (If you ever connect an API that pages differently, each endpoint can take an optional `"overrides"` block, but you don't need one here.) Checklist Templates is intentionally left out — see below.
 
 ## What you can't pull ❌
-- **Checklist Templates** — CompanyCam doesn't expose this one to API tokens (the request bounces to a login page), so it can't be synced. Everything else above works with the same token.
+- **Checklist Templates** and **Pages** — CompanyCam doesn't expose these to API tokens (the request bounces to a login page), so they can't be synced. Note: the project **"Files"** tab *is* pullable — it's the **Documents** table above. Everything else works with the same token.
 - **Per-project / per-photo lists** (a project's comments, documents, labels, photos; a photo's tags) — these aren't standalone tables, because CompanyCam requires the specific project/photo ID in the address. If you need one of these, we can add it as its own table pinned to a single project (e.g. "Comments for Project X"); it just can't be one table that spans every project.
 
 ## Gotchas

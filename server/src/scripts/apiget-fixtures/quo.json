@@ -75,6 +75,42 @@
           "dataPath": "data"
         }
       }
+    },
+    {
+      "id": "ep_quo_webhooks",
+      "name": "Webhooks",
+      "method": "GET",
+      "url": "https://api.openphone.com/v1/webhooks",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "pageToken",
+          "limitParam": "maxResults",
+          "maxPageSize": 50
+        },
+        "response": {
+          "cursorPath": "nextPageToken",
+          "dataPath": "data"
+        }
+      }
+    },
+    {
+      "id": "ep_quo_contact_custom_fields",
+      "name": "ContactCustomFields",
+      "method": "GET",
+      "url": "https://api.openphone.com/v1/contact-custom-fields",
+      "overrides": {
+        "paginationType": "cursor",
+        "request": {
+          "cursorParam": "pageToken",
+          "limitParam": "maxResults",
+          "maxPageSize": 50
+        },
+        "response": {
+          "cursorPath": "nextPageToken",
+          "dataPath": "data"
+        }
+      }
     }
   ]
 }

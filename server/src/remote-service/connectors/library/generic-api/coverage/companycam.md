@@ -75,7 +75,9 @@ Top-level collections (the generic, no-parent-id endpoints). **Maximized** — e
 | Videos | `GET /v2/videos` | `page` | `id` | ✅ | 0 | fetches (empty); pagination/idPath detected. Records are mobile-app-only — not API-seedable. |
 | Webhooks | `GET /v2/webhooks` | `page` | `id` | ✅ | 0 | fetches (empty); config object, not user content |
 | Checklists | `GET /v2/checklists` | `page` | `id` | ✅ | 0 | fetched 1 on the prior account (refs `project_id`, `creator_id`, `checklist_template_id`); new account has none (created from templates in UI) |
+| Documents | `GET /v2/documents` | `page` | `id` | ✅ | 0 | **This is the UI's "Files" tab.** Global endpoint fetches (200, bare array, currently empty). Also exists per-project (`/projects/{id}/documents`). |
 | ChecklistTemplates | `GET /v2/checklist_templates` | `page` | `id` | ❌ | – | **302 → `/users/sign_in` → 401** (see Fetchability); not token-accessible |
+| Pages | `GET /v2/pages` | – | – | ❌ | – | **302 → `/users/sign_in`** — the UI's "Pages" tab is web-only, not exposed to API tokens (global *and* `/projects/{id}/pages`) |
 
 **Sub-resource collections** (require a parent id in the path — e.g. `GET /v2/projects/{id}/comments`). The generic connector has **no path templating / fan-out**, so these are **not** general entities. They ARE fetchable when pinned to a concrete parent URL (one endpoint per parent). Verified live against project `105997447`:
 
@@ -83,7 +85,7 @@ Top-level collections (the generic, no-parent-id endpoints). **Maximized** — e
 |---|:--:|--:|---|
 | `…/projects/{id}/comments` | 200 | 0 | bare array — fetchable via pinned URL ✅ |
 | `…/projects/{id}/photos` | 200 | 0 | bare array — fetchable via pinned URL ✅ |
-| `…/projects/{id}/documents` | 200 | 0 | bare array — fetchable via pinned URL ✅ |
+| `…/projects/{id}/documents` | 200 | 0 | bare array ✅ — but Documents is **also a global table** (`/v2/documents`, see Entities); prefer that over pinning per project |
 | `…/projects/{id}/labels` | 200 | 0 | bare array — fetchable via pinned URL ✅ |
 | `…/projects/{id}/checklists` | 403 | – | CompanyCam per-endpoint quirk; use top-level `/checklists` instead |
 
@@ -95,7 +97,8 @@ For every ❌, the reason mapped to the connector's hard limits, plus any `overr
 | Entity | ✅/❌ | Reason (if ❌) | Workaround tried |
 |---|:--:|---|---|
 | Projects, Photos, Users, Groups, Tags, Videos, Webhooks, Checklists | ✅ | — | none needed (auto-detect) |
-| ChecklistTemplates | ❌ | **Not token-accessible.** `GET /v2/checklist_templates` returns `302 → https://api.companycam.com/users/sign_in` (Rails web-session auth). apiget follows the same-host redirect; the sign-in route returns `401 {"error":{"general":"Bad credentials"}}`. The same bearer token returns 200 on all 8 other endpoints — this is a CompanyCam-side per-endpoint quirk, not a connector defect. | None viable. `overrides` can't fix an auth/route gap. **Declared UNSUPPORTED.** |
+| ChecklistTemplates | ❌ | **Not token-accessible.** `GET /v2/checklist_templates` returns `302 → https://api.companycam.com/users/sign_in` (Rails web-session auth). apiget follows the same-host redirect; the sign-in route returns `401 {"error":{"general":"Bad credentials"}}`. The same bearer token returns 200 on all other endpoints — this is a CompanyCam-side per-endpoint quirk, not a connector defect. | None viable. `overrides` can't fix an auth/route gap. **Declared UNSUPPORTED.** |
+| Pages | ❌ | **Not token-accessible** — the UI's "Pages" tab. Same `302 → /users/sign_in` pattern as ChecklistTemplates, both global (`/v2/pages`) and per-project (`/v2/projects/{id}/pages`). Web-session-only feature. | None viable. **Declared UNSUPPORTED.** |
 | Sub-resource collections (templated) | ➖ | Require a parent id in the path; connector has no FK/templating. | **Fetchable via a pinned full URL** (one endpoint per parent) — verified 200 + bare array above. Not a general entity. |
 
 ## Reference fields (pseudo-FKs)
@@ -124,6 +127,23 @@ The read-only proof: timestamped seed→fetch entries.
 - `[2026-06-12 15:30]` **Seed (via CompanyCam API, with user permission)** — `POST` created 4 projects, 3 tags, 1 group ("Scratch Crew"), 2 photos (on a seeded project; `placehold.co` image URIs). User had manually added 1 photo earlier. Note: Videos + Checklists are **not API-seedable** here (mobile-app / template-driven) — left empty.
 - `[2026-06-12 15:31]` **Seed→fetch re-pull (connector worker)** → Projects **5**, Photos **3**, Tags **22**, Users **1**, Groups **1**, Checklists **0**. Counts match the live API exactly. ✅
 - `[2026-06-12 15:30]` **Photos schema inference confirmed:** re-probe after seeding → page 1 = 3 records, inferred schema **17 fields** (`uris`, `coordinates`, `project_id`, `creator_id`, `captured_at`, …). (Was 0 fields when the table was empty.) ✅
+- `[2026-06-12 16:55]` **"Files" / "Pages" UI tabs probed.** Global `GET /v2/documents` → `200` bare array (currently 0) = the UI **Files** tab → **added as a fetchable entity** (was previously only logged as a per-project sub-resource). `GET /v2/files` → 302→sign_in (wrong name; `documents` is the real one). `GET /v2/pages` **and** `/v2/projects/{id}/pages` → 302→`/users/sign_in` → **Pages is web-only, UNSUPPORTED** (same pattern as ChecklistTemplates).
+- `[2026-06-12 16:13]` **Pagination genuinely validated at `per_page=2`** (full size returns everything on page 1, so it never exercised multi-page walking): Tags → 12 pages walked, **22 records, 22 unique ids, 0 dupes**; Projects → 4 pages, **5 records, 5 unique ids, 0 dupes**. Counts match the full-page pulls → page advancement + accumulation + de-dup all correct. ✅
+
+## Seeding instructions (for next iteration)
+All API seeds below were used successfully this run (against the Whaleform Inc account). `POST` to `https://api.companycam.com/v2` with `Authorization: Bearer <token>`.
+
+| Entity | Seedable? | How |
+|---|:--:|---|
+| Projects | **API** | `POST /v2/projects {"project":{"name":"…","address":{…}}}` |
+| Tags | **API** | `POST /v2/tags {"tag":{"display_value":"…"}}` |
+| Groups | **API** | `POST /v2/groups {"group":{"name":"…"}}` |
+| Photos | **API** | `POST /v2/projects/{projectId}/photos {"photo":{"uri":"<public image url>","captured_at":<unix>}}` (e.g. a `placehold.co` PNG) |
+| Webhooks | **API** | `POST /v2/webhooks` — needs a callback URL; config, not content |
+| Users | **UI** | Invite a teammate in the CompanyCam app — no simple API create |
+| Videos | **mobile** | Captured/uploaded from the CompanyCam mobile app only — no API create |
+| Checklists | **UI** | Created on a project from a checklist **template** in the web UI (the templates endpoint is API-unsupported, so the API path is blocked) |
+| ChecklistTemplates | **UI** | Created in settings — and not fetchable anyway (see Fetchability) |
 
 ## Improvement candidates
 Each run through the **generality gate**. Default to UNSUPPORTED when unsure; burden of proof is on adding connector code.
@@ -136,6 +156,6 @@ Each run through the **generality gate**. Default to UNSUPPORTED when unsure; bu
 | Sub-resource fan-out / path templating | Sub-resources need a parent id; no templating. | **TOO-SPECIFIC** (out of scope) | This is effectively FK support, which the connector deliberately omits. Sub-resources already work via a pinned full URL. | → no change |
 
 ## Coverage summary
-- **Top-level entities:** 8 fetchable ✅ / 1 unsupported ❌ (ChecklistTemplates) / 0 untested.
+- **Top-level entities:** 9 fetchable ✅ (incl. **Documents = the UI "Files" tab**) / 2 unsupported ❌ (ChecklistTemplates, **Pages**) / 0 untested.
 - **Sub-resources:** fetchable via pinned parent URL (not as templated entities).
-- **Overall:** **well-covered.** CompanyCam is a clean fit for the generic REST connector — page pagination + bare-array responses + string `id` are all auto-detected with zero `overrides`. The only top-level gap is one endpoint CompanyCam doesn't expose to API tokens.
+- **Overall:** **well-covered.** CompanyCam is a clean fit for the generic REST connector — page pagination + bare-array responses + string `id` are all auto-detected with zero `overrides`. The only gaps are the two endpoints CompanyCam doesn't expose to API tokens (ChecklistTemplates, Pages — both 302→login).

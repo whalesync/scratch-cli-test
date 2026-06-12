@@ -34,6 +34,7 @@ Status: ✅ done · 🔄 in progress · ⬜ not started.
 | 6 | **Improvement candidates triaged** (each GENERAL / TRIVIAL / UNSUPPORTED) | ⬜ | generality gate |
 
 ## Service & connection
+- **Test account:** `<which account/workspace the key belongs to — e.g. login email + auth method (Google/SSO/password), org/workspace name, plan>`. Record this so the **next run reuses the same account** instead of hunting for one. Identify, don't expose secrets (the key still never goes in this doc). Where the key is stored locally: `<e.g. apiget-fixtures/.env → SERVICE_API_KEY>`.
 - **Login:** `<https://app.service.com/login>` · **API docs:** `<https://developers.service.com>`
 - **API key source:** `<Settings → Developer → API keys>` (where a human generates the long-lived key). **Never record the key itself.** To inspect a live one, decrypt `ConnectorAccount.encryptedCredentials` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in `server/.env`, AAD `connector-account`; `server/tools/decrypt-credentials.js`).
 - **Auth header style:** `<bearer | token | raw | custom-header>` (`headerName: <…>` if custom).
@@ -75,6 +76,15 @@ The read-only proof: timestamped seed→fetch entries. Append one line per actio
 - `[yyyy-mm-dd hh:mm]` Seeded `<N>` `<Projects>` in the service UI → pulled → got `<N>` ✅ (spot-checked record `<id>`).
 - `[yyyy-mm-dd hh:mm]` Added `<2>` more `<Projects>` in browser → re-pulled → new ones present ✅.
 
+## Seeding instructions (for next iteration)
+How to populate test data for this service next time — so a future run doesn't have to rediscover it. For each entity say **how it can be seeded** and **whether it can be at all**: `API` (a `POST` you can script — give the endpoint + minimal body), `UI` (must click through the web app), `mobile` (mobile-app only), or `not seedable` (provisioned/derived/billing-gated) — with the reason. Flag anything with side effects (e.g. sending a real SMS, incurring cost). This is the seed half of the seed→fetch loop; pair it with the verification log above.
+
+| Entity | Seedable? | How |
+|---|:--:|---|
+| `<Projects>` | API | `POST /v1/projects {project:{name}}` |
+| `<Videos>` | mobile | uploaded from the mobile app only — no API create |
+| `<…>` | not seedable | `<provisioned by billing / derived from another action / UI-only>` |
+
 ## Improvement candidates
 Gaps found while testing, each run through the **generality gate**. Default to UNSUPPORTED when unsure; the burden of proof is on adding connector code.
 
@@ -93,6 +103,8 @@ Gaps found while testing, each run through the **generality gate**. Default to U
 ## Template changelog
 Newest first. One concise line per **structural** change (section/table/required-rule add/rename/remove). Bump `Template version` to today when you add a line.
 
+- **2026-06-12** — Added **Seeding instructions (for next iteration)** section: per-entity how-to-seed (API/UI/mobile/not-seedable + side effects), so a future run can repopulate test data fast.
+- **2026-06-12** — Service & connection must record the **Test account** used (login email + auth method, workspace/plan, where the key is stored) so the next run reuses the same account.
 - **2026-06-12** — User notes brief must now include a **paste-ready JSON config snippet** of the fetchable endpoints (wire shape the user pastes into Scratch) plus a note on per-endpoint `overrides` options.
 - **2026-06-12** — Added **User notes (client-facing brief)** section: a short, sendable client brief kept as a separate standalone doc `<service>-user-notes.md`, pointed to from the coverage doc.
 - **2026-06-12** — Initial template: Metadata (with Template version), Milestones, Service & connection, Connection setup, Entities, Fetchability, Reference fields (pseudo-FKs), Fetch verification log, Improvement candidates (generality gate), Coverage summary.
