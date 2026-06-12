@@ -3,7 +3,6 @@ import { Text12Regular, Text13Medium, Text13Regular } from '@/components/base/te
 import { Badge, Box, Group, Loader, Stack, UnstyledButton } from '@mantine/core';
 import { Workspace } from '@spinner/shared-types';
 import {
-  BugIcon,
   CheckIcon,
   CircleXIcon,
   LinkIcon,
@@ -16,7 +15,6 @@ import {
   UnplugIcon,
 } from 'lucide-react';
 import { JSX, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import type { ReviewStat } from '../../../../shared/review-types';
 import type { ValidationStat } from '../../../../shared/validation-types';
 import { UserMenu } from '../../components/user-menu';
@@ -76,7 +74,6 @@ export function WorkspaceSidebar({
   validationStats,
   reviewStats,
 }: WorkspaceSidebarProps) {
-  const navigate = useNavigate();
   const { isDevToolsEnabled } = useDevTools();
   const { user } = useCurrentUser();
   const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
@@ -243,14 +240,6 @@ export function WorkspaceSidebar({
           />
         )}
 
-        {isDevToolsEnabled && (
-          <MenuButton
-            devOnly
-            onClick={() => void navigate(`/workspace/${workspace.id}/debug`)}
-            Icon={BugIcon}
-            title="Debug"
-          />
-        )}
         <UserMenu />
       </Box>
     </Stack>

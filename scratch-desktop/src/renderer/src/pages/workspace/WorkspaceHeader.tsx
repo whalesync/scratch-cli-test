@@ -70,10 +70,13 @@ export function WorkspaceHeader({
       [
         { id: 'toggle-watching', label: 'Watching files', checked: !!watchingEnabled },
         { id: 'toggle-claude-chat', label: 'Claude chat', checked: !!claudeChatEnabled },
+        { id: 'sep', label: '', type: 'separator' },
+        { id: 'debug', label: 'Debug Viewer' },
       ],
       (id) => {
         if (id === 'toggle-watching') onToggleWatching?.();
         if (id === 'toggle-claude-chat') onToggleClaudeChat?.();
+        if (id === 'debug') void navigate(`/workspace/${workspace.id}/debug`);
       },
     );
   };
