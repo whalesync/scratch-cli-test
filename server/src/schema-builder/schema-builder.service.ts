@@ -33,6 +33,7 @@ import { extractSchemaFields } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
+import { selectPlanFieldsFromTableView } from './schema-builder-field-selection';
 import { normalizeCreateSchema } from './schema-builder-normalizer';
 import { PlanGeneratorSource, generateCreatePlanFromSources } from './schema-builder-plan-generator';
 import {
@@ -243,14 +244,26 @@ export class SchemaBuilderService {
           `Source data folder ${source.dataFolderId} has no stored schema to derive a plan from`,
         );
       }
+
+      // Prefer the connector's curated default view: it names the meaningful
+      // columns and hides deep system objects, so deeply-nested sources (Notion's
+      // `created_by: { object, id }`, etc.) don't explode into duplicate `object`/
+      // `id` columns. Fall back to raw schema flattening when no view is stored
+      // (e.g. connectors that don't build a default view).
+      const storedView = await this.dataFolderService.getStoredView(source.dataFolderId as DataFolderId, actor);
+      const { schemaFields, viewTypeByPath } = storedView
+        ? selectPlanFieldsFromTableView({ schema: stored.schema as TSchema, view: storedView })
+        : { schemaFields: extractSchemaFields(stored.schema as TSchema), viewTypeByPath: undefined };
+
       sources.push({
         ref: source.dataFolderId,
         dataFolderId: source.dataFolderId,
         tableName: source.newTableName ?? (typeof stored.name === 'string' ? stored.name : folder.name),
-        schemaFields: extractSchemaFields(stored.schema as TSchema),
+        schemaFields,
         primaryFieldPath: toDotPath(stored.titleColumnRemoteId),
         idFieldPath: typeof stored.idColumnRemoteId === 'string' ? stored.idColumnRemoteId : undefined,
         remoteTableIds: folder.tableId,
+        ...(viewTypeByPath ? { viewTypeByPath } : {}),
       });
     }
 

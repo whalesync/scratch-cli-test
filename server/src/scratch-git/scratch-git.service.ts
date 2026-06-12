@@ -492,6 +492,34 @@ export class ScratchGitService {
     }
   }
 
+  /**
+   * Reads a TableView (`views/{viewName}.json`) from `.scratch/{folderPath}/` on
+   * the main branch — the read complement of `writeViewToGit`. The connector's
+   * curated default view is persisted separately from the schema (it is stripped
+   * out of `schema.json` by `writeSchemaToGit`), so this is the only way to read
+   * it back offline. Returns the parsed TableView or null if missing/invalid.
+   * Non-throwing — failures are logged but do not block callers.
+   */
+  async readViewFromGit(repoId: string, folderPath: string, viewName: string): Promise<TableView | null> {
+    try {
+      const normalizedFolder = folderPath.replace(/^\//, '');
+      const gitPath = `${SCRATCH_DIR}/${normalizedFolder}/views/${viewName}.json`;
+      const file = await this.getRepoFile(repoId, MAIN_BRANCH, gitPath);
+      if (!file) return null;
+      return JSON.parse(file.content) as TableView;
+    } catch (error) {
+      WSLogger.error({
+        source: 'ScratchGitService.readViewFromGit',
+        message: 'Failed to read view from git',
+        repoId,
+        folderPath,
+        viewName,
+        error,
+      });
+      return null;
+    }
+  }
+
   async proxyToGitService(repoId: string, path: string, method: string, body?: Record<string, unknown>) {
     return this.scratchGitClient.proxyRequest(repoId, path, method, body);
   }

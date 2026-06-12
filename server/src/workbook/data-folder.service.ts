@@ -8,6 +8,7 @@ import {
   formatRecordJson,
   IncrementalPullSupport,
   Service,
+  TableView,
   ValidatedCreateDataFolderDto,
   ValidatedUpdateDataFolderDto,
   WorkbookId,
@@ -842,6 +843,44 @@ export class DataFolderService {
   async getStoredSchema(id: DataFolderId, actor: Actor): Promise<Record<string, unknown> | null> {
     const folder = await this.findOne(id, actor);
     return await this.readSchema(folder.workbookId, folder.connectorAccountId, folder.path);
+  }
+
+  /**
+   * Reads a stored TableView from git for a data folder. The connector's curated
+   * default view is persisted separately from `schema.json` (see
+   * `ScratchGitService.writeViewToGit`), so this is the read complement of
+   * `readSchema`. Returns null if the view is missing or unreadable.
+   */
+  async readView(
+    connectorAccountId: string | null | undefined,
+    folderPath: string | null,
+    viewName: string,
+  ): Promise<TableView | null> {
+    if (!folderPath) return null;
+    try {
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+      return await this.scratchGitService.readViewFromGit(repoId, folderPath, viewName);
+    } catch (error) {
+      WSLogger.error({
+        source: 'DataFolderService.readView',
+        message: 'Failed to read view from git',
+        error,
+        folderPath,
+        viewName,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Returns the connector's stored default TableView for a data folder, without
+   * calling the connector. Parallels `getStoredSchema`. Used by create-schema
+   * plan generation to pick meaningful, de-duplicated columns instead of walking
+   * the raw nested JSON schema.
+   */
+  async getStoredView(id: DataFolderId, actor: Actor): Promise<TableView | null> {
+    const folder = await this.findOne(id, actor);
+    return await this.readView(folder.connectorAccountId, folder.path, 'default');
   }
 
   /**

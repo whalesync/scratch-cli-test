@@ -24,13 +24,31 @@ describe('inferLogicalFieldType', () => {
     expect(inferLogicalFieldType(field({ path: 's', type: 'string' })).fieldType).toEqual({ kind: 'text' });
   });
 
-  it('downgrades complex and read-only fields to text', () => {
+  it('downgrades structurally complex (object/array) fields to text', () => {
     expect(inferLogicalFieldType(field({ path: 'o', type: 'object' }))).toMatchObject({
       status: 'downgraded',
       fieldType: { kind: 'text' },
     });
-    expect(inferLogicalFieldType(field({ path: 'r', type: 'string', readonly: true }))).toMatchObject({
+    expect(inferLogicalFieldType(field({ path: 'a', type: 'array' }))).toMatchObject({
       status: 'downgraded',
+      fieldType: { kind: 'text' },
+    });
+  });
+
+  it('keeps read-only fields at their real type instead of downgrading to text', () => {
+    // This tool copies a table for a sync, so a read-only source field becomes an
+    // editable destination column of the SAME logical type (e.g. a read-only
+    // last_edited_time stays a date), not a text field.
+    expect(inferLogicalFieldType(field({ path: 'rn', type: 'number', readonly: true }))).toMatchObject({
+      status: 'mapped',
+      fieldType: { kind: 'number' },
+    });
+    expect(inferLogicalFieldType(field({ path: 'rd', type: 'string', readonly: true }), 'date')).toMatchObject({
+      status: 'mapped',
+      fieldType: { kind: 'date' },
+    });
+    expect(inferLogicalFieldType(field({ path: 'rs', type: 'string', readonly: true }))).toMatchObject({
+      status: 'mapped',
       fieldType: { kind: 'text' },
     });
   });

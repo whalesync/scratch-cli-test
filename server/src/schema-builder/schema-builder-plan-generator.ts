@@ -131,18 +131,16 @@ export interface InferredFieldType {
 /**
  * Map a non-foreignKey source field to a logical create field type using only
  * generic signals. Prefers a `TablePropertyType` display hint when available,
- * otherwise falls back to the JSON-Schema primitive. Anything read-only,
- * computed, or structurally complex is downgraded to `text` with a note.
+ * otherwise falls back to the JSON-Schema primitive. Only structurally complex
+ * (object/array) values are downgraded to `text`.
+ *
+ * Read-only/computed source fields are NOT downgraded: this tool copies a table
+ * for use in a sync, so a read-only source date should become a real `date`
+ * column in the destination (which has no read-only concept) rather than collapse
+ * to text. The field's logical type comes from its view hint / primitive like any
+ * other field.
  */
 export function inferLogicalFieldType(field: SchemaField, viewType?: TablePropertyType): InferredFieldType {
-  if (field.readonly) {
-    return {
-      status: 'downgraded',
-      fieldType: { kind: 'text' },
-      message: 'read-only/computed source field; created as an editable text field',
-    };
-  }
-
   if (viewType) {
     switch (viewType) {
       case 'checkbox':

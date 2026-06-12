@@ -37,7 +37,7 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
   let app: INestApplication;
   let connectorsService: { getConnector: jest.Mock };
   let connectorAccountService: { findOneById: jest.Mock };
-  let dataFolderService: { getStoredSchema: jest.Mock; createFolder: jest.Mock };
+  let dataFolderService: { getStoredSchema: jest.Mock; getStoredView: jest.Mock; createFolder: jest.Mock };
   let auditLogService: { logEvent: jest.Mock };
   let dbService: { client: { dataFolder: { findUnique: jest.Mock; findFirst: jest.Mock } } };
 
@@ -55,6 +55,7 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
     connectorsService = { getConnector: jest.fn().mockResolvedValue(connectorStub({})) };
     dataFolderService = {
       getStoredSchema: jest.fn().mockResolvedValue(null),
+      getStoredView: jest.fn().mockResolvedValue(null),
       createFolder: jest.fn().mockResolvedValue({ id: 'folder_new' }),
     };
     auditLogService = { logEvent: jest.fn().mockResolvedValue(undefined) };
