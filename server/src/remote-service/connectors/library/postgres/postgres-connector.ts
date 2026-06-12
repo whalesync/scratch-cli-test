@@ -94,6 +94,8 @@ export class PostgresConnector extends Connector {
     incrementalPull: true,
     incrementalPullInstructions:
       'To enable incremental pulls, this table must contain a date-time column that tracks when a row was last changed (e.g. updated_at).',
+    // Postgres implements the create-schema seam (supportsSchemaCreation() === true).
+    supportsSchemaCreation: true,
     userProvidedParamsLabel: 'Connection String',
     credentialFields: {
       user_provided_params: [

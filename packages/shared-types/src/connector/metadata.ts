@@ -32,6 +32,16 @@ export interface ConnectorMetadata {
    * (never `undefined`) so every connector's metadata is explicit about this.
    */
   incrementalPullInstructions: string | null;
+  /**
+   * Whether this connector type implements the create-schema seam
+   * (`Connector.supportsSchemaCreation()` returns true). Static, per-connector
+   * answer used by the web client to gate the "Create tables and fields" dev
+   * tool — the menu item is disabled for connectors that can't create schemas.
+   * The runtime `supportsSchemaCreation()` on the connector instance remains
+   * authoritative for what the API actually does; this flag is only a UI hint
+   * (kept in sync by hand per connector, exactly like `incrementalPull`).
+   */
+  supportsSchemaCreation: boolean;
   pushOperationName: string;
   pullOperationName: string;
   supportedAuthMethods: AuthMethod[];
@@ -58,6 +68,7 @@ const DEFAULTS: Omit<ConnectorMetadata, 'displayName' | 'logo'> = {
   visible: true,
   incrementalPull: false,
   incrementalPullInstructions: null,
+  supportsSchemaCreation: false,
   pushOperationName: 'Publish',
   pullOperationName: 'Download',
   supportedAuthMethods: [],

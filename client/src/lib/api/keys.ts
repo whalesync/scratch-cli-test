@@ -17,6 +17,12 @@ export const SWR_KEYS = {
       workbookId,
       connectorAccountId,
     ],
+    createDestinations: (workbookId: string, connectorAccountId: string) => [
+      'connector-accounts',
+      'create-destinations',
+      workbookId,
+      connectorAccountId,
+    ],
     searchTables: (workbookId: string, connectorAccountId: string, searchTerm: string) => [
       'connector-accounts',
       'search-tables',

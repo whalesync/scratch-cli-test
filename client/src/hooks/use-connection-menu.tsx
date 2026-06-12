@@ -3,6 +3,7 @@
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { ApiQuotaDialog } from '@/app/workbook/[id]/components/Sidebar/ApiQuotaDialog';
 import { BreakGlassCredentialsModal } from '@/app/workbook/[id]/components/modals/BreakGlassCredentialsModal';
+import { CreateSchemaModal } from '@/app/workbook/[id]/components/modals/CreateSchemaModal';
 import { GitFileBrowserModal } from '@/app/workbook/[id]/components/modals/GitFileBrowserModal';
 import { GitGcModal } from '@/app/workbook/[id]/components/modals/GitGcModal';
 import { GitGraphModal } from '@/app/workbook/[id]/components/modals/GitGraphModal';
@@ -10,6 +11,7 @@ import { GitIndexModal } from '@/app/workbook/[id]/components/modals/GitIndexMod
 import { GitObjectCountsModal } from '@/app/workbook/[id]/components/modals/GitObjectCountsModal';
 import { MoveRepoModal } from '@/app/workbook/[id]/components/modals/MoveRepoModal';
 import type { ContextMenuItem } from '@/app/workbook/[id]/components/shared/ContextMenu';
+import { useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useGitActions } from '@/hooks/use-git-actions';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
@@ -22,6 +24,7 @@ import {
   ActivityIcon,
   CloudCogIcon,
   CopyIcon,
+  DatabaseIcon,
   FileCodeIcon,
   GitGraphIcon,
   GitMergeIcon,
@@ -72,6 +75,8 @@ export function useConnectionMenu(
   const { extraItemsBefore, extraItemsAfter, onReauthorizeStart, onReauthorizeEnd, fullConnectorAccount } = options;
 
   const { isDevToolsEnabled } = useDevTools();
+  const { metadata } = useConnectorsMetadata();
+  const schemaCreationSupported = !!metadata?.[connection.service]?.supportsSchemaCreation;
   const setWorkbookError = useWorkbookUIStore((state) => state.setWorkbookError);
   const git = useGitActions();
 
@@ -87,6 +92,7 @@ export function useConnectionMenu(
     useDisclosure(false);
   const [apiQuotaOpened, { open: openApiQuota, close: closeApiQuota }] = useDisclosure(false);
   const [breakGlassOpened, { open: openBreakGlass, close: closeBreakGlass }] = useDisclosure(false);
+  const [createSchemaOpened, { open: openCreateSchema, close: closeCreateSchema }] = useDisclosure(false);
   const { open: openResetConnectionDialog, dialogProps: resetConnectionDialogProps } = useConfirmDialog();
 
   // --- Handlers ---
@@ -249,6 +255,13 @@ export function useConnectionMenu(
       ? [
           { label: 'Reset Connection', icon: Trash2Icon, devtool: true, delete: true, onClick: handleResetConnection },
           { label: 'Break glass', icon: KeyRoundIcon, devtool: true, onClick: openBreakGlass },
+          {
+            label: 'Create tables and fields',
+            icon: DatabaseIcon,
+            devtool: true,
+            onClick: openCreateSchema,
+            disabled: !schemaCreationSupported,
+          },
           // Connector code version snapshotted onto this account at creation (DEV-10302).
           // Dev-tools-only, non-interactive footer label — a generic scalar, no connector branching.
           ...(fullConnectorAccount
@@ -309,6 +322,13 @@ export function useConnectionMenu(
         workbookId={workbookId}
         connectionId={cId}
         connectionName={cName}
+      />
+      <CreateSchemaModal
+        opened={createSchemaOpened}
+        onClose={closeCreateSchema}
+        workbookId={workbookId}
+        connectorAccountId={cId}
+        service={connection.service}
       />
     </>
   );

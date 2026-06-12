@@ -97,6 +97,8 @@ export class AirtableConnector extends Connector {
     incrementalPull: true,
     incrementalPullInstructions:
       'To enable incremental pulls, this table must contain a timestamp column that tracks when a row was last changed (e.g. updated_at).',
+    // Airtable implements the create-schema seam (supportsSchemaCreation() === true).
+    supportsSchemaCreation: true,
     oauth: { label: 'OAuth' },
     credentialFields: {
       user_provided_params: [
