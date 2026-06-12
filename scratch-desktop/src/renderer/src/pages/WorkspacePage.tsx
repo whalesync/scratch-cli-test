@@ -108,6 +108,8 @@ export function WorkspacePage() {
   const setShowPublishHistoryPanel = useWorkspaceUiStore((s) => s.setShowPublishHistoryPanel);
   const showValidationPanel = useWorkspaceUiStore((s) => s.showValidationPanel);
   const setShowValidationPanel = useWorkspaceUiStore((s) => s.setShowValidationPanel);
+  const showSettingsPanel = useWorkspaceUiStore((s) => s.showSettingsPanel);
+  const setShowSettingsPanel = useWorkspaceUiStore((s) => s.setShowSettingsPanel);
   const setSelectedFolderPath = useCallback(
     (path: string | null) => {
       if (selectedFolderPathRef.current === path) return;
@@ -121,9 +123,16 @@ export function WorkspacePage() {
         setShowConnectionsPanel(false);
         setShowPublishHistoryPanel(false);
         setShowValidationPanel(false);
+        setShowSettingsPanel(false);
       }
     },
-    [resetFolderState, setShowConnectionsPanel, setShowPublishHistoryPanel, setShowValidationPanel],
+    [
+      resetFolderState,
+      setShowConnectionsPanel,
+      setShowPublishHistoryPanel,
+      setShowValidationPanel,
+      setShowSettingsPanel,
+    ],
   );
   // Opening the connections panel clears the selected folder so the grid
   // returns to its empty state when the panel closes (preserves the
@@ -146,6 +155,12 @@ export function WorkspacePage() {
       setSelectedFolderPathInner(null);
     }
   }, [showValidationPanel]);
+  // Opening the settings panel clears the selected folder too.
+  useEffect(() => {
+    if (showSettingsPanel) {
+      setSelectedFolderPathInner(null);
+    }
+  }, [showSettingsPanel]);
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [workspaceLevelDataInvalidationCounter, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);

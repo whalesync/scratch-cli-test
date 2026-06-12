@@ -1,6 +1,6 @@
 import { Box } from '@mantine/core';
 import { Workspace } from '@spinner/shared-types';
-import { History, ShieldCheck, Table, Unplug, type LucideIcon } from 'lucide-react';
+import { History, Settings, ShieldCheck, Table, Unplug, type LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { ReviewStat } from '../../../../shared/review-types';
@@ -14,6 +14,7 @@ import { ConnectionsPanel } from './ConnectionsPanel';
 import { FolderDataGrid } from './FolderDataGrid';
 import { PublishHistoryPanel } from './PublishHistoryPanel';
 import { ResizeHandle } from './ResizeHandle';
+import { SettingsPanel } from './SettingsPanel';
 import { ValidationPanel } from './ValidationPanel';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
 
@@ -77,6 +78,8 @@ export function WorkspaceContent({
   const setShowPublishHistoryPanel = useWorkspaceUiStore((s) => s.setShowPublishHistoryPanel);
   const showValidationPanel = useWorkspaceUiStore((s) => s.showValidationPanel);
   const setShowValidationPanel = useWorkspaceUiStore((s) => s.setShowValidationPanel);
+  const showSettingsPanel = useWorkspaceUiStore((s) => s.showSettingsPanel);
+  const setShowSettingsPanel = useWorkspaceUiStore((s) => s.setShowSettingsPanel);
   const activeCenterTab = useWorkspaceUiStore((s) => s.activeCenterTab);
   const setActiveCenterTab = useWorkspaceUiStore((s) => s.setActiveCenterTab);
   const showField = useWorkspaceUiStore((s) => s.showField);
@@ -122,12 +125,14 @@ export function WorkspaceContent({
     setShowConnectionsPanel(false);
     setShowPublishHistoryPanel(false);
     setShowValidationPanel(false);
+    setShowSettingsPanel(false);
     setSelectedFolderPath(null);
     setActiveCenterTab('chat');
   }, [
     setShowConnectionsPanel,
     setShowPublishHistoryPanel,
     setShowValidationPanel,
+    setShowSettingsPanel,
     setSelectedFolderPath,
     setActiveCenterTab,
   ]);
@@ -230,6 +235,9 @@ export function WorkspaceContent({
   } else if (showConnectionsPanel) {
     dataTabLabel = 'Connections';
     dataTabIcon = Unplug;
+  } else if (showSettingsPanel) {
+    dataTabLabel = 'Settings';
+    dataTabIcon = Settings;
   } else if (selectedFolderName) {
     dataTabLabel = selectedFolderName;
     dataTabIcon = Table;
@@ -278,6 +286,8 @@ export function WorkspaceContent({
         newConnectionId={newConnectionId}
         onNewConnectionConsumed={() => setNewConnectionId(null)}
       />
+    ) : showSettingsPanel ? (
+      <SettingsPanel workbookId={workspace.id} />
     ) : (
       <FolderDataGrid
         workspaceId={workspace.id}
@@ -323,6 +333,8 @@ export function WorkspaceContent({
         publishHistoryPanelOpen={showPublishHistoryPanel}
         onToggleValidationPanel={() => setShowValidationPanel(!showValidationPanel)}
         validationPanelOpen={showValidationPanel}
+        onToggleSettingsPanel={() => setShowSettingsPanel(!showSettingsPanel)}
+        settingsPanelOpen={showSettingsPanel}
         validationStats={validationStats}
         reviewStats={reviewStats}
       />

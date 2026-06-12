@@ -53,6 +53,9 @@ export interface WorkspaceUiState {
   showPublishHistoryPanel: boolean;
   /** When true, the central content area shows the Validation panel. */
   showValidationPanel: boolean;
+  /** When true, the central content area shows the Settings panel (workspace
+   * permissions and other workspace-level settings). */
+  showSettingsPanel: boolean;
   /** When non-null while `showPublishHistoryPanel` is true, the panel drills
    * into the detail view for this plan id. Null means "show the list". */
   publishHistoryDetailPlanId: string | null;
@@ -83,6 +86,7 @@ export interface WorkspaceUiState {
   setShowConnectionsPanel: (show: boolean) => void;
   setShowPublishHistoryPanel: (show: boolean) => void;
   setShowValidationPanel: (show: boolean) => void;
+  setShowSettingsPanel: (show: boolean) => void;
   setPublishHistoryDetailPlanId: (planId: string | null) => void;
   setActiveCenterTab: (tab: CenterTab) => void;
 
@@ -132,6 +136,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   showConnectionsPanel: false,
   showPublishHistoryPanel: false,
   showValidationPanel: false,
+  showSettingsPanel: false,
   publishHistoryDetailPlanId: null,
   activeCenterTab: 'chat',
 
@@ -160,19 +165,45 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
     set({
       showConnectionsPanel: show,
       // Opening a center panel focuses the data tab; the other panels close.
-      ...(show ? { showPublishHistoryPanel: false, showValidationPanel: false, activeCenterTab: 'data' } : {}),
+      ...(show
+        ? {
+            showPublishHistoryPanel: false,
+            showValidationPanel: false,
+            showSettingsPanel: false,
+            activeCenterTab: 'data',
+          }
+        : {}),
     }),
   setShowPublishHistoryPanel: (show) =>
     set({
       showPublishHistoryPanel: show,
       ...(show
-        ? { showConnectionsPanel: false, showValidationPanel: false, activeCenterTab: 'data' }
+        ? { showConnectionsPanel: false, showValidationPanel: false, showSettingsPanel: false, activeCenterTab: 'data' }
         : { publishHistoryDetailPlanId: null }),
     }),
   setShowValidationPanel: (show) =>
     set({
       showValidationPanel: show,
-      ...(show ? { showConnectionsPanel: false, showPublishHistoryPanel: false, activeCenterTab: 'data' } : {}),
+      ...(show
+        ? {
+            showConnectionsPanel: false,
+            showPublishHistoryPanel: false,
+            showSettingsPanel: false,
+            activeCenterTab: 'data',
+          }
+        : {}),
+    }),
+  setShowSettingsPanel: (show) =>
+    set({
+      showSettingsPanel: show,
+      ...(show
+        ? {
+            showConnectionsPanel: false,
+            showPublishHistoryPanel: false,
+            showValidationPanel: false,
+            activeCenterTab: 'data',
+          }
+        : {}),
     }),
   setPublishHistoryDetailPlanId: (planId) => set({ publishHistoryDetailPlanId: planId }),
   setActiveCenterTab: (tab) => set({ activeCenterTab: tab }),
@@ -206,6 +237,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
       showConnectionsPanel: false,
       showPublishHistoryPanel: false,
       showValidationPanel: false,
+      showSettingsPanel: false,
       publishHistoryDetailPlanId: null,
       activeCenterTab: 'chat',
     }),

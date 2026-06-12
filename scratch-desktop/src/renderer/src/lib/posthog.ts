@@ -29,6 +29,9 @@ export enum PostHogEvents {
   FIRST_RUN_DOWNLOAD = 'first_run_download',
   OPEN_CLAUDE_CHAT_PANEL = 'open_claude_chat_panel',
   SEND_CLAUDE_CHAT_MESSAGE = 'send_claude_chat_message',
+  ADD_WORKSPACE_PERMISSION = 'add_workspace_permission',
+  REMOVE_WORKSPACE_PERMISSION = 'remove_workspace_permission',
+  REMOVE_WORKSPACE_INVITE = 'remove_workspace_invite',
 }
 
 export type CloudSyncSurface = 'open' | 'create';
@@ -220,6 +223,18 @@ export async function trackDeepLinkProcessed(props: {
 
 export async function trackOpenConnectionsDialog(workbookId: string): Promise<void> {
   await captureEvent(PostHogEvents.OPEN_CONNECTIONS_DIALOG, { workbookId });
+}
+
+export async function trackAddWorkspacePermission(workbookId: string): Promise<void> {
+  await captureEvent(PostHogEvents.ADD_WORKSPACE_PERMISSION, { workbookId });
+}
+
+export async function trackRemoveWorkspacePermission(workbookId: string): Promise<void> {
+  await captureEvent(PostHogEvents.REMOVE_WORKSPACE_PERMISSION, { workbookId });
+}
+
+export async function trackRemoveWorkspaceInvite(workbookId: string): Promise<void> {
+  await captureEvent(PostHogEvents.REMOVE_WORKSPACE_INVITE, { workbookId });
 }
 
 export async function trackFirstRunDownload(workspaceId: string): Promise<void> {

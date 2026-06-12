@@ -10,6 +10,7 @@ import {
   LucideIcon,
   PlugZapIcon,
   ScrollTextIcon,
+  SettingsIcon,
   ShieldCheckIcon,
   TriangleAlertIcon,
   UnplugIcon,
@@ -45,6 +46,8 @@ interface WorkspaceSidebarProps {
   publishHistoryPanelOpen?: boolean;
   onToggleValidationPanel?: () => void;
   validationPanelOpen?: boolean;
+  onToggleSettingsPanel?: () => void;
+  settingsPanelOpen?: boolean;
   validationStats?: ValidationStat[];
   reviewStats?: ReviewStat[];
 }
@@ -68,6 +71,8 @@ export function WorkspaceSidebar({
   publishHistoryPanelOpen,
   onToggleValidationPanel,
   validationPanelOpen,
+  onToggleSettingsPanel,
+  settingsPanelOpen,
   validationStats,
   reviewStats,
 }: WorkspaceSidebarProps) {
@@ -226,6 +231,15 @@ export function WorkspaceSidebar({
             Icon={ScrollTextIcon}
             isSelected={publishHistoryPanelOpen}
             onClick={onTogglePublishHistoryPanel}
+          />
+        )}
+
+        {onToggleSettingsPanel && (
+          <MenuButton
+            title="Settings"
+            Icon={SettingsIcon}
+            isSelected={settingsPanelOpen}
+            onClick={onToggleSettingsPanel}
           />
         )}
 
