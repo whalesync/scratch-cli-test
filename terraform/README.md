@@ -8,9 +8,8 @@ Terraform modules for Scratch's GCP environments
 terraform
 ├── README.md
 ├── envs
-│   ├── test
-│   ├── staging
-│   └── production
+│   ├── eu-test
+│   └── eu-production
 └── modules
     ├── env
     ├── gitlab_oidc
@@ -19,10 +18,9 @@ terraform
 ```
 
 - **envs:**
-  Contains the main Terraform configuration files for each environment. Each environment (`test`, `staging`, `production`) corresponds to a distinct GCP project.
-  - `test`: Config files for the test environment.
-  - `staging`: Config files for the staging environment.
-  - `production`: Config files for the production environment.
+  Contains the main Terraform configuration files for each environment. Each environment (`eu-test`, `eu-production`) corresponds to a distinct GCP project.
+  - `eu-test`: Config files for the test environment.
+  - `eu-production`: Config files for the production environment.
 
 - **modules:**
   Each subdirectory represents a reusable GCP module written in Terraform, which can be used across multiple environments.
@@ -60,13 +58,13 @@ gcloud auth login
 - Install the current version of terraform with tfenv
 
 ```
-cd ./envs/test
+cd ./envs/eu-test
 tfenv install
 
 terraform -version # The output should match what's in .terraform-version
 ```
 
-1. Change to the env directory you want to deploy (e.g. `terraform/envs/test`)
+1. Change to the env directory you want to deploy (e.g. `terraform/envs/eu-test`)
 2. Run `terraform init` (You'll only need to run this again if you create new modules)
 3. Run `terraform plan` to see what changes will be made
 4. Run `terraform apply` to actually apply the changes
@@ -79,7 +77,7 @@ More information [here](https://cloud.google.com/docs/terraform/resource-managem
 
 Step 2: Deploy resources to an environment
 
-- cd into the env subdirectory you are deploying to (ie `./envs/production`); create it if necessary
+- cd into the env subdirectory you are deploying to (ie `./envs/eu-production`); create it if necessary
 - copy the following files into the new env folder:
 - 1. <env_name>.tf
 - 2. variables.tf
@@ -117,7 +115,7 @@ gcloud compute addresses describe nat-egress-ip \
   --format='get(address)'
 
 # Via Terraform output
-cd terraform/envs/production
+cd terraform/envs/eu-production
 terraform output nat_egress_ip
 ```
 

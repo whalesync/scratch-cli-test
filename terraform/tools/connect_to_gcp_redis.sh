@@ -6,19 +6,19 @@ set -e
 # Prerequisites:
 #   - Install gcloud CLI and authenticate
 # To use:
-#   1. Run this script for the environment you want to access: 'test', 'staging', or 'production'
+#   1. Run this script for the environment you want to access: 'test' or 'production'
 #      > ./connect_to_gcp_redis.sh test
 #   2. Use Redis CLI to connect to the Redis instance at 127.0.0.1:6399 
 #          redis-cli -h 127.0.0.1 -p 6399 -a <REDIS_PASS>
 #      Get the password from the GCP Secrets Manager
 #   3. Ctrl-C the script or hit any key to terminate the tunnel
 
-# arg1: environment: 'test'|'staging'|'production'
+# arg1: environment: 'test'|'production'
 
 if [ $# -lt 1 ]
 then
   echo "usage: $0 <environment> [host]"
-  echo "You must provide the name of the environment as the first argument: 'test', 'staging', or 'production'."
+  echo "You must provide the name of the environment as the first argument: 'test' or 'production'."
   exit 1
 fi
 
@@ -33,9 +33,9 @@ GCP_PROJECT="spv1eu-${ENVIRONMENT}"
 GCP_REGION=europe-west1
 
 # Validate environment argument
-if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "production" ]]; then
     echo "Error: Invalid environment '$ENVIRONMENT'"
-    echo "Allowed values: 'test', 'staging', or 'production'"
+    echo "Allowed values: 'test' or 'production'"
     exit 1
 fi
 

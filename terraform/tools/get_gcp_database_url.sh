@@ -3,7 +3,7 @@ set -e
 
 if [ $# -ne 1 ]
 then
-  echo "You must provide the name of the environment as the first argument: 'test', 'staging', or 'production'."
+  echo "You must provide the name of the environment as the first argument: 'test' or 'production'."
   exit 1
 fi
 
@@ -28,9 +28,9 @@ fi
 ENVIRONMENT=$1
 
 # Validate environment argument
-if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "production" ]]; then
     echo "Error: Invalid environment '$ENVIRONMENT'"
-    echo "Allowed values: 'test', 'staging', or 'production'"
+    echo "Allowed values: 'test' or 'production'"
     exit 1
 fi
 

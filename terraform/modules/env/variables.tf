@@ -1,6 +1,6 @@
 variable "env_name" {
   type        = string
-  description = "Name of the environment: test | staging | production"
+  description = "Name of the environment: test | production"
 }
 
 variable "default_labels" {

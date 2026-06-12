@@ -17,8 +17,9 @@ set -euo pipefail
 # The password and DB host both come from Secret Manager (READONLY_DB_PASSWORD,
 # DB_HOST), so they never live in this repo or your shell history — and reading
 # the host from a secret means this script needs no Cloud SQL Admin API call,
-# which a least-privilege principal (e.g. the read-only SA, whose gcloud quota
-# project is the bare wsv1-dev-identity project) can't make. The username is the
+# which a least-privilege principal (e.g. the read-only SA, whose default gcloud
+# quota project is the bare wsv1-dev-identity project — see the
+# CLOUDSDK_BILLING_QUOTA_PROJECT override below) can't make. The username is the
 # literal "readonly" and the database is "scratchpad" (see
 # terraform/modules/cloudsql and terraform/modules/env/secrets.tf).
 #
@@ -33,12 +34,12 @@ set -euo pipefail
 #   # Interactive psql session (quit with \q to tear down the tunnel):
 #   ./connect_to_gcp_db_readonly.sh production
 #
-# arg1: environment: 'test'|'staging'|'production'
+# arg1: environment: 'test'|'production'
 # arg2: (optional) SQL to run once. If omitted, opens an interactive psql shell.
 
 if [ $# -lt 1 ]; then
   echo "usage: $0 <environment> [sql]"
-  echo "You must provide the name of the environment as the first argument: 'test', 'staging', or 'production'."
+  echo "You must provide the name of the environment as the first argument: 'test' or 'production'."
   echo "Optionally provide a SQL string as the second argument to run a single query; otherwise an interactive psql shell opens."
   exit 1
 fi
@@ -60,12 +61,25 @@ ENVIRONMENT=$1
 QUERY=${2:-}
 GCP_PROJECT="spv1eu-${ENVIRONMENT}"
 
-# Validate environment argument
-if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+# Validate environment argument. Only 'test' and 'production' exist as GCP projects
+# (spv1eu-test / spv1eu-production — see terraform/envs); there is no spv1eu-staging.
+if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "production" ]]; then
   echo "Error: Invalid environment '$ENVIRONMENT'"
-  echo "Allowed values: 'test', 'staging', or 'production'"
+  echo "Allowed values: 'test' or 'production'"
   exit 1
 fi
+
+# Route gcloud's quota/enablement check to the target project on every gcloud call
+# below. gcloud otherwise bills the quota check to the active credential's OWN quota
+# project — for the read-only dev-identity SA that's the bare `wsv1-dev-identity`
+# project (number 268345193365), where APIs like IAP / Cloud SQL Admin aren't enabled,
+# so calls fail with "<API> has not been used in project 268345193365 ... or it is
+# disabled" even though `--project` already points at spv1eu-${ENVIRONMENT}. The SA
+# has access to the target project, so attributing the quota check there (equivalent
+# to passing `--billing-project="${GCP_PROJECT}"` on every call) makes the script
+# self-contained — no `CLOUDSDK_BILLING_QUOTA_PROJECT=...` prefix needed by callers.
+# (DEV-10406)
+export CLOUDSDK_BILLING_QUOTA_PROJECT="${GCP_PROJECT}"
 
 # The read-only user and database name are fixed by terraform (see
 # terraform/modules/cloudsql/main.tf and terraform/modules/env/secrets.tf).

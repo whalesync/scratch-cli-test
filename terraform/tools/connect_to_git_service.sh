@@ -6,17 +6,17 @@ set -e
 # Prerequisites:
 #   - Install gcloud CLI and authenticate
 # To use:
-#   1. Run this script for the environment you want to access: 'test', 'staging', or 'production'
+#   1. Run this script for the environment you want to access: 'test' or 'production'
 #      > ./connect_to_git_service.sh test
 #   2. Access the git service at 127.0.0.1:3100
 #   3. Ctrl-C the script or hit any key to terminate the tunnel
 
-# arg1: environment: 'test'|'staging'|'production'
+# arg1: environment: 'test'|'production'
 
 if [ $# -lt 1 ]
 then
   echo "usage: $0 <environment>"
-  echo "You must provide the name of the environment as the first argument: 'test', 'staging', or 'production'."
+  echo "You must provide the name of the environment as the first argument: 'test' or 'production'."
   exit 1
 fi
 
@@ -30,9 +30,9 @@ ENVIRONMENT=$1
 GCP_PROJECT="spv1eu-${ENVIRONMENT}"
 
 # Validate environment argument
-if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "production" ]]; then
     echo "Error: Invalid environment '$ENVIRONMENT'"
-    echo "Allowed values: 'test', 'staging', or 'production'"
+    echo "Allowed values: 'test' or 'production'"
     exit 1
 fi
 
