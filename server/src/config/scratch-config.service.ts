@@ -159,6 +159,18 @@ export class ScratchConfigService {
     return this.getOptionalEnvVariable('LINEAR_API_KEY');
   }
 
+  /**
+   * Token for authenticating the GitHub REST calls that resolve the latest Scratch Desktop / CLI
+   * releases (`DesktopReleaseService`). Unauthenticated GitHub requests are limited to 60/hr per IP,
+   * which a shared production egress IP exhausts — yielding 403s and a 404 on the download page.
+   * An authenticated token raises the limit to 5,000/hr. Optional: when unset (e.g. local dev) the
+   * service falls back to unauthenticated requests, which is fine at low volume. Only needs read
+   * access to the public release repos, so a no-scope classic PAT or a read-only fine-grained token.
+   */
+  getGithubReleasesToken(): string | undefined {
+    return this.getOptionalEnvVariable('GITHUB_RELEASES_TOKEN');
+  }
+
   getScratchApplicationUrl(): string {
     const env = ScratchConfigService.getScratchEnvironment();
     if (env === 'development') {

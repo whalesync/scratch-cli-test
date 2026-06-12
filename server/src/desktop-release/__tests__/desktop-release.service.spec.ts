@@ -1,10 +1,16 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- expect.objectContaining() / expect.anything() return any */
 import { NotFoundException } from '@nestjs/common';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DesktopReleaseService } from '../desktop-release.service';
 
-// Mock ioredis — prevent real connections. Each test resets the get/set mocks.
-const mockRedisGet = jest.fn();
-const mockRedisSet = jest.fn();
+// Mock ioredis with a key-aware in-memory store so tests exercise the real cache-key behavior
+// (fresh / last-known-good / negative markers all live under different keys).
+let redisStore: Map<string, string>;
+const mockRedisGet = jest.fn((key: string) => Promise.resolve(redisStore.get(key) ?? null));
+const mockRedisSet = jest.fn((key: string, value: string) => {
+  redisStore.set(key, value);
+  return Promise.resolve('OK');
+});
 const mockRedisQuit = jest.fn().mockResolvedValue(undefined);
 
 jest.mock('ioredis', () => {
@@ -15,11 +21,18 @@ jest.mock('ioredis', () => {
   }));
 });
 
+const CACHE_KEY_PREFIX = 'desktop-release:latest:v4:';
+const freshCacheKey = (kind: string, channel: string): string => `${CACHE_KEY_PREFIX}${kind}:${channel}`;
+const lastKnownGoodCacheKey = (kind: string, channel: string): string =>
+  `${CACHE_KEY_PREFIX}${kind}:${channel}:last-good`;
+const negativeCacheKey = (kind: string, channel: string): string => `${CACHE_KEY_PREFIX}${kind}:${channel}:negative`;
+
 interface FakeRelease {
   tag_name: string;
   name?: string;
   html_url?: string;
   draft?: boolean;
+  prerelease?: boolean;
   published_at?: string;
   assets?: { name: string; browser_download_url: string; size: number }[];
 }
@@ -40,19 +53,28 @@ function makeDesktopRelease(tag: string, overrides: Partial<FakeRelease> = {}): 
   return makeRelease(tag, overrides, 'whalesync/scratch-desktop');
 }
 
-function mockFetchOnce(releases: FakeRelease[]): void {
-  global.fetch = jest.fn().mockResolvedValueOnce({
+function mockFetchOnce(releases: FakeRelease[]): jest.Mock {
+  const fetchMock = jest.fn().mockResolvedValueOnce({
     ok: true,
     json: jest.fn().mockResolvedValue(releases),
-  }) as unknown as typeof fetch;
+  });
+  global.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
 }
 
-function makeService(isProduction: boolean): DesktopReleaseService {
+function mockFetchNonOk(status: number): jest.Mock {
+  const fetchMock = jest.fn().mockResolvedValue({ ok: false, status, json: jest.fn() });
+  global.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
+}
+
+function makeService(isProduction: boolean, githubReleasesToken?: string): DesktopReleaseService {
   const config = {
     isProductionEnvironment: () => isProduction,
     getRedisHost: () => 'localhost',
     getRedisPort: () => 6379,
     getRedisPassword: () => undefined,
+    getGithubReleasesToken: () => githubReleasesToken,
   } as unknown as ScratchConfigService;
   return new DesktopReleaseService(config);
 }
@@ -60,8 +82,7 @@ function makeService(isProduction: boolean): DesktopReleaseService {
 describe('DesktopReleaseService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockRedisGet.mockResolvedValue(null);
-    mockRedisSet.mockResolvedValue('OK');
+    redisStore = new Map();
   });
 
   describe('getLatestCliRelease — production channel', () => {
@@ -145,6 +166,15 @@ describe('DesktopReleaseService', () => {
       expect(result.assets[0].name).toBe('Scratch-1.4.8-arm64.dmg');
     });
 
+    it('skips production releases marked as prerelease', async () => {
+      mockFetchOnce([makeDesktopRelease('v1.5.0', { prerelease: true }), makeDesktopRelease('v1.4.8')]);
+
+      const service = makeService(true);
+      const result = await service.getLatestDesktopRelease();
+
+      expect(result.tagName).toBe('v1.4.8');
+    });
+
     it('returns the latest -test tag for test channel', async () => {
       mockFetchOnce([
         makeDesktopRelease('v1.4.8'),
@@ -161,6 +191,36 @@ describe('DesktopReleaseService', () => {
     });
   });
 
+  describe('GitHub authentication', () => {
+    it('sends an Authorization header when a token is configured', async () => {
+      const fetchMock = mockFetchOnce([makeDesktopRelease('v1.4.8')]);
+
+      const service = makeService(true, 'ghp_test_token');
+      await service.getLatestDesktopRelease();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('whalesync/scratch-desktop'),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer ghp_test_token' }),
+        }),
+      );
+    });
+
+    it('omits the Authorization header when no token is configured', async () => {
+      const fetchMock = mockFetchOnce([makeDesktopRelease('v1.4.8')]);
+
+      const service = makeService(true);
+      await service.getLatestDesktopRelease();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.not.objectContaining({ Authorization: expect.anything() }),
+        }),
+      );
+    });
+  });
+
   describe('caching', () => {
     it('returns cached value without calling fetch', async () => {
       const cached = {
@@ -172,7 +232,7 @@ describe('DesktopReleaseService', () => {
         channel: 'production' as const,
         assets: [],
       };
-      mockRedisGet.mockResolvedValueOnce(JSON.stringify(cached));
+      redisStore.set(freshCacheKey('cli', 'production'), JSON.stringify(cached));
       const fetchSpy = jest.fn();
       global.fetch = fetchSpy as unknown as typeof fetch;
 
@@ -193,17 +253,9 @@ describe('DesktopReleaseService', () => {
         channel: 'production' as const,
         assets: [],
       };
-      // First call (CLI) — miss; second call (desktop) — hit.
-      mockRedisGet
-        .mockImplementationOnce((key: string) => {
-          expect(key).toContain('cli');
-          return Promise.resolve(null);
-        })
-        .mockImplementationOnce((key: string) => {
-          expect(key).toContain('desktop');
-          return Promise.resolve(JSON.stringify(desktopCached));
-        });
-      mockFetchOnce([makeRelease('v0.4.1')]);
+      // Desktop is cached; CLI is not — the CLI lookup must fall through to fetch.
+      redisStore.set(freshCacheKey('desktop', 'production'), JSON.stringify(desktopCached));
+      const fetchMock = mockFetchOnce([makeRelease('v0.4.1')]);
 
       const service = makeService(true);
       const cli = await service.getLatestCliRelease();
@@ -211,6 +263,49 @@ describe('DesktopReleaseService', () => {
 
       expect(cli.tagName).toBe('v0.4.1');
       expect(desktop.tagName).toBe('v1.4.8');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('writes both the fresh and last-known-good cache entries on success', async () => {
+      mockFetchOnce([makeDesktopRelease('v1.4.8')]);
+
+      const service = makeService(true);
+      await service.getLatestDesktopRelease();
+
+      expect(redisStore.has(freshCacheKey('desktop', 'production'))).toBe(true);
+      expect(redisStore.has(lastKnownGoodCacheKey('desktop', 'production'))).toBe(true);
+    });
+  });
+
+  describe('resilience — stale-on-error and negative cache', () => {
+    it('serves the last-known-good release when GitHub returns a non-ok status', async () => {
+      const lastGood = {
+        name: 'v1.4.8',
+        tagName: 'v1.4.8',
+        version: '1.4.8',
+        htmlUrl: 'https://example',
+        publishedAt: '2026-05-01T00:00:00Z',
+        channel: 'production' as const,
+        assets: [],
+      };
+      redisStore.set(lastKnownGoodCacheKey('desktop', 'production'), JSON.stringify(lastGood));
+      mockFetchNonOk(403);
+
+      const service = makeService(true);
+      const result = await service.getLatestDesktopRelease();
+
+      expect(result).toEqual(lastGood);
+    });
+
+    it('negative-caches a 404 so a second request does not re-hit GitHub', async () => {
+      const fetchMock = mockFetchNonOk(403);
+
+      const service = makeService(true);
+      await expect(service.getLatestDesktopRelease()).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.getLatestDesktopRelease()).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(redisStore.has(negativeCacheKey('desktop', 'production'))).toBe(true);
     });
   });
 
@@ -222,7 +317,7 @@ describe('DesktopReleaseService', () => {
       await expect(service.getLatestCliRelease()).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('throws NotFoundException when GitHub fetch fails', async () => {
+    it('throws NotFoundException when GitHub fetch fails and there is no last-known-good', async () => {
       global.fetch = jest.fn().mockRejectedValueOnce(new Error('network down')) as unknown as typeof fetch;
 
       const service = makeService(true);
