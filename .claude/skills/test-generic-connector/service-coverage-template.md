@@ -14,6 +14,13 @@
 
 Legend: ✅ fetched & verified · ⬜ not yet · ➖ N/A · ❌ not fetchable (see reason).
 
+## User notes (client-facing brief)
+A **short brief we can send to the user/client** — plain language, no internal jargon. It teaches them what this connector can and can't fetch for this service and the gotchas to expect. Keep it tight: supported entities, unsupported + why, setup gotchas, and — importantly — a **paste-ready JSON config code snippet** listing the **fetchable** endpoints (name + method + full URL) in the exact shape the user pastes into Scratch (the AI-prompt wire shape: `{ "authHeader": "Bearer", "endpoints": [ … ] }`). Include only fetchable endpoints (omit the ❌ ones so the client doesn't paste a dead table), and add a one-line note that per-endpoint `overrides` options exist (showing any this service actually needs).
+
+It lives as a **separate standalone doc** so it can be sent as-is: [`<service>-user-notes.md`](./<service>-user-notes.md). Don't duplicate its content here — this section is just the pointer.
+
+> Brief: [`<service>-user-notes.md`](./<service>-user-notes.md).
+
 ## Milestones
 Status: ✅ done · 🔄 in progress · ⬜ not started.
 
@@ -86,4 +93,6 @@ Gaps found while testing, each run through the **generality gate**. Default to U
 ## Template changelog
 Newest first. One concise line per **structural** change (section/table/required-rule add/rename/remove). Bump `Template version` to today when you add a line.
 
+- **2026-06-12** — User notes brief must now include a **paste-ready JSON config snippet** of the fetchable endpoints (wire shape the user pastes into Scratch) plus a note on per-endpoint `overrides` options.
+- **2026-06-12** — Added **User notes (client-facing brief)** section: a short, sendable client brief kept as a separate standalone doc `<service>-user-notes.md`, pointed to from the coverage doc.
 - **2026-06-12** — Initial template: Metadata (with Template version), Milestones, Service & connection, Connection setup, Entities, Fetchability, Reference fields (pseudo-FKs), Fetch verification log, Improvement candidates (generality gate), Coverage summary.

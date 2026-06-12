@@ -58,6 +58,8 @@ There is **no base-URL field** — each endpoint carries its full `url`. When `o
 
 ## Connection setup — automatable via the API token
 
+**Server: run this against a [`/start-parallel-session`](../start-parallel-session/SKILL.md) server, not the shared `:3010` dev stack.** The generic connector compiles into the server build and pulls run in the worker, so test it against a server running **this worktree's branch code** with its **own isolated Redis/queue**. Run `/start-parallel-session <N>` (N≥1) to bring up a monolith on `http://localhost:<3010+N>` (own Redis on `<6379+N>`, shared Postgres/scratch-git), then target every step at that URL: `SCRATCH_SERVER=http://localhost:<3010+N>` for the helper below, `--scratch-url http://localhost:<3010+N>` for `scratchmd`. A fresh worktree first needs `yarn install` at the repo root **and** a shared-types build (`yarn --cwd packages/shared-types build`) or the server build fails with `Cannot find module '@spinner/shared-types'`. Confirm `ENABLE_GENERIC_CONNECTOR` is on for the acting user before creating the connection. Use a **dedicated, connector-prefixed workbook** (e.g. `generic-<service>`) so it's scannable in the shared DB — don't reuse another connector's workbook.
+
 You can stand up a GENERIC_API connection **fully programmatically** — no UI. The `scratchmd` CLI **cannot** do it (its create request drops `extras`), so use the **web** REST endpoint directly with the CLI's API token:
 
 ```
@@ -92,8 +94,11 @@ From the service's API docs, enumerate its **list endpoints** (the collection en
 Run the helper / recipe to create the GENERIC_API connection in the test workbook. Record `workbook` + `connectorAccount` ids and the exact `extras` used in the coverage doc.
 
 ### Stage D — per entity: probe, add table, fetch, verify counts
+
+> **Seeding shortcut — the API can write even though the connector can't (ASK FIRST).** The GENERIC_API *connector* is read-only, but **you (the skill) hold the service's API key and can `POST` to the service directly** to seed records far faster and more reliably than clicking through the UI — create a batch of projects/tags/photos in one script, then fetch them back through the connector. This is fair game for testing. **But get the user's explicit go-ahead before writing to their service via the API.** Users frequently assume that because the *connector* is read-only the whole skill is read-only, and will not expect the skill to create data in their account; don't surprise them. Once they say yes, prefer API-seeding for speed, and **record in the coverage doc whether seeding was via API or UI** (and note anything the API can't create — e.g. mobile-only uploads — which still needs manual UI/app seeding).
+
 For each endpoint, drive the **seed → fetch** loop and record it in the doc's verification log:
-1. **Seed** a known number of records of that entity **in the service's UI (browser)** — or note the existing count from the service's own API/UI.
+1. **Seed** a known number of records of that entity — in the service's UI (browser) **or**, with the user's permission, via the service's API (see the shortcut above) — or note the existing count from the service's own API/UI.
 2. **Probe + add the table** (the client's `probe-endpoint` flow, or the `apiget-driver.ts` script for a quick check), then **pull**.
 3. **Verify**: the fetched record count and a spot-checked record match what you seeded/observed in the service. ✅ only when the live numbers line up.
 4. **Seed more** (add a few records in the browser), **re-pull**, confirm the new ones arrive. This is the read-only stand-in for an edit round-trip.
@@ -129,14 +134,15 @@ One per service, co-located with the connector at `server/src/remote-service/con
 
 1. A **do-not-delete** notice (generated/maintained by this skill).
 2. **Metadata** — `Template version` this doc is reconciled to, `Last run`, `Tester`, service.
-3. **Service & connection** — service name, login + API-docs URLs, **where the API key lives** (settings path / decrypt recipe — never the key), auth header style, notable API traits (pagination style, OAuth?).
-4. **Connection setup** — test `workbook` / `connectorAccount` ids, how it was created (helper/recipe), and the exact `extras` used.
-5. **Entities** table — one row per endpoint considered: name, method + url, pagination type, `idPath`, **fetchable** (✅/❌/➖), records fetched, notes.
-6. **Fetchability** — for each ❌, the reason from the [taxonomy](#stage-e--classify-fetchability-the-core-deliverable), and any `overrides` workaround that rescued it.
-7. **Reference fields (pseudo-FKs)** — fields observed to point at other entities. The connector does **not** resolve these; record them as data observations (field → likely target entity) so we know the relational shape exists.
-8. **Fetch verification log** — timestamped seed→fetch entries (seeded N of X in the service → pulled N), the read-only proof.
-9. **Improvement candidates** — the Stage F table: candidate, gap, classification (GENERAL / TRIVIAL / TOO-SPECIFIC→UNSUPPORTED), rationale (how many services it'd help), action (PLAN.md item / fixed now / declared unsupported).
-10. **Coverage summary** — counts (entities fetchable / unsupported) and overall status.
+3. **User notes (client-facing brief)** — a one-line pointer to the separate sendable brief `coverage/<service>-user-notes.md` (see below). The brief itself lives in that standalone file, not inline.
+4. **Service & connection** — service name, login + API-docs URLs, **where the API key lives** (settings path / decrypt recipe — never the key), auth header style, notable API traits (pagination style, OAuth?).
+5. **Connection setup** — test `workbook` / `connectorAccount` ids, how it was created (helper/recipe), and the exact `extras` used.
+6. **Entities** table — one row per endpoint considered: name, method + url, pagination type, `idPath`, **fetchable** (✅/❌/➖), records fetched, notes.
+7. **Fetchability** — for each ❌, the reason from the [taxonomy](#stage-e--classify-fetchability-the-core-deliverable), and any `overrides` workaround that rescued it.
+8. **Reference fields (pseudo-FKs)** — fields observed to point at other entities. The connector does **not** resolve these; record them as data observations (field → likely target entity) so we know the relational shape exists.
+9. **Fetch verification log** — timestamped seed→fetch entries (seeded N of X in the service → pulled N), the read-only proof.
+10. **Improvement candidates** — the Stage F table: candidate, gap, classification (GENERAL / TRIVIAL / TOO-SPECIFIC→UNSUPPORTED), rationale (how many services it'd help), action (PLAN.md item / fixed now / declared unsupported).
+11. **Coverage summary** — counts (entities fetchable / unsupported) and overall status.
 
 Keep `Last run` current; flip a cell to ✅ only after a live fetch confirmed it. Legend: ✅ fetched & verified · ⬜ not yet · ➖ N/A · ❌ not fetchable (see reason).
 
@@ -147,6 +153,7 @@ The template carries a `Template version` (Metadata) and a `## Template changelo
 ## The docs, for the generic connector
 
 - `…/generic-api/coverage/<service>.md` — **one per service** (this skill). What's been tested for that service.
+- `…/generic-api/coverage/<service>-user-notes.md` — **client-facing brief, one per service.** Short, plain-language, sendable as-is: what's supported, what isn't, the gotchas, and a **paste-ready JSON config snippet** of the fetchable endpoints (what the user enters in Scratch) + a note on per-endpoint `overrides` options. The coverage doc's "User notes" section just points here.
 - `…/generic-api/PLAN.md` — connector-wide **active** improvement plans (only the GENERAL candidates promoted from coverage docs). Reuses the /connector-build PLAN flow.
 - `…/generic-api/ARCHIVE.md` — implemented plans, moved out of PLAN.md once shipped.
 - [service-coverage-template.md](service-coverage-template.md) — the per-service template (this skill folder). Improve it here; bump its version when you do.
