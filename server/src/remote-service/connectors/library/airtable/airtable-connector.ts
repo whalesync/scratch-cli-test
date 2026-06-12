@@ -1,4 +1,11 @@
-import { connectorMetadata, ConnectorSettingDefinition, IncrementalPullSupport } from '@spinner/shared-types';
+import {
+  connectorMetadata,
+  ConnectorSettingDefinition,
+  CreateFieldResult,
+  CreateTableResult,
+  IncrementalPullSupport,
+  SchemaCreationCapabilities,
+} from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
 import _ from 'lodash';
 import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
@@ -12,6 +19,11 @@ import {
   extractCommonDetailsFromAxiosError,
   extractErrorMessageFromAxiosError,
 } from '../../error';
+import {
+  type NormalizedCreateFieldsPlan,
+  type NormalizedCreateTablePlan,
+  type ResolvedCreateFieldSpec,
+} from '../../schema-creation.types';
 import { Service } from '../../service-constants';
 import {
   BaseJsonTableSpec,
@@ -25,9 +37,15 @@ import {
   TablePreview,
 } from '../../types';
 import { AirtableApiClient } from './airtable-api-client';
+import {
+  AIRTABLE_SCHEMA_CREATION_CAPABILITIES,
+  buildAirtableCreateField,
+  isAirtablePrimaryEligibleKind,
+} from './airtable-create-schema';
 import { buildAirtableModifiedSinceFormula, combineAirtableFormulas } from './airtable-incremental';
 import { buildAirtableJsonTableSpec, isReadonlyField } from './airtable-json-schema';
 import { AirtableSchemaParser } from './airtable-schema-parser';
+import { type AirtableApiCreateField } from './airtable-types';
 
 interface AirtablePullOptions extends PullRecordFilesOptions {
   filter?: string | undefined;
@@ -293,6 +311,187 @@ export class AirtableConnector extends Connector {
 
   getBatchSize(): number {
     return 10;
+  }
+
+  // -------------------------------------------------------------------------
+  // Schema creation (create-schema API — DEV-10379)
+  // -------------------------------------------------------------------------
+
+  override supportsSchemaCreation(): boolean {
+    return true;
+  }
+
+  override getSchemaCreationCapabilities(): SchemaCreationCapabilities {
+    return AIRTABLE_SCHEMA_CREATION_CAPABILITIES;
+  }
+
+  /**
+   * Create one table and its non-deferred fields in a single Airtable create-table
+   * call. The target base is `plan.remoteParentId[0]` (Airtable has no default base
+   * and cannot create one via API, so a missing base fails the table). Airtable
+   * requires the primary field to be `fields[0]`, so the `isPrimary` field is moved
+   * to the front; fields that can't be mapped (a cross-base link) become per-field
+   * skips. Creates are NOT idempotent — re-running creates a second table.
+   */
+  override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
+    const baseId = plan.remoteParentId?.[0];
+    if (!baseId) {
+      return this.failedTableResult(plan, 'Airtable requires a target base (remoteParentId) to create a table');
+    }
+
+    // Map every requested field to an Airtable field request or a skip reason.
+    const skippedFieldReasons = new Map<string, string>();
+    const builtFieldsByName = new Map<string, AirtableApiCreateField>();
+    for (const field of plan.fields) {
+      const built = buildAirtableCreateField(field, { baseId });
+      if ('skip' in built) {
+        skippedFieldReasons.set(field.name, built.skip);
+      } else {
+        builtFieldsByName.set(field.name, built.field);
+      }
+    }
+
+    // Airtable mandates a primary field as fields[0], of a primary-eligible type.
+    // The generic validator enforces this for a vetted request; guard defensively
+    // for direct/un-validated callers.
+    const primaryField = this.selectPrimaryField(plan.fields, skippedFieldReasons);
+    if (!primaryField) {
+      return this.failedTableResult(
+        plan,
+        'Airtable requires a primary field with a text-like type; none of the requested fields can be the primary',
+      );
+    }
+    const primaryBuiltField = builtFieldsByName.get(primaryField.name);
+    if (!primaryBuiltField) {
+      return this.failedTableResult(
+        plan,
+        skippedFieldReasons.get(primaryField.name) ?? 'the primary field could not be created',
+      );
+    }
+
+    // Order built fields with the primary first, preserving request order otherwise.
+    const orderedFields: AirtableApiCreateField[] = [primaryBuiltField];
+    for (const field of plan.fields) {
+      if (field.name === primaryField.name) {
+        continue;
+      }
+      const built = builtFieldsByName.get(field.name);
+      if (built) {
+        orderedFields.push(built);
+      }
+    }
+
+    try {
+      const response = await this.client.createTable(baseId, { name: plan.name, fields: orderedFields });
+      const remoteFieldIdByName = new Map<string, string>(
+        response.fields.map((field): [string, string] => [field.name, field.id]),
+      );
+      return {
+        ref: plan.ref,
+        name: plan.name,
+        status: skippedFieldReasons.size > 0 ? 'partial' : 'created',
+        remoteTableId: [baseId, response.id],
+        fields: this.buildFieldResults(plan.fields, skippedFieldReasons, remoteFieldIdByName),
+      };
+    } catch (error) {
+      return {
+        ref: plan.ref,
+        name: plan.name,
+        status: 'failed',
+        fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
+        error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+      };
+    }
+  }
+
+  /**
+   * Add fields to an existing table — one Airtable create-field call per field so a
+   * single bad field fails in isolation. Also used by the server to add deferred
+   * cyclic/self record-link fields after every table in a multi-table create
+   * exists. `plan.remoteTableId` is `[baseId, tableId]`.
+   */
+  override async createFields(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]> {
+    const [baseId, tableId] = plan.remoteTableId;
+    if (!baseId || !tableId) {
+      return plan.fields.map((field) => ({
+        name: field.name,
+        status: 'failed' as const,
+        error: 'Airtable requires a [baseId, tableId] remote table id to add fields',
+      }));
+    }
+
+    const results: CreateFieldResult[] = [];
+    for (const field of plan.fields) {
+      const built = buildAirtableCreateField(field, { baseId });
+      if ('skip' in built) {
+        results.push({ name: field.name, status: 'skipped', error: built.skip });
+        continue;
+      }
+      try {
+        const response = await this.client.createField(baseId, tableId, built.field);
+        results.push({ name: field.name, status: 'created', remoteFieldId: response.id });
+      } catch (error) {
+        results.push({
+          name: field.name,
+          status: 'failed',
+          error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+        });
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Choose the field Airtable will treat as the primary (`fields[0]`): the
+   * `isPrimary`-designated field when it maps to a primary-eligible type, otherwise
+   * (defensively) the first primary-eligible, non-skipped field. Returns `undefined`
+   * when no field can be the primary.
+   */
+  private selectPrimaryField(
+    fields: ResolvedCreateFieldSpec[],
+    skippedFieldReasons: Map<string, string>,
+  ): ResolvedCreateFieldSpec | undefined {
+    const isEligible = (field: ResolvedCreateFieldSpec): boolean =>
+      !skippedFieldReasons.has(field.name) && isAirtablePrimaryEligibleKind(field.fieldType.kind);
+
+    const designatedPrimaryField = fields.find((field) => field.isPrimary);
+    if (designatedPrimaryField && isEligible(designatedPrimaryField)) {
+      return designatedPrimaryField;
+    }
+    return fields.find(isEligible);
+  }
+
+  /**
+   * Build the per-field result list: each requested field is `created` (with its
+   * Airtable field id when the response returned one) unless it was skipped, in
+   * which case the reason is surfaced.
+   */
+  private buildFieldResults(
+    fields: ResolvedCreateFieldSpec[],
+    skippedFieldReasons: Map<string, string>,
+    remoteFieldIdByName: Map<string, string>,
+  ): CreateFieldResult[] {
+    return fields.map((field) => {
+      const skipReason = skippedFieldReasons.get(field.name);
+      if (skipReason !== undefined) {
+        return { name: field.name, status: 'skipped', error: skipReason };
+      }
+      const remoteFieldId = remoteFieldIdByName.get(field.name);
+      return remoteFieldId !== undefined
+        ? { name: field.name, status: 'created', remoteFieldId }
+        : { name: field.name, status: 'created' };
+    });
+  }
+
+  /** A whole-table `failed` result with every field marked failed and a shared reason. */
+  private failedTableResult(plan: NormalizedCreateTablePlan, error: string): CreateTableResult {
+    return {
+      ref: plan.ref,
+      name: plan.name,
+      status: 'failed',
+      fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
+      error,
+    };
   }
 
   /**

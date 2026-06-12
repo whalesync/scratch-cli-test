@@ -2,6 +2,10 @@ import axios, { AxiosInstance } from 'axios';
 import { RateLimiter, WithRetryOpts, withRetry as standaloneWithRetry } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
 import {
+  AirtableApiCreateField,
+  AirtableApiCreateFieldResponse,
+  AirtableApiCreateTableRequest,
+  AirtableApiCreateTableResponse,
   AirtableApiPushResponse,
   AirtableBaseSchemaResponseV2,
   AirtableListBasesResponse,
@@ -120,6 +124,42 @@ export class AirtableApiClient {
         params: { records: recordIds },
       }),
     );
+  }
+
+  /**
+   * Create a new table (with its initial fields) in a base.
+   * https://airtable.com/developers/web/api/create-table
+   *
+   * Requires the token to have the `schema.bases:write` scope; a read-only token
+   * gets a 403, which the connector surfaces as a failed create.
+   */
+  async createTable(baseId: string, request: AirtableApiCreateTableRequest): Promise<AirtableApiCreateTableResponse> {
+    const r = await this.retryableRequest(() =>
+      this.client.post<AirtableApiCreateTableResponse>(`/meta/bases/${baseId}/tables`, request, {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    return r.data;
+  }
+
+  /**
+   * Add a single field to an existing table.
+   * https://airtable.com/developers/web/api/create-field
+   *
+   * Requires the `schema.bases:write` scope. Airtable creates one field per call,
+   * so the connector loops for bulk field creation.
+   */
+  async createField(
+    baseId: string,
+    tableId: string,
+    field: AirtableApiCreateField,
+  ): Promise<AirtableApiCreateFieldResponse> {
+    const r = await this.retryableRequest(() =>
+      this.client.post<AirtableApiCreateFieldResponse>(`/meta/bases/${baseId}/tables/${tableId}/fields`, field, {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    return r.data;
   }
 
   /**

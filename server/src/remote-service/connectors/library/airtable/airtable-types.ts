@@ -291,7 +291,7 @@ export interface AirtableApiPollingResponse extends AirtableApiResponse {
   records?: AirtableRecord[];
 }
 
-/** https://airtable.com/developers/web/api/create-a-webhook. */
+/** https://airtable.com/developers/web/api/create-table. */
 export type AirtableApiCreateTableRequest = {
   name: string;
   /**
@@ -609,6 +609,7 @@ export type AirtableCollaboratorRequestData = {
 // https://airtable.com/developers/web/api/create-field
 export type AirtableApiCreateFieldTypeAndOptions =
   | AirtableApiCreateNumberField
+  | AirtableApiCreatePercentField
   | AirtableApiCreateSinglelilneTextField
   | AirtableApiCreateRichTextField
   | AirtableApiCreateCheckboxField
@@ -639,6 +640,13 @@ export type AirtableApiCreateNumberField = {
   };
 };
 
+export type AirtableApiCreatePercentField = {
+  type: 'percent';
+  options: {
+    precision: AirtableNumberPrecisios;
+  };
+};
+
 export type AirtableApiCreateCheckboxField = {
   type: 'checkbox';
   options: {
@@ -650,7 +658,7 @@ export type AirtableApiCreateCheckboxField = {
 export type AirtableApiCreateCurrencyField = {
   type: 'currency';
   options: {
-    precision: 2;
+    precision: AirtableNumberPrecisios;
     symbol: string;
   };
 };

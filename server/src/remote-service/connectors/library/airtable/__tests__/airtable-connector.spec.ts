@@ -12,6 +12,8 @@ const mockListBases = jest.fn();
 const mockCreateRecords = jest.fn();
 const mockDeleteRecords = jest.fn();
 const mockListRecords = jest.fn();
+const mockCreateTable = jest.fn();
+const mockCreateField = jest.fn();
 
 jest.mock('../airtable-api-client', () => ({
   AirtableApiClient: jest.fn().mockImplementation(() => ({
@@ -20,9 +22,16 @@ jest.mock('../airtable-api-client', () => ({
     updateRecords: mockUpdateRecords,
     deleteRecords: mockDeleteRecords,
     listRecords: mockListRecords,
+    createTable: mockCreateTable,
+    createField: mockCreateField,
   })),
 }));
 
+import {
+  type NormalizedCreateFieldsPlan,
+  type NormalizedCreateTablePlan,
+  type ResolvedCreateFieldSpec,
+} from '../../../schema-creation.types';
 import { AirtableConnector } from '../airtable-connector';
 import { AIRTABLE_INCREMENTAL_CLOCK_SKEW_MS } from '../airtable-incremental';
 
@@ -318,5 +327,201 @@ describe('AirtableConnector.pullRecordFiles (incremental)', () => {
     const [, , listOptions] = mockListRecords.mock.calls[0] as [string, string, { filterByFormula?: string }];
     // User filter still flows through unchanged on full pulls.
     expect(listOptions.filterByFormula).toBe("{Status} = 'Active'");
+  });
+});
+
+function schemaField(name: string, extra: Partial<ResolvedCreateFieldSpec> = {}): ResolvedCreateFieldSpec {
+  return { name, fieldType: { kind: 'text' }, ...extra };
+}
+
+type CreateTableRequest = { name: string; fields: { name: string }[] };
+
+describe('AirtableConnector schema creation', () => {
+  let connector: AirtableConnector;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    connector = new AirtableConnector('test-api-key');
+  });
+
+  it('declares schema-creation support and capabilities', () => {
+    expect(connector.supportsSchemaCreation()).toBe(true);
+
+    const capabilities = connector.getSchemaCreationCapabilities();
+    expect(capabilities.supportedFieldKinds).toHaveLength(12);
+    expect(capabilities.requiresPrimaryField).toBe(true);
+    expect(capabilities.primaryFieldKinds).not.toContain('boolean');
+    expect(capabilities.maxTableNameLength).toBe(255);
+    expect(capabilities.maxFieldNameLength).toBe(255);
+  });
+
+  describe('createTable', () => {
+    it('creates a table and returns remoteTableId plus per-field ids matched by name', async () => {
+      mockCreateTable.mockResolvedValue({
+        id: 'tblNEW',
+        name: 'People',
+        fields: [
+          { id: 'fld1', name: 'Name' },
+          { id: 'fld2', name: 'Age' },
+        ],
+      });
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: ['appBASE'],
+        ref: 't1',
+        name: 'People',
+        fields: [schemaField('Name', { isPrimary: true }), schemaField('Age', { fieldType: { kind: 'number' } })],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(mockCreateTable).toHaveBeenCalledTimes(1);
+      const [baseId, request] = mockCreateTable.mock.calls[0] as [string, CreateTableRequest];
+      expect(baseId).toBe('appBASE');
+      expect(request.name).toBe('People');
+      expect(result).toMatchObject({
+        ref: 't1',
+        name: 'People',
+        status: 'created',
+        remoteTableId: ['appBASE', 'tblNEW'],
+      });
+      expect(result.fields).toEqual([
+        { name: 'Name', status: 'created', remoteFieldId: 'fld1' },
+        { name: 'Age', status: 'created', remoteFieldId: 'fld2' },
+      ]);
+    });
+
+    it('moves the isPrimary field to fields[0] even when declared last', async () => {
+      mockCreateTable.mockResolvedValue({ id: 'tblNEW', name: 'T', fields: [] });
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: ['appBASE'],
+        ref: 't1',
+        name: 'T',
+        fields: [schemaField('Active', { fieldType: { kind: 'boolean' } }), schemaField('Title', { isPrimary: true })],
+        deferredFkFields: [],
+      };
+
+      await connector.createTable(plan);
+
+      const [, request] = mockCreateTable.mock.calls[0] as [string, CreateTableRequest];
+      expect(request.fields.map((field) => field.name)).toEqual(['Title', 'Active']);
+    });
+
+    it('fails the table (no client call) when no base is provided', async () => {
+      const plan: NormalizedCreateTablePlan = {
+        ref: 't1',
+        name: 'T',
+        fields: [schemaField('Title', { isPrimary: true })],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(mockCreateTable).not.toHaveBeenCalled();
+      expect(result.status).toBe('failed');
+      expect(result.error).toMatch(/base/i);
+      expect(result.fields).toEqual([{ name: 'Title', status: 'failed' }]);
+    });
+
+    it('marks the table partial and surfaces a cross-base link skip', async () => {
+      mockCreateTable.mockResolvedValue({ id: 'tblNEW', name: 'T', fields: [{ id: 'fld1', name: 'Title' }] });
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: ['appBASE'],
+        ref: 't1',
+        name: 'T',
+        fields: [
+          schemaField('Title', { isPrimary: true }),
+          schemaField('Linked', {
+            fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: ['appOTHER', 'tblX'] } },
+          }),
+        ],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      // The skipped cross-base link must not be sent to Airtable.
+      const [, request] = mockCreateTable.mock.calls[0] as [string, CreateTableRequest];
+      expect(request.fields.map((field) => field.name)).toEqual(['Title']);
+      expect(result.status).toBe('partial');
+      expect(result.fields).toContainEqual({ name: 'Title', status: 'created', remoteFieldId: 'fld1' });
+      const linkedResult = result.fields.find((field) => field.name === 'Linked');
+      expect(linkedResult).toMatchObject({ name: 'Linked', status: 'skipped' });
+      expect(linkedResult?.error).toContain('different base');
+    });
+
+    it('returns a failed result (no throw) when the API rejects', async () => {
+      mockCreateTable.mockRejectedValue(new Error('boom'));
+      const plan: NormalizedCreateTablePlan = {
+        remoteParentId: ['appBASE'],
+        ref: 't1',
+        name: 'T',
+        fields: [schemaField('Title', { isPrimary: true })],
+        deferredFkFields: [],
+      };
+
+      const result = await connector.createTable(plan);
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toBeDefined();
+      expect(result.fields).toEqual([{ name: 'Title', status: 'failed' }]);
+    });
+  });
+
+  describe('createFields', () => {
+    it('adds each field with a separate create-field call', async () => {
+      mockCreateField
+        .mockResolvedValueOnce({ id: 'fldA', name: 'Bio' })
+        .mockResolvedValueOnce({ id: 'fldB', name: 'Nickname' });
+      const plan: NormalizedCreateFieldsPlan = {
+        remoteTableId: ['appBASE', 'tblNEW'],
+        fields: [schemaField('Bio'), schemaField('Nickname')],
+      };
+
+      const results = await connector.createFields(plan);
+
+      expect(mockCreateField).toHaveBeenCalledTimes(2);
+      const [baseId, tableId] = mockCreateField.mock.calls[0] as [string, string, unknown];
+      expect(baseId).toBe('appBASE');
+      expect(tableId).toBe('tblNEW');
+      expect(results).toEqual([
+        { name: 'Bio', status: 'created', remoteFieldId: 'fldA' },
+        { name: 'Nickname', status: 'created', remoteFieldId: 'fldB' },
+      ]);
+    });
+
+    it('isolates a per-field failure from the rest', async () => {
+      mockCreateField
+        .mockResolvedValueOnce({ id: 'fldA', name: 'ok' })
+        .mockRejectedValueOnce(new Error('duplicate field name'));
+      const plan: NormalizedCreateFieldsPlan = {
+        remoteTableId: ['appBASE', 'tblNEW'],
+        fields: [schemaField('ok'), schemaField('dupe')],
+      };
+
+      const results = await connector.createFields(plan);
+
+      expect(results[0]).toEqual({ name: 'ok', status: 'created', remoteFieldId: 'fldA' });
+      expect(results[1].status).toBe('failed');
+      expect(results[1].error).toBeDefined();
+    });
+
+    it('skips a cross-base link without calling the API for it', async () => {
+      const plan: NormalizedCreateFieldsPlan = {
+        remoteTableId: ['appBASE', 'tblNEW'],
+        fields: [
+          schemaField('Linked', {
+            fieldType: { kind: 'foreignKey', target: { existingRemoteTableId: ['appOTHER', 'tblX'] } },
+          }),
+        ],
+      };
+
+      const results = await connector.createFields(plan);
+
+      expect(mockCreateField).not.toHaveBeenCalled();
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ name: 'Linked', status: 'skipped' });
+      expect(results[0].error).toContain('different base');
+    });
   });
 });
