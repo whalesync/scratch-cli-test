@@ -61,8 +61,14 @@ Wait until it answers: `docker exec spinner-redis-<N> redis-cli ping` returns `P
 
 > A `kill -9` of the whole session can still leak the container; step 1's port check + this `docker rm -f` make the next start clean. To tear down by hand: `docker rm -f spinner-redis-<N>`.
 
-### 5. Start this session's monolith server (background)
-From `server/` in this worktree, in a **background Bash call**:
+### 5. Install deps (server only) + start this session's monolith server (background)
+**First time in a fresh worktree, install dependencies — server only.** A new git worktree starts with **no `node_modules`** (worktrees don't share them with the main checkout). A parallel session runs only the server + worker, so install just that workspace:
+```bash
+cd server && yarn install   # server deps + its @spinner/shared-types workspace dep — the only install a session needs
+```
+**Don't install `client` / `scratch-desktop` / `scratch-cli-tests`** unless a later task actually needs one — they're irrelevant to the server + worker and just cost time and disk. (Skip this step entirely if the worktree already has `server/node_modules`.)
+
+Then, from `server/` in this worktree, in a **background Bash call**:
 ```bash
 cd server && PORT=$((3010+N)) REDIS_HOST=localhost REDIS_PORT=$((6379+N)) SERVICE_TYPE=monolith yarn dev
 ```
