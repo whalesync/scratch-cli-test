@@ -14,10 +14,13 @@ set -euo pipefail
 #   - application_name=claude-readonly  (so the queries are identifiable in logs
 #                                        and Cloud SQL Query Insights)
 #
-# The password comes from Secret Manager (READONLY_DB_PASSWORD), so it never
-# lives in this repo or your shell history. The username is the literal
-# "readonly" and the database is "scratchpad" (see terraform/modules/cloudsql
-# and terraform/modules/env/outputs.tf).
+# The password and DB host both come from Secret Manager (READONLY_DB_PASSWORD,
+# DB_HOST), so they never live in this repo or your shell history — and reading
+# the host from a secret means this script needs no Cloud SQL Admin API call,
+# which a least-privilege principal (e.g. the read-only SA, whose gcloud quota
+# project is the bare wsv1-dev-identity project) can't make. The username is the
+# literal "readonly" and the database is "scratchpad" (see
+# terraform/modules/cloudsql and terraform/modules/env/secrets.tf).
 #
 # Prerequisites:
 #   - Install and authenticate the gcloud CLI
@@ -65,20 +68,19 @@ if [[ "$ENVIRONMENT" != "test" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" 
 fi
 
 # The read-only user and database name are fixed by terraform (see
-# terraform/modules/cloudsql/main.tf and terraform/modules/env/outputs.tf).
-# Only the password is stored in Secret Manager.
+# terraform/modules/cloudsql/main.tf and terraform/modules/env/secrets.tf).
+# The password and the DB host (primary instance private IP) are stored in
+# Secret Manager — reading the host from a secret rather than discovering it via
+# `gcloud sql instances list` keeps this script off the Cloud SQL Admin API.
 READONLY_DB_USER="readonly"
 DB_NAME="scratchpad"
 READONLY_DB_PASSWORD=$(gcloud secrets versions access latest --project="${GCP_PROJECT}" --secret=READONLY_DB_PASSWORD)
 
-# Discover the primary Cloud SQL instance's private IP for this environment.
-DB_HOST=$(gcloud sql instances list \
-  --project="${GCP_PROJECT}" \
-  --filter="labels.primary=true" \
-  --format="value(ipAddresses[0].ipAddress)" \
-  --limit=1)
+# The primary Cloud SQL instance's private IP, written to Secret Manager by terraform (see DB_HOST in
+# terraform/modules/env/secrets.tf).
+DB_HOST=$(gcloud secrets versions access latest --project="${GCP_PROJECT}" --secret=DB_HOST)
 if [ -z "$DB_HOST" ]; then
-  echo "Error: failed to find the primary database instance IP for ${ENVIRONMENT}"
+  echo "Error: failed to read the primary database host (DB_HOST secret) for ${ENVIRONMENT}"
   exit 1
 fi
 

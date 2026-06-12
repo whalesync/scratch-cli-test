@@ -46,6 +46,15 @@ locals {
       name        = "cloudsql-proxy-service-account"
       account_id  = "cloudsql-proxy-service-account"
       description = "Service account for the GCE VM that serves as the Cloud SQL Auth Proxy bastion host"
+      # role_readonly_sa@ needs actAs on this SA to SSH the bastion via OS Login (read-only DB inspection). OS Login SSH
+      # into a VM with an attached SA returns "Permission denied (publickey)" without roles/iam.serviceAccountUser on
+      # that SA, even with compute.osLogin granted — this is the exact symptom that got OS Login rolled back on this
+      # bastion in 2025 (misread as "OS Login breaks --tunnel-through-iap"). Grant it HERE, through the module's
+      # authoritative serviceAccountUser binding, not a standalone google_service_account_iam_member: the authoritative
+      # binding would otherwise keep removing the standalone member, thrashing on every apply. NB: the module also
+      # confers serviceAccountTokenCreator on this SA to these members; accepted as inert — the SA holds only
+      # roles/cloudsql.client (no mutate) and is not an IAM database user.
+      service_account_users = ["group:role_readonly_sa@whalesync.com"]
       roles = [
         "roles/cloudsql.client"
       ]
@@ -140,12 +149,39 @@ locals {
     "roles/aiplatform.expressUser",
   ]
 
+  # Genuinely read-only roles for the org-level role_readonly_sa@ group — the default local gcloud/ADC identity on a
+  # developer laptop (the per-dev "<alias>-readonly" service accounts minted in whalesync DEV-10397, reused here
+  # cross-project because both project families live in the same whalesync.com org). Deliberately TIGHTER than
+  # developer_roles, which is NOT read-only: that set grants storage.objectUser (object writes), run.developer (deploy),
+  # oauthconfig.editor, iam.serviceAccountUser (actAs/impersonation) and cloudsql.studioUser — none of which belong on a
+  # long-lived key sitting on a laptop. We omit secretmanager.* entirely so a leaked read-only key cannot read secret
+  # payloads. Widen read-only access for every dev at once by adding the missing read role HERE — never a write or
+  # escalation role.
+  readonly_sa_roles = [
+    "roles/browser",
+    "roles/cloudsql.viewer",
+    "roles/compute.viewer",
+    "roles/storage.objectViewer",
+    "roles/redis.viewer",
+    "roles/artifactregistry.reader",
+    "roles/run.viewer",
+    "roles/monitoring.viewer",
+    "roles/logging.viewer",
+    "roles/vpcaccess.viewer",
+    "roles/iam.roleViewer",
+    "roles/errorreporting.viewer",
+    "roles/aiplatform.viewer",
+  ]
+
   # Assignments of roles to users, groups, and service accounts
   # See https://cloud.google.com/iam/docs/overview#concepts_related_identity for what can be used as a principal.
   principals_to_roles = {
     # Groups that are defined and administrated at the organization level (whalesync.com)
     "group:role_operations@whalesync.com" : [local.terraform_roles, local.operations_roles],
     "group:role_developers@whalesync.com" : local.developer_roles,
+    # Per-dev "<alias>-readonly" laptop service accounts (members managed in Workspace, not here; SAs minted in whalesync
+    # DEV-10397). Read-only by default for laptops + AI agents.
+    "group:role_readonly_sa@whalesync.com" : local.readonly_sa_roles,
   }
   principal_role_pairs = flatten([for principal, roles in local.principals_to_roles : [for role in distinct(flatten(roles)) : { principal : principal, role : role }]])
 
@@ -282,6 +318,7 @@ module "gce_instance" {
   network               = module.vpc.network
   subnetwork            = module.vpc.subnets_id[0]
   enable_iap            = true
+  enable_oslogin        = true
   service_account_email = module.iam-sa.service_accounts["cloudsql-proxy-service-account"].email
   gcp_project_id        = var.gcp_project_id
   give_external_ip      = true
@@ -293,6 +330,42 @@ module "gce_instance" {
   EOT
 
   depends_on = [module.vpc, module.iam-sa]
+}
+
+## ---------------------------------------------------------------------------------------------------------------------
+## Read-only DB inspection access to the Cloud SQL bastion
+## ---------------------------------------------------------------------------------------------------------------------
+# Let the per-dev read-only service accounts (members of role_readonly_sa@) reach the Cloud SQL bastion so they can run
+# terraform/tools/connect_to_gcp_db_readonly.sh — read-only DB inspection, including by AI agents. Both bindings are
+# scoped to THIS instance (not the project) and are connect/login-only: neither can modify any infrastructure. SSH lands
+# a NON-privileged shell (roles/compute.osLogin, not osAdminLogin), and the DB is still reachable only as the SELECT-only
+# Postgres "readonly" user. Requires enable_oslogin=true on the instance above, plus iam.serviceAccountUser on the
+# attached SA (granted via cloudsql-proxy-service-account's service_account_users in the service_accounts local above).
+resource "google_iap_tunnel_instance_iam_member" "readonly_sa_bastion_tunnel" {
+  project  = var.gcp_project_id
+  zone     = var.gcp_zone
+  instance = module.gce_instance.instance_name
+  role     = "roles/iap.tunnelResourceAccessor"
+  member   = "group:role_readonly_sa@whalesync.com"
+}
+
+resource "google_compute_instance_iam_member" "readonly_sa_bastion_oslogin" {
+  project       = var.gcp_project_id
+  zone          = var.gcp_zone
+  instance_name = module.gce_instance.instance_name
+  role          = "roles/compute.osLogin"
+  member        = "group:role_readonly_sa@whalesync.com"
+}
+
+# Keep operators' SSH to the bastion working AFTER enabling OS Login (it supersedes the metadata-key SSH they used
+# before). osAdminLogin gives the ops group sudo on the box; they already hold iam.serviceAccountUser + IAP access.
+# This is the guard that prevents the OS Login flip from locking admins out.
+resource "google_compute_instance_iam_member" "operations_bastion_osadminlogin" {
+  project       = var.gcp_project_id
+  zone          = var.gcp_zone
+  instance_name = module.gce_instance.instance_name
+  role          = "roles/compute.osAdminLogin"
+  member        = "group:role_operations@whalesync.com"
 }
 
 ## ---------------------------------------------------------------------------------------------------------------------

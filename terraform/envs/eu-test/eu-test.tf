@@ -9,6 +9,11 @@ module "eu_test" {
   gcp_zone           = "europe-west1-b"
   as_gitlab          = var.as_gitlab
 
+  # TEST ONLY: let role_readonly_sa@ read ALL test secret payloads so developers/agents can run the Scratch server
+  # locally against test. Test secrets must stay test-scoped + distinct from prod (see the variable's caveat). NEVER set
+  # this in eu-production.
+  grant_readonly_sa_all_secrets = true
+
   # Cloud IDS.
   enable_intrusion_detection = false
 
@@ -53,10 +58,15 @@ module "eu_test" {
   # Metrics
   use_opentelemetry_metrics = true
 
-  # Allow developers to mint tokens for the cloudrun SA in test, needed for running the GCS uploads from their local Scratch servers.
+  # Let local Scratch servers mint tokens for the cloudrun SA so they can do GCS uploads: the server impersonates the
+  # cloudrun SA (which holds storage.objectAdmin on the asset/upload-patch buckets) for both object writes and V4 signed
+  # URLs — see GCS_LOCAL_SIGNING_SA in server/.env.example. role_readonly_sa@ is the laptop's read-only-by-default
+  # identity (DEV-10401), so it's the one that needs this for local dev. role_developers@ is kept for any dev not yet on
+  # the read-only-SA flow; prune it once the team is fully migrated. (curtis@ was dropped — local dev now runs as
+  # curtis-readonly@, a member of role_readonly_sa@.) TEST ONLY — never grant cloudrun-SA impersonation in production.
   cloudrun_service_account_token_creators = [
     "group:role_developers@whalesync.com",
-    "user:curtis@whalesync.com",
+    "group:role_readonly_sa@whalesync.com",
   ]
 }
 

@@ -37,7 +37,7 @@ resource "google_compute_instance" "instance" {
 
   metadata = {
     block-project-ssh-keys = "true"
-    enable-oslogin         = "FALSE"
+    enable-oslogin         = var.enable_oslogin ? "TRUE" : "FALSE"
   }
 
   metadata_startup_script = var.metadata_startup_script

@@ -411,3 +411,16 @@ variable "cloudrun_service_account_token_creators" {
   default     = []
   description = "Additional principals granted roles/iam.serviceAccountTokenCreator on the cloudrun service account. Used in non-production environments to allow developers to run the GCS uploads from their local machines."
 }
+
+variable "grant_readonly_sa_all_secrets" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    When true, grant role_readonly_sa@ project-wide secretmanager.secretAccessor — read access to ALL secret payloads in
+    this env — so developers/agents can run the Scratch server locally against it. Intended for TEST ONLY; NEVER set it
+    for production. Safe only while this env's secrets stay test-scoped and distinct from prod: keep the connector OAuth
+    client secrets, the AI/observability keys (GEMINI/OPENROUTER/LANGSMITH/POSTHOG/LINEAR), ENCRYPTION_MASTER_KEY, and
+    the write-capable DB creds (DATABASE_URL/MIGRATIONS_DB_*) test-scoped. See
+    docs/plans/2026-06-11-local-readonly-agent-access-spinner.md.
+  EOT
+}

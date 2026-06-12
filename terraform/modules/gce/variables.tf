@@ -39,6 +39,12 @@ variable "enable_iap" {
   default     = false
 }
 
+variable "enable_oslogin" {
+  description = "Enable OS Login (IAM-based SSH). When true, `gcloud compute ssh` provisions keys via the user's own OS Login profile instead of writing to instance metadata — which lets least-privilege (read-only) principals SSH in without the compute.instances.setMetadata write the metadata path requires."
+  type        = bool
+  default     = false
+}
+
 variable "gcp_project_id" {
   description = "What project should this VM be created in"
   type        = string
