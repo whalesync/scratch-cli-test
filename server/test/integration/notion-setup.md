@@ -34,6 +34,9 @@ Stash it:
 ```bash
 # server/.env.integration
 NOTION_API_KEY=ntn_abc123…
+# Optional — only needed for the create-schema suite (notion-create-schema.spec.ts).
+# A page shared with the integration, under which new test databases are created. See step 7.
+NOTION_TEST_PARENT_PAGE_ID=2a1b3c4d5e6f…
 ```
 
 (`server/.env.integration` is gitignored. Copy from `.env.integration.example` if you don't already have one.)
@@ -46,22 +49,22 @@ In your test workspace, create a new full-page database titled **exactly** `Scra
 
 Add these properties in this order. **Property names must match exactly** (the spec asserts on them):
 
-| Property name    | Type           | Configuration notes                                                                                          |
-| ---------------- | -------------- | ------------------------------------------------------------------------------------------------------------ |
-| `Name`           | Title          | The default title column — rename `Name` if Notion calls it something else.                                  |
-| `Description`    | Text           | (rich_text)                                                                                                  |
-| `Status`         | Status         | Default options are fine                                                                                     |
-| `Priority`       | Select         | Add options: `Low`, `Medium`, `High`                                                                         |
-| `Tags`           | Multi-select   | Add options: `backend`, `frontend`, `infra`                                                                  |
-| `Estimate`       | Number         | Format: Number                                                                                               |
-| `Due Date`       | Date           | Time + timezone off is fine                                                                                  |
-| `Done`           | Checkbox       |                                                                                                              |
-| `Owner Email`    | Email          |                                                                                                              |
-| `Link`           | URL            |                                                                                                              |
-| `Attachments`    | Files & media  |                                                                                                              |
-| `Linked Items`   | Relation       | **Related to**: `Scratch Integration Test Linked` (created in step 4). Two-way is fine but not required.     |
-| `Linked Count`   | Rollup         | **Relation**: `Linked Items` → **Property**: `Name` → **Calculate**: `Count all`. Yields a read-only number. |
-| `Score`          | Formula        | Expression: `length(prop("Name"))`. Yields a read-only number.                                               |
+| Property name  | Type          | Configuration notes                                                                                          |
+| -------------- | ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `Name`         | Title         | The default title column — rename `Name` if Notion calls it something else.                                  |
+| `Description`  | Text          | (rich_text)                                                                                                  |
+| `Status`       | Status        | Default options are fine                                                                                     |
+| `Priority`     | Select        | Add options: `Low`, `Medium`, `High`                                                                         |
+| `Tags`         | Multi-select  | Add options: `backend`, `frontend`, `infra`                                                                  |
+| `Estimate`     | Number        | Format: Number                                                                                               |
+| `Due Date`     | Date          | Time + timezone off is fine                                                                                  |
+| `Done`         | Checkbox      |                                                                                                              |
+| `Owner Email`  | Email         |                                                                                                              |
+| `Link`         | URL           |                                                                                                              |
+| `Attachments`  | Files & media |                                                                                                              |
+| `Linked Items` | Relation      | **Related to**: `Scratch Integration Test Linked` (created in step 4). Two-way is fine but not required.     |
+| `Linked Count` | Rollup        | **Relation**: `Linked Items` → **Property**: `Name` → **Calculate**: `Count all`. Yields a read-only number. |
+| `Score`        | Formula       | Expression: `length(prop("Name"))`. Yields a read-only number.                                               |
 
 > The `Linked Count` rollup and `Score` formula are intentionally read-only types. The test asserts that `updateRecords` silently strips writes against them — that branch is one of the bug-magnets we want covered before the SDK upgrade.
 
@@ -87,11 +90,11 @@ Add at least **three** rows to `Scratch Integration Test`. Give each a non-empty
 
 Suggested seed rows:
 
-| Name              | Description     | Status      | Priority | Tags                  | Estimate | Due Date     | Done | Owner Email      | Link                  | Linked Items |
-| ----------------- | --------------- | ----------- | -------- | --------------------- | -------- | ------------ | ---- | ---------------- | --------------------- | ------------ |
-| `Seed Page A`     | Short rich text | In progress | High     | `backend`             | 3        | (today + 7d) | ✓    | a@example.com    | https://example.com   | Linked A     |
-| `Seed Page B`     |                 | Not started | Medium   | `frontend`, `backend` | 5        |              |      | b@example.com    | https://example.com/b | Linked B     |
-| `Seed Page C`     | Plain note      | Done        | Low      |                       | 1        |              | ✓    |                  |                       |              |
+| Name          | Description     | Status      | Priority | Tags                  | Estimate | Due Date     | Done | Owner Email   | Link                  | Linked Items |
+| ------------- | --------------- | ----------- | -------- | --------------------- | -------- | ------------ | ---- | ------------- | --------------------- | ------------ |
+| `Seed Page A` | Short rich text | In progress | High     | `backend`             | 3        | (today + 7d) | ✓    | a@example.com | https://example.com   | Linked A     |
+| `Seed Page B` |                 | Not started | Medium   | `frontend`, `backend` | 5        |              |      | b@example.com | https://example.com/b | Linked B     |
+| `Seed Page C` | Plain note      | Done        | Low      |                       | 1        |              | ✓    |               |                       |              |
 
 The exact contents don't matter for assertions — only that there are ≥1 rows with a populated title.
 
@@ -111,11 +114,25 @@ If you've already shared a parent page that contains both databases, that works 
 
 ---
 
-## 7. Run the tests
+## 7. (Optional) Parent page for the create-schema suite
+
+Only needed to run [`notion-create-schema.spec.ts`](notion-create-schema.spec.ts), which creates brand-new databases. Notion requires a **parent page** to create a database under, so the suite needs one shared with the integration:
+
+1. In your test workspace, create a new empty page titled e.g. `Scratch Create-Schema Parent`.
+2. Share it with the integration: **•••** → **Connections** → **Add connections** → **Scratch Integration Tests**.
+3. Copy its page id from the URL (the 32-hex-char id at the end, dashes optional) into `server/.env.integration` as `NOTION_TEST_PARENT_PAGE_ID`.
+
+The create-schema suite also reuses the `Scratch Integration Test Linked` database from step 4 as a relation (foreign-key) target, so make sure that one is shared too. Each run creates a couple of databases under the parent page and trashes them in `afterAll`; leftovers from a failed run are findable by the `Spinner Create-Schema` title prefix. The suite auto-skips when `NOTION_TEST_PARENT_PAGE_ID` is unset.
+
+---
+
+## 8. Run the tests
 
 ```bash
 cd server
 yarn test:integration -- notion-connector
+# create-schema suite (needs NOTION_TEST_PARENT_PAGE_ID — see step 7):
+yarn test:integration -- notion-create-schema
 ```
 
 Expected first run: the snapshot test creates `__snapshots__/notion-connector.spec.ts.snap` and passes. Commit the snapshot — it becomes the v3 contract that Phase 3 / Phase 4 of the upgrade plan diff against.

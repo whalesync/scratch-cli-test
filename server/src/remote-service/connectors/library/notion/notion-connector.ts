@@ -1,13 +1,18 @@
 import type {
   BlockObjectResponse,
+  CreateDatabaseParameters,
   CreatePageParameters,
   PageObjectResponse,
   QueryDataSourceParameters,
+  UpdateDataSourceParameters,
 } from '@notionhq/client';
 import {
   connectorMetadata,
   ConnectorSettingDefinition,
+  type CreateFieldResult,
+  type CreateTableResult,
   IncrementalPullSupport,
+  type SchemaCreationCapabilities,
   TableDiscoveryMode,
 } from '@spinner/shared-types';
 import _ from 'lodash';
@@ -18,6 +23,11 @@ import { defaultResolveFieldValue, extractFromAnnotatedSchema, stripQueryParams 
 import { Connector, suggestFileNamesFromFieldPaths } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError, ErrorMessageTemplates } from '../../error';
+import {
+  type NormalizedCreateFieldsPlan,
+  type NormalizedCreateTablePlan,
+  type ResolvedCreateFieldSpec,
+} from '../../schema-creation.types';
 import { Service } from '../../service-constants';
 import {
   BaseJsonTableSpec,
@@ -42,6 +52,12 @@ import {
   NotionError,
   NotionRequestTimeoutError,
 } from './notion-api-client';
+import {
+  buildNotionPropertiesForFields,
+  NOTION_SCHEMA_CREATION_CAPABILITIES,
+  type NotionForeignKeyResolutions,
+  type NotionPropertiesMap,
+} from './notion-create-schema';
 import { isFullDatabase, isFullDataSource, NotionDataSourceSearchResult } from './notion-data-source-types';
 import { buildNotionLastEditedFilter, combineNotionFilters } from './notion-incremental';
 import { buildNotionJsonTableSpec, NOTION_READ_ONLY_PROPERTY_TYPES } from './notion-json-schema';
@@ -1002,6 +1018,235 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
   supportsFilters(): boolean {
     return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Schema creation (create-schema API — DEV-10382)
+  // -------------------------------------------------------------------------
+
+  override supportsSchemaCreation(): boolean {
+    return true;
+  }
+
+  override getSchemaCreationCapabilities(): SchemaCreationCapabilities {
+    return NOTION_SCHEMA_CREATION_CAPABILITIES;
+  }
+
+  /**
+   * Create one Notion database (and its initial data source) with all of its
+   * properties in a single `POST /v1/databases` call. A brand-new "table" must be
+   * created this way: a standalone data source can only be *added* to an existing
+   * database. The new database needs a parent **page** — taken from
+   * `plan.remoteParentId[0]`; without one we fail rather than guessing where to
+   * put it. ForeignKey targets are already resolved to existing tables by the
+   * server; here we resolve each to its data source id so the relation points at
+   * it. Creates are NOT idempotent — re-running creates a second database.
+   */
+  override async createTable(plan: NormalizedCreateTablePlan): Promise<CreateTableResult> {
+    const parentPageId = plan.remoteParentId?.[0];
+    if (!parentPageId) {
+      return {
+        ref: plan.ref,
+        name: plan.name,
+        status: 'failed',
+        fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
+        error:
+          'Notion requires a parent page to create a database. Provide the parent page id as remoteParentId (e.g. ["<pageId>"]).',
+      };
+    }
+
+    try {
+      const foreignKeyResolutions = await this.resolveForeignKeyTargets(plan.fields);
+      const skippedFieldReasons = new Map<string, string>();
+      const properties = buildNotionPropertiesForFields(
+        plan.fields,
+        { treatPrimaryAsTitle: true },
+        foreignKeyResolutions,
+        skippedFieldReasons,
+      );
+
+      // Every Notion data source needs exactly one title property. The generic
+      // validator enforces an isPrimary field, but guard defensively: if none
+      // made it in, inject a "Name" title so the create can't fail for lack of one.
+      const autoAddedTitleName = this.ensureTitleProperty(properties);
+
+      const title: CreateDatabaseParameters['title'] = [{ type: 'text', text: { content: plan.name } }];
+      const database = await this.client.createDatabase({
+        parent: { type: 'page_id', page_id: parentPageId },
+        title,
+        initial_data_source: { properties },
+      });
+      if (!isFullDatabase(database)) {
+        throw new Error('Notion databases.create returned a partial response');
+      }
+      const dataSourceId = database.data_sources[0]?.id;
+      if (!dataSourceId) {
+        throw new Error('Notion databases.create returned a database with no data source');
+      }
+
+      const fields = this.buildFieldResults(plan.fields, skippedFieldReasons);
+      if (autoAddedTitleName) {
+        fields.unshift({
+          name: autoAddedTitleName,
+          status: 'created',
+          remoteFieldId: autoAddedTitleName,
+          autoAdded: true,
+        });
+      }
+      return {
+        ref: plan.ref,
+        name: plan.name,
+        status: skippedFieldReasons.size > 0 ? 'partial' : 'created',
+        remoteTableId: [database.id, dataSourceId],
+        fields,
+      };
+    } catch (error) {
+      return {
+        ref: plan.ref,
+        name: plan.name,
+        status: 'failed',
+        fields: plan.fields.map((field) => ({ name: field.name, status: 'failed' as const })),
+        error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+      };
+    }
+  }
+
+  /**
+   * Add properties (fields) to an existing data source — one
+   * `PATCH /v1/data_sources/{id}` per field so a single bad field fails in
+   * isolation rather than taking the rest down. Also used by the server to add
+   * deferred cyclic/self foreignKey fields after every table in a multi-table
+   * create exists. A field whose name already exists on the data source is
+   * skipped (not overwritten), keeping the operation non-destructive.
+   */
+  override async createFields(plan: NormalizedCreateFieldsPlan): Promise<CreateFieldResult[]> {
+    const dataSourceId = await this.resolveDataSourceId(plan.remoteTableId);
+    const foreignKeyResolutions = await this.resolveForeignKeyTargets(plan.fields);
+    const existingPropertyNames = await this.fetchExistingPropertyNames(dataSourceId);
+
+    const results: CreateFieldResult[] = [];
+    for (const field of plan.fields) {
+      if (existingPropertyNames.has(field.name.trim().toLowerCase())) {
+        results.push({
+          name: field.name,
+          status: 'skipped',
+          error: `a property named "${field.name}" already exists on the data source`,
+        });
+        continue;
+      }
+
+      const skippedFieldReasons = new Map<string, string>();
+      const properties = buildNotionPropertiesForFields(
+        [field],
+        { treatPrimaryAsTitle: false },
+        foreignKeyResolutions,
+        skippedFieldReasons,
+      );
+      const skipReason = skippedFieldReasons.get(field.name);
+      if (skipReason !== undefined) {
+        results.push({ name: field.name, status: 'skipped', error: skipReason });
+        continue;
+      }
+
+      try {
+        await this.client.updateDataSource({
+          data_source_id: dataSourceId,
+          properties: properties as UpdateDataSourceParameters['properties'],
+        });
+        results.push({ name: field.name, status: 'created', remoteFieldId: field.name });
+      } catch (error) {
+        results.push({
+          name: field.name,
+          status: 'failed',
+          error: this.extractConnectorErrorDetails(error).userFriendlyMessage,
+        });
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Resolve every foreignKey field's (server-resolved) target table to a Notion
+   * data source id. The target remoteId is `[databaseId, dataSourceId]`; older
+   * targets carry only `[databaseId]` and are looked up via `resolveDataSourceId`.
+   * A target that can't be resolved yields an `unresolvable` reason the mapper
+   * turns into a per-field skip.
+   */
+  private async resolveForeignKeyTargets(fields: ResolvedCreateFieldSpec[]): Promise<NotionForeignKeyResolutions> {
+    const resolutions: NotionForeignKeyResolutions = new Map();
+    for (const field of fields) {
+      const fieldType = field.fieldType;
+      if (fieldType.kind !== 'foreignKey') {
+        continue;
+      }
+      if (!('existingRemoteTableId' in fieldType.target)) {
+        // The server resolves every {ref} target before dispatch; a lingering ref is a bug.
+        resolutions.set(field.name, {
+          kind: 'unresolvable',
+          reason: `foreign key "${field.name}" target was not resolved to an existing table`,
+        });
+        continue;
+      }
+      try {
+        const targetDataSourceId = await this.resolveDataSourceId(fieldType.target.existingRemoteTableId);
+        resolutions.set(field.name, { kind: 'resolved', targetDataSourceId });
+      } catch (error) {
+        resolutions.set(field.name, {
+          kind: 'unresolvable',
+          reason: `couldn't resolve the data source for foreign key "${field.name}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
+    }
+    return resolutions;
+  }
+
+  /**
+   * Guarantee the properties map has a Notion `title` property. Returns the
+   * injected property name when it had to add one (so the caller can report it as
+   * auto-added), or undefined when a title was already present.
+   */
+  private ensureTitleProperty(properties: NotionPropertiesMap): string | undefined {
+    const hasTitle = Object.values(properties).some((config) => 'title' in config);
+    if (hasTitle) {
+      return undefined;
+    }
+    let name = 'Name';
+    let suffix = 2;
+    while (name in properties) {
+      name = `Name ${suffix}`;
+      suffix += 1;
+    }
+    properties[name] = { title: {} };
+    return name;
+  }
+
+  /** Lowercased set of property names currently on a data source (for the non-destructive add guard). */
+  private async fetchExistingPropertyNames(dataSourceId: string): Promise<Set<string>> {
+    const dataSource = await this.client.retrieveDataSource({ data_source_id: dataSourceId });
+    if (!isFullDataSource(dataSource)) {
+      return new Set();
+    }
+    return new Set(Object.keys(dataSource.properties).map((name) => name.trim().toLowerCase()));
+  }
+
+  /**
+   * Per-field result list for a created table: each requested field is `created`
+   * (its property name is the stable remote field id) unless it was skipped (an
+   * unresolvable foreign key), in which case the reason is surfaced.
+   */
+  private buildFieldResults(
+    fields: ResolvedCreateFieldSpec[],
+    skippedFieldReasons: Map<string, string>,
+  ): CreateFieldResult[] {
+    return fields.map((field) => {
+      const skipReason = skippedFieldReasons.get(field.name);
+      if (skipReason !== undefined) {
+        return { name: field.name, status: 'skipped', error: skipReason };
+      }
+      return { name: field.name, status: 'created', remoteFieldId: field.name };
+    });
   }
 }
 

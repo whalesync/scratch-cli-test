@@ -1,6 +1,8 @@
 import type {
   AppendBlockChildrenParameters,
   AppendBlockChildrenResponse,
+  CreateDatabaseParameters,
+  CreateDatabaseResponse,
   CreatePageParameters,
   CreatePageResponse,
   DeleteBlockParameters,
@@ -21,6 +23,8 @@ import type {
   SearchResponse,
   UpdateBlockParameters,
   UpdateBlockResponse,
+  UpdateDataSourceParameters,
+  UpdateDataSourceResponse,
   UpdatePageParameters,
   UpdatePageResponse,
 } from '@notionhq/client';
@@ -241,10 +245,29 @@ const ENDPOINTS = {
     bodyParams: [],
     path: (a) => `/databases/${enc(String(a.database_id))}`,
   },
+  createDatabase: {
+    method: 'post',
+    queryParams: [],
+    // Verbatim from the SDK's `createDatabase.bodyParams`. Creating a database
+    // with `initial_data_source.properties` provisions the database, its first
+    // data source, and every property in a single call — the only way to create
+    // a brand-new Notion "table" (a standalone data source can only be added to
+    // an existing database).
+    bodyParams: ['parent', 'title', 'description', 'is_inline', 'initial_data_source', 'icon', 'cover'],
+    path: () => `/databases`,
+  },
   retrieveDataSource: {
     method: 'get',
     queryParams: [],
     bodyParams: [],
+    path: (a) => `/data_sources/${enc(String(a.data_source_id))}`,
+  },
+  updateDataSource: {
+    method: 'patch',
+    queryParams: [],
+    // Verbatim from the SDK's `updateDataSource.bodyParams`. Used to add
+    // properties (fields) to an existing data source via `properties`.
+    bodyParams: ['archived', 'title', 'icon', 'properties', 'in_trash', 'parent'],
     path: (a) => `/data_sources/${enc(String(a.data_source_id))}`,
   },
   queryDataSource: {
@@ -423,8 +446,16 @@ export class NotionApiClient {
     return this.request<GetDatabaseResponse>(ENDPOINTS.retrieveDatabase, args);
   }
 
+  createDatabase(args: CreateDatabaseParameters): Promise<CreateDatabaseResponse> {
+    return this.request<CreateDatabaseResponse>(ENDPOINTS.createDatabase, args);
+  }
+
   retrieveDataSource(args: GetDataSourceParameters): Promise<GetDataSourceResponse> {
     return this.request<GetDataSourceResponse>(ENDPOINTS.retrieveDataSource, args);
+  }
+
+  updateDataSource(args: UpdateDataSourceParameters): Promise<UpdateDataSourceResponse> {
+    return this.request<UpdateDataSourceResponse>(ENDPOINTS.updateDataSource, args);
   }
 
   queryDataSource(args: QueryDataSourceParameters): Promise<QueryDataSourceResponse> {
