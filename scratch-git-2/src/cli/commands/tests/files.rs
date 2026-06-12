@@ -3555,6 +3555,7 @@ mod publish_results_formatting {
             warning:
                 "3 record(s) were rejected by the destination connector and were not published."
                     .into(),
+            failed_operations: vec![],
         }];
         // Human path also runs (printed during cargo test) to exercise the warning branch.
         print_publish_results(&outcomes, 100, false).unwrap();
@@ -3568,6 +3569,53 @@ mod publish_results_formatting {
             .as_str()
             .unwrap()
             .contains("rejected"));
+    }
+
+    #[test]
+    fn row_failure_warning_surfaces_the_connector_message_and_record() {
+        // The server now returns per-record rejections; the CLI must show *why*
+        // a record failed (the connector's own message), not just a count.
+        let connector_message =
+            "'person_id' is a read-only field. Add a primary participant to set 'person_id' instead.";
+        let warning = super::super::format_row_failure_warning(
+            2,
+            &[crate::api::JobFailedOperation {
+                file_path: "Activities/call-nishant-tare.json".into(),
+                phase: "create".into(),
+                error: Some(connector_message.into()),
+            }],
+        );
+        assert!(warning.contains("call-nishant-tare"));
+        assert!(warning.contains(connector_message));
+        // `failed_count` (2) is the authoritative total; the one shown leaves 1 other.
+        assert!(warning.contains("1 other record failed"));
+        assert!(warning.contains("scratchmd files unpublished"));
+
+        let outcomes = vec![PublishConnectionOutcome::PublishedWithRowFailures {
+            name: "Pipedrive".into(),
+            failed_count: 2,
+            warning,
+            failed_operations: vec![crate::api::JobFailedOperation {
+                file_path: "Activities/call-nishant-tare.json".into(),
+                phase: "create".into(),
+                error: Some(connector_message.into()),
+            }],
+        }];
+        let json = parse_json_output(&outcomes);
+        // The structured `failedOperations` carries the per-record detail too.
+        let op = &json["connections"][0]["warning"]["failedOperations"][0];
+        assert_eq!(op["filePath"], "Activities/call-nishant-tare.json");
+        assert_eq!(op["phase"], "create");
+        assert_eq!(op["error"], connector_message);
+    }
+
+    #[test]
+    fn row_failure_warning_falls_back_to_count_when_no_message() {
+        // No per-record message available (older server / empty error) → the
+        // bare-count warning, not a misleading clean success.
+        let warning = super::super::format_row_failure_warning(4, &[]);
+        assert!(warning.contains("4 record(s) were rejected"));
+        assert!(warning.contains("scratchmd files unpublished"));
     }
 }
 

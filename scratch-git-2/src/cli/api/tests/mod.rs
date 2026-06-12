@@ -92,6 +92,58 @@ fn job_progress_dirty_head_absent_when_public_progress_omits_it() {
 }
 
 #[test]
+fn job_progress_reads_failed_operations_off_run_job_public_progress() {
+    // A publish run-job that the connector partially rejected reports the count
+    // (`failedCount`) AND the per-record messages (`failedOperations`) on its
+    // terminal `completed` progress. Lock down that the CLI deserializes both so
+    // it can show *why* a record failed, not just that something did.
+    let progress: JobProgress = serde_json::from_value(serde_json::json!({
+        "state": "completed",
+        "publicProgress": {
+            "status": "completed",
+            "failedCount": 1,
+            "failedOperations": [
+                {
+                    "filePath": "Activities/call-nishant.json",
+                    "phase": "create",
+                    "error": "'person_id' is a read-only field. Add a primary participant instead."
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let public = progress.public_progress.unwrap();
+    assert_eq!(public.failed_count, 1);
+    assert_eq!(public.failed_operations.len(), 1);
+    assert_eq!(
+        public.failed_operations[0].file_path,
+        "Activities/call-nishant.json"
+    );
+    assert_eq!(public.failed_operations[0].phase, "create");
+    assert!(public.failed_operations[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("read-only field"));
+}
+
+#[test]
+fn job_progress_failed_operations_default_empty_when_absent() {
+    // A clean job (or older server) omits `failedOperations` → empty vec, not a
+    // deserialization error.
+    let progress: JobProgress = serde_json::from_value(serde_json::json!({
+        "state": "completed",
+        "publicProgress": { "status": "completed" }
+    }))
+    .unwrap();
+
+    let public = progress.public_progress.unwrap();
+    assert_eq!(public.failed_count, 0);
+    assert!(public.failed_operations.is_empty());
+}
+
+#[test]
 fn build_request_sets_content_length_zero_when_no_body() {
     let client = ApiClient::new("http://localhost:3010", "test-token");
     let req = client

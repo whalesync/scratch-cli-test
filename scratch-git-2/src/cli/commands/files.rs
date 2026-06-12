@@ -1095,6 +1095,11 @@ enum PublishConnectionOutcome {
         name: String,
         failed_count: u64,
         warning: String,
+        /// The per-record rejections the server returned on the run-job
+        /// progress (bounded sample), each carrying the connector's own
+        /// message. Drives the `failedOperations` detail in `--json` output;
+        /// the first one with a message is folded into `warning` for humans.
+        failed_operations: Vec<crate::api::JobFailedOperation>,
     },
     /// Plan-job returned no work (server-side diff was empty).
     NoDiff { name: String },
@@ -1246,24 +1251,29 @@ async fn publish_single_connection(
     };
     // Number of rows the destination connector rejected during the run-job
     // (DEV-10243). The run-job still ends `completed` even when every row was
-    // rejected, so the only signal is `failedCount` on its terminal progress.
-    let run_job_failed_count = if let Some(run_job_id) = run.job_id.as_deref() {
-        match crate::api::poll_job(client, run_job_id).await {
-            Ok(progress) => progress.public_progress.map_or(0, |p| p.failed_count),
-            Err(e) => {
-                if verbose {
-                    eprintln!(" failed");
+    // rejected, so the only signal is `failedCount` (the count) plus
+    // `failedOperations` (the per-record connector messages) on its terminal
+    // progress.
+    let (run_job_failed_count, run_job_failed_operations) =
+        if let Some(run_job_id) = run.job_id.as_deref() {
+            match crate::api::poll_job(client, run_job_id).await {
+                Ok(progress) => progress
+                    .public_progress
+                    .map_or((0, Vec::new()), |p| (p.failed_count, p.failed_operations)),
+                Err(e) => {
+                    if verbose {
+                        eprintln!(" failed");
+                    }
+                    return PublishConnectionOutcome::Failed {
+                        name,
+                        phase: "run-job",
+                        message: e.to_string(),
+                    };
                 }
-                return PublishConnectionOutcome::Failed {
-                    name,
-                    phase: "run-job",
-                    message: e.to_string(),
-                };
             }
-        }
-    } else {
-        0
-    };
+        } else {
+            (0, Vec::new())
+        };
     if verbose {
         eprintln!(" done");
     }
@@ -1297,14 +1307,56 @@ async fn publish_single_connection(
         return PublishConnectionOutcome::PublishedWithRowFailures {
             name,
             failed_count: run_job_failed_count,
-            warning: format!(
-                "{run_job_failed_count} record(s) were rejected by the destination connector and were not published. \
-                 Run `scratchmd files unpublished` to see which records still need publishing."
-            ),
+            warning: format_row_failure_warning(run_job_failed_count, &run_job_failed_operations),
+            failed_operations: run_job_failed_operations,
         };
     }
 
     PublishConnectionOutcome::Published { name }
+}
+
+/// `public/Activities/call-nishant.json` → `call-nishant` — a readable record
+/// label for the row-failure warning.
+fn record_name_from_path(file_path: &str) -> String {
+    let base = file_path.rsplit('/').next().unwrap_or(file_path);
+    base.strip_suffix(".json").unwrap_or(base).to_string()
+}
+
+/// Build the user-facing row-failure warning. Prefers the connector's own
+/// per-record message from the run-job's `failedOperations` (e.g. Pipedrive's
+/// "'person_id' is a read-only field…") over a bare count, mirroring the
+/// desktop modal. `failed_count` is the authoritative total — the operations
+/// list is a bounded sample, so "others" is derived from the count.
+fn format_row_failure_warning(
+    failed_count: u64,
+    failed_operations: &[crate::api::JobFailedOperation],
+) -> String {
+    const RECOVERY: &str =
+        "Run `scratchmd files unpublished` to see which records still need publishing.";
+
+    let first_with_error = failed_operations
+        .iter()
+        .find(|op| op.error.as_deref().is_some_and(|e| !e.is_empty()));
+
+    match first_with_error {
+        Some(op) => {
+            let record = record_name_from_path(&op.file_path);
+            let message = op.error.as_deref().unwrap_or_default();
+            let others = failed_count.saturating_sub(1);
+            let suffix = if others > 0 {
+                format!(
+                    " (and {others} other record{} failed)",
+                    if others == 1 { "" } else { "s" }
+                )
+            } else {
+                String::new()
+            };
+            format!("{record}: {message}{suffix} {RECOVERY}")
+        }
+        None => format!(
+            "{failed_count} record(s) were rejected by the destination connector and were not published. {RECOVERY}"
+        ),
+    }
 }
 
 /// Roll records from a publish plan back to their pre-publish blob.
@@ -1735,11 +1787,29 @@ fn publish_outcome_to_json(outcome: &PublishConnectionOutcome) -> serde_json::Va
             name,
             failed_count,
             warning,
-        } => serde_json::json!({
-            "name": name,
-            "status": "published",
-            "warning": { "phase": "run-job", "message": warning, "failedCount": failed_count },
-        }),
+            failed_operations,
+        } => {
+            let operations: Vec<serde_json::Value> = failed_operations
+                .iter()
+                .map(|op| {
+                    serde_json::json!({
+                        "filePath": op.file_path,
+                        "phase": op.phase,
+                        "error": op.error,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "name": name,
+                "status": "published",
+                "warning": {
+                    "phase": "run-job",
+                    "message": warning,
+                    "failedCount": failed_count,
+                    "failedOperations": operations,
+                },
+            })
+        }
         PublishConnectionOutcome::NoDiff { name } => serde_json::json!({
             "name": name,
             "status": "no_diff",

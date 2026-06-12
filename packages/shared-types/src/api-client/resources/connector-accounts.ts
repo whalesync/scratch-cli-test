@@ -76,10 +76,7 @@ export function createConnectorAccountsApi(http: Http) {
     },
 
     /** GET `/workbooks/:id/connections/:connectionId/create-destinations` — list where a new table can be created. (web + desktop) */
-    listCreateDestinations: async (
-      workbookId: string,
-      connectorAccountId: string,
-    ): Promise<CreateDestinationList> => {
+    listCreateDestinations: async (workbookId: string, connectorAccountId: string): Promise<CreateDestinationList> => {
       const res = await http.get<CreateDestinationList>(
         `/workbooks/${workbookId}/connections/${connectorAccountId}/create-destinations`,
         { fallbackMessage: 'Failed to list create destinations' },

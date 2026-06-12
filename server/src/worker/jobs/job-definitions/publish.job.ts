@@ -1,4 +1,4 @@
-import { JobType, type WorkbookId } from '@spinner/shared-types';
+import { JobType, type PublishFailedOperation, type WorkbookId } from '@spinner/shared-types';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishDirtyDriftError, type PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
@@ -37,6 +37,14 @@ export type PublishPublicProgress = {
    * don't need to set it.
    */
   failedCount?: number;
+  /**
+   * Bounded sample of the run's per-record connector rejections (rows left
+   * `failed-batch`), each carrying the connector's own user-facing message.
+   * Set on the terminal `completed` checkpoint alongside `failedCount` so the
+   * desktop/CLI can show *why* a record didn't publish (e.g. Pipedrive's
+   * "'person_id' is a read-only field…"), not just a count. Extends DEV-10243.
+   */
+  failedOperations?: PublishFailedOperation[];
   /**
    * DEV-10316 publish-time TOCTOU abort. Set (with `status: 'failed'`) when the
    * connection's dirty HEAD drifted past the client's `expectedBaseDirtyHead`
@@ -301,8 +309,13 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           renameFilesPlanned: runResult.totalByPhase?.['rename-files'] ?? 0,
           ...latestErrorInfo,
           // DEV-10243: surface per-row connector rejections (failed-batch) so the
-          // CLI/desktop don't read this terminal `completed` checkpoint as a clean success.
+          // CLI/desktop don't read this terminal `completed` checkpoint as a clean
+          // success. `failedCount` is the count; `failedOperations` carries the
+          // connector's own per-record message (the actionable "why", e.g.
+          // Pipedrive's "'person_id' is a read-only field…") so the desktop/CLI
+          // show why a record failed, not just that something did.
           failedCount: runResult.failedCount ?? 0,
+          failedOperations: runResult.failedOperations ?? [],
         },
         jobProgress: {},
         connectorProgress: {},

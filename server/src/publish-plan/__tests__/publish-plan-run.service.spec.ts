@@ -993,5 +993,74 @@ describe('PublishPlanRunService', () => {
       const failedData = (failedBatchCall![0] as { data: { status: string; error: string } }).data;
       expect(failedData.error).toBe(serviceValidationMessage);
     });
+
+    it('returns failedOperations (filePath/phase/connector message) so the job can surface why a record failed', async () => {
+      setupEditPhaseEntries([
+        {
+          id: 'op_1',
+          filePath: 'Activities/call-nishant.json',
+          content: { id: 'rec_1', person_id: 5022 },
+          changedFields: { person_id: 5022 },
+          remoteRecordId: 'rec_1',
+        },
+      ]);
+
+      const connectorMessage =
+        "'person_id' is a read-only field. Add a primary participant to set 'person_id' instead.";
+      jest.mocked(connector.updateRecords).mockRejectedValue(new Error('Request failed with status code 400'));
+      jest.mocked(connector.extractConnectorErrorDetails).mockReturnValue({
+        userFriendlyMessage: connectorMessage,
+        additionalContext: { status: 400 },
+      });
+
+      // Final status reflects the rejection...
+      db.client.publishPlanOperation.groupBy.mockResolvedValue([{ status: 'failed-batch', phase: 'edit', _count: 1 }]);
+      // ...and the bounded summary query (the one with a `select`) returns the
+      // failed row carrying the connector's persisted message. The retry query
+      // (no `select`) returns [] so the entry isn't reprocessed.
+      jest.mocked(db.client.publishPlanOperation.findMany).mockImplementation((args: unknown) => {
+        const a = args as {
+          where?: { phase?: string; status?: string };
+          distinct?: string[];
+          select?: Record<string, boolean>;
+        };
+        if (a?.distinct) return Promise.resolve([{ dataFolderId: DATA_FOLDER_ID }]);
+        // The bounded summary query (has a `select`) returns the failed row with
+        // its persisted connector message; the retry query (no `select`) returns
+        // [] so the failed entry isn't reprocessed.
+        if (a?.where?.status === 'failed-batch') {
+          return Promise.resolve(
+            a.select ? [{ filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage }] : [],
+          );
+        }
+        // Pending entries only exist for the edit phase in this test.
+        if (a?.where?.phase === 'edit' && a?.where?.status === 'pending') {
+          return Promise.resolve([
+            {
+              id: 'op_1',
+              filePath: 'Activities/call-nishant.json',
+              content: { id: 'rec_1', person_id: 5022 },
+              changedFields: { person_id: 5022 },
+              remoteRecordId: 'rec_1',
+              planId: PLAN_ID,
+              phase: 'edit',
+              dataFolderId: DATA_FOLDER_ID,
+              status: 'pending',
+              error: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const result = await service.runPipeline(PLAN_ID);
+
+      expect(result.failedCount).toBe(1);
+      expect(result.failedOperations).toEqual([
+        { filePath: 'Activities/call-nishant.json', phase: 'edit', error: connectorMessage },
+      ]);
+    });
   });
 });

@@ -327,6 +327,28 @@ pub struct JobPublicProgress {
     /// land. `0`/absent on jobs that had no per-row failures.
     #[serde(rename = "failedCount", default)]
     pub failed_count: u64,
+    /// Per-record connector rejections from a publish run-job (the server's
+    /// `failedOperations`), each carrying the connector's own user-facing
+    /// message so the CLI can show *why* a record failed (e.g. Pipedrive's
+    /// "'person_id' is a read-only field…"), not just `failedCount`. Bounded
+    /// server-side; `[]`/absent on jobs that had no per-row failures.
+    #[serde(rename = "failedOperations", default)]
+    pub failed_operations: Vec<JobFailedOperation>,
+}
+
+/// One record the destination connector rejected during a publish run-job.
+/// Mirrors `@spinner/shared-types`' `PublishFailedOperation` — an entry of the
+/// server's `failedOperations` on the run-job's terminal `publicProgress`.
+/// Keep this struct's fields in sync with that shared type.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[allow(dead_code)]
+pub struct JobFailedOperation {
+    #[serde(rename = "filePath", default)]
+    pub file_path: String,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// Response from endpoints that start a background job.

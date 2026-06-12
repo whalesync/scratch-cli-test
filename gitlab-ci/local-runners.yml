@@ -120,6 +120,18 @@ include:
 # them. See the header comment at the top of this file for details.
 
 # -----------------------------------------------------------------------------
+# Shared-types
+# -----------------------------------------------------------------------------
+
+local build and test shared-types:
+  extends:
+    - .build-and-test-shared-types
+    - .local-runner-defaults
+  rules:
+    - if: !reference [.rules, local_runner_users_mr]
+      changes: !reference [.changes, shared-types]
+
+# -----------------------------------------------------------------------------
 # Client
 # -----------------------------------------------------------------------------
 

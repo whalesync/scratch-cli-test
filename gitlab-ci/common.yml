@@ -100,6 +100,8 @@ include:
   scratch-desktop:
     - scratch-desktop/**/*
     - packages/**/*
+  shared-types:
+    - packages/shared-types/**/*
   dummy:
     - terraform/**/*
     - .cursor/**/*

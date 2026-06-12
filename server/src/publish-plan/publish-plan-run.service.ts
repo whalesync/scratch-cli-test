@@ -4,6 +4,7 @@ import {
   isScratchPendingPublishId,
   isScratchPendingRecreateId,
   parseScratchPendingRecreateId,
+  type PublishFailedOperation,
 } from '@spinner/shared-types';
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
@@ -36,6 +37,14 @@ import { RefResolverService } from './ref-resolver.service';
 import { SchemaHelperService } from './schema-helper.service';
 import { PublishPlanInfo, PublishPlanStatus } from './types';
 import { parsePath } from './utils';
+
+// Upper bound on the number of per-record failures echoed back onto the
+// run-job's terminal progress payload. The connector-rejected count
+// (`failedCount`) stays the authoritative total even when there are more
+// failures than this; this only caps the inline "why each record failed"
+// detail so a pathological run (thousands of rejections) can't bloat the
+// progress JSON the CLI/desktop poll.
+const PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP = 20;
 
 // Common shape for any plan-operation row dispatched by the runner. Phases that
 // require a sparse partial (edit/backfill) widen this to UpdatePublishOperation.
@@ -477,6 +486,25 @@ export class PublishPlanRunService {
         }
       }
 
+      // Collect a bounded sample of the per-record connector rejections so the
+      // run-job can surface *why* records didn't publish (the connector's own
+      // message, persisted on `error` by processBatch), not just a count.
+      // Authoritative total stays `failedCount`; this caps the inline detail.
+      let failedOperations: PublishFailedOperation[] | undefined;
+      if (failedCount > 0) {
+        const failedRows = await this.db.client.publishPlanOperation.findMany({
+          where: { planId: pipelineId, status: 'failed-batch' },
+          select: { filePath: true, phase: true, error: true },
+          orderBy: { filePath: 'asc' },
+          take: PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP,
+        });
+        failedOperations = failedRows.map((row) => ({
+          filePath: row.filePath,
+          phase: row.phase,
+          error: row.error,
+        }));
+      }
+
       // If we exit early intentionally because of single-phase execution, retain the completed suffix.
       // Otherwise, the entire pipeline is done.
       const lastPhaseRun = phasesToRun[phasesToRun.length - 1];
@@ -566,6 +594,7 @@ export class PublishPlanRunService {
         failedCount,
         successByPhase,
         totalByPhase: finalTotalByPhase,
+        failedOperations,
       };
     } catch (err) {
       // Check if cancellation was requested — mark as canceled (resumable) rather than failed

@@ -3,6 +3,34 @@ include:
   - "/gitlab-ci/common.yml"
 
 # =============================================================================
+# SHARED-TYPES SUBPROJECT
+# =============================================================================
+#
+# @spinner/shared-types is consumed by the server and all three frontends, but
+# the client/server/scratch-desktop jobs each `cd` into their own subproject and
+# only lint THAT package — so a style/lint regression in packages/shared-types
+# would otherwise ship unchecked (it's only ever `yarn build`-ed elsewhere). This
+# job closes that gap with the package's own prettier + eslint + tsc gate.
+
+.build-and-test-shared-types:
+  stage: build and test
+  interruptible: true
+  script:
+    - cd packages/shared-types
+    - !reference [.use_nvm, script]
+    - yarn prettier:check
+    - yarn lint-strict
+    - yarn build
+
+build and test shared-types:
+  extends: .build-and-test-shared-types
+  rules:
+    - !reference [.rules, skip_for_local_runner_users]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.changes, shared-types]
+    - !reference [.rules, on_merge_to_master]
+
+# =============================================================================
 # CLIENT SUBPROJECT
 # =============================================================================
 

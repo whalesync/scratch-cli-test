@@ -15,7 +15,7 @@ export interface PipelinePhase {
 
 export type PhaseCountMap = Partial<Record<PublishPlanPhase, number>>;
 
-import { PublishPlanStatus } from '@spinner/shared-types';
+import { PublishPlanStatus, type PublishFailedOperation } from '@spinner/shared-types';
 export { PublishPlanStatus };
 
 export interface PublishPlanInfo {
@@ -29,4 +29,11 @@ export interface PublishPlanInfo {
   failedCount?: number;
   successByPhase?: PhaseCountMap;
   totalByPhase?: PhaseCountMap;
+  /**
+   * Bounded sample of the run's per-record connector rejections (rows left
+   * `failed-batch`). `failedCount` remains the authoritative total; this only
+   * carries the inline detail the run-job surfaces on its terminal progress.
+   * Capped server-side so the job-progress payload stays bounded.
+   */
+  failedOperations?: PublishFailedOperation[];
 }

@@ -15,7 +15,7 @@ import {
   Table,
   Text,
 } from '@mantine/core';
-import type { Job } from '@spinner/shared-types';
+import type { Job, PublishFailedOperation } from '@spinner/shared-types';
 import { CheckCircle2, Circle, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ValidationStat } from '../../../../shared/validation-types';
@@ -191,6 +191,13 @@ interface PublishPipelineProgress {
   currentTableName?: string;
   successCount?: number;
   failedCount?: number;
+  /**
+   * Bounded per-record connector rejections from the run, each carrying the
+   * connector's user-facing `error`. Lets the modal show *why* a record didn't
+   * publish rather than "N operations failed". `failedCount` is the true total
+   * (may exceed this list's length when the server capped it).
+   */
+  failedOperations?: PublishFailedOperation[];
   editsPlanned?: number;
   createsPlanned?: number;
   deletesPlanned?: number;
@@ -210,19 +217,72 @@ function hasPublishFailures(job: Job | undefined): boolean {
   return (progress?.failedCount ?? 0) > 0;
 }
 
+/** `Activities/call-nishant.json` → `call-nishant` for a readable record label. */
+function recordNameFromPath(filePath: string): string {
+  const base = filePath.split('/').pop() ?? filePath;
+  return base.endsWith('.json') ? base.slice(0, -'.json'.length) : base;
+}
+
+/**
+ * Group connector rejections by their error message so each distinct reason is
+ * shown once with the affected record name(s) — instead of surfacing only the
+ * first failure. Operations with no error message are dropped (the caller falls
+ * back to the one-line summary for those). Order follows first appearance.
+ */
+function groupFailuresByError(operations: PublishFailedOperation[]): { error: string; records: string[] }[] {
+  const groups: { error: string; records: string[] }[] = [];
+  const groupIndexByError = new Map<string, number>();
+  for (const operation of operations) {
+    if (!operation.error) continue;
+    const recordName = recordNameFromPath(operation.filePath);
+    const existingIndex = groupIndexByError.get(operation.error);
+    if (existingIndex === undefined) {
+      groupIndexByError.set(operation.error, groups.length);
+      groups.push({ error: operation.error, records: [recordName] });
+    } else {
+      groups[existingIndex].records.push(recordName);
+    }
+  }
+  return groups;
+}
+
+/** Join record names for display, capping the visible count with a "+N more" tail. */
+function formatRecordList(records: string[]): string {
+  const MAX_VISIBLE_RECORD_NAMES = 5;
+  if (records.length <= MAX_VISIBLE_RECORD_NAMES) return records.join(', ');
+  return `${records.slice(0, MAX_VISIBLE_RECORD_NAMES).join(', ')} +${records.length - MAX_VISIBLE_RECORD_NAMES} more`;
+}
+
 function getPublishFailureMessage(job: Job): string {
   const progress = job.publicProgress as PublishPipelineProgress | undefined;
   const failedCount = progress?.failedCount ?? 0;
-  const currentPhase = progress?.currentPhase;
+  const failedOps = progress?.failedOperations ?? [];
 
-  if (job.failedReason && failedCount > 0 && currentPhase) {
-    return `${job.failedReason} (${failedCount.toLocaleString()} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase})`;
+  // Best: the connector's own per-record rejection message — the actionable
+  // "why" (e.g. "'person_id' is a read-only field. Add a primary participant…").
+  const opsWithError = failedOps.filter((op) => op.error);
+  if (opsWithError.length > 0) {
+    const first = opsWithError[0];
+    // `failedCount` is the authoritative total; the ops list may be capped, so
+    // derive "others" from it rather than the (possibly shorter) list length.
+    const otherFailures = Math.max(failedCount, opsWithError.length) - 1;
+    const suffix =
+      otherFailures > 0
+        ? ` (and ${otherFailures.toLocaleString()} other record${otherFailures === 1 ? '' : 's'} failed)`
+        : '';
+    return `${recordNameFromPath(first.filePath)}: ${first.error ?? ''}${suffix}`;
   }
+
+  // A hard plan/run-job failure (the job itself threw) carries failedReason.
   if (job.failedReason) {
     return job.failedReason;
   }
-  if (failedCount > 0 && currentPhase) {
-    return `${failedCount.toLocaleString()} operation${failedCount === 1 ? '' : 's'} failed in ${currentPhase}.`;
+  // Records were rejected but the server returned no per-record message for them
+  // (the connector produced no extractable detail).
+  if (failedCount > 0) {
+    return `${failedCount.toLocaleString()} record${failedCount === 1 ? '' : 's'} ${
+      failedCount === 1 ? 'was' : 'were'
+    } rejected by the connector, but no error detail was returned.`;
   }
   return 'One or more publish jobs did not complete successfully.';
 }
@@ -276,6 +336,13 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
   const hasProgress = total > 0;
   const rows = progress ? computePhaseRows(progress) : null;
   const currentTable = progress?.currentTableName;
+
+  // Per-record connector rejections, grouped by message so distinct reasons each
+  // show once. `failedCount` is the authoritative total; the ops list is capped
+  // server-side, so some failures may not be represented in the groups.
+  const failureGroups = groupFailuresByError(progress?.failedOperations ?? []);
+  const shownFailureRecordCount = failureGroups.reduce((sum, group) => sum + group.records.length, 0);
+  const unshownFailureCount = Math.max(0, (progress?.failedCount ?? 0) - shownFailureRecordCount);
 
   const statusLabel = (() => {
     switch (connection.status) {
@@ -385,9 +452,27 @@ function ConnectionPublishRow({ connection, job }: { connection: ConnectionPubli
         </>
       )}
 
-      {connection.status === 'failed' && connection.failureMessage && (
+      {connection.status === 'failed' && (failureGroups.length > 0 || connection.failureMessage) && (
         <Alert color="red" mt="sm" title="Failure details">
-          {connection.failureMessage}
+          {failureGroups.length > 0 ? (
+            <Stack gap={8}>
+              {failureGroups.map((group) => (
+                <Box key={group.error}>
+                  <Text size="xs" fw={600}>
+                    {formatRecordList(group.records)}
+                  </Text>
+                  <Text size="xs">{group.error}</Text>
+                </Box>
+              ))}
+              {unshownFailureCount > 0 && (
+                <Text size="xs" c="dimmed">
+                  …and {unshownFailureCount.toLocaleString()} more record{unshownFailureCount === 1 ? '' : 's'} failed.
+                </Text>
+              )}
+            </Stack>
+          ) : (
+            connection.failureMessage
+          )}
         </Alert>
       )}
     </Box>
