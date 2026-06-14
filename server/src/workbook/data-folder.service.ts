@@ -359,7 +359,12 @@ export class DataFolderService {
         connectorService: service,
         path: folderPath,
         lock: 'pull',
-        version: 1,
+        // Connector-declared folder-structure version (DEV-9698). Defaults to 1;
+        // a connector that evolves its on-disk layout (e.g. Webflow nested
+        // collections) stamps the new version here so a migration can find and
+        // convert folders still on the old layout. Keep DataFolderService
+        // connector-agnostic — no `if (service === WEBFLOW)` here.
+        version: tableSpec.structureVersion ?? 1,
         tableId: dto.tableId,
         isAssetTable,
         options: {

@@ -19,6 +19,7 @@ import _ from 'lodash';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildWebflowDefaultView } from './webflow-default-view';
+import { webflowCollectionBasePath, webflowSiteFolderName } from './webflow-folder-paths';
 import { Collection, Field, FieldType, Site } from './webflow-types';
 
 /**
@@ -159,7 +160,12 @@ export function webflowFieldToJsonSchema(field: Field): TSchema {
  * Converts Webflow field types to JSON Schema types.
  * Uses field slugs as property keys.
  */
-export function buildWebflowJsonTableSpec(id: EntityId, site: Site, collection: Collection): BaseJsonTableSpec {
+export function buildWebflowJsonTableSpec(
+  id: EntityId,
+  site: Site,
+  collection: Collection,
+  structureVersion = 1,
+): BaseJsonTableSpec {
   const [, collectionId] = id.remoteId;
 
   const properties: Record<string, TSchema> = {};
@@ -255,7 +261,10 @@ export function buildWebflowJsonTableSpec(id: EntityId, site: Site, collection: 
     mainContentColumnRemoteId,
     idColumnRemoteId: idPath('id'),
     slugFieldPath: 'fieldData.slug',
-    basePath: [site.displayName ?? site.shortName ?? ''],
+    // v2 accounts nest collections under /<Site>/Collections/; v1 stay flat at
+    // /<Site>/. Single source of truth shared with the folder-move migration.
+    basePath: webflowCollectionBasePath(site, structureVersion),
+    structureVersion,
     generatedAt: new Date().toISOString(),
     defaultView: buildWebflowDefaultView(schema, 'collection_items'),
   };
@@ -269,7 +278,7 @@ export const WEBFLOW_ASSETS_TABLE_ID_PREFIX = '__assets__';
 /**
  * Build a BaseJsonTableSpec schema for Webflow site assets.
  */
-export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Site): BaseJsonTableSpec {
+export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Site, structureVersion = 1): BaseJsonTableSpec {
   const schema = Type.Object(
     {
       id: Type.String({ description: 'Unique asset identifier', [X_SCRATCH_READONLY]: true }),
@@ -320,7 +329,10 @@ export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Site): BaseJ
     schema,
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['displayName'],
-    basePath: [site.displayName ?? site.shortName ?? ''],
+    // Assets always stay flat at /<Site>/Assets regardless of version — only
+    // collections nest. Stamp the account's structure version for consistency.
+    basePath: [webflowSiteFolderName(site)],
+    structureVersion,
     generatedAt: new Date().toISOString(),
     defaultView: buildWebflowDefaultView(schema, 'assets'),
   };
@@ -334,7 +346,7 @@ export { WEBFLOW_PAGES_TABLE_ID_PREFIX } from './webflow-types';
 /**
  * Build a BaseJsonTableSpec schema for Webflow site pages.
  */
-export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site): BaseJsonTableSpec {
+export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site, structureVersion = 1): BaseJsonTableSpec {
   const schema = Type.Object(
     {
       id: Type.String({ description: 'Unique page identifier', [X_SCRATCH_READONLY]: true }),
@@ -398,7 +410,10 @@ export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site): BaseJs
     schema,
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId: ['slug'],
-    basePath: [site.displayName ?? site.shortName ?? ''],
+    // Pages always stay flat at /<Site>/Pages regardless of version — only
+    // collections nest. Stamp the account's structure version for consistency.
+    basePath: [webflowSiteFolderName(site)],
+    structureVersion,
     generatedAt: new Date().toISOString(),
     defaultView: buildWebflowDefaultView(schema, 'pages'),
   };

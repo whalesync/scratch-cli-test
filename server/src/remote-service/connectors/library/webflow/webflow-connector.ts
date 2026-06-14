@@ -104,9 +104,19 @@ export class WebflowConnector extends Connector {
   private readonly client: WebflowApiClient;
   private readonly schemaParser = new WebflowSchemaParser();
 
-  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
+  /**
+   * The account's pinned connector structure version (DEV-10302 / DEV-9698).
+   * v1 = flat collections (`/<Site>/<Collection>`); v2 = nested
+   * (`/<Site>/Collections/<Collection>`). Snapshotted from
+   * `ConnectorAccount.version` at instantiation; defaults to 1 for callers that
+   * don't supply it (e.g. unit tests).
+   */
+  private readonly structureVersion: number;
+
+  constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter; structureVersion?: number }) {
     super();
     this.client = new WebflowApiClient(accessToken, { rateLimiter: opts?.rateLimiter });
+    this.structureVersion = opts?.structureVersion ?? 1;
   }
 
   public async testConnection(): Promise<void> {
@@ -131,7 +141,7 @@ export class WebflowConnector extends Connector {
         if (collection.slug && WEBFLOW_ECOMMERCE_COLLECTION_SLUGS.includes(collection.slug)) {
           continue;
         }
-        tables.push(this.schemaParser.parseTablePreview(site, collection));
+        tables.push(this.schemaParser.parseTablePreview(site, collection, this.structureVersion));
       }
 
       // Add a site-level Assets table
@@ -426,16 +436,18 @@ export class WebflowConnector extends Connector {
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const [siteId, collectionId] = id.remoteId;
 
-    // Handle assets table
+    // Handle assets table. Discriminate by tableId prefix, never by name/path —
+    // a CMS collection literally named "Assets" must not be treated as the
+    // synthetic assets table (DEV-9698, finding #13).
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
       const site = await this.client.getSite(siteId);
-      return buildWebflowAssetsJsonTableSpec(id, site);
+      return buildWebflowAssetsJsonTableSpec(id, site, this.structureVersion);
     }
 
-    // Handle pages table
+    // Handle pages table (discriminated by tableId prefix, same as assets).
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
       const site = await this.client.getSite(siteId);
-      return buildWebflowPagesJsonTableSpec(id, site);
+      return buildWebflowPagesJsonTableSpec(id, site, this.structureVersion);
     }
 
     // Fetch site and collection directly from Webflow API
@@ -444,7 +456,7 @@ export class WebflowConnector extends Connector {
       this.client.getCollection(collectionId),
     ]);
 
-    return buildWebflowJsonTableSpec(id, site, collection);
+    return buildWebflowJsonTableSpec(id, site, collection, this.structureVersion);
   }
 
   async pullRecordFilesByIds(
@@ -896,6 +908,11 @@ export class WebflowConnector extends Connector {
 
 connectorRegistry.register({
   service: Service.WEBFLOW,
+  // v2 nests CMS collections under /<Site>/Collections/ (DEV-9698). New accounts
+  // snapshot this onto ConnectorAccount.version and pull nested; existing accounts
+  // stay pinned to v1 (flat) until the folder-move migration flips them, so a
+  // connection is never half-flat-half-nested.
+  version: 2,
   metadata: WebflowConnector.metadata,
   advancedSettings: [],
   supportedAuthMethods: ['user_provided_params'],
@@ -909,14 +926,17 @@ connectorRegistry.register({
       throw new ConnectorInstantiationError('Connector account is required for Webflow', Service.WEBFLOW);
     }
     const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+    // Pin the on-disk folder layout to the version snapshotted on this account
+    // (DEV-9698): v2 nests collections, v1 stays flat.
+    const structureVersion = ctx.connectorAccount.version;
     if (ctx.connectorAccount.authType === 'OAUTH') {
       const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
-      return new WebflowConnector(accessToken, { rateLimiter });
+      return new WebflowConnector(accessToken, { rateLimiter, structureVersion });
     } else {
       if (!ctx.decryptedCredentials?.apiKey) {
         throw new ConnectorInstantiationError('API key is required for Webflow', Service.WEBFLOW);
       }
-      return new WebflowConnector(ctx.decryptedCredentials.apiKey, { rateLimiter });
+      return new WebflowConnector(ctx.decryptedCredentials.apiKey, { rateLimiter, structureVersion });
     }
   },
 });

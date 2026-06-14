@@ -245,6 +245,16 @@ export type BaseJsonTableSpec = {
   // For Airtable this would be the base name
   basePath?: string[];
 
+  /**
+   * The connector's on-disk folder *structure* version for this table, stamped
+   * onto `DataFolder.version` at folder-create time. Lets a connector evolve its
+   * layout (e.g. Webflow's flat→nested collections, DEV-9698) while keeping
+   * existing folders pinned to the version they were created at, so a migration
+   * can find and convert them. Connector-declared so `DataFolderService` never
+   * branches on a service. Omit to default to 1.
+   */
+  structureVersion?: number;
+
   // The date and time the schema was generated
   // ISO 8601 format
   generatedAt?: string;

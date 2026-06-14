@@ -1,9 +1,21 @@
 # Webflow: site-grouped folder structure + all-workbooks migration (DEV-9698)
 
 **Date**: 2026-06-11
-**Status**: In Review
+**Status**: In Progress
 **Author**: Curtis Fonger
 **Linear**: [DEV-9698](https://linear.app/whalesync/issue/DEV-9698/proposal-support-all-of-webflow)
+
+## Implementation progress
+
+| Task | Lane | Status | Notes |
+|---|---|---|---|
+| **T3** Connector nested layout + version pin | W1 | ✅ **Done** (uncommitted, branch `webflow-support-all`) | New file `webflow-folder-paths.ts`; `BaseJsonTableSpec.structureVersion`; `createFolder` stamps it (no service branch); registration `version: 2`; 13 new tests + 145 webflow tests + typecheck + lint-strict + prettier green. C1 drift-guard test deferred to T2. |
+| **T1** scratch-git `move_folder` | W2 | ⬜ Not started | Next foundation lane. |
+| **T2** Migration | W3 | ⬜ Not started | Highest risk; depends on T1 + T3; land isolated, canary-first. |
+| **T4** Per-connection quiesce | W3 | ⬜ Not started | |
+| **T5** Desktop/CLI salvage + re-clone | W4 | ⬜ Not started | P2 |
+| **T6** Inverse/rollback migration | — | ⬜ Not started | P2 |
+| **T7** Pages SEO completeness | — | ⬜ Not started | P2 |
 
 ## Problem
 
@@ -381,10 +393,11 @@ dirs across parallel lanes → no conflict flags.
   - Surfaced by: Phase 1 + A1/A2/A4 + #1/#5/#6/#9/#10/#11 + Tension 1 — atomic 6-column rewrite, ensureUniquePath, dest-side sync, prefix-safe SQL
   - Files: `server/src/code-migrations/`, `publish-plan/file-index.service.ts`, `sync/`, `workbook/data-folder.service.ts`
   - Verify: migration unit specs (idempotency, crash, re-collision, dest-side, prefix, plan-cancel)
-- [ ] **T3 (P1, human: ~4h / CC: ~20min)** — connector — version-pinned nested basePath + shared helper + tableSpec structure version
+- [x] **T3 (P1, human: ~4h / CC: ~20min)** — connector — version-pinned nested basePath + shared helper + tableSpec structure version ✅ **Done** (uncommitted)
   - Surfaced by: Phase 0 + C1 + #7/#13/#14 — `webflowCollectionBasePath`, version pin, tableId discriminator
-  - Files: `connectors/library/webflow/webflow-json-schema.ts`, `webflow-schema-parser.ts`, `connector-registry`, `data-folder.service.ts`
-  - Verify: connector unit (v1 flat / v2 nested, drift guard, discriminator)
+  - Files (actual): **new** `connectors/library/webflow/webflow-folder-paths.ts` (C1 single-source helper + `WEBFLOW_COLLECTIONS_FOLDER_SEGMENT` + `WEBFLOW_NESTED_STRUCTURE_VERSION`); `webflow-json-schema.ts` (3 builders take `structureVersion`); `webflow-connector.ts` (stores `structureVersion` from `ctx.connectorAccount.version`, registration `version: 2`); `webflow-schema-parser.ts` (`parseTablePreview` picker grouping); `connectors/types.ts` (`BaseJsonTableSpec.structureVersion`); `workbook/data-folder.service.ts` (`version: tableSpec.structureVersion ?? 1`, no service branch); `connectors/display-names.ts` (de-stale `getConnectorCurrentVersion` docstring now that Webflow registers v2)
+  - Verify: connector unit (v1 flat / v2 nested, discriminator, "Assets"/"Pages"-named no collision, picker grouping) — `webflow-folder-structure.spec.ts`, 13 tests; full webflow suite 145 green; typecheck + lint-strict + prettier clean. Confirmed `getConnectorCurrentVersion → registration.version` snapshots `2` onto new accounts.
+  - **Deferred to T2**: the C1 drift-guard test (connector v2 path == migration recomputed path) — needs the migration's path helper.
 - [ ] **T4 (P1, human: ~1.5d / CC: ~40min)** — server — per-connection quiesce: drain + dequeue + block edits + cancel publish plans + persist schedule state
   - Surfaced by: A3, #1, #6, #11
   - Files: `server/src/schedule/`, `publish-plan/`, pull/publish/sync + `/upload-patch/commit` entry points
