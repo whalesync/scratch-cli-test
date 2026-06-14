@@ -123,6 +123,10 @@ pub async fn run() {
         )
         .route("/api/repo/write/{id}/rebase", post(routes::write::rebase))
         .route("/api/repo/write/{id}/rename", post(routes::write::rename))
+        .route(
+            "/api/repo/write/{id}/move-folder",
+            post(routes::write::move_folder),
+        )
         // Diff
         .route("/api/repo/diff/{id}/status", get(routes::diff::status))
         .route(

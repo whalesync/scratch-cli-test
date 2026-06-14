@@ -300,6 +300,17 @@ export class ScratchGitService {
     await this.scratchGitClient.deleteFolder(repoId, folderPath, message, branch);
   }
 
+  /**
+   * Move a folder (records + `.scratch/` metadata) from `oldPath` to `newPath` on both branches,
+   * preserving blob OIDs and advancing merge_base in lockstep. Idempotent and crash-safe — used by
+   * the Webflow folder-structure migration to re-parent collections under `/<Site>/Collections/`.
+   * Returns whether anything was actually moved.
+   */
+  async moveFolder(repoId: string, oldPath: string, newPath: string, message: string): Promise<{ moved: boolean }> {
+    const result = await this.scratchGitClient.moveFolder(repoId, oldPath, newPath, message);
+    return { moved: result.moved };
+  }
+
   async deleteFolderFromAllBranches(repoId: string, folderPath: string, message: string): Promise<void> {
     // Delete from both main and dirty branches to avoid orphaned files in git status
     await this.scratchGitClient.deleteFolder(repoId, folderPath, message, MAIN_BRANCH);

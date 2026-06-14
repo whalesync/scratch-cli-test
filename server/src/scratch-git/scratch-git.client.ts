@@ -253,6 +253,24 @@ export class ScratchGitClient {
     });
   }
 
+  /**
+   * Re-parent the folder at `oldPath` (and its `.scratch/` metadata) to `newPath` on both the
+   * main and dirty branches, preserving blob OIDs. Idempotent: a re-run after the move converges
+   * to a no-op. `moved` reports whether anything actually changed.
+   */
+  async moveFolder(
+    repoId: string,
+    oldPath: string,
+    newPath: string,
+    message: string,
+  ): Promise<{ success: boolean; moved: boolean }> {
+    return (await this.callGitApi(`/api/repo/write/${this.encodeRepoId(repoId)}/move-folder`, 'POST', {
+      oldPath,
+      newPath,
+      message,
+    })) as { success: boolean; moved: boolean };
+  }
+
   async rebaseDirty(repoId: string): Promise<{ rebased: boolean; conflicts: string[] }> {
     return this.callGitApi(`/api/repo/write/${this.encodeRepoId(repoId)}/rebase`, 'POST', {}) as Promise<{
       rebased: boolean;

@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::Json;
+use gix::ObjectId;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -692,9 +695,313 @@ pub async fn rename(
     }
 }
 
+#[derive(Deserialize)]
+pub struct MoveFolderBody {
+    #[serde(rename = "oldPath")]
+    pub old_path: String,
+    #[serde(rename = "newPath")]
+    pub new_path: String,
+    pub message: Option<String>,
+}
+
+/// Strip the leading and trailing `/` from a folder path so it matches the
+/// no-leading-slash convention git trees use (e.g. `/My Site/Blog` → `My Site/Blog`).
+fn normalize_folder_path(folder_path: &str) -> String {
+    let without_leading = folder_path.strip_prefix('/').unwrap_or(folder_path);
+    without_leading
+        .strip_suffix('/')
+        .unwrap_or(without_leading)
+        .to_string()
+}
+
+/// True when `old_path` is `new_path` itself or an ancestor of it — i.e. the destination is
+/// nested *inside* the source (e.g. a collection literally named "Collections" moving from
+/// `Site/Collections` to `Site/Collections/Collections`). In that case we must NOT delete the
+/// old folder wholesale (that would wipe the freshly-grafted destination); we delete only the
+/// individual source leaves instead.
+fn old_path_is_prefix_of_new(old_path: &str, new_path: &str) -> bool {
+    new_path == old_path || new_path.starts_with(&format!("{}/", old_path))
+}
+
+/// Build the `FileChange` list that moves the blobs under `old_path` to `new_path` on a single
+/// branch. Blob OIDs are reused so content identity (and git history) follows the move.
+fn build_subtree_move_changes(
+    old_path: &str,
+    new_path: &str,
+    old_blob_paths_with_oids: &[(String, ObjectId)],
+    old_path_is_prefix_of_new: bool,
+) -> Vec<FileChange> {
+    let mut changes = Vec::new();
+
+    if old_path_is_prefix_of_new {
+        // Destination is nested under the source — delete each source leaf individually so the
+        // grafted destination (which lives under `old_path`) survives.
+        for (relative_path, _) in old_blob_paths_with_oids {
+            changes.push(FileChange {
+                path: format!("{}/{}", old_path, relative_path),
+                content: None,
+                oid: None,
+                change_type: ChangeType::Delete,
+            });
+        }
+    } else {
+        // Disjoint paths — delete the whole old folder in one entry so no empty tree is left
+        // behind at the source.
+        changes.push(FileChange {
+            path: old_path.to_string(),
+            content: None,
+            oid: None,
+            change_type: ChangeType::Delete,
+        });
+    }
+
+    for (relative_path, oid) in old_blob_paths_with_oids {
+        changes.push(FileChange {
+            path: format!("{}/{}", new_path, relative_path),
+            content: None,
+            oid: Some(oid.to_string()),
+            change_type: ChangeType::Add,
+        });
+    }
+
+    changes
+}
+
+/// Build the move changes for one branch, covering both the data folder and its `.scratch/`
+/// metadata sibling. Returns:
+///   - `Ok(vec![])` when there is nothing to move on this branch (source absent everywhere) — the
+///     idempotent no-op case (already moved, or folder only lives on the other branch).
+///   - `Err(..)` when the move is refused: the source has a nested data folder, or the
+///     destination already exists with differing content (non-destructive guard).
+fn build_move_changes_for_branch(
+    git_repo: &GitRepo,
+    commit_oid: ObjectId,
+    old_data_path: &str,
+    new_data_path: &str,
+    old_scratch_path: &str,
+    new_scratch_path: &str,
+) -> Result<Vec<FileChange>, AppError> {
+    let mut changes = Vec::new();
+
+    // The data folder (records) is handled first; its `.scratch/<path>` metadata sibling
+    // (schema.json + views) follows the move. `is_data_path` gates the nested-folder check,
+    // which is meaningful only for the records tree (`.scratch` legitimately nests `views/`).
+    let path_pairs = [
+        (true, old_data_path, new_data_path),
+        (false, old_scratch_path, new_scratch_path),
+    ];
+
+    for (is_data_path, old_path, new_path) in path_pairs {
+        let all_blobs_under_old_path = match git_repo.list_blob_paths_under(commit_oid, old_path)? {
+            // Source absent on this branch for this path — nothing to move here.
+            None => continue,
+            Some(blobs) => blobs,
+        };
+
+        let old_is_prefix_of_new = old_path_is_prefix_of_new(old_path, new_path);
+
+        // When the destination is nested under the source (a collection literally named
+        // "Collections"), the destination's already-relocated records live *under* `old_path`.
+        // The records that still need moving are only those NOT yet under `new_path` — so on an
+        // idempotent re-run after the move completed, the source is correctly seen as empty.
+        let source_blobs_to_move: Vec<(String, ObjectId)> = if old_is_prefix_of_new {
+            // `new_path` relative to `old_path`, e.g. old `Site/Coll`, new `Site/Coll/Coll` → `Coll`.
+            let nested_relative_prefix = new_path[old_path.len() + 1..].to_string();
+            all_blobs_under_old_path
+                .into_iter()
+                .filter(|(relative_path, _)| {
+                    relative_path != &nested_relative_prefix
+                        && !relative_path.starts_with(&format!("{}/", nested_relative_prefix))
+                })
+                .collect()
+        } else {
+            all_blobs_under_old_path
+        };
+
+        if source_blobs_to_move.is_empty() {
+            // Nothing left at the source (already relocated) — no-op for this path.
+            continue;
+        }
+
+        // Refuse to move a data folder that contains a nested data folder: the migration updates
+        // one DataFolder row at a time, so a wholesale subtree move would orphan the nested
+        // folder's DB path. A nested folder shows up as a relative blob path containing a `/`
+        // (record files live directly under their folder, never in subdirectories).
+        if is_data_path
+            && source_blobs_to_move
+                .iter()
+                .any(|(relative_path, _)| relative_path.contains('/'))
+        {
+            return Err(AppError::bad_request(format!(
+                "Refusing to move folder {}: it contains a nested folder; move nested folders first",
+                old_path
+            )));
+        }
+
+        // Non-destructive guard: if the destination already has content, only proceed when it is
+        // byte-identical to the records being moved (an interrupted run that grafted the
+        // destination but never deleted the source). Differing content is an ambiguous collision —
+        // refuse rather than clobber.
+        if let Some(new_blob_paths_with_oids) =
+            git_repo.list_blob_paths_under(commit_oid, new_path)?
+        {
+            if !new_blob_paths_with_oids.is_empty() {
+                let source_blobs: BTreeMap<String, ObjectId> =
+                    source_blobs_to_move.iter().cloned().collect();
+                let destination_blobs: BTreeMap<String, ObjectId> =
+                    new_blob_paths_with_oids.into_iter().collect();
+                if source_blobs != destination_blobs {
+                    return Err(AppError::bad_request(format!(
+                        "Refusing to move folder {} → {}: destination already exists with differing content",
+                        old_path, new_path
+                    )));
+                }
+            }
+        }
+
+        changes.extend(build_subtree_move_changes(
+            old_path,
+            new_path,
+            &source_blobs_to_move,
+            old_is_prefix_of_new,
+        ));
+    }
+
+    Ok(changes)
+}
+
+/// Re-parent the data folder at `old_path` (and its `.scratch/` metadata) to `new_path` on BOTH
+/// `main` and `dirty`, preserving blob OIDs, in lockstep with `merge_base` so the move does not
+/// surface as ghost delete+add entries in the review list (mirrors [`rename`]).
+///
+/// Idempotent and crash-safe: a re-run after a partial move converges to a no-op. Returns whether
+/// any change was actually written (`moved`).
+pub fn perform_move_folder(
+    git_repo: &GitRepo,
+    old_normalized_path: &str,
+    new_normalized_path: &str,
+    message: &str,
+) -> Result<bool, AppError> {
+    if old_normalized_path == new_normalized_path {
+        return Ok(false);
+    }
+
+    let old_scratch_path = format!(".scratch/{}", old_normalized_path);
+    let new_scratch_path = format!(".scratch/{}", new_normalized_path);
+
+    let main_oid = git_repo.resolve_ref(MAIN_BRANCH)?;
+    let dirty_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
+
+    let changes_for_main = build_move_changes_for_branch(
+        git_repo,
+        main_oid,
+        old_normalized_path,
+        new_normalized_path,
+        &old_scratch_path,
+        &new_scratch_path,
+    )?;
+    let changes_for_dirty = build_move_changes_for_branch(
+        git_repo,
+        dirty_oid,
+        old_normalized_path,
+        new_normalized_path,
+        &old_scratch_path,
+        &new_scratch_path,
+    )?;
+
+    if changes_for_main.is_empty() && changes_for_dirty.is_empty() {
+        // Nothing to move on either branch — already migrated, or the folder is absent.
+        return Ok(false);
+    }
+
+    // Apply to main.
+    let mut new_main_commit_oid = main_oid;
+    if !changes_for_main.is_empty() {
+        (new_main_commit_oid, _) =
+            git_repo.commit_changes_to_ref(MAIN_BRANCH, &changes_for_main, message)?;
+    }
+
+    // Apply to dirty with an efficient squashed rebase onto the new main (same shape as `rename`).
+    let dirty_commit_oid = git_repo.resolve_ref(DIRTY_BRANCH)?;
+    let dirty_tree_oid = git_repo.get_commit_tree_oid(dirty_commit_oid)?;
+    let (new_dirty_tree_oid, _) =
+        git_repo.apply_changes_to_tree(dirty_tree_oid, &changes_for_dirty, "")?;
+    let new_main_tree_oid = git_repo.get_commit_tree_oid(new_main_commit_oid)?;
+
+    if new_dirty_tree_oid == new_main_tree_oid {
+        git_repo.force_ref(DIRTY_BRANCH, new_main_commit_oid)?;
+    } else {
+        let new_dirty_commit = git_repo.write_commit(
+            new_dirty_tree_oid,
+            &[new_main_commit_oid],
+            "Uncommitted changes after folder move",
+        )?;
+        git_repo.force_ref(DIRTY_BRANCH, new_dirty_commit)?;
+    }
+
+    // A folder move is a lockstep operation: the same paths are rewritten on both main and dirty.
+    // Advance merge_base to the new main so the move does not appear as ghost delete+add entries
+    // in the review list — any remaining merge_base ↔ dirty diffs are genuine user edits.
+    git_repo.write_tag("merge_base", new_main_commit_oid)?;
+
+    Ok(true)
+}
+
+pub async fn move_folder(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<MoveFolderBody>,
+) -> Response {
+    let old_normalized_path = normalize_folder_path(&body.old_path);
+    let new_normalized_path = normalize_folder_path(&body.new_path);
+
+    if old_normalized_path.is_empty() || new_normalized_path.is_empty() {
+        return envelope_error(
+            &state,
+            Some(&id),
+            AppError::bad_request(
+                "Both oldPath and newPath are required and cannot be the repo root",
+            ),
+        );
+    }
+
+    let message = body.message.unwrap_or_else(|| {
+        format!(
+            "Move folder {} → {}",
+            old_normalized_path, new_normalized_path
+        )
+    });
+
+    // Acquire main before dirty to maintain consistent lock ordering and prevent deadlocks.
+    let _main_guard = state.write_locks.acquire(&id, MAIN_BRANCH).await;
+    let _dirty_guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
+
+    let result = tokio::task::spawn_blocking({
+        let repos_dir = state.repos_dir.clone();
+        let id = id.clone();
+        move || {
+            let git_repo = GitRepo::open(&repos_dir, &id)?;
+            let moved = perform_move_folder(
+                &git_repo,
+                &old_normalized_path,
+                &new_normalized_path,
+                &message,
+            )?;
+            Ok::<_, AppError>(json!({ "success": true, "moved": moved }))
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, &id, inner),
+        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn data_folder_delete_changes_includes_scratch_metadata() {
@@ -714,5 +1021,361 @@ mod tests {
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0].path, "Products");
         assert_eq!(changes[1].path, ".scratch/Products");
+    }
+
+    // ── move_folder ──────────────────────────────────────────────────────────
+
+    fn setup_repo() -> (TempDir, GitRepo) {
+        let tmp = TempDir::new().unwrap();
+        let repo = GitRepo::init(tmp.path(), "test").unwrap();
+        (tmp, repo)
+    }
+
+    fn add(path: &str, content: &str) -> FileChange {
+        FileChange {
+            path: path.to_string(),
+            content: Some(content.to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        }
+    }
+
+    /// Commit `changes` to main, then point dirty + merge_base at the new main so the repo looks
+    /// like a freshly-pulled, edit-free workbook (folder present identically on both branches).
+    fn commit_to_both_branches(repo: &GitRepo, changes: &[FileChange]) {
+        repo.commit_changes_to_ref(MAIN_BRANCH, changes, "seed")
+            .unwrap();
+        let main_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        repo.force_ref(DIRTY_BRANCH, main_oid).unwrap();
+        repo.write_tag("merge_base", main_oid).unwrap();
+    }
+
+    fn sorted_relative_paths(repo: &GitRepo, branch: &str, folder: &str) -> Option<Vec<String>> {
+        let commit_oid = repo.resolve_ref(branch).unwrap();
+        repo.list_blob_paths_under(commit_oid, folder)
+            .unwrap()
+            .map(|blobs| {
+                let mut paths: Vec<String> = blobs.into_iter().map(|(path, _)| path).collect();
+                paths.sort();
+                paths
+            })
+    }
+
+    fn blob_oid_at(
+        repo: &GitRepo,
+        branch: &str,
+        folder: &str,
+        relative_path: &str,
+    ) -> Option<ObjectId> {
+        let commit_oid = repo.resolve_ref(branch).unwrap();
+        repo.list_blob_paths_under(commit_oid, folder)
+            .unwrap()
+            .and_then(|blobs| {
+                blobs
+                    .into_iter()
+                    .find(|(path, _)| path == relative_path)
+                    .map(|(_, oid)| oid)
+            })
+    }
+
+    fn dummy_oid() -> ObjectId {
+        ObjectId::from_hex(b"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").unwrap()
+    }
+
+    #[test]
+    fn build_subtree_move_changes_deletes_whole_folder_for_disjoint_paths() {
+        let blobs = vec![
+            ("rec1.json".to_string(), dummy_oid()),
+            ("rec2.json".to_string(), dummy_oid()),
+        ];
+        let changes =
+            build_subtree_move_changes("Site/Blog", "Site/Collections/Blog", &blobs, false);
+
+        assert_eq!(changes[0].path, "Site/Blog");
+        assert_eq!(changes[0].change_type, ChangeType::Delete);
+        let added: Vec<&str> = changes
+            .iter()
+            .filter(|c| c.change_type == ChangeType::Add)
+            .map(|c| c.path.as_str())
+            .collect();
+        assert_eq!(
+            added,
+            vec![
+                "Site/Collections/Blog/rec1.json",
+                "Site/Collections/Blog/rec2.json"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_subtree_move_changes_deletes_leaves_when_old_is_prefix_of_new() {
+        let blobs = vec![
+            ("rec1.json".to_string(), dummy_oid()),
+            ("rec2.json".to_string(), dummy_oid()),
+        ];
+        let changes = build_subtree_move_changes(
+            "Site/Collections",
+            "Site/Collections/Collections",
+            &blobs,
+            true,
+        );
+
+        let deleted: Vec<&str> = changes
+            .iter()
+            .filter(|c| c.change_type == ChangeType::Delete)
+            .map(|c| c.path.as_str())
+            .collect();
+        // Per-leaf deletes, NOT a whole-folder delete (which would wipe the new location).
+        assert_eq!(
+            deleted,
+            vec!["Site/Collections/rec1.json", "Site/Collections/rec2.json"]
+        );
+    }
+
+    #[test]
+    fn old_path_is_prefix_of_new_is_segment_aware() {
+        assert!(old_path_is_prefix_of_new(
+            "Site/Collections",
+            "Site/Collections/Collections"
+        ));
+        assert!(old_path_is_prefix_of_new("Site/Blog", "Site/Blog"));
+        // Must not treat "Blog" as a prefix of "Blog Posts" — a shared string prefix is not an
+        // ancestor relationship.
+        assert!(!old_path_is_prefix_of_new("Site/Blog", "Site/Blog Posts"));
+        assert!(!old_path_is_prefix_of_new(
+            "Site/Blog",
+            "Site/Collections/Blog"
+        ));
+    }
+
+    #[test]
+    fn move_folder_relocates_records_and_scratch_metadata_on_both_branches() {
+        let (_tmp, repo) = setup_repo();
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Blog/rec1.json", "{\"id\":1}"),
+                add("My Site/Blog/rec2.json", "{\"id\":2}"),
+                add(".scratch/My Site/Blog/schema.json", "{\"schema\":true}"),
+                add(
+                    ".scratch/My Site/Blog/views/default.json",
+                    "{\"view\":true}",
+                ),
+            ],
+        );
+
+        let original_rec1_oid =
+            blob_oid_at(&repo, MAIN_BRANCH, "My Site/Blog", "rec1.json").unwrap();
+
+        let moved =
+            perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "move").unwrap();
+        assert!(moved);
+
+        for branch in [MAIN_BRANCH, DIRTY_BRANCH] {
+            // Old data + scratch locations gone.
+            assert_eq!(sorted_relative_paths(&repo, branch, "My Site/Blog"), None);
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, ".scratch/My Site/Blog"),
+                None
+            );
+
+            // Records relocated.
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, "My Site/Collections/Blog"),
+                Some(vec!["rec1.json".to_string(), "rec2.json".to_string()])
+            );
+            // `.scratch` metadata (schema + views) relocated alongside.
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, ".scratch/My Site/Collections/Blog"),
+                Some(vec![
+                    "schema.json".to_string(),
+                    "views/default.json".to_string()
+                ])
+            );
+        }
+
+        // Blob OIDs are preserved across the move (content identity / git history follows).
+        let relocated_rec1_oid =
+            blob_oid_at(&repo, MAIN_BRANCH, "My Site/Collections/Blog", "rec1.json").unwrap();
+        assert_eq!(relocated_rec1_oid, original_rec1_oid);
+
+        // Lockstep: merge_base advances to the new main so the move isn't a ghost diff.
+        assert_eq!(
+            repo.resolve_ref("merge_base").unwrap(),
+            repo.resolve_ref(MAIN_BRANCH).unwrap()
+        );
+    }
+
+    #[test]
+    fn move_folder_is_idempotent_on_rerun() {
+        let (_tmp, repo) = setup_repo();
+        commit_to_both_branches(&repo, &[add("My Site/Blog/rec1.json", "{\"id\":1}")]);
+
+        assert!(
+            perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "m").unwrap()
+        );
+
+        let main_after_first = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let dirty_after_first = repo.resolve_ref(DIRTY_BRANCH).unwrap();
+
+        // Re-run: nothing to move (source absent, destination present).
+        let moved_again =
+            perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "m").unwrap();
+        assert!(!moved_again);
+        assert_eq!(repo.resolve_ref(MAIN_BRANCH).unwrap(), main_after_first);
+        assert_eq!(repo.resolve_ref(DIRTY_BRANCH).unwrap(), dirty_after_first);
+    }
+
+    #[test]
+    fn move_folder_handles_collection_named_collections() {
+        let (_tmp, repo) = setup_repo();
+        // A CMS collection literally named "Collections" sits at `My Site/Collections` in the flat
+        // v1 layout and must move to `My Site/Collections/Collections` — old path is a prefix of new.
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Collections/rec1.json", "{\"id\":1}"),
+                add(".scratch/My Site/Collections/schema.json", "{}"),
+            ],
+        );
+
+        assert!(perform_move_folder(
+            &repo,
+            "My Site/Collections",
+            "My Site/Collections/Collections",
+            "m"
+        )
+        .unwrap());
+
+        for branch in [MAIN_BRANCH, DIRTY_BRANCH] {
+            // The records moved one level deeper; nothing left loose at the old level.
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, "My Site/Collections"),
+                Some(vec!["Collections/rec1.json".to_string()])
+            );
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, "My Site/Collections/Collections"),
+                Some(vec!["rec1.json".to_string()])
+            );
+        }
+
+        // Idempotent even in the prefix case.
+        assert!(!perform_move_folder(
+            &repo,
+            "My Site/Collections",
+            "My Site/Collections/Collections",
+            "m"
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn move_folder_refuses_folder_with_nested_data_folder() {
+        let (_tmp, repo) = setup_repo();
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Blog/rec1.json", "{\"id\":1}"),
+                add("My Site/Blog/Nested/rec2.json", "{\"id\":2}"),
+            ],
+        );
+
+        let result = perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "m");
+        assert!(result.is_err());
+        // Nothing should have moved.
+        assert!(sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Blog").is_some());
+        assert!(sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Collections/Blog").is_none());
+    }
+
+    #[test]
+    fn move_folder_refuses_destination_with_differing_content() {
+        let (_tmp, repo) = setup_repo();
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Blog/rec1.json", "{\"id\":1}"),
+                add("My Site/Collections/Blog/other.json", "{\"id\":99}"),
+            ],
+        );
+
+        let result = perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "m");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn move_folder_converges_when_destination_already_identical() {
+        let (_tmp, repo) = setup_repo();
+        // Simulate a crash after the destination was grafted but before the source was deleted:
+        // both locations hold byte-identical records.
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Blog/rec1.json", "{\"id\":1}"),
+                add("My Site/Collections/Blog/rec1.json", "{\"id\":1}"),
+            ],
+        );
+
+        assert!(
+            perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "m").unwrap()
+        );
+
+        // Source removed, destination intact.
+        assert_eq!(
+            sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Blog"),
+            None
+        );
+        assert_eq!(
+            sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Collections/Blog"),
+            Some(vec!["rec1.json".to_string()])
+        );
+    }
+
+    #[test]
+    fn move_folder_no_ops_when_source_absent() {
+        let (_tmp, repo) = setup_repo();
+        commit_to_both_branches(&repo, &[add("My Site/Other/rec1.json", "{\"id\":1}")]);
+
+        let moved =
+            perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "m").unwrap();
+        assert!(!moved);
+    }
+
+    #[test]
+    fn move_folder_moves_dirty_only_folder() {
+        let (_tmp, repo) = setup_repo();
+        // Folder exists only on dirty (e.g. a locally-created folder not yet on main).
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[add("My Site/Blog/rec1.json", "{\"id\":1}")],
+            "dirty-only",
+        )
+        .unwrap();
+
+        let moved =
+            perform_move_folder(&repo, "My Site/Blog", "My Site/Collections/Blog", "m").unwrap();
+        assert!(moved);
+
+        // Main untouched (folder never existed there); dirty relocated.
+        assert_eq!(
+            sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Blog"),
+            None
+        );
+        assert_eq!(
+            sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Collections/Blog"),
+            None
+        );
+        assert_eq!(
+            sorted_relative_paths(&repo, DIRTY_BRANCH, "My Site/Collections/Blog"),
+            Some(vec!["rec1.json".to_string()])
+        );
+    }
+
+    #[test]
+    fn move_folder_no_ops_when_old_equals_new() {
+        let (_tmp, repo) = setup_repo();
+        commit_to_both_branches(&repo, &[add("My Site/Blog/rec1.json", "{\"id\":1}")]);
+
+        let moved = perform_move_folder(&repo, "My Site/Blog", "My Site/Blog", "m").unwrap();
+        assert!(!moved);
     }
 }

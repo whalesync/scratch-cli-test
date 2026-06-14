@@ -575,12 +575,15 @@ impl GitRepo {
                 let mut found = false;
 
                 for entry_ref in t.iter() {
-                    if let Ok(entry) = entry_ref {
-                        if entry.filename() == part_bytes && entry.mode().is_tree() {
-                            current_oid = entry.object_id().into();
-                            found = true;
-                            break;
-                        }
+                    // Propagate (don't swallow) a tree entry that fails to read: silently dropping
+                    // it could hide the entry matching `part`, making an existing folder look
+                    // absent (surface failures).
+                    let entry = entry_ref
+                        .map_err(|e| AppError::internal(format!("Failed to read entry: {}", e)))?;
+                    if entry.filename() == part_bytes && entry.mode().is_tree() {
+                        current_oid = entry.object_id().into();
+                        found = true;
+                        break;
                     }
                 }
 
@@ -613,6 +616,101 @@ impl GitRepo {
             entries.push((name, entry.object_id().into(), is_tree));
         }
         Ok(entries)
+    }
+
+    /// Recursively collect every blob under `folder_path` in the given commit's tree.
+    ///
+    /// Each returned entry is `(blob_path_relative_to_folder, blob_oid)`. Used by the
+    /// `move_folder` route to re-parent a whole subtree while preserving blob OIDs, and to
+    /// detect a nested data folder (any relative path containing a `/`).
+    ///
+    /// Returns `Ok(None)` when `folder_path` does not exist in the tree (so callers can treat
+    /// an absent source as a no-op rather than an error, unlike [`Self::read_tree_at_path`]).
+    pub fn list_blob_paths_under(
+        &self,
+        commit_oid: ObjectId,
+        folder_path: &str,
+    ) -> Result<Option<Vec<(String, ObjectId)>>, AppError> {
+        let commit = self
+            .repo
+            .find_commit(commit_oid)
+            .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?;
+        let root_tree_oid: ObjectId = commit
+            .tree_id()
+            .map_err(|e| AppError::internal(format!("Failed to get tree: {}", e)))?
+            .into();
+
+        // Walk down to the folder's tree OID, returning None if any segment is missing.
+        let folder_tree_oid: ObjectId = if folder_path.is_empty() {
+            root_tree_oid
+        } else {
+            let mut current_tree_oid = root_tree_oid;
+            for segment in folder_path.split('/') {
+                let obj = self
+                    .repo
+                    .find_object(current_tree_oid)
+                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?;
+                let tree = obj
+                    .try_into_tree()
+                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+
+                let mut next_tree_oid: Option<ObjectId> = None;
+                for entry_ref in tree.iter() {
+                    // Propagate (don't swallow) a tree entry that fails to read: silently dropping
+                    // it could hide the very entry matching `segment`, making an existing folder
+                    // look absent and turning a real move into a false no-op (surface failures).
+                    let entry = entry_ref
+                        .map_err(|e| AppError::internal(format!("Failed to read entry: {}", e)))?;
+                    if entry.filename() == segment.as_bytes() && entry.mode().is_tree() {
+                        next_tree_oid = Some(entry.object_id().into());
+                        break;
+                    }
+                }
+                match next_tree_oid {
+                    Some(oid) => current_tree_oid = oid,
+                    None => return Ok(None),
+                }
+            }
+            current_tree_oid
+        };
+
+        let mut blob_paths_with_oids = Vec::new();
+        self.collect_blob_paths_recursive(folder_tree_oid, "", &mut blob_paths_with_oids)?;
+        Ok(Some(blob_paths_with_oids))
+    }
+
+    fn collect_blob_paths_recursive(
+        &self,
+        tree_oid: ObjectId,
+        path_prefix: &str,
+        blob_paths_with_oids: &mut Vec<(String, ObjectId)>,
+    ) -> Result<(), AppError> {
+        let obj = self
+            .repo
+            .find_object(tree_oid)
+            .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?;
+        let tree = obj
+            .try_into_tree()
+            .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+
+        for entry_ref in tree.iter() {
+            let entry = entry_ref
+                .map_err(|e| AppError::internal(format!("Failed to read entry: {}", e)))?;
+            let name = std::str::from_utf8(entry.filename())
+                .map_err(|e| AppError::internal(format!("Invalid UTF-8: {}", e)))?;
+            let entry_path = if path_prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{}", path_prefix, name)
+            };
+            let entry_oid: ObjectId = entry.object_id().into();
+            if entry.mode().is_tree() {
+                self.collect_blob_paths_recursive(entry_oid, &entry_path, blob_paths_with_oids)?;
+            } else {
+                blob_paths_with_oids.push((entry_path, entry_oid));
+            }
+        }
+        Ok(())
     }
 
     /// Strip the single top-level directory prefix from every branch/tag in the repo.

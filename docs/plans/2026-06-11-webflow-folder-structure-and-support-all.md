@@ -9,8 +9,8 @@
 
 | Task | Lane | Status | Notes |
 |---|---|---|---|
-| **T3** Connector nested layout + version pin | W1 | ✅ **Done** (uncommitted, branch `webflow-support-all`) | New file `webflow-folder-paths.ts`; `BaseJsonTableSpec.structureVersion`; `createFolder` stamps it (no service branch); registration `version: 2`; 13 new tests + 145 webflow tests + typecheck + lint-strict + prettier green. C1 drift-guard test deferred to T2. |
-| **T1** scratch-git `move_folder` | W2 | ⬜ Not started | Next foundation lane. |
+| **T3** Connector nested layout + version pin | W1 | ✅ **Done** — merged to master (`263f7ba4`) | New file `webflow-folder-paths.ts`; `BaseJsonTableSpec.structureVersion`; `createFolder` stamps it (no service branch); registration `version: 2`; 13 new tests + 145 webflow tests + typecheck + lint-strict + prettier green. C1 drift-guard test deferred to T2. |
+| **T1** scratch-git `move_folder` | W2 | ✅ **Done** (uncommitted, branch `webflow-support-all-v1`) | New `move-folder` route + `perform_move_folder` core in `write.rs`; `GitRepo::list_blob_paths_under` in `repo.rs`; route registered in `mod.rs`; `moveFolder` on NestJS `scratch-git.client.ts` + `scratch-git.service.ts`. 12 new cargo tests; full crate suite (271+339+417+2+16) green; `cargo fmt` clean. |
 | **T2** Migration | W3 | ⬜ Not started | Highest risk; depends on T1 + T3; land isolated, canary-first. |
 | **T4** Per-connection quiesce | W3 | ⬜ Not started | |
 | **T5** Desktop/CLI salvage + re-clone | W4 | ⬜ Not started | P2 |
@@ -146,7 +146,8 @@ per connection batch:
       (web saves + desktop /upload-patch/commit write to dirty after a request-time
        path check — a write racing the move orphans at the old path)
 
-  for each Webflow collection DataFolder (account still v1, version < 2):
+  for each Webflow collection DataFolder (account still v1, version < 2),
+      ORDERED so a collection literally named "Collections" migrates FIRST in its site:  [Ordering]
     a. NEW PATH = dirname(existing path) + '/Collections/' + escape(DataFolder.name)  [#5]
          • handle old-is-PREFIX-of-new (collection literally named "Collections")     [#4]
          • run through ensureUniquePath → re-suffix ONLY on a genuine collision        [A2]
@@ -173,6 +174,33 @@ per connection batch:
 crash anywhere → re-run: account still v1 (or partial), skips version=2 folders,
 finishes the rest, flips account, repairs schedule state. Every step idempotent.
 ```
+
+### Move ordering constraint — a collection named "Collections" migrates first (Ordering)
+
+**Surfaced by the T1 implementation, not a T1 bug — the nested-folder refusal is correct;
+this is an ordering obligation the migration must honor.** `move_folder` refuses to move any
+data folder whose recursive blob listing contains a nested folder (a relative path with a `/`),
+because the migration updates one `DataFolder` row at a time and a wholesale subtree move would
+orphan a nested folder's DB path.
+
+For the prefix case — a collection literally named **"Collections"** at `/<Site>/Collections`
+moving to `/<Site>/Collections/Collections` — this interacts with sibling moves. Every other
+collection in the site moves *into* `/<Site>/Collections/<Coll>`, so once any sibling has moved,
+`list_blob_paths_under("<Site>/Collections")` surfaces those relocated siblings (`Blog/rec.json`,
+`Team/rec.json`, …) as nested paths. `move_folder` then refuses to move the "Collections"
+collection — it looks like a folder containing nested folders.
+
+> T1's prefix handling only excludes blobs already under the *destination*
+> (`/<Site>/Collections/Collections`); it does **not** exclude sibling collections parked
+> elsewhere under `/<Site>/Collections/`. So the refusal fires unless ordering prevents it.
+
+**Therefore: within each site, migrate the "Collections"-named collection (the prefix case)
+before any of its siblings.** When it moves first, `/<Site>/Collections` still holds only its own
+records (no nested siblings yet) and the move succeeds; subsequent sibling moves then nest
+cleanly beside the already-relocated `/<Site>/Collections/Collections`. Concretely: sort each
+site's collection batch so any folder whose path equals `dirname(path) + '/Collections'` sorts
+first. (Re-runs stay safe — once moved, the "Collections" collection's source converges to a
+no-op regardless of order.)
 
 ### Why rewrite, not rebuild (Tension 1 decision)
 
@@ -276,6 +304,9 @@ expanding this plan if a larger gap appears. No body/DOM content.
 - **(A2)** colliding recomputed paths → `ensureUniquePath` re-suffixes exactly one.
 - **(#4)** collection named "Collections" (old path prefix of new) migrates once; re-run
   no-op; nested-DataFolder-under-moving-path refused.
+- **(Ordering)** a site with a "Collections"-named collection **plus** siblings migrates with
+  the prefix-case collection first → no `move_folder` refusal; verify a wrong order (sibling
+  first) would refuse, and that the migration sorts to avoid it.
 - **(#5)** folder under a parent (≥3 segments) keeps its site; escape-emptied site → skip-warn.
 - **Idempotency**: re-run no-op. **Crash-safety**: partial run (git moved, txn not
   committed) converges; partial connection (some folders v2, account still v1) converges.
@@ -325,6 +356,7 @@ the desktop salvage-then-re-clone path.
 | pre-migration publish resumes | commits result files to OLD path on main | ✅ #1 | cancel non-terminal plans | nothing |
 | move_folder re-run after crash | `rename`-style throw on missing src | ✅ A1 | no-op contract | nothing |
 | "Collections"-named collection | prefix-of-new → double-move | ✅ #4 | prefix handling | nothing |
+| "Collections"-named collection migrated after its siblings | relocated siblings look nested → `move_folder` refuses it | ✅ Ordering | migrate prefix-case collection first per site | nothing |
 | path recompute drops suffix | re-collision → 2 folders, 1 dir → data loss | ✅ A2 | ensureUniquePath | nothing |
 | live write during migration | orphan at old path | ✅ #6 | drain + block edits | "connection busy" |
 | dest-side sync rows | missed by source-keyed rewrite → broken sync | ✅ #9 | SyncTablePair.destination | nothing |
@@ -385,14 +417,21 @@ dirs across parallel lanes → no conflict flags.
 
 ## Implementation Tasks
 
-- [ ] **T1 (P1, human: ~1d / CC: ~30min)** — scratch-git — `move_folder` route with the full idempotency/prefix/both-exist contract
+- [x] **T1 (P1, human: ~1d / CC: ~30min)** — scratch-git — `move_folder` route with the full idempotency/prefix/both-exist contract ✅ **Done** (uncommitted)
   - Surfaced by: A1, #4, #8 — re-parent, no-op on moved, prefix-of-new, refuse both-exist, 404-vs-empty
-  - Files: `scratch-git-2/src/service/routes/write.rs`, `server/src/scratch-git/scratch-git.service.ts`, shared-types api-client
-  - Verify: `cargo test` move_folder cases
+  - Files (actual):
+    - `scratch-git-2/src/service/git/repo.rs` — **new** `GitRepo::list_blob_paths_under(commit_oid, folder_path) -> Option<Vec<(rel_path, oid)>>` (recursive blob walk; `None` when folder absent) + private `collect_blob_paths_recursive`.
+    - `scratch-git-2/src/service/routes/write.rs` — **new** `move_folder` axum handler + `MoveFolderBody {oldPath,newPath,message}`; core extracted to `perform_move_folder(git_repo, old, new, message) -> Result<bool /*moved*/>` (testable without HTTP); helpers `build_move_changes_for_branch`, `build_subtree_move_changes`, `old_path_is_prefix_of_new`, `normalize_folder_path`.
+    - `scratch-git-2/src/service/mod.rs` — route `POST /api/repo/write/{id}/move-folder`.
+    - `server/src/scratch-git/scratch-git.client.ts` + `scratch-git.service.ts` — `moveFolder(repoId, oldPath, newPath, message) -> {moved}`.
+  - **Contract implemented:** moves the data folder **and its `.scratch/<path>` metadata sibling** (schema + views) on BOTH main+dirty, reusing blob OIDs (history follows the move); advances `merge_base` to new main in lockstep (mirrors `rename`, so the move is not a ghost review diff). Idempotent (`moved:false` on re-run); **old-is-prefix-of-new** handled by per-leaf deletes + excluding already-relocated blobs (so a collection literally named "Collections" re-runs cleanly); **refuses** a folder containing a nested data folder (relative blob path with a `/`) and a destination that already exists with **differing** content (identical content → converge); src-absent → no-op; asymmetric dirty-only / main-only handled; missing repo → 404 via `GitRepo::open`.
+  - Verify: 12 new cargo tests in `write.rs` (relocate+OID-preserve+`.scratch`+merge_base on both branches; idempotent re-run; "Collections"-named prefix case + its re-run; nested-folder refuse; differing-dest refuse; identical-dest converge; src-absent no-op; dirty-only move; old==new no-op; 2 pure-fn shape tests). Full crate suite green; `cargo fmt` clean.
+  - **Deferred to T2**: the C1 drift-guard test (connector v2 path == migration recomputed path); the NestJS `moveFolder` wrapper currently lets a 404 (missing repo) propagate as `ScratchGitNotFoundError` — the migration decides how to treat it.
 - [ ] **T2 (P1, human: ~3d / CC: ~1h)** — code-migrations — the folder-move migration (quiesce → move → flip)
-  - Surfaced by: Phase 1 + A1/A2/A4 + #1/#5/#6/#9/#10/#11 + Tension 1 — atomic 6-column rewrite, ensureUniquePath, dest-side sync, prefix-safe SQL
+  - Surfaced by: Phase 1 + A1/A2/A4 + #1/#5/#6/#9/#10/#11 + Tension 1 + Ordering — atomic 6-column rewrite, ensureUniquePath, dest-side sync, prefix-safe SQL
   - Files: `server/src/code-migrations/`, `publish-plan/file-index.service.ts`, `sync/`, `workbook/data-folder.service.ts`
-  - Verify: migration unit specs (idempotency, crash, re-collision, dest-side, prefix, plan-cancel)
+  - **Move ordering (from T1):** within each site, migrate a collection literally named "Collections" (path == `dirname + '/Collections'`, the prefix case) **before its siblings** — once a sibling has moved into `/<Site>/Collections/<Coll>`, `move_folder` sees the relocated siblings as nested folders under `/<Site>/Collections` and refuses the "Collections" collection. Sort each site's batch so the prefix-case folder is first. See "Move ordering constraint" under Phase 1.
+  - Verify: migration unit specs (idempotency, crash, re-collision, dest-side, prefix, prefix-case-ordering, plan-cancel)
 - [x] **T3 (P1, human: ~4h / CC: ~20min)** — connector — version-pinned nested basePath + shared helper + tableSpec structure version ✅ **Done** (uncommitted)
   - Surfaced by: Phase 0 + C1 + #7/#13/#14 — `webflowCollectionBasePath`, version pin, tableId discriminator
   - Files (actual): **new** `connectors/library/webflow/webflow-folder-paths.ts` (C1 single-source helper + `WEBFLOW_COLLECTIONS_FOLDER_SEGMENT` + `WEBFLOW_NESTED_STRUCTURE_VERSION`); `webflow-json-schema.ts` (3 builders take `structureVersion`); `webflow-connector.ts` (stores `structureVersion` from `ctx.connectorAccount.version`, registration `version: 2`); `webflow-schema-parser.ts` (`parseTablePreview` picker grouping); `connectors/types.ts` (`BaseJsonTableSpec.structureVersion`); `workbook/data-folder.service.ts` (`version: tableSpec.structureVersion ?? 1`, no service branch); `connectors/display-names.ts` (de-stale `getConnectorCurrentVersion` docstring now that Webflow registers v2)
