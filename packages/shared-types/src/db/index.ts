@@ -5,6 +5,7 @@ export * from './job';
 export * from './organization';
 export * from './schedule';
 export * from './sync';
+export * from './sync-draft';
 export * from './user';
 export * from './workspace';
 export * from './workspace-invite';

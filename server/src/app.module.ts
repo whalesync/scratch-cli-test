@@ -38,6 +38,7 @@ import { ScheduleModule } from './schedule/schedule.module';
 import { SchemaBuilderModule } from './schema-builder/schema-builder.module';
 import { ScratchGitModule } from './scratch-git/scratch-git.module';
 import { SlackNotificationModule } from './slack/slack-notification.module';
+import { SyncDraftModule } from './sync-draft/sync-draft.module';
 import { SyncModule } from './sync/sync.module';
 import { UserModule } from './users/users.module';
 import { WorkbookModule } from './workbook/workbook.module';
@@ -65,6 +66,7 @@ import { WorkerModule } from './worker/workers.module';
     WorkbookModule,
     ScratchGitModule,
     SyncModule,
+    SyncDraftModule,
     PaymentModule,
     SlackNotificationModule,
     EmailModule,

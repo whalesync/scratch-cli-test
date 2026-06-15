@@ -68,6 +68,8 @@ export * from './dto/schedule/update-schedule.dto';
 export * from './dto/schema/create-schema-responses.dto';
 export * from './dto/schema/create-schema.dto';
 export * from './dto/scratch-git/scratch-git.dto';
+export * from './dto/sync-draft/sync-draft-api';
+export * from './dto/sync-draft/sync-draft-content';
 export * from './dto/sync/run-sync.dto';
 export * from './dto/sync/sync-api';
 export * from './dto/sync/whalesync-import-api';

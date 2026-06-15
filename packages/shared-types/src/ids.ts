@@ -28,6 +28,7 @@ export enum IdPrefixes {
   AUTHORIZATION_CODE = 'aut_', // Authorization code for CLI login
   SYNC = 'syn_', // Sync
   SYNC_TABLE_PAIR = 'stp_', // Pair of source=>destination tables in a Sync
+  SYNC_DRAFT = 'syd_', // Draft of an intended sync (incl. tables/fields to create) before apply
   SCHEDULE = 'sch_', // Schedule
   SCRATCH_PENDING_PUBLISH = 'scratch_pending_publish_', // Temporary ID for sync-created records before publishing
   SCRATCH_PENDING_RECREATE = 'scratch_pending_recreate_', // Sentinel for revert-create patches: encodes the prior remote id of a record being revived from a previously-published delete. Parsed server-side at publish time to populate RecreatedIdMap after the connector assigns a fresh id.
@@ -220,6 +221,17 @@ export function isSyncTablePairId(id: unknown): id is SyncTablePairId {
 
 export function createSyncTablePairId(): SyncTablePairId {
   return createId(IdPrefixes.SYNC_TABLE_PAIR) as SyncTablePairId;
+}
+
+// ------- Sync Draft -------
+export type SyncDraftId = PrefixedId<IdPrefixes.SYNC_DRAFT>;
+
+export function isSyncDraftId(id: unknown): id is SyncDraftId {
+  return isId(id, IdPrefixes.SYNC_DRAFT);
+}
+
+export function createSyncDraftId(): SyncDraftId {
+  return createId(IdPrefixes.SYNC_DRAFT) as SyncDraftId;
 }
 
 // ------- Schedule -------

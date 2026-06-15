@@ -206,6 +206,7 @@ model Workbook {
   publishPlans         PublishPlan[]
   schedules            Schedule[]
   syncs                Sync[]
+  syncDrafts           SyncDraft[]
   assets               Asset[]
   workspacePermissions WorkspacePermission[]
   workspaceInvites     WorkspaceInvites[]
@@ -770,6 +771,42 @@ model SyncRemoteIdMapping {
   @@unique([syncId, dataFolderId, sourceRemoteId])
   @@index([syncId])
   @@index([dataFolderId])
+}
+
+/// A transient, desired-state working copy used to provision (or edit) a Sync —
+/// including tables/fields to create on a remote service — before it is applied.
+/// Spans the two-phase saga: the reconciler input for apply (Phase 2) and the
+/// checkpoint that makes materialize (Phase 1) retryable. Archived (not deleted)
+/// after apply for debugging.
+/// @see packages/shared-types/src/db/sync-draft.ts
+model SyncDraft {
+  id        String   @id // type: SyncDraftId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workbookId String
+  workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+
+  /// Optimistic-concurrency token, bumped on every write. PATCH echoes the
+  /// version it edited; a mismatch is a 409.
+  version Int @default(1)
+
+  displayName String
+  /// Cron expression mirroring SaveSyncBody.schedule, or null for no schedule.
+  schedule    String?
+  /// Set when initialized from an existing sync (edit flow); apply diffs against it.
+  sourceSyncId String?
+
+  /// The desired-state working copy: DraftTableMapping[].
+  /// @see packages/shared-types/src/dto/sync-draft/sync-draft-content.ts
+  tableMappings Json
+
+  /// Set once applied — an archived draft is never edited or re-applied.
+  archivedAt    DateTime?
+  /// The Sync produced by apply (set alongside archivedAt).
+  appliedSyncId String?
+
+  @@index([workbookId])
 }
 
 //#endregion
