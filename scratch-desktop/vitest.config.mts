@@ -1,14 +1,12 @@
-import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
+import { sharedTypesSourceAliases } from './shared-types-source-aliases';
 
 export default defineConfig({
   resolve: {
-    alias: {
-      // Resolve the api-client to monorepo source (mirrors electron.vite.config.ts) so tests run
-      // against the same code the app bundles AND so `vi.mock('axios')` reaches it — the published
-      // `dist` CJS in node_modules is outside the test module graph and would not be intercepted.
-      '@spinner/shared-types/api-client': resolve(__dirname, '../packages/shared-types/src/api-client/index.ts'),
-    },
+    // Resolve every @spinner/shared-types entrypoint to monorepo source — shared with
+    // electron.vite.config.ts so the test module graph matches what the app bundles (and so
+    // vi.mock(...) can intercept it). See shared-types-source-aliases.ts for the full rationale.
+    alias: sharedTypesSourceAliases(__dirname),
   },
   test: {
     environment: 'node',

@@ -389,6 +389,7 @@ build scratch-git docker image:
     - !reference [.use_nvm, script]
     - yarn prettier:check
     - yarn lint-strict
+    - yarn test
     - yarn build
 
 build and test scratch-desktop:
