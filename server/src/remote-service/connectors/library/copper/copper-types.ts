@@ -58,6 +58,37 @@ export const COPPER_ENTITY_CONFIG: Record<CopperEntityType, CopperEntityConfig> 
 };
 
 /**
+ * Read-only reference entities (pull-only; no CRUD). Unlike the six writable
+ * entities (which list via `POST /{entity}/search` with offset pagination), these
+ * are small config collections fetched whole via `GET /{endpoint}`. They're the FK
+ * targets that Opportunities link to (`pipeline_id` → pipelines,
+ * `pipeline_stage_id` → pipeline_stages).
+ */
+export type CopperReferenceEntityType = 'pipelines' | 'pipeline_stages';
+
+/** All read-only reference entity types, in display order. */
+export const COPPER_REFERENCE_ENTITY_TYPES: CopperReferenceEntityType[] = ['pipelines', 'pipeline_stages'];
+
+export interface CopperReferenceEntityConfig {
+  /** Human-readable plural name shown in the table picker. */
+  displayName: string;
+  /** REST path segment for the GET-all list, e.g. `pipelines` → `GET /pipelines`. */
+  endpoint: string;
+  /** Field used as the record's display title / suggested filename. */
+  titleField: string;
+}
+
+export const COPPER_REFERENCE_ENTITY_CONFIG: Record<CopperReferenceEntityType, CopperReferenceEntityConfig> = {
+  pipelines: { displayName: 'Pipelines', endpoint: 'pipelines', titleField: 'name' },
+  pipeline_stages: { displayName: 'Pipeline Stages', endpoint: 'pipeline_stages', titleField: 'name' },
+};
+
+/** True when `wsId` is one of the read-only reference tables (pipelines / pipeline_stages). */
+export function isCopperReferenceEntityType(wsId: string): wsId is CopperReferenceEntityType {
+  return (COPPER_REFERENCE_ENTITY_TYPES as string[]).includes(wsId);
+}
+
+/**
  * A custom field definition from `GET /custom_field_definitions`. Drives the
  * dynamic portion of each entity's schema and resolves
  * `custom_field_definition_id` → name/type/options.

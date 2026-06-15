@@ -70,3 +70,15 @@ Per-entity CRUD for the 4 remaining entities (Leads/Opportunities/Tasks/Projects
 [14:36:00] [Manual Edits + Scratch CLI] New→Push minimal `name`-only records → all 4 created, remote ids flowed back (Leads 94197062, Opp 38357247, Task 59108940, Project 1664798). No extra required fields (Opp needs no pipeline_id; Task/Project need no related_resource).
 [14:38:00] [Manual Edits + Scratch CLI + Service API] Edit→Push details on all 4 → confirmed in Copper API (4/4 ✅).
 [14:40:00] [Scratch CLI + Service API] Delete→Push all 4 → 404 in Copper API (4/4 ✅); unpublished empty. → all 6 Copper entities now have full CRUD via CLI publish.
+
+## 2026-06-15 — add Pipelines + Pipeline Stages (read-only reference) + Opportunity pipeline FKs
+
+Scoped /connector-build pass (pipelines + FK wiring):
+[17:05:00] [Research] Cold-read copper-connector/types/api-client/json-schema; mirrored Zoho's read-only-reference pattern (`disabledCreates/Updates/Deletes/Reason` on the TablePreview + special-cased fetch/pull).
+[17:08:00] [Manual Edits] Added read-only reference entities `pipelines` + `pipeline_stages` (copper-types.ts), `listReferenceEntities` GET helper (copper-api-client.ts), reference schemas + `buildCopperReferenceTableSpec` (copper-json-schema.ts), and listTables/fetch/pull/pullByIds wiring + read-only write guard (copper-connector.ts). Wired `Opportunities.pipeline_id`→pipelines, `pipeline_stage_id`→pipeline_stages FKs.
+[17:12:00] [Scratch CLI] yarn jest copper (33 pass, updated listTables test) + eslint clean.
+[17:15:00] [Scratch CLI] linked available coa_v21ua3Q7ct → Pipelines + Pipeline Stages now listed "(creates not supported)". linked add --table-id pipelines / pipeline_stages.
+[17:17:00] [Scratch CLI] linked pull dfd_bwojj2rB5a (pipelines) + dfd_Noy32encI1 (pipeline_stages) --mode full → completed.
+[17:18:00] [Manual Edits] Confirmed verbatim shape live: Pipelines/sales.json = {id 1149734, name "Sales", stages[5], type "item", is_revenue false}; Pipeline Stages/closing.json = {id 5176286, name "Closing", pipeline_id 1149734, win_probability null}. Added `type`/`is_revenue` columns to the Pipelines schema; re-pulled to regenerate.
+[17:21:00] [Scratch CLI] Re-pulled Opportunities (dfd_wL5qMWxhC2) → schema now serializes pipeline_id→pipelines, pipeline_stage_id→pipeline_stages, primary_contact_id→people, company_id→companies (all FK annotations confirmed). Pipeline Stages.pipeline_id read confirmed (5176286→1149734).
+[17:23:00] [Research] FK PUSH tests NOT run this pass: test workspace has 0 Opportunities / 0 Tasks / 1 Person (needs seeding), and service-API verification not set up (no decrypt tool; localdev Postgres `scratchpad` not running). Recorded FK push rows as ⬜ pending → scheduled for the 2026-06-16 manual session.

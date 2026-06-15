@@ -20,6 +20,23 @@ const COMPUTED_READONLY_DATA_TYPES = new Set(['formula', 'rollup_summary', 'aggr
 /** File/image field types — deferred to v2; stored verbatim, read-only for now. */
 const ASSET_DATA_TYPES = new Set(['fileupload', 'imageupload', 'profileimage']);
 
+/**
+ * Field `api_name`s that round-trip on **read** but cannot be written through the
+ * standard create/update record API, so we mark them read-only for now.
+ *
+ * `Tag`: Zoho returns it as a `[{name, id}]` array on read, but tags can only be
+ * mutated via the dedicated `/{module}/actions/add_tags` & `remove_tags` endpoints.
+ * Including `Tag` in a normal record write makes Zoho reject the **whole** record, so
+ * keeping it read-only blocks edits in the grid and excludes it from publish (the same
+ * path audit/computed fields already take) — a user who types into Tag has that edit
+ * dropped rather than failing the record's publish.
+ *
+ * TODO(zoho-tags): make `Tag` writable by routing Tag diffs to add_tags/remove_tags
+ * (creating tags as needed), then remove it from this set. See PLAN.md → "Make the
+ * Zoho `Tag` field writable".
+ */
+const READONLY_FIELD_API_NAMES = new Set(['Tag']);
+
 /** The system last-modified field Zoho exposes on every record module. */
 export const ZOHO_MODIFIED_TIME_FIELD = 'Modified_Time';
 
@@ -31,6 +48,7 @@ export const ZOHO_MODIFIED_TIME_FIELD = 'Modified_Time';
  * authoritative signal (verified live against the Leads module).
  */
 export function isReadonlyZohoField(field: ZohoFieldMetadata): boolean {
+  if (READONLY_FIELD_API_NAMES.has(field.api_name)) return true;
   if (field.read_only === true || field.field_read_only === true) return true;
   if (field.operation_type && field.operation_type.api_update === false) return true;
   if (COMPUTED_READONLY_DATA_TYPES.has(field.data_type)) return true;

@@ -3,7 +3,13 @@ import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { customFieldColumnKey } from './copper-custom-fields';
 import { buildCopperDefaultView } from './copper-default-view';
-import { COPPER_ENTITY_CONFIG, CopperCustomFieldDefinition, CopperEntityType } from './copper-types';
+import {
+  COPPER_ENTITY_CONFIG,
+  COPPER_REFERENCE_ENTITY_CONFIG,
+  CopperCustomFieldDefinition,
+  CopperEntityType,
+  CopperReferenceEntityType,
+} from './copper-types';
 
 /**
  * Builds the JSON schema for each Copper entity.
@@ -32,8 +38,8 @@ function readonly(schema: TSchema): TSchema {
   return { ...schema, [X_SCRATCH_READONLY]: true };
 }
 
-/** A numeric foreign key pointing at another Copper entity table (by wsId). */
-function foreignKey(linkedTableId: CopperEntityType): TSchema {
+/** A numeric foreign key pointing at another Copper table (by wsId). */
+function foreignKey(linkedTableId: CopperEntityType | CopperReferenceEntityType): TSchema {
   return Type.Union([Type.Number(), Type.Null()], {
     [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId },
   });
@@ -207,8 +213,8 @@ function opportunitiesProperties(): Record<string, TSchema> {
     customer_source_id: nullableNumber(),
     details: nullableString(),
     loss_reason_id: nullableNumber(),
-    pipeline_id: nullableNumber(),
-    pipeline_stage_id: nullableNumber(),
+    pipeline_id: foreignKey('pipelines'),
+    pipeline_stage_id: foreignKey('pipeline_stages'),
     primary_contact_id: foreignKey('people'),
     priority: nullableString(),
     status: nullableString(),
@@ -327,6 +333,65 @@ export function buildCopperJsonTableSpec(
     basePath: [],
     // System fields flat; custom fields grouped under a "Custom Fields" banner.
     defaultView: buildCopperDefaultView(properties, customFieldDefinitions),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// --- Read-only reference tables (Pipelines / Pipeline Stages) ---
+
+/**
+ * Pipelines (`GET /pipelines`). A small read-only config list and the FK target
+ * of `Opportunities.pipeline_id`. Copper returns each pipeline's `stages` embedded
+ * verbatim; the stages are also exposed flat as the Pipeline Stages table.
+ */
+function pipelinesProperties(): Record<string, TSchema> {
+  return {
+    id: readonly(Type.Number()),
+    name: readonly(nullableString()),
+    type: readonly(nullableString()),
+    is_revenue: readonly(Type.Union([Type.Boolean(), Type.Null()])),
+    stages: readonly(Type.Array(Type.Unknown())),
+  };
+}
+
+/**
+ * Pipeline Stages (`GET /pipeline_stages`). Read-only; the FK target of
+ * `Opportunities.pipeline_stage_id`. Each stage belongs to a pipeline.
+ */
+function pipelineStagesProperties(): Record<string, TSchema> {
+  return {
+    id: readonly(Type.Number()),
+    name: readonly(nullableString()),
+    pipeline_id: readonly(foreignKey('pipelines')),
+    win_probability: readonly(nullableNumber()),
+  };
+}
+
+const REFERENCE_PROPERTY_BUILDERS: Record<CopperReferenceEntityType, () => Record<string, TSchema>> = {
+  pipelines: pipelinesProperties,
+  pipeline_stages: pipelineStagesProperties,
+};
+
+/**
+ * Build a {@link BaseJsonTableSpec} for a read-only Copper reference table. Every
+ * field is read-only (pull-only table); records are stored verbatim, so any field
+ * not declared here is still kept on disk.
+ */
+export function buildCopperReferenceTableSpec(id: EntityId, refType: CopperReferenceEntityType): BaseJsonTableSpec {
+  const config = COPPER_REFERENCE_ENTITY_CONFIG[refType];
+  const schema = Type.Object(REFERENCE_PROPERTY_BUILDERS[refType](), {
+    $id: `copper/${refType}`,
+    title: config.displayName,
+  });
+
+  return {
+    id,
+    slug: id.wsId,
+    name: config.displayName,
+    schema,
+    idColumnRemoteId: idPath('id'),
+    titleColumnRemoteId: [config.titleField],
+    basePath: [],
     generatedAt: new Date().toISOString(),
   };
 }

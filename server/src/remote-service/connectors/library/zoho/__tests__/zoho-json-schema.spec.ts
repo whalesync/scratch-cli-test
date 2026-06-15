@@ -145,6 +145,14 @@ describe('isReadonlyZohoField', () => {
       ),
     ).toBe(false);
   });
+
+  it('treats Tag as read-only even though Zoho reports it writable (not writable via the record API)', () => {
+    expect(
+      isReadonlyZohoField(
+        makeField({ api_name: 'Tag', data_type: 'text', read_only: false, operation_type: { api_update: true } }),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('buildZohoJsonTableSpec', () => {

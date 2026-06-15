@@ -55,16 +55,37 @@ describe('CopperConnector', () => {
   });
 
   describe('listTables', () => {
-    it('returns all six writable entity types', async () => {
+    it('returns the six writable entity types followed by the read-only reference tables', async () => {
       const tables = await connector.listTables();
-      expect(tables).toHaveLength(6);
+      expect(tables).toHaveLength(8);
       const ids = tables.map((t) => t.id.wsId);
-      expect(ids).toEqual(['people', 'companies', 'opportunities', 'leads', 'tasks', 'projects']);
+      expect(ids).toEqual([
+        'people',
+        'companies',
+        'opportunities',
+        'leads',
+        'tasks',
+        'projects',
+        'pipelines',
+        'pipeline_stages',
+      ]);
+    });
+
+    it('marks pipelines / pipeline_stages as read-only reference tables (no CRUD)', async () => {
+      const tables = await connector.listTables();
+      for (const refId of ['pipelines', 'pipeline_stages']) {
+        const table = tables.find((t) => t.id.wsId === refId);
+        expect(table?.disabledCreates).toBe(true);
+        expect(table?.disabledUpdates).toBe(true);
+        expect(table?.disabledDeletes).toBe(true);
+        expect(table?.disabledReason).toBeTruthy();
+      }
     });
 
     it('includes display names', async () => {
       const tables = await connector.listTables();
       expect(tables.find((t) => t.id.wsId === 'people')?.displayName).toBe('People');
+      expect(tables.find((t) => t.id.wsId === 'pipelines')?.displayName).toBe('Pipelines');
     });
   });
 

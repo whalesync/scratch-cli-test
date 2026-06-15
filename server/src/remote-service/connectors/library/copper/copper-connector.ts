@@ -22,9 +22,17 @@ import {
 } from '../../types';
 import { CopperApiClient, CopperError } from './copper-api-client';
 import { reshapeCustomFieldsArrayToObject, reshapeCustomFieldsObjectToArray } from './copper-custom-fields';
-import { buildCopperJsonTableSpec } from './copper-json-schema';
+import { buildCopperJsonTableSpec, buildCopperReferenceTableSpec } from './copper-json-schema';
 import { COPPER_LOGO_DATA_URI } from './copper-logo';
-import { COPPER_ENTITY_CONFIG, COPPER_ENTITY_TYPES, CopperDownloadProgress, CopperEntityType } from './copper-types';
+import {
+  COPPER_ENTITY_CONFIG,
+  COPPER_ENTITY_TYPES,
+  COPPER_REFERENCE_ENTITY_CONFIG,
+  COPPER_REFERENCE_ENTITY_TYPES,
+  CopperDownloadProgress,
+  CopperEntityType,
+  isCopperReferenceEntityType,
+} from './copper-types';
 
 const LOG_SOURCE = 'CopperConnector';
 
@@ -76,14 +84,26 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     await this.client.testConnection();
   }
 
-  /** List the six writable entity types as tables. */
+  /** List the six writable entity types plus the read-only reference tables. */
   // eslint-disable-next-line @typescript-eslint/require-await
   async listTables(): Promise<TablePreview[]> {
-    return COPPER_ENTITY_TYPES.map((entityType) => ({
+    const writable: TablePreview[] = COPPER_ENTITY_TYPES.map((entityType) => ({
       id: { wsId: entityType, remoteId: [entityType] },
       displayName: COPPER_ENTITY_CONFIG[entityType].displayName,
       metadata: { entityType },
     }));
+    // Pipelines / Pipeline Stages: pull-only reference tables (no CRUD). They are
+    // the FK targets of Opportunities.pipeline_id / pipeline_stage_id.
+    const reference: TablePreview[] = COPPER_REFERENCE_ENTITY_TYPES.map((refType) => ({
+      id: { wsId: refType, remoteId: [refType] },
+      displayName: COPPER_REFERENCE_ENTITY_CONFIG[refType].displayName,
+      disabledCreates: true,
+      disabledUpdates: true,
+      disabledDeletes: true,
+      disabledReason: 'Copper pipelines/stages are a read-only reference table.',
+      metadata: { entityType: refType },
+    }));
+    return [...writable, ...reference];
   }
 
   /**
@@ -91,6 +111,9 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
    * dynamically discovered custom field definitions.
    */
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
+    if (isCopperReferenceEntityType(id.wsId)) {
+      return buildCopperReferenceTableSpec(id, id.wsId);
+    }
     const entityType = this.resolveEntityType(id.wsId);
     const customFieldDefinitions = await this.client.listCustomFieldDefinitions();
     return buildCopperJsonTableSpec(id, entityType, customFieldDefinitions);
@@ -107,6 +130,18 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
+    // Read-only reference tables: fetch the whole small list via GET (no pagination,
+    // no custom-field reshape — these aren't record entities).
+    if (isCopperReferenceEntityType(tableSpec.id.wsId)) {
+      const records = await this.client.listReferenceEntities(
+        COPPER_REFERENCE_ENTITY_CONFIG[tableSpec.id.wsId].endpoint,
+      );
+      if (records.length > 0) {
+        await callback({ files: records as ConnectorFile[] });
+      }
+      return {};
+    }
+
     const entityType = this.resolveEntityType(tableSpec.id.wsId);
     const startPage = typeof progress?.nextPage === 'number' && progress.nextPage > 0 ? progress.nextPage : 1;
 
@@ -127,6 +162,18 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
+    // Reference tables have no get-by-id; refetch the small list and filter.
+    if (isCopperReferenceEntityType(tableSpec.id.wsId)) {
+      const wanted = new Set(ids.map(String));
+      const matched = (
+        await this.client.listReferenceEntities(COPPER_REFERENCE_ENTITY_CONFIG[tableSpec.id.wsId].endpoint)
+      ).filter((record) => wanted.has(String(record.id)));
+      if (matched.length > 0) {
+        await callback({ files: matched as ConnectorFile[] });
+      }
+      return;
+    }
+
     const entityType = this.resolveEntityType(tableSpec.id.wsId);
     const buffer: ConnectorFile[] = [];
 
@@ -247,6 +294,9 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
   // --- Private helpers ---
 
   private resolveEntityType(wsId: string): CopperEntityType {
+    if (isCopperReferenceEntityType(wsId)) {
+      throw new CopperError(`'${wsId}' is a read-only reference table and cannot be written.`, 400);
+    }
     if (!(COPPER_ENTITY_TYPES as string[]).includes(wsId)) {
       throw new CopperError(`Entity type '${wsId}' not found. Copper supports: ${COPPER_ENTITY_TYPES.join(', ')}`, 404);
     }

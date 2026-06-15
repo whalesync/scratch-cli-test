@@ -165,6 +165,18 @@ export class CopperApiClient {
     }
   }
 
+  // --- Read-only reference collections (GET /{endpoint}) ---
+
+  /**
+   * Fetch a small read-only reference collection whole via `GET /{endpoint}`
+   * (e.g. `/pipelines`, `/pipeline_stages`). Copper returns the full array in one
+   * response — these are config lists, not paginated record search.
+   */
+  async listReferenceEntities(endpoint: string): Promise<Record<string, unknown>[]> {
+    const response = await this.withRetry(() => this.client.get<Record<string, unknown>[]>(`/${endpoint}`));
+    return Array.isArray(response.data) ? response.data : [];
+  }
+
   // --- Create / Update / Delete ---
 
   /** Create a record. Returns Copper's response (includes the assigned `id`). */

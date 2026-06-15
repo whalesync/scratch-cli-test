@@ -19,7 +19,7 @@
 ## Metadata
 - **Type:** STATIC (CRM) · custom fields supported (mixed)
 - **Template version:** 2026-06-09 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](coverage-template.md#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
-- **Last run:** 2026-06-10 · scratchmd CLI publish + Copper API + gstack browser · Tester: Ivan
+- **Last run:** 2026-06-15 · added Pipelines + Pipeline Stages (read-only reference) + Opportunity pipeline FKs · live pull confirmed · Tester: Ivan
 
 Legend: ✅ verified in Copper · ⬜ not yet · ➖ N/A · ❌ broken.
 
@@ -49,7 +49,7 @@ Best-case future-state contract (`Status` = built/planned), not just what's wire
 | **Entity** (People/Companies/…) | the table — its records are files | **path segment** (the table itself) |
 
 ### 2. Main entities — independent top-level record types → each its own Scratch table
-The six writable record entities (built) + read-only reference entities (planned). No custom objects (custom *fields* are columns — see [Custom fields](#custom-fields-mixed--untested), not entities).
+The six writable record entities (built) + read-only reference entities (Pipelines / Pipeline Stages **built**; Users / Activities / the rest planned). No custom objects (custom *fields* are columns — see [Custom fields](#custom-fields-mixed--untested), not entities).
 
 | Entity | Scratch table | Pull | Create | Edit | Delete | FK | Status |
 |---|---|:--:|:--:|:--:|:--:|:--:|---|
@@ -61,7 +61,9 @@ The six writable record entities (built) + read-only reference entities (planned
 | Projects | record | ✅ | ✅ | ✅ | ✅ | ➖ | **built**, CRUD verified |
 | Users | read-only reference (`GET /users/search`) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only; `assignee_id` references them) |
 | Activities | top-level but **read-only** system rows (no `date_modified`) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only; deferred in v1) |
-| Pipelines / Customer Sources / Loss Reasons / Contact Types | reference/config that other entities link to | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only reference) |
+| Pipelines | read-only reference (`GET /pipelines`) | ✅ | ➖ | ➖ | ➖ | ✅ | **built 2026-06-15** — pull-only; FK target of `Opportunities.pipeline_id`; stages embedded verbatim |
+| Pipeline Stages | read-only reference (`GET /pipeline_stages`) | ✅ | ➖ | ➖ | ➖ | ✅ | **built 2026-06-15** — pull-only; FK target of `Opportunities.pipeline_stage_id`; `pipeline_id`→Pipelines |
+| Customer Sources / Loss Reasons / Contact Types | reference/config that other entities link to | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only reference) |
 
 ### 3. Scoped / non-top-level entities
 | Entity | Why not top-level | How we reach it | Status |
@@ -81,10 +83,12 @@ The six writable record entities (built) + read-only reference entities (planned
 |--------|:----:|:-----------:|:---------:|:--------:|:------:|----|------------------------|
 | Companies | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `primary_contact_id`→People (re-parent B→C) | Companies list → **Add Company** split-button → **Add Company** menu item → "Add a New Company" modal → Name (required) → **Save** |
 | People | ✅ | ✅ | ✅ | ⬜ | ⬜ | ➖ `company_id` read-only (Related Items) | People list → add Person |
-| Opportunities | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ company_id/primary_contact_id (untested; generic FK code) | New→Push w/ `name` only (no pipeline_id required); CRUD confirmed 2026-06-10 |
+| Opportunities | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ pipeline_id/pipeline_stage_id/primary_contact_id FK-wired, push untested; company_id set-on-create only | New→Push w/ `name` only (no pipeline_id required); CRUD confirmed 2026-06-10 |
 | Leads | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | New→Push w/ `name` only; CRUD confirmed 2026-06-10 |
 | Tasks | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ `related_resource` (untested) | New→Push w/ `name` only (no related_resource required); CRUD confirmed 2026-06-10 |
 | Projects | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | New→Push w/ `name` only; CRUD confirmed 2026-06-10 |
+| Pipelines | ✅ | ➖ | ➖ | ➖ | ➖ | ✅ read (FK target) | read-only reference (`GET /pipelines`); pulled 2026-06-15 (1 pipeline "Sales", 5 embedded stages) |
+| Pipeline Stages | ✅ | ➖ | ➖ | ➖ | ➖ | ✅ read (`pipeline_id`→Pipelines) | read-only reference (`GET /pipeline_stages`); pulled 2026-06-15 (5 stages) |
 
 ### Evidence (Companies, 2026-06-05)
 - **Create→Pull:** "ScratchPull TestCo 0605" created in Copper UI → `linked pull` → `id 76658947` landed verbatim.
@@ -123,7 +127,10 @@ One row per FK. **Tested = set via the CLI** (edit FK to a *different* parent �
 |---|:--:|:--:|---|
 | `Companies.primary_contact_id` → `people` | ✅ | ✅ | **True re-parent confirmed 2026-06-10** — company dadas (76645470) moved B(183582749)→C(183582757) via manual edit + CLI publish, confirmed in Copper API; read pulls back the id. ⚠️ See the **related-person rule** gotcha — the target person must be eligible (related/free), or Copper 422s the whole write. |
 | `Opportunities.company_id` → `companies` | ✅ | ➖ | **Set-on-create only** — settable on New→Push (confirmed company A landed), but Copper **silently ignores `company_id` *updates*** (200, no change — reproduced on the raw API too, even with `company_name`). So a CLI re-parent is a no-op; not a connector defect. |
-| `Opportunities.primary_contact_id` → `people` | ⬜ | ⬜ | untested (likely the related-person + possibly create-only constraints) |
+| `Opportunities.primary_contact_id` → `people` | ⬜ | ⬜ | untested (likely the related-person + possibly create-only constraints) — **scheduled for manual test** (needs a 2nd Person + a seeded Opportunity). |
+| `Opportunities.pipeline_id` → `pipelines` | ⬜ | ⬜ | **FK-wired 2026-06-15** (schema annotation confirmed). Push untested — no Opportunity records in the test workspace yet, and only **1 pipeline** ("Sales") exists, so a true re-parent needs a 2nd pipeline; **scheduled for manual test**. |
+| `Opportunities.pipeline_stage_id` → `pipeline_stages` | ⬜ | ⬜ | **FK-wired 2026-06-15** (schema annotation confirmed). Push untested — 5 stages exist, so a stage→stage move is testable once an Opportunity is seeded; **scheduled for manual test**. |
+| `Pipeline Stages.pipeline_id` → `pipelines` | ✅ | ➖ | **Read confirmed 2026-06-15** — stage `5176286` (Closing) → pipeline `1149734` (Sales). Write ➖ (read-only reference table). |
 | `People.company_id` → `companies` | ⬜ | ➖ | **read-only in v1** — set via Related Items, not a normal update (schema marks it `x-scratch-readonly`). |
 - `*.assignee_id` (Copper User id) — plain number, **not** a linked Scratch table. ➖
 - No special association endpoint for plain-id FKs. Related Items (the only association endpoint) is **not implemented** in v1 (`People.company_id` rides on it → read-only).
@@ -141,6 +148,8 @@ Base host `https://api.copper.com/developer_api/v1`. Auth = three headers togeth
 | `<entity>` | create | `POST /<entity>` | response carries the assigned `id`. Read-only fields stripped before send. |
 | `<entity>` | update | `PUT /<entity>/{id}` | sparse — Copper applies only the fields present in the body (uses `changedFields`). |
 | `<entity>` | delete | `DELETE /<entity>/{id}` | 404 ignored (already deleted). |
+| pipelines | list | `GET /pipelines` | read-only reference; full unpaginated list. Each pipeline embeds its `stages[]` verbatim. FK target of `Opportunities.pipeline_id`. |
+| pipeline_stages | list | `GET /pipeline_stages` | read-only reference; full unpaginated list. `pipeline_id`→Pipelines. FK target of `Opportunities.pipeline_stage_id`. |
 
 - **Rate limit:** registry `rateLimiterSpec { points: 3, duration: 1 }` (≈3 req/s); honours `429` + `Retry-After` header on retry.
 - **Activities** entity exists in Copper but is **not** called (deferred — read-only, no `date_modified`).
