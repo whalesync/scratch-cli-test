@@ -30,7 +30,10 @@ import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { NotionApiClient } from 'src/remote-service/connectors/library/notion/notion-api-client';
 import { isFullDatabase } from 'src/remote-service/connectors/library/notion/notion-data-source-types';
+import { WEBFLOW_NESTED_STRUCTURE_VERSION } from 'src/remote-service/connectors/library/webflow/webflow-folder-paths';
 import { Service } from 'src/remote-service/connectors/service-constants';
+import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
+import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SYSTEM_ACTOR } from 'src/users/types';
 import { EncryptedData } from 'src/utils/encryption';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
@@ -54,6 +57,19 @@ import {
   SyncMappingV2BackfillDeps,
   SyncMappingV2BackfillResult,
 } from './sync-mapping-v2-backfill';
+import {
+  accumulateWebflowFolderRestructure,
+  classifyWebflowTableByTableId,
+  emptyWebflowFolderRestructureSummary,
+  FolderMovePathRewriteInput,
+  GitFolderMoveOutcome,
+  migrateWebflowCollectionFolder,
+  sortWebflowCollectionFoldersForSafeMoveOrder,
+  WebflowCollectionFolderMigrationResult,
+  WebflowCollectionFolderToMigrate,
+  AuditLogEntry as WebflowFolderRestructureAuditLogEntry,
+  WebflowFolderRestructureDeps,
+} from './webflow-folder-restructure-backfill';
 
 const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
   {
@@ -81,6 +97,19 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'non-destructive and reversible by clearing mappingsV2 back to NULL. Idempotent — re-runs and ' +
       'parallel batches skip rows already at v2.',
   },
+  {
+    name: 'webflow-folder-restructure',
+    description:
+      'Re-parents existing Webflow CMS collection folders from the flat v1 layout /<Site>/<Collection> ' +
+      'to the nested v2 layout /<Site>/Collections/<Collection> (DEV-9698). Moves the folder in git on ' +
+      'both branches and rewrites DataFolder.path + version and every dependent path column (FileIndex, ' +
+      'FileReference, SyncMatchKeys, SyncRemoteIdMapping destination side, RecreatedIdMap, ' +
+      'UploadPatchMeta) in one atomic transaction per folder. Assets and Pages folders are left ' +
+      'untouched. Flips ConnectorAccount.version to 2 once an account has no flat collection folders ' +
+      'left. Supports dryRun. Idempotent — re-runs skip folders already at version 2. ' +
+      'NOTE: this build does NOT yet quiesce a connection (drain jobs / block live edits / cancel ' +
+      'publish plans) — that lands with T4; run it on an idle connection until then.',
+  },
 ];
 
 /**
@@ -102,6 +131,7 @@ export class CodeMigrationsController {
     private readonly credentialEncryptionService: CredentialEncryptionService,
     private readonly oauthService: OAuthService,
     private readonly auditLogService: AuditLogService,
+    private readonly scratchGitService: ScratchGitService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
@@ -137,6 +167,8 @@ export class CodeMigrationsController {
         return this.runNotionDataSourceBackfill(dto);
       case 'sync-mapping-v2-backfill':
         return this.runSyncMappingV2Backfill(dto);
+      case 'webflow-folder-restructure':
+        return this.runWebflowFolderRestructure(dto);
       default:
         throw new BadRequestException(`Unknown migration: ${dto.migration}`);
     }
@@ -487,5 +519,367 @@ export class CodeMigrationsController {
         }
       },
     };
+  }
+
+  /**
+   * DEV-9698 (T2) — re-parent existing Webflow CMS collection folders from the
+   * flat v1 layout `/<Site>/<Collection>` to the nested v2 layout
+   * `/<Site>/Collections/<Collection>`.
+   *
+   * Per-folder decision logic lives in
+   * [webflow-folder-restructure-backfill.ts](./webflow-folder-restructure-backfill.ts)
+   * and is dependency-injected so the orchestration here stays thin and the core
+   * is unit-testable without a database. Each folder's git move + atomic
+   * path-column rewrite happen via `migrateWebflowCollectionFolder`; this method
+   * orders the batch safely, then flips `ConnectorAccount.version` to 2 for every
+   * account whose flat collection folders are all migrated.
+   *
+   * Idempotent: re-runs skip folders already at `DataFolder.version === 2`.
+   * NOTE: this build does not yet quiesce the connection (drain jobs / block live
+   * edits / cancel publish plans) — that is T4. Run against an idle connection.
+   */
+  private async runWebflowFolderRestructure(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    const migrationName = 'webflow-folder-restructure';
+    const dryRun = dto.dryRun ?? false;
+    const targetingSpecificWorkbooks = dto.ids !== undefined && dto.ids.length > 0;
+
+    // Candidate folders: Webflow folders still on the flat layout (version < 2).
+    // `isAssetTable: false` drops the synthetic Assets table from the candidate
+    // set up front (a real CMS collection is never an asset table, even one a
+    // user named "Assets"), so a qty-bounded sweep isn't churned by it. The
+    // synthetic Pages table carries no such flag — it falls through to the
+    // in-function tableId discriminator and is skipped (Assets/Pages stay
+    // untouched at version 1).
+    const candidateWhereBase: Prisma.DataFolderWhereInput = {
+      connectorService: Service.WEBFLOW,
+      isAssetTable: false,
+      version: { lt: WEBFLOW_NESTED_STRUCTURE_VERSION },
+    };
+
+    // Every run is account-atomic: it migrates a connector account's flat
+    // collections all in one pass. This is required for correct move ordering —
+    // if an account were split across batches, a sibling migrating first in an
+    // earlier batch (into `/<Site>/Collections/<Sibling>`) would make move_folder
+    // refuse a later-batch `/<Site>/Collections` prefix-case collection forever,
+    // a permanent wedge that never lets the account flip to v2. `ids` mode targets
+    // whole workbooks (⊇ whole accounts); `qty` mode takes `qty` oldest candidates
+    // as a SEED, then expands to the full candidate set of every account they touch
+    // (so `qty` is a lower bound on rows processed, rounded up to whole accounts).
+    let candidateRows;
+    if (targetingSpecificWorkbooks) {
+      candidateRows = await this.db.client.dataFolder.findMany({
+        where: { ...candidateWhereBase, workbookId: { in: dto.ids } },
+        include: { workbook: { select: { organizationId: true } } },
+      });
+    } else {
+      const seedRows = await this.db.client.dataFolder.findMany({
+        where: candidateWhereBase,
+        take: dto.qty,
+        orderBy: { createdAt: 'asc' },
+        select: { connectorAccountId: true },
+      });
+      const seedAccountIds = [
+        ...new Set(seedRows.map((row) => row.connectorAccountId).filter((id): id is string => id !== null)),
+      ];
+      candidateRows =
+        seedAccountIds.length === 0
+          ? []
+          : await this.db.client.dataFolder.findMany({
+              where: { ...candidateWhereBase, connectorAccountId: { in: seedAccountIds } },
+              include: { workbook: { select: { organizationId: true } } },
+            });
+    }
+
+    const deps = this.buildWebflowFolderRestructureDeps(dryRun);
+    const summary = emptyWebflowFolderRestructureSummary();
+    const migratedIds: string[] = [];
+
+    const foldersToMigrate: WebflowCollectionFolderToMigrate[] = [];
+    for (const row of candidateRows) {
+      if (!row.connectorAccountId || !row.path) {
+        this.logger.warn(`webflow-folder-restructure: folder ${row.id} missing connectorAccountId/path — skipping`);
+        summary.errored += 1;
+        summary.total += 1;
+        continue;
+      }
+      foldersToMigrate.push({
+        id: row.id as DataFolderId,
+        workbookId: row.workbookId,
+        organizationId: row.workbook.organizationId,
+        connectorAccountId: row.connectorAccountId,
+        name: row.name,
+        path: row.path,
+        version: row.version,
+        tableId: row.tableId,
+      });
+    }
+
+    // Order so a collection literally named "Collections" migrates before its
+    // siblings (otherwise move_folder refuses it once siblings have relocated).
+    const orderedFolders = sortWebflowCollectionFoldersForSafeMoveOrder(foldersToMigrate);
+
+    for (const folder of orderedFolders) {
+      let result: WebflowCollectionFolderMigrationResult;
+      try {
+        result = await migrateWebflowCollectionFolder(folder, deps);
+      } catch (error) {
+        // A failure on one folder (git move, DB txn) must not abort the batch —
+        // the folder stays v1 and a re-run retries it; idempotency makes the
+        // retry safe.
+        result = { kind: 'errored', error };
+      }
+      accumulateWebflowFolderRestructure(summary, result);
+      this.logger.log(`webflow-folder-restructure: folder ${folder.id} (${folder.name}) → ${result.kind}`);
+      if (result.kind === 'migrated') {
+        migratedIds.push(folder.id);
+      } else if (result.kind === 'errored') {
+        this.logger.warn(`webflow-folder-restructure: folder ${folder.id} errored: ${String(result.error)}`);
+      }
+    }
+
+    // Q4: flip ConnectorAccount.version to 2 for every in-scope Webflow account
+    // whose flat collection folders are now all migrated. Re-checks fresh DB
+    // state, so it also repairs an account left unflipped by an earlier crashed
+    // run. Skipped entirely in dry-run.
+    const flippedAccountIds = dryRun
+      ? []
+      : await this.flipFullyMigratedWebflowAccounts(targetingSpecificWorkbooks ? dto.ids : undefined);
+
+    const remainingCount = await this.countRemainingFlatWebflowCollectionFolders();
+
+    this.logger.log(
+      `${migrationName} complete${dryRun ? ' (dry-run)' : ''}: ${JSON.stringify(summary)}; ` +
+        `flippedAccounts=${flippedAccountIds.length}; remaining=${remainingCount}`,
+    );
+
+    return { migratedIds, remainingCount, migrationName };
+  }
+
+  /**
+   * Wire the production Prisma / scratch-git / audit services into
+   * `WebflowFolderRestructureDeps`. The atomic per-folder rewrite is delegated to
+   * `applyWebflowFolderMovePathRewrite`; the git move resolves the connection's
+   * repo and maps a missing-repo 404 to `repo_missing` (folder picked but never
+   * pulled — left for a later run).
+   */
+  private buildWebflowFolderRestructureDeps(dryRun: boolean): WebflowFolderRestructureDeps {
+    return {
+      dryRun,
+      ensureUniqueFolderPath: async (workbookId, connectorAccountId, candidateFolderPath, folderId) => {
+        // Mirrors DataFolderService.ensureUniquePath: re-suffix with the last 5
+        // of the folder id only on a genuine collision within the same account.
+        const existing = await this.db.client.dataFolder.findFirst({
+          where: { workbookId, connectorAccountId, path: candidateFolderPath },
+          select: { id: true },
+        });
+        return existing ? `${candidateFolderPath}-${folderId.slice(-5)}` : candidateFolderPath;
+      },
+      moveFolderInGit: async (
+        connectorAccountId,
+        oldFolderPath,
+        newFolderPath,
+        commitMessage,
+      ): Promise<GitFolderMoveOutcome> => {
+        const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccountId);
+        try {
+          const { moved } = await this.scratchGitService.moveFolder(
+            repoId,
+            oldFolderPath,
+            newFolderPath,
+            commitMessage,
+          );
+          return moved ? { kind: 'moved' } : { kind: 'noop' };
+        } catch (error) {
+          if (error instanceof ScratchGitNotFoundError) return { kind: 'repo_missing' };
+          throw error;
+        }
+      },
+      applyFolderMovePathRewrite: (input) => this.applyWebflowFolderMovePathRewrite(input),
+      logAudit: async (entry: WebflowFolderRestructureAuditLogEntry) => {
+        // Audit is a best-effort side log written AFTER the folder is already
+        // committed at version 2 (the move + path rewrite have landed). An
+        // audit-write failure must not propagate — if it did, the per-folder
+        // function would reject, the orchestrator would mark an already-migrated
+        // folder as `errored` and drop it from `migratedIds`, misreporting a
+        // success. Catch + warn, never block (matches buildSyncMappingV2BackfillDeps).
+        try {
+          await this.auditLogService.logEvent({
+            actor: SYSTEM_ACTOR,
+            eventType: 'update',
+            message: entry.message,
+            entityId: entry.entityId,
+            organizationId: entry.organizationId,
+            context: entry.context,
+          });
+        } catch (error) {
+          this.logger.warn(
+            `webflow-folder-restructure: audit log failed for folder ${entry.entityId}: ${String(error)}`,
+          );
+        }
+      },
+    };
+  }
+
+  /**
+   * Apply, in ONE atomic Postgres transaction, the full path rewrite for a folder
+   * move from `oldFolderPath` to `newFolderPath` (both leading-slash):
+   *   - `DataFolder.path` := new, `DataFolder.version` := 2 (the idempotency commit point)
+   *   - `FileIndex.folderPath`: exact match (no leading slash; records are direct children)
+   *   - `FileReference.sourceFilePath`: boundary-prefix rewrite, all branches
+   *   - `SyncMatchKeys.filePath`: boundary-prefix rewrite, scoped by `dataFolderId` = this folder
+   *     (both source- and destination-side match keys live in their own dataFolder)
+   *   - `SyncRemoteIdMapping.destinationFilePath`: destination side only, resolved via
+   *     `SyncTablePair.destinationDataFolderId` (these rows are keyed by the SOURCE folder id, #9)
+   *   - `RecreatedIdMap.folder`: exact folder-path match, scoped by (workbook, account)
+   *   - `UploadPatchMeta.filePath`: boundary-prefix rewrite, scoped by (workbook, account)
+   *
+   * **Slash convention (critical):** `DataFolder.path` is the ONLY column that
+   * stores a leading slash; every record/file path column stores paths relative
+   * to the connection root with **no leading slash** (`My Site/Blog Posts/rec.json`),
+   * the system-wide convention enforced by `validateRecordPath` (UploadPatchMeta),
+   * `getAllFileContentsByFolderId`/sync's `path.replace(/^\//, '')` (SyncMatchKeys,
+   * SyncRemoteIdMapping.destinationFilePath), `deleteForFolder(…, folderPathNoSlash)`
+   * (FileReference), and `parsePath(filePath).folderPath` (RecreatedIdMap.folder).
+   * So FileIndex AND all five file-path columns match on the no-leading-slash form;
+   * only `DataFolder.path` keeps the slash. (The git `move_folder` route normalizes
+   * the slash away itself, so it takes the leading-slash form.)
+   *
+   * The boundary-prefix rewrites match on `left(col, char_length(old)+1) = old || '/'`
+   * (prefix-safe by construction — moving `Site/Blog` never touches `Site/Blog Posts` —
+   * and multibyte-safe because Postgres counts characters itself), then swap the folder
+   * prefix while preserving the filename via `substring`. `move_folder` refuses a folder
+   * containing a nested data folder, so every record is a direct child and a single
+   * prefix swap is sufficient. Mirrors `rewriteFilePathFolderPrefix` (the unit-tested twin).
+   */
+  private async applyWebflowFolderMovePathRewrite(input: FolderMovePathRewriteInput): Promise<void> {
+    const { folderId, workbookId, connectorAccountId, oldFolderPath, newFolderPath } = input;
+    // Every column below except DataFolder.path stores the no-leading-slash form.
+    const oldFolderPathNoLeadingSlash = oldFolderPath.replace(/^\//, '');
+    const newFolderPathNoLeadingSlash = newFolderPath.replace(/^\//, '');
+
+    await this.db.client.$transaction(async (tx) => {
+      // DataFolder.path is the one leading-slash column. Also the idempotency commit point.
+      await tx.dataFolder.update({
+        where: { id: folderId },
+        data: { path: newFolderPath, version: WEBFLOW_NESTED_STRUCTURE_VERSION },
+      });
+
+      // FileIndex.folderPath (no leading slash) equals the folder path exactly
+      // (records are direct children) → exact-match updateMany.
+      await tx.fileIndex.updateMany({
+        where: { workbookId, folderPath: oldFolderPathNoLeadingSlash },
+        data: { folderPath: newFolderPathNoLeadingSlash },
+      });
+
+      // FileReference.sourceFilePath (no leading slash): full file paths under the
+      // folder, on every branch (main + dirty). Boundary-prefix rewrite.
+      await tx.$executeRaw`
+        UPDATE "FileReference"
+        SET "sourceFilePath" = ${newFolderPathNoLeadingSlash} || substring("sourceFilePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
+        WHERE "workbookId" = ${workbookId}
+          AND left("sourceFilePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
+      `;
+
+      // SyncMatchKeys.filePath (no leading slash): keyed by dataFolderId; a match
+      // key's filePath always lives in its own dataFolder, so filtering on this
+      // folder id catches both the source-side and destination-side keys.
+      await tx.$executeRaw`
+        UPDATE "SyncMatchKeys"
+        SET "filePath" = ${newFolderPathNoLeadingSlash} || substring("filePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
+        WHERE "dataFolderId" = ${folderId}
+          AND left("filePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
+      `;
+
+      // SyncRemoteIdMapping.destinationFilePath (no leading slash) points into the
+      // DESTINATION folder but its row is keyed by the SOURCE folder id (finding #9).
+      // So when THIS folder is a sync destination, resolve the affected rows via the
+      // table pair's destinationDataFolderId → (syncId, sourceDataFolderId), then rewrite.
+      const destinationPairs = await tx.syncTablePair.findMany({
+        where: { destinationDataFolderId: folderId },
+        select: { syncId: true, sourceDataFolderId: true },
+      });
+      for (const pair of destinationPairs) {
+        await tx.$executeRaw`
+          UPDATE "SyncRemoteIdMapping"
+          SET "destinationFilePath" = ${newFolderPathNoLeadingSlash} || substring("destinationFilePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
+          WHERE "syncId" = ${pair.syncId}
+            AND "dataFolderId" = ${pair.sourceDataFolderId}
+            AND "destinationFilePath" IS NOT NULL
+            AND left("destinationFilePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
+        `;
+      }
+
+      // RecreatedIdMap.folder (no leading slash) is the folder path exactly (not a
+      // file), scoped per (workbook, account) → exact-match updateMany.
+      await tx.recreatedIdMap.updateMany({
+        where: { workbookId, connectorAccountId, folder: oldFolderPathNoLeadingSlash },
+        data: { folder: newFolderPathNoLeadingSlash },
+      });
+
+      // UploadPatchMeta.filePath (no leading slash): full file paths, scoped per (workbook, account).
+      await tx.$executeRaw`
+        UPDATE "UploadPatchMeta"
+        SET "filePath" = ${newFolderPathNoLeadingSlash} || substring("filePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
+        WHERE "workbookId" = ${workbookId}
+          AND "connectorAccountId" = ${connectorAccountId}
+          AND left("filePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
+      `;
+    });
+  }
+
+  /**
+   * Flip `ConnectorAccount.version` to 2 for every in-scope Webflow account whose
+   * flat CMS collection folders are all migrated (none remain at version < 2).
+   * `workbookIdsInScope` bounds the check to the targeted workbooks in `ids` mode;
+   * `undefined` (qty mode) considers every Webflow account still on v1, which also
+   * repairs an account left unflipped by an earlier crashed run.
+   */
+  private async flipFullyMigratedWebflowAccounts(workbookIdsInScope: string[] | undefined): Promise<string[]> {
+    const accounts = await this.db.client.connectorAccount.findMany({
+      where: {
+        service: Service.WEBFLOW,
+        version: { lt: WEBFLOW_NESTED_STRUCTURE_VERSION },
+        ...(workbookIdsInScope ? { workbookId: { in: workbookIdsInScope } } : {}),
+      },
+      select: { id: true },
+    });
+
+    const flippedAccountIds: string[] = [];
+    for (const account of accounts) {
+      const remainingFlatCollections = await this.countFlatWebflowCollectionFoldersForAccount(account.id);
+      if (remainingFlatCollections === 0) {
+        await this.db.client.connectorAccount.update({
+          where: { id: account.id },
+          data: { version: WEBFLOW_NESTED_STRUCTURE_VERSION },
+        });
+        flippedAccountIds.push(account.id);
+        this.logger.log(
+          `webflow-folder-restructure: flipped ConnectorAccount ${account.id} → v${WEBFLOW_NESTED_STRUCTURE_VERSION}`,
+        );
+      }
+    }
+    return flippedAccountIds;
+  }
+
+  /** Count flat (`version < 2`) Webflow CMS collection folders for one account. */
+  private async countFlatWebflowCollectionFoldersForAccount(connectorAccountId: string): Promise<number> {
+    const flatFolders = await this.db.client.dataFolder.findMany({
+      where: {
+        connectorAccountId,
+        connectorService: Service.WEBFLOW,
+        version: { lt: WEBFLOW_NESTED_STRUCTURE_VERSION },
+      },
+      select: { tableId: true },
+    });
+    return flatFolders.filter((folder) => classifyWebflowTableByTableId(folder.tableId) === 'collection').length;
+  }
+
+  /** Count every flat (`version < 2`) Webflow CMS collection folder still remaining. */
+  private async countRemainingFlatWebflowCollectionFolders(): Promise<number> {
+    const flatFolders = await this.db.client.dataFolder.findMany({
+      where: { connectorService: Service.WEBFLOW, version: { lt: WEBFLOW_NESTED_STRUCTURE_VERSION } },
+      select: { tableId: true },
+    });
+    return flatFolders.filter((folder) => classifyWebflowTableByTableId(folder.tableId) === 'collection').length;
   }
 }

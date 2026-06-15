@@ -38,6 +38,7 @@ import {
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
 import { BaseJsonTableSpec, idPath } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
+import { escapeConnectorFolderPathSegment } from './connector-folder-path.util';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
 import { FilesService } from './files.service';
 import { WorkbookEventService } from './workbook-event.service';
@@ -793,14 +794,9 @@ export class DataFolderService {
     tableSpec: BaseJsonTableSpec,
     parentFolderPath?: string,
   ): string {
-    const escape = (s: string) =>
-      Array.from(s)
-        .map((c) => (c === '\t' ? ' ' : c)) // convert tabs to spaces
-        .filter((c) => c.charCodeAt(0) > 31) // strip other control characters
-        .join('')
-        .replace(/[/*?"<>|]/g, ' ') // replace filesystem-unsafe chars
-        .replace(/ {2,}/g, ' ') // collapse consecutive spaces
-        .replace(/^[\s]+|[\s.]+$/g, ''); // trim leading whitespace; trim trailing whitespace and dots
+    // Single source of truth shared with the Webflow folder-restructure
+    // migration so a migrated folder's path matches a fresh pull's (finding C1).
+    const escape = escapeConnectorFolderPathSegment;
     const parts: string[] = [];
 
     if (parentFolderPath) {

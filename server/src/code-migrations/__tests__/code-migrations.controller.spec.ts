@@ -8,6 +8,7 @@ import { CustomMetric } from 'src/metrics/custom-metrics';
 import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { NotionApiClient } from 'src/remote-service/connectors/library/notion/notion-api-client';
+import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
 
@@ -33,6 +34,7 @@ describe('CodeMigrationsController', () => {
   let credentialEncryptionService: jest.Mocked<CredentialEncryptionService>;
   let oauthService: jest.Mocked<OAuthService>;
   let auditLogService: jest.Mocked<AuditLogService>;
+  let scratchGitService: jest.Mocked<ScratchGitService>;
   let metricsService: jest.Mocked<CustomMetricsService>;
 
   beforeEach(() => {
@@ -49,6 +51,8 @@ describe('CodeMigrationsController', () => {
         },
         connectorAccount: {
           findUnique: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+          update: jest.fn().mockResolvedValue(undefined),
         },
         sync: {
           findMany: jest.fn().mockResolvedValue([]),
@@ -74,6 +78,11 @@ describe('CodeMigrationsController', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditLogService>;
 
+    scratchGitService = {
+      resolveConnectionRepoPath: jest.fn().mockResolvedValue('repo-1'),
+      moveFolder: jest.fn().mockResolvedValue({ moved: true }),
+    } as unknown as jest.Mocked<ScratchGitService>;
+
     metricsService = {
       logValue: jest.fn(),
       withLoggedExecTime: jest.fn(),
@@ -86,6 +95,7 @@ describe('CodeMigrationsController', () => {
       credentialEncryptionService,
       oauthService,
       auditLogService,
+      scratchGitService,
       metricsService,
     );
   });
@@ -476,6 +486,107 @@ describe('CodeMigrationsController', () => {
 
       // The CAS write succeeded, so the row counts as migrated despite the audit failure.
       expect(result.migratedIds).toEqual(['syn_a']);
+    });
+  });
+
+  // Per-folder decision logic is covered in webflow-folder-restructure-backfill.spec.ts.
+  // These cover the orchestration layer's candidate selection — specifically that
+  // every run is account-atomic, the property that prevents the qty-batch-split
+  // move-ordering wedge for a collection literally named "Collections".
+  describe('runMigration - webflow-folder-restructure', () => {
+    it('qty mode seeds with qty, then expands to every seeded account in full (no take limit)', async () => {
+      const seedRows = [
+        { connectorAccountId: 'acct_1' },
+        { connectorAccountId: 'acct_2' },
+        { connectorAccountId: 'acct_1' },
+      ];
+      dbService.client.dataFolder.findMany = jest
+        .fn()
+        .mockResolvedValueOnce(seedRows) // seed (select connectorAccountId, take: qty)
+        .mockResolvedValue([]); // account expansion + remaining-count
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure',
+        qty: 2,
+      });
+
+      const findManyCalls = (dbService.client.dataFolder.findMany as jest.Mock).mock.calls as Array<
+        [{ where?: Record<string, unknown>; take?: number }]
+      >;
+      // 1st call is the qty-bounded seed.
+      expect(findManyCalls[0][0]).toEqual(expect.objectContaining({ take: 2 }));
+      // 2nd call expands to the DISTINCT seeded accounts, with NO take limit.
+      const expansionArgs = findManyCalls[1][0];
+      expect(expansionArgs.where).toEqual(
+        expect.objectContaining({ connectorAccountId: { in: ['acct_1', 'acct_2'] } }),
+      );
+      expect(expansionArgs.take).toBeUndefined();
+      expect(result.migrationName).toBe('webflow-folder-restructure');
+    });
+
+    it('ids mode targets whole workbooks with no take limit (accounts never split)', async () => {
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]);
+
+      await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure',
+        ids: ['wkb_1'],
+      });
+
+      const candidateArgs = (
+        (dbService.client.dataFolder.findMany as jest.Mock).mock.calls as Array<
+          [{ where?: Record<string, unknown>; take?: number }]
+        >
+      )[0][0];
+      expect(candidateArgs.where).toEqual(expect.objectContaining({ workbookId: { in: ['wkb_1'] } }));
+      expect(candidateArgs.take).toBeUndefined();
+    });
+
+    it('counts a folder as migrated even if its audit-log write fails (audit is best-effort)', async () => {
+      // A real CMS collection still on the flat layout.
+      const folderRow = {
+        id: 'fld_blog',
+        workbookId: 'wkb_1',
+        connectorAccountId: 'acct_1',
+        name: 'Blog Posts',
+        path: '/My Site/Blog Posts',
+        version: 1,
+        tableId: ['site-1', 'collection-abc'],
+        workbook: { organizationId: 'org_1' },
+      };
+      dbService.client.dataFolder.findMany = jest
+        .fn()
+        .mockResolvedValueOnce([{ connectorAccountId: 'acct_1' }]) // qty seed
+        .mockResolvedValueOnce([folderRow]) // account expansion
+        .mockResolvedValue([]); // flip count + remaining count
+      dbService.client.dataFolder.findFirst = jest.fn().mockResolvedValue(null); // ensureUniquePath: no collision
+
+      // The atomic executor: invoke the $transaction callback with a tx stub that
+      // no-ops every write, simulating a successful commit at version 2.
+      const txStub = {
+        dataFolder: { update: jest.fn().mockResolvedValue(undefined) },
+        fileIndex: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        syncTablePair: { findMany: jest.fn().mockResolvedValue([]) },
+        recreatedIdMap: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      dbService.client.$transaction = jest
+        .fn()
+        .mockImplementation((cb: (tx: typeof txStub) => Promise<unknown>) =>
+          cb(txStub),
+        ) as unknown as typeof dbService.client.$transaction;
+
+      // Audit write fails AFTER the move + path/version rewrite have committed.
+      auditLogService.logEvent = jest.fn().mockRejectedValue(new Error('audit DB down'));
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure',
+        qty: 1,
+      });
+
+      // The folder is fully migrated, so the audit failure must NOT drop it from
+      // migratedIds or flip it to errored.
+      expect(result.migratedIds).toEqual(['fld_blog']);
+      expect(txStub.dataFolder.update).toHaveBeenCalledTimes(1);
     });
   });
 });
