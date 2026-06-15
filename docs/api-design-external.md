@@ -336,7 +336,7 @@ Returns basic server info.
 
 ```json
 {
-  "server": "Scratchpad API",
+  "server": "Scratch API",
   "build_version": "1.2.3"
 }
 ```
@@ -355,7 +355,7 @@ Returns server health status.
 {
   "status": "alive",
   "timestamp": "2025-01-19T00:00:00.000Z",
-  "service": "scratchpad-api",
+  "service": "scratch-api",
   "build_version": "1.2.3",
   "in_cloud": true,
   "app_url": "https://app.scratch.md",

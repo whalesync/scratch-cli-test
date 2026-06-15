@@ -46,9 +46,9 @@ export function RemoveTableModal({ opened, onClose, folder, workbookId, onSucces
     <Modal opened={opened} onClose={onClose} title="Unlink Table" size="sm" centered>
       <Stack gap="md">
         <Text size="sm">
-          Are you sure you want to unlink &quot;{folder.name}&quot; from this workspace? This table will be removed from
-          your scratchpad along with any pending changes, but the remote files will not be affected. You can relink this
-          table in the future if needed.
+          Are you sure you want to unlink &quot;{folder.name}&quot; from this workspace? This table and any pending
+          changes will be removed, but the remote files will not be affected. You can relink this table in the future if
+          needed.
         </Text>
         {linkedSyncs.length > 0 && (
           <Alert color="orange" variant="light">
