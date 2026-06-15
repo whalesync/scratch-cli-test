@@ -19,6 +19,14 @@ export const WEBFLOW_COLLECTIONS_FOLDER_SEGMENT = 'Collections';
 export const WEBFLOW_NESTED_STRUCTURE_VERSION = 2;
 
 /**
+ * The connector structure version of the flat v1 layout (`/<Site>/<Collection>`),
+ * before collections were grouped under `/<Site>/Collections/`. This is the target
+ * a rollback (inverse migration, DEV-9698 T6) restores both `DataFolder.version`
+ * and `ConnectorAccount.version` to.
+ */
+export const WEBFLOW_FLAT_STRUCTURE_VERSION = 1;
+
+/**
  * The site's on-disk folder name (the top segment of every Webflow table path).
  * Matches the legacy expression used by the table-spec builders.
  */

@@ -799,6 +799,13 @@ fn build_move_changes_for_branch(
         };
 
         let old_is_prefix_of_new = old_path_is_prefix_of_new(old_path, new_path);
+        // The mirror direction: the destination is an ANCESTOR of the source. This is the
+        // inverse/rollback of a collection literally named "Collections"
+        // (`Site/Collections/Collections` → `Site/Collections`). The source subtree then lives
+        // *under* the destination, so it appears in the destination's blob listing and must be
+        // excluded from the non-destructive collision check below (otherwise the guard always sees
+        // the source as "differing content already at the destination" and refuses the move).
+        let new_is_prefix_of_old = old_path_is_prefix_of_new(new_path, old_path);
 
         // When the destination is nested under the source (a collection literally named
         // "Collections"), the destination's already-relocated records live *under* `old_path`.
@@ -845,11 +852,26 @@ fn build_move_changes_for_branch(
         if let Some(new_blob_paths_with_oids) =
             git_repo.list_blob_paths_under(commit_oid, new_path)?
         {
-            if !new_blob_paths_with_oids.is_empty() {
+            // When the destination is an ancestor of the source (the "Collections"-named inverse),
+            // the source's own records are nested under the destination and show up here. Exclude
+            // them so the guard only judges OTHER content at the destination: an unrelated collision
+            // or a sibling collection not yet moved out (both still refuse), while the source itself
+            // — and a re-run's already-grafted copy at the destination level — does not.
+            let destination_blobs: BTreeMap<String, ObjectId> = if new_is_prefix_of_old {
+                let source_relative_prefix = old_path[new_path.len() + 1..].to_string();
+                new_blob_paths_with_oids
+                    .into_iter()
+                    .filter(|(relative_path, _)| {
+                        relative_path != &source_relative_prefix
+                            && !relative_path.starts_with(&format!("{}/", source_relative_prefix))
+                    })
+                    .collect()
+            } else {
+                new_blob_paths_with_oids.into_iter().collect()
+            };
+            if !destination_blobs.is_empty() {
                 let source_blobs: BTreeMap<String, ObjectId> =
                     source_blobs_to_move.iter().cloned().collect();
-                let destination_blobs: BTreeMap<String, ObjectId> =
-                    new_blob_paths_with_oids.into_iter().collect();
                 if source_blobs != destination_blobs {
                     return Err(AppError::bad_request(format!(
                         "Refusing to move folder {} → {}: destination already exists with differing content",
@@ -1377,5 +1399,179 @@ mod tests {
 
         let moved = perform_move_folder(&repo, "My Site/Blog", "My Site/Blog", "m").unwrap();
         assert!(!moved);
+    }
+
+    // ── move_folder: inverse / rollback (nested v2 → flat v1) ─────────────────
+
+    #[test]
+    fn move_folder_inverts_nested_collection_to_flat() {
+        let (_tmp, repo) = setup_repo();
+        // The rollback of an ordinary collection: `Site/Collections/Blog` → `Site/Blog`. Disjoint
+        // paths, the mirror of the forward nest move.
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Collections/Blog/rec1.json", "{\"id\":1}"),
+                add("My Site/Collections/Blog/rec2.json", "{\"id\":2}"),
+                add(".scratch/My Site/Collections/Blog/schema.json", "{}"),
+                add(
+                    ".scratch/My Site/Collections/Blog/views/default.json",
+                    "{\"view\":true}",
+                ),
+            ],
+        );
+
+        let original_rec1_oid =
+            blob_oid_at(&repo, MAIN_BRANCH, "My Site/Collections/Blog", "rec1.json").unwrap();
+
+        let moved = perform_move_folder(
+            &repo,
+            "My Site/Collections/Blog",
+            "My Site/Blog",
+            "rollback",
+        )
+        .unwrap();
+        assert!(moved);
+
+        for branch in [MAIN_BRANCH, DIRTY_BRANCH] {
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, "My Site/Collections/Blog"),
+                None
+            );
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, ".scratch/My Site/Collections/Blog"),
+                None
+            );
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, "My Site/Blog"),
+                Some(vec!["rec1.json".to_string(), "rec2.json".to_string()])
+            );
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, ".scratch/My Site/Blog"),
+                Some(vec![
+                    "schema.json".to_string(),
+                    "views/default.json".to_string()
+                ])
+            );
+        }
+
+        // OID preserved across the rollback move.
+        assert_eq!(
+            blob_oid_at(&repo, MAIN_BRANCH, "My Site/Blog", "rec1.json").unwrap(),
+            original_rec1_oid
+        );
+        assert_eq!(
+            repo.resolve_ref("merge_base").unwrap(),
+            repo.resolve_ref(MAIN_BRANCH).unwrap()
+        );
+    }
+
+    #[test]
+    fn move_folder_inverts_collection_named_collections() {
+        let (_tmp, repo) = setup_repo();
+        // The rollback mirror of the prefix case: a collection literally named "Collections" moves
+        // back from the nested `My Site/Collections/Collections` to the flat `My Site/Collections`.
+        // Here the destination (`My Site/Collections`) is an ANCESTOR of the source — new is a prefix
+        // of old — and the source's own records appear under the destination listing.
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Collections/Collections/rec1.json", "{\"id\":1}"),
+                add(".scratch/My Site/Collections/Collections/schema.json", "{}"),
+            ],
+        );
+
+        let moved = perform_move_folder(
+            &repo,
+            "My Site/Collections/Collections",
+            "My Site/Collections",
+            "rollback",
+        )
+        .unwrap();
+        assert!(moved);
+
+        for branch in [MAIN_BRANCH, DIRTY_BRANCH] {
+            // Records moved one level up; the nested `Collections/` subtree is gone.
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, "My Site/Collections"),
+                Some(vec!["rec1.json".to_string()])
+            );
+            assert_eq!(
+                sorted_relative_paths(&repo, branch, "My Site/Collections/Collections"),
+                None
+            );
+        }
+
+        // Idempotent even in the inverse prefix case (source absent on re-run).
+        assert!(!perform_move_folder(
+            &repo,
+            "My Site/Collections/Collections",
+            "My Site/Collections",
+            "rollback"
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn move_folder_inverse_collections_named_refuses_when_sibling_present() {
+        let (_tmp, repo) = setup_repo();
+        // Rolling back the "Collections"-named collection BEFORE its siblings have vacated
+        // `My Site/Collections/` is unsafe: the destination still holds the sibling's records, which
+        // are NOT part of the source being moved up. The guard must refuse rather than clobber — the
+        // migration's ordering (Collections-named LAST) is what prevents this.
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Collections/Collections/rec1.json", "{\"id\":1}"),
+                add("My Site/Collections/Blog/rec2.json", "{\"id\":2}"),
+            ],
+        );
+
+        let result = perform_move_folder(
+            &repo,
+            "My Site/Collections/Collections",
+            "My Site/Collections",
+            "rollback",
+        );
+        assert!(result.is_err());
+        // Nothing moved — the source is intact.
+        assert_eq!(
+            sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Collections/Collections"),
+            Some(vec!["rec1.json".to_string()])
+        );
+    }
+
+    #[test]
+    fn move_folder_inverse_collections_named_converges_after_partial() {
+        let (_tmp, repo) = setup_repo();
+        // Crash mid-rollback of the "Collections"-named collection: the destination was grafted
+        // (`My Site/Collections/rec1.json`) but the source (`…/Collections/Collections/rec1.json`)
+        // was never deleted. Both hold byte-identical records → converge (finish the delete).
+        commit_to_both_branches(
+            &repo,
+            &[
+                add("My Site/Collections/Collections/rec1.json", "{\"id\":1}"),
+                add("My Site/Collections/rec1.json", "{\"id\":1}"),
+            ],
+        );
+
+        let moved = perform_move_folder(
+            &repo,
+            "My Site/Collections/Collections",
+            "My Site/Collections",
+            "rollback",
+        )
+        .unwrap();
+        assert!(moved);
+
+        // Source subtree gone; destination intact.
+        assert_eq!(
+            sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Collections/Collections"),
+            None
+        );
+        assert_eq!(
+            sorted_relative_paths(&repo, MAIN_BRANCH, "My Site/Collections"),
+            Some(vec!["rec1.json".to_string()])
+        );
     }
 }

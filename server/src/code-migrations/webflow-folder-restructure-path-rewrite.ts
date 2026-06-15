@@ -14,13 +14,14 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { WEBFLOW_NESTED_STRUCTURE_VERSION } from 'src/remote-service/connectors/library/webflow/webflow-folder-paths';
 import { FolderMovePathRewriteInput } from './webflow-folder-restructure-backfill';
 
 /**
  * Apply, in ONE atomic Postgres transaction, the full path rewrite for a folder
  * move from `oldFolderPath` to `newFolderPath` (both leading-slash):
- *   - `DataFolder.path` := new, `DataFolder.version` := 2 (the idempotency commit point)
+ *   - `DataFolder.path` := new, `DataFolder.version` := `targetFolderVersion`
+ *     (the idempotency commit point — 2 nesting the folder for the forward
+ *     migration, 1 flattening it for the inverse/rollback)
  *   - `FileIndex.folderPath`: exact match (no leading slash; records are direct children)
  *   - `FileReference.sourceFilePath`: boundary-prefix rewrite, all branches
  *   - `SyncMatchKeys.filePath`: boundary-prefix rewrite, scoped by `dataFolderId` = this folder
@@ -51,6 +52,7 @@ import { FolderMovePathRewriteInput } from './webflow-folder-restructure-backfil
 export async function applyWebflowFolderMovePathRewrite(
   prisma: PrismaClient,
   input: FolderMovePathRewriteInput,
+  targetFolderVersion: number,
 ): Promise<void> {
   const { folderId, workbookId, connectorAccountId, oldFolderPath, newFolderPath } = input;
   // Every column below except DataFolder.path stores the no-leading-slash form.
@@ -58,10 +60,11 @@ export async function applyWebflowFolderMovePathRewrite(
   const newFolderPathNoLeadingSlash = newFolderPath.replace(/^\//, '');
 
   await prisma.$transaction(async (tx) => {
-    // DataFolder.path is the one leading-slash column. Also the idempotency commit point.
+    // DataFolder.path is the one leading-slash column. Also the idempotency commit point:
+    // `targetFolderVersion` is 2 (nested) for the forward migration, 1 (flat) for the inverse.
     await tx.dataFolder.update({
       where: { id: folderId },
-      data: { path: newFolderPath, version: WEBFLOW_NESTED_STRUCTURE_VERSION },
+      data: { path: newFolderPath, version: targetFolderVersion },
     });
 
     // FileIndex.folderPath (no leading slash) equals the folder path exactly

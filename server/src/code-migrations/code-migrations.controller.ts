@@ -30,7 +30,10 @@ import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { OAuthService } from 'src/oauth/oauth.service';
 import { NotionApiClient } from 'src/remote-service/connectors/library/notion/notion-api-client';
 import { isFullDatabase } from 'src/remote-service/connectors/library/notion/notion-data-source-types';
-import { WEBFLOW_NESTED_STRUCTURE_VERSION } from 'src/remote-service/connectors/library/webflow/webflow-folder-paths';
+import {
+  WEBFLOW_FLAT_STRUCTURE_VERSION,
+  WEBFLOW_NESTED_STRUCTURE_VERSION,
+} from 'src/remote-service/connectors/library/webflow/webflow-folder-paths';
 import { Service } from 'src/remote-service/connectors/service-constants';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -70,6 +73,13 @@ import {
   AuditLogEntry as WebflowFolderRestructureAuditLogEntry,
   WebflowFolderRestructureDeps,
 } from './webflow-folder-restructure-backfill';
+import {
+  accumulateWebflowFolderRestructureInverse,
+  emptyWebflowFolderRestructureInverseSummary,
+  invertWebflowCollectionFolder,
+  sortWebflowCollectionFoldersForSafeInverseMoveOrder,
+  WebflowCollectionFolderInversionResult,
+} from './webflow-folder-restructure-inverse-backfill';
 import { applyWebflowFolderMovePathRewrite } from './webflow-folder-restructure-path-rewrite';
 
 const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
@@ -112,6 +122,18 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'non-terminal publish plans cancelled, in-flight jobs drained, and live edits + new job ' +
       'enqueues blocked with a 409; a connection too busy to drain in time is skipped and retried ' +
       'on a later run.',
+  },
+  {
+    name: 'webflow-folder-restructure-inverse',
+    description:
+      'ROLLBACK of webflow-folder-restructure (DEV-9698 T6). Re-parents nested v2 Webflow CMS ' +
+      'collection folders from /<Site>/Collections/<Collection> back to the flat v1 layout ' +
+      '/<Site>/<Collection>, rewriting the same path columns in one atomic transaction per folder ' +
+      'and flipping DataFolder.version (and, once an account has no nested collections left, ' +
+      'ConnectorAccount.version) from 2 back to 1. A collection literally named "Collections" ' +
+      'reverts last in its site (the mirror of the forward ordering). Assets and Pages are ' +
+      'untouched. Uses the same per-connection quiesce (T4) and dryRun support. Idempotent — ' +
+      're-runs skip folders already at version 1.',
   },
 ];
 
@@ -173,6 +195,8 @@ export class CodeMigrationsController {
         return this.runSyncMappingV2Backfill(dto);
       case 'webflow-folder-restructure':
         return this.runWebflowFolderRestructure(dto);
+      case 'webflow-folder-restructure-inverse':
+        return this.runWebflowFolderRestructureInverse(dto);
       default:
         throw new BadRequestException(`Unknown migration: ${dto.migration}`);
     }
@@ -594,7 +618,7 @@ export class CodeMigrationsController {
             });
     }
 
-    const deps = this.buildWebflowFolderRestructureDeps(dryRun);
+    const deps = this.buildWebflowFolderRestructureDeps(dryRun, WEBFLOW_NESTED_STRUCTURE_VERSION, migrationName);
     const summary = emptyWebflowFolderRestructureSummary();
     const migratedIds: string[] = [];
 
@@ -775,8 +799,19 @@ export class CodeMigrationsController {
    * `applyWebflowFolderMovePathRewrite`; the git move resolves the connection's
    * repo and maps a missing-repo 404 to `repo_missing` (folder picked but never
    * pulled — left for a later run).
+   *
+   * `targetFolderVersion` is the `DataFolder.version` the atomic rewrite commits —
+   * the only thing that differs functionally between the forward migration (2,
+   * nesting) and the inverse/rollback (1, flattening); every other dep is
+   * direction-agnostic, so both directions share this builder. `migrationName` is
+   * a display-only label so the best-effort audit-failure warning is attributed to
+   * the right run.
    */
-  private buildWebflowFolderRestructureDeps(dryRun: boolean): WebflowFolderRestructureDeps {
+  private buildWebflowFolderRestructureDeps(
+    dryRun: boolean,
+    targetFolderVersion: number,
+    migrationName: string,
+  ): WebflowFolderRestructureDeps {
     return {
       dryRun,
       ensureUniqueFolderPath: async (workbookId, connectorAccountId, candidateFolderPath, folderId) => {
@@ -808,13 +843,14 @@ export class CodeMigrationsController {
           throw error;
         }
       },
-      applyFolderMovePathRewrite: (input) => applyWebflowFolderMovePathRewrite(this.db.client, input),
+      applyFolderMovePathRewrite: (input) =>
+        applyWebflowFolderMovePathRewrite(this.db.client, input, targetFolderVersion),
       logAudit: async (entry: WebflowFolderRestructureAuditLogEntry) => {
         // Audit is a best-effort side log written AFTER the folder is already
-        // committed at version 2 (the move + path rewrite have landed). An
+        // committed at its target version (the move + path rewrite have landed). An
         // audit-write failure must not propagate — if it did, the per-folder
-        // function would reject, the orchestrator would mark an already-migrated
-        // folder as `errored` and drop it from `migratedIds`, misreporting a
+        // function would reject, the orchestrator would mark an already-processed
+        // folder as `errored` and drop it from its result ids, misreporting a
         // success. Catch + warn, never block (matches buildSyncMappingV2BackfillDeps).
         try {
           await this.auditLogService.logEvent({
@@ -826,9 +862,7 @@ export class CodeMigrationsController {
             context: entry.context,
           });
         } catch (error) {
-          this.logger.warn(
-            `webflow-folder-restructure: audit log failed for folder ${entry.entityId}: ${String(error)}`,
-          );
+          this.logger.warn(`${migrationName}: audit log failed for folder ${entry.entityId}: ${String(error)}`);
         }
       },
     };
@@ -854,5 +888,245 @@ export class CodeMigrationsController {
       select: { tableId: true },
     });
     return flatFolders.filter((folder) => classifyWebflowTableByTableId(folder.tableId) === 'collection').length;
+  }
+
+  /**
+   * DEV-9698 (T6) — the ROLLBACK of {@link runWebflowFolderRestructure}: re-parent
+   * nested v2 Webflow CMS collection folders from `/<Site>/Collections/<Collection>`
+   * back to the flat v1 layout `/<Site>/<Collection>`, then flip
+   * `ConnectorAccount.version` back to 1 for every account whose nested collections
+   * are all reverted.
+   *
+   * This is a structural mirror of the forward orchestrator and shares its
+   * primitives (account-atomic batching, per-connection quiesce, the atomic path
+   * rewrite). The only deliberate differences: the candidate filter selects nested
+   * folders (`version >= 2`), the ordering reverts a "Collections"-named collection
+   * LAST in its site (vs. first), and the rewrite commits `version := 1` (vs. 2).
+   *
+   * Idempotent: re-runs skip folders already at `DataFolder.version === 1`.
+   */
+  private async runWebflowFolderRestructureInverse(dto: ValidatedRunMigrationDto): Promise<MigrationResult> {
+    const migrationName = 'webflow-folder-restructure-inverse';
+    const dryRun = dto.dryRun ?? false;
+    const targetingSpecificWorkbooks = dto.ids !== undefined && dto.ids.length > 0;
+
+    // Candidate folders: Webflow folders still on the NESTED layout (version >= 2).
+    // `isAssetTable: false` is symmetric with the forward sweep (a real collection is
+    // never an asset table); Assets/Pages stay at version 1 and are excluded by the
+    // version filter regardless.
+    const candidateWhereBase: Prisma.DataFolderWhereInput = {
+      connectorService: Service.WEBFLOW,
+      isAssetTable: false,
+      version: { gte: WEBFLOW_NESTED_STRUCTURE_VERSION },
+    };
+
+    // Account-atomic, identical to the forward run: `ids` mode targets whole
+    // workbooks; `qty` mode takes `qty` oldest nested candidates as a SEED and then
+    // expands to the full nested candidate set of every account they touch (so the
+    // "Collections"-named-last ordering can never be split across batches).
+    let candidateRows;
+    if (targetingSpecificWorkbooks) {
+      candidateRows = await this.db.client.dataFolder.findMany({
+        where: { ...candidateWhereBase, workbookId: { in: dto.ids } },
+        include: { workbook: { select: { organizationId: true } } },
+      });
+    } else {
+      const seedRows = await this.db.client.dataFolder.findMany({
+        where: candidateWhereBase,
+        take: dto.qty,
+        orderBy: { createdAt: 'asc' },
+        select: { connectorAccountId: true },
+      });
+      const seedAccountIds = [
+        ...new Set(seedRows.map((row) => row.connectorAccountId).filter((id): id is string => id !== null)),
+      ];
+      candidateRows =
+        seedAccountIds.length === 0
+          ? []
+          : await this.db.client.dataFolder.findMany({
+              where: { ...candidateWhereBase, connectorAccountId: { in: seedAccountIds } },
+              include: { workbook: { select: { organizationId: true } } },
+            });
+    }
+
+    const deps = this.buildWebflowFolderRestructureDeps(dryRun, WEBFLOW_FLAT_STRUCTURE_VERSION, migrationName);
+    const summary = emptyWebflowFolderRestructureInverseSummary();
+    const revertedIds: string[] = [];
+
+    const foldersToRevert: WebflowCollectionFolderToMigrate[] = [];
+    for (const row of candidateRows) {
+      if (!row.connectorAccountId || !row.path) {
+        this.logger.warn(
+          `webflow-folder-restructure-inverse: folder ${row.id} missing connectorAccountId/path — skipping`,
+        );
+        summary.errored += 1;
+        summary.total += 1;
+        continue;
+      }
+      foldersToRevert.push({
+        id: row.id as DataFolderId,
+        workbookId: row.workbookId,
+        organizationId: row.workbook.organizationId,
+        connectorAccountId: row.connectorAccountId,
+        name: row.name,
+        path: row.path,
+        version: row.version,
+        tableId: row.tableId,
+      });
+    }
+
+    const foldersByConnectorAccount = new Map<
+      string,
+      { workbookId: string; folders: WebflowCollectionFolderToMigrate[] }
+    >();
+    for (const folder of foldersToRevert) {
+      const entry = foldersByConnectorAccount.get(folder.connectorAccountId) ?? {
+        workbookId: folder.workbookId,
+        folders: [],
+      };
+      entry.folders.push(folder);
+      foldersByConnectorAccount.set(folder.connectorAccountId, entry);
+    }
+
+    // In `ids` mode, also process in-scope Webflow accounts still at v2 that have NO
+    // nested candidate folders — fully reverted but never flipped back to v1 (a crash
+    // before the version flip). Including them (empty folder list) lets the per-account
+    // block quiesce + flip them to v1, repairing the crash.
+    if (!dryRun && targetingSpecificWorkbooks) {
+      const inScopeNestedAccounts = await this.db.client.connectorAccount.findMany({
+        where: {
+          service: Service.WEBFLOW,
+          version: { gte: WEBFLOW_NESTED_STRUCTURE_VERSION },
+          workbookId: { in: dto.ids },
+        },
+        select: { id: true, workbookId: true },
+      });
+      for (const account of inScopeNestedAccounts) {
+        if (!foldersByConnectorAccount.has(account.id)) {
+          foldersByConnectorAccount.set(account.id, { workbookId: account.workbookId, folders: [] });
+        }
+      }
+    }
+
+    const flippedAccountIds: string[] = [];
+    const skippedBusyAccountIds: string[] = [];
+
+    const connectorAccountEntries = [...foldersByConnectorAccount.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+
+    for (const [connectorAccountId, { workbookId, folders }] of connectorAccountEntries) {
+      // Order so a collection literally named "Collections" reverts AFTER its siblings
+      // (otherwise its flat destination still holds the siblings and move_folder refuses it).
+      const orderedFolders = sortWebflowCollectionFoldersForSafeInverseMoveOrder(folders);
+
+      if (dryRun) {
+        for (const folder of orderedFolders) {
+          const result = await this.invertOneWebflowFolder(folder, deps);
+          accumulateWebflowFolderRestructureInverse(summary, result);
+          if (result.kind === 'reverted') revertedIds.push(folder.id);
+        }
+        continue;
+      }
+
+      try {
+        await this.connectionQuiesceService.quiesceConnection(workbookId, connectorAccountId);
+      } catch (error) {
+        await this.connectionQuiesceService
+          .unquiesceConnection(workbookId, connectorAccountId)
+          .catch((releaseError) => {
+            this.logger.warn(
+              `webflow-folder-restructure-inverse: failed to release connection ${connectorAccountId} after a quiesce error: ${String(releaseError)}`,
+            );
+          });
+        if (error instanceof ConnectionDrainTimeoutError) {
+          skippedBusyAccountIds.push(connectorAccountId);
+          this.logger.warn(`webflow-folder-restructure-inverse: ${error.message}`);
+          continue;
+        }
+        throw error;
+      }
+
+      try {
+        for (const folder of orderedFolders) {
+          const result = await this.invertOneWebflowFolder(folder, deps);
+          accumulateWebflowFolderRestructureInverse(summary, result);
+          this.logger.log(`webflow-folder-restructure-inverse: folder ${folder.id} (${folder.name}) → ${result.kind}`);
+          if (result.kind === 'reverted') {
+            revertedIds.push(folder.id);
+          } else if (result.kind === 'errored') {
+            this.logger.warn(
+              `webflow-folder-restructure-inverse: folder ${folder.id} errored: ${String(result.error)}`,
+            );
+          }
+        }
+
+        // Flip the account back to v1 once all its nested collection folders are gone —
+        // BEFORE the release restores schedules and unlocks (mirrors the forward flip).
+        const remainingNestedCollections = await this.countNestedWebflowCollectionFoldersForAccount(connectorAccountId);
+        if (remainingNestedCollections === 0) {
+          await this.db.client.connectorAccount.update({
+            where: { id: connectorAccountId },
+            data: { version: WEBFLOW_FLAT_STRUCTURE_VERSION },
+          });
+          flippedAccountIds.push(connectorAccountId);
+          this.logger.log(
+            `webflow-folder-restructure-inverse: flipped ConnectorAccount ${connectorAccountId} → v${WEBFLOW_FLAT_STRUCTURE_VERSION}`,
+          );
+        }
+      } finally {
+        // Release UNCONDITIONALLY (same rationale as the forward run): a pull never
+        // rewrites `DataFolder.path`, so a transiently-mixed tree after a partial revert
+        // converges on a re-run, and a folder that can never revert (permanent bad shape /
+        // repo_missing) must not wedge the connection's schedules off forever.
+        await this.connectionQuiesceService.unquiesceConnection(workbookId, connectorAccountId);
+      }
+    }
+
+    const remainingCount = await this.countRemainingNestedWebflowCollectionFolders();
+
+    this.logger.log(
+      `${migrationName} complete${dryRun ? ' (dry-run)' : ''}: ${JSON.stringify(summary)}; ` +
+        `flippedAccounts=${flippedAccountIds.length}; skippedBusyAccounts=${skippedBusyAccountIds.length}; ` +
+        `remaining=${remainingCount}`,
+    );
+
+    return { migratedIds: revertedIds, remainingCount, migrationName };
+  }
+
+  /**
+   * Run one folder's inversion, converting a thrown error into an `errored` result
+   * so a single folder failure never aborts the batch (the folder stays v2 and a
+   * re-run retries it; idempotency makes the retry safe).
+   */
+  private async invertOneWebflowFolder(
+    folder: WebflowCollectionFolderToMigrate,
+    deps: WebflowFolderRestructureDeps,
+  ): Promise<WebflowCollectionFolderInversionResult> {
+    try {
+      return await invertWebflowCollectionFolder(folder, deps);
+    } catch (error) {
+      return { kind: 'errored', error };
+    }
+  }
+
+  /** Count nested (`version >= 2`) Webflow CMS collection folders for one account. */
+  private async countNestedWebflowCollectionFoldersForAccount(connectorAccountId: string): Promise<number> {
+    const nestedFolders = await this.db.client.dataFolder.findMany({
+      where: {
+        connectorAccountId,
+        connectorService: Service.WEBFLOW,
+        version: { gte: WEBFLOW_NESTED_STRUCTURE_VERSION },
+      },
+      select: { tableId: true },
+    });
+    return nestedFolders.filter((folder) => classifyWebflowTableByTableId(folder.tableId) === 'collection').length;
+  }
+
+  /** Count every nested (`version >= 2`) Webflow CMS collection folder still remaining. */
+  private async countRemainingNestedWebflowCollectionFolders(): Promise<number> {
+    const nestedFolders = await this.db.client.dataFolder.findMany({
+      where: { connectorService: Service.WEBFLOW, version: { gte: WEBFLOW_NESTED_STRUCTURE_VERSION } },
+      select: { tableId: true },
+    });
+    return nestedFolders.filter((folder) => classifyWebflowTableByTableId(folder.tableId) === 'collection').length;
   }
 }

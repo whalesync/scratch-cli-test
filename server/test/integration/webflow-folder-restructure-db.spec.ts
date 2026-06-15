@@ -38,6 +38,10 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { applyWebflowFolderMovePathRewrite } from 'src/code-migrations/webflow-folder-restructure-path-rewrite';
+import {
+  WEBFLOW_FLAT_STRUCTURE_VERSION,
+  WEBFLOW_NESTED_STRUCTURE_VERSION,
+} from 'src/remote-service/connectors/library/webflow/webflow-folder-paths';
 
 const OLD_FOLDER_PATH_WITH_SLASH = '/My Site/Blog';
 const NEW_FOLDER_PATH_WITH_SLASH = '/My Site/Collections/Blog';
@@ -285,7 +289,7 @@ describe('webflow-folder-restructure path rewrite (DB-backed atomic SQL)', () =>
   it('rewrites all seven path columns for the move and leaves every decoy untouched', async () => {
     const fixture = await seedFullFixture();
     try {
-      await applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture));
+      await applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture), WEBFLOW_NESTED_STRUCTURE_VERSION);
 
       // 1. DataFolder.path (leading slash) + version flipped; sibling row untouched.
       const migratedFolder = await prisma.dataFolder.findUniqueOrThrow({ where: { id: fixture.migratedFolderId } });
@@ -370,10 +374,10 @@ describe('webflow-folder-restructure path rewrite (DB-backed atomic SQL)', () =>
   it('is a no-op on a second application — already-moved paths no longer match (no double rewrite)', async () => {
     const fixture = await seedFullFixture();
     try {
-      await applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture));
+      await applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture), WEBFLOW_NESTED_STRUCTURE_VERSION);
       // Re-run with the same (old → new): the source paths are gone, so nothing
       // under the old prefix should match and no path should double-nest.
-      await applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture));
+      await applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture), WEBFLOW_NESTED_STRUCTURE_VERSION);
 
       const migratedFolder = await prisma.dataFolder.findUniqueOrThrow({ where: { id: fixture.migratedFolderId } });
       expect(migratedFolder.path).toBe(NEW_FOLDER_PATH_WITH_SLASH);
@@ -409,9 +413,9 @@ describe('webflow-folder-restructure path rewrite (DB-backed atomic SQL)', () =>
         },
       });
 
-      await expect(applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture))).rejects.toThrow(
-        Prisma.PrismaClientKnownRequestError,
-      );
+      await expect(
+        applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture), WEBFLOW_NESTED_STRUCTURE_VERSION),
+      ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
 
       // The DataFolder.update in the same transaction must have rolled back.
       const migratedFolder = await prisma.dataFolder.findUniqueOrThrow({ where: { id: fixture.migratedFolderId } });
@@ -423,6 +427,96 @@ describe('webflow-folder-restructure path rewrite (DB-backed atomic SQL)', () =>
         where: { workbookId: fixture.workbookId, recordId: 'r1', folderPath: OLD_FOLDER_PATH_NO_SLASH },
       });
       expect(movedRow).not.toBeNull();
+    } finally {
+      await cleanUpFixture(fixture);
+    }
+  });
+
+  it('round-trips — the inverse rewrite (new→old, version 1) restores the flat layout exactly (T6)', async () => {
+    const fixture = await seedFullFixture();
+    try {
+      // Forward: flat → nested, DataFolder.version → 2.
+      await applyWebflowFolderMovePathRewrite(prisma, rewriteInput(fixture), WEBFLOW_NESTED_STRUCTURE_VERSION);
+      // Inverse (rollback): nested → flat with old/new swapped, DataFolder.version → 1. Same shipped
+      // SQL, opposite direction — confirms the rewrite is direction-agnostic against real Postgres.
+      await applyWebflowFolderMovePathRewrite(
+        prisma,
+        {
+          ...rewriteInput(fixture),
+          oldFolderPath: NEW_FOLDER_PATH_WITH_SLASH,
+          newFolderPath: OLD_FOLDER_PATH_WITH_SLASH,
+        },
+        WEBFLOW_FLAT_STRUCTURE_VERSION,
+      );
+
+      // DataFolder.path + version restored to the original flat layout.
+      const migratedFolder = await prisma.dataFolder.findUniqueOrThrow({ where: { id: fixture.migratedFolderId } });
+      expect(migratedFolder.path).toBe(OLD_FOLDER_PATH_WITH_SLASH);
+      expect(migratedFolder.version).toBe(1);
+
+      // FileIndex back to the flat path; sibling decoy untouched throughout.
+      const fileIndexRows = await prisma.fileIndex.findMany({
+        where: { workbookId: fixture.workbookId },
+        orderBy: { recordId: 'asc' },
+      });
+      expect(fileIndexRows.map((r) => [r.recordId, r.folderPath])).toEqual([
+        ['r1', OLD_FOLDER_PATH_NO_SLASH],
+        ['r2', SIBLING_FOLDER_PATH_NO_SLASH],
+      ]);
+
+      // FileReference back to flat on both branches; sibling untouched.
+      const fileRefRows = await prisma.fileReference.findMany({ where: { workbookId: fixture.workbookId } });
+      expect(fileRefRows.map((r) => r.sourceFilePath).sort()).toEqual(
+        [
+          `${OLD_FOLDER_PATH_NO_SLASH}/r1.json`,
+          `${OLD_FOLDER_PATH_NO_SLASH}/r2.json`,
+          `${SIBLING_FOLDER_PATH_NO_SLASH}/r.json`,
+        ].sort(),
+      );
+
+      // SyncMatchKeys restored; decoys preserved.
+      const matchKeyByMatchId = new Map(
+        (await prisma.syncMatchKeys.findMany({ where: { syncId: fixture.syncId } })).map((k) => [
+          k.matchId,
+          k.filePath,
+        ]),
+      );
+      expect(matchKeyByMatchId.get('m1')).toBe(`${OLD_FOLDER_PATH_NO_SLASH}/r1.json`);
+      expect(matchKeyByMatchId.get('m2')).toBe(`${OLD_FOLDER_PATH_NO_SLASH}/should-not-change.json`);
+      expect(matchKeyByMatchId.get('m3')).toBe(`${SIBLING_FOLDER_PATH_NO_SLASH}/r.json`);
+
+      // SyncRemoteIdMapping dest-side restored; #9 folder-as-source row never moved either way.
+      const mappingBySource = new Map(
+        (await prisma.syncRemoteIdMapping.findMany({ where: { syncId: fixture.syncId } })).map((m) => [
+          m.sourceRemoteId,
+          m.destinationFilePath,
+        ]),
+      );
+      expect(mappingBySource.get('src1')).toBe(`${OLD_FOLDER_PATH_NO_SLASH}/r1.json`);
+      expect(mappingBySource.get('src3')).toBeNull();
+      expect(mappingBySource.get('src4')).toBe(`${OLD_FOLDER_PATH_NO_SLASH}/elsewhere.json`);
+
+      // RecreatedIdMap + UploadPatchMeta restored; account-scoped decoys preserved.
+      const recreatedByPrior = new Map(
+        (await prisma.recreatedIdMap.findMany({ where: { workbookId: fixture.workbookId } })).map((r) => [
+          r.priorRemoteId,
+          r.folder,
+        ]),
+      );
+      expect(recreatedByPrior.get('p1')).toBe(OLD_FOLDER_PATH_NO_SLASH);
+      expect(recreatedByPrior.get('p3')).toBe(OLD_FOLDER_PATH_NO_SLASH); // other account, never touched
+      const uploadByAccountAndPath = (
+        await prisma.uploadPatchMeta.findMany({ where: { workbookId: fixture.workbookId } })
+      )
+        .map((r) => `${r.connectorAccountId}:${r.filePath}`)
+        .sort();
+      expect(uploadByAccountAndPath).toEqual(
+        [
+          `${fixture.connectorAccountId}:${OLD_FOLDER_PATH_NO_SLASH}/r1.json`,
+          `${fixture.connectorAccountId}:${SIBLING_FOLDER_PATH_NO_SLASH}/r.json`,
+          `${fixture.otherConnectorAccountId}:${OLD_FOLDER_PATH_NO_SLASH}/r1.json`,
+        ].sort(),
+      );
     } finally {
       await cleanUpFixture(fixture);
     }

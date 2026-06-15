@@ -666,4 +666,95 @@ describe('CodeMigrationsController', () => {
       expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
     });
   });
+
+  // The inverse / rollback orchestrator (DEV-9698 T6). Per-folder decisions are
+  // covered in webflow-folder-restructure-inverse-backfill.spec.ts; these pin the
+  // orchestration: nested candidate selection, the quiesce/release wrapper, and the
+  // account flip BACK to v1.
+  describe('runMigration - webflow-folder-restructure-inverse', () => {
+    function seedOneNestedCollection() {
+      const folderRow = {
+        id: 'fld_blog',
+        workbookId: 'wkb_1',
+        connectorAccountId: 'acct_1',
+        name: 'Blog Posts',
+        path: '/My Site/Collections/Blog Posts',
+        version: 2,
+        tableId: ['site-1', 'collection-abc'],
+        workbook: { organizationId: 'org_1' },
+      };
+      dbService.client.dataFolder.findMany = jest
+        .fn()
+        .mockResolvedValueOnce([folderRow]) // ids mode: nested candidate folders
+        .mockResolvedValue([]); // flip count (nested remaining) + remaining count → 0
+      dbService.client.dataFolder.findFirst = jest.fn().mockResolvedValue(null);
+      dbService.client.connectorAccount.findMany = jest.fn().mockResolvedValue([]); // no stuck accounts
+      const txStub = {
+        dataFolder: { update: jest.fn().mockResolvedValue(undefined) },
+        fileIndex: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        syncTablePair: { findMany: jest.fn().mockResolvedValue([]) },
+        recreatedIdMap: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      dbService.client.$transaction = jest
+        .fn()
+        .mockImplementation((cb: (tx: typeof txStub) => Promise<unknown>) =>
+          cb(txStub),
+        ) as unknown as typeof dbService.client.$transaction;
+    }
+
+    it('selects nested (version >= 2) folders as candidates in ids mode', async () => {
+      dbService.client.dataFolder.findMany = jest.fn().mockResolvedValue([]);
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure-inverse',
+        ids: ['wkb_1'],
+      });
+
+      const candidateArgs = (
+        (dbService.client.dataFolder.findMany as jest.Mock).mock.calls as Array<
+          [{ where?: Record<string, unknown>; take?: number }]
+        >
+      )[0][0];
+      expect(candidateArgs.where).toEqual(
+        expect.objectContaining({ version: { gte: 2 }, workbookId: { in: ['wkb_1'] } }),
+      );
+      expect(candidateArgs.take).toBeUndefined();
+      expect(result.migrationName).toBe('webflow-folder-restructure-inverse');
+    });
+
+    it('quiesces and releases the connection around the rollback, then flips it back to v1', async () => {
+      seedOneNestedCollection();
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure-inverse',
+        ids: ['wkb_1'],
+      });
+
+      expect(connectionQuiesceService.quiesceConnection).toHaveBeenCalledWith('wkb_1', 'acct_1');
+      expect(connectionQuiesceService.unquiesceConnection).toHaveBeenCalledWith('wkb_1', 'acct_1');
+      expect(result.migratedIds).toEqual(['fld_blog']);
+      // Flip BACK to v1 (account had no nested collections left after the revert).
+      expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+        where: { id: 'acct_1' },
+        data: { version: 1 },
+      });
+    });
+
+    it('skips an account whose jobs will not drain in time, releasing it without reverting', async () => {
+      seedOneNestedCollection();
+      connectionQuiesceService.quiesceConnection = jest
+        .fn()
+        .mockRejectedValue(new ConnectionDrainTimeoutError('acct_1', 3));
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure-inverse',
+        ids: ['wkb_1'],
+      });
+
+      expect(connectionQuiesceService.unquiesceConnection).toHaveBeenCalledWith('wkb_1', 'acct_1');
+      expect(result.migratedIds).toEqual([]);
+      expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+    });
+  });
 });
