@@ -26,6 +26,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { ExperimentsService } from 'src/experiments/experiments.service';
 import { SystemFeatureFlag } from 'src/experiments/flags';
 import { WSLogger } from 'src/logger';
+import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import { gcsKeyForPatchUpload } from 'src/publish-plan/apply-patches.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
@@ -63,6 +64,7 @@ export class UploadPatchController {
     private readonly scratchGitService: ScratchGitService,
     private readonly experimentsService: ExperimentsService,
     private readonly posthogService: PostHogService,
+    private readonly migrationLockService: MigrationLockService,
   ) {}
 
   @Post('init')
@@ -127,6 +129,12 @@ export class UploadPatchController {
     if (!body.uploadId) throw new BadRequestException('uploadId is required');
     if (!body.connectorAccountId) throw new BadRequestException('connectorAccountId is required');
     const connectorAccountId = body.connectorAccountId;
+
+    // T4 (DEV-9698): refuse the commit outright while this connection is being
+    // migrated to the new folder layout — a patch applied to the dirty branch
+    // during the folder move would orphan records at the old path. Checked before
+    // the dirty gate and before any side effect, so a refusal is clean.
+    await this.migrationLockService.assertConnectionNotMigrating(connectorAccountId);
 
     // DEV-10316 dirty gate. With `refuseIfDirty: true` (sent by updated desktop
     // / `scratchmd files upload`) and the org kill switch enabled, refuse the

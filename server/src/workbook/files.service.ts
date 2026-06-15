@@ -6,6 +6,7 @@ import {
   ValidatedCreateFileDto,
   ValidatedUpdateFileDto,
 } from '@spinner/shared-types';
+import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { DbService } from '../db/db.service';
 import { FileIndexService } from '../publish-plan/file-index.service';
@@ -28,6 +29,7 @@ export class FilesService {
     private readonly schemaHelperService: SchemaHelperService,
     private readonly refCleanerService: RefCleanerService,
     private readonly fileIndexService: FileIndexService,
+    private readonly migrationLockService: MigrationLockService,
   ) {}
 
   /**
@@ -67,10 +69,19 @@ export class FilesService {
     const fullPath = (parentPath === '/' ? '' : parentPath) + '/' + createFileDto.name;
 
     const parentFolderId = createFileDto.parentFolderId;
+    let parentConnectorAccountId: string | null | undefined;
+    if (parentFolderId) {
+      const parentFolder = await this.db.client.dataFolder.findUnique({
+        where: { id: parentFolderId as string },
+        select: { connectorAccountId: true },
+      });
+      parentConnectorAccountId = parentFolder?.connectorAccountId;
+    }
+    // T4: refuse a live edit while the connection is being migrated (a write racing
+    // the folder move would orphan the record at the old path).
+    await this.migrationLockService.assertConnectionNotMigrating(parentConnectorAccountId);
     const repoId = parentFolderId
-      ? await this.db.client.dataFolder
-          .findUnique({ where: { id: parentFolderId as string }, select: { connectorAccountId: true } })
-          .then((df) => this.scratchGitService.resolveConnectionRepoPath(df?.connectorAccountId ?? ''))
+      ? await this.scratchGitService.resolveConnectionRepoPath(parentConnectorAccountId ?? '')
       : await this.scratchGitService.resolveConnectionRepoPath(null as unknown as string); // Will throw, which is correct for V2 root
 
     await this.scratchGitService.commitFile(repoId, fullPath, content, `Create file ${createFileDto.name}`);
@@ -198,6 +209,8 @@ export class FilesService {
       where: { workbookId, path: folderPathRaw || '/' },
       select: { connectorAccountId: true },
     });
+    // T4: refuse a live edit while the connection is being migrated.
+    await this.migrationLockService.assertConnectionNotMigrating(dataFolder?.connectorAccountId);
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId);
     await this.scratchGitService.deleteFile(repoId, [path], `Delete ${path}`);
 
@@ -226,6 +239,8 @@ export class FilesService {
       where: { workbookId, path: folderPath },
       select: { connectorAccountId: true },
     });
+    // T4: refuse a live edit while the connection is being migrated.
+    await this.migrationLockService.assertConnectionNotMigrating(dataFolder?.connectorAccountId);
     const repoId = await this.scratchGitService.resolveConnectionRepoPath(dataFolder?.connectorAccountId);
 
     if (updateFileDto.name) {

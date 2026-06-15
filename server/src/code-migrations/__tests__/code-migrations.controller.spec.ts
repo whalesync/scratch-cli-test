@@ -11,6 +11,7 @@ import { NotionApiClient } from 'src/remote-service/connectors/library/notion/no
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { CodeMigrationsController } from '../code-migrations.controller';
+import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from '../connection-quiesce.service';
 
 const makeReqWithUser = (isAdmin = true) =>
   ({
@@ -35,6 +36,7 @@ describe('CodeMigrationsController', () => {
   let oauthService: jest.Mocked<OAuthService>;
   let auditLogService: jest.Mocked<AuditLogService>;
   let scratchGitService: jest.Mocked<ScratchGitService>;
+  let connectionQuiesceService: jest.Mocked<ConnectionQuiesceService>;
   let metricsService: jest.Mocked<CustomMetricsService>;
 
   beforeEach(() => {
@@ -83,6 +85,11 @@ describe('CodeMigrationsController', () => {
       moveFolder: jest.fn().mockResolvedValue({ moved: true }),
     } as unknown as jest.Mocked<ScratchGitService>;
 
+    connectionQuiesceService = {
+      quiesceConnection: jest.fn().mockResolvedValue({ cancelledPublishPlans: 0, cancelledJobs: 0 }),
+      unquiesceConnection: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<ConnectionQuiesceService>;
+
     metricsService = {
       logValue: jest.fn(),
       withLoggedExecTime: jest.fn(),
@@ -96,6 +103,7 @@ describe('CodeMigrationsController', () => {
       oauthService,
       auditLogService,
       scratchGitService,
+      connectionQuiesceService,
       metricsService,
     );
   });
@@ -587,6 +595,75 @@ describe('CodeMigrationsController', () => {
       // migratedIds or flip it to errored.
       expect(result.migratedIds).toEqual(['fld_blog']);
       expect(txStub.dataFolder.update).toHaveBeenCalledTimes(1);
+    });
+
+    // T4: a non-dry-run wraps each account in a quiesce/release pair and flips the
+    // account only after its folders have moved (while still locked).
+    function seedOneFlatCollection() {
+      const folderRow = {
+        id: 'fld_blog',
+        workbookId: 'wkb_1',
+        connectorAccountId: 'acct_1',
+        name: 'Blog Posts',
+        path: '/My Site/Blog Posts',
+        version: 1,
+        tableId: ['site-1', 'collection-abc'],
+        workbook: { organizationId: 'org_1' },
+      };
+      dbService.client.dataFolder.findMany = jest
+        .fn()
+        .mockResolvedValueOnce([folderRow]) // ids mode: candidate folders
+        .mockResolvedValue([]); // flip count + remaining count → 0 flat left
+      dbService.client.dataFolder.findFirst = jest.fn().mockResolvedValue(null);
+      dbService.client.connectorAccount.findMany = jest.fn().mockResolvedValue([]); // no stuck accounts
+      const txStub = {
+        dataFolder: { update: jest.fn().mockResolvedValue(undefined) },
+        fileIndex: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        syncTablePair: { findMany: jest.fn().mockResolvedValue([]) },
+        recreatedIdMap: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      dbService.client.$transaction = jest
+        .fn()
+        .mockImplementation((cb: (tx: typeof txStub) => Promise<unknown>) =>
+          cb(txStub),
+        ) as unknown as typeof dbService.client.$transaction;
+    }
+
+    it('quiesces and releases the connection around the migration, then flips it to v2', async () => {
+      seedOneFlatCollection();
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure',
+        ids: ['wkb_1'],
+      });
+
+      expect(connectionQuiesceService.quiesceConnection).toHaveBeenCalledWith('wkb_1', 'acct_1');
+      expect(connectionQuiesceService.unquiesceConnection).toHaveBeenCalledWith('wkb_1', 'acct_1');
+      expect(result.migratedIds).toEqual(['fld_blog']);
+      // Flip happens (account had no flat collections left after the move).
+      expect(dbService.client.connectorAccount.update).toHaveBeenCalledWith({
+        where: { id: 'acct_1' },
+        data: { version: 2 },
+      });
+    });
+
+    it('skips an account whose jobs will not drain in time, releasing it without migrating', async () => {
+      seedOneFlatCollection();
+      connectionQuiesceService.quiesceConnection = jest
+        .fn()
+        .mockRejectedValue(new ConnectionDrainTimeoutError('acct_1', 3));
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure',
+        ids: ['wkb_1'],
+      });
+
+      // The connection is still released (not left locked) ...
+      expect(connectionQuiesceService.unquiesceConnection).toHaveBeenCalledWith('wkb_1', 'acct_1');
+      // ... but nothing was migrated or flipped for it this run.
+      expect(result.migratedIds).toEqual([]);
+      expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
     });
   });
 });

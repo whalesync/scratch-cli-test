@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Schedule } from '@prisma/client';
+import { ScheduleAction as PrismaScheduleAction, Schedule } from '@prisma/client';
 import {
   createScheduleId,
   ScheduleAction,
@@ -183,6 +183,114 @@ export class ScheduleService {
       where: { id: scheduleId },
       data: { enabled: false },
     });
+  }
+
+  /**
+   * DEV-9698 (T4) — quiesce step: disable every schedule that targets a
+   * connection so none fires (a scheduled pull / publish / sync racing the
+   * folder move would write to old paths). Stamps `disabledForMigrationAt` so the
+   * restore step re-enables exactly the schedules THIS migration disabled.
+   *
+   * Only schedules that are **currently enabled and not already
+   * migration-disabled** are touched, so it (a) never clobbers a schedule the
+   * user disabled themselves — those keep `disabledForMigrationAt = null` and are
+   * never re-enabled by restore — and (b) is idempotent across re-runs: an
+   * already-migration-disabled schedule keeps its marker untouched. Covers all
+   * three schedule kinds: connection-wide pulls (entityId = ConnectorAccountId),
+   * per-table pull/publish (entityId = DataFolderId), and syncs touching the
+   * connection (entityId = SyncId).
+   */
+  async disableSchedulesForConnectionMigration(workbookId: WorkbookId, connectorAccountId: string): Promise<void> {
+    const scheduleIds = await this.findScheduleIdsForConnection(workbookId, connectorAccountId);
+    if (scheduleIds.length === 0) return;
+
+    await this.db.client.schedule.updateMany({
+      where: { id: { in: scheduleIds }, enabled: true, disabledForMigrationAt: null },
+      data: { enabled: false, disabledForMigrationAt: new Date() },
+    });
+  }
+
+  /**
+   * DEV-9698 (T4) — release step: re-enable the schedules this migration
+   * disabled, recomputing each `nextRunAt` from its cron so it fires on its next
+   * natural tick rather than immediately.
+   *
+   * Driven entirely off the `disabledForMigrationAt` marker (not an in-memory
+   * snapshot), so it is crash-safe: if a run disabled schedules then died before
+   * restoring, a later re-run's restore re-enables exactly the marked schedules.
+   * User-disabled schedules (marker null) are never re-enabled.
+   */
+  async restoreSchedulesForConnectionMigration(workbookId: WorkbookId, connectorAccountId: string): Promise<void> {
+    const scheduleIds = await this.findScheduleIdsForConnection(workbookId, connectorAccountId);
+    if (scheduleIds.length === 0) return;
+
+    const toRestore = await this.db.client.schedule.findMany({
+      where: { id: { in: scheduleIds }, disabledForMigrationAt: { not: null } },
+    });
+    for (const schedule of toRestore) {
+      await this.db.client.schedule.update({
+        where: { id: schedule.id },
+        data: {
+          enabled: true,
+          disabledForMigrationAt: null,
+          nextRunAt: this.computeNextRunAt(schedule.cronExpression),
+        },
+      });
+    }
+  }
+
+  /**
+   * Resolve the ids of every schedule that targets a connection, across the three
+   * polymorphic `entityId` kinds: the ConnectorAccount itself (connection-wide
+   * pulls), each of its linked DataFolders (per-table pull/publish), and each Sync
+   * whose source or destination table belongs to the connection.
+   */
+  private async findScheduleIdsForConnection(workbookId: WorkbookId, connectorAccountId: string): Promise<string[]> {
+    const folders = await this.db.client.dataFolder.findMany({
+      where: { workbookId, connectorAccountId },
+      select: { id: true },
+    });
+    const folderIds = folders.map((folder) => folder.id);
+
+    const syncTablePairs = await this.db.client.syncTablePair.findMany({
+      where: {
+        OR: [{ sourceDataFolder: { connectorAccountId } }, { destinationDataFolder: { connectorAccountId } }],
+      },
+      select: { syncId: true },
+    });
+    const syncIds = [...new Set(syncTablePairs.map((pair) => pair.syncId))];
+
+    const schedules = await this.db.client.schedule.findMany({
+      where: {
+        workbookId,
+        OR: [
+          {
+            action: {
+              in: [PrismaScheduleAction.CONNECTION_FULL_PULL, PrismaScheduleAction.CONNECTION_INCREMENTAL_PULL],
+            },
+            entityId: connectorAccountId,
+          },
+          ...(folderIds.length > 0
+            ? [
+                {
+                  action: {
+                    in: [
+                      PrismaScheduleAction.PULL,
+                      PrismaScheduleAction.FULL_PULL,
+                      PrismaScheduleAction.INCREMENTAL_PULL,
+                      PrismaScheduleAction.PUBLISH,
+                    ],
+                  },
+                  entityId: { in: folderIds },
+                },
+              ]
+            : []),
+          ...(syncIds.length > 0 ? [{ action: PrismaScheduleAction.SYNC, entityId: { in: syncIds } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    return schedules.map((schedule) => schedule.id);
   }
 
   /** Validates that the entityId refers to a valid entity for the given action within the workbook. */

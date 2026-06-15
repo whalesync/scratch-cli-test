@@ -39,6 +39,7 @@ import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { ExperimentsService } from 'src/experiments/experiments.service';
+import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -111,6 +112,10 @@ describe('UploadPatchController (controller-level e2e)', () => {
         { provide: ScratchGitService, useValue: scratchGitService },
         { provide: ExperimentsService, useValue: experimentsService },
         { provide: PostHogService, useValue: posthogService },
+        {
+          provide: MigrationLockService,
+          useValue: { assertConnectionNotMigrating: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     })
       .overrideGuard(ScratchAuthGuard)

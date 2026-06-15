@@ -7,15 +7,15 @@
 
 ## Implementation progress
 
-| Task | Lane | Status | Notes |
-|---|---|---|---|
-| **T3** Connector nested layout + version pin | W1 | ✅ **Done** — merged to master (`263f7ba4`) | New file `webflow-folder-paths.ts`; `BaseJsonTableSpec.structureVersion`; `createFolder` stamps it (no service branch); registration `version: 2`; 13 new tests + 145 webflow tests + typecheck + lint-strict + prettier green. C1 drift-guard test deferred to T2. |
-| **T1** scratch-git `move_folder` | W2 | ✅ **Done** (uncommitted, branch `webflow-support-all-v1`) | New `move-folder` route + `perform_move_folder` core in `write.rs`; `GitRepo::list_blob_paths_under` in `repo.rs`; route registered in `mod.rs`; `moveFolder` on NestJS `scratch-git.client.ts` + `scratch-git.service.ts`. 12 new cargo tests; full crate suite (271+339+417+2+16) green; `cargo fmt` clean. |
-| **T2** Migration | W3 | ✅ **Core done + review-fixed + DB-integration-covered** — merged to master (`f252a269`) | Pure per-folder engine + atomic 7-column rewrite + ordering + account-flip + `dryRun`, wired into `code-migrations` controller as `webflow-folder-restructure`. **Three review fixes applied** (see T2 task block): (1) the 5 record-path columns store **no leading slash** — the executor now matches their no-slash form (was matching the leading-slash form → silently rewrote nothing); (2) every run is now **account-atomic** so a qty-batch split can't wedge a "Collections"-named collection; (3) `logAudit` is best-effort (a post-commit audit failure no longer misreports a migrated folder as errored). 85 code-migrations tests green; typecheck + build (14/14) + lint-strict + prettier clean. **De-risk follow-up (2026-06-14, uncommitted on `webflow-support-all-v1`):** the atomic raw-SQL rewrite was extracted to `webflow-folder-restructure-path-rewrite.ts` (controller now delegates; behavior-identical) and is now covered by a **real-Postgres integration test** (`test/integration/webflow-folder-restructure-db.spec.ts`, 3 tests) that runs the *actual* shipped SQL against seeded rows + decoys — pins #9 dest-side resolution, #10 boundary-prefix safety, dataFolderId/account scoping, the no-leading-slash convention, and `$transaction` atomicity (mid-txn failure rolls back DataFolder too). **Deferred:** the T4 quiesce wrapper, and live-pipeline E2E (publish/sync interleave). Run only on an idle connection until T4 lands. |
-| **T4** Per-connection quiesce | W3 | ⬜ Not started | T2 core ships without it — `webflow-folder-restructure` currently assumes an idle connection. |
-| **T5** Desktop/CLI salvage + re-clone | W4 | ⬜ Not started | P2 |
-| **T6** Inverse/rollback migration | — | ⬜ Not started | P2 |
-| **T7** Pages SEO completeness | — | ⬜ Not started | P2 |
+| Task                                         | Lane | Status                                                                                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------- | ---- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **T3** Connector nested layout + version pin | W1   | ✅ **Done** — merged to master (`263f7ba4`)                                              | New file `webflow-folder-paths.ts`; `BaseJsonTableSpec.structureVersion`; `createFolder` stamps it (no service branch); registration `version: 2`; 13 new tests + 145 webflow tests + typecheck + lint-strict + prettier green. C1 drift-guard test deferred to T2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **T1** scratch-git `move_folder`             | W2   | ✅ **Done** (uncommitted, branch `webflow-support-all-v1`)                               | New `move-folder` route + `perform_move_folder` core in `write.rs`; `GitRepo::list_blob_paths_under` in `repo.rs`; route registered in `mod.rs`; `moveFolder` on NestJS `scratch-git.client.ts` + `scratch-git.service.ts`. 12 new cargo tests; full crate suite (271+339+417+2+16) green; `cargo fmt` clean.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **T2** Migration                             | W3   | ✅ **Core done + review-fixed + DB-integration-covered** — merged to master (`f252a269`) | Pure per-folder engine + atomic 7-column rewrite + ordering + account-flip + `dryRun`, wired into `code-migrations` controller as `webflow-folder-restructure`. **Three review fixes applied** (see T2 task block): (1) the 5 record-path columns store **no leading slash** — the executor now matches their no-slash form (was matching the leading-slash form → silently rewrote nothing); (2) every run is now **account-atomic** so a qty-batch split can't wedge a "Collections"-named collection; (3) `logAudit` is best-effort (a post-commit audit failure no longer misreports a migrated folder as errored). 85 code-migrations tests green; typecheck + build (14/14) + lint-strict + prettier clean. **De-risk follow-up (2026-06-14, uncommitted on `webflow-support-all-v1`):** the atomic raw-SQL rewrite was extracted to `webflow-folder-restructure-path-rewrite.ts` (controller now delegates; behavior-identical) and is now covered by a **real-Postgres integration test** (`test/integration/webflow-folder-restructure-db.spec.ts`, 3 tests) that runs the _actual_ shipped SQL against seeded rows + decoys — pins #9 dest-side resolution, #10 boundary-prefix safety, dataFolderId/account scoping, the no-leading-slash convention, and `$transaction` atomicity (mid-txn failure rolls back DataFolder too). **Deferred:** the T4 quiesce wrapper, and live-pipeline E2E (publish/sync interleave). Run only on an idle connection until T4 lands. |
+| **T4** Per-connection quiesce                | W3   | ✅ **Done** (uncommitted, branch `webflow-support-all-v1`)                               | New `ConnectorAccount.migrationLockedAt` + `Schedule.disabledForMigrationAt` columns (migration `20260615110245`). New `MigrationLockService` (lock/unlock + `assertConnectionNotMigrating` edit gate + `assertEnqueueAllowedForJob` enqueue gate, fast-path no-op) wired into the write paths (files.service CRUD, CLI upload-patch commit) and the single enqueue chokepoint (`BullEnqueuerService.createAndEnqueue`). New `ConnectionQuiesceService` orchestrates acquire (lock → disable+mark schedules → cancel non-terminal PublishPlans → cancel+drain in-flight jobs, waiting for the BullMQ `active` set to clear) and release (restore marked schedules → unlock → `workbook-updated` event). `ScheduleService` disable/restore is **marker-driven → crash-safe** (#11); `PublishPlanBuildService.cancelNonTerminalPlansForConnection`; `JobService.systemCancelJob`/`getNonTerminalJobsForWorkbook`/`getActiveBullJobDatas` drain primitives. `runWebflowFolderRestructure` refactored to **per-account**: quiesce → migrate folders → flip version (while locked) → release in `finally`; a connection that won't drain in time is **released + skipped** (retried later); dryRun skips quiesce. 82 unit + 4 DB-integration tests; `main.spec` (full AppModule boot) green; typecheck + lint-strict + prettier clean. Reusable playbook documented in CONNECTOR_GUIDE.md §9.                                                                                         |
+| **T5** Desktop/CLI salvage + re-clone        | W4   | ⬜ Not started                                                                           | P2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **T6** Inverse/rollback migration            | —    | ⬜ Not started                                                                           | P2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **T7** Pages SEO completeness                | —    | ⬜ Not started                                                                           | P2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ## Problem
 
@@ -62,7 +62,7 @@ Call this out on the ticket — it's a real correctness fix, not only cosmetics.
   workbooks via a migration**, plus a verification pass that Pages **SEO metadata**
   editing is complete.
 - **"Pages content editing" = SEO metadata only.** The Webflow Data API can only
-  write page *body* (DOM) content for **secondary locales** — primary-locale page
+  write page _body_ (DOM) content for **secondary locales** — primary-locale page
   content is Designer-only, no API
   ([Update Page Content](https://developers.webflow.com/data/reference/pages-and-components/pages/update-static-content),
   [Localization](https://developers.webflow.com/data/docs/working-with-localization)).
@@ -185,12 +185,12 @@ orphan a nested folder's DB path.
 
 For the prefix case — a collection literally named **"Collections"** at `/<Site>/Collections`
 moving to `/<Site>/Collections/Collections` — this interacts with sibling moves. Every other
-collection in the site moves *into* `/<Site>/Collections/<Coll>`, so once any sibling has moved,
+collection in the site moves _into_ `/<Site>/Collections/<Coll>`, so once any sibling has moved,
 `list_blob_paths_under("<Site>/Collections")` surfaces those relocated siblings (`Blog/rec.json`,
 `Team/rec.json`, …) as nested paths. `move_folder` then refuses to move the "Collections"
 collection — it looks like a folder containing nested folders.
 
-> T1's prefix handling only excludes blobs already under the *destination*
+> T1's prefix handling only excludes blobs already under the _destination_
 > (`/<Site>/Collections/Collections`); it does **not** exclude sibling collections parked
 > elsewhere under `/<Site>/Collections/`. So the refusal fires unless ordering prevents it.
 
@@ -204,7 +204,7 @@ no-op regardless of order.)
 
 ### Why rewrite, not rebuild (Tension 1 decision)
 
-A folder move changes **paths, not contents**. `FileIndex.folderPath` *is* the folder
+A folder move changes **paths, not contents**. `FileIndex.folderPath` _is_ the folder
 path (key `[workbookId, folderPath, recordId]`, `schema.prisma:496`) → an **exact-match
 `updateMany`**, the precedent at `files.service.ts:417-429`. `FileReference.sourceFilePath`
 is a prefix rewrite (targets are remote IDs — `schema.prisma:506` — so unmoved folders
@@ -220,7 +220,7 @@ reintroduce `recordId` derivation + a dirty-only/main-only branch ambiguity for 
   **prefix-safe, LIKE-escaped** match — `path = old OR path LIKE old || '/%'`, escaping
   `%`/`_` (finding #10; `/Site/Blog` must not match `/Site/Blog Posts`).
 - **Sync side-awareness** (#9): `SyncRemoteIdMapping.destinationFilePath` and
-  `SyncMatchKeys.filePath` rows for a *destination* Webflow folder are keyed by the
+  `SyncMatchKeys.filePath` rows for a _destination_ Webflow folder are keyed by the
   **source** folder's id. Resolve affected rows via `SyncTablePair.destinationDataFolderId`,
   not just `WHERE dataFolderId = migratedFolder.id`.
 - **Compute path from persisted data** (no `metadata` column on `DataFolder`; `tableId`
@@ -291,6 +291,7 @@ expanding this plan if a larger gap appears. No body/DOM content.
 ## Tests
 
 ### Connector unit
+
 - v2 account: collection → `/<Site>/Collections/<Collection>`; Assets/Pages unchanged.
 - v1 account: still flat (version pin).
 - Collection named "Assets"/"Pages" no longer collides.
@@ -298,6 +299,7 @@ expanding this plan if a larger gap appears. No body/DOM content.
 - **(#13)** collection vs Assets/Pages discriminated by `tableId` prefix.
 
 ### Migration unit
+
 - N collections migrate; `DataFolder.version` 1→2; `ConnectorAccount.version` flips to 2
   only after all folders done; Assets/Pages untouched.
 - **(REGRESSION)** `Assets-a3f9c` → clean `/<Site>/Collections/Assets`.
@@ -312,7 +314,7 @@ expanding this plan if a larger gap appears. No body/DOM content.
   committed) converges; partial connection (some folders v2, account still v1) converges.
 - **(Tension 1)** all 6 path columns + version in ONE atomic txn; FileIndex exact-match;
   FileReference prefix rewrite on **both** branches; `dataFolderId`-keyed rows untouched.
-- **(#9)** destination-side sync rows (folder as sync *destination*) rewritten via
+- **(#9)** destination-side sync rows (folder as sync _destination_) rewritten via
   `SyncTablePair.destinationDataFolderId`.
 - **(#10)** prefix-safe rewrite: `/Site/Blog` move does not touch `/Site/Blog Posts`.
 - **(#1)** a non-terminal `PublishPlan` for the connection is cancelled by the migration;
@@ -321,12 +323,14 @@ expanding this plan if a larger gap appears. No body/DOM content.
 - **(A4)** inverse restores paths + flips account v2→1; round-trip converges.
 
 ### scratch-git unit (`write.rs`)
+
 - `move_folder` re-parents on both branches, preserves OIDs, atomic.
 - **(A1)** src absent + dst present → no-op; asymmetric dirty-only / main-only; dirty
   blob ≠ main blob both preserved; missing repo 404 vs pulled-empty 200{files:[]}.
 - **(#8)** src+dst both exist differing → refuse; verify dst empty.
 
 ### Integration / E2E
+
 - **(A3/#6 →E2E)** during a connection's batch: scheduled fire deferred, in-flight job
   drained, enqueued job dequeued, a live web save / `/upload-patch/commit` rejected;
   all succeed after re-enable.
@@ -336,13 +340,16 @@ expanding this plan if a larger gap appears. No body/DOM content.
   no work lost.
 
 ### Client unit
+
 - Intermediate `Collections` node renders as a container (children, no records).
 
 ### Build/lint/typecheck
+
 `yarn build`, `yarn lint`, `yarn lint-strict` (server), `yarn typecheck`; `cargo fmt` +
 `cargo test` (scratch-git-2).
 
 ### Manual
+
 Real Webflow workbook (≥2 collections, one named "Pages", + assets + pages): `dryRun`,
 canary one workbook, then live; verify tree, sync/publish on a migrated collection, and
 the desktop salvage-then-re-clone path.
@@ -351,19 +358,19 @@ the desktop salvage-then-re-clone path.
 
 ## Failure modes
 
-| Codepath | Realistic failure | Test? | Handling | User sees |
-|---|---|---|---|---|
-| pre-migration publish resumes | commits result files to OLD path on main | ✅ #1 | cancel non-terminal plans | nothing |
-| move_folder re-run after crash | `rename`-style throw on missing src | ✅ A1 | no-op contract | nothing |
-| "Collections"-named collection | prefix-of-new → double-move | ✅ #4 | prefix handling | nothing |
-| "Collections"-named collection migrated after its siblings | relocated siblings look nested → `move_folder` refuses it | ✅ Ordering | migrate prefix-case collection first per site | nothing |
-| path recompute drops suffix | re-collision → 2 folders, 1 dir → data loss | ✅ A2 | ensureUniquePath | nothing |
-| live write during migration | orphan at old path | ✅ #6 | drain + block edits | "connection busy" |
-| dest-side sync rows | missed by source-keyed rewrite → broken sync | ✅ #9 | SyncTablePair.destination | nothing |
-| prefix over-match | `/Blog` clobbers `/Blog Posts` | ✅ #10 | LIKE-escaped prefix | nothing |
-| schedule re-enable | clobbers user-disabled schedule | ✅ #11 | persist + repair | prior state kept |
-| stale desktop clone | un-uploaded edits wiped | ✅ #12 | salvage first | re-clone prompt |
-| bad prod batch | irrecoverable in-place move | manual canary | inverse + version flip | — |
+| Codepath                                                   | Realistic failure                                         | Test?         | Handling                                      | User sees         |
+| ---------------------------------------------------------- | --------------------------------------------------------- | ------------- | --------------------------------------------- | ----------------- |
+| pre-migration publish resumes                              | commits result files to OLD path on main                  | ✅ #1         | cancel non-terminal plans                     | nothing           |
+| move_folder re-run after crash                             | `rename`-style throw on missing src                       | ✅ A1         | no-op contract                                | nothing           |
+| "Collections"-named collection                             | prefix-of-new → double-move                               | ✅ #4         | prefix handling                               | nothing           |
+| "Collections"-named collection migrated after its siblings | relocated siblings look nested → `move_folder` refuses it | ✅ Ordering   | migrate prefix-case collection first per site | nothing           |
+| path recompute drops suffix                                | re-collision → 2 folders, 1 dir → data loss               | ✅ A2         | ensureUniquePath                              | nothing           |
+| live write during migration                                | orphan at old path                                        | ✅ #6         | drain + block edits                           | "connection busy" |
+| dest-side sync rows                                        | missed by source-keyed rewrite → broken sync              | ✅ #9         | SyncTablePair.destination                     | nothing           |
+| prefix over-match                                          | `/Blog` clobbers `/Blog Posts`                            | ✅ #10        | LIKE-escaped prefix                           | nothing           |
+| schedule re-enable                                         | clobbers user-disabled schedule                           | ✅ #11        | persist + repair                              | prior state kept  |
+| stale desktop clone                                        | un-uploaded edits wiped                                   | ✅ #12        | salvage first                                 | re-clone prompt   |
+| bad prod batch                                             | irrecoverable in-place move                               | manual canary | inverse + version flip                        | —                 |
 
 No failure mode is left silent-AND-unhandled-AND-untested.
 
@@ -397,12 +404,12 @@ No failure mode is left silent-AND-unhandled-AND-untested.
 
 ## Worktree parallelization strategy
 
-| Step | Modules | Depends on |
-|---|---|---|
-| W1 Connector + shared path helper + version pin | `connectors/library/webflow/`, `connector-registry` | — |
-| W2 scratch-git `move_folder` | `scratch-git-2/src/service/`, `scratch-git/` | — |
-| W3 Migration | `code-migrations/`, `publish-plan/`, `sync/`, `workbook/`, `schedule/` | W1 (helper+pin), W2 (move) |
-| W4 Desktop/CLI salvage + re-clone signal | `scratch-desktop/`, `scratch-git-2/src/cli/` | — |
+| Step                                            | Modules                                                                | Depends on                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------- | -------------------------- |
+| W1 Connector + shared path helper + version pin | `connectors/library/webflow/`, `connector-registry`                    | —                          |
+| W2 scratch-git `move_folder`                    | `scratch-git-2/src/service/`, `scratch-git/`                           | —                          |
+| W3 Migration                                    | `code-migrations/`, `publish-plan/`, `sync/`, `workbook/`, `schedule/` | W1 (helper+pin), W2 (move) |
+| W4 Desktop/CLI salvage + re-clone signal        | `scratch-desktop/`, `scratch-git-2/src/cli/`                           | —                          |
 
 ```
 Lane A: W1 ─┐
@@ -443,17 +450,28 @@ dirs across parallel lanes → no conflict flags.
     2. **qty-batch-split ordering wedge.** Per-batch sorting only guaranteed "Collections"-first within one fetched batch; a qty split could migrate a sibling first in an earlier batch, after which `move_folder` refuses the `/<Site>/Collections` collection forever → account never flips. **Fixed:** every run is now **account-atomic** — `ids` mode targets whole workbooks (⊇ whole accounts); `qty` mode takes `qty` oldest rows as a SEED then expands to each seeded account's full candidate set. 2 new controller tests pin this.
     3. **Audit failure misreported a migrated folder as errored.** `logAudit` runs AFTER the version-2 commit point; an unguarded `logEvent` throw rethrew out of the per-folder function → the orchestrator's catch flipped an already-migrated folder to `errored` and dropped it from `migratedIds`. **Fixed:** the `logAudit` dep now try/catches + warns + swallows (mirrors `buildSyncMappingV2BackfillDeps`). 1 new controller test (folder migrated despite a failing audit write).
   - Verify: `webflow-folder-restructure-backfill.spec.ts` (**44 tests** — path computation; **C1 drift-guard**; #13 discriminator; #10 prefix-safety on the **no-leading-slash** form; A2 re-suffix; ordering; idempotency; repo-missing/bad-shape skips; dry-run) + 3 `code-migrations.controller.spec.ts` orchestration tests (account-atomic ×2, best-effort-audit ×1). Full `code-migrations` suite **85 green**; typecheck + build (14/14) + `lint-strict` + prettier clean.
-  - **DB-integration coverage landed (2026-06-14):** the atomic executor was extracted from the controller into an exported `applyWebflowFolderMovePathRewrite(prisma, input)` (`webflow-folder-restructure-path-rewrite.ts`; the controller now delegates, behavior-identical, so the SQL is a first-class testable unit that can't drift from a test copy) and exercised against **real Postgres** in `test/integration/webflow-folder-restructure-db.spec.ts` (3 tests). It seeds the full FK chain (org → workbook → account → folders → sync → table pair) plus a row in each of the 7 rewritten tables with deliberate decoys, runs the shipped SQL, and asserts: all 7 columns rewrite correctly; #9 dest-side rows resolve via `SyncTablePair.destinationDataFolderId` (a row keyed by the migrated folder *as source* is left untouched); #10 boundary-prefix safety (`My Site/Blog` never touches `My Site/Blog Posts`); `SyncMatchKeys` `dataFolderId`-scoping + `RecreatedIdMap`/`UploadPatchMeta` `connectorAccountId`-scoping; the no-leading-slash convention; idempotent re-apply (no double-nest); and `$transaction` atomicity (a forced mid-txn unique violation rolls the `DataFolder` path+version back). The Jest-mocked-`$transaction` gap the controller spec couldn't reach is now closed.
+  - **DB-integration coverage landed (2026-06-14):** the atomic executor was extracted from the controller into an exported `applyWebflowFolderMovePathRewrite(prisma, input)` (`webflow-folder-restructure-path-rewrite.ts`; the controller now delegates, behavior-identical, so the SQL is a first-class testable unit that can't drift from a test copy) and exercised against **real Postgres** in `test/integration/webflow-folder-restructure-db.spec.ts` (3 tests). It seeds the full FK chain (org → workbook → account → folders → sync → table pair) plus a row in each of the 7 rewritten tables with deliberate decoys, runs the shipped SQL, and asserts: all 7 columns rewrite correctly; #9 dest-side rows resolve via `SyncTablePair.destinationDataFolderId` (a row keyed by the migrated folder _as source_ is left untouched); #10 boundary-prefix safety (`My Site/Blog` never touches `My Site/Blog Posts`); `SyncMatchKeys` `dataFolderId`-scoping + `RecreatedIdMap`/`UploadPatchMeta` `connectorAccountId`-scoping; the no-leading-slash convention; idempotent re-apply (no double-nest); and `$transaction` atomicity (a forced mid-txn unique violation rolls the `DataFolder` path+version back). The Jest-mocked-`$transaction` gap the controller spec couldn't reach is now closed.
   - **Deferred:** the per-connection **quiesce wrapper (T4)** — cancel non-terminal PublishPlans, drain/dequeue jobs, block live edits, persist+restore schedule state; and **live-pipeline E2E** (publish/sync interleaved with a migration batch). Until T4, run `webflow-folder-restructure` only on an idle connection.
 - [x] **T3 (P1, human: ~4h / CC: ~20min)** — connector — version-pinned nested basePath + shared helper + tableSpec structure version ✅ **Done** (uncommitted)
   - Surfaced by: Phase 0 + C1 + #7/#13/#14 — `webflowCollectionBasePath`, version pin, tableId discriminator
   - Files (actual): **new** `connectors/library/webflow/webflow-folder-paths.ts` (C1 single-source helper + `WEBFLOW_COLLECTIONS_FOLDER_SEGMENT` + `WEBFLOW_NESTED_STRUCTURE_VERSION`); `webflow-json-schema.ts` (3 builders take `structureVersion`); `webflow-connector.ts` (stores `structureVersion` from `ctx.connectorAccount.version`, registration `version: 2`); `webflow-schema-parser.ts` (`parseTablePreview` picker grouping); `connectors/types.ts` (`BaseJsonTableSpec.structureVersion`); `workbook/data-folder.service.ts` (`version: tableSpec.structureVersion ?? 1`, no service branch); `connectors/display-names.ts` (de-stale `getConnectorCurrentVersion` docstring now that Webflow registers v2)
   - Verify: connector unit (v1 flat / v2 nested, discriminator, "Assets"/"Pages"-named no collision, picker grouping) — `webflow-folder-structure.spec.ts`, 13 tests; full webflow suite 145 green; typecheck + lint-strict + prettier clean. Confirmed `getConnectorCurrentVersion → registration.version` snapshots `2` onto new accounts.
   - ~~**Deferred to T2**: the C1 drift-guard test (connector v2 path == migration recomputed path)~~ ✅ **landed in T2** (`webflow-folder-restructure-backfill.spec.ts`, the "C1 drift guard" describe block) — and hardened beyond a test: `buildConnectorFolderPath` and the migration now share `escapeConnectorFolderPathSegment` + `WEBFLOW_COLLECTIONS_FOLDER_SEGMENT`, so they can't drift by construction.
-- [ ] **T4 (P1, human: ~1.5d / CC: ~40min)** — server — per-connection quiesce: drain + dequeue + block edits + cancel publish plans + persist schedule state
+- [x] **T4 (P1, human: ~1.5d / CC: ~40min)** — server — per-connection quiesce: drain + dequeue + block edits + cancel publish plans + persist schedule state ✅ **Done** (uncommitted, branch `webflow-support-all-v1`)
   - Surfaced by: A3, #1, #6, #11
-  - Files: `server/src/schedule/`, `publish-plan/`, pull/publish/sync + `/upload-patch/commit` entry points
-  - Verify: integration (op rejected during batch, ok after; schedule state repaired)
+  - Files (actual):
+    - `server/prisma/schema.prisma` + migration `20260615110245_webflow_quiesce_connection_locks` — **new** `ConnectorAccount.migrationLockedAt DateTime?` (+ index) and `Schedule.disabledForMigrationAt DateTime?`.
+    - **new** `migration-lock/migration-lock.service.ts` + `.module.ts` — lightweight `MigrationLockService` (DbService-only): `lockConnection`/`unlockConnection`/`isConnectionMigrating`; `assertConnectionNotMigrating` (edit gate, 409 `blocked_migrating`); `assertEnqueueAllowedForJob` (enqueue gate with fast-path no-op + job→account resolution reused by the drain). Shared DTO `ConnectionMigratingBlockedResponseDto`.
+    - **new** `code-migrations/connection-quiesce.service.ts` — `ConnectionQuiesceService.quiesceConnection` (lock → disable schedules → cancel publish plans → drain) / `unquiesceConnection` (restore schedules → unlock → `workbook-updated` event) + `ConnectionDrainTimeoutError`. Drain cancels matching non-terminal jobs then waits for the BullMQ `active` set to clear.
+    - `schedule/schedule.service.ts` — `disableSchedulesForConnectionMigration` / `restoreSchedulesForConnectionMigration` (marker-driven, crash-safe; all 3 schedule kinds).
+    - `publish-plan/publish-plan-build.service.ts` — `cancelNonTerminalPlansForConnection`.
+    - `job/job.service.ts` — `getNonTerminalJobsForWorkbook`, `systemCancelJob` (bypasses per-actor check; removes waiting jobs), `getActiveBullJobDatas`.
+    - `worker-enqueuer/bull-enqueuer.service.ts` — enqueue gate in the `createAndEnqueue` chokepoint (next to the pending-delete guard, DeleteWorkbook exempt).
+    - `workbook/files.service.ts` (create/update/delete) + `cli/upload-patch.controller.ts` (commit) — edit gates.
+    - `code-migrations/code-migrations.controller.ts` — `runWebflowFolderRestructure` refactored **per-account**: quiesce → migrate folders → flip version (while locked) → release in `finally`; drain-timeout ⇒ release + skip the account; dryRun skips quiesce. Descriptor updated. Module wires the new deps.
+  - **Decisions (confirmed):** dedicated lock column (not `extras`); gate blocks edits **and** enqueues; in-flight jobs **cancelled** (resumable); schedule restore via marker column (crash-safe); **no auto-TTL** on the lock; drain-timeout ⇒ **abort-and-skip** the account.
+  - Verify: 82 unit tests (`migration-lock.service.spec` + `connection-quiesce.service.spec` + `schedule.service.connection-migration.spec` + 2 new `code-migrations.controller.spec` quiesce-wrapping/abort-skip + fixed existing specs) + **4 DB-integration** (`test/integration/connection-quiesce-db.spec.ts`: lock gate + schedule disable/restore + crash-repair re-run, real Postgres). `main.spec` (full AppModule DI boot) green; typecheck + `lint-strict` + prettier clean.
+  - **Reusable playbook** documented in `CONNECTOR_GUIDE.md` §9 (version-pin → code-migrations idempotency/crash-safety → per-connection quiesce → local-checkout re-clone).
 - [ ] **T5 (P2, human: ~1.5d / CC: ~40min)** — desktop/CLI — salvage un-uploaded work, then forced re-clone on structure mismatch
   - Surfaced by: Client/desktop, #12, #16, #17
   - Files: `scratch-desktop/`, `scratch-git-2/src/cli/`, workbook event emit
@@ -482,13 +500,13 @@ dirs across parallel lanes → no conflict flags.
 
 ## GSTACK REVIEW REPORT
 
-| Review | Trigger | Why | Runs | Status | Findings |
-|--------|---------|-----|------|--------|----------|
-| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | not run (scope already set with maintainer) |
-| Outside Voice | Claude Fable 5 | Independent 2nd opinion | 1 | ISSUES_FOUND | 17 findings, all folded in |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR (PLAN) | 16 issues, 0 critical gaps, all resolved |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | minimal UI (generic tree render) |
-| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | not run |
+| Review        | Trigger               | Why                             | Runs | Status       | Findings                                    |
+| ------------- | --------------------- | ------------------------------- | ---- | ------------ | ------------------------------------------- |
+| CEO Review    | `/plan-ceo-review`    | Scope & strategy                | 0    | —            | not run (scope already set with maintainer) |
+| Outside Voice | Claude Fable 5        | Independent 2nd opinion         | 1    | ISSUES_FOUND | 17 findings, all folded in                  |
+| Eng Review    | `/plan-eng-review`    | Architecture & tests (required) | 1    | CLEAR (PLAN) | 16 issues, 0 critical gaps, all resolved    |
+| Design Review | `/plan-design-review` | UI/UX gaps                      | 0    | —            | minimal UI (generic tree render)            |
+| DX Review     | `/plan-devex-review`  | Developer experience gaps       | 0    | —            | not run                                     |
 
 - **OUTSIDE VOICE (Claude Fable 5):** found 17 findings including **2 cross-model
   tensions** — (1) rebuild vs rewrite of FileIndex/FileReference, (2) feature flag vs

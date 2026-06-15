@@ -6,6 +6,7 @@ import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { Progress } from 'src/types/progress';
 import { RunContext } from 'src/worker/jobs/base-types';
+import type { JobData } from 'src/worker/jobs/union-types';
 import { DbService } from '../db/db.service';
 import { hasWorkspacePermissions } from '../users/permissions';
 import { Actor } from '../users/types';
@@ -403,5 +404,76 @@ export class JobService {
       success: true,
       message: `Job ${jobId} has been canceled`,
     };
+  }
+
+  /**
+   * DEV-9698 (T4) — the non-terminal (`created` / `active`) jobs for a workbook.
+   * The quiesce job-drain fetches these, scopes them down to the connection being
+   * migrated (via `MigrationLockService.resolveConnectorAccountIdsForJob`), cancels
+   * the matching ones, and polls this until the connection has none left.
+   */
+  async getNonTerminalJobsForWorkbook(workbookId: string): Promise<DbJob[]> {
+    return this.db.client.dbJob.findMany({
+      where: { workbookId, status: { in: ['created', 'active'] } },
+    });
+  }
+
+  /**
+   * DEV-9698 (T4) — the `data` of every job BullMQ is currently *running*
+   * (`active` state). The quiesce drain polls this after cancelling: a cancelled
+   * job's worker keeps executing until it reaches its next abort checkpoint, so
+   * the migration must wait for the connection's `active` set to clear (not merely
+   * for the DB status to flip) before moving folders. Reads the live BullMQ state,
+   * not the DB, so it reflects whether the worker has actually stopped.
+   */
+  async getActiveBullJobDatas(): Promise<JobData[]> {
+    const queue = new Queue('worker-queue', { connection: this.getRedis() });
+    try {
+      const activeJobs = await queue.getJobs(['active']);
+      return activeJobs.map((job) => job.data as JobData);
+    } finally {
+      await queue.close();
+    }
+  }
+
+  /**
+   * DEV-9698 (T4) — system-level cancel of a single job, bypassing the per-actor
+   * access check in {@link cancelJob} (callers are already privileged — the drain
+   * runs inside the admin-gated migration). Marks the DB row canceled, signals a
+   * running worker to abort via the fast-path pub/sub channel, AND removes the job
+   * from the BullMQ queue if it is still waiting/delayed so a worker can't pick it
+   * up after the connection is locked. Idempotent: a job already terminal is a no-op.
+   */
+  async systemCancelJob(dbJob: DbJob): Promise<void> {
+    if (['completed', 'failed', 'canceled'].includes(dbJob.status)) return;
+
+    const now = new Date();
+    await this.db.client.dbJob.update({
+      where: { id: dbJob.id },
+      data: { status: 'canceled', cancelRequestedAt: now, finishedOn: now, error: 'Canceled by connection migration' },
+    });
+
+    if (!dbJob.bullJobId) return;
+
+    const queue = new Queue('worker-queue', { connection: this.getRedis() });
+    try {
+      const job = await queue.getJob(dbJob.bullJobId);
+      if (!job) return;
+      const state = await job.getState();
+      if (state === 'completed' || state === 'failed') return;
+
+      if (state === 'active') {
+        // Running — signal the worker to abort at its next checkpoint (it can't be removed mid-run).
+        await this.getRedis().publish(
+          `job-cancel:${dbJob.bullJobId}`,
+          JSON.stringify({ action: 'cancel', jobId: dbJob.bullJobId }),
+        );
+      } else {
+        // Waiting / delayed / prioritized — remove it so no worker ever starts it.
+        await job.remove();
+      }
+    } finally {
+      await queue.close();
+    }
   }
 }

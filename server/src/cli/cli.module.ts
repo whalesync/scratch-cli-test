@@ -7,6 +7,7 @@ import { DbModule } from 'src/db/db.module';
 import { ExperimentsModule } from 'src/experiments/experiments.module';
 import { JobModule } from 'src/job/job.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
+import { MigrationLockModule } from 'src/migration-lock/migration-lock.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
 import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
@@ -42,6 +43,7 @@ import { UploadPatchController } from './upload-patch.controller';
     PublishPlanModule,
     AssetModule,
     AuditLogModule,
+    MigrationLockModule,
   ],
   controllers: [
     CliAuthController,

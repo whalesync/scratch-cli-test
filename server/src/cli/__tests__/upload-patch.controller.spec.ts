@@ -14,6 +14,7 @@ import type { RequestWithUser } from 'src/auth/types';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { ExperimentsService } from 'src/experiments/experiments.service';
+import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { PostHogEventName, PostHogService } from 'src/posthog/posthog.service';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import type { RepoId } from 'src/scratch-git/scratch-git.service';
@@ -60,6 +61,7 @@ describe('UploadPatchController', () => {
   let scratchGitService: jest.Mocked<ScratchGitService>;
   let experimentsService: jest.Mocked<ExperimentsService>;
   let posthogService: jest.Mocked<PostHogService>;
+  let migrationLockService: jest.Mocked<MigrationLockService>;
 
   beforeEach(() => {
     workbookService = {
@@ -98,6 +100,10 @@ describe('UploadPatchController', () => {
       captureEvent: jest.fn(),
     } as unknown as jest.Mocked<PostHogService>;
 
+    migrationLockService = {
+      assertConnectionNotMigrating: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<MigrationLockService>;
+
     controller = new UploadPatchController(
       workbookService,
       objectStorageService,
@@ -107,6 +113,7 @@ describe('UploadPatchController', () => {
       scratchGitService,
       experimentsService,
       posthogService,
+      migrationLockService,
     );
   });
 

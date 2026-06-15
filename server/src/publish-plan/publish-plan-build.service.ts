@@ -148,6 +148,36 @@ export class PublishPlanBuildService {
   }
 
   /**
+   * DEV-9698 (T4) — quiesce step: cancel every non-terminal publish plan for a
+   * connection so a resumed plan can't commit result files to the OLD folder
+   * paths after the folder move (finding #1). Sets the status to `Canceled` (the
+   * plan can be re-planned from scratch afterward); terminal plans
+   * (completed / completed-with-errors / failed / canceled) are left untouched, so
+   * this is idempotent and safe to re-run. Returns the number of plans cancelled.
+   *
+   * Note this only flips plan *status*; an already-running publish *job* is stopped
+   * separately by the job-drain step (a running batch commits even after the plan
+   * is cancelled, since it does not re-check status mid-batch).
+   */
+  async cancelNonTerminalPlansForConnection(connectorAccountId: string): Promise<number> {
+    const result = await this.db.client.publishPlan.updateMany({
+      where: {
+        connectorAccountId,
+        status: {
+          notIn: [
+            PublishPlanStatus.Completed,
+            PublishPlanStatus.CompletedWithErrors,
+            PublishPlanStatus.Failed,
+            PublishPlanStatus.Canceled,
+          ],
+        },
+      },
+      data: { status: PublishPlanStatus.Canceled },
+    });
+    return result.count;
+  }
+
+  /**
    * Like `getRepoStatus`, but treats a not-yet-created repo (scratch-git 404)
    * as "no changes" instead of throwing. A connection whose repo has never been
    * pulled has nothing to publish — the status controller already handles this

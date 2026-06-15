@@ -5,6 +5,7 @@ import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
 import { EmailModule } from 'src/email/email.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
+import { MigrationLockModule } from 'src/migration-lock/migration-lock.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { RedisModule } from 'src/redis/redis.module';
@@ -45,6 +46,7 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     PublishPlanModule,
     WorkbookEventModule,
     EmailModule,
+    MigrationLockModule,
   ],
   controllers: [WorkbookController, FilesController, FilesPublicController, DataFolderController],
   providers: [

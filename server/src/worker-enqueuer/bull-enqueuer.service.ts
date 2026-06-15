@@ -6,6 +6,7 @@ import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
+import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { Actor } from 'src/users/types';
 import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
@@ -26,6 +27,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     private readonly configService: ScratchConfigService,
     private readonly jobService: JobService,
     private readonly dbService: DbService,
+    private readonly migrationLockService: MigrationLockService,
   ) {
     if (configService.getUseJobs()) {
       this.redis = new IORedis({
@@ -342,6 +344,14 @@ export class BullEnqueuerService implements OnModuleDestroy {
     // delete-workbook job itself bypasses this check (it's the worker draining the workbook).
     if (params.workbookId && data.type !== JobType.DeleteWorkbook) {
       await this.assertWorkbookNotPendingDelete(params.workbookId as WorkbookId);
+    }
+
+    // T4 (DEV-9698): do not enqueue work that touches a connection being migrated —
+    // it would re-create activity the quiesce just drained, racing the folder move.
+    // Fast-path no-op when nothing is locked (the common case). DeleteWorkbook is a
+    // workbook-level drain and is exempt for the same reason as above.
+    if (data.type !== JobType.DeleteWorkbook) {
+      await this.migrationLockService.assertEnqueueAllowedForJob(data);
     }
 
     const dbJob = await this.jobService.createJob(params);

@@ -30,6 +30,7 @@ function makeSchedule(overrides: Partial<Schedule> = {}): Schedule {
     entityId: ENTITY_ID,
     cronExpression: '0 * * * *',
     enabled: true,
+    disabledForMigrationAt: null,
     nextRunAt: new Date('2025-01-01T00:00:00Z'),
     lastTriggeredAt: null,
     createdAt: new Date('2025-01-01T00:00:00Z'),

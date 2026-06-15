@@ -40,6 +40,7 @@ import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
 import { ScratchAuthGuard } from '../auth/scratch-auth.guard';
 import type { RequestWithUser } from '../auth/types';
 import { DbService } from '../db/db.service';
+import { ConnectionDrainTimeoutError, ConnectionQuiesceService } from './connection-quiesce.service';
 import { RunMigrationDto } from './dto/code-migrations.dto';
 import {
   accumulate,
@@ -107,8 +108,10 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
       'UploadPatchMeta) in one atomic transaction per folder. Assets and Pages folders are left ' +
       'untouched. Flips ConnectorAccount.version to 2 once an account has no flat collection folders ' +
       'left. Supports dryRun. Idempotent — re-runs skip folders already at version 2. ' +
-      'NOTE: this build does NOT yet quiesce a connection (drain jobs / block live edits / cancel ' +
-      'publish plans) — that lands with T4; run it on an idle connection until then.',
+      'Each connection is quiesced for the duration of its migration (T4): schedules disabled, ' +
+      'non-terminal publish plans cancelled, in-flight jobs drained, and live edits + new job ' +
+      'enqueues blocked with a 409; a connection too busy to drain in time is skipped and retried ' +
+      'on a later run.',
   },
 ];
 
@@ -132,6 +135,7 @@ export class CodeMigrationsController {
     private readonly oauthService: OAuthService,
     private readonly auditLogService: AuditLogService,
     private readonly scratchGitService: ScratchGitService,
+    private readonly connectionQuiesceService: ConnectionQuiesceService,
     @Inject(CustomMetricsService) private readonly metricsService: CustomMetricsService,
   ) {}
 
@@ -614,45 +618,155 @@ export class CodeMigrationsController {
       });
     }
 
-    // Order so a collection literally named "Collections" migrates before its
-    // siblings (otherwise move_folder refuses it once siblings have relocated).
-    const orderedFolders = sortWebflowCollectionFoldersForSafeMoveOrder(foldersToMigrate);
+    // Group candidate folders by connector account, keeping each account's
+    // workbookId. The migration is processed ONE ACCOUNT AT A TIME, each wrapped
+    // in a quiesce/release pair (T4), because the lock + schedule-disable +
+    // publish-cancel + job-drain are all per-connection.
+    const foldersByConnectorAccount = new Map<
+      string,
+      { workbookId: string; folders: WebflowCollectionFolderToMigrate[] }
+    >();
+    for (const folder of foldersToMigrate) {
+      const entry = foldersByConnectorAccount.get(folder.connectorAccountId) ?? {
+        workbookId: folder.workbookId,
+        folders: [],
+      };
+      entry.folders.push(folder);
+      foldersByConnectorAccount.set(folder.connectorAccountId, entry);
+    }
 
-    for (const folder of orderedFolders) {
-      let result: WebflowCollectionFolderMigrationResult;
-      try {
-        result = await migrateWebflowCollectionFolder(folder, deps);
-      } catch (error) {
-        // A failure on one folder (git move, DB txn) must not abort the batch —
-        // the folder stays v1 and a re-run retries it; idempotency makes the
-        // retry safe.
-        result = { kind: 'errored', error };
-      }
-      accumulateWebflowFolderRestructure(summary, result);
-      this.logger.log(`webflow-folder-restructure: folder ${folder.id} (${folder.name}) → ${result.kind}`);
-      if (result.kind === 'migrated') {
-        migratedIds.push(folder.id);
-      } else if (result.kind === 'errored') {
-        this.logger.warn(`webflow-folder-restructure: folder ${folder.id} errored: ${String(result.error)}`);
+    // In `ids` mode, also process in-scope Webflow accounts still at v1 that have
+    // NO candidate folders — these were fully moved but never flipped (a crash
+    // before the version flip). Including them (with an empty folder list) lets the
+    // per-account block below quiesce + flip them, repairing the crash. `qty` mode
+    // is left out (it would require an unbounded scan); such stragglers are repaired
+    // by a later `ids`-targeted run.
+    if (!dryRun && targetingSpecificWorkbooks) {
+      const inScopeFlatAccounts = await this.db.client.connectorAccount.findMany({
+        where: {
+          service: Service.WEBFLOW,
+          version: { lt: WEBFLOW_NESTED_STRUCTURE_VERSION },
+          workbookId: { in: dto.ids },
+        },
+        select: { id: true, workbookId: true },
+      });
+      for (const account of inScopeFlatAccounts) {
+        if (!foldersByConnectorAccount.has(account.id)) {
+          foldersByConnectorAccount.set(account.id, { workbookId: account.workbookId, folders: [] });
+        }
       }
     }
 
-    // Q4: flip ConnectorAccount.version to 2 for every in-scope Webflow account
-    // whose flat collection folders are now all migrated. Re-checks fresh DB
-    // state, so it also repairs an account left unflipped by an earlier crashed
-    // run. Skipped entirely in dry-run.
-    const flippedAccountIds = dryRun
-      ? []
-      : await this.flipFullyMigratedWebflowAccounts(targetingSpecificWorkbooks ? dto.ids : undefined);
+    const flippedAccountIds: string[] = [];
+    const skippedBusyAccountIds: string[] = [];
+
+    // Stable account order so a run is deterministic and re-runs converge.
+    const connectorAccountEntries = [...foldersByConnectorAccount.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+
+    for (const [connectorAccountId, { workbookId, folders }] of connectorAccountEntries) {
+      // Order so a collection literally named "Collections" migrates before its
+      // siblings (otherwise move_folder refuses it once siblings have relocated).
+      const orderedFolders = sortWebflowCollectionFoldersForSafeMoveOrder(folders);
+
+      // Dry-run: no quiesce, no flip — just report each folder's would-be move.
+      if (dryRun) {
+        for (const folder of orderedFolders) {
+          const result = await this.migrateOneWebflowFolder(folder, deps);
+          accumulateWebflowFolderRestructure(summary, result);
+          if (result.kind === 'migrated') migratedIds.push(folder.id);
+        }
+        continue;
+      }
+
+      // Quiesce (acquire). A connection too busy to drain in time is released and
+      // SKIPPED this run rather than migrated unsafely — a later run retries it.
+      try {
+        await this.connectionQuiesceService.quiesceConnection(workbookId, connectorAccountId);
+      } catch (error) {
+        await this.connectionQuiesceService
+          .unquiesceConnection(workbookId, connectorAccountId)
+          .catch((releaseError) => {
+            this.logger.warn(
+              `webflow-folder-restructure: failed to release connection ${connectorAccountId} after a quiesce error: ${String(releaseError)}`,
+            );
+          });
+        if (error instanceof ConnectionDrainTimeoutError) {
+          skippedBusyAccountIds.push(connectorAccountId);
+          this.logger.warn(`webflow-folder-restructure: ${error.message}`);
+          continue;
+        }
+        throw error;
+      }
+
+      try {
+        for (const folder of orderedFolders) {
+          const result = await this.migrateOneWebflowFolder(folder, deps);
+          accumulateWebflowFolderRestructure(summary, result);
+          this.logger.log(`webflow-folder-restructure: folder ${folder.id} (${folder.name}) → ${result.kind}`);
+          if (result.kind === 'migrated') {
+            migratedIds.push(folder.id);
+          } else if (result.kind === 'errored') {
+            this.logger.warn(`webflow-folder-restructure: folder ${folder.id} errored: ${String(result.error)}`);
+          }
+        }
+
+        // Flip the account to v2 once all its flat collection folders are gone —
+        // BEFORE the release restores schedules and unlocks, so a restored schedule
+        // can't fire a v1-layout pull that re-creates the flat folders we just moved.
+        const remainingFlatCollections = await this.countFlatWebflowCollectionFoldersForAccount(connectorAccountId);
+        if (remainingFlatCollections === 0) {
+          await this.db.client.connectorAccount.update({
+            where: { id: connectorAccountId },
+            data: { version: WEBFLOW_NESTED_STRUCTURE_VERSION },
+          });
+          flippedAccountIds.push(connectorAccountId);
+          this.logger.log(
+            `webflow-folder-restructure: flipped ConnectorAccount ${connectorAccountId} → v${WEBFLOW_NESTED_STRUCTURE_VERSION}`,
+          );
+        }
+      } finally {
+        // Release UNCONDITIONALLY, even on a partial-folder failure that left the
+        // account at v1 (some folders moved, one errored, so no flip above). The
+        // tree is then transiently MIXED (some v2-nested, some v1-flat) until a
+        // re-run finishes it — but this is safe because a pull never rewrites
+        // `DataFolder.path`: a connection-wide pull fans out to the account's
+        // EXISTING folders by id and writes records at each folder's STORED path
+        // (`pull-linked-folder-files.job.ts` updates only `lock`/watermark fields),
+        // so a restored v1 schedule can't revert an already-moved folder. We do NOT
+        // hold schedules disabled on a non-flip: a folder that can NEVER migrate
+        // (a permanent bad-path shape, or a `repo_missing` folder picked but never
+        // pulled) would otherwise wedge the connection's schedules off forever.
+        // ⚠️ If pull is ever changed to recompute a folder's path from the account
+        // version, revisit this — the mixed window would then become a real revert.
+        await this.connectionQuiesceService.unquiesceConnection(workbookId, connectorAccountId);
+      }
+    }
 
     const remainingCount = await this.countRemainingFlatWebflowCollectionFolders();
 
     this.logger.log(
       `${migrationName} complete${dryRun ? ' (dry-run)' : ''}: ${JSON.stringify(summary)}; ` +
-        `flippedAccounts=${flippedAccountIds.length}; remaining=${remainingCount}`,
+        `flippedAccounts=${flippedAccountIds.length}; skippedBusyAccounts=${skippedBusyAccountIds.length}; ` +
+        `remaining=${remainingCount}`,
     );
 
     return { migratedIds, remainingCount, migrationName };
+  }
+
+  /**
+   * Run one folder's migration, converting a thrown error into an `errored`
+   * result so a single folder failure (git move, DB txn) never aborts the batch —
+   * the folder stays v1 and a re-run retries it (idempotency makes the retry safe).
+   */
+  private async migrateOneWebflowFolder(
+    folder: WebflowCollectionFolderToMigrate,
+    deps: WebflowFolderRestructureDeps,
+  ): Promise<WebflowCollectionFolderMigrationResult> {
+    try {
+      return await migrateWebflowCollectionFolder(folder, deps);
+    } catch (error) {
+      return { kind: 'errored', error };
+    }
   }
 
   /**
@@ -718,40 +832,6 @@ export class CodeMigrationsController {
         }
       },
     };
-  }
-
-  /**
-   * Flip `ConnectorAccount.version` to 2 for every in-scope Webflow account whose
-   * flat CMS collection folders are all migrated (none remain at version < 2).
-   * `workbookIdsInScope` bounds the check to the targeted workbooks in `ids` mode;
-   * `undefined` (qty mode) considers every Webflow account still on v1, which also
-   * repairs an account left unflipped by an earlier crashed run.
-   */
-  private async flipFullyMigratedWebflowAccounts(workbookIdsInScope: string[] | undefined): Promise<string[]> {
-    const accounts = await this.db.client.connectorAccount.findMany({
-      where: {
-        service: Service.WEBFLOW,
-        version: { lt: WEBFLOW_NESTED_STRUCTURE_VERSION },
-        ...(workbookIdsInScope ? { workbookId: { in: workbookIdsInScope } } : {}),
-      },
-      select: { id: true },
-    });
-
-    const flippedAccountIds: string[] = [];
-    for (const account of accounts) {
-      const remainingFlatCollections = await this.countFlatWebflowCollectionFoldersForAccount(account.id);
-      if (remainingFlatCollections === 0) {
-        await this.db.client.connectorAccount.update({
-          where: { id: account.id },
-          data: { version: WEBFLOW_NESTED_STRUCTURE_VERSION },
-        });
-        flippedAccountIds.push(account.id);
-        this.logger.log(
-          `webflow-folder-restructure: flipped ConnectorAccount ${account.id} → v${WEBFLOW_NESTED_STRUCTURE_VERSION}`,
-        );
-      }
-    }
-    return flippedAccountIds;
   }
 
   /** Count flat (`version < 2`) Webflow CMS collection folders for one account. */

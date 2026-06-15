@@ -154,11 +154,17 @@ model ConnectorAccount {
   modifier                  String? // ID of the custom connector or other modifier entity
   extras                    Json? // Additional service-specific configuration
   version                   Int                    @default(1) // Connector code version snapshotted at creation (DEV-10302)
+  // Set while a code-migration is quiescing this connection (DEV-9698 T4). Non-null = the
+  // connection is locked: live edits + new job enqueues for it are rejected with 409, and a
+  // re-run (or the migration's own release in `finally`) clears it. The timestamp records when
+  // the lock was taken (aids stale-lock debugging). NOT an auto-expiring lock — strict by design.
+  migrationLockedAt         DateTime?
   dataFolders               DataFolder[]
   publishPlans              PublishPlan[]
 
   @@index([userId])
   @@index([workbookId])
+  @@index([migrationLockedAt])
 }
 
 ///
@@ -804,6 +810,13 @@ model Schedule {
 
   /// Whether this schedule is active. Disabled schedules are not evaluated.
   enabled Boolean @default(true)
+
+  /// Set when the Webflow folder-restructure (or any future connection-quiesce) migration
+  /// disabled this schedule, so a crashed run can re-enable exactly the schedules IT disabled
+  /// without re-enabling ones the user disabled themselves (DEV-9698 T4, finding #11). The
+  /// restore step is driven entirely off this marker, so it repairs schedule state on re-run
+  /// even after the in-memory prior-state map is lost to a crash. Null in normal operation.
+  disabledForMigrationAt DateTime?
 
   /// The last time this schedule fired (successfully enqueued a job).
   lastTriggeredAt DateTime?

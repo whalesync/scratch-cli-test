@@ -68,22 +68,22 @@ export abstract class Connector<
 
 ### Required Abstract Members
 
-| Member                                                    | Signature                                                                                                                                                                                                                                     | Purpose                                                                                                               |
-| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `service`                                                 | `abstract readonly service: T`                                                                                                                                                                                                                | The service identifier string                                                                                         |
-| `displayName`                                             | `static readonly displayName: string`                                                                                                                                                                                                         | Human-readable name (e.g., `'Airtable'`)                                                                              |
-| `metadata`                                                | `static readonly metadata: ConnectorMetadata`                                                                                                                                                                                                 | Connector metadata (display name, terminology, logo, visibility, OAuth labels). Use the `connectorMetadata()` helper. |
-| `testConnection()`                                        | `abstract testConnection(): Promise<void>`                                                                                                                                                                                                    | Validate credentials. Throw on failure, resolve silently on success.                                                  |
-| `listTables()`                                            | `abstract listTables(): Promise<TablePreview[]>`                                                                                                                                                                                              | Return all available tables/collections                                                                               |
-| `fetchJsonTableSpec(id)`                                  | `abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>`                                                                                                                                                                       | Build the full JSON schema for a table                                                                                |
+| Member                                                    | Signature                                                                                                                                                                                                                                  | Purpose                                                                                                               |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `service`                                                 | `abstract readonly service: T`                                                                                                                                                                                                             | The service identifier string                                                                                         |
+| `displayName`                                             | `static readonly displayName: string`                                                                                                                                                                                                      | Human-readable name (e.g., `'Airtable'`)                                                                              |
+| `metadata`                                                | `static readonly metadata: ConnectorMetadata`                                                                                                                                                                                              | Connector metadata (display name, terminology, logo, visibility, OAuth labels). Use the `connectorMetadata()` helper. |
+| `testConnection()`                                        | `abstract testConnection(): Promise<void>`                                                                                                                                                                                                 | Validate credentials. Throw on failure, resolve silently on success.                                                  |
+| `listTables()`                                            | `abstract listTables(): Promise<TablePreview[]>`                                                                                                                                                                                           | Return all available tables/collections                                                                               |
+| `fetchJsonTableSpec(id)`                                  | `abstract fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec>`                                                                                                                                                                    | Build the full JSON schema for a table                                                                                |
 | `pullRecordFiles(tableSpec, callback, progress, options)` | `abstract pullRecordFiles(tableSpec: BaseJsonTableSpec, callback: (params: { files: ConnectorFile[]; connectorProgress?: TConnectorProgress }) => Promise<void>, progress: TConnectorProgress, options: DataFolderOptions): Promise<void>` | Stream all records via batched callbacks                                                                              |
-| `pullRecordFilesByIds(tableSpec, ids, callback)`          | `abstract pullRecordFilesByIds(tableSpec: BaseJsonTableSpec, ids: string[], callback: (params: { files: ConnectorFile[] }) => Promise<void>): Promise<void>`                                                                                  | Fetch specific records by ID (bulk where supported, silently skip 404s)                                               |
-| `getBatchSize(operation)`                                 | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                                                  | Max batch size per CRUD operation (must be > 0)                                                                       |
-| `createRecords(tableSpec, files)`                         | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                                                      | Create records, return files with remote IDs assigned                                                                 |
-| `updateRecords(tableSpec, files, changedFields?)`         | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> \| undefined)[]): Promise<void>`                                                                                       | Update existing records (see [Partial Field Updates](#partial-field-updates-changedfields))                           |
-| `deleteRecords(tableSpec, files)`                         | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                                                 | Delete records                                                                                                        |
-| `getSuggestedRecordFileNames(records, tableSpec)`         | `abstract getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string \| undefined)[]`                                                                                                                       | Suggest human-friendly filenames for pulled records (without extension). Return `undefined` per record to use its ID. |
-| `extractConnectorErrorDetails(error)`                     | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                                                | Translate service errors to user-friendly messages                                                                    |
+| `pullRecordFilesByIds(tableSpec, ids, callback)`          | `abstract pullRecordFilesByIds(tableSpec: BaseJsonTableSpec, ids: string[], callback: (params: { files: ConnectorFile[] }) => Promise<void>): Promise<void>`                                                                               | Fetch specific records by ID (bulk where supported, silently skip 404s)                                               |
+| `getBatchSize(operation)`                                 | `abstract getBatchSize(operation: 'create' \| 'update' \| 'delete'): number`                                                                                                                                                               | Max batch size per CRUD operation (must be > 0)                                                                       |
+| `createRecords(tableSpec, files)`                         | `abstract createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]>`                                                                                                                                   | Create records, return files with remote IDs assigned                                                                 |
+| `updateRecords(tableSpec, files, changedFields?)`         | `abstract updateRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[], changedFields?: (Record<string, unknown> \| undefined)[]): Promise<void>`                                                                                    | Update existing records (see [Partial Field Updates](#partial-field-updates-changedfields))                           |
+| `deleteRecords(tableSpec, files)`                         | `abstract deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void>`                                                                                                                                              | Delete records                                                                                                        |
+| `getSuggestedRecordFileNames(records, tableSpec)`         | `abstract getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string \| undefined)[]`                                                                                                                    | Suggest human-friendly filenames for pulled records (without extension). Return `undefined` per record to use its ID. |
+| `extractConnectorErrorDetails(error)`                     | `abstract extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails`                                                                                                                                                             | Translate service errors to user-friendly messages                                                                    |
 
 ### Optional Methods & Properties
 
@@ -338,10 +338,10 @@ The job demotes an incremental run to a full scan whenever `supportsIncrementalP
    Connectors over an API with no last-modified convention (SQL) skip layer 2 — there is nothing to annotate, so resolution is the explicit setting only.
 
    `findLastModifiedFieldName` understands the three record-schema shapes connectors use (first match wins), so a connector's `resolveModifiedAtField`/auto-detect path and the client's annotation walk stay identical regardless of shape:
-
    1. **Airtable-nested** — `{ properties: { fields: { properties: { <name> } } } }` (the original Airtable record shape).
-   2. **Flat top-level** — `{ properties: { <name> } }` — one static schema per entity type (WordPress, **Linear**, **Moco**, Shopify, Intercom). Note Intercom gates incremental on the *table*, not on this helper — the annotation is only for the UI picker.
+   2. **Flat top-level** — `{ properties: { <name> } }` — one static schema per entity type (WordPress, **Linear**, **Moco**, Shopify, Intercom). Note Intercom gates incremental on the _table_, not on this helper — the annotation is only for the UI picker.
    3. **HubSpot-nested** — `{ properties: { properties: { properties: { <name> } } } }`, where CRM properties live under a nested `properties` object.
+
 3. **`supportsIncrementalPull`** — usually `return this.resolveModifiedAtField(...) !== undefined`. Connectors with a guaranteed system field (e.g. Notion's `last_edited_time`) return `true` unconditionally.
 4. **`advancedSettings`** — expose `modifiedAtField` as a `field-select` setting so users can override/declare the column, unless the field is fixed and not user-selectable.
 5. **Watermark-before-first-call rule** — capture `newWatermark = new Date()` _before the first API call_, not after the last. Anything modified mid-pull is then re-pulled next run rather than skipped; idempotent commits absorb the duplicates.
@@ -703,7 +703,9 @@ Reach for this annotation **sparingly** — only when a connector quirk would ot
 import { X_SCRATCH_AGENT_INSTRUCTIONS } from '@spinner/shared-types';
 
 const authorSchema = Type.Object(
-  { /* ...fields... */ },
+  {
+    /* ...fields... */
+  },
   {
     [X_SCRATCH_AGENT_INSTRUCTIONS]:
       'Author `type` is one of "user", "admin", or "bot". "user" and "admin" represent ' +
@@ -713,7 +715,7 @@ const authorSchema = Type.Object(
 );
 ```
 
-Place the annotation at the *object* level when the hint spans multiple fields, and at the *field* level when scoped to a single value.
+Place the annotation at the _object_ level when the hint spans multiple fields, and at the _field_ level when scoped to a single value.
 
 ### Reading annotations back: escape JSON Pointer segments
 
@@ -727,12 +729,7 @@ Use the shared helper for every interpolated segment:
 import { escapePointerToken } from '../../utils/json-pointer';
 
 export function isReadonlyField(field: string, tableSpec: BaseJsonTableSpec): boolean {
-  return (
-    ValuePointer.Get(
-      tableSpec.schema,
-      `/properties/${escapePointerToken(field)}/${X_SCRATCH_READONLY}`,
-    ) === true
-  );
+  return ValuePointer.Get(tableSpec.schema, `/properties/${escapePointerToken(field)}/${X_SCRATCH_READONLY}`) === true;
 }
 ```
 
@@ -1137,7 +1134,6 @@ See the types in `/packages/shared-types/src/connector/table-view.ts`. Comments 
 
 A default view is a `TableView` object set on `tableSpec.defaultView` in your `fetchJsonTableSpec()` implementation. It is written to `views/default.json` in the workbook's git repo on every pull. Put the builder in a dedicated file (`<service-name>-default-view.ts`) and add tests in `__tests__/<service-name>-default-view.spec.ts`.
 
-
 ### Design Principles
 
 **0. Make the table immediately recognizable.** The user should open this up and say "AHA! That's my data!". Ensure the first screen of ~5 columns contains real user-meaningful data and not only IDs, dates, and metadata that will be hard to relate to. Focus on columns that a user of this service will interact with frequently and identify each record in the user's mind.
@@ -1171,3 +1167,48 @@ Write unit tests that build a realistic schema and verify the view output.
 ### Reference Implementation
 
 See `library/wordpress/wordpress-default-view.ts` and its tests in `library/wordpress/__tests__/wordpress-default-view.spec.ts` for a complete example covering priority ordering, hidden fields, subfields, type mapping, and nested field expansion.
+
+## 9. Migrating Existing Data When a Connector's Layout Changes
+
+Sometimes a connector change is not backward-compatible with data already pulled into existing workbooks — most commonly a **folder-layout change** (e.g. re-parenting collections under a `/<Site>/Collections/` grouping, DEV-9698). New workbooks pick up the new layout automatically, but existing ones need a one-time **migration** that moves their folders and rewrites every path that points at them. Do this with the established playbook below rather than inventing a one-off — it is idempotent, crash-safe, and never races live pipeline activity. Reference implementation: the `webflow-folder-restructure` migration in `server/src/code-migrations/`.
+
+### Step 1 — Version-pin the layout (no mixed-layout window)
+
+Bump the connector's `ConnectorRegistration.version` (`connector-registry.ts`). The current code version is snapshotted onto `ConnectorAccount.version` at account creation (DEV-10302). The connector emits the **old** layout for accounts pinned to the old version and the **new** layout for the new version (drive this off a `BaseJsonTableSpec.structureVersion` the builders read — never an `if (service === X)` branch in `DataFolderService`). The migration flips an account's `version` to the new value only **after** all its folders have moved, so a connection is always atomically all-old or all-new, never mixed. Keep the old-vs-new path derivation in **one shared helper** used by both the connector and the migration, so the path a fresh pull writes can never drift from the path the migration moves a folder to.
+
+### Step 2 — Write the migration in the `code-migrations` framework
+
+Register it in `server/src/code-migrations/` (admin-gated `POST /code-migrations/run`, with `dryRun` + `qty`/`ids` batching + audit logging; model on an existing migration). Make it:
+
+- **Idempotent** — gate each unit of work on a per-folder version column (`DataFolder.version`); a folder already at the new version is skipped. Re-running converges.
+- **Crash-safe** — order writes so the idempotency key only advances in the **same atomic transaction** as the path rewrite. A crash between the git move and the DB commit leaves the key un-advanced; a re-run recomputes the same target, finds the git move already done (the move route is a no-op when the source is gone), and finishes the commit.
+- **`dryRun`-able** — return the would-be moves without touching git or the DB, so you can canary against real data read-only before running for real (you can even replicate the dryRun read-path against a read-only DB replica).
+- **Account-atomic** — process a whole connector account in one pass (don't split an account across `qty` batches), so move-ordering constraints hold and the version flip is reached.
+
+### Step 3 — Quiesce each connection for the duration of its migration
+
+A folder move must not race a live edit or an in-flight job, or a write lands at the old path and is orphaned. Wrap **each connection's** migration in a quiesce/release pair (the reusable `ConnectionQuiesceService` + `MigrationLockService`):
+
+```
+acquire (quiesceConnection):
+  1. set ConnectorAccount.migrationLockedAt = now   → gates live edits + new job enqueues (409 "blocked_migrating")
+  2. disable + MARK the connection's schedules        (persist prior state via a marker column)
+  3. cancel every non-terminal PublishPlan            (so a resumed publish can't commit to old paths)
+  4. cancel + DRAIN in-flight jobs                    (wait for the BullMQ `active` set to clear, not just DB status)
+  → migrate the account's folders, then flip ConnectorAccount.version  (while still locked)
+release (unquiesceConnection, in a `finally`):
+  5. restore the schedules this migration disabled    (marker-driven → crash-safe)
+  6. clear migrationLockedAt
+  7. emit a workbook event so open clients refresh the relocated tree
+```
+
+Key invariants:
+
+- **The lock is the single gate.** `MigrationLockService.assertConnectionNotMigrating(connectorAccountId)` is called from the live-edit write paths (web file CRUD, CLI `/upload-patch/commit`); `assertEnqueueAllowedForJob(jobData)` is called from the one job-enqueue chokepoint (`BullEnqueuerService.createAndEnqueue`). The enqueue gate has a fast-path no-op when nothing is locked, so it is essentially free in normal operation.
+- **Flip the version BEFORE releasing.** If you restore schedules / unlock before flipping, a restored schedule could fire an old-layout pull that re-creates the folders you just moved.
+- **Draining means waiting for the worker to actually stop.** Setting a job's DB status to `canceled` does not stop a worker mid-batch; poll the live `active` set until the connection has none. A connection whose jobs won't drain within the timeout is **released and skipped** (retried on a later run) rather than migrated unsafely.
+- **Crash-repair is marker-driven.** Persist "this migration disabled this schedule" as a column marker (not just in memory), so a re-run after a crash re-enables exactly the schedules the migration disabled and leaves user-disabled ones alone. The connection lock is strict-by-design (no auto-expiry); a re-run (or a manual clear) releases a lock a hard crash left set.
+
+### Step 4 — Local checkouts (desktop / CLI)
+
+Path-changing moves invalidate stale local clones. The server already rejects uploads to an unknown path (`validateRecordPath`), so a stale binary fails loudly rather than silently — surface an actionable "re-clone" message, and salvage un-uploaded local work before any forced re-clone.

@@ -2,6 +2,7 @@
 import { NotFoundException } from '@nestjs/common';
 import type { DataFolderId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
@@ -74,6 +75,7 @@ describe('FilesService', () => {
       schemaHelperService,
       refCleanerService,
       fileIndexService,
+      { assertConnectionNotMigrating: jest.fn().mockResolvedValue(undefined) } as unknown as MigrationLockService,
     );
   });
 
