@@ -17,6 +17,7 @@ import { PullFilesJobDefinition } from '../worker/jobs/job-definitions/pull-file
 import { PullLinkedFolderFilesJobDefinition } from '../worker/jobs/job-definitions/pull-linked-folder-files.job';
 import { RehostAssetsJobDefinition } from '../worker/jobs/job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobDefinition } from '../worker/jobs/job-definitions/sync-data-folders.job';
+import { TemporarySyncWithPullJobDefinition } from '../worker/jobs/job-definitions/temporary-sync-with-pull.job';
 
 @Injectable()
 export class BullEnqueuerService implements OnModuleDestroy {
@@ -117,6 +118,43 @@ export class BullEnqueuerService implements OnModuleDestroy {
       trigger: runContext.trigger,
       type: JobType.SyncDataFolders,
       initialPublicProgress,
+    };
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        syncId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
+      data,
+      id,
+    );
+  }
+
+  /**
+   * THROWAWAY (no Linear issue): enqueue a job that pulls every data folder in
+   * the sync (incremental where supported) and then runs the normal sync job.
+   * Mirrors {@link enqueueSyncDataFoldersJob}; remove once the real
+   * job-dependency system lands.
+   */
+  async enqueueTemporarySyncWithPullJob(
+    workbookId: WorkbookId,
+    syncId: SyncId,
+    actor: Actor,
+    runContext: RunContext,
+  ): Promise<Job> {
+    const id = `temp-sync-with-pull-${workbookId}-${syncId}-${createPlainId()}`;
+    const data: TemporarySyncWithPullJobDefinition['data'] = {
+      type: JobType.TemporarySyncWithPull,
+      workbookId,
+      syncId,
+      userId: actor.userId,
+      organizationId: actor.organizationId,
+      trigger: runContext.trigger,
     };
     return await this.createAndEnqueue(
       {

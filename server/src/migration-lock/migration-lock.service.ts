@@ -119,7 +119,10 @@ export class MigrationLockService {
         return this.connectorAccountIdsForFolders([data.dataFolderId]);
       case JobType.PullLinkedFolderFiles:
         return this.connectorAccountIdsForFolders(data.dataFolderIds);
+      // THROWAWAY: the temporary pull-then-sync job touches the same connections
+      // as the sync it wraps.
       case JobType.SyncDataFolders:
+      case JobType.TemporarySyncWithPull:
         return this.connectorAccountIdsForSync(data.syncId);
       case JobType.DeleteWorkbook:
         return [];

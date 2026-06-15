@@ -30,6 +30,7 @@ import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
 import { RehostAssetsJobHandler } from './jobs/job-definitions/rehost-assets.job';
 import { SyncDataFoldersJobHandler } from './jobs/job-definitions/sync-data-folders.job';
+import { TemporarySyncWithPullJobHandler } from './jobs/job-definitions/temporary-sync-with-pull.job';
 import { JobData, JobDefinition, JobHandler } from './jobs/union-types';
 
 @Injectable()
@@ -107,6 +108,11 @@ export class JobHandlerService {
           this.metricsService,
           this.auditLogService,
         ) as JobHandler<JobDefinition>;
+
+      // THROWAWAY: pulls every folder in the sync, then runs the normal sync job.
+      // It reuses the other handlers in-process, so it gets `this` to build them.
+      case JobType.TemporarySyncWithPull:
+        return new TemporarySyncWithPullJobHandler(this.syncService, this) as JobHandler<JobDefinition>;
 
       case JobType.RehostAssets:
         return new RehostAssetsJobHandler(

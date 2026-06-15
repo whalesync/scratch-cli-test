@@ -165,6 +165,8 @@ export const JOB_COMPLETED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_COMPLETED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_COMPLETED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_COMPLETED,
+  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
+  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_COMPLETED,
 };
 
 export const JOB_FAILED_METRIC: Record<JobTypes, CustomMetric> = {
@@ -175,6 +177,8 @@ export const JOB_FAILED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_FAILED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_FAILED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_FAILED,
+  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
+  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_FAILED,
 };
 
 export const JOB_CANCELED_METRIC: Record<JobTypes, CustomMetric> = {
@@ -185,6 +189,8 @@ export const JOB_CANCELED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_CANCELED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_CANCELED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_CANCELED,
+  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
+  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_CANCELED,
 };
 
 export const JOB_STALLED_METRIC: Record<JobTypes, CustomMetric> = {
@@ -195,4 +201,6 @@ export const JOB_STALLED_METRIC: Record<JobTypes, CustomMetric> = {
   [JobType.ApplyPatches]: CustomMetric.JOB_APPLY_PATCHES_STALLED,
   [JobType.Publish]: CustomMetric.JOB_PUBLISH_STALLED,
   [JobType.DeleteWorkbook]: CustomMetric.JOB_DELETE_WORKBOOK_STALLED,
+  // THROWAWAY: reuse the sync metric for the temporary pull-then-sync job.
+  [JobType.TemporarySyncWithPull]: CustomMetric.JOB_SYNC_DATA_FOLDERS_STALLED,
 };

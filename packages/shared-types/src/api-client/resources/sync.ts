@@ -41,8 +41,11 @@ export function createSyncApi(http: Http) {
       return res.data;
     },
 
-    run: async (workbookId: string, syncId: string): Promise<RunSyncResponse> => {
-      const res = await http.post<RunSyncResponse>(`/workbooks/${workbookId}/syncs/${syncId}/run`, undefined, {
+    run: async (workbookId: string, syncId: string, pullFirst?: boolean): Promise<RunSyncResponse> => {
+      // THROWAWAY: `pullFirst` enqueues the temporary pull-then-sync job instead of
+      // the plain sync job. Remove once the real job-dependency system lands.
+      const query = pullFirst ? '?pullFirst=true' : '';
+      const res = await http.post<RunSyncResponse>(`/workbooks/${workbookId}/syncs/${syncId}/run${query}`, undefined, {
         fallbackMessage: 'Failed to run sync',
       });
       return res.data;

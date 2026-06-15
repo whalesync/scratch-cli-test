@@ -18,6 +18,9 @@ export const JobType = {
   SyncDataFolders: 'sync-data-folders',
   RehostAssets: 'rehost-assets',
   DeleteWorkbook: 'delete-workbook',
+  // THROWAWAY (no Linear issue): temporary "pull then sync" job used to unblock
+  // development of the real job-dependency system. Remove once dependencies land.
+  TemporarySyncWithPull: 'temporary-sync-with-pull',
 } as const;
 
 export type JobType = (typeof JobType)[keyof typeof JobType];
