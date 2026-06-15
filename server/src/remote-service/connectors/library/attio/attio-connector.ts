@@ -21,15 +21,21 @@ import {
   TablePreview,
 } from '../../types';
 import { AttioApiClient, AttioError } from './attio-api-client';
-import { buildAttioListTableSpec, buildAttioObjectTableSpec } from './attio-json-schema';
+import {
+  buildAttioListTableSpec,
+  buildAttioMembersTableSpec,
+  buildAttioObjectTableSpec,
+  buildAttioTasksTableSpec,
+} from './attio-json-schema';
 import {
   AttioDownloadProgress,
   AttioListEntry,
   AttioRecord,
-  AttioStandardObject,
   AttioTableKind,
-  STANDARD_OBJECT_DISPLAY,
-  STANDARD_OBJECTS,
+  AttioTask,
+  AttioTaskAssignee,
+  AttioTaskLinkedRecord,
+  AttioWorkspaceMember,
 } from './attio-types';
 import { toWriteValues } from './attio-write-shape';
 
@@ -81,6 +87,8 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
   private readonly client: AttioApiClient;
   /** Cache of (list api_slug → list name), populated by `listTables`. */
   private readonly listNameCache = new Map<string, string>();
+  /** Cache of (object api_slug → display nouns), populated by `listTables`. */
+  private readonly objectDisplayCache = new Map<string, { singular: string; plural: string }>();
 
   constructor(accessToken: string, opts?: { rateLimiter?: RateLimiter }) {
     super();
@@ -100,20 +108,27 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
    *   Lists/<list name> ← /v2/lists/{slug}/entries
    */
   async listTables(): Promise<TablePreview[]> {
-    const objectTables: TablePreview[] = STANDARD_OBJECTS.map((slug) => ({
-      id: { wsId: slug, remoteId: [slug] },
-      displayName: STANDARD_OBJECT_DISPLAY[slug].plural,
-      metadata: { tableKind: 'object', objectSlug: slug },
-    }));
+    // Every object the workspace exposes — standard (companies/people/deals)
+    // *and* the rest (events, products, users, workspaces, custom objects).
+    // They all share the `/v2/objects/{slug}` endpoint family, so one codepath
+    // (parsed.kind === 'object') handles them all.
+    const objects = await this.client.listObjects();
+    const objectTables: TablePreview[] = objects.map((obj) => {
+      const display = { singular: obj.singular_noun, plural: obj.plural_noun };
+      this.objectDisplayCache.set(obj.api_slug, display);
+      return {
+        id: { wsId: sanitizeForTableWsId(obj.api_slug), remoteId: [obj.api_slug] },
+        displayName: display.plural,
+        metadata: { tableKind: 'object', objectSlug: obj.api_slug },
+      };
+    });
 
     const lists = await this.client.listLists();
     const listTables: TablePreview[] = lists
-      // v1 only handles lists whose parent object is one we already expose.
-      // Lists on custom objects fall out of v1 alongside custom objects.
-      .filter((list) => {
-        const parent = list.parent_object[0];
-        return parent !== undefined && (STANDARD_OBJECTS as readonly string[]).includes(parent);
-      })
+      // Expose every list regardless of parent object (custom-object lists
+      // included). A list with no resolvable parent is skipped — without a
+      // `parent_object` we couldn't create entries in it.
+      .filter((list) => list.parent_object[0] !== undefined)
       .map((list) => {
         this.listNameCache.set(list.api_slug, list.name);
         return {
@@ -124,18 +139,46 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
         };
       });
 
-    return [...objectTables, ...listTables];
+    // Workspace members — a read-only reference directory (teammates), the
+    // target for `actor-reference` fields. Its own endpoint + fixed shape, so
+    // its own table kind; all writes disabled.
+    const membersTable: TablePreview = {
+      id: { wsId: 'workspace_members', remoteId: ['members'] },
+      displayName: 'Workspace Members',
+      disabledCreates: true,
+      disabledUpdates: true,
+      disabledDeletes: true,
+      disabledReason: 'Workspace members are a read-only reference directory in Attio.',
+      metadata: { tableKind: 'members' },
+    };
+
+    // Tasks — their own endpoint + flat shape (not the object `values[]`
+    // envelope), so their own table kind. Full CRUD; content is write-once.
+    const tasksTable: TablePreview = {
+      id: { wsId: 'tasks', remoteId: ['tasks'] },
+      displayName: 'Tasks',
+      metadata: { tableKind: 'tasks' },
+    };
+
+    return [...objectTables, ...listTables, membersTable, tasksTable];
   }
 
   async fetchJsonTableSpec(id: EntityId): Promise<BaseJsonTableSpec> {
     const parsed = parseAttioTableId(id);
     switch (parsed.kind) {
-      case 'object':
-        return buildAttioObjectTableSpec(id, parsed.objectSlug, this.client);
+      case 'object': {
+        const display =
+          this.objectDisplayCache.get(parsed.objectSlug) ?? (await this.lookupObjectDisplay(parsed.objectSlug));
+        return buildAttioObjectTableSpec(id, parsed.objectSlug, this.client, display);
+      }
       case 'list': {
         const name = this.listNameCache.get(parsed.listSlug) ?? (await this.lookupListName(parsed.listSlug));
         return buildAttioListTableSpec(id, parsed.listSlug, name, this.client);
       }
+      case 'members':
+        return buildAttioMembersTableSpec(id);
+      case 'tasks':
+        return buildAttioTasksTableSpec(id);
       default:
         return assertUnreachable(parsed);
     }
@@ -170,6 +213,22 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
         }
         return {};
       }
+      case 'members': {
+        // Single page — the endpoint returns the full member set with no
+        // pagination params.
+        const members = await this.client.listWorkspaceMembers();
+        await callback({ files: members as unknown as ConnectorFile[], connectorProgress: {} });
+        return {};
+      }
+      case 'tasks': {
+        for await (const batch of this.client.queryTasks(resumeOffset)) {
+          await callback({
+            files: batch.data as unknown as ConnectorFile[],
+            connectorProgress: batch.nextOffset !== undefined ? { offset: batch.nextOffset } : {},
+          });
+        }
+        return {};
+      }
       default:
         return assertUnreachable(parsed);
     }
@@ -193,6 +252,19 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
         case 'list': {
           const entry = await this.client.getListEntry(parsed.listSlug, recordId);
           if (entry) buffer.push(entry as unknown as ConnectorFile);
+          break;
+        }
+        case 'members': {
+          // No get-member-by-id endpoint — list and filter. The member set is
+          // tiny, so the per-id refetch cost is negligible.
+          const members = await this.client.listWorkspaceMembers();
+          const found = members.find((member) => member.id.workspace_member_id === recordId);
+          if (found) buffer.push(found as unknown as ConnectorFile);
+          break;
+        }
+        case 'tasks': {
+          const task = await this.client.getTask(recordId);
+          if (task) buffer.push(task as unknown as ConnectorFile);
           break;
         }
         default:
@@ -237,6 +309,13 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
           created.push(entry as unknown as ConnectorFile);
           break;
         }
+        case 'members':
+          throw new AttioError('Workspace members are read-only — create is not supported.');
+        case 'tasks': {
+          const task = await this.client.createTask(readTaskWriteFields(file));
+          created.push(task as unknown as ConnectorFile);
+          break;
+        }
         default:
           return assertUnreachable(parsed);
       }
@@ -278,6 +357,22 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
           results.push(updated as unknown as ConnectorFile);
           break;
         }
+        case 'members':
+          throw new AttioError('Workspace members are read-only — update is not supported.');
+        case 'tasks': {
+          const taskId = extractTaskId(files[i]);
+          // Content is immutable on update (write-once, DEV-10408) — only the
+          // mutable fields present in the (sparse) payload are sent. If only
+          // content changed, the update is empty → no-op.
+          const fields = readTaskUpdateFields(payload);
+          if (Object.keys(fields).length === 0) {
+            results.push(files[i]);
+            continue;
+          }
+          const updated = await this.client.updateTask(taskId, fields);
+          results.push(updated as unknown as ConnectorFile);
+          break;
+        }
         default:
           return assertUnreachable(parsed);
       }
@@ -294,6 +389,11 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
           break;
         case 'list':
           await this.client.deleteListEntry(parsed.listSlug, extractEntryId(file));
+          break;
+        case 'members':
+          throw new AttioError('Workspace members are read-only — delete is not supported.');
+        case 'tasks':
+          await this.client.deleteTask(extractTaskId(file));
           break;
         default:
           return assertUnreachable(parsed);
@@ -313,6 +413,16 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
           // can rename, and the parent record file (in companies/people/deals)
           // already has a meaningful name.
           return (record as unknown as AttioListEntry).parent_record_id;
+        case 'members': {
+          const member = record as unknown as AttioWorkspaceMember;
+          const fullName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim();
+          return fullName || member.email_address;
+        }
+        case 'tasks': {
+          const task = record as unknown as AttioTask;
+          const content = task.content_plaintext?.trim();
+          return content && content.length > 0 ? content.slice(0, 80) : task.id.task_id;
+        }
         default:
           return assertUnreachable(parsed);
       }
@@ -353,24 +463,41 @@ export class AttioConnector extends Connector<string, AttioDownloadProgress> {
     this.listNameCache.set(listSlug, found.name);
     return found.name;
   }
+
+  /**
+   * Fallback when `fetchJsonTableSpec` is called for an object before
+   * `listTables` populated the display cache (e.g. after a server restart).
+   * Returns `undefined` if the slug isn't found — `buildAttioObjectTableSpec`
+   * then falls back to the standard-object labels / the slug itself.
+   */
+  private async lookupObjectDisplay(objectSlug: string): Promise<{ singular: string; plural: string } | undefined> {
+    const objects = await this.client.listObjects();
+    const found = objects.find((obj) => obj.api_slug === objectSlug);
+    if (!found) return undefined;
+    const display = { singular: found.singular_noun, plural: found.plural_noun };
+    this.objectDisplayCache.set(objectSlug, display);
+    return display;
+  }
 }
 
 /**
- * Parse an EntityId into one of the table kinds the connector exposes.
- * Standard-object slugs ('companies', 'people', 'deals') are checked first;
- * anything else with `'list'` as `remoteId[0]` is treated as a list.
+ * Parse an EntityId into one of the table kinds the connector exposes. A list
+ * id is `['list', <slug>]`; **any other head is an object api_slug** (standard
+ * or custom — they share the `/v2/objects/{slug}` endpoint family). `'list'` is
+ * the one reserved head; an object whose api_slug is literally `list` isn't a
+ * thing Attio allows.
  */
 export function parseAttioTableId(id: EntityId): AttioTableKind {
   const head = id.remoteId[0];
-  if ((STANDARD_OBJECTS as readonly string[]).includes(head)) {
-    return { kind: 'object', objectSlug: head as AttioStandardObject };
-  }
   if (head === 'list') {
     const slug = id.remoteId[1];
     if (!slug) throw new AttioError(`Invalid Attio list id: missing list slug in remoteId`);
     return { kind: 'list', listSlug: slug };
   }
-  throw new AttioError(`Unknown Attio table id: ${head}`);
+  if (head === 'members') return { kind: 'members' };
+  if (head === 'tasks') return { kind: 'tasks' };
+  if (!head) throw new AttioError('Invalid Attio table id: empty remoteId');
+  return { kind: 'object', objectSlug: head };
 }
 
 /** Extract the `record_id` from a record file's `id` triple. */
@@ -394,6 +521,69 @@ function extractEntryId(file: ConnectorFile): string {
     return (id as { entry_id: string }).entry_id;
   }
   throw new AttioError('List-entry file is missing `id.entry_id` — cannot route the write.');
+}
+
+/** Extract the `task_id` from a task file's `id`. */
+function extractTaskId(file: ConnectorFile): string {
+  const id = (file as { id?: unknown }).id;
+  if (id && typeof id === 'object' && 'task_id' in id && typeof (id as { task_id: unknown }).task_id === 'string') {
+    return (id as { task_id: string }).task_id;
+  }
+  throw new AttioError('Task file is missing `id.task_id` — cannot route the write.');
+}
+
+/** Read an array field off a file, or `[]` if missing/wrong-typed. */
+function readArray<T>(file: Record<string, unknown>, key: string): T[] {
+  const value = file[key];
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+/**
+ * Translate a task record file into the full **create** payload. Read shape
+ * (`content_plaintext`) → write shape (`content` + `format`); Attio requires
+ * every field, so missing ones default (no deadline → `null`, etc.).
+ */
+function readTaskWriteFields(file: ConnectorFile): {
+  content: string;
+  deadlineAt: string | null;
+  isCompleted: boolean;
+  linkedRecords: AttioTaskLinkedRecord[];
+  assignees: AttioTaskAssignee[];
+} {
+  const f = file as Record<string, unknown>;
+  return {
+    content: readString(file, 'content_plaintext') ?? '',
+    deadlineAt: typeof f.deadline_at === 'string' ? f.deadline_at : null,
+    isCompleted: f.is_completed === true,
+    linkedRecords: readArray<AttioTaskLinkedRecord>(f, 'linked_records'),
+    assignees: readArray<AttioTaskAssignee>(f, 'assignees'),
+  };
+}
+
+/**
+ * Build the sparse **update** payload from a (changed-fields) task payload —
+ * only the mutable keys present are included. `content_plaintext` is
+ * deliberately never mapped (immutable on update; see DEV-10408).
+ */
+function readTaskUpdateFields(payload: Record<string, unknown>): {
+  isCompleted?: boolean;
+  deadlineAt?: string | null;
+  linkedRecords?: AttioTaskLinkedRecord[];
+  assignees?: AttioTaskAssignee[];
+} {
+  const fields: {
+    isCompleted?: boolean;
+    deadlineAt?: string | null;
+    linkedRecords?: AttioTaskLinkedRecord[];
+    assignees?: AttioTaskAssignee[];
+  } = {};
+  if ('is_completed' in payload) fields.isCompleted = payload.is_completed === true;
+  if ('deadline_at' in payload) {
+    fields.deadlineAt = typeof payload.deadline_at === 'string' ? payload.deadline_at : null;
+  }
+  if ('linked_records' in payload) fields.linkedRecords = readArray<AttioTaskLinkedRecord>(payload, 'linked_records');
+  if ('assignees' in payload) fields.assignees = readArray<AttioTaskAssignee>(payload, 'assignees');
+  return fields;
 }
 
 /** Read a top-level string field from a file, or return `undefined` if missing/wrong-typed. */

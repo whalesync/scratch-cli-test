@@ -9,12 +9,12 @@
 > ⚠️ **This doc was reverse-engineered from the connector CODE on 2026-06-10 (DEV-10303 review) — it is NOT a record of live verification.** Every coverage cell is `⬜`: the code clearly implements these paths, but a fresh adoption starts unverified until a live CLI+service round-trip earns each `✅`. No test account, connection, pull, or push was run this session. See [TODOs](#todos--known-pending-tasks).
 
 ## Test account (used to run this coverage)
-- **Service:** *none provisioned yet.* Attio workspace TBD.
-- **Trial:** n/a — no account created this run.
-- **API key / credentials:** Attio access token from **Settings → Developers → Create access token** (workspace token; Bearer auth). Decrypt an existing `ConnectorAccount.encryptedCredentials` with `server/tools/decrypt-credentials.js` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`) once a connection exists.
-- **Scratch side:** workbook `<wkb_id>` / connection `<coa_id>` · local workspace `<path>` — TBD.
+- **Service:** Attio workspace **`whalesync-attio`** (workspace_id `1a69f957-cdfa-44fc-a305-8b45828223f8`), login ivan@whalesync.com. Enrolled in Attio's **developer program** — banner says "Data will be periodically removed", so seeded test data may vanish between runs; no billing/trial risk.
+- **Trial:** n/a — developer-program workspace, free.
+- **API key / credentials:** access token **"Scratch connector-build"** (Settings → Developers → Access tokens; all 12 scopes read-write, no expiry). Decrypt `ConnectorAccount.encryptedCredentials` with `local/decrypt-credentials.js` (AES-256-GCM, key `ENCRYPTION_MASTER_KEY` in server/.env, AAD `connector-account`).
+- **Scratch side:** workbook `wkb_N8QkBoNSTH` ("attio") / connection `coa_Am0iQb8Kgb` · local workspace `/Users/ijd/repos/spinner/local/cli-v4/attio` · tested against parallel session 1 (server :3011, Redis :6380).
 - **Auth method:** `user_provided_params` (CLI-connectable: `scratchmd connections add --service ATTIO --param apiKey=<token>`). OAuth not wired (see Milestone 9).
-- **Provenance:** connector code authored by a developer (commits `b0f3700d` → `db29a4a4`); STATE.md created by `/connector-build` desk review on 2026-06-10.
+- **Provenance:** connector code authored by a developer (commits `b0f3700d` → `db29a4a4`); STATE.md created by `/connector-build` desk review on 2026-06-10; live testing started 2026-06-11.
 
 ## Metadata
 - **Type:** STATIC · custom fields supported (mixed) — 3 hardcoded standard objects (companies / people / deals) + lists discovered from the workspace; custom **fields** fall out of the per-object attributes endpoint.
@@ -28,28 +28,30 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. **All ⬜ pending live 
 
 | # | Milestone | Status | Notes |
 |---|---|:--:|---|
-| 1 | **Account ready** (registered / logged into the service web app) | ⬜ | No Attio test account provisioned yet |
-| 2 | **Connected** (connection created, health OK) | ⬜ | `testConnection` hits `GET /v2/self` |
-| 3 | **First fetch** (pulled ≥1 record) | ⬜ | |
-| 4 | **All entities seeded & fetched** | ⬜ | Only companies/people/deals + standard-object lists exposed; users/tasks/custom-objects not built |
-| 5 | **Full write CRUD** (create + edit + delete, pushed) | ⬜ | create/update/delete implemented in code for objects + list entries |
-| 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | ⚠️ **no FK declared** — `record-reference` attrs lack `x-scratch-foreign-key` |
-| 7 | **Edge cases & quirks tested** (Pass 2) | ⬜ | write-shape layer looks solid in code; unverified live |
+| 1 | **Account ready** (registered / logged into the service web app) | ✅ | `whalesync-attio` dev-program workspace, 2026-06-11 |
+| 2 | **Connected** (connection created, health OK) | ✅ | `coa_Am0iQb8Kgb` via CLI, Health OK (2026-06-11) |
+| 3 | **First fetch** (pulled ≥1 record) | ✅ | 94 records across 6 tables; counts match API exactly; one record deep-compared **verbatim-identical** to `GET /v2/objects/companies/records/{id}` |
+| 4 | **All entities seeded & fetched** | 🔄 | companies/people/deals + 3 lists + 4 extra objects (events/products/users/workspaces, P5) + workspace members (P4) + **Tasks (P6)** all pulled & verified. Remaining: Notes, Comments/Threads |
+| 5 | **Full write CRUD** (create + edit + delete, pushed) | ✅ | all entity kinds incl. **Tasks (P6)**: edit/create/delete pushed via CLI + API-verified. **Required a publish-pipeline fix** — see Edge cases: nested-IdPath bug |
+| 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | FKs declared (P1) on record-reference + actor-reference; move parent→parent verified (person→Atlas) |
+| 7 | **Edge cases & quirks tested** (Pass 2) | ✅ | field-type matrix (11 types round-tripped live), select/status terse-write, date no-tz-shift, task content write-once (immutable on update), read-only `is_writable` propagation — all live-verified |
 | 8 | **View(s) built** (default view) | 🔄 | `attio-default-view.ts` builds object + list views; not confirmed in desktop |
 | 9 | **OAuth** (final / pre-release) | ⬜ | Not wired; Bearer wire format already matches so add `'oauth'` + `AttioOAuthProvider` when ready |
 
 ## TODOs — known pending tasks
-Surfaced by the DEV-10303 code review. Coarser than the coverage matrix.
+Surfaced by the DEV-10303 code review. Coarser than the coverage matrix. **The substantial ones are now drafted as atomic plan items in [PLAN.md](./PLAN.md) (all `FOR_REVIEW`); small fixes (e.g. surface `is_required`, remove dead `listObjects()`) stay here and apply immediately on resume.**
 
 - [ ] **Live validation** — provision an Attio workspace, connect via CLI, and run the full CRUD + field-type round-trip matrix (every cell below is code-only today). Browser preflight is a hard gate before this.
-- [ ] **Declare foreign keys.** `record-reference` attributes (e.g. `people.company`, deals→associated company/people) carry only a display virtual-field that extracts `target_record_id` — there is **no `x-scratch-foreign-key`** annotation, so relations get no FK picker and Milestone 6 can't pass. Every other CRM connector (copper/zoho/pipedrive) declares FKs. Derive `linkedTableId` from the attribute's `config` allowed-object for single-target references. (multi-target references are the hard case — defer.)
-- [ ] **Read-only labeling gap.** The schema sets `x-scratch-readonly` from `is_archived` **only**. `is_system_attribute` (object attributes) and `is_writable === false` (list-scoped attributes) are declared in `attio-types.ts` but **never propagated** to the schema — so the UI lets a user edit a system/non-writable attribute that publish then silently drops. Wire both into `valueArraySchemaForAttribute`. (`attio-default-view.ts` masks a hardcoded subset, but the schema flag is the source of truth.)
-- [ ] **List-entry New→Push friction.** `createListEntry` requires top-level `parent_record_id` + `parent_object` on the file, but the list schema marks both `x-scratch-readonly` (and the default view hides them) → a user can't set the parent when creating a new list entry through the normal edit flow. Decide: allow-on-create, or document the create path.
-- [ ] **Expose Users / Workspace members** (`GET /v2/workspace-members`) as a read-only reference table — also the natural target for `actor-reference` fields.
-- [ ] **Planned entities:** custom objects (+ their lists, currently filtered out in `listTables`), Tasks (`/v2/tasks`), Notes, Comments/Threads.
+- [x] **Declare foreign keys** ✅ 2026-06-13 (P1). `x-scratch-foreign-key` on single-target record-reference (→ target object) + actor-reference (→ workspace_members); object-id→slug resolved via `listObjects`. Multi-target deferred. Move parent→parent verified.
+- [x] **Read-only labeling gap.** ✅ 2026-06-12 (PLAN P2). Schema now derives `x-scratch-readonly` from **`is_writable === false`** (+ `is_archived`) via `isAttributeReadonly` in `valueArraySchemaForAttribute`. **Correction:** do NOT use `is_system_attribute` — verified live that Attio sets it `true` for writable standard fields (`name`/`description`/`domains`); it would wrongly lock them. `is_writable` is the precise flag on both object and list attributes. Unit tests added. (Pending: desktop visual confirm.)
+- [x] **List-entry New→Push friction.** ✅ 2026-06-12 (PLAN P3). `parent_record_id`/`parent_object` are now writable + visible in the grid (no pipeline write-once support exists, so they're fully writable for now). Write-once locking tracked in **DEV-10408**. (Pending: desktop grid-create confirm.)
+- [ ] **Write-once / create-only field support** (**DEV-10408**, assigned Ivan) — pipeline has no create-only flag; once added, lock the list-entry parent fields (and Copper set-on-create FKs) to write-once.
+- [x] **Workspace members** ✅ 2026-06-12 (P4). `GET /v2/workspace_members` (underscore — the `-members` guess 404s), read-only table at `/Workspace Members`. Still TODO: point `actor-reference` FKs at it (folds into P1).
+- [x] **Custom / extra objects + all lists** ✅ 2026-06-12 (P5). `listObjects()` now drives `listTables`; all lists exposed. Events/Products/Users/Workspaces light up; custom objects use the same path.
+- [ ] **Planned entities (remaining):** Tasks (`/v2/tasks`, spec'd in PLAN P6 — deferred to post-GCS-reauth), Notes, Comments/Threads.
 - [ ] **Incremental polling not wired** — no `x-scratch-last-modified-field`; evaluate Attio's filter-based `since` pull; deletions not detected.
 - [ ] **`is_required` not surfaced** in the schema `required[]` — a create can 4xx on a missing required attribute.
-- [ ] **Dead code:** `AttioApiClient.listObjects()` is defined but never called (`listTables` hardcodes the 3 standard objects). Remove or use it (would also be the basis for custom-object discovery).
+- [x] **Dead code `listObjects()`** ✅ 2026-06-12 — now used by `listTables` for object discovery (P5).
 - [ ] **OAuth** (Milestone 9).
 
 ## Objects / entity types — what the connector exposes
@@ -68,13 +70,14 @@ Best-case future state; `Status` tracks built/planned.
 
 | Entity | Scratch table | Pull | Create→Push | Edit→Push | Delete | FK | Status |
 |---|---|:--:|:--:|:--:|:--:|:--:|---|
-| Companies | `companies` object | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built (read-write) |
-| People | `people` object | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built (read-write) |
-| Deals | `deals` object | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built (read-write) |
-| List entries (per standard-object list) | `list_<slug>` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | built (read-write) |
-| Users / Workspace members | — | ➖ | ➖ | ➖ | ➖ | ➖ | planned (read-only ref; `/v2/workspace-members`) |
-| Custom objects | — | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | planned (deferred to v2) |
-| Tasks | — | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | planned (`/v2/tasks`) |
+| Companies | `companies` object | ✅ | ✅ | ✅ | ✅ | ⬜ | 21 pulled (count+verbatim match); edit/create/delete all pushed & API-verified, incl. create→edit→delete cycle with NO re-pull; **Create-in-UI→Pull ✅** (ui-created-co-0611) |
+| People | `people` object | ✅ | ✅ | ✅ | ✅ | ⬜ | 65 pulled (count match); job_title edit (incl. envelope-less `[{value}]`), create (name+email), delete — all API-verified |
+| Deals | `deals` object | ✅ | ✅ | ✅ | ✅ | ⬜ | 5 pulled; name edit, create (status `stage` + actor-ref `owner` set on create), delete — all API-verified |
+| List entries (per standard-object list) | `list_<slug>` | ✅ | ✅ | ✅ | ✅ | ⬜ | 3 lists; `new_text` edit, create (parent_record_id+parent_object on raw file — works via CLI), delete — all API-verified |
+| Events / Products / Users / Workspaces (extra standard objects) | `<slug>` object | ✅ | ➖ | ➖ | ➖ | ⬜ | **built (P5)** — exposed via `listObjects()`; Products + Users pulled & verified; same object codepath as companies/people/deals (writes identical, not separately re-pushed) |
+| Custom objects (user-defined) | `<slug>` object | ➖ | ➖ | ➖ | ➖ | ⬜ | **built (P5)** — same codepath as above; none defined in the test workspace, so validated against the extra standard objects instead |
+| Workspace members | `workspace_members` (`/Workspace Members`) | ✅ | ➖ | ➖ | ➖ | ➖ | **built (P4), read-only** — `GET /v2/workspace_members`; 1 member pulled verbatim; all writes disabled. Distinct from the `users` *object* |
+| Tasks | `tasks` (`/Tasks`) | ✅ | ✅ | ✅ | ✅ | ⬜ | **built + full CRUD validated (P6)** — `/v2/tasks`; content write-once (immutable on update); create needs all 6 fields; assignees→members, linked_records→records |
 | Notes | — | ⬜ | ⬜ | ⬜ | ⬜ | ➖ | planned (`/v2/notes` list, or per-record) |
 
 ### 3. Scoped / non-top-level entities
@@ -88,26 +91,26 @@ Best-case future state; `Status` tracks built/planned.
 <!-- A ✅ in any push column requires a MANUAL on-disk edit pushed via the CLI (accept→upload→publish) and confirmed in the service. Integration-spec / direct-API coverage is evidence only. -->
 
 ## Field-types × Operations (mixed — Attio attribute types)
-Every Attio attribute `type`, with its on-disk read key, write key, and the display virtual-field expression. All ⬜ — code-reviewed, not live-verified.
+Every Attio attribute `type`, with its on-disk read key, write key, and the display virtual-field expression. **Live-verified 2026-06-13** — 11 custom-field types round-tripped in one edit→push on `atlas` (companies) + confirmed in the API; relations via the FK/create tests.
 
 | Attribute type | Pull | Edit→Push | New→Push | Notes (read expr → write key) |
 |---|:--:|:--:|:--:|---|
-| text | ⬜ | ⬜ | ⬜ | `$[0].value` → `value` |
-| number | ⬜ | ⬜ | ⬜ | `$[0].value` → `value` |
-| checkbox | ⬜ | ⬜ | ⬜ | `$[0].value` (boolean) → `value` |
-| currency | ⬜ | ⬜ | ⬜ | `$[0].value` → `currency_value` (currency code fixed by attr config?) |
-| date | ⬜ | ⬜ | ⬜ | `$[0].value` → `value`; **tz/day-boundary?** |
-| timestamp | ⬜ | ⬜ | ⬜ | `$[0].value` → `value` |
-| rating | ⬜ | ⬜ | ⬜ | `$[0].value` → `value` |
-| status | ⬜ | ⬜ | ⬜ | read `$[0].status.title`, **write terse string title** (`convertStatus`) → `status` |
-| select | ⬜ | ⬜ | ⬜ | read `$[0].option.title`, **write terse string title** (`convertSelect`) → `option`; multiselect = array |
-| record-reference | ⬜ | ⬜ | ⬜ | `$[0].target_record_id` → `target_object`+`target_record_id`. **No FK declared** — see TODO |
-| actor-reference | ⬜ | ⬜ | ⬜ | `$[0].referenced_actor_id` → `referenced_actor_type`+`referenced_actor_id` (workspace member) |
-| location | ⬜ | ⬜ | ⬜ | `$[0].locality` → line_1..4/locality/region/postcode/country_code/lat/long |
-| domain | ⬜ | ⬜ | ⬜ | `$[0].domain` → `domain` |
-| email-address | ⬜ | ⬜ | ⬜ | `$[0].email_address` → `email_address`; **derived keys (`email_domain`, …) rejected on write — stripped by allowlist** |
-| phone-number | ⬜ | ⬜ | ⬜ | `$[0].phone_number` → `original_phone_number`+`country_code` |
-| personal-name | ⬜ | ⬜ | ⬜ | `$[*].first_name` (note `$[*]`) → first_name/last_name/full_name |
+| text | ✅ | ✅ | ✅ | `$[0].value` → `value` (matrix `custom_companies`; also name/description) |
+| number | ✅ | ✅ | ➖ | `$[0].value` → `value` (set 42) |
+| checkbox | ✅ | ✅ | ➖ | `$[0].value` (boolean) → `value` (set true) |
+| currency | ✅ | ✅ | ➖ | `$[0]` → `currency_value` (set 123.45) |
+| date | ✅ | ✅ | ➖ | `$[0].value` → `value`; **no tz shift** — `2026-07-04` round-tripped exactly (date is day-only) |
+| timestamp | ✅ | ➖ | ✅ | `$[0].value` → `value`; same value-key path as date (covered via task `deadline_at`) |
+| rating | ✅ | ✅ | ➖ | `$[0].value` → `value` (set 4) |
+| status | ✅ | ✅ | ➖ | read `$[0].status.title`, **write terse string title** (`convertStatus`) — wrote `"Status 2"`, read back full object ✓ |
+| select | ✅ | ✅ | ➖ | read `$[0].option.title`, **write terse string** (`convertSelect`) — wrote `"Option 2"`; multiselect = array (`Option 1`+`Option 3`) ✓ |
+| record-reference | ✅ | ✅ | ✅ | `$[0].target_record_id` → `target_object`+`target_record_id`; **FK declared + move parent→parent verified** |
+| actor-reference | ✅ | ➖ | ✅ | `$[0].referenced_actor_id` → `referenced_actor_type`+`referenced_actor_id`; FK → Workspace Members; set on deal create |
+| location | ✅ | ✅ | ➖ | `$[0].locality` → line_1..4/locality/region/postcode/country_code/lat/long (set SF/CA/US) |
+| domain | ✅ | ➖ | ➖ | `$[0].domain` → `domain` (read-verified on company `domains`) |
+| email-address | ✅ | ➖ | ✅ | `$[0].email_address` → `email_address`; derived keys stripped by allowlist; set on person create |
+| phone-number | ✅ | ✅ | ➖ | read `$[0].phone_number` → write `original_phone_number`+`country_code` (set +1415…) |
+| personal-name | ✅ | ➖ | ✅ | `$[*].first_name` → first_name/last_name/full_name (set on person create) |
 | interaction | ➖ | ➖ | ➖ | system/read-only — no virtual field, no write key |
 | record-id | ➖ | ➖ | ➖ | system id — read-only |
 
@@ -155,16 +158,26 @@ Org-wide rate limit: **100 req/s per workspace token** (`rateLimiterSpec { point
 Cross-cutting: base `https://api.attio.com`; `Authorization: Bearer <token>`, `Accept: application/json`; 60s timeout; envelope `{ data: <T> }` on every response.
 
 ## Foreign keys / associations
-⚠️ **No FK is declared in the connector today.** `record-reference` attributes surface only as a display virtual-field (`$[0].target_record_id`); none carry `x-scratch-foreign-key`, so no FK picker / linked-table UI and Milestone 6 cannot pass. Candidates to wire:
+✅ **FKs declared 2026-06-13 (P1).** `foreignKeyOptionsForAttribute` annotates `x-scratch-foreign-key` on single-target `record-reference` attrs (`linkedTableId` = target slug, resolved from `config.record_reference.allowed_object_ids[0]` via an object-id→slug map) and on `actor-reference` attrs (→ `workspace_members`). Multi-target references deferred. The write path was already correct (`target_object`+`target_record_id` allowlist).
 
 | FK field → target table | Read (pull) | Write via CLI (move parent→parent) | Notes |
 |---|:--:|:--:|---|
-| `people.company` → `companies` | ⬜ | ⬜ | single-target record-reference → declarable |
-| `deals.associated_company` → `companies` | ⬜ | ⬜ | single-target |
-| `deals.associated_people` → `people` | ⬜ | ⬜ | multi-value record-reference |
+| `people.company` → `companies` | ✅ | ✅ | single-target; **move test passed** — re-pointed a person to Atlas, verified in API |
+| `people.associated_deals` → `deals` | ✅ | ➖ | single-target; FK declared (multi-value array, move not separately tested) |
+| `people.associated_users` → `users` | ✅ | ➖ | single-target → the `users` object (P5) |
+| `deals.associated_company` → `companies` | ✅ | ➖ | single-target |
+| `deals.associated_people` → `people` | ✅ | ➖ | single-target (multi-value array) |
+| `*.created_by` / `deals.owner` (`actor-reference`) → `workspace_members` | ✅ | ➖ | actor-reference → Workspace Members table (P4) |
 - Association endpoint: none — Attio relations are `record-reference` attributes on the record (write `target_object`+`target_record_id`), not a separate association endpoint.
+- **Multi-target record-references** (a reference allowing >1 object type) are **not** declared — a single `linkedTableId` can't express N targets. None present in the test workspace; revisit if a use case appears.
 
-## Edge cases discovered (from code; verify live)
+## Edge cases discovered (live-verified 2026-06-11)
+- **FOUND+FIXED: publish pipeline broke on nested id paths (`id.record_id`).** `publish-plan-run.service.ts` read/wrote the record id with plain property access (`returned[idField]`, `{[idField]: id}`, `delete obj[idField]`) although `idColumnRemoteId` is a lodash dot-path (Attio is the first connector with a nested one). Consequences before the fix: (1) **create wrote no FileIndex row** → a publish-created record could never be updated or deleted ("Could not resolve remote ID", while the CLI still printed "Published" — silent failure); (2) **delete filters were built flat** (`{"id.record_id": id}`) which the connector's `extractRecordId` can't read → deletes of even *pulled* records would throw; (3) a later pull saw the unindexed record as new and **re-materialized it under a different filename**. Fixed in `dispatchUpdateBatch`/`dispatchCreateBatch`/`dispatchDeleteBatch` with `readRecordId`/lodash `set`/`unset`; verified by a create→edit→delete cycle with no intermediate pull.
+- **Post-publish phantom local edit (every write).** Attio rotates the value envelope (`active_from`, `created_by_actor`) on every successful write, and publish-v2 writes the service's fresh copy to `main` — so the local worktree file (still holding the pre-publish envelope) shows as a phantom `files unpublished` "modified" forever; a re-pull does NOT clear it (non-destructive: pull won't clobber a locally-modified file). **Resolution: `files discard <path>` after a confirmed publish** — restores from main (which has both the user's edit and the fresh envelope). Always confirm the write in the service API first; the phantom makes `unpublished`-empty unusable as the publish proof for Attio.
+- **Envelope-less fresh values publish fine.** An empty value array hand-written as bare `[{value:"…"}]` (no `active_from`/`created_by_actor` envelope) passes the write-shape and lands (people.job_title, verified in API) — so grid-created values don't need the read envelope.
+- **List-entry filename = parent_record_id, entry_id inside.** `/Lists/<List>/<parent_record_id>.json`; the entry's own id is `id.entry_id` (needed for `GET /v2/lists/{slug}/entries/{entry_id}`).
+
+## Edge cases from code review (verify live)
 - **Read shape ≠ write shape** — every value carries a metadata envelope (`attribute_type`, `active_from`, `active_until`, `created_by_actor`) stripped on write; `select`/`status` read a full option object but **write the terse string title**; `email-address` read carries derived keys (`email_domain`, `email_root_domain`, …) that **fail the write** and are dropped by the per-type allowlist. (`attio-write-shape.ts`, "empirically verified against Attio v2 on 2026-05-05".)
 - **Empty arrays rejected on write** — `toWriteValues` drops keys pointing at `[]`; to *clear* a multi-value attribute, pass `[null]`.
 - **`personal-name` uses `$[*].first_name`** (not `$[0]`) — array-wide extraction.

@@ -194,10 +194,68 @@ export interface AttioFieldValue {
 
 /**
  * Discriminated union over the kinds of "tables" the Attio connector exposes.
- * The dispatch function (`parseAttioTableId`) checks for the fixed standard-
- * object slugs first, then falls through to list-id parsing.
+ * `parseAttioTableId` parses a list id (`['list', slug]`) first, then treats
+ * any other head as an object api_slug (standard *or* custom — they share the
+ * `/v2/objects/{slug}` endpoint family, so one codepath handles both).
  */
-export type AttioTableKind = { kind: 'object'; objectSlug: AttioStandardObject } | { kind: 'list'; listSlug: string };
+export type AttioTableKind =
+  | { kind: 'object'; objectSlug: string }
+  | { kind: 'list'; listSlug: string }
+  | { kind: 'members' }
+  | { kind: 'tasks' };
+
+/** A record a task is linked to. Same shape on read and write. */
+export interface AttioTaskLinkedRecord {
+  target_object: string;
+  target_record_id: string;
+}
+
+/** A task assignee (a workspace member). Same shape on read and write. */
+export interface AttioTaskAssignee {
+  referenced_actor_type: string;
+  referenced_actor_id: string;
+}
+
+/**
+ * One Attio task (`GET /v2/tasks`). Its own endpoint family + flat shape (not
+ * the object `values[]` envelope), so its own codepath.
+ *
+ * Read ≠ write for the body: read returns **`content_plaintext`**, but a
+ * create sends **`content` + `format: "plaintext"`**, and Attio **rejects
+ * `content` on update** (immutable / write-once — DEV-10408). Create requires
+ * `content`, `format`, `deadline_at`, `is_completed`, `linked_records`, and
+ * `assignees`; update accepts only the latter four. `completed_at`,
+ * `created_by_actor`, `created_at` are system-set (read-only).
+ */
+export interface AttioTask {
+  id: { workspace_id: string; task_id: string };
+  content_plaintext: string;
+  is_completed: boolean;
+  completed_at: string | null;
+  deadline_at: string | null;
+  linked_records: AttioTaskLinkedRecord[];
+  assignees: AttioTaskAssignee[];
+  created_by_actor: { type: string; id: string | null } | null;
+  created_at: string;
+}
+
+/**
+ * One workspace member (`GET /v2/workspace_members`) — a teammate/user account
+ * in the Attio workspace. This is the directory that `actor-reference` fields
+ * (owner, created_by_actor) point at. Distinct from the standard **`users`
+ * object** (`/v2/objects/users`), which is a CRM object for tracking *your
+ * product's* users. Read-only reference data: flat shape, fixed fields (no
+ * attribute-discovery endpoint), no create/update/delete.
+ */
+export interface AttioWorkspaceMember {
+  id: { workspace_id: string; workspace_member_id: string };
+  first_name: string;
+  last_name: string;
+  avatar_url: string | null;
+  email_address: string;
+  access_level: string;
+  created_at: string;
+}
 
 /**
  * Resumable pull progress: the `offset` of the next page (Attio uses

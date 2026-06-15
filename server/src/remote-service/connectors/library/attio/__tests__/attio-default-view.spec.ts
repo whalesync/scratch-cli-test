@@ -56,8 +56,10 @@ function makeListSchema() {
       },
       { [X_SCRATCH_READONLY]: true },
     ),
-    parent_record_id: Type.String({ [X_SCRATCH_READONLY]: true }),
-    parent_object: Type.String({ [X_SCRATCH_READONLY]: true }),
+    // Writable (settable on create) — mirrors the real list schema; write-once
+    // not yet supported by the pipeline. See attio-json-schema.ts.
+    parent_record_id: Type.String(),
+    parent_object: Type.String(),
     created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
     entry_values: Type.Object({
       stage: attr('status'),
@@ -272,18 +274,18 @@ describe('buildAttioDefaultView (list)', () => {
     expect(stageIdx).toBeGreaterThan(idIdx);
   });
 
-  it('should hide parent_record_id and parent_object', () => {
+  it('should show parent_record_id and parent_object so a user can set them when creating an entry', () => {
     const parentRecordCol = view.cols.find((c) => c.kind === 'col' && c.path === 'parent_record_id') as TableViewCol;
     const parentObjectCol = view.cols.find((c) => c.kind === 'col' && c.path === 'parent_object') as TableViewCol;
-    expect(parentRecordCol.hidden).toBe(true);
-    expect(parentObjectCol.hidden).toBe(true);
+    expect(parentRecordCol.hidden).toBeUndefined();
+    expect(parentObjectCol.hidden).toBeUndefined();
   });
 
-  it('should mark parent_record_id and parent_object as readonly', () => {
+  it('should leave parent_record_id and parent_object writable (write-once not yet supported)', () => {
     const parentRecordCol = view.cols.find((c) => c.kind === 'col' && c.path === 'parent_record_id') as TableViewCol;
     const parentObjectCol = view.cols.find((c) => c.kind === 'col' && c.path === 'parent_object') as TableViewCol;
-    expect(parentRecordCol.readonly).toBe(true);
-    expect(parentObjectCol.readonly).toBe(true);
+    expect(parentRecordCol.readonly).toBeUndefined();
+    expect(parentObjectCol.readonly).toBeUndefined();
   });
 });
 

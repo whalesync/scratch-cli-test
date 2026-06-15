@@ -1,7 +1,18 @@
 import { AxiosInstance, isAxiosError } from 'axios';
 import { RateLimiter, withRetry as standaloneWithRetry, WithRetryOpts } from 'src/rate-limiter/rate-limiter';
 import { createApiClient } from '../../create-api-client';
-import { AttioAttribute, AttioEnvelope, AttioList, AttioListEntry, AttioObject, AttioRecord } from './attio-types';
+import {
+  AttioAttribute,
+  AttioEnvelope,
+  AttioList,
+  AttioListEntry,
+  AttioObject,
+  AttioRecord,
+  AttioTask,
+  AttioTaskAssignee,
+  AttioTaskLinkedRecord,
+  AttioWorkspaceMember,
+} from './attio-types';
 
 const BASE_URL = 'https://api.attio.com';
 const PAGE_LIMIT = 500; // Attio's POST `/records/query` and `/entries/query` cap
@@ -100,6 +111,18 @@ export class AttioApiClient {
   async listObjectAttributes(objectSlug: string): Promise<AttioAttribute[]> {
     const response = await this.withRetry(async () =>
       this.http.get<AttioEnvelope<AttioAttribute[]>>(`/v2/objects/${objectSlug}/attributes`),
+    );
+    return response.data.data;
+  }
+
+  /**
+   * List every workspace member (`GET /v2/workspace_members`) — the teammates
+   * in the workspace. Read-only reference data; the endpoint returns the full
+   * set in one response (no pagination params).
+   */
+  async listWorkspaceMembers(): Promise<AttioWorkspaceMember[]> {
+    const response = await this.withRetry(async () =>
+      this.http.get<AttioEnvelope<AttioWorkspaceMember[]>>('/v2/workspace_members'),
     );
     return response.data.data;
   }
@@ -281,6 +304,100 @@ export class AttioApiClient {
   async deleteListEntry(listSlug: string, entryId: string): Promise<boolean> {
     try {
       await this.withRetry(async () => this.http.delete(`/v2/lists/${listSlug}/entries/${entryId}`));
+      return true;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) return false;
+      throw error;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Tasks (`/v2/tasks`) — own endpoint family, flat shape, offset pagination.
+  // -------------------------------------------------------------------------
+
+  /** Stream every task via `GET /v2/tasks?limit&offset`. */
+  async *queryTasks(resumeOffset?: number): AsyncGenerator<{ data: AttioTask[]; nextOffset?: number }, void> {
+    let offset = resumeOffset ?? 0;
+    while (true) {
+      const response = await this.withRetry(async () =>
+        this.http.get<AttioEnvelope<AttioTask[]>>('/v2/tasks', { params: { limit: PAGE_LIMIT, offset } }),
+      );
+      const data = response.data.data ?? [];
+      const nextOffset = offset + data.length;
+      const hasMore = data.length === PAGE_LIMIT;
+      yield { data, nextOffset: hasMore ? nextOffset : undefined };
+      if (!hasMore) return;
+      offset = nextOffset;
+    }
+  }
+
+  /** Fetch a single task by id. Returns `null` on 404. */
+  async getTask(taskId: string): Promise<AttioTask | null> {
+    try {
+      const response = await this.withRetry(async () => this.http.get<AttioEnvelope<AttioTask>>(`/v2/tasks/${taskId}`));
+      return response.data.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Create a task. Attio requires *all* of `content` + `format`, `deadline_at`
+   * (a date or `null`), `is_completed`, `linked_records`, and `assignees` —
+   * the connector fills sensible defaults for any the file omits.
+   */
+  async createTask(input: {
+    content: string;
+    deadlineAt: string | null;
+    isCompleted: boolean;
+    linkedRecords: AttioTaskLinkedRecord[];
+    assignees: AttioTaskAssignee[];
+  }): Promise<AttioTask> {
+    const response = await this.withRetry(async () =>
+      this.http.post<AttioEnvelope<AttioTask>>('/v2/tasks', {
+        data: {
+          format: 'plaintext',
+          content: input.content,
+          deadline_at: input.deadlineAt,
+          is_completed: input.isCompleted,
+          linked_records: input.linkedRecords,
+          assignees: input.assignees,
+        },
+      }),
+    );
+    return response.data.data;
+  }
+
+  /**
+   * Update a task via `PATCH /v2/tasks/{id}`. Only the mutable fields are
+   * accepted — Attio **rejects `content` on update** (write-once). Sends only
+   * the keys present in `fields`.
+   */
+  async updateTask(
+    taskId: string,
+    fields: {
+      isCompleted?: boolean;
+      deadlineAt?: string | null;
+      linkedRecords?: AttioTaskLinkedRecord[];
+      assignees?: AttioTaskAssignee[];
+    },
+  ): Promise<AttioTask> {
+    const data: Record<string, unknown> = {};
+    if (fields.isCompleted !== undefined) data.is_completed = fields.isCompleted;
+    if (fields.deadlineAt !== undefined) data.deadline_at = fields.deadlineAt;
+    if (fields.linkedRecords !== undefined) data.linked_records = fields.linkedRecords;
+    if (fields.assignees !== undefined) data.assignees = fields.assignees;
+    const response = await this.withRetry(async () =>
+      this.http.patch<AttioEnvelope<AttioTask>>(`/v2/tasks/${taskId}`, { data }),
+    );
+    return response.data.data;
+  }
+
+  /** Delete a task. Returns `true` if deleted, `false` if it was already gone (404). */
+  async deleteTask(taskId: string): Promise<boolean> {
+    try {
+      await this.withRetry(async () => this.http.delete(`/v2/tasks/${taskId}`));
       return true;
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) return false;

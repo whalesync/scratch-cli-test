@@ -10,10 +10,15 @@ import {
 // ── Top-level fixed fields ──
 
 // Fixed fields that should be hidden by default.
-const HIDDEN_FIXED_FIELDS = new Set(['web_url', 'parent_record_id', 'parent_object']);
+// `parent_record_id` / `parent_object` are intentionally NOT hidden: a user
+// must see and set them to create a list entry from the grid (createListEntry
+// requires them). See the write-once note in attio-json-schema.ts.
+const HIDDEN_FIXED_FIELDS = new Set(['web_url']);
 
 // Fixed fields that are always readonly (system-generated, not editable via the API).
-const READONLY_FIXED_FIELDS = new Set(['id', 'created_at', 'web_url', 'parent_record_id', 'parent_object']);
+// `parent_record_id` / `parent_object` are writable (settable on create) until
+// the pipeline supports write-once — see attio-json-schema.ts.
+const READONLY_FIXED_FIELDS = new Set(['id', 'created_at', 'web_url']);
 
 // ── Attio attribute type mapping ──
 

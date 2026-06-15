@@ -1,5 +1,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any */
-import { TransformerTypes, VirtualFieldDef, X_SCRATCH_VIRTUAL_FIELDS } from '@spinner/shared-types';
+import {
+  TransformerTypes,
+  VirtualFieldDef,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+  X_SCRATCH_VIRTUAL_FIELDS,
+} from '@spinner/shared-types';
 import { buildAttioListTableSpec, buildAttioObjectTableSpec } from '../attio-json-schema';
 import { AttioAttribute } from '../attio-types';
 
@@ -27,6 +33,9 @@ const mockEntityId = { wsId: 'test', remoteId: ['test-remote'] };
 const mockClient = {
   listObjectAttributes: jest.fn(),
   listListAttributes: jest.fn(),
+  // Drives object-id → slug resolution for record-reference foreign keys.
+  // Default: empty (no resolution); FK tests override per-case.
+  listObjects: jest.fn().mockResolvedValue([]),
 } as any;
 
 describe('attio-json-schema virtual fields', () => {
@@ -159,5 +168,120 @@ describe('attio-json-schema virtual fields', () => {
       type: TransformerTypes.JSONPath,
       options: { expression: '$[0].status.title', arrayHandling: 'first' },
     });
+  });
+});
+
+describe('attio-json-schema read-only propagation (is_writable)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('marks a non-writable attribute (is_writable=false) read-only', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      // Mirrors Attio's computed fields (record_id, created_at, *_interaction):
+      // is_system_attribute true AND is_writable false.
+      makeAttribute({ api_slug: 'last_interaction', type: 'timestamp', is_system_attribute: true, is_writable: false }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'companies', mockClient);
+    expect(spec.schema.properties.values.properties.last_interaction[X_SCRATCH_READONLY]).toBe(true);
+  });
+
+  it('does NOT mark a writable system field read-only (the is_system_attribute trap)', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      // name/description/domains on Attio: is_system_attribute true but writable.
+      // Keying off is_system_attribute would wrongly lock these — it must not.
+      makeAttribute({ api_slug: 'name', type: 'text', is_system_attribute: true, is_writable: true }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'companies', mockClient);
+    expect(spec.schema.properties.values.properties.name[X_SCRATCH_READONLY]).toBeUndefined();
+  });
+
+  it('leaves an attribute with no is_writable flag writable (absent !== false)', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([makeAttribute({ api_slug: 'custom_text', type: 'text' })]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'companies', mockClient);
+    expect(spec.schema.properties.values.properties.custom_text[X_SCRATCH_READONLY]).toBeUndefined();
+  });
+
+  it('propagates is_writable=false on list-scoped attributes too', async () => {
+    mockClient.listListAttributes.mockResolvedValue([
+      makeAttribute({ api_slug: 'computed_on_list', type: 'timestamp', is_writable: false }),
+      makeAttribute({ api_slug: 'sector', type: 'select', is_writable: true }),
+    ]);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', mockClient);
+    expect(spec.schema.properties.entry_values.properties.computed_on_list[X_SCRATCH_READONLY]).toBe(true);
+    expect(spec.schema.properties.entry_values.properties.sector[X_SCRATCH_READONLY]).toBeUndefined();
+  });
+});
+
+describe('attio-json-schema foreign keys', () => {
+  const companiesObject = {
+    id: { workspace_id: 'ws', object_id: 'obj-companies' },
+    api_slug: 'companies',
+    singular_noun: 'Company',
+    plural_noun: 'Companies',
+    created_at: '2024-01-01T00:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockClient.listObjects.mockResolvedValue([companiesObject]);
+  });
+
+  it('declares a foreign key on a single-target record-reference (→ target object table)', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({
+        api_slug: 'company',
+        type: 'record-reference',
+        config: { record_reference: { allowed_object_ids: ['obj-companies'] } },
+      }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'people', mockClient);
+    expect(spec.schema.properties.values.properties.company[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'companies',
+    });
+  });
+
+  it('declares a foreign key on an actor-reference (→ workspace members table)', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([makeAttribute({ api_slug: 'owner', type: 'actor-reference' })]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'deals', mockClient);
+    expect(spec.schema.properties.values.properties.owner[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({
+      linkedTableId: 'workspace_members',
+    });
+  });
+
+  it('does NOT declare a foreign key on a multi-target record-reference (deferred)', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({
+        api_slug: 'related',
+        type: 'record-reference',
+        config: { record_reference: { allowed_object_ids: ['obj-companies', 'obj-people'] } },
+      }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'people', mockClient);
+    expect(spec.schema.properties.values.properties.related[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
+  });
+
+  it('does NOT declare a foreign key when the target object id is unknown', async () => {
+    mockClient.listObjectAttributes.mockResolvedValue([
+      makeAttribute({
+        api_slug: 'company',
+        type: 'record-reference',
+        config: { record_reference: { allowed_object_ids: ['obj-not-in-map'] } },
+      }),
+    ]);
+    const spec = await buildAttioObjectTableSpec(mockEntityId, 'people', mockClient);
+    expect(spec.schema.properties.values.properties.company[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toBeUndefined();
+  });
+});
+
+describe('attio-json-schema list-entry parent fields (write-once not yet supported)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('leaves parent_record_id / parent_object writable so a list entry can be created from the grid', async () => {
+    mockClient.listListAttributes.mockResolvedValue([makeAttribute({ api_slug: 'stage', type: 'status' })]);
+    const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', mockClient);
+    expect(spec.schema.properties.parent_record_id[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(spec.schema.properties.parent_object[X_SCRATCH_READONLY]).toBeUndefined();
+    // The id triple and created_at stay read-only.
+    expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(spec.schema.properties.created_at[X_SCRATCH_READONLY]).toBe(true);
   });
 });
