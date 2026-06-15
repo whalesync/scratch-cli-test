@@ -115,7 +115,9 @@ Look for `fail exit=...` (CLI), non-2xx status codes (API), or `PUBLISH complete
 
 ## CLI location
 
-If the `scratchmd` CLI tool is not on the executable path, you can run it directly from `{cli_path}`.
+Always run the CLI as the absolute path `{cli_path}` — this is the exact build whose command surface matches these docs.
+
+Do not rely on a bare `scratchmd` from your PATH: it may be a different, leaner build (e.g. a Homebrew install) that is missing subcommands described here. If you run it and get `unrecognized subcommand`, you'd wrongly conclude the feature doesn't exist when you actually ran the wrong binary. Only fall back to a PATH `scratchmd` if the binary at `{cli_path}` no longer exists.
 
 ## Before running `scratchmd` (sandbox check)
 
