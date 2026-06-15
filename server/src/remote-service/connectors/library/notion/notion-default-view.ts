@@ -151,6 +151,10 @@ function mapFixedFieldType(fieldId: string, fieldSchema: TSchema | undefined): T
 /** Build a TableViewCol for a fixed top-level field. */
 function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): TableViewCol {
   const hidden = HIDDEN_FIXED_FIELDS.has(fieldId) || undefined;
+  // Read-only system fields (created_time, last_edited_time, created_by,
+  // last_edited_by, url) carry X_SCRATCH_READONLY on their schema node; mirror
+  // buildPropertyCol so the grid renders them read-only.
+  const isReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true;
 
   const col: TableViewCol = {
     kind: 'col',
@@ -158,6 +162,7 @@ function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): Table
     name: formatFieldName(fieldId),
     type: mapFixedFieldType(fieldId, fieldSchema),
     hidden,
+    readonly: isReadonly || undefined,
   };
 
   // User objects: created_by, last_edited_by → default to showing id

@@ -173,7 +173,7 @@ function buildDataSource(): DataSourceObjectResponse {
   } as unknown as DataSourceObjectResponse;
 }
 
-describe('buildNotionJsonTableSpec last-modified annotation', () => {
+describe('buildNotionJsonTableSpec top-level field annotations', () => {
   function topLevelProps(): Record<string, Record<string, unknown>> {
     const spec = buildNotionJsonTableSpec({ wsId: 'db', remoteId: ['db_123', 'ds_123'] }, buildDataSource());
     return (spec.schema as unknown as { properties: Record<string, Record<string, unknown>> }).properties;
@@ -185,5 +185,19 @@ describe('buildNotionJsonTableSpec last-modified annotation', () => {
 
   it('does not annotate the created_time system field', () => {
     expect(topLevelProps().created_time[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
+  });
+
+  it('marks the fixed read-only system fields readonly', () => {
+    expect(topLevelProps().created_time[X_SCRATCH_READONLY]).toBe(true);
+    expect(topLevelProps().last_edited_time[X_SCRATCH_READONLY]).toBe(true);
+    expect(topLevelProps().created_by[X_SCRATCH_READONLY]).toBe(true);
+    expect(topLevelProps().last_edited_by[X_SCRATCH_READONLY]).toBe(true);
+    expect(topLevelProps().url[X_SCRATCH_READONLY]).toBe(true);
+  });
+
+  it('leaves genuinely writable fixed fields (cover, icon, in_trash) editable', () => {
+    expect(topLevelProps().cover[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(topLevelProps().icon[X_SCRATCH_READONLY]).toBeUndefined();
+    expect(topLevelProps().in_trash[X_SCRATCH_READONLY]).toBeUndefined();
   });
 });

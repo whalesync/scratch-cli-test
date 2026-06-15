@@ -7,10 +7,12 @@ import { extractSchemaFields, type SchemaField } from 'src/utils/schema-helpers'
  *
  * Walking the raw JSON schema with `extractSchemaFields` and naming each leaf by
  * its last path segment produces garbage for connectors whose records nest deep
- * value objects: a Notion page has `created_by: { object, id }` and
- * `last_edited_by: { object, id }` (plain objects with no `x-scratch-*`
- * annotation), so the flattener emits several columns all named `object` and
+ * value objects that share key names: a Notion page's `created_by` /
+ * `last_edited_by` are `{ object, id }` value objects, so a flattener that
+ * recurses into an un-annotated one emits several columns all named `object` and
  * several named `id`, and the destination connector rejects the duplicate names.
+ * (DEV-10412 since marks those two fields `x-scratch-readonly`, so the flattener
+ * keeps them whole — but the hazard stands for any un-annotated nested object.)
  *
  * There is no generic JSON-Schema signal that tells a "container to expand"
  * (Airtable `fields`, HubSpot `properties`) apart from a "value object to keep

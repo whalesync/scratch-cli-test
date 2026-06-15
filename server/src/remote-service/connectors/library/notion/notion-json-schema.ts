@@ -62,10 +62,11 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
     {
       object: Type.Literal('page', { description: 'Object type' }),
       id: Type.String({ description: 'Unique page identifier' }),
-      created_time: Type.String({ description: 'Page creation time', format: 'date-time' }),
+      created_time: Type.String({ description: 'Page creation time', format: 'date-time', [X_SCRATCH_READONLY]: true }),
       last_edited_time: Type.String({
         description: 'Last edit time',
         format: 'date-time',
+        [X_SCRATCH_READONLY]: true,
         // System field present on every Notion page. Drives incremental pulls
         // (the connector filters on it) and surfaces it to the UI's
         // last-modified-field picker. See notion-incremental.ts.
@@ -76,14 +77,14 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
           object: Type.Literal('user'),
           id: Type.String(),
         },
-        { description: 'User who created the page' },
+        { description: 'User who created the page', [X_SCRATCH_READONLY]: true },
       ),
       last_edited_by: Type.Object(
         {
           object: Type.Literal('user'),
           id: Type.String(),
         },
-        { description: 'User who last edited the page' },
+        { description: 'User who last edited the page', [X_SCRATCH_READONLY]: true },
       ),
       cover: Type.Optional(
         Type.Union(
@@ -150,7 +151,7 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
         }),
       ),
       properties: Type.Object(propertySchemas, { description: 'Page properties' }),
-      url: Type.String({ description: 'Page URL', format: 'uri' }),
+      url: Type.String({ description: 'Page URL', format: 'uri', [X_SCRATCH_READONLY]: true }),
       public_url: Type.Optional(Type.Union([Type.String({ format: 'uri' }), Type.Null()])),
     },
     {

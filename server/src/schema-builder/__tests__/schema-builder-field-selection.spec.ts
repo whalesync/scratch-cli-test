@@ -12,9 +12,11 @@ function planFieldName(field: SchemaField): string {
 
 describe('selectPlanFieldsFromTableView', () => {
   // ── Notion regression: real generated schema + curated default view ──────────
-  // Reproduces the bug where planning from a Notion folder emitted several columns
-  // all named "object" and several named "id" because the raw flattener recurses
-  // into Notion's un-annotated `created_by: { object, id }` / `last_edited_by`.
+  // Plan generation drives off the curated view (not the raw flattener), which used
+  // to emit several columns all named "object"/"id" by recursing into Notion's
+  // `created_by: { object, id }` / `last_edited_by`. These tests pin that the
+  // view-driven selection stays free of those collisions; DEV-10412 additionally
+  // marks the fixed user objects read-only, so the flattener keeps them whole too.
   describe('Notion (real builders)', () => {
     function buildNotionSpec(
       properties: Record<string, { id: string; type: string; relation?: { database_id: string } }>,
@@ -39,10 +41,17 @@ describe('selectPlanFieldsFromTableView', () => {
 
     const result = selectPlanFieldsFromTableView({ schema: spec.schema, view });
 
-    it('sanity-checks that raw flattening DOES produce the duplicate names (the bug)', () => {
-      const rawLeafNames = extractSchemaFields(spec.schema).map((f) => f.path.split('.').pop());
-      expect(rawLeafNames.filter((n) => n === 'object').length).toBeGreaterThan(1);
-      expect(rawLeafNames.filter((n) => n === 'id').length).toBeGreaterThan(1);
+    it('keeps created_by / last_edited_by whole in the raw flattener now they are readonly (DEV-10412)', () => {
+      // Marking the fixed user objects X_SCRATCH_READONLY makes the flattener treat
+      // them as single leaves instead of exploding them into duplicate `object` /
+      // `id` sub-fields (the original plan-generation collision).
+      const rawPaths = extractSchemaFields(spec.schema).map((f) => f.path);
+      expect(rawPaths).toContain('created_by');
+      expect(rawPaths).toContain('last_edited_by');
+      expect(rawPaths).not.toContain('created_by.object');
+      expect(rawPaths).not.toContain('created_by.id');
+      expect(rawPaths).not.toContain('last_edited_by.object');
+      expect(rawPaths).not.toContain('last_edited_by.id');
     });
 
     it('produces no duplicate field names', () => {

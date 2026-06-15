@@ -174,6 +174,18 @@ describe('buildNotionDefaultView', () => {
     it('does not mark writable properties readonly', () => {
       expect(findCol(view, 'properties.Name.title')?.readonly).toBeUndefined();
     });
+
+    it('marks the fixed read-only system fields readonly', () => {
+      expect(findCol(view, 'created_time')?.readonly).toBe(true);
+      expect(findCol(view, 'last_edited_time')?.readonly).toBe(true);
+      expect(findCol(view, 'created_by')?.readonly).toBe(true);
+      expect(findCol(view, 'last_edited_by')?.readonly).toBe(true);
+      expect(findCol(view, 'url')?.readonly).toBe(true);
+    });
+
+    it('does not mark writable fixed fields (in_trash) readonly', () => {
+      expect(findCol(view, 'in_trash')?.readonly).toBeUndefined();
+    });
   });
 
   describe('hidden fixed fields', () => {
