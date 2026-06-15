@@ -138,24 +138,28 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
         "kind": "col",
         "name": "Url",
         "path": "url",
+        "readonly": true,
         "type": "url",
       },
       {
         "kind": "col",
         "name": "Created Time",
         "path": "created_time",
+        "readonly": true,
         "type": "date",
       },
       {
         "kind": "col",
         "name": "Last Edited Time",
         "path": "last_edited_time",
+        "readonly": true,
         "type": "date",
       },
       {
         "kind": "col",
         "name": "Created By",
         "path": "created_by",
+        "readonly": true,
         "selectedSubfield": 0,
         "subfields": [
           {
@@ -170,6 +174,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
         "kind": "col",
         "name": "Last Edited By",
         "path": "last_edited_by",
+        "readonly": true,
         "selectedSubfield": 0,
         "subfields": [
           {
@@ -202,6 +207,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
         "kind": "col",
         "name": "Page Content",
         "path": "page_content",
+        "readonly": true,
         "type": "object",
       },
       {
@@ -346,11 +352,13 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
           "id",
         ],
         "type": "object",
+        "x-scratch-readonly": true,
       },
       "created_time": {
         "description": "Page creation time",
         "format": "date-time",
         "type": "string",
+        "x-scratch-readonly": true,
       },
       "icon": {
         "anyOf": [
@@ -461,12 +469,14 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
           "id",
         ],
         "type": "object",
+        "x-scratch-readonly": true,
       },
       "last_edited_time": {
         "description": "Last edit time",
         "format": "date-time",
         "type": "string",
         "x-scratch-last-modified-field": true,
+        "x-scratch-readonly": true,
       },
       "object": {
         "const": "page",
@@ -1300,6 +1310,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
         "description": "Page URL",
         "format": "uri",
         "type": "string",
+        "x-scratch-readonly": true,
       },
     },
     "required": [
