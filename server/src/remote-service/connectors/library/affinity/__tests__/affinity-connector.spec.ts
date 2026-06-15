@@ -36,6 +36,25 @@ const mockListAllNotes = jest.fn();
 const mockGetNote = jest.fn();
 const mockListAllEntityFiles = jest.fn();
 const mockGetEntityFile = jest.fn();
+const mockListAllUsers = jest.fn();
+const mockGetUser = jest.fn();
+const mockUpdatePersonFieldValues = jest.fn();
+const mockUpdateCompanyFieldValues = jest.fn();
+const mockUpdateListEntryFieldValues = jest.fn();
+const mockCreateNote = jest.fn();
+const mockUpdateNote = jest.fn();
+const mockDeleteNote = jest.fn();
+const mockCreatePerson = jest.fn();
+const mockUpdatePerson = jest.fn();
+const mockDeletePerson = jest.fn();
+const mockCreateCompany = jest.fn();
+const mockUpdateCompany = jest.fn();
+const mockDeleteCompany = jest.fn();
+const mockCreateOpportunity = jest.fn();
+const mockUpdateOpportunity = jest.fn();
+const mockDeleteOpportunity = jest.fn();
+const mockCreateListEntry = jest.fn();
+const mockDeleteListEntry = jest.fn();
 
 jest.mock('../affinity-api-client', () => {
   return {
@@ -58,6 +77,25 @@ jest.mock('../affinity-api-client', () => {
       getNote: mockGetNote,
       listAllEntityFiles: mockListAllEntityFiles,
       getEntityFile: mockGetEntityFile,
+      listAllUsers: mockListAllUsers,
+      getUser: mockGetUser,
+      updatePersonFieldValues: mockUpdatePersonFieldValues,
+      updateCompanyFieldValues: mockUpdateCompanyFieldValues,
+      updateListEntryFieldValues: mockUpdateListEntryFieldValues,
+      createNote: mockCreateNote,
+      updateNote: mockUpdateNote,
+      deleteNote: mockDeleteNote,
+      createPerson: mockCreatePerson,
+      updatePerson: mockUpdatePerson,
+      deletePerson: mockDeletePerson,
+      createCompany: mockCreateCompany,
+      updateCompany: mockUpdateCompany,
+      deleteCompany: mockDeleteCompany,
+      createOpportunity: mockCreateOpportunity,
+      updateOpportunity: mockUpdateOpportunity,
+      deleteOpportunity: mockDeleteOpportunity,
+      createListEntry: mockCreateListEntry,
+      deleteListEntry: mockDeleteListEntry,
     })),
     AffinityError: class AffinityError extends Error {
       statusCode?: number;
@@ -207,7 +245,7 @@ describe('parseAffinityTableId', () => {
 // listTables ------------------------------------------------------------------
 
 describe('AffinityConnector.listTables', () => {
-  it('returns 3 tenant tables at the top level plus user lists under "Lists/"', async () => {
+  it('returns the tenant tables at the top level plus user lists under "Lists/"', async () => {
     mockListAllLists.mockResolvedValue([
       makeList(101, 'My People List', 'person'),
       makeList(102, 'My Company List', 'company'),
@@ -224,6 +262,7 @@ describe('AffinityConnector.listTables', () => {
       'Opportunities',
       'Notes',
       'Entity Files',
+      'Users',
     ]);
 
     // List tables come after tenant tables, all flat under "Lists/" regardless of entity type.
@@ -233,14 +272,21 @@ describe('AffinityConnector.listTables', () => {
     expect(lists.map((t) => t.id.remoteId[0])).toEqual(['101', '102']);
   });
 
-  it('still returns the 3 tenant tables when there are no user-created lists', async () => {
+  it('still returns the tenant tables when there are no user-created lists', async () => {
     mockListAllLists.mockResolvedValue([]);
 
     const connector = new AffinityConnector('fake-key');
     const tables = await connector.listTables();
 
-    expect(tables).toHaveLength(5);
-    expect(tables.map((t) => t.displayName)).toEqual(['Companies', 'People', 'Opportunities', 'Notes', 'Entity Files']);
+    expect(tables).toHaveLength(6);
+    expect(tables.map((t) => t.displayName)).toEqual([
+      'Companies',
+      'People',
+      'Opportunities',
+      'Notes',
+      'Entity Files',
+      'Users',
+    ]);
   });
 });
 
@@ -552,5 +598,469 @@ describe('AffinityConnector.getSuggestedRecordFileNames', () => {
     const suggestions = connector.getSuggestedRecordFileNames(records, buildTableSpec('entity-files'));
 
     expect(suggestions).toEqual(['contract.pdf']);
+  });
+});
+
+// Writes (DEV-10298) -----------------------------------------------------------
+
+describe('AffinityConnector writes', () => {
+  const X_SCRATCH_READONLY = 'x-scratch-readonly';
+  const X_SCRATCH_CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
+
+  /** Table spec whose schema declares one writable text field (`field-1`). */
+  function buildWritableTableSpec(remoteId: string, recordHasEntityWrapper: boolean): BaseJsonTableSpec {
+    const fieldsObjectSchema = {
+      properties: {
+        'field-1': { description: 'Status', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'text' },
+        'enriched-1': { description: 'Growth', [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'number', [X_SCRATCH_READONLY]: true },
+      },
+    };
+    const schema = recordHasEntityWrapper
+      ? { properties: { entity: { properties: { fields: fieldsObjectSchema } } } }
+      : { properties: { fields: fieldsObjectSchema } };
+    return {
+      ...buildTableSpec(remoteId),
+      schema: schema as unknown as TSchema,
+    };
+  }
+
+  describe('updateRecords', () => {
+    it('pushes a changed person field through the persons batch endpoint and reads back', async () => {
+      const personFile = {
+        id: 42,
+        firstName: 'Ada',
+        fields: {
+          'field-1': {
+            id: 'field-1',
+            name: 'Status',
+            type: 'global',
+            enrichmentSource: null,
+            value: { type: 'text', data: 'Active' },
+          },
+        },
+      } as unknown as ConnectorFile;
+      mockUpdatePersonFieldValues.mockResolvedValue(undefined);
+      mockGetPerson.mockResolvedValue(makePerson(42, [{ id: 'field-1', value: { type: 'text', data: 'Active' } }]));
+
+      const connector = new AffinityConnector('fake-key');
+      const results = await connector.updateRecords(
+        buildWritableTableSpec('persons', false),
+        [personFile],
+        [{ fields: { 'field-1': { value: { data: 'Active' } } } }],
+      );
+
+      expect(mockUpdatePersonFieldValues).toHaveBeenCalledWith(42, [
+        { id: 'field-1', value: { type: 'text', data: 'Active' } },
+      ]);
+      expect(mockGetPerson).toHaveBeenCalledWith(42);
+      expect(results).toHaveLength(1);
+    });
+
+    it('pushes a changed list-entry field through the list-entries batch endpoint', async () => {
+      const entryFile = {
+        id: 9,
+        listId: 500,
+        entity: {
+          id: 8,
+          name: 'Deal',
+          fields: {
+            'field-1': {
+              id: 'field-1',
+              name: 'Status',
+              type: 'list',
+              enrichmentSource: null,
+              value: { type: 'text', data: 'Won' },
+            },
+          },
+        },
+      } as unknown as ConnectorFile;
+      mockUpdateListEntryFieldValues.mockResolvedValue(undefined);
+      mockGetListEntry.mockResolvedValue(makeListEntry(9, 500));
+
+      const connector = new AffinityConnector('fake-key');
+      await connector.updateRecords(
+        buildWritableTableSpec('500', true),
+        [entryFile],
+        [{ entity: { fields: { 'field-1': { value: { data: 'Won' } } } } }],
+      );
+
+      expect(mockUpdateListEntryFieldValues).toHaveBeenCalledWith(500, 9, [
+        { id: 'field-1', value: { type: 'text', data: 'Won' } },
+      ]);
+    });
+
+    it('routes a writable basic (firstName) to the v1 PUT, not a v2 field write', async () => {
+      const personFile = { id: 42, firstName: 'Renamed', fields: {} } as unknown as ConnectorFile;
+      mockUpdatePerson.mockResolvedValue({ id: 42 });
+      mockGetPerson.mockResolvedValue(makePerson(42));
+
+      const connector = new AffinityConnector('fake-key');
+      await connector.updateRecords(buildWritableTableSpec('persons', false), [personFile], [{ firstName: 'Renamed' }]);
+
+      expect(mockUpdatePerson).toHaveBeenCalledWith(42, { first_name: 'Renamed' });
+      expect(mockUpdatePersonFieldValues).not.toHaveBeenCalled();
+    });
+
+    it('refuses an edit to a computed (read-only) field', async () => {
+      const personFile = {
+        id: 42,
+        fields: { 'enriched-1': { id: 'enriched-1', value: { type: 'number', data: 1 } } },
+      } as unknown as ConnectorFile;
+
+      const connector = new AffinityConnector('fake-key');
+      await expect(
+        connector.updateRecords(
+          buildWritableTableSpec('persons', false),
+          [personFile],
+          [{ fields: { 'enriched-1': { value: { data: 2 } } } }],
+        ),
+      ).rejects.toThrow(/computed by Affinity/);
+    });
+
+    it('updates note content through the note-update endpoint', async () => {
+      const noteFile = { id: 7, content: { html: '<p>edited</p>' } } as unknown as ConnectorFile;
+      mockUpdateNote.mockResolvedValue({ id: 7 });
+      mockGetNote.mockResolvedValue(makeNote(7));
+
+      const connector = new AffinityConnector('fake-key');
+      await connector.updateRecords(buildTableSpec('notes'), [noteFile], [{ content: { html: '<p>edited</p>' } }]);
+
+      expect(mockUpdateNote).toHaveBeenCalledWith(7, { content: { html: '<p>edited</p>' } });
+    });
+
+    it('throws a clear read-only error when updating entity files', async () => {
+      const connector = new AffinityConnector('fake-key');
+      await expect(
+        connector.updateRecords(buildTableSpec('entity-files'), [{ id: 1 } as unknown as ConnectorFile], []),
+      ).rejects.toThrow(/read-only/);
+    });
+  });
+
+  describe('createRecords', () => {
+    it('creates a note from content.html and preview association ids', async () => {
+      mockCreateNote.mockResolvedValue({ id: 555 });
+      mockGetNote.mockResolvedValue(makeNote(555));
+
+      const noteFile = {
+        content: { html: '<p>new note</p>' },
+        personsPreview: { data: [{ id: 42 }], totalCount: 1 },
+      } as unknown as ConnectorFile;
+
+      const connector = new AffinityConnector('fake-key');
+      const created = await connector.createRecords(buildTableSpec('notes'), [noteFile]);
+
+      expect(mockCreateNote).toHaveBeenCalledWith({
+        type: 'entities',
+        content: { html: '<p>new note</p>' },
+        persons: [{ id: 42 }],
+      });
+      expect(mockGetNote).toHaveBeenCalledWith(555);
+      expect(created).toHaveLength(1);
+    });
+
+    it('refuses to create entity files (read-only)', async () => {
+      const connector = new AffinityConnector('fake-key');
+      await expect(
+        connector.createRecords(buildTableSpec('entity-files'), [{ name: 'x.pdf' } as unknown as ConnectorFile]),
+      ).rejects.toThrow(/read-only/);
+    });
+  });
+
+  describe('deleteRecords', () => {
+    it('deletes notes by id', async () => {
+      mockDeleteNote.mockResolvedValue(undefined);
+
+      const connector = new AffinityConnector('fake-key');
+      await connector.deleteRecords(buildTableSpec('notes'), [{ id: 7 } as unknown as ConnectorFile]);
+
+      expect(mockDeleteNote).toHaveBeenCalledWith(7);
+    });
+
+    it('refuses to delete entity files (read-only)', async () => {
+      const connector = new AffinityConnector('fake-key');
+      await expect(
+        connector.deleteRecords(buildTableSpec('entity-files'), [{ id: 1 } as unknown as ConnectorFile]),
+      ).rejects.toThrow(/read-only/);
+    });
+  });
+});
+
+// P2 — v1 record lifecycle (DEV-10298 phase 2) ---------------------------------
+
+describe('AffinityConnector v1 writes (P2)', () => {
+  function specWithSchema(remoteId: string, schema: object): BaseJsonTableSpec {
+    return { ...buildTableSpec(remoteId), schema: schema as unknown as TSchema };
+  }
+  const PERSON_SCHEMA = { properties: { id: {}, firstName: {}, fields: { properties: {} } } };
+
+  describe('createRecords', () => {
+    it('creates a person via v1 basics then reads back via v2', async () => {
+      mockCreatePerson.mockResolvedValue({ id: 999 });
+      mockGetPerson.mockResolvedValue(makePerson(999));
+      const file = {
+        firstName: 'Ada',
+        lastName: 'L',
+        emailAddresses: ['ada@x.com'],
+        fields: {},
+      } as unknown as ConnectorFile;
+
+      const connector = new AffinityConnector('k');
+      const created = await connector.createRecords(specWithSchema('persons', PERSON_SCHEMA), [file]);
+
+      expect(mockCreatePerson).toHaveBeenCalledWith({ first_name: 'Ada', last_name: 'L', emails: ['ada@x.com'] });
+      expect(mockGetPerson).toHaveBeenCalledWith(999);
+      expect(created).toHaveLength(1);
+    });
+
+    it('creates a company via v1 /organizations', async () => {
+      mockCreateCompany.mockResolvedValue({ id: 7 });
+      mockGetCompany.mockResolvedValue(makeCompany(7));
+      const file = { name: 'Acme', domain: 'acme.com', fields: {} } as unknown as ConnectorFile;
+
+      const connector = new AffinityConnector('k');
+      await connector.createRecords(specWithSchema('companies', { properties: { fields: { properties: {} } } }), [
+        file,
+      ]);
+      expect(mockCreateCompany).toHaveBeenCalledWith({ name: 'Acme', domain: 'acme.com' });
+    });
+
+    it('creates an opportunity (needs listId)', async () => {
+      mockCreateOpportunity.mockResolvedValue({ id: 11 });
+      mockGetOpportunity.mockResolvedValue(makeOpportunity(11, 204872));
+      const file = { name: 'Deal', listId: 204872 } as unknown as ConnectorFile;
+
+      const connector = new AffinityConnector('k');
+      await connector.createRecords(buildTableSpec('opportunities'), [file]);
+      expect(mockCreateOpportunity).toHaveBeenCalledWith({ name: 'Deal', list_id: 204872 });
+    });
+
+    it('creates list membership from entity.id', async () => {
+      mockCreateListEntry.mockResolvedValue({ id: 555 });
+      mockGetListEntry.mockResolvedValue(makeListEntry(555, 197394));
+      const file = { entity: { id: 7 }, fields: {} } as unknown as ConnectorFile;
+
+      const connector = new AffinityConnector('k');
+      await connector.createRecords(
+        specWithSchema('197394', { properties: { entity: { properties: { fields: { properties: {} } } } } }),
+        [file],
+      );
+      expect(mockCreateListEntry).toHaveBeenCalledWith(197394, 7);
+    });
+
+    it('refuses to create entity files', async () => {
+      const connector = new AffinityConnector('k');
+      await expect(connector.createRecords(buildTableSpec('entity-files'), [{} as ConnectorFile])).rejects.toThrow(
+        /read-only/,
+      );
+    });
+  });
+
+  describe('updateRecords — basics split', () => {
+    it('routes a person basics change to v1 PUT and a field change to v2', async () => {
+      mockUpdatePerson.mockResolvedValue({ id: 42 });
+      mockUpdatePersonFieldValues.mockResolvedValue(undefined);
+      mockGetPerson.mockResolvedValue(makePerson(42));
+      const schema = {
+        properties: { fields: { properties: { 'field-1': { 'x-scratch-connector-data-type': 'text' } } } },
+      };
+      const file = {
+        id: 42,
+        firstName: 'New',
+        fields: { 'field-1': { id: 'field-1', value: { type: 'text', data: 'v' } } },
+      } as unknown as ConnectorFile;
+
+      const connector = new AffinityConnector('k');
+      await connector.updateRecords(
+        specWithSchema('persons', schema),
+        [file],
+        [{ firstName: 'New', fields: { 'field-1': { value: { data: 'v' } } } }],
+      );
+
+      expect(mockUpdatePerson).toHaveBeenCalledWith(42, { first_name: 'New' });
+      expect(mockUpdatePersonFieldValues).toHaveBeenCalledWith(42, [
+        { id: 'field-1', value: { type: 'text', data: 'v' } },
+      ]);
+    });
+
+    it('refuses an edit to a read-only basic (primaryEmailAddress)', async () => {
+      const connector = new AffinityConnector('k');
+      await expect(
+        connector.updateRecords(
+          specWithSchema('persons', PERSON_SCHEMA),
+          [{ id: 42 } as ConnectorFile],
+          [{ primaryEmailAddress: 'x@y.com' }],
+        ),
+      ).rejects.toThrow(/not writable/);
+      expect(mockUpdatePerson).not.toHaveBeenCalled();
+    });
+
+    it('renames an opportunity via v1 PUT', async () => {
+      mockUpdateOpportunity.mockResolvedValue({ id: 11 });
+      mockGetOpportunity.mockResolvedValue(makeOpportunity(11, 204872));
+      const connector = new AffinityConnector('k');
+      await connector.updateRecords(
+        buildTableSpec('opportunities'),
+        [{ id: 11, name: 'Renamed' } as ConnectorFile],
+        [{ name: 'Renamed' }],
+      );
+      expect(mockUpdateOpportunity).toHaveBeenCalledWith(11, { name: 'Renamed' });
+    });
+  });
+
+  describe('deleteRecords', () => {
+    it('deletes person/company/opportunity/list-entry via v1', async () => {
+      const connector = new AffinityConnector('k');
+      await connector.deleteRecords(buildTableSpec('persons'), [{ id: 1 } as ConnectorFile]);
+      expect(mockDeletePerson).toHaveBeenCalledWith(1);
+      await connector.deleteRecords(buildTableSpec('companies'), [{ id: 2 } as ConnectorFile]);
+      expect(mockDeleteCompany).toHaveBeenCalledWith(2);
+      await connector.deleteRecords(buildTableSpec('opportunities'), [{ id: 3 } as ConnectorFile]);
+      expect(mockDeleteOpportunity).toHaveBeenCalledWith(3);
+      await connector.deleteRecords(buildTableSpec('197394'), [{ id: 4 } as ConnectorFile]);
+      expect(mockDeleteListEntry).toHaveBeenCalledWith(197394, 4);
+    });
+
+    it('refuses to delete entity files', async () => {
+      const connector = new AffinityConnector('k');
+      await expect(
+        connector.deleteRecords(buildTableSpec('entity-files'), [{ id: 1 } as ConnectorFile]),
+      ).rejects.toThrow(/read-only/);
+    });
+  });
+});
+
+// Users — read-only reference entity (workspace teammates) -----------------------
+
+function makeUser(id: number) {
+  return {
+    id,
+    firstName: `User${id}`,
+    lastName: 'Test',
+    photoUrl: null,
+    primaryEmailAddress: `user${id}@example.com`,
+    status: 'active',
+    emailAddresses: [`user${id}@example.com`],
+    role: 'admin',
+  };
+}
+
+describe('AffinityConnector Users entity', () => {
+  it('routes the users sentinel and exposes a Users table', async () => {
+    expect(parseAffinityTableId({ wsId: 'users', remoteId: ['users'] })).toEqual({ kind: 'tenant-users' });
+    mockListAllLists.mockResolvedValue([]);
+    const connector = new AffinityConnector('k');
+    const tables = await connector.listTables();
+    const usersTable = tables.find((t) => t.id.remoteId[0] === 'users');
+    expect(usersTable?.displayName).toBe('Users');
+  });
+
+  it('builds a flat read-only Users schema', async () => {
+    const connector = new AffinityConnector('k');
+    const spec = await connector.fetchJsonTableSpec({ wsId: 'users', remoteId: ['users'] });
+    expect(spec.name).toBe('Users');
+    const props = (spec.schema as unknown as { properties: Record<string, Record<string, unknown>> }).properties;
+    expect(Object.keys(props)).toEqual(
+      expect.arrayContaining([
+        'id',
+        'firstName',
+        'lastName',
+        'photoUrl',
+        'primaryEmailAddress',
+        'status',
+        'emailAddresses',
+        'role',
+      ]),
+    );
+    // Every column is read-only (reference table).
+    for (const key of Object.keys(props)) {
+      expect(props[key]['x-scratch-readonly']).toBe(true);
+    }
+  });
+
+  it('streams users verbatim on pull', async () => {
+    mockListAllUsers.mockReturnValue(singleBatch([makeUser(1), makeUser(2)]));
+    const connector = new AffinityConnector('k');
+    const collected: ConnectorFile[] = [];
+    await connector.pullRecordFiles(
+      buildTableSpec('users'),
+      ({ files }) => {
+        collected.push(...files);
+        return Promise.resolve();
+      },
+      {},
+      {} as never,
+    );
+    expect(collected).toHaveLength(2);
+    expect((collected[0] as unknown as { role: string }).role).toBe('admin');
+  });
+
+  it('is read-only: create / update / delete all throw', async () => {
+    const connector = new AffinityConnector('k');
+    const spec = buildTableSpec('users');
+    await expect(connector.createRecords(spec, [{ firstName: 'x' } as unknown as ConnectorFile])).rejects.toThrow(
+      /read-only/,
+    );
+    await expect(connector.updateRecords(spec, [{ id: 1 } as unknown as ConnectorFile], [{}])).rejects.toThrow(
+      /read-only/,
+    );
+    await expect(connector.deleteRecords(spec, [{ id: 1 } as unknown as ConnectorFile])).rejects.toThrow(/read-only/);
+  });
+});
+
+// Write gate — ENABLE_AFFINITY_WRITE (DEV-10298) -------------------------------
+
+describe('AffinityConnector write gate (ENABLE_AFFINITY_WRITE)', () => {
+  const notesSpec = buildTableSpec('notes');
+  // A creatable note must be attached to at least one entity (mirrors the
+  // createRecords note test above), so the flag-on / inert paths reach the API.
+  const noteFile = {
+    content: { html: '<p>gate</p>' },
+    personsPreview: { data: [{ id: 42 }], totalCount: 1 },
+  } as unknown as ConnectorFile;
+
+  it('refuses create / update / delete with a read-only error when the flag check returns false', async () => {
+    const connector = new AffinityConnector('k', { isFeatureEnabled: () => Promise.resolve(false) });
+
+    await expect(connector.createRecords(notesSpec, [noteFile])).rejects.toThrow(/ENABLE_AFFINITY_WRITE/);
+    await expect(
+      connector.updateRecords(notesSpec, [{ id: 7, content: { html: '<p>x</p>' } } as unknown as ConnectorFile], [{}]),
+    ).rejects.toThrow(/read-only/i);
+    await expect(connector.deleteRecords(notesSpec, [{ id: 7 } as unknown as ConnectorFile])).rejects.toThrow(
+      /ENABLE_AFFINITY_WRITE/,
+    );
+
+    // The gate short-circuits before any API call.
+    expect(mockCreateNote).not.toHaveBeenCalled();
+    expect(mockUpdateNote).not.toHaveBeenCalled();
+    expect(mockDeleteNote).not.toHaveBeenCalled();
+  });
+
+  it('checks exactly the ENABLE_AFFINITY_WRITE flag key (decoupled from the flag enum)', async () => {
+    const isFeatureEnabled = jest.fn((): Promise<boolean> => Promise.resolve(false));
+    const connector = new AffinityConnector('k', { isFeatureEnabled });
+
+    await expect(connector.createRecords(notesSpec, [noteFile])).rejects.toThrow();
+
+    expect(isFeatureEnabled).toHaveBeenCalledWith('ENABLE_AFFINITY_WRITE');
+  });
+
+  it('proceeds with the write when the flag check returns true', async () => {
+    mockCreateNote.mockResolvedValue({ id: 555 });
+    mockGetNote.mockResolvedValue(makeNote(555));
+    const connector = new AffinityConnector('k', { isFeatureEnabled: () => Promise.resolve(true) });
+
+    await connector.createRecords(notesSpec, [noteFile]);
+
+    expect(mockCreateNote).toHaveBeenCalledTimes(1);
+  });
+
+  it('is inert when no flag check is wired (direct construction, e.g. tests): writes proceed', async () => {
+    mockCreateNote.mockResolvedValue({ id: 556 });
+    mockGetNote.mockResolvedValue(makeNote(556));
+    const connector = new AffinityConnector('k'); // no isFeatureEnabled wired
+
+    await connector.createRecords(notesSpec, [noteFile]);
+
+    expect(mockCreateNote).toHaveBeenCalledTimes(1);
   });
 });

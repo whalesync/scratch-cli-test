@@ -42,6 +42,19 @@ export interface ConnectorFactoryContext {
    * Returns null when no folder exists with that tableId for that account.
    */
   getFolderOptionsByTableId: (connectorAccountId: string, tableId: string[]) => Promise<DataFolderOptions | null>;
+  /**
+   * Evaluate a host feature flag for the user this connector instance is acting
+   * on behalf of (`ctx.userId`). Lets a connector gate its own behavior behind a
+   * flag without taking a dependency on the experiments / PostHog stack — the
+   * host binds the user and the flag backend; the connector just passes a flag
+   * key string. Fail-closed: returns `false` when no user is bound, the user
+   * can't be found, or the lookup errors. Connectors that gate nothing ignore it
+   * (like `getFolderOptionsByTableId`).
+   *
+   * Today's only consumer is AFFINITY, which gates create/update/delete behind
+   * `ENABLE_AFFINITY_WRITE` while publishing is productionized (DEV-10298).
+   */
+  isFeatureEnabled: (flagKey: string) => Promise<boolean>;
 }
 
 /**

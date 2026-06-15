@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any */
-import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
+import {
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+  X_SCRATCH_REMOTE_FIELD_ID,
+} from '@spinner/shared-types';
 import {
   buildAffinityCompaniesTableSpec,
   buildAffinityEntityFilesTableSpec,
@@ -462,6 +467,19 @@ describe('buildAffinityEntityFilesTableSpec', () => {
     expect(props.size[X_SCRATCH_READONLY]).toBe(true);
     expect(props.uploader_id[X_SCRATCH_READONLY]).toBe(true);
     expect(props.created_at[X_SCRATCH_READONLY]).toBe(true);
+  });
+
+  it('declares foreign keys on the parent-entity id fields → the right tenant tables', () => {
+    const spec = buildAffinityEntityFilesTableSpec(entityId);
+    const props = (spec.schema as any).properties;
+
+    expect(props.person_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'persons' });
+    expect(props.organization_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'companies' });
+    expect(props.opportunity_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'opportunities' });
+    // FK fields remain read-only (entity files have no v1 metadata-update endpoint).
+    expect(props.person_id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.organization_id[X_SCRATCH_READONLY]).toBe(true);
+    expect(props.opportunity_id[X_SCRATCH_READONLY]).toBe(true);
   });
 });
 

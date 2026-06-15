@@ -57,6 +57,20 @@ export enum UserFlag {
    * broader fix plan.
    */
   UPDATE_RECORDS_RETURNS_REMOTE_DATA = 'UPDATE_RECORDS_RETURNS_REMOTE_DATA',
+  /**
+   * DEV-10298 rollout gate for Affinity connector writes. The Affinity connector
+   * implements full create/update/delete, but publishing to Affinity is being
+   * productionized — so writes are refused for everyone except users on this
+   * flag. When TRUE for the publishing user, Affinity create/update/delete/
+   * backfill proceed; when FALSE (default), each service-mutating publish batch
+   * throws a read-only error (the pre-write-codepath behavior), surfaced per
+   * record in the review UI. Fail-closed: default false, unmatched users and a
+   * PostHog outage both yield false. Evaluated inside the Affinity connector via
+   * the host-provided `ConnectorFactoryContext.isFeatureEnabled` capability,
+   * which `ConnectorsService` binds to the publishing user (`plan.userId`).
+   * Checked only in the connector write path, so it is NOT exposed to the client.
+   */
+  ENABLE_AFFINITY_WRITE = 'ENABLE_AFFINITY_WRITE',
 }
 
 /**

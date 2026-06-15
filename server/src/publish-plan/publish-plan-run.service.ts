@@ -171,8 +171,12 @@ export class PublishPlanRunService {
       }
     }
 
-    // Resolve connector
-    const connector = await this.resolveConnector(plan.connectorAccountId);
+    // Resolve connector. Pass the plan's user so the connector can evaluate any
+    // per-user feature flags it gates on (e.g. Affinity gates writes behind
+    // ENABLE_AFFINITY_WRITE via the connector factory's isFeatureEnabled
+    // capability). plan.userId is always set — for scheduled/automated publishes
+    // it's the schedule's run-as user resolved by SchedulerService.buildActor.
+    const connector = await this.resolveConnector(plan.connectorAccountId, plan.userId);
 
     // Cache tableSpecs per folder to avoid repeated DB lookups
     const tableSpecCache = new Map<string, BaseJsonTableSpec>();
@@ -776,7 +780,7 @@ export class PublishPlanRunService {
     return out;
   }
 
-  private async resolveConnector(connectorAccountId: string | null): Promise<Connector> {
+  private async resolveConnector(connectorAccountId: string | null, userId?: string): Promise<Connector> {
     if (!connectorAccountId) {
       throw new Error('No connectorAccountId on plan — cannot resolve connector');
     }
@@ -796,6 +800,7 @@ export class PublishPlanRunService {
       service: account.service,
       connectorAccount: account,
       decryptedCredentials,
+      userId,
     });
   }
 

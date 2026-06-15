@@ -109,7 +109,8 @@ export type AffinityTableKind =
   | { kind: 'tenant-companies' }
   | { kind: 'tenant-opportunities' }
   | { kind: 'tenant-notes' }
-  | { kind: 'tenant-entity-files' };
+  | { kind: 'tenant-entity-files' }
+  | { kind: 'tenant-users' };
 
 /**
  * A single record from `GET /v2/persons` — flat shape, no `entity` wrapper
@@ -150,6 +151,22 @@ export interface AffinityOpportunity {
   id: number;
   name: string | null;
   listId: number;
+}
+
+/**
+ * A workspace teammate, from `GET /v2/users`. A read-only reference entity (the
+ * people who have Affinity accounts in this org — distinct from `persons`, the
+ * CRM contacts). Fixed shape, no custom fields.
+ */
+export interface AffinityUser {
+  id: number;
+  firstName: string | null;
+  lastName: string | null;
+  photoUrl: string | null;
+  primaryEmailAddress: string | null;
+  status: string;
+  emailAddresses: string[];
+  role: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +228,140 @@ export interface AffinityV1PagedResponse<T> {
 export interface AffinityDownloadProgress {
   [key: string]: string | undefined;
   cursor?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Write types — Affinity v2 publishing (DEV-10298)
+//
+// The v2 API writes FIELD VALUES (not whole records) through batch endpoints:
+//   PATCH /v2/persons/{id}/fields · PATCH /v2/companies/{id}/fields ·
+//   PATCH /v2/lists/{listId}/list-entries/{entryId}/fields
+// with body `{ operation: 'update-fields', updates: [{ id, value }] }` (≤100
+// updates per request). Notes have full CRUD on /v2/notes. Whole-record
+// create/delete (persons, companies, opportunities) and record basics
+// (firstName, name, domain, …) are v1-API-only and not implemented yet.
+// ---------------------------------------------------------------------------
+
+/**
+ * The write shape of a field value — `{ type, data }` where `data` carries
+ * only the reference keys the API accepts on write (`{id}` for person/company,
+ * `{dropdownOptionId}` for dropdowns), unlike the read shape which embeds
+ * display decoration (name, domain, text, rank, color, totalCount, …).
+ */
+export interface AffinityFieldValueWritePayload {
+  type: string;
+  data: unknown;
+}
+
+/** One item in a v2 `update-fields` batch operation. */
+export interface AffinityFieldValueUpdate {
+  id: string;
+  value: AffinityFieldValueWritePayload;
+}
+
+/** Sparse body for `POST /v2/notes/{noteId}` — only supplied properties are mutated. */
+export interface AffinityNoteUpdateRequest {
+  content?: { html: string };
+  persons?: Array<{ id: number }>;
+  companies?: Array<{ id: number }>;
+  opportunities?: Array<{ id: number }>;
+}
+
+/**
+ * Body for `POST /v2/notes` creating a note attached directly to entities.
+ * Requires `content` and at least one association (the service rejects an
+ * unattached note). The other note types (`interaction`, `user-reply`) are
+ * not built from Scratch records.
+ */
+export interface AffinityNoteCreateRequest {
+  type: 'entities';
+  content: { html: string };
+  persons?: Array<{ id: number }>;
+  companies?: Array<{ id: number }>;
+  opportunities?: Array<{ id: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// v1 record-lifecycle types (DEV-10298 phase 2)
+//
+// The Affinity v2 API writes only field values + Notes. Whole-record
+// create/delete, record *basics* (firstName/name/domain/emails), opportunity
+// create, and list membership live ONLY on the v1 API. The same Bearer token
+// authorizes v1 (verified 2026-06-12). v1 responses are snake_case and use a
+// numeric `type` (person=0, organization=1, opportunity=8). The connector only
+// needs the assigned `id` off these — it re-reads the canonical record via the
+// v2 path for the on-disk shape — but the full shapes are typed for clarity.
+//
+// Field VALUES on a created/updated record still go through the v2 field-update
+// path, so this layer never touches the v1 field-values endpoint (and sidesteps
+// its one-row-per-element multi-value model).
+// ---------------------------------------------------------------------------
+
+/** v1 numeric entity-type discriminator. */
+export const AFFINITY_V1_ENTITY_TYPE = { person: 0, organization: 1, opportunity: 8 } as const;
+
+/** `POST /persons` response (v1, snake_case). */
+export interface AffinityV1Person {
+  id: number;
+  type: number;
+  first_name: string | null;
+  last_name: string | null;
+  primary_email: string | null;
+  emails: string[];
+  organization_ids: number[];
+}
+
+/** `POST /organizations` response (v1, snake_case). The Companies table maps to v1 "organizations". */
+export interface AffinityV1Organization {
+  id: number;
+  name: string | null;
+  domain: string | null;
+  domains: string[];
+  global: boolean;
+  person_ids: number[];
+}
+
+/** `POST /opportunities` response (v1). */
+export interface AffinityV1Opportunity {
+  id: number;
+  name: string | null;
+  list_entries?: unknown[];
+  person_ids?: number[];
+  organization_ids?: number[];
+}
+
+/** `POST /lists/{listId}/list-entries` response (v1). */
+export interface AffinityV1ListEntry {
+  id: number;
+  list_id: number;
+  creator_id: number | null;
+  entity_id: number;
+  entity_type: number;
+  created_at: string;
+}
+
+/** Create/update body for `POST /persons` / `PUT /persons/{id}` (sparse for update). */
+export interface AffinityV1PersonWrite {
+  first_name?: string | null;
+  last_name?: string | null;
+  emails?: string[];
+}
+
+/** Create/update body for `POST /organizations` / `PUT /organizations/{id}` (sparse for update). */
+export interface AffinityV1OrganizationWrite {
+  name?: string | null;
+  domain?: string | null;
+}
+
+/** Create body for `POST /opportunities` — requires an opportunity-type `list_id`. */
+export interface AffinityV1OpportunityCreate {
+  name: string;
+  list_id: number;
+}
+
+/** Update body for `PUT /opportunities/{id}`. */
+export interface AffinityV1OpportunityWrite {
+  name?: string;
 }
 
 /**

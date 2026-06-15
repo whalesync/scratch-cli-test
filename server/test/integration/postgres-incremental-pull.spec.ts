@@ -280,7 +280,7 @@ describe('Postgres incremental pull — full bootstrap → incremental → no-op
 
     // ── Wire services (real connector + index; mocks elsewhere) ──────────────
     const dbService = makeDbService(prisma);
-    const realConnectorsService = new ConnectorsService({} as any, {} as any, {} as any);
+    const realConnectorsService = new ConnectorsService({} as any, {} as any, {} as any, {} as any);
     const credentialEncryptionService = new CredentialEncryptionService();
     const fileIndexService = new FileIndexService(dbService);
     const refCleanerService = new RefCleanerService();

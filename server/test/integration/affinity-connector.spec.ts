@@ -23,7 +23,10 @@ jest.setTimeout(60_000);
 
 const API_KEY = process.env.AFFINITY_API_KEY;
 
-const TENANT_TABLE_IDS = new Set(['persons', 'companies', 'opportunities']);
+// All workspace-wide (non-user-list) table sentinels — used to separate the
+// fixed tenant tables from the user-created lists. Keep in sync with the
+// `TENANT_*_ID` constants in affinity-connector.ts.
+const TENANT_TABLE_IDS = new Set(['persons', 'companies', 'opportunities', 'notes', 'entity-files', 'users']);
 
 function createConnector(): AffinityConnector {
   return new AffinityConnector(API_KEY!);
@@ -65,8 +68,8 @@ describeIfKey('AffinityConnector — live API', () => {
   // -------------------------------------------------------------------------
 
   describe('listTables', () => {
-    it('returns the three tenant-wide tables', () => {
-      expect(tenantTables).toHaveLength(3);
+    it('returns all the tenant-wide tables', () => {
+      expect(tenantTables).toHaveLength(TENANT_TABLE_IDS.size);
       const ids = new Set(tenantTables.map((t) => t.id.remoteId[0]));
       expect(ids).toEqual(TENANT_TABLE_IDS);
     });
@@ -430,3 +433,71 @@ class EarlyExit extends Error {
     this.name = 'EarlyExit';
   }
 }
+
+// ---------------------------------------------------------------------------
+// P2 — v1 write round-trip (DEV-10298): create → basics update → delete.
+//
+// Drives the real connector code (createRecords / updateRecords / deleteRecords)
+// against the live Affinity API — the end-to-end proof that doesn't depend on
+// the Scratch CLI publish path (GCS). Uses a throwaway person and deletes it in
+// a finally block so it never litters the org.
+// ---------------------------------------------------------------------------
+
+describeIfKey('AffinityConnector — v1 write round-trip (P2)', () => {
+  it('creates, updates basics, and deletes a person through the connector', async () => {
+    const connector = createConnector();
+    const personsTable = (await connector.listTables()).find((t) => t.id.remoteId[0] === 'persons');
+    if (!personsTable) throw new Error('persons table not found');
+    const tableSpec = await connector.fetchJsonTableSpec(personsTable.id);
+
+    const newPersonFile = {
+      firstName: 'ZZZ-Integration',
+      lastName: 'DeleteMe',
+      primaryEmailAddress: 'zzz-integration-deleteme@example.com',
+      emailAddresses: ['zzz-integration-deleteme@example.com'],
+      type: 'external',
+      fields: {},
+    } as unknown as ConnectorFile;
+
+    let createdId: number | undefined;
+    try {
+      // CREATE
+      const [created] = await connector.createRecords(tableSpec, [newPersonFile]);
+      createdId = (created as unknown as { id: number }).id;
+      expect(typeof createdId).toBe('number');
+      expect((created as unknown as { firstName: string }).firstName).toBe('ZZZ-Integration');
+
+      // UPDATE basics (firstName → v1 PUT)
+      const fileWithId = { ...newPersonFile, id: createdId, firstName: 'ZZZ-Integration-Renamed' } as ConnectorFile;
+      const [updated] = await connector.updateRecords(
+        tableSpec,
+        [fileWithId],
+        [{ firstName: 'ZZZ-Integration-Renamed' }],
+      );
+      expect((updated as unknown as { firstName: string }).firstName).toBe('ZZZ-Integration-Renamed');
+
+      // DELETE
+      await connector.deleteRecords(tableSpec, [fileWithId]);
+      createdId = undefined; // deleted; skip the finally cleanup
+
+      // Verify gone: a by-id pull yields nothing.
+      const pulledAfterDelete: ConnectorFile[] = [];
+      await connector.pullRecordFilesByIds(
+        tableSpec,
+        [String((fileWithId as unknown as { id: number }).id)],
+        ({ files }) => {
+          pulledAfterDelete.push(...files);
+          return Promise.resolve();
+        },
+      );
+      expect(pulledAfterDelete).toHaveLength(0);
+    } finally {
+      if (createdId !== undefined) {
+        // Best-effort cleanup if an assertion failed before the delete.
+        await connector
+          .deleteRecords(tableSpec, [{ id: createdId } as unknown as ConnectorFile])
+          .catch(() => undefined);
+      }
+    }
+  });
+});

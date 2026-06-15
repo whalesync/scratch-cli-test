@@ -3,6 +3,8 @@ import { ConnectorAccount } from '@prisma/client';
 import { DataFolderOptions, Service } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { JsonSafeObject } from 'src/utils/objects';
+import { ExperimentsService } from '../../experiments/experiments.service';
+import { AllFeatureFlags } from '../../experiments/flags';
 import { OAuthService } from '../../oauth/oauth.service';
 import { RateLimiterFactory } from '../../rate-limiter/rate-limiter-factory.service';
 import { DecryptedCredentials } from '../connector-account/types/encrypted-credentials.interface';
@@ -19,6 +21,7 @@ export class ConnectorsService {
     private readonly oauthService: OAuthService,
     private readonly rateLimiterFactory: RateLimiterFactory,
     private readonly dbService: DbService,
+    private readonly experimentsService: ExperimentsService,
   ) {}
 
   getAuthParser(params: { service: Service }): AuthParser | undefined {
@@ -53,7 +56,32 @@ export class ConnectorsService {
       getOAuthAccessToken: (id) => this.oauthService.getValidAccessToken(id),
       createRateLimiter: (id) => this.rateLimiterFactory.createLimiter({ service, connectorAccountId: id }),
       getFolderOptionsByTableId: (id, tableId) => this.lookupFolderOptions(id, tableId),
+      isFeatureEnabled: (flagKey) => this.evaluateFeatureFlagForUser(flagKey, userId),
     });
+  }
+
+  /**
+   * Implementation of `ConnectorFactoryContext.isFeatureEnabled`. Binds a
+   * connector's flag check to the user the connector is acting for. Fail-closed:
+   * no user → false; user not found → false; a lookup error inside
+   * `getBooleanFlag` resolves to its `false` default. The user is looked up
+   * lazily so it costs a query only when a connector actually checks a flag (no
+   * cost for connectors that never call it).
+   */
+  private async evaluateFeatureFlagForUser(flagKey: string, userId: string | undefined): Promise<boolean> {
+    if (!userId) {
+      return false;
+    }
+    const user = await this.dbService.client.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+    if (!user) {
+      return false;
+    }
+    // The callback takes a plain flag-key string to keep connectors decoupled
+    // from the flag enum; narrow it to the flag union for getBooleanFlag.
+    return this.experimentsService.getBooleanFlag(flagKey as AllFeatureFlags, false, user);
   }
 
   /**

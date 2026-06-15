@@ -5,14 +5,26 @@ import {
   AffinityCompany,
   AffinityEntityFile,
   AffinityFieldMetadata,
+  AffinityFieldValueUpdate,
   AffinityList,
   AffinityListEntry,
   AffinityNote,
+  AffinityNoteCreateRequest,
+  AffinityNoteUpdateRequest,
   AffinityOpportunity,
   AffinityPagedResponse,
   AffinityPerson,
   AffinityQuota,
+  AffinityUser,
+  AffinityV1ListEntry,
+  AffinityV1Opportunity,
+  AffinityV1OpportunityCreate,
+  AffinityV1OpportunityWrite,
+  AffinityV1Organization,
+  AffinityV1OrganizationWrite,
   AffinityV1PagedResponse,
+  AffinityV1Person,
+  AffinityV1PersonWrite,
   FIELD_TYPES,
   TENANT_FIELD_TYPES,
 } from './affinity-types';
@@ -364,6 +376,28 @@ export class AffinityApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Users (workspace teammates) — v2, read-only reference entity.
+  // ---------------------------------------------------------------------------
+
+  /** Stream every workspace user. Pass `resumeCursor` to resume from a checkpoint. */
+  listAllUsers(resumeCursor?: string): AsyncGenerator<{ data: AffinityUser[]; nextCursor?: string }, void> {
+    return this.paginate<AffinityUser>('/v2/users', {}, resumeCursor);
+  }
+
+  /** Fetch a single user by id. Returns `null` on 404. */
+  async getUser(userId: number): Promise<AffinityUser | null> {
+    try {
+      const response = await this.withRetry(async () => this.http.get<AffinityUser>(`/v2/users/${userId}`));
+      return response.data;
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Entity Files (v1 API)
   //
   // The v1 API uses token-based pagination (`page_token` / `next_page_token`)
@@ -405,6 +439,163 @@ export class AffinityApiClient {
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {
         return null;
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Writes (DEV-10298) — v2 field-value batch updates + Notes CRUD.
+  //
+  // Field values are written through per-record `update-fields` batch
+  // operations (≤100 field updates per request). There is NO v2 endpoint for
+  // whole-record create/delete or for record basics (firstName, name, domain)
+  // — those are v1-API-only and intentionally not implemented yet.
+  // ---------------------------------------------------------------------------
+
+  /** Max field updates the batch `update-fields` operation accepts per request. */
+  private static readonly FIELD_UPDATE_BATCH_LIMIT = 100;
+
+  /**
+   * Issue one or more `update-fields` batch operations against a fields path,
+   * chunking at the API's 100-updates-per-request limit.
+   */
+  private async patchFieldValues(fieldsPath: string, updates: AffinityFieldValueUpdate[]): Promise<void> {
+    for (let start = 0; start < updates.length; start += AffinityApiClient.FIELD_UPDATE_BATCH_LIMIT) {
+      const chunk = updates.slice(start, start + AffinityApiClient.FIELD_UPDATE_BATCH_LIMIT);
+      await this.withRetry(async () => this.http.patch(fieldsPath, { operation: 'update-fields', updates: chunk }));
+    }
+  }
+
+  /** Update field values on a tenant-wide person. */
+  async updatePersonFieldValues(personId: number, updates: AffinityFieldValueUpdate[]): Promise<void> {
+    await this.patchFieldValues(`/v2/persons/${personId}/fields`, updates);
+  }
+
+  /** Update field values on a tenant-wide company. */
+  async updateCompanyFieldValues(companyId: number, updates: AffinityFieldValueUpdate[]): Promise<void> {
+    await this.patchFieldValues(`/v2/companies/${companyId}/fields`, updates);
+  }
+
+  /** Update field values on a list entry. */
+  async updateListEntryFieldValues(
+    listId: number,
+    listEntryId: number,
+    updates: AffinityFieldValueUpdate[],
+  ): Promise<void> {
+    await this.patchFieldValues(`/v2/lists/${listId}/list-entries/${listEntryId}/fields`, updates);
+  }
+
+  /**
+   * Create a note attached directly to entities (`POST /v2/notes`).
+   * The service requires `content` and at least one person/company/opportunity
+   * association — an unattached note is rejected with a 400 we surface as-is.
+   */
+  async createNote(request: AffinityNoteCreateRequest): Promise<AffinityNote> {
+    const response = await this.withRetry(async () => this.http.post<AffinityNote>('/v2/notes', request));
+    return response.data;
+  }
+
+  /**
+   * Update a note's content and/or entity associations (`POST /v2/notes/{id}`,
+   * sparse body — omitted properties are left unchanged). Affinity rejects
+   * content updates on notes containing @mentions; that error is surfaced.
+   */
+  async updateNote(noteId: number, request: AffinityNoteUpdateRequest): Promise<AffinityNote> {
+    const response = await this.withRetry(async () => this.http.post<AffinityNote>(`/v2/notes/${noteId}`, request));
+    return response.data;
+  }
+
+  /** Delete a note (`DELETE /v2/notes/{id}`). An already-deleted note (404) is a no-op. */
+  async deleteNote(noteId: number): Promise<void> {
+    await this.deleteWith404Noop(`/v2/notes/${noteId}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // v1 record lifecycle (DEV-10298 phase 2) — whole-record create/update/delete
+  // and list membership. The v2 API has no endpoint for these; v1 does, and the
+  // same Bearer token authorizes it (verified 2026-06-12). These paths carry NO
+  // `/v2` prefix. Record *field values* still go through the v2 field-update
+  // methods above, even on a freshly v1-created record — so this layer never
+  // touches the v1 field-values endpoint or its multi-value one-row-per-element
+  // model.
+  // ---------------------------------------------------------------------------
+
+  /** Create a person (`POST /persons`, v1). Returns the v1 record carrying the new id. */
+  async createPerson(body: AffinityV1PersonWrite): Promise<AffinityV1Person> {
+    const response = await this.withRetry(async () => this.http.post<AffinityV1Person>('/persons', body));
+    return response.data;
+  }
+
+  /** Update a person's basics (`PUT /persons/{id}`, v1) — first/last name, emails. */
+  async updatePerson(personId: number, body: AffinityV1PersonWrite): Promise<AffinityV1Person> {
+    const response = await this.withRetry(async () => this.http.put<AffinityV1Person>(`/persons/${personId}`, body));
+    return response.data;
+  }
+
+  /** Delete a person (`DELETE /persons/{id}`, v1). 404 is a no-op. */
+  async deletePerson(personId: number): Promise<void> {
+    await this.deleteWith404Noop(`/persons/${personId}`);
+  }
+
+  /** Create a company (`POST /organizations`, v1 — the Companies table maps to v1 organizations). */
+  async createCompany(body: AffinityV1OrganizationWrite): Promise<AffinityV1Organization> {
+    const response = await this.withRetry(async () => this.http.post<AffinityV1Organization>('/organizations', body));
+    return response.data;
+  }
+
+  /** Update a company's basics (`PUT /organizations/{id}`, v1) — name, domain. */
+  async updateCompany(companyId: number, body: AffinityV1OrganizationWrite): Promise<AffinityV1Organization> {
+    const response = await this.withRetry(async () =>
+      this.http.put<AffinityV1Organization>(`/organizations/${companyId}`, body),
+    );
+    return response.data;
+  }
+
+  /** Delete a company (`DELETE /organizations/{id}`, v1). 404 is a no-op. */
+  async deleteCompany(companyId: number): Promise<void> {
+    await this.deleteWith404Noop(`/organizations/${companyId}`);
+  }
+
+  /** Create an opportunity (`POST /opportunities`, v1) — requires an opportunity-type `list_id`. */
+  async createOpportunity(body: AffinityV1OpportunityCreate): Promise<AffinityV1Opportunity> {
+    const response = await this.withRetry(async () => this.http.post<AffinityV1Opportunity>('/opportunities', body));
+    return response.data;
+  }
+
+  /** Update an opportunity (`PUT /opportunities/{id}`, v1) — name. */
+  async updateOpportunity(opportunityId: number, body: AffinityV1OpportunityWrite): Promise<AffinityV1Opportunity> {
+    const response = await this.withRetry(async () =>
+      this.http.put<AffinityV1Opportunity>(`/opportunities/${opportunityId}`, body),
+    );
+    return response.data;
+  }
+
+  /** Delete an opportunity (`DELETE /opportunities/{id}`, v1). 404 is a no-op. */
+  async deleteOpportunity(opportunityId: number): Promise<void> {
+    await this.deleteWith404Noop(`/opportunities/${opportunityId}`);
+  }
+
+  /** Add a record to a list (`POST /lists/{listId}/list-entries`, v1) — list membership. */
+  async createListEntry(listId: number, entityId: number): Promise<AffinityV1ListEntry> {
+    const response = await this.withRetry(async () =>
+      this.http.post<AffinityV1ListEntry>(`/lists/${listId}/list-entries`, { entity_id: entityId }),
+    );
+    return response.data;
+  }
+
+  /** Remove a record from a list (`DELETE /lists/{listId}/list-entries/{entryId}`, v1). 404 is a no-op. */
+  async deleteListEntry(listId: number, listEntryId: number): Promise<void> {
+    await this.deleteWith404Noop(`/lists/${listId}/list-entries/${listEntryId}`);
+  }
+
+  /** Issue a DELETE, treating an already-deleted target (404) as a successful no-op. */
+  private async deleteWith404Noop(path: string): Promise<void> {
+    try {
+      await this.withRetry(async () => this.http.delete(path));
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return;
       }
       throw error;
     }

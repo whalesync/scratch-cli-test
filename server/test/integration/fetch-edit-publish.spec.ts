@@ -483,7 +483,7 @@ describe('Fetch → Edit → Publish Integration', () => {
     const dbService = makeDbService(prisma);
 
     // Real PostgresConnector — used for both pull and publish
-    const realConnectorsService = new ConnectorsService({} as any, {} as any, {} as any);
+    const realConnectorsService = new ConnectorsService({} as any, {} as any, {} as any, {} as any);
 
     const credentialEncryptionService = new CredentialEncryptionService();
 

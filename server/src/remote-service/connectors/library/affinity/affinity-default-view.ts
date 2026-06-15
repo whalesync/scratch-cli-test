@@ -274,6 +274,10 @@ function buildDynamicFieldCol(fieldKey: string, fieldSchema: TSchema, pathPrefix
     path: `${pathPrefix}.${fieldKey}`,
     name: description || fieldKey,
     type: mapConnectorDataType(connectorDataType),
+    // The schema flags enriched / relationship-intelligence / computed fields
+    // x-scratch-readonly; the grid honors the column's own readonly, so it has
+    // to be propagated here or the user gets an edit publish will reject.
+    readonly: fieldSchema?.[X_SCRATCH_READONLY] === true || undefined,
     subfields: buildFieldSubfields(connectorDataType),
     selectedSubfield: 0,
   };
@@ -338,10 +342,12 @@ function buildLocationBannerGroup(fieldKey: string, fieldSchema: TSchema, pathPr
   // e.g. "dealroom-location" → "Location (Dealroom)", "affinity-data-location" → "Location (Affinity Data)"
   const groupName = deriveLocationGroupName(fieldKey, description);
 
+  const locationFieldIsReadonly = fieldSchema?.[X_SCRATCH_READONLY] === true || undefined;
   const cols: TableViewCol[] = LOCATION_SUBFIELDS.map((sub) => ({
     kind: 'col' as const,
     path: `${basePath}.value.data.${sub}`,
     name: formatCamelCaseName(sub),
+    readonly: locationFieldIsReadonly,
   }));
 
   return { kind: 'banner-group', name: groupName, cols };

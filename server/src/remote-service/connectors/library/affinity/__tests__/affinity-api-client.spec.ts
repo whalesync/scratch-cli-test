@@ -8,10 +8,18 @@ import { AffinityApiClient, AffinityError } from '../affinity-api-client';
 // `fieldTypes` constant become visible. The connector-level spec mocks the
 // entire AffinityApiClient and so can't catch this kind of regression.
 const mockGet = jest.fn();
+const mockPatch = jest.fn();
+const mockPost = jest.fn();
+const mockPut = jest.fn();
+const mockDelete = jest.fn();
 
 jest.mock('../../../create-api-client', () => ({
   createApiClient: jest.fn(() => ({
     get: mockGet,
+    patch: mockPatch,
+    post: mockPost,
+    put: mockPut,
+    delete: mockDelete,
   })),
 }));
 
@@ -578,5 +586,166 @@ describe('AffinityApiClient', () => {
       expect(mockGet).toHaveBeenCalledWith('/rate-limit');
       expect(result.rate.api_key_per_minute.limit).toBe(900);
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Writes (DEV-10298)
+  // ---------------------------------------------------------------------------
+
+  describe('field value updates', () => {
+    const singleUpdate = [{ id: 'field-1', value: { type: 'text', data: 'hi' } }];
+
+    it('PATCHes the persons fields path with an update-fields operation', async () => {
+      mockPatch.mockResolvedValue({ data: {} });
+      await client.updatePersonFieldValues(42, singleUpdate);
+      expect(mockPatch).toHaveBeenCalledWith('/v2/persons/42/fields', {
+        operation: 'update-fields',
+        updates: singleUpdate,
+      });
+    });
+
+    it('PATCHes the companies fields path', async () => {
+      mockPatch.mockResolvedValue({ data: {} });
+      await client.updateCompanyFieldValues(7, singleUpdate);
+      expect(mockPatch).toHaveBeenCalledWith('/v2/companies/7/fields', {
+        operation: 'update-fields',
+        updates: singleUpdate,
+      });
+    });
+
+    it('PATCHes the list-entry fields path', async () => {
+      mockPatch.mockResolvedValue({ data: {} });
+      await client.updateListEntryFieldValues(5, 99, singleUpdate);
+      expect(mockPatch).toHaveBeenCalledWith('/v2/lists/5/list-entries/99/fields', {
+        operation: 'update-fields',
+        updates: singleUpdate,
+      });
+    });
+
+    it('chunks updates at the 100-per-request batch limit', async () => {
+      mockPatch.mockResolvedValue({ data: {} });
+      const manyUpdates = Array.from({ length: 150 }, (_, i) => ({
+        id: `field-${i}`,
+        value: { type: 'text', data: 'x' },
+      }));
+
+      await client.updatePersonFieldValues(1, manyUpdates);
+
+      expect(mockPatch).toHaveBeenCalledTimes(2);
+      expect(mockPatch.mock.calls[0][1].updates).toHaveLength(100);
+      expect(mockPatch.mock.calls[1][1].updates).toHaveLength(50);
+    });
+  });
+
+  describe('notes CRUD', () => {
+    it('POSTs /v2/notes to create a note', async () => {
+      mockPost.mockResolvedValue({ data: { id: 123 } });
+      const request = { type: 'entities' as const, content: { html: '<p>x</p>' }, persons: [{ id: 1 }] };
+
+      const created = await client.createNote(request);
+
+      expect(mockPost).toHaveBeenCalledWith('/v2/notes', request);
+      expect(created.id).toBe(123);
+    });
+
+    it('POSTs /v2/notes/{id} to update a note', async () => {
+      mockPost.mockResolvedValue({ data: { id: 123 } });
+      await client.updateNote(123, { content: { html: '<p>new</p>' } });
+      expect(mockPost).toHaveBeenCalledWith('/v2/notes/123', { content: { html: '<p>new</p>' } });
+    });
+
+    it('DELETEs /v2/notes/{id}, treating 404 as a no-op', async () => {
+      mockDelete.mockResolvedValue({ data: {} });
+      await client.deleteNote(123);
+      expect(mockDelete).toHaveBeenCalledWith('/v2/notes/123');
+
+      const notFound = new axios.AxiosError('Not Found', '404', undefined, undefined, {
+        status: 404,
+        statusText: 'Not Found',
+        headers: {},
+        config: {} as never,
+        data: {},
+      });
+      mockDelete.mockRejectedValue(notFound);
+      await expect(client.deleteNote(456)).resolves.toBeUndefined();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v1 record lifecycle (DEV-10298 phase 2)
+// ---------------------------------------------------------------------------
+
+describe('v1 record lifecycle', () => {
+  let v1client: AffinityApiClient;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    v1client = new AffinityApiClient('test-api-key');
+  });
+
+  it('POSTs /persons and PUT/DELETEs by id (no /v2 prefix)', async () => {
+    mockPost.mockResolvedValue({ data: { id: 42 } });
+    mockPut.mockResolvedValue({ data: { id: 42 } });
+    mockDelete.mockResolvedValue({ data: { success: true } });
+
+    await v1client.createPerson({ first_name: 'Ada', last_name: 'L', emails: ['a@x.com'] });
+    expect(mockPost).toHaveBeenCalledWith('/persons', { first_name: 'Ada', last_name: 'L', emails: ['a@x.com'] });
+
+    await v1client.updatePerson(42, { first_name: 'Ada2' });
+    expect(mockPut).toHaveBeenCalledWith('/persons/42', { first_name: 'Ada2' });
+
+    await v1client.deletePerson(42);
+    expect(mockDelete).toHaveBeenCalledWith('/persons/42');
+  });
+
+  it('maps companies to /organizations', async () => {
+    mockPost.mockResolvedValue({ data: { id: 7 } });
+    mockPut.mockResolvedValue({ data: { id: 7 } });
+    mockDelete.mockResolvedValue({ data: { success: true } });
+
+    await v1client.createCompany({ name: 'Acme', domain: 'acme.com' });
+    expect(mockPost).toHaveBeenCalledWith('/organizations', { name: 'Acme', domain: 'acme.com' });
+    await v1client.updateCompany(7, { name: 'Acme2' });
+    expect(mockPut).toHaveBeenCalledWith('/organizations/7', { name: 'Acme2' });
+    await v1client.deleteCompany(7);
+    expect(mockDelete).toHaveBeenCalledWith('/organizations/7');
+  });
+
+  it('POST/PUT/DELETEs /opportunities', async () => {
+    mockPost.mockResolvedValue({ data: { id: 9 } });
+    mockPut.mockResolvedValue({ data: { id: 9 } });
+    mockDelete.mockResolvedValue({ data: { success: true } });
+
+    await v1client.createOpportunity({ name: 'Deal', list_id: 204872 });
+    expect(mockPost).toHaveBeenCalledWith('/opportunities', { name: 'Deal', list_id: 204872 });
+    await v1client.updateOpportunity(9, { name: 'Deal2' });
+    expect(mockPut).toHaveBeenCalledWith('/opportunities/9', { name: 'Deal2' });
+    await v1client.deleteOpportunity(9);
+    expect(mockDelete).toHaveBeenCalledWith('/opportunities/9');
+  });
+
+  it('adds/removes list membership via /lists/{id}/list-entries', async () => {
+    mockPost.mockResolvedValue({ data: { id: 555, entity_id: 7 } });
+    mockDelete.mockResolvedValue({ data: { success: true } });
+
+    await v1client.createListEntry(197394, 7);
+    expect(mockPost).toHaveBeenCalledWith('/lists/197394/list-entries', { entity_id: 7 });
+    await v1client.deleteListEntry(197394, 555);
+    expect(mockDelete).toHaveBeenCalledWith('/lists/197394/list-entries/555');
+  });
+
+  it('treats a 404 delete as a no-op across all v1 deletes', async () => {
+    const notFound = new axios.AxiosError('Not Found', '404', undefined, undefined, {
+      status: 404,
+      statusText: 'Not Found',
+      headers: {},
+      config: {} as never,
+      data: {},
+    });
+    mockDelete.mockRejectedValue(notFound);
+    await expect(v1client.deletePerson(1)).resolves.toBeUndefined();
+    await expect(v1client.deleteCompany(1)).resolves.toBeUndefined();
+    await expect(v1client.deleteOpportunity(1)).resolves.toBeUndefined();
+    await expect(v1client.deleteListEntry(1, 2)).resolves.toBeUndefined();
   });
 });

@@ -1,9 +1,33 @@
 import { Type, type TSchema } from '@sinclair/typebox';
-import { X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY, X_SCRATCH_REMOTE_FIELD_ID } from '@spinner/shared-types';
+import {
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_FOREIGN_KEY_OPTIONS,
+  X_SCRATCH_READONLY,
+  X_SCRATCH_REMOTE_FIELD_ID,
+} from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
 import { buildAffinityDefaultView } from './affinity-default-view';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
+import { isReadOnlyAffinityField } from './affinity-write-translation';
+
+// wsIds of the tenant tables that FK fields point at. These mirror the
+// `TENANT_*_ID` sentinels in affinity-connector.ts (which sets each tenant
+// table's `id.wsId` to exactly these strings); kept as literals here to avoid a
+// circular import (the connector imports the build functions from this file).
+const PEOPLE_TABLE_WS_ID = 'persons';
+const COMPANIES_TABLE_WS_ID = 'companies';
+const OPPORTUNITIES_TABLE_WS_ID = 'opportunities';
+
+// Record "basics" (firstName/lastName/emailAddresses on persons; name/domain on
+// companies; name on opportunities) are **writable via the v1 API** (DEV-10298
+// phase 2) — the connector routes their edits through v1 `PUT` while field
+// values go through v2. They are intentionally NOT read-only on the tenant
+// People/Companies/Opportunities tables. Server-derived siblings stay
+// read-only: `primaryEmailAddress` (first of `emailAddresses`), `domains`,
+// `isGlobal`, `type`, `id`, `listId`. The writable keys must match
+// `*_WRITABLE_BASIC_KEYS` in affinity-write-translation.ts. (List-entry-wrapped
+// entities keep basics read-only — edit basics on the tenant tables.)
 
 // ---------------------------------------------------------------------------
 // Reusable sub-schemas for interaction types
@@ -90,21 +114,30 @@ function valueSchemaForType(valueType: AffinityValueType): TSchema {
  * Build a schema for one entry in `entity.fields` (after the array → keyed
  * object transformation done at pull time). The shape mirrors the API's
  * `Field` schema, with `value` narrowed by the field's known `valueType`.
+ *
+ * Writability: only the field's `value` is editable, and only for `list` /
+ * `global` category fields with a writable valueType — `enriched` and
+ * `relationship-intelligence` fields are computed by Affinity, and
+ * `interaction` / `formula-number` values have no write shape at all. Those
+ * are labeled `x-scratch-readonly` so publish never attempts them. The field's
+ * own metadata keys (id / name / type / enrichmentSource) are always read-only.
  */
 function fieldEntrySchema(metadata: AffinityFieldMetadata): TSchema {
   const valueSchema = valueSchemaForType(metadata.valueType);
+  const fieldIsReadOnly = isReadOnlyAffinityField(metadata.type, metadata.valueType);
   return Type.Object(
     {
-      id: Type.Literal(metadata.id),
-      name: Type.String(),
-      type: Type.Literal(metadata.type),
-      enrichmentSource: Type.Union([Type.String(), Type.Null()]),
+      id: Type.Literal(metadata.id, { [X_SCRATCH_READONLY]: true }),
+      name: Type.String({ [X_SCRATCH_READONLY]: true }),
+      type: Type.Literal(metadata.type, { [X_SCRATCH_READONLY]: true }),
+      enrichmentSource: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
       value: Type.Union([valueSchema, Type.Null()]),
     },
     {
       description: metadata.name,
       [X_SCRATCH_REMOTE_FIELD_ID]: metadata.id,
       [X_SCRATCH_CONNECTOR_DATA_TYPE]: metadata.valueType,
+      ...(fieldIsReadOnly ? { [X_SCRATCH_READONLY]: true } : {}),
     },
   );
 }
@@ -125,9 +158,9 @@ function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<s
     case 'company':
       return Type.Object({
         id: Type.Number({ [X_SCRATCH_READONLY]: true }),
-        name: Type.Union([Type.String(), Type.Null()]),
-        domain: Type.Union([Type.String(), Type.Null()]),
-        domains: Type.Array(Type.String()),
+        name: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+        domain: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+        domains: Type.Array(Type.String(), { [X_SCRATCH_READONLY]: true }),
         isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
         fields: fieldsObject,
       });
@@ -135,18 +168,18 @@ function buildEntitySchema(entityType: AffinityEntityType, fieldsByKey: Record<s
     case 'person':
       return Type.Object({
         id: Type.Number({ [X_SCRATCH_READONLY]: true }),
-        firstName: Type.Union([Type.String(), Type.Null()]),
-        lastName: Type.Union([Type.String(), Type.Null()]),
-        primaryEmailAddress: Type.Union([Type.String(), Type.Null()]),
-        emailAddresses: Type.Array(Type.String()),
-        type: Type.Union([Type.String(), Type.Null()]),
+        firstName: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+        lastName: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+        primaryEmailAddress: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+        emailAddresses: Type.Array(Type.String(), { [X_SCRATCH_READONLY]: true }),
+        type: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
         fields: fieldsObject,
       });
 
     case 'opportunity':
       return Type.Object({
         id: Type.Number({ [X_SCRATCH_READONLY]: true }),
-        name: Type.Union([Type.String(), Type.Null()]),
+        name: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
         listId: Type.Number({ [X_SCRATCH_READONLY]: true }),
         fields: fieldsObject,
       });
@@ -242,9 +275,11 @@ export async function buildAffinityPersonsTableSpec(
   const schema = Type.Object(
     {
       id: Type.Number({ description: 'Person id', [X_SCRATCH_READONLY]: true }),
+      // Writable basics → v1 PUT /persons (phase 2).
       firstName: Type.Union([Type.String(), Type.Null()]),
       lastName: Type.Union([Type.String(), Type.Null()]),
-      primaryEmailAddress: Type.Union([Type.String(), Type.Null()]),
+      // Derived from `emailAddresses` — read-only; edit the array instead.
+      primaryEmailAddress: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
       emailAddresses: Type.Array(Type.String()),
       type: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
       fields: Type.Object(fieldsByKey, {
@@ -288,9 +323,11 @@ export async function buildAffinityCompaniesTableSpec(
   const schema = Type.Object(
     {
       id: Type.Number({ description: 'Company id', [X_SCRATCH_READONLY]: true }),
+      // Writable basics → v1 PUT /organizations (phase 2).
       name: Type.Union([Type.String(), Type.Null()]),
       domain: Type.Union([Type.String(), Type.Null()]),
-      domains: Type.Array(Type.String()),
+      // `domains` is the server-maintained set (derived from `domain` + enrichment); read-only.
+      domains: Type.Array(Type.String(), { [X_SCRATCH_READONLY]: true }),
       isGlobal: Type.Boolean({ [X_SCRATCH_READONLY]: true }),
       fields: Type.Object(fieldsByKey, {
         description: 'Affinity fields keyed by field id',
@@ -324,6 +361,9 @@ export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTable
   const schema = Type.Object(
     {
       id: Type.Number({ description: 'Opportunity id', [X_SCRATCH_READONLY]: true }),
+      // Writable → v1 PUT /opportunities (phase 2). `listId` stays read-only: it's
+      // required on create (which opportunity-type list to create in) but the v2
+      // read returns it as the opportunity's home list and it isn't re-targetable here.
       name: Type.Union([Type.String(), Type.Null()]),
       listId: Type.Number({
         description: 'Id of the list this opportunity belongs to',
@@ -383,19 +423,32 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
       mentions: Type.Array(mentionSchema, { [X_SCRATCH_READONLY]: true }),
       createdAt: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
       updatedAt: Type.Union([Type.String({ format: 'date-time' }), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      // Included via `includes` query parameter:
+      // Included via `includes` query parameter — server-computed previews of
+      // the note's associations, not writable as such (association edits go
+      // through the note-update endpoint's persons/companies/opportunities
+      // arrays, not these preview shapes):
       companiesPreview: Type.Optional(
-        Type.Object({ data: Type.Array(companyPreviewSchema), totalCount: Type.Number() }),
+        Type.Object(
+          { data: Type.Array(companyPreviewSchema), totalCount: Type.Number() },
+          { [X_SCRATCH_READONLY]: true },
+        ),
       ),
-      personsPreview: Type.Optional(Type.Object({ data: Type.Array(personDataSchema), totalCount: Type.Number() })),
+      personsPreview: Type.Optional(
+        Type.Object({ data: Type.Array(personDataSchema), totalCount: Type.Number() }, { [X_SCRATCH_READONLY]: true }),
+      ),
       opportunitiesPreview: Type.Optional(
-        Type.Object({ data: Type.Array(opportunityPreviewSchema), totalCount: Type.Number() }),
+        Type.Object(
+          { data: Type.Array(opportunityPreviewSchema), totalCount: Type.Number() },
+          { [X_SCRATCH_READONLY]: true },
+        ),
       ),
-      repliesCount: Type.Optional(Type.Number()),
+      repliesCount: Type.Optional(Type.Number({ [X_SCRATCH_READONLY]: true })),
       // Discriminated fields — present on interaction / ai-notetaker types:
-      interaction: Type.Optional(Type.Object({ id: Type.Number(), type: Type.String() })),
-      transcriptId: Type.Optional(Type.Number()),
-      parent: Type.Optional(Type.Object({ id: Type.Number() })),
+      interaction: Type.Optional(
+        Type.Object({ id: Type.Number(), type: Type.String() }, { [X_SCRATCH_READONLY]: true }),
+      ),
+      transcriptId: Type.Optional(Type.Number({ [X_SCRATCH_READONLY]: true })),
+      parent: Type.Optional(Type.Object({ id: Type.Number() }, { [X_SCRATCH_READONLY]: true })),
     },
     { $id: 'affinity/notes', title: 'Notes' },
   );
@@ -414,6 +467,44 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
 }
 
 // ---------------------------------------------------------------------------
+// Users (workspace teammates) — read-only reference table, fixed schema.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the table spec for the Users table (`GET /v2/users`). Workspace
+ * teammates (the people with Affinity accounts in this org) — a read-only
+ * reference entity, distinct from `persons` (CRM contacts). Every field is
+ * read-only: the connector never creates/edits/deletes users.
+ */
+export function buildAffinityUsersTableSpec(id: EntityId): BaseJsonTableSpec {
+  const schema = Type.Object(
+    {
+      id: Type.Number({ description: 'User id', [X_SCRATCH_READONLY]: true }),
+      firstName: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      lastName: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      photoUrl: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      primaryEmailAddress: Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      status: Type.String({ description: 'Account status (e.g. active)', [X_SCRATCH_READONLY]: true }),
+      emailAddresses: Type.Array(Type.String(), { [X_SCRATCH_READONLY]: true }),
+      role: Type.String({ description: 'Workspace role (e.g. admin)', [X_SCRATCH_READONLY]: true }),
+    },
+    { $id: 'affinity/users', title: 'Users' },
+  );
+
+  return {
+    id,
+    slug: id.wsId,
+    name: 'Users',
+    schema,
+    idColumnRemoteId: idPath('id'),
+    titleColumnRemoteId: ['firstName'],
+    basePath: [],
+    generatedAt: new Date().toISOString(),
+    defaultView: buildAffinityDefaultView(schema, 'firstName'),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Entity Files (v1 API)
 // ---------------------------------------------------------------------------
 
@@ -425,11 +516,26 @@ export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSp
   const schema = Type.Object(
     {
       id: Type.Number({ description: 'Entity file id', [X_SCRATCH_READONLY]: true }),
-      name: Type.String({ description: 'File name' }),
+      // Read-only: the v1 entity-files API has no metadata-update endpoint.
+      name: Type.String({ description: 'File name', [X_SCRATCH_READONLY]: true }),
       size: Type.Number({ description: 'File size in bytes', [X_SCRATCH_READONLY]: true }),
-      person_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      organization_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
-      opportunity_id: Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true }),
+      // The attachment's parent entity. These are bare scalar ids (the only
+      // clean FK surface in the connector — every other Affinity reference is a
+      // decorated object nested inside a field value). Read-only/navigation FKs:
+      // entity files have no v1 metadata-update endpoint, so the link can be
+      // followed but not re-parented from Scratch.
+      person_id: Type.Union([Type.Number(), Type.Null()], {
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: PEOPLE_TABLE_WS_ID },
+      }),
+      organization_id: Type.Union([Type.Number(), Type.Null()], {
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: COMPANIES_TABLE_WS_ID },
+      }),
+      opportunity_id: Type.Union([Type.Number(), Type.Null()], {
+        [X_SCRATCH_READONLY]: true,
+        [X_SCRATCH_FOREIGN_KEY_OPTIONS]: { linkedTableId: OPPORTUNITIES_TABLE_WS_ID },
+      }),
       uploader_id: Type.Number({ [X_SCRATCH_READONLY]: true }),
       created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
     },
