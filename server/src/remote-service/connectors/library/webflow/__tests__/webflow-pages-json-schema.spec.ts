@@ -80,5 +80,38 @@ describe('buildWebflowPagesJsonTableSpec', () => {
     it('should not mark slug as readonly', () => {
       expect((props.slug as Record<string, unknown>)[X_SCRATCH_READONLY]).toBeUndefined();
     });
+
+    // T7 (DEV-9698): the SEO metadata customers asked to edit. The Webflow Data
+    // API exposes exactly these writable SEO fields — no Open Graph image,
+    // canonical URL, or search-visibility/noindex toggle exists in the API
+    // (those are Designer-only). These assertions pin that the full editable
+    // SEO surface stays present and editable end-to-end.
+    describe('SEO + Open Graph editable surface', () => {
+      const subProps = (field: unknown): Record<string, Record<string, unknown>> =>
+        (field as { properties: Record<string, Record<string, unknown>> }).properties;
+
+      it('should expose editable seo.title and seo.description', () => {
+        const seo = subProps(props.seo);
+        expect(seo.title).toBeDefined();
+        expect(seo.description).toBeDefined();
+        expect(seo.title[X_SCRATCH_READONLY]).toBeUndefined();
+        expect(seo.description[X_SCRATCH_READONLY]).toBeUndefined();
+      });
+
+      it('should expose editable openGraph title/description and their copied flags', () => {
+        const og = subProps(props.openGraph);
+        for (const key of ['title', 'titleCopied', 'description', 'descriptionCopied']) {
+          expect(og[key]).toBeDefined();
+          expect(og[key][X_SCRATCH_READONLY]).toBeUndefined();
+        }
+      });
+
+      it.each(['publishedPath', 'parentId', 'archived', 'draft', 'createdOn', 'lastUpdated'])(
+        'should mark the read-only metadata field %s as readonly',
+        (field) => {
+          expect((props[field] as Record<string, unknown>)[X_SCRATCH_READONLY]).toBe(true);
+        },
+      );
+    });
   });
 });

@@ -345,6 +345,17 @@ export { WEBFLOW_PAGES_TABLE_ID_PREFIX } from './webflow-types';
 
 /**
  * Build a BaseJsonTableSpec schema for Webflow site pages.
+ *
+ * Editable surface = page settings + the full SEO metadata customers asked for
+ * (DEV-9698 T7): `title`, `slug`, `seo.{title,description}`, and
+ * `openGraph.{title,titleCopied,description,descriptionCopied}`. These are
+ * exactly the writable fields the Webflow Data API's PUT /pages/{id} accepts.
+ *
+ * Deliberately NOT modelled — the Webflow Data API exposes no such field, so
+ * they are Designer-only and out of reach here (same boundary as page body/DOM
+ * content): Open Graph image, canonical URL, and the per-page
+ * search-visibility / noindex toggle. If a customer needs one of these, it is a
+ * Webflow API gap, not a connector omission.
  */
 export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site, structureVersion = 1): BaseJsonTableSpec {
   const schema = Type.Object(
