@@ -274,8 +274,16 @@ export type CreateSchemaFieldsDto = z.infer<typeof createSchemaFieldsSchema>;
 /** One source folder feeding a generated plan. */
 export const generateCreatePlanSourceSchema = z.object({
   dataFolderId: z.string().min(1),
-  /** Defaults to the source table/folder name. */
+  /** Defaults to the source table/folder name. Ignored for existing-table sources. */
   newTableName: z.string().min(1).max(MAX_TABLE_NAME_LENGTH).optional(),
+  /**
+   * When set, this source's destination table ALREADY EXISTS: the DataFolderId of
+   * an existing, materialized destination folder (it must belong to this workbook
+   * and to `destinationConnectorAccountId`). The generated plan becomes an
+   * add-fields plan — the source's fields diffed against that folder's current
+   * fields, so only the missing ones remain — instead of a create-table plan.
+   */
+  existingDestinationDataFolderId: z.string().min(1).optional(),
 });
 export type GenerateCreatePlanSource = z.infer<typeof generateCreatePlanSourceSchema>;
 

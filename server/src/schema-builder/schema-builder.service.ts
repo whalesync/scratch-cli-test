@@ -35,7 +35,11 @@ import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
 import { selectPlanFieldsFromTableView } from './schema-builder-field-selection';
 import { normalizeCreateSchema } from './schema-builder-normalizer';
-import { PlanGeneratorSource, generateCreatePlanFromSources } from './schema-builder-plan-generator';
+import {
+  ExistingDestinationTable,
+  PlanGeneratorSource,
+  generateCreatePlanFromSources,
+} from './schema-builder-plan-generator';
 import {
   validateFieldsAgainstCapabilities,
   validateNamesAgainstExisting,
@@ -255,6 +259,17 @@ export class SchemaBuilderService {
         ? selectPlanFieldsFromTableView({ schema: stored.schema as TSchema, view: storedView })
         : { schemaFields: extractSchemaFields(stored.schema as TSchema), viewTypeByPath: undefined };
 
+      // When the source targets an existing destination table, resolve that
+      // folder's current fields now so the generator can diff against them.
+      const existingDestination = source.existingDestinationDataFolderId
+        ? await this.resolveExistingDestinationTable(
+            workbookId,
+            dto.destinationConnectorAccountId,
+            source.existingDestinationDataFolderId,
+            actor,
+          )
+        : undefined;
+
       sources.push({
         ref: source.dataFolderId,
         dataFolderId: source.dataFolderId,
@@ -264,11 +279,13 @@ export class SchemaBuilderService {
         idFieldPath: typeof stored.idColumnRemoteId === 'string' ? stored.idColumnRemoteId : undefined,
         remoteTableIds: folder.tableId,
         ...(viewTypeByPath ? { viewTypeByPath } : {}),
+        ...(existingDestination ? { existingDestination } : {}),
       });
     }
 
-    const { tables, notes } = generateCreatePlanFromSources({
+    const { tables, fieldPlans, notes } = generateCreatePlanFromSources({
       sources,
+      destinationConnectorAccountId: dto.destinationConnectorAccountId,
       linkedTableMappings: dto.linkedTableMappings,
     });
 
@@ -279,7 +296,47 @@ export class SchemaBuilderService {
       materializeLocally: false,
     };
 
-    return { plan, notes, destinationSupportsCreation: connector.supportsSchemaCreation() };
+    return { plan, fieldPlans, notes, destinationSupportsCreation: connector.supportsSchemaCreation() };
+  }
+
+  /**
+   * Resolve an existing, materialized destination folder for an add-fields plan:
+   * assert it belongs to this workbook and the destination connector, then read
+   * its stored schema and derive its current field names — on the SAME basis the
+   * plan generator names fields (`displayLabel ?? lastPathSegment`) so the diff
+   * matches. Fails fast rather than silently treating a bad target as "no
+   * existing fields" (which would re-create every field and collide remotely).
+   */
+  private async resolveExistingDestinationTable(
+    workbookId: WorkbookId,
+    destinationConnectorAccountId: string,
+    destinationDataFolderId: string,
+    actor: Actor,
+  ): Promise<ExistingDestinationTable> {
+    const folder = await this.db.client.dataFolder.findUnique({ where: { id: destinationDataFolderId } });
+    if (!folder) {
+      throw new BadRequestException(`Existing destination data folder ${destinationDataFolderId} not found`);
+    }
+    if (folder.workbookId !== workbookId) {
+      throw new BadRequestException(
+        `Existing destination data folder ${destinationDataFolderId} does not belong to this workbook`,
+      );
+    }
+    if (folder.connectorAccountId !== destinationConnectorAccountId) {
+      throw new BadRequestException(
+        `Existing destination data folder ${destinationDataFolderId} does not belong to the destination connector`,
+      );
+    }
+    const stored = await this.dataFolderService.getStoredSchema(destinationDataFolderId as DataFolderId, actor);
+    if (!stored) {
+      throw new BadRequestException(
+        `Existing destination data folder ${destinationDataFolderId} has no stored schema to diff against`,
+      );
+    }
+    const fieldNames = extractSchemaFields(stored.schema as TSchema).map(
+      (field) => field.displayLabel ?? lastPathSegment(field.path),
+    );
+    return { dataFolderId: destinationDataFolderId, remoteTableId: folder.tableId, fieldNames };
   }
 
   // ── execution core (BullMQ-wrappable) ──────────────────────────────────────

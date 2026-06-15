@@ -189,4 +189,109 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       expect(auditLogService.logEvent).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('POST .../schema/plan-from-folder', () => {
+    // A flat Authors source schema; the destination is a subset (id + name only).
+    const sourceSchema = {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        name: { type: 'string' },
+        bio: { type: 'string' },
+        age: { type: 'integer' },
+      },
+    };
+    const destinationSchema = {
+      type: 'object',
+      properties: { id: { type: 'string' }, name: { type: 'string' } },
+    };
+    const sourceFolder = {
+      id: 'src_authors',
+      workbookId: WORKBOOK_ID,
+      connectorAccountId: 'conn_src',
+      tableId: ['tblSrcAuthors'],
+      name: 'Authors',
+    };
+    const sourceStoredSchema = {
+      schema: sourceSchema,
+      name: 'Authors',
+      idColumnRemoteId: 'id',
+      titleColumnRemoteId: ['name'],
+    };
+
+    it('generates a create-tables plan when no existing destination is given', async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
+        .expect(201);
+
+      expect(res.body.fieldPlans).toEqual([]);
+      expect(res.body.plan.tables).toHaveLength(1);
+      expect(res.body.plan.tables[0].name).toBe('Authors');
+      // id is skipped (destination owns it); name (primary) + bio + age remain.
+      expect(res.body.plan.tables[0].fields.map((f: { name: string }) => f.name)).toEqual(['name', 'bio', 'age']);
+    });
+
+    it('diffs against an existing destination folder and emits an add-fields plan', async () => {
+      const destinationFolder = {
+        id: 'dst_authors',
+        workbookId: WORKBOOK_ID,
+        connectorAccountId: CONNECTOR_ACCOUNT_ID,
+        tableId: ['tblDstAuthors'],
+        name: 'Authors',
+      };
+      dbService.client.dataFolder.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+        Promise.resolve(where.id === 'dst_authors' ? destinationFolder : sourceFolder),
+      );
+      dataFolderService.getStoredSchema.mockImplementation((id: string) =>
+        Promise.resolve(id === 'dst_authors' ? { schema: destinationSchema } : sourceStoredSchema),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({
+          sources: [{ dataFolderId: 'src_authors', existingDestinationDataFolderId: 'dst_authors' }],
+          destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
+        })
+        .expect(201);
+
+      // No new table; one add-fields plan with only the missing fields.
+      expect(res.body.plan.tables).toEqual([]);
+      expect(res.body.fieldPlans).toHaveLength(1);
+      expect(res.body.fieldPlans[0]).toMatchObject({
+        sourceDataFolderId: 'src_authors',
+        destinationDataFolderId: 'dst_authors',
+        connectorAccountId: CONNECTOR_ACCOUNT_ID,
+        remoteTableId: ['tblDstAuthors'],
+      });
+      // id skipped, 'name' already on destination → only bio + age are added.
+      expect(res.body.fieldPlans[0].fields.map((f: { name: string }) => f.name)).toEqual(['bio', 'age']);
+      expect(res.body.notes.find((note: { fieldName: string }) => note.fieldName === 'name')).toMatchObject({
+        status: 'exists',
+      });
+      expect(res.body.destinationSupportsCreation).toBe(false);
+    });
+
+    it('rejects an existing destination folder from a different connector', async () => {
+      dbService.client.dataFolder.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+        Promise.resolve(
+          where.id === 'dst_authors'
+            ? { id: 'dst_authors', workbookId: WORKBOOK_ID, connectorAccountId: 'other_conn', tableId: ['x'] }
+            : sourceFolder,
+        ),
+      );
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+
+      await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({
+          sources: [{ dataFolderId: 'src_authors', existingDestinationDataFolderId: 'dst_authors' }],
+          destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
+        })
+        .expect(400);
+    });
+  });
 });

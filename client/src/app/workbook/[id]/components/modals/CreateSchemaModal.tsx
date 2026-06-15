@@ -20,6 +20,7 @@ import {
 import { CopyIcon, DatabaseIcon, PlusIcon, RotateCcwIcon } from 'lucide-react';
 import { useState } from 'react';
 import {
+  editorFieldsFromSpecs,
   findDuplicateFieldNameIds,
   fromCreateTablesDto,
   makeEmptyField,
@@ -73,6 +74,9 @@ export function CreateSchemaModal({
   const [materializeLocally, setMaterializeLocally] = useState(true);
 
   const [copySourceFolderId, setCopySourceFolderId] = useState('');
+  // Optional add-fields target for "Copy from folder": an existing destination
+  // folder to diff against (empty ⇒ create a new table).
+  const [copyDestinationDataFolderId, setCopyDestinationDataFolderId] = useState('');
 
   const [validateResult, setValidateResult] = useState<ValidateSchemaResponse | null>(null);
   const [createResult, setCreateResult] = useState<CreateResult | null>(null);
@@ -143,24 +147,48 @@ export function CreateSchemaModal({
     setParentFolderId('');
     setMaterializeLocally(true);
     setCopySourceFolderId('');
+    setCopyDestinationDataFolderId('');
     clearResults();
   };
 
   // "Copy from folder": run planFromFolder for the chosen source folder against this
-  // (destination) connector, then prefill the create-tables form with the generated plan.
+  // (destination) connector, then prefill the editor with the generated plan. When an
+  // existing destination table is chosen, the plan is an add-fields diff instead of a
+  // create-tables plan, so seed the add-fields editor for that table.
   const handleCopyFromFolder = async () => {
     if (!copySourceFolderId) return;
     setIsGeneratingPlan(true);
     clearResults();
     try {
       const response = await scratchApiClient.schema.planFromFolder(workbookId, {
-        sources: [{ dataFolderId: copySourceFolderId }],
+        sources: [
+          {
+            dataFolderId: copySourceFolderId,
+            ...(copyDestinationDataFolderId ? { existingDestinationDataFolderId: copyDestinationDataFolderId } : {}),
+          },
+        ],
         destinationConnectorAccountId: connectorAccountId,
       });
+      setPlanResult({ notes: response.notes, destinationSupportsCreation: response.destinationSupportsCreation });
+
+      const fieldPlan = response.fieldPlans[0];
+      if (fieldPlan) {
+        // Existing destination table: switch to the add-fields editor, seeded with
+        // only the missing fields and targeting the chosen destination folder.
+        setMode('createFields');
+        setSelectedDataFolderId(fieldPlan.destinationDataFolderId);
+        setRemoteTableIdText('');
+        setExistingFields(editorFieldsFromSpecs(fieldPlan.fields));
+        ScratchpadNotifications.success({
+          title: 'Plan generated',
+          message: `Prefilled ${fieldPlan.fields.length} missing field${fieldPlan.fields.length === 1 ? '' : 's'} to add to the existing table.`,
+        });
+        return;
+      }
+
       const seeded = fromCreateTablesDto(response.plan);
       setTables(seeded.tables);
       if (seeded.remoteParentId) setRemoteParentId(seeded.remoteParentId);
-      setPlanResult({ notes: response.notes, destinationSupportsCreation: response.destinationSupportsCreation });
       ScratchpadNotifications.success({
         title: 'Plan generated',
         message: `Prefilled ${seeded.tables.length} table${seeded.tables.length === 1 ? '' : 's'} from the source folder.`,
@@ -325,6 +353,21 @@ export function CreateSchemaModal({
                 searchable
                 clearable
                 disabled={sourceFolderGroups.length === 0}
+                style={{ flex: 1 }}
+              />
+              <Select
+                label="Into existing table (optional)"
+                description="Diff against an existing table and add only the missing fields"
+                placeholder={connectorFolders.length ? 'Create a new table' : 'No tables for this connector'}
+                data={connectorFolders.map((folder) => ({
+                  value: folder.id,
+                  label: `${folder.name} (${folder.tableId.join('/')})`,
+                }))}
+                value={copyDestinationDataFolderId || null}
+                onChange={(value) => setCopyDestinationDataFolderId(value ?? '')}
+                searchable
+                clearable
+                disabled={connectorFolders.length === 0}
                 style={{ flex: 1 }}
               />
               <ButtonSecondaryOutline

@@ -89,7 +89,10 @@ describe('generateCreatePlanFromSources', () => {
   };
 
   it('resolves a foreignKey to a sibling source as an in-plan ref', () => {
-    const { tables, notes } = generateCreatePlanFromSources({ sources: [authors, posts] });
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [authors, posts],
+      destinationConnectorAccountId: 'destConn',
+    });
 
     const postsTable = tables.find((table) => table.ref === 'posts');
     expect(postsTable).toBeDefined();
@@ -113,7 +116,10 @@ describe('generateCreatePlanFromSources', () => {
       remoteTableIds: ['tblPosts'],
       schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblMissing' } })],
     };
-    const { tables, notes } = generateCreatePlanFromSources({ sources: [orphan] });
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [orphan],
+      destinationConnectorAccountId: 'destConn',
+    });
 
     expect(tables[0].fields).toHaveLength(0);
     expect(notes.find((note) => note.sourceFieldPath === 'author')).toMatchObject({ status: 'unsupported' });
@@ -129,10 +135,125 @@ describe('generateCreatePlanFromSources', () => {
     };
     const { tables } = generateCreatePlanFromSources({
       sources: [orphan],
+      destinationConnectorAccountId: 'destConn',
       linkedTableMappings: [{ sourceLinkedTableId: 'tblExternal', destinationRemoteTableId: ['destTbl'] }],
     });
 
     expect(tables[0].fields[0].fieldType).toEqual({
+      kind: 'foreignKey',
+      target: { existingRemoteTableId: ['destTbl'] },
+    });
+  });
+});
+
+describe('generateCreatePlanFromSources — existing destination table (add-fields diff)', () => {
+  // A source whose destination table already exists yields an add-fields plan: the
+  // source fields diffed against the destination's current fields, never a new table.
+  const authorsSource: PlanGeneratorSource = {
+    ref: 'authors',
+    dataFolderId: 'authors',
+    tableName: 'Authors',
+    remoteTableIds: ['tblAuthors'],
+    primaryFieldPath: 'name',
+    idFieldPath: 'id',
+    schemaFields: [
+      field({ path: 'id', type: 'string' }),
+      field({ path: 'name', type: 'string' }),
+      field({ path: 'bio', type: 'string' }),
+      field({ path: 'age', type: 'integer' }),
+    ],
+  };
+
+  const authorsIntoExisting = (fieldNames: string[]): PlanGeneratorSource => ({
+    ...authorsSource,
+    existingDestination: { dataFolderId: 'destAuthors', remoteTableId: ['tblDestAuthors'], fieldNames },
+  });
+
+  it('emits a fieldPlan (not a table) and drops fields the destination already has', () => {
+    const { tables, fieldPlans, notes } = generateCreatePlanFromSources({
+      sources: [authorsIntoExisting(['name'])],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(tables).toHaveLength(0);
+    expect(fieldPlans).toHaveLength(1);
+    expect(fieldPlans[0]).toMatchObject({
+      sourceDataFolderId: 'authors',
+      destinationDataFolderId: 'destAuthors',
+      connectorAccountId: 'destConn',
+      remoteTableId: ['tblDestAuthors'],
+    });
+    // id is skipped (destination owns it); 'name' already exists; bio + age remain.
+    expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['bio', 'age']);
+    expect(notes.find((note) => note.fieldName === 'name')).toMatchObject({ status: 'exists' });
+  });
+
+  it('matches existing field names case-insensitively', () => {
+    const { fieldPlans } = generateCreatePlanFromSources({
+      sources: [authorsIntoExisting(['NAME', ' Bio '])],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['age']);
+  });
+
+  it('does not re-designate a primary field on an existing table', () => {
+    const { fieldPlans } = generateCreatePlanFromSources({
+      sources: [authorsIntoExisting([])],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['name', 'bio', 'age']);
+    expect(fieldPlans[0].fields.every((f) => f.isPrimary === undefined)).toBe(true);
+  });
+
+  it('still yields a fieldPlan with no fields when the destination already has everything', () => {
+    const { fieldPlans, notes } = generateCreatePlanFromSources({
+      sources: [authorsIntoExisting(['name', 'bio', 'age'])],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(fieldPlans).toHaveLength(1);
+    expect(fieldPlans[0].fields).toHaveLength(0);
+    // Every source field surfaced as an 'exists' note — nothing dropped silently.
+    expect(notes.filter((note) => note.status === 'exists')).toHaveLength(3);
+  });
+
+  it('downgrades a sibling-ref foreignKey to unsupported when adding to an existing table', () => {
+    const postsIntoExisting: PlanGeneratorSource = {
+      ref: 'posts',
+      dataFolderId: 'posts',
+      tableName: 'Posts',
+      remoteTableIds: ['tblPosts'],
+      schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblAuthors' } })],
+      existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], fieldNames: [] },
+    };
+    // authorsSource registers tblAuthors as a sibling, so the FK would otherwise resolve to { ref }.
+    const { tables, fieldPlans, notes } = generateCreatePlanFromSources({
+      sources: [authorsSource, postsIntoExisting],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    // Mixed: authors is a new table, posts is an add-fields plan.
+    expect(tables.map((table) => table.ref)).toEqual(['authors']);
+    const postsPlan = fieldPlans.find((plan) => plan.sourceDataFolderId === 'posts');
+    expect(postsPlan?.fields).toHaveLength(0);
+    expect(notes.find((note) => note.sourceFieldPath === 'author')).toMatchObject({ status: 'unsupported' });
+  });
+
+  it('keeps a linkedTableMappings foreignKey as existingRemoteTableId in a fieldPlan', () => {
+    const postsIntoExisting: PlanGeneratorSource = {
+      ref: 'posts',
+      dataFolderId: 'posts',
+      tableName: 'Posts',
+      remoteTableIds: ['tblPosts'],
+      schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblExternal' } })],
+      existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], fieldNames: [] },
+    };
+    const { fieldPlans } = generateCreatePlanFromSources({
+      sources: [postsIntoExisting],
+      destinationConnectorAccountId: 'destConn',
+      linkedTableMappings: [{ sourceLinkedTableId: 'tblExternal', destinationRemoteTableId: ['destTbl'] }],
+    });
+
+    expect(fieldPlans[0].fields[0].fieldType).toEqual({
       kind: 'foreignKey',
       target: { existingRemoteTableId: ['destTbl'] },
     });

@@ -329,6 +329,15 @@ export function editorTableFromSpec(spec: CreateTableSpec): EditorTable {
   };
 }
 
+/**
+ * Build editor fields from wire CreateFieldSpecs — used to seed the add-fields
+ * editor from a `CreateSchemaFieldsPlan` (the diff against an existing table).
+ * Falls back to a single empty field when the diff found nothing to add.
+ */
+export function editorFieldsFromSpecs(specs: CreateFieldSpec[]): EditorField[] {
+  return specs.length ? specs.map(editorFieldFromSpec) : [makeEmptyField()];
+}
+
 export interface SeededCreateTablesForm {
   tables: EditorTable[];
   remoteParentId: string;

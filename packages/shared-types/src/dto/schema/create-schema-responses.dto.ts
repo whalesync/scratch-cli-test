@@ -1,4 +1,4 @@
-import type { CreateFieldKind, CreateSchemaTablesDto } from './create-schema.dto';
+import type { CreateFieldKind, CreateFieldSpec, CreateSchemaTablesDto } from './create-schema.dto';
 
 /**
  * Responses and connector-capability descriptors for the create-schema API
@@ -97,14 +97,49 @@ export interface FieldMappingNote {
   sourceDataFolderId: string;
   sourceFieldPath: string;
   fieldName: string;
-  status: 'mapped' | 'downgraded' | 'unsupported';
+  /**
+   * `mapped`/`downgraded`/`unsupported` describe how the source field maps to a
+   * create field; `exists` means the field was skipped because the existing
+   * destination table already has a field of that name (add-fields diff only).
+   */
+  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists';
   mappedKind?: CreateFieldKind;
   message?: string;
 }
 
+/**
+ * Add-fields plan for one source whose destination table already exists: the
+ * source's fields diffed against the destination's current fields, so only the
+ * missing ones remain. The client edits these, then POSTs them to /schema/fields.
+ */
+export interface CreateSchemaFieldsPlan {
+  /** Echoes the source folder this plan was generated from. */
+  sourceDataFolderId: string;
+  /** The existing, materialized destination folder these fields are added to. */
+  destinationDataFolderId: string;
+  connectorAccountId: string;
+  /** The destination folder's remote table id (target of the /schema/fields POST). */
+  remoteTableId: string[];
+  /**
+   * The missing fields to create. MAY be empty when the destination already has
+   * every source field — that's a meaningful "nothing to add" result, surfaced
+   * rather than dropped (see `notes` for the skipped fields).
+   */
+  fields: CreateFieldSpec[];
+}
+
 export interface GenerateCreatePlanResponse {
-  /** One CreateTableSpec per source; ready to review/edit, then POST to /schema/tables. */
+  /**
+   * Create-tables plan for sources whose destination table doesn't yet exist; one
+   * CreateTableSpec per such source, ready to review/edit then POST to /schema/tables.
+   * `tables` is empty when every source targets an existing destination table.
+   */
   plan: CreateSchemaTablesDto;
+  /**
+   * Add-fields plans, one per source that targets an existing destination table.
+   * Empty when every source is a new table.
+   */
+  fieldPlans: CreateSchemaFieldsPlan[];
   /** Per-field mapping outcome — nothing is dropped silently. */
   notes: FieldMappingNote[];
   destinationSupportsCreation: boolean;

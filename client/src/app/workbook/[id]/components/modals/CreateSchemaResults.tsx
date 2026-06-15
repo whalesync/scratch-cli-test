@@ -72,6 +72,7 @@ export function CreateSchemaResults({ error, validateResult, createResult, planR
 function noteColor(status: FieldMappingNote['status']): 'green' | 'gray' | 'red' {
   if (status === 'mapped') return 'green';
   if (status === 'downgraded') return 'gray';
+  if (status === 'exists') return 'gray'; // already on destination — skipped, not an error
   return 'red'; // unsupported
 }
 
@@ -79,9 +80,10 @@ function PlanResultView({ planResult }: { planResult: PlanResult }) {
   const mappedCount = planResult.notes.filter((note) => note.status === 'mapped').length;
   const downgraded = planResult.notes.filter((note) => note.status === 'downgraded');
   const unsupported = planResult.notes.filter((note) => note.status === 'unsupported');
+  const exists = planResult.notes.filter((note) => note.status === 'exists');
   const mapped = planResult.notes.filter((note) => note.status === 'mapped');
   // All notes, most-severe first, for the collapsible details panel.
-  const orderedNotes = [...unsupported, ...downgraded, ...mapped];
+  const orderedNotes = [...unsupported, ...downgraded, ...exists, ...mapped];
 
   return (
     <Stack gap="sm">
@@ -98,6 +100,7 @@ function PlanResultView({ planResult }: { planResult: PlanResult }) {
         <Text13Regular>
           {mappedCount} field{mappedCount === 1 ? '' : 's'} mapped
           {downgraded.length > 0 ? `, ${downgraded.length} downgraded` : ''}
+          {exists.length > 0 ? `, ${exists.length} already on destination (skipped)` : ''}
           {unsupported.length > 0 ? `, ${unsupported.length} unsupported (omitted)` : ''}.
         </Text13Regular>
       </Alert>
