@@ -2,9 +2,9 @@
 
 import MainContent from '@/app/components/layouts/MainContent';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
-import { Alert, Button, Card, Group, NumberInput, Select, Stack, Text, Textarea, Title } from '@mantine/core';
+import { Alert, Button, Card, Checkbox, Group, NumberInput, Select, Stack, Text, Textarea, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import type { MigrationDescriptor } from '@spinner/shared-types';
+import type { MigrationDescriptor, MigrationResult } from '@spinner/shared-types';
 import { AlertCircle, CheckCircle2, Database, DatabaseIcon, Info } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -14,21 +14,20 @@ export default function MigrationsDevPage() {
   const [selectedMigration, setSelectedMigration] = useState<string | null>(null);
   const [qty, setQty] = useState<number | string>('');
   const [ids, setIds] = useState<string>('');
+  const [dryRun, setDryRun] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [lastResult, setLastResult] = useState<{
-    migratedIds: string[];
-    remainingCount: number;
-    migrationName: string;
-  } | null>(null);
+  const [lastResult, setLastResult] = useState<MigrationResult | null>(null);
 
   useEffect(() => {
     loadAvailableMigrations();
   }, []);
 
-  const selectedDescription = useMemo(
-    () => availableMigrations.find((m) => m.name === selectedMigration)?.description,
+  const selectedDescriptor = useMemo(
+    () => availableMigrations.find((m) => m.name === selectedMigration) ?? null,
     [availableMigrations, selectedMigration],
   );
+  const selectedDescription = selectedDescriptor?.description;
+  const dryRunSupported = selectedDescriptor?.supportsDryRun ?? false;
 
   const loadAvailableMigrations = async () => {
     try {
@@ -84,21 +83,27 @@ export default function MigrationsDevPage() {
     setIsRunning(true);
 
     try {
+      const isDryRun = dryRunSupported && dryRun;
       const result = await scratchApiClient.codeMigrations.runMigration({
         migration: selectedMigration,
         qty: qty ? Number(qty) : undefined,
         ids: idsArray.length > 0 ? idsArray : undefined,
+        dryRun: isDryRun ? true : undefined,
       });
 
       setLastResult(result);
 
       notifications.show({
-        title: 'Migration completed',
-        message: `Migrated ${result.migratedIds.length} items. ${result.remainingCount} remaining.`,
+        title: result.dryRun ? 'Dry run complete' : 'Migration completed',
+        message: result.dryRun
+          ? `Would migrate ${result.migratedIds.length} items; ${result.remainingCount} would remain. No changes were written.`
+          : `Migrated ${result.migratedIds.length} items. ${result.remainingCount} remaining.`,
         color: 'green',
       });
 
-      // Reset form
+      // Reset only the targeting inputs. Keep the selected migration and the
+      // dry-run choice so the common "dry-run, eyeball it, then run for real"
+      // flow is just un-checking the box and clicking again.
       setQty('');
       setIds('');
     } catch (error) {
@@ -169,6 +174,20 @@ export default function MigrationsDevPage() {
                 rows={3}
               />
 
+              <Checkbox
+                label="Dry run"
+                description={
+                  dryRunSupported
+                    ? 'Report the would-be changes without writing anything. Recommended before a real run.'
+                    : selectedMigration
+                      ? 'This migration does not support dry-run — it always performs a real run.'
+                      : 'Select a migration that supports dry-run to enable this.'
+                }
+                checked={dryRunSupported && dryRun}
+                onChange={(e) => setDryRun(e.currentTarget.checked)}
+                disabled={!dryRunSupported || isRunning}
+              />
+
               <Group>
                 <Button
                   onClick={handleRunMigration}
@@ -176,19 +195,32 @@ export default function MigrationsDevPage() {
                   disabled={!selectedMigration}
                   leftSection={<Database size={16} />}
                 >
-                  Run Migration
+                  {dryRunSupported && dryRun ? 'Run dry run' : 'Run Migration'}
                 </Button>
               </Group>
             </Stack>
           </Card>
 
           {lastResult && (
-            <Card shadow="sm" padding="lg" radius="md" withBorder bg="green.0">
+            <Card shadow="sm" padding="lg" radius="md" withBorder bg={lastResult.dryRun ? 'blue.0' : 'green.0'}>
               <Stack gap="sm">
                 <Group gap="sm">
-                  <CheckCircle2 size={20} color="green" />
-                  <Title order={4}>Last Migration Result</Title>
+                  {lastResult.dryRun ? (
+                    <Info size={20} color="var(--mantine-color-blue-6)" />
+                  ) : (
+                    <CheckCircle2 size={20} color="green" />
+                  )}
+                  <Title order={4}>{lastResult.dryRun ? 'Last Dry Run Result' : 'Last Migration Result'}</Title>
                 </Group>
+
+                {lastResult.dryRun && (
+                  <Alert icon={<Info size={16} />} color="blue" variant="light" p="xs">
+                    <Text size="sm">
+                      Dry run — these are the changes that <strong>would</strong> be made. Nothing was written.
+                    </Text>
+                  </Alert>
+                )}
+
                 <Group gap="md">
                   <div>
                     <Text size="xs" c="dimmed">
@@ -200,7 +232,7 @@ export default function MigrationsDevPage() {
                   </div>
                   <div>
                     <Text size="xs" c="dimmed">
-                      Migrated
+                      {lastResult.dryRun ? 'Would migrate' : 'Migrated'}
                     </Text>
                     <Text size="sm" fw={500}>
                       {lastResult.migratedIds.length} items
@@ -208,17 +240,36 @@ export default function MigrationsDevPage() {
                   </div>
                   <div>
                     <Text size="xs" c="dimmed">
-                      Remaining
+                      {lastResult.dryRun ? 'Would remain' : 'Remaining'}
                     </Text>
                     <Text size="sm" fw={500}>
                       {lastResult.remainingCount} items
                     </Text>
                   </div>
                 </Group>
+
+                {lastResult.summary && lastResult.summary.length > 0 && (
+                  <div>
+                    <Text size="xs" c="dimmed" mb={4}>
+                      Breakdown
+                    </Text>
+                    <Stack gap={2}>
+                      {lastResult.summary.map((row) => (
+                        <Group key={row.label} gap="xs" justify="space-between" maw={420}>
+                          <Text size="sm">{row.label}</Text>
+                          <Text size="sm" fw={500} ff="monospace">
+                            {row.count}
+                          </Text>
+                        </Group>
+                      ))}
+                    </Stack>
+                  </div>
+                )}
+
                 {lastResult.migratedIds.length > 0 && (
                   <div>
                     <Text size="xs" c="dimmed" mb={4}>
-                      Migrated IDs
+                      {lastResult.dryRun ? 'Would-migrate IDs' : 'Migrated IDs'}
                     </Text>
                     <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
                       {lastResult.migratedIds.join(', ')}

@@ -17,6 +17,7 @@ import type {
   AvailableMigrationsResponse,
   MigrationDescriptor,
   MigrationResult,
+  MigrationResultSummaryRow,
   SyncId,
   ValidatedRunMigrationDto,
   WorkbookId,
@@ -72,6 +73,7 @@ import {
   WebflowCollectionFolderToMigrate,
   AuditLogEntry as WebflowFolderRestructureAuditLogEntry,
   WebflowFolderRestructureDeps,
+  WebflowFolderRestructureSummary,
 } from './webflow-folder-restructure-backfill';
 import {
   accumulateWebflowFolderRestructureInverse,
@@ -79,18 +81,21 @@ import {
   invertWebflowCollectionFolder,
   sortWebflowCollectionFoldersForSafeInverseMoveOrder,
   WebflowCollectionFolderInversionResult,
+  WebflowFolderRestructureInverseSummary,
 } from './webflow-folder-restructure-inverse-backfill';
 import { applyWebflowFolderMovePathRewrite } from './webflow-folder-restructure-path-rewrite';
 
 const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
   {
     name: 'init-workbook-repos',
+    supportsDryRun: false,
     description:
       'Initializes the Git config repo for workbooks created before auto-init was added (April 2026). ' +
       'Safe to run multiple times — workbooks that already have a repo are skipped by scratch-git.',
   },
   {
     name: 'notion-data-source-backfill',
+    supportsDryRun: false,
     description:
       "Backfills Notion data source IDs into existing folders so the connector can talk to Notion's " +
       '2025-09-03 API. For single-source databases (the common case), the folder is rewritten in place ' +
@@ -100,6 +105,7 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
   },
   {
     name: 'sync-mapping-v2-backfill',
+    supportsDryRun: false,
     description:
       'Backfills the v2 mapping shape into Sync.mappingsV2 for syncs created before the dual-column ' +
       'migration (rows where mappingsV2 IS NULL). Reads the frozen v1 mappings column, transforms it ' +
@@ -110,6 +116,7 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
   },
   {
     name: 'webflow-folder-restructure',
+    supportsDryRun: true,
     description:
       'Re-parents existing Webflow CMS collection folders from the flat v1 layout /<Site>/<Collection> ' +
       'to the nested v2 layout /<Site>/Collections/<Collection> (DEV-9698). Moves the folder in git on ' +
@@ -125,6 +132,7 @@ const AVAILABLE_MIGRATIONS: MigrationDescriptor[] = [
   },
   {
     name: 'webflow-folder-restructure-inverse',
+    supportsDryRun: true,
     description:
       'ROLLBACK of webflow-folder-restructure (DEV-9698 T6). Re-parents nested v2 Webflow CMS ' +
       'collection folders from /<Site>/Collections/<Collection> back to the flat v1 layout ' +
@@ -186,6 +194,16 @@ export class CodeMigrationsController {
       throw new BadRequestException('Must provide either qty or ids.');
     }
 
+    // Reject a dry-run for a migration that doesn't support it, so a user can
+    // never believe they dry-ran a migration that actually performed writes.
+    // (Unknown migration names fall through to the switch's default below.)
+    if (dto.dryRun) {
+      const descriptor = AVAILABLE_MIGRATIONS.find((m) => m.name === dto.migration);
+      if (descriptor && !descriptor.supportsDryRun) {
+        throw new BadRequestException(`Migration "${dto.migration}" does not support dry-run.`);
+      }
+    }
+
     switch (dto.migration) {
       case 'init-workbook-repos':
         return this.initWorkbookRepos(dto);
@@ -238,6 +256,7 @@ export class CodeMigrationsController {
       migratedIds,
       remainingCount: totalCount - migratedIds.length,
       migrationName: 'init-workbook-repos',
+      dryRun: false,
     };
   }
 
@@ -320,6 +339,7 @@ export class CodeMigrationsController {
       migratedIds,
       remainingCount,
       migrationName: 'notion-data-source-backfill',
+      dryRun: false,
     };
   }
 
@@ -504,6 +524,7 @@ export class CodeMigrationsController {
       migratedIds,
       remainingCount,
       migrationName: 'sync-mapping-v2-backfill',
+      dryRun: false,
     };
   }
 
@@ -693,11 +714,13 @@ export class CodeMigrationsController {
       const orderedFolders = sortWebflowCollectionFoldersForSafeMoveOrder(folders);
 
       // Dry-run: no quiesce, no flip — just report each folder's would-be move.
+      // A dry-run folder resolves to `would_migrate` (never `migrated`), so the
+      // would-be ids are surfaced in `migratedIds` for the admin UI to list.
       if (dryRun) {
         for (const folder of orderedFolders) {
           const result = await this.migrateOneWebflowFolder(folder, deps);
           accumulateWebflowFolderRestructure(summary, result);
-          if (result.kind === 'migrated') migratedIds.push(folder.id);
+          if (result.kind === 'would_migrate') migratedIds.push(folder.id);
         }
         continue;
       }
@@ -774,7 +797,50 @@ export class CodeMigrationsController {
         `remaining=${remainingCount}`,
     );
 
-    return { migratedIds, remainingCount, migrationName };
+    return {
+      migratedIds,
+      remainingCount,
+      migrationName,
+      dryRun,
+      summary: this.buildWebflowForwardSummaryRows(
+        summary,
+        flippedAccountIds.length,
+        skippedBusyAccountIds.length,
+        dryRun,
+      ),
+    };
+  }
+
+  /**
+   * Flatten the forward-migration outcome counters into UI-renderable rows. In a
+   * dry-run the move count reads from `would_migrate` (nothing was written), and
+   * the account-flip rows are omitted because a dry-run neither quiesces nor flips.
+   */
+  private buildWebflowForwardSummaryRows(
+    summary: WebflowFolderRestructureSummary,
+    flippedAccounts: number,
+    skippedBusyAccounts: number,
+    dryRun: boolean,
+  ): MigrationResultSummaryRow[] {
+    const rows: MigrationResultSummaryRow[] = [
+      { label: 'Collection folders examined', count: summary.total },
+      {
+        label: dryRun ? 'Would migrate to nested layout' : 'Migrated to nested layout',
+        count: dryRun ? summary.would_migrate : summary.migrated,
+      },
+      { label: 'Skipped — already nested', count: summary.skipped_already_migrated },
+      { label: 'Skipped — Assets/Pages (not a collection)', count: summary.skipped_not_a_collection },
+      { label: 'Skipped — unexpected path shape', count: summary.skipped_bad_path_shape },
+      { label: 'Skipped — repo not pulled yet', count: summary.skipped_repo_missing },
+      { label: 'Errored', count: summary.errored },
+    ];
+    if (!dryRun) {
+      rows.push(
+        { label: 'Accounts flipped to v2 (nested)', count: flippedAccounts },
+        { label: 'Accounts skipped (too busy to drain)', count: skippedBusyAccounts },
+      );
+    }
+    return rows;
   }
 
   /**
@@ -1018,11 +1084,13 @@ export class CodeMigrationsController {
       // (otherwise its flat destination still holds the siblings and move_folder refuses it).
       const orderedFolders = sortWebflowCollectionFoldersForSafeInverseMoveOrder(folders);
 
+      // Dry-run: a folder resolves to `would_revert` (never `reverted`), so the
+      // would-be ids are surfaced in `revertedIds` for the admin UI to list.
       if (dryRun) {
         for (const folder of orderedFolders) {
           const result = await this.invertOneWebflowFolder(folder, deps);
           accumulateWebflowFolderRestructureInverse(summary, result);
-          if (result.kind === 'reverted') revertedIds.push(folder.id);
+          if (result.kind === 'would_revert') revertedIds.push(folder.id);
         }
         continue;
       }
@@ -1089,7 +1157,50 @@ export class CodeMigrationsController {
         `remaining=${remainingCount}`,
     );
 
-    return { migratedIds: revertedIds, remainingCount, migrationName };
+    return {
+      migratedIds: revertedIds,
+      remainingCount,
+      migrationName,
+      dryRun,
+      summary: this.buildWebflowInverseSummaryRows(
+        summary,
+        flippedAccountIds.length,
+        skippedBusyAccountIds.length,
+        dryRun,
+      ),
+    };
+  }
+
+  /**
+   * Flatten the inverse-migration outcome counters into UI-renderable rows. In a
+   * dry-run the revert count reads from `would_revert` (nothing was written), and
+   * the account-flip rows are omitted because a dry-run neither quiesces nor flips.
+   */
+  private buildWebflowInverseSummaryRows(
+    summary: WebflowFolderRestructureInverseSummary,
+    flippedAccounts: number,
+    skippedBusyAccounts: number,
+    dryRun: boolean,
+  ): MigrationResultSummaryRow[] {
+    const rows: MigrationResultSummaryRow[] = [
+      { label: 'Collection folders examined', count: summary.total },
+      {
+        label: dryRun ? 'Would revert to flat layout' : 'Reverted to flat layout',
+        count: dryRun ? summary.would_revert : summary.reverted,
+      },
+      { label: 'Skipped — already flat', count: summary.skipped_already_flat },
+      { label: 'Skipped — Assets/Pages (not a collection)', count: summary.skipped_not_a_collection },
+      { label: 'Skipped — unexpected path shape', count: summary.skipped_bad_path_shape },
+      { label: 'Skipped — repo not pulled yet', count: summary.skipped_repo_missing },
+      { label: 'Errored', count: summary.errored },
+    ];
+    if (!dryRun) {
+      rows.push(
+        { label: 'Accounts flipped to v1 (flat)', count: flippedAccounts },
+        { label: 'Accounts skipped (too busy to drain)', count: skippedBusyAccounts },
+      );
+    }
+    return rows;
   }
 
   /**

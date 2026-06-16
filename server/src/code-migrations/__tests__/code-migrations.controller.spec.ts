@@ -133,8 +133,33 @@ describe('CodeMigrationsController', () => {
       expect(descriptor!.description.length).toBeGreaterThan(0);
     });
 
+    it('flags only the webflow folder migrations as dry-run capable', () => {
+      const { migrations } = controller.getAvailableMigrations(makeReqWithUser());
+      const supportsDryRun = (name: string) => migrations.find((m) => m.name === name)?.supportsDryRun;
+
+      expect(supportsDryRun('webflow-folder-restructure')).toBe(true);
+      expect(supportsDryRun('webflow-folder-restructure-inverse')).toBe(true);
+      expect(supportsDryRun('init-workbook-repos')).toBe(false);
+      expect(supportsDryRun('notion-data-source-backfill')).toBe(false);
+      expect(supportsDryRun('sync-mapping-v2-backfill')).toBe(false);
+    });
+
     it('rejects non-admin users', () => {
       expect(() => controller.getAvailableMigrations(makeReqWithUser(false))).toThrow(UnauthorizedException);
+    });
+  });
+
+  // A dry-run must only be accepted for a migration that actually honors it —
+  // otherwise a user could believe they dry-ran a migration that wrote for real.
+  describe('runMigration - dry-run gating', () => {
+    it('rejects dryRun for a migration that does not support it', async () => {
+      await expect(
+        controller.runMigration(makeReqWithUser(), {
+          migration: 'init-workbook-repos',
+          ids: ['wkb_1'],
+          dryRun: true,
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -646,6 +671,40 @@ describe('CodeMigrationsController', () => {
         where: { id: 'acct_1' },
         data: { version: 2 },
       });
+    });
+
+    it('returns dryRun:false and a per-outcome summary for a real run', async () => {
+      seedOneFlatCollection();
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure',
+        ids: ['wkb_1'],
+      });
+
+      expect(result.dryRun).toBe(false);
+      const count = (label: string) => result.summary?.find((row) => row.label === label)?.count;
+      expect(count('Migrated to nested layout')).toBe(1);
+      expect(count('Accounts flipped to v2 (nested)')).toBe(1);
+    });
+
+    it('dry-run reports the would-be move without quiescing, writing, or flipping the account', async () => {
+      seedOneFlatCollection();
+
+      const result = await controller.runMigration(makeReqWithUser(), {
+        migration: 'webflow-folder-restructure',
+        ids: ['wkb_1'],
+        dryRun: true,
+      });
+
+      expect(result.dryRun).toBe(true);
+      // A dry-run surfaces the would-be moves as `migratedIds` (the folder
+      // resolves to `would_migrate`, not `migrated`) but writes nothing.
+      expect(result.migratedIds).toEqual(['fld_blog']);
+      expect(connectionQuiesceService.quiesceConnection).not.toHaveBeenCalled();
+      expect(dbService.client.connectorAccount.update).not.toHaveBeenCalled();
+      expect(result.summary?.find((row) => row.label === 'Would migrate to nested layout')?.count).toBe(1);
+      // No real-run-only account rows in a dry-run.
+      expect(result.summary?.some((row) => row.label.startsWith('Accounts'))).toBe(false);
     });
 
     it('skips an account whose jobs will not drain in time, releasing it without migrating', async () => {
