@@ -9,11 +9,13 @@ import { AuthType, ConnectorAccount, Prisma } from '@prisma/client';
 import {
   createConnectorAccountId,
   isShopifyConnectorExtras,
+  parseYouTubeAdditionalChannels,
   QuickBooksConnectorExtras,
   ShopifyConnectorExtras,
   SupabaseProjectCredentials,
   ValidatedOAuthInitiateOptionsDto,
   WorkbookId,
+  YouTubeConnectorExtras,
 } from '@spinner/shared-types';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { capitalize } from 'lodash';
@@ -145,6 +147,7 @@ export class OAuthService {
       shopDomain,
       quickbooksSandbox: options.quickbooksSandbox,
       zohoDataCenter: options.zohoDataCenter,
+      youtubeAdditionalChannels: options.youtubeAdditionalChannels,
       codeVerifier,
       ts: Date.now(),
     };
@@ -278,6 +281,7 @@ export class OAuthService {
           customClientSecret: statePayload.customClientSecret,
           connectionName: statePayload.connectionName,
           quickbooksSandbox: statePayload.quickbooksSandbox,
+          youtubeAdditionalChannels: statePayload.youtubeAdditionalChannels,
         },
       );
 
@@ -350,11 +354,13 @@ export class OAuthService {
       customClientSecret?: string;
       connectionName?: string;
       quickbooksSandbox?: boolean;
+      youtubeAdditionalChannels?: string;
     },
   ) {
     const serviceKey = service.toUpperCase();
     const isShopify = serviceKey === Service.SHOPIFY;
     const isQuickBooks = serviceKey === Service.QUICKBOOKS;
+    const isYouTube = serviceKey === Service.YOUTUBE;
 
     // Load the workbook to get its organizationId (don't rely on actor's organizationId)
     const workbook = await this.db.client.workbook.findUniqueOrThrow({
@@ -391,11 +397,19 @@ export class OAuthService {
     const repoPath = getDefaultRepoPath(workbook.organizationId, workbookId, accountId);
 
     // Store non-sensitive metadata in extras for direct querying (e.g. GDPR shop/redact lookups)
-    let extras: ShopifyConnectorExtras | QuickBooksConnectorExtras | undefined;
+    let extras: ShopifyConnectorExtras | QuickBooksConnectorExtras | YouTubeConnectorExtras | undefined;
     if (isShopify && tokenResponse.workspace_id) {
       extras = { shopDomain: tokenResponse.workspace_id };
     } else if (isQuickBooks && tokenResponse.workspace_id) {
       extras = { realmId: tokenResponse.workspace_id, sandbox: connectionInfo?.quickbooksSandbox ?? false };
+    } else if (isYouTube) {
+      // Brand/managed channels the OAuth identity doesn't own — parsed from the
+      // connect form and listed as extra video tables. Only set when non-empty so
+      // listTables' `'additionalChannels' in extras` check stays meaningful.
+      const additionalChannels = parseYouTubeAdditionalChannels(connectionInfo?.youtubeAdditionalChannels);
+      if (additionalChannels.length > 0) {
+        extras = { additionalChannels };
+      }
     }
 
     const newConnectorAccount = await this.db.client.connectorAccount.create({
@@ -410,7 +424,7 @@ export class OAuthService {
         authType: AuthType.OAUTH,
         repoPath,
         encryptedCredentials: encryptedCredentials as Prisma.InputJsonValue,
-        extras: extras as Record<string, string> | undefined,
+        extras: extras as Prisma.InputJsonValue | undefined,
         healthStatus: 'OK', // assume healthy because this connection is created via a successful oauth flow
         healthStatusLastCheckedAt: new Date(),
       },

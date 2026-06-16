@@ -38,6 +38,9 @@ export interface YouTubeChannel {
   id?: string;
   snippet?: YouTubeChannelSnippet;
   contentDetails?: YouTubeChannelContentDetails;
+  // The richer parts (statistics, status, brandingSettings, localizations) only
+  // present when the channel is fetched with those parts; persisted verbatim, so
+  // the index signature keeps them flowing through unmodified.
   [key: string]: unknown;
 }
 
@@ -91,6 +94,127 @@ export interface YouTubePlaylistItemListResponse {
   items?: YouTubePlaylistItem[];
   nextPageToken?: string;
   prevPageToken?: string;
+  pageInfo?: YouTubePageInfo;
+  kind?: string;
+  etag?: string;
+  [key: string]: unknown;
+}
+
+// --- Playlists ---
+
+/**
+ * A YouTube playlist resource (`playlists.list/insert/update`). Stored verbatim,
+ * so the index signature preserves every key (snippet, status, contentDetails, …)
+ * the API returns.
+ */
+export interface YouTubePlaylist {
+  id?: string;
+  snippet?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface YouTubePlaylistListResponse {
+  items?: YouTubePlaylist[];
+  nextPageToken?: string;
+  prevPageToken?: string;
+  pageInfo?: YouTubePageInfo;
+  kind?: string;
+  etag?: string;
+  [key: string]: unknown;
+}
+
+// --- Channel sections ---
+
+export interface YouTubeChannelSection {
+  id?: string;
+  snippet?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface YouTubeChannelSectionListResponse {
+  items?: YouTubeChannelSection[];
+  pageInfo?: YouTubePageInfo;
+  kind?: string;
+  etag?: string;
+  [key: string]: unknown;
+}
+
+// --- Subscriptions ---
+
+export interface YouTubeSubscription {
+  id?: string;
+  snippet?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface YouTubeSubscriptionListResponse {
+  items?: YouTubeSubscription[];
+  nextPageToken?: string;
+  prevPageToken?: string;
+  pageInfo?: YouTubePageInfo;
+  kind?: string;
+  etag?: string;
+  [key: string]: unknown;
+}
+
+// --- Members / membership levels (owner-only; require the channel-memberships scope) ---
+
+export interface YouTubeMember {
+  snippet?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface YouTubeMemberListResponse {
+  items?: YouTubeMember[];
+  nextPageToken?: string;
+  pageInfo?: YouTubePageInfo;
+  kind?: string;
+  etag?: string;
+  [key: string]: unknown;
+}
+
+export interface YouTubeMembershipsLevel {
+  id?: string;
+  snippet?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface YouTubeMembershipsLevelListResponse {
+  items?: YouTubeMembershipsLevel[];
+  pageInfo?: YouTubePageInfo;
+  kind?: string;
+  etag?: string;
+  [key: string]: unknown;
+}
+
+// --- Reference resources (videoCategories, i18nLanguages, i18nRegions) ---
+
+export interface YouTubeReferenceItem {
+  id?: string;
+  snippet?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface YouTubeReferenceListResponse {
+  items?: YouTubeReferenceItem[];
+  pageInfo?: YouTubePageInfo;
+  kind?: string;
+  etag?: string;
+  [key: string]: unknown;
+}
+
+// --- Comment threads (gated deep-fetch embedded on video records) ---
+
+export interface YouTubeCommentThread {
+  id?: string;
+  snippet?: Record<string, unknown>;
+  replies?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface YouTubeCommentThreadListResponse {
+  items?: YouTubeCommentThread[];
+  nextPageToken?: string;
   pageInfo?: YouTubePageInfo;
   kind?: string;
   etag?: string;

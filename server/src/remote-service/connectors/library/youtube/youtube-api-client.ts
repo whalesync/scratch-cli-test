@@ -5,11 +5,37 @@ import { createApiClient } from '../../create-api-client';
 import {
   YouTubeCaption,
   YouTubeCaptionListResponse,
+  YouTubeChannel,
   YouTubeChannelListResponse,
+  YouTubeChannelSection,
+  YouTubeChannelSectionListResponse,
+  YouTubeCommentThreadListResponse,
+  YouTubeMemberListResponse,
+  YouTubeMembershipsLevelListResponse,
+  YouTubePlaylist,
+  YouTubePlaylistItem,
   YouTubePlaylistItemListResponse,
+  YouTubePlaylistListResponse,
+  YouTubeReferenceListResponse,
+  YouTubeSubscription,
+  YouTubeSubscriptionListResponse,
   YouTubeVideo,
   YouTubeVideoListResponse,
 } from './youtube-types';
+
+/** YouTube's documented `maxResults` ceiling for list endpoints. */
+const YOUTUBE_MAX_RESULTS = 50;
+
+/** The channel parts the one-row Channel table reads (everything mutable + the read-only context). */
+const CHANNEL_FULL_PARTS = [
+  'id',
+  'snippet',
+  'statistics',
+  'contentDetails',
+  'status',
+  'brandingSettings',
+  'localizations',
+];
 
 /**
  * Base URL for the YouTube Data API v3. The official `@googleapis/youtube` SDK
@@ -107,7 +133,7 @@ export class YoutubeApiClient {
   async getChannels(): Promise<YouTubeChannelListResponse> {
     const response = await this.withRetry(async () =>
       this.http.get<YouTubeChannelListResponse>('/channels', {
-        params: { part: ['id', 'snippet'], mine: true, maxResults: 100 },
+        params: { part: ['id', 'snippet'], mine: true, maxResults: YOUTUBE_MAX_RESULTS },
       }),
     );
     return response.data;
@@ -116,31 +142,93 @@ export class YoutubeApiClient {
   async getChannelsByIds(channelIds: string[]): Promise<YouTubeChannelListResponse> {
     const response = await this.withRetry(async () =>
       this.http.get<YouTubeChannelListResponse>('/channels', {
-        params: { part: ['id', 'snippet'], id: channelIds, maxResults: 100 },
+        params: { part: ['id', 'snippet'], id: channelIds, maxResults: YOUTUBE_MAX_RESULTS },
       }),
     );
     return response.data;
   }
 
-  async getVideos(channelId: string, nextPageToken?: string): Promise<YouTubeVideoListResponse> {
-    // Get videos from the specified channel (user's channel or brand channel they manage)
-    // First, get the channel's uploads playlist ID
-    const channelResponse = await this.withRetry(async () =>
+  /**
+   * Fetch the full resource for a single channel (every part the Channels table
+   * exposes). Used by the Channels-table by-id reconcile after a publish, not by
+   * `listTables` (which only needs id+snippet).
+   */
+  async getChannelById(channelId: string): Promise<YouTubeChannelListResponse> {
+    const response = await this.withRetry(async () =>
       this.http.get<YouTubeChannelListResponse>('/channels', {
-        params: { part: ['contentDetails'], id: [channelId] },
+        params: { part: CHANNEL_FULL_PARTS, id: [channelId], maxResults: YOUTUBE_MAX_RESULTS },
       }),
     );
+    return response.data;
+  }
 
+  /**
+   * Fetch the full resource for several channels in one call (every part the
+   * Channels table exposes). Used by the Channels-table pull, which aggregates the
+   * owned channel + additional public channels — one batch request per id group
+   * (1 quota unit, up to 50 ids). Unlike {@link getChannelsByIds} (id+snippet for
+   * `listTables`), this requests all parts. Invalid ids are silently omitted by
+   * the API; owner-only parts (brandingSettings/status) come back only for the
+   * authorized channel.
+   */
+  async getChannelsByIdsWithFullParts(channelIds: string[]): Promise<YouTubeChannelListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeChannelListResponse>('/channels', {
+        params: { part: CHANNEL_FULL_PARTS, id: channelIds, maxResults: YOUTUBE_MAX_RESULTS },
+      }),
+    );
+    return response.data;
+  }
+
+  /**
+   * Update a channel's mutable parts. Only `brandingSettings`, `status`, and
+   * `localizations` are writable on `channels.update`; everything else is
+   * read-only. The caller passes the parts it actually changed.
+   */
+  async updateChannel(
+    channelId: string,
+    body: { brandingSettings?: unknown; status?: unknown; localizations?: unknown },
+  ): Promise<YouTubeChannel> {
+    const parts = ['id', ...Object.keys(body)];
+    const response = await this.withRetry(async () =>
+      this.http.put<YouTubeChannel>('/channels', { id: channelId, ...body }, { params: { part: parts } }),
+    );
+    return response.data;
+  }
+
+  /**
+   * Resolve a channel's uploads playlist id (the special playlist that contains
+   * every upload, including private ones). Split out from {@link getVideosPage} so
+   * a multi-page pull resolves it once instead of once per page (1u saved/page).
+   */
+  async getUploadsPlaylistId(channelId: string): Promise<string> {
+    const channelResponse = await this.withRetry(async () =>
+      this.http.get<YouTubeChannelListResponse>('/channels', {
+        params: { part: ['contentDetails'], id: [channelId], maxResults: YOUTUBE_MAX_RESULTS },
+      }),
+    );
     const uploadsPlaylistId = channelResponse.data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-
     if (!uploadsPlaylistId) {
       throw new Error(`Could not find uploads playlist for channel ${channelId}`);
     }
+    return uploadsPlaylistId;
+  }
 
+  /**
+   * Fetch one page of a channel's videos. `uploadsPlaylistId` is the channel's
+   * uploads playlist id (resolve once via {@link getUploadsPlaylistId}); the page
+   * is identified by `nextPageToken` (undefined = first page).
+   */
+  async getVideosPage(uploadsPlaylistId: string, nextPageToken?: string): Promise<YouTubeVideoListResponse> {
     // Get videos from the uploads playlist (includes private videos)
     const playlistResponse = await this.withRetry(async () =>
       this.http.get<YouTubePlaylistItemListResponse>('/playlistItems', {
-        params: { part: ['snippet'], playlistId: uploadsPlaylistId, maxResults: 100, pageToken: nextPageToken },
+        params: {
+          part: ['snippet'],
+          playlistId: uploadsPlaylistId,
+          maxResults: YOUTUBE_MAX_RESULTS,
+          pageToken: nextPageToken,
+        },
       }),
     );
 
@@ -178,7 +266,7 @@ export class YoutubeApiClient {
     // Get full video details including statistics and status
     const videosResponse = await this.withRetry(async () =>
       this.http.get<YouTubeVideoListResponse>('/videos', {
-        params: { part: ['snippet', 'id', 'statistics', 'status'], id: videoIds },
+        params: { part: ['snippet', 'id', 'statistics', 'status', 'contentDetails'], id: videoIds },
       }),
     );
 
@@ -196,7 +284,7 @@ export class YoutubeApiClient {
   async getVideo(videoId: string): Promise<YouTubeVideoListResponse> {
     const response = await this.withRetry(async () =>
       this.http.get<YouTubeVideoListResponse>('/videos', {
-        params: { part: ['snippet', 'id', 'statistics', 'status'], id: [videoId] },
+        params: { part: ['snippet', 'id', 'statistics', 'status', 'contentDetails'], id: [videoId] },
       }),
     );
     return response.data;
@@ -206,6 +294,253 @@ export class YoutubeApiClient {
   async updateVideo(videoId: string, snippet: object): Promise<YouTubeVideo> {
     const response = await this.withRetry(async () =>
       this.http.put<YouTubeVideo>('/videos', { id: videoId, snippet }, { params: { part: ['snippet', 'id'] } }),
+    );
+    return response.data;
+  }
+
+  /**
+   * Fetch one page of comment threads for a video, with the top-level comment and
+   * its replies. Read-only — embedded on the video record during the gated
+   * `includeComments` deep-fetch (one page is sufficient for v1).
+   */
+  async getVideoCommentThreadsPage(videoId: string, nextPageToken?: string): Promise<YouTubeCommentThreadListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeCommentThreadListResponse>('/commentThreads', {
+        params: { part: ['snippet', 'replies'], videoId, maxResults: YOUTUBE_MAX_RESULTS, pageToken: nextPageToken },
+      }),
+    );
+    return response.data;
+  }
+
+  // --- Playlists ------------------------------------------------------------
+
+  /**
+   * Fetch one page of a channel's playlists. `mine=true` (owned channel) includes
+   * the channel's PRIVATE playlists; for an additional public channel we list by
+   * `channelId` (public playlists only).
+   */
+  async getPlaylistsPage(
+    channelId: string,
+    options: { mine: boolean; pageToken?: string },
+  ): Promise<YouTubePlaylistListResponse> {
+    const params: Record<string, unknown> = {
+      part: ['snippet', 'status', 'contentDetails'],
+      maxResults: YOUTUBE_MAX_RESULTS,
+      pageToken: options.pageToken,
+    };
+    if (options.mine) {
+      params.mine = true;
+    } else {
+      params.channelId = channelId;
+    }
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubePlaylistListResponse>('/playlists', { params }),
+    );
+    return response.data;
+  }
+
+  /** Fetch a single playlist by id (used on the post-publish by-id re-pull). */
+  async getPlaylistById(playlistId: string): Promise<YouTubePlaylistListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubePlaylistListResponse>('/playlists', {
+        params: { part: ['snippet', 'status', 'contentDetails'], id: [playlistId], maxResults: YOUTUBE_MAX_RESULTS },
+      }),
+    );
+    return response.data;
+  }
+
+  async createPlaylist(body: { snippet?: unknown; status?: unknown }): Promise<YouTubePlaylist> {
+    const response = await this.withRetry(async () =>
+      this.http.post<YouTubePlaylist>('/playlists', body, { params: { part: ['snippet', 'status'] } }),
+    );
+    return response.data;
+  }
+
+  async updatePlaylist(playlistId: string, body: { snippet?: unknown; status?: unknown }): Promise<YouTubePlaylist> {
+    const response = await this.withRetry(async () =>
+      this.http.put<YouTubePlaylist>(
+        '/playlists',
+        { id: playlistId, ...body },
+        { params: { part: ['snippet', 'status'] } },
+      ),
+    );
+    return response.data;
+  }
+
+  async deletePlaylist(playlistId: string): Promise<void> {
+    await this.withRetry(async () => this.http.delete('/playlists', { params: { id: playlistId } }));
+  }
+
+  // --- Playlist items -------------------------------------------------------
+
+  /** Fetch one page of the items in a single playlist. */
+  async getPlaylistItemsPage(playlistId: string, nextPageToken?: string): Promise<YouTubePlaylistItemListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubePlaylistItemListResponse>('/playlistItems', {
+        params: {
+          part: ['snippet', 'contentDetails'],
+          playlistId,
+          maxResults: YOUTUBE_MAX_RESULTS,
+          pageToken: nextPageToken,
+        },
+      }),
+    );
+    return response.data;
+  }
+
+  /** Fetch a single playlist item by id (post-publish by-id re-pull). */
+  async getPlaylistItemById(playlistItemId: string): Promise<YouTubePlaylistItemListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubePlaylistItemListResponse>('/playlistItems', {
+        params: { part: ['snippet', 'contentDetails'], id: [playlistItemId], maxResults: YOUTUBE_MAX_RESULTS },
+      }),
+    );
+    return response.data;
+  }
+
+  async createPlaylistItem(body: { snippet?: unknown; contentDetails?: unknown }): Promise<YouTubePlaylistItem> {
+    const response = await this.withRetry(async () =>
+      this.http.post<YouTubePlaylistItem>('/playlistItems', body, { params: { part: ['snippet', 'contentDetails'] } }),
+    );
+    return response.data;
+  }
+
+  async updatePlaylistItem(
+    playlistItemId: string,
+    body: { snippet?: unknown; contentDetails?: unknown },
+  ): Promise<YouTubePlaylistItem> {
+    const response = await this.withRetry(async () =>
+      this.http.put<YouTubePlaylistItem>(
+        '/playlistItems',
+        { id: playlistItemId, ...body },
+        { params: { part: ['snippet', 'contentDetails'] } },
+      ),
+    );
+    return response.data;
+  }
+
+  async deletePlaylistItem(playlistItemId: string): Promise<void> {
+    await this.withRetry(async () => this.http.delete('/playlistItems', { params: { id: playlistItemId } }));
+  }
+
+  // --- Channel sections -----------------------------------------------------
+
+  /** List a channel's sections (single unpaginated call — channelSections.list has no paging). */
+  async getChannelSections(channelId: string): Promise<YouTubeChannelSectionListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeChannelSectionListResponse>('/channelSections', {
+        params: { part: ['snippet', 'contentDetails'], channelId },
+      }),
+    );
+    return response.data;
+  }
+
+  async getChannelSectionById(channelSectionId: string): Promise<YouTubeChannelSectionListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeChannelSectionListResponse>('/channelSections', {
+        params: { part: ['snippet', 'contentDetails'], id: [channelSectionId] },
+      }),
+    );
+    return response.data;
+  }
+
+  async createChannelSection(body: { snippet?: unknown; contentDetails?: unknown }): Promise<YouTubeChannelSection> {
+    const response = await this.withRetry(async () =>
+      this.http.post<YouTubeChannelSection>('/channelSections', body, {
+        params: { part: ['snippet', 'contentDetails'] },
+      }),
+    );
+    return response.data;
+  }
+
+  async updateChannelSection(
+    channelSectionId: string,
+    body: { snippet?: unknown; contentDetails?: unknown },
+  ): Promise<YouTubeChannelSection> {
+    const response = await this.withRetry(async () =>
+      this.http.put<YouTubeChannelSection>(
+        '/channelSections',
+        { id: channelSectionId, ...body },
+        { params: { part: ['snippet', 'contentDetails'] } },
+      ),
+    );
+    return response.data;
+  }
+
+  async deleteChannelSection(channelSectionId: string): Promise<void> {
+    await this.withRetry(async () => this.http.delete('/channelSections', { params: { id: channelSectionId } }));
+  }
+
+  // --- Subscriptions (owner-only) -------------------------------------------
+
+  /** Fetch one page of the authorized channel's own subscriptions. */
+  async getSubscriptionsPage(nextPageToken?: string): Promise<YouTubeSubscriptionListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeSubscriptionListResponse>('/subscriptions', {
+        params: {
+          part: ['snippet', 'contentDetails'],
+          mine: true,
+          maxResults: YOUTUBE_MAX_RESULTS,
+          pageToken: nextPageToken,
+        },
+      }),
+    );
+    return response.data;
+  }
+
+  async createSubscription(body: { snippet?: unknown }): Promise<YouTubeSubscription> {
+    const response = await this.withRetry(async () =>
+      this.http.post<YouTubeSubscription>('/subscriptions', body, { params: { part: ['snippet'] } }),
+    );
+    return response.data;
+  }
+
+  async deleteSubscription(subscriptionId: string): Promise<void> {
+    await this.withRetry(async () => this.http.delete('/subscriptions', { params: { id: subscriptionId } }));
+  }
+
+  // --- Members / membership levels (owner-only; require the channel-memberships scope) ---
+
+  /** List the channel's current members. 403s without the channel-memberships scope. */
+  async getMembersPage(nextPageToken?: string): Promise<YouTubeMemberListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeMemberListResponse>('/members', {
+        params: { part: ['snippet'], mode: 'all_current', maxResults: YOUTUBE_MAX_RESULTS, pageToken: nextPageToken },
+      }),
+    );
+    return response.data;
+  }
+
+  /** List the channel's membership levels. 403s without the channel-memberships scope. */
+  async getMembershipsLevels(): Promise<YouTubeMembershipsLevelListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeMembershipsLevelListResponse>('/membershipsLevels', { params: { part: ['snippet'] } }),
+    );
+    return response.data;
+  }
+
+  // --- Reference resources (public, read-only) ------------------------------
+
+  /** List video categories for a region (default US). */
+  async getVideoCategories(regionCode = 'US'): Promise<YouTubeReferenceListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeReferenceListResponse>('/videoCategories', { params: { part: ['snippet'], regionCode } }),
+    );
+    return response.data;
+  }
+
+  /** List the languages YouTube supports for its UI / metadata. */
+  async getI18nLanguages(): Promise<YouTubeReferenceListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeReferenceListResponse>('/i18nLanguages', { params: { part: ['snippet'] } }),
+    );
+    return response.data;
+  }
+
+  /** List the content regions YouTube supports. */
+  async getI18nRegions(): Promise<YouTubeReferenceListResponse> {
+    const response = await this.withRetry(async () =>
+      this.http.get<YouTubeReferenceListResponse>('/i18nRegions', { params: { part: ['snippet'] } }),
     );
     return response.data;
   }

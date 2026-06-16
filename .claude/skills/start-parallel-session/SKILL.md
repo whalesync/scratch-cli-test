@@ -16,6 +16,28 @@ SHARED (run once, from the main checkout):  Postgres · scratch-git-2 (:3100/:31
 THIS session N:                             server :3010+N (monolith, THIS worktree) + Redis :6379+N (own queue)
 ```
 
+## Fast path — the helper script (use this)
+
+[`start-parallel-session.sh`](start-parallel-session.sh) (in this skill's folder) automates Steps 1, 4 and 5: it finds the **lowest free N**, starts this session's Redis + monolith server (this worktree's branch code, own queue/worker), and prints the chosen ports. It resolves the worktree root from its own path, so it works from any cwd. Run it from the worktree you want to test, in a **background** Bash call (`run_in_background: true`) — it `exec`s the server as its final step, so the background task *becomes* the server and stays alive for the session:
+
+```bash
+./.claude/skills/start-parallel-session/start-parallel-session.sh
+```
+
+It prints, **before** the (~1 min) server compile:
+
+```
+First available N=<n>
+Redis at: localhost:<6379+N> (container spinner-redis-<N>)
+Server at: http://localhost:<3010+N>
+```
+
+What it does for you: lowest-free-N selection (server `3010+N` **and** redis `6379+N` both free, N=1..16), idempotent Redis (`docker rm -f` any stale `spinner-redis-<N>` then `docker run`), server-only `yarn install` if the worktree has no `node_modules`, and the monolith server with `PORT`/`REDIS_PORT`/`SERVICE_TYPE=monolith` set. It uses `yarn start:dev` (watch, **no** `--debug`) so multiple sessions don't fight over inspector port `:9229`.
+
+What it does **not** do (still your job): confirm the **shared stack** is up (Step 2) and ensure **`server/.env`** exists in the worktree — the script **errors out** if `server/.env` is missing (symlink/copy from main, Step 3). After it prints `Server at:`, wait for readiness (Step 6) and point `scratchmd` at that URL (Step 7). Teardown: `docker rm -f spinner-redis-<N>` (the server dies on session close).
+
+The numbered Steps below are the **reference / manual fallback** (and explain the why); the script is the day-to-day path. It auto-selects N — pass a specific index only if you need one.
+
 ## Inputs
 
 - `$1 = N`, the **session index**. Must be an **integer ≥ 1**. (N=0 is the default dev stack on 3010/6379 — refuse it.)

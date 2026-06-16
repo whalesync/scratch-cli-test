@@ -7,12 +7,16 @@ import { YoutubeApiClient } from '../youtube-api-client';
 // and so can't catch a wrong URL, a dropped query param, or a mis-shaped body).
 const mockGet = jest.fn();
 const mockPut = jest.fn();
+const mockPost = jest.fn();
+const mockDelete = jest.fn();
 const mockRequest = jest.fn();
 
 jest.mock('../../../create-api-client', () => ({
   createApiClient: jest.fn(() => ({
     get: mockGet,
     put: mockPut,
+    post: mockPost,
+    delete: mockDelete,
     request: mockRequest,
   })),
 }));
@@ -68,7 +72,7 @@ describe('YoutubeApiClient', () => {
       mockGet.mockResolvedValue({ data: { items: [{ id: 'c1' }] } });
       const result = await client.getChannels();
       expect(mockGet).toHaveBeenCalledWith('/channels', {
-        params: { part: ['id', 'snippet'], mine: true, maxResults: 100 },
+        params: { part: ['id', 'snippet'], mine: true, maxResults: 50 },
       });
       expect(result).toEqual({ items: [{ id: 'c1' }] });
     });
@@ -79,35 +83,48 @@ describe('YoutubeApiClient', () => {
       mockGet.mockResolvedValue({ data: { items: [] } });
       await client.getChannelsByIds(['c1', 'c2']);
       expect(mockGet).toHaveBeenCalledWith('/channels', {
-        params: { part: ['id', 'snippet'], id: ['c1', 'c2'], maxResults: 100 },
+        params: { part: ['id', 'snippet'], id: ['c1', 'c2'], maxResults: 50 },
       });
     });
   });
 
-  describe('getVideos', () => {
-    it('resolves the uploads playlist, lists its items, then fetches full videos', async () => {
+  describe('getUploadsPlaylistId', () => {
+    it('GETs /channels contentDetails and returns the uploads playlist id', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: { items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU123' } } }] },
+      });
+      const result = await client.getUploadsPlaylistId('chan1');
+      expect(mockGet).toHaveBeenCalledWith('/channels', {
+        params: { part: ['contentDetails'], id: ['chan1'], maxResults: 50 },
+      });
+      expect(result).toBe('UU123');
+    });
+
+    it('throws when the channel has no uploads playlist', async () => {
+      mockGet.mockResolvedValueOnce({ data: { items: [{ contentDetails: {} }] } });
+      await expect(client.getUploadsPlaylistId('chan1')).rejects.toThrow(
+        'Could not find uploads playlist for channel chan1',
+      );
+    });
+  });
+
+  describe('getVideosPage', () => {
+    it('lists the uploads-playlist items, then fetches the full videos', async () => {
       mockGet
-        // 1) channel contentDetails → uploads playlist id
-        .mockResolvedValueOnce({
-          data: { items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU123' } } }] },
-        })
-        // 2) playlistItems → resourceId.videoId for each
+        // 1) playlistItems → resourceId.videoId for each
         .mockResolvedValueOnce({
           data: { items: [{ snippet: { resourceId: { videoId: 'v1' } } }], nextPageToken: 'NEXT', etag: 'e' },
         })
-        // 3) videos.list → full video resources
+        // 2) videos.list → full video resources
         .mockResolvedValueOnce({ data: { items: [{ id: 'v1', snippet: { title: 'T' } }] } });
 
-      const result = await client.getVideos('chan1', 'PAGE');
+      const result = await client.getVideosPage('UU123', 'PAGE');
 
-      expect(mockGet).toHaveBeenNthCalledWith(1, '/channels', {
-        params: { part: ['contentDetails'], id: ['chan1'] },
+      expect(mockGet).toHaveBeenNthCalledWith(1, '/playlistItems', {
+        params: { part: ['snippet'], playlistId: 'UU123', maxResults: 50, pageToken: 'PAGE' },
       });
-      expect(mockGet).toHaveBeenNthCalledWith(2, '/playlistItems', {
-        params: { part: ['snippet'], playlistId: 'UU123', maxResults: 100, pageToken: 'PAGE' },
-      });
-      expect(mockGet).toHaveBeenNthCalledWith(3, '/videos', {
-        params: { part: ['snippet', 'id', 'statistics', 'status'], id: ['v1'] },
+      expect(mockGet).toHaveBeenNthCalledWith(2, '/videos', {
+        params: { part: ['snippet', 'id', 'statistics', 'status', 'contentDetails'], id: ['v1'] },
       });
       expect(result).toMatchObject({
         items: [{ id: 'v1', snippet: { title: 'T' } }],
@@ -117,19 +134,213 @@ describe('YoutubeApiClient', () => {
       });
     });
 
-    it('throws when the channel has no uploads playlist', async () => {
-      mockGet.mockResolvedValueOnce({ data: { items: [{ contentDetails: {} }] } });
-      await expect(client.getVideos('chan1')).rejects.toThrow('Could not find uploads playlist for channel chan1');
-    });
-
-    it('returns an empty list (carrying pagination) when the uploads playlist is empty', async () => {
-      mockGet
-        .mockResolvedValueOnce({ data: { items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU' } } }] } })
-        .mockResolvedValueOnce({ data: { items: [], nextPageToken: 'N2' } });
-      const result = await client.getVideos('chan1');
+    it('returns an empty list (carrying pagination) when the uploads playlist page is empty', async () => {
+      mockGet.mockResolvedValueOnce({ data: { items: [], nextPageToken: 'N2' } });
+      const result = await client.getVideosPage('UU');
       expect(result).toMatchObject({ items: [], nextPageToken: 'N2', kind: 'youtube#videoListResponse' });
       // No videos.list call should fire.
-      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getChannelById', () => {
+    it('GETs /channels with the full part list for the one-row Channel table', async () => {
+      mockGet.mockResolvedValue({ data: { items: [{ id: 'chan1' }] } });
+      await client.getChannelById('chan1');
+      expect(mockGet).toHaveBeenCalledWith('/channels', {
+        params: {
+          part: ['id', 'snippet', 'statistics', 'contentDetails', 'status', 'brandingSettings', 'localizations'],
+          id: ['chan1'],
+          maxResults: 50,
+        },
+      });
+    });
+  });
+
+  describe('updateChannel', () => {
+    it('PUTs /channels with id + only the changed mutable parts', async () => {
+      mockPut.mockResolvedValue({ data: { id: 'chan1' } });
+      await client.updateChannel('chan1', { brandingSettings: { channel: { title: 'New' } } });
+      expect(mockPut).toHaveBeenCalledWith(
+        '/channels',
+        { id: 'chan1', brandingSettings: { channel: { title: 'New' } } },
+        { params: { part: ['id', 'brandingSettings'] } },
+      );
+    });
+  });
+
+  describe('playlists', () => {
+    it('lists the owned channel playlists with mine=true', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getPlaylistsPage('chan1', { mine: true });
+      expect(mockGet).toHaveBeenCalledWith('/playlists', {
+        params: { part: ['snippet', 'status', 'contentDetails'], maxResults: 50, pageToken: undefined, mine: true },
+      });
+    });
+
+    it('lists a public channel playlists by channelId (no mine)', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getPlaylistsPage('chan1', { mine: false, pageToken: 'P2' });
+      expect(mockGet).toHaveBeenCalledWith('/playlists', {
+        params: { part: ['snippet', 'status', 'contentDetails'], maxResults: 50, pageToken: 'P2', channelId: 'chan1' },
+      });
+    });
+
+    it('POSTs a new playlist with snippet+status parts', async () => {
+      mockPost.mockResolvedValue({ data: { id: 'pl1' } });
+      await client.createPlaylist({ snippet: { title: 'T' } });
+      expect(mockPost).toHaveBeenCalledWith(
+        '/playlists',
+        { snippet: { title: 'T' } },
+        { params: { part: ['snippet', 'status'] } },
+      );
+    });
+
+    it('PUTs a playlist update carrying its id', async () => {
+      mockPut.mockResolvedValue({ data: { id: 'pl1' } });
+      await client.updatePlaylist('pl1', { snippet: { title: 'T2' } });
+      expect(mockPut).toHaveBeenCalledWith(
+        '/playlists',
+        { id: 'pl1', snippet: { title: 'T2' } },
+        { params: { part: ['snippet', 'status'] } },
+      );
+    });
+
+    it('DELETEs a playlist by id', async () => {
+      mockDelete.mockResolvedValue({ data: {} });
+      await client.deletePlaylist('pl1');
+      expect(mockDelete).toHaveBeenCalledWith('/playlists', { params: { id: 'pl1' } });
+    });
+  });
+
+  describe('playlistItems', () => {
+    it('lists items for a playlist with snippet+contentDetails parts', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getPlaylistItemsPage('pl1', 'PG');
+      expect(mockGet).toHaveBeenCalledWith('/playlistItems', {
+        params: { part: ['snippet', 'contentDetails'], playlistId: 'pl1', maxResults: 50, pageToken: 'PG' },
+      });
+    });
+
+    it('POSTs a new playlist item', async () => {
+      mockPost.mockResolvedValue({ data: { id: 'pli1' } });
+      await client.createPlaylistItem({ snippet: { playlistId: 'pl1' } });
+      expect(mockPost).toHaveBeenCalledWith(
+        '/playlistItems',
+        { snippet: { playlistId: 'pl1' } },
+        { params: { part: ['snippet', 'contentDetails'] } },
+      );
+    });
+
+    it('PUTs a playlist item update (the FK re-parent path) carrying its id', async () => {
+      mockPut.mockResolvedValue({ data: { id: 'pli1' } });
+      await client.updatePlaylistItem('pli1', { snippet: { playlistId: 'pl2', position: 0 } });
+      expect(mockPut).toHaveBeenCalledWith(
+        '/playlistItems',
+        { id: 'pli1', snippet: { playlistId: 'pl2', position: 0 } },
+        { params: { part: ['snippet', 'contentDetails'] } },
+      );
+    });
+
+    it('DELETEs a playlist item by id', async () => {
+      mockDelete.mockResolvedValue({ data: {} });
+      await client.deletePlaylistItem('pli1');
+      expect(mockDelete).toHaveBeenCalledWith('/playlistItems', { params: { id: 'pli1' } });
+    });
+  });
+
+  describe('channelSections', () => {
+    it('lists a channel sections by channelId', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getChannelSections('chan1');
+      expect(mockGet).toHaveBeenCalledWith('/channelSections', {
+        params: { part: ['snippet', 'contentDetails'], channelId: 'chan1' },
+      });
+    });
+
+    it('POSTs / PUTs / DELETEs channel sections', async () => {
+      mockPost.mockResolvedValue({ data: { id: 'cs1' } });
+      mockPut.mockResolvedValue({ data: { id: 'cs1' } });
+      mockDelete.mockResolvedValue({ data: {} });
+      await client.createChannelSection({ snippet: { type: 'singlePlaylist' } });
+      await client.updateChannelSection('cs1', { snippet: { title: 'S' } });
+      await client.deleteChannelSection('cs1');
+      expect(mockPost).toHaveBeenCalledWith(
+        '/channelSections',
+        { snippet: { type: 'singlePlaylist' } },
+        { params: { part: ['snippet', 'contentDetails'] } },
+      );
+      expect(mockPut).toHaveBeenCalledWith(
+        '/channelSections',
+        { id: 'cs1', snippet: { title: 'S' } },
+        { params: { part: ['snippet', 'contentDetails'] } },
+      );
+      expect(mockDelete).toHaveBeenCalledWith('/channelSections', { params: { id: 'cs1' } });
+    });
+  });
+
+  describe('subscriptions', () => {
+    it('lists the authorized channel own subscriptions with mine=true', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getSubscriptionsPage('PG');
+      expect(mockGet).toHaveBeenCalledWith('/subscriptions', {
+        params: { part: ['snippet', 'contentDetails'], mine: true, maxResults: 50, pageToken: 'PG' },
+      });
+    });
+
+    it('POSTs a new subscription and DELETEs by id', async () => {
+      mockPost.mockResolvedValue({ data: { id: 'sub1' } });
+      mockDelete.mockResolvedValue({ data: {} });
+      await client.createSubscription({ snippet: { resourceId: { channelId: 'other' } } });
+      await client.deleteSubscription('sub1');
+      expect(mockPost).toHaveBeenCalledWith(
+        '/subscriptions',
+        { snippet: { resourceId: { channelId: 'other' } } },
+        { params: { part: ['snippet'] } },
+      );
+      expect(mockDelete).toHaveBeenCalledWith('/subscriptions', { params: { id: 'sub1' } });
+    });
+  });
+
+  describe('members / membershipsLevels (owner-only, read-only)', () => {
+    it('lists current members with mode=all_current', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getMembersPage('PG');
+      expect(mockGet).toHaveBeenCalledWith('/members', {
+        params: { part: ['snippet'], mode: 'all_current', maxResults: 50, pageToken: 'PG' },
+      });
+    });
+
+    it('lists membership levels', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getMembershipsLevels();
+      expect(mockGet).toHaveBeenCalledWith('/membershipsLevels', { params: { part: ['snippet'] } });
+    });
+  });
+
+  describe('reference resources', () => {
+    it('lists video categories for a region (default US)', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getVideoCategories();
+      expect(mockGet).toHaveBeenCalledWith('/videoCategories', { params: { part: ['snippet'], regionCode: 'US' } });
+    });
+
+    it('lists i18n languages and regions', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getI18nLanguages();
+      await client.getI18nRegions();
+      expect(mockGet).toHaveBeenCalledWith('/i18nLanguages', { params: { part: ['snippet'] } });
+      expect(mockGet).toHaveBeenCalledWith('/i18nRegions', { params: { part: ['snippet'] } });
+    });
+  });
+
+  describe('getVideoCommentThreadsPage', () => {
+    it('GETs /commentThreads for a video with snippet+replies parts', async () => {
+      mockGet.mockResolvedValue({ data: { items: [] } });
+      await client.getVideoCommentThreadsPage('v1');
+      expect(mockGet).toHaveBeenCalledWith('/commentThreads', {
+        params: { part: ['snippet', 'replies'], videoId: 'v1', maxResults: 50, pageToken: undefined },
+      });
     });
   });
 
@@ -138,7 +349,7 @@ describe('YoutubeApiClient', () => {
       mockGet.mockResolvedValue({ data: { items: [{ id: 'v9' }] } });
       const result = await client.getVideo('v9');
       expect(mockGet).toHaveBeenCalledWith('/videos', {
-        params: { part: ['snippet', 'id', 'statistics', 'status'], id: ['v9'] },
+        params: { part: ['snippet', 'id', 'statistics', 'status', 'contentDetails'], id: ['v9'] },
       });
       expect(result).toEqual({ items: [{ id: 'v9' }] });
     });

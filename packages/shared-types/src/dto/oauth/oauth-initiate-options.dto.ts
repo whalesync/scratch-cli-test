@@ -22,6 +22,12 @@ export const oauthInitiateOptionsSchema = z.object({
   quickbooksSandbox: z.boolean().optional(),
   /** Zoho multi-datacenter selection (US | EU | IN | AU | JP | CA | CN | SA). */
   zohoDataCenter: z.string().optional(),
+  /**
+   * YouTube: raw, user-entered list of extra channel IDs (brand/managed channels
+   * that `channels.list?mine=true` does not return). Comma/space/newline
+   * separated; parsed into `ConnectorAccount.extras.additionalChannels` on connect.
+   */
+  youtubeAdditionalChannels: z.string().optional(),
 });
 
 export type OAuthInitiateOptionsDto = z.infer<typeof oauthInitiateOptionsSchema>;

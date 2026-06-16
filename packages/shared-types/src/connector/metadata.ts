@@ -128,6 +128,47 @@ export function isQuickBooksConnectorExtras(extras: unknown): extras is QuickBoo
   );
 }
 
+// ============= YouTube Connector Extras =============
+
+/**
+ * Extras stored on YouTube ConnectorAccount records. `additionalChannels` holds
+ * brand/managed channel IDs that `channels.list?mine=true` does NOT return (the
+ * OAuth identity only owns its own channel), so the user supplies them on the
+ * connect form and the connector lists them as extra video tables. Stored
+ * unencrypted so `listTables` can read them without decrypting credentials.
+ */
+export interface YouTubeConnectorExtras {
+  additionalChannels: string[];
+}
+
+/**
+ * Type guard for YouTubeConnectorExtras: an object whose `additionalChannels` is
+ * an array of strings.
+ */
+export function isYouTubeConnectorExtras(extras: unknown): extras is YouTubeConnectorExtras {
+  return (
+    typeof extras === 'object' &&
+    extras !== null &&
+    'additionalChannels' in extras &&
+    Array.isArray((extras as Record<string, unknown>).additionalChannels) &&
+    (extras as YouTubeConnectorExtras).additionalChannels.every((channelId) => typeof channelId === 'string')
+  );
+}
+
+/**
+ * Parse the raw, user-entered additional-channels string from the YouTube connect
+ * form into a deduped list of channel IDs. Splits on commas and any whitespace
+ * (so `"UCa, UCb\nUCc"` works), trims, and drops blanks. Returns `[]` for empty input.
+ */
+export function parseYouTubeAdditionalChannels(rawAdditionalChannels: string | undefined): string[] {
+  if (!rawAdditionalChannels) return [];
+  const channelIds = rawAdditionalChannels
+    .split(/[\s,]+/)
+    .map((channelId) => channelId.trim())
+    .filter((channelId) => channelId.length > 0);
+  return Array.from(new Set(channelIds));
+}
+
 // ============= Generic API Connector Extras =============
 //
 // The GENERIC_API connector lets a user point Scratch at any REST or GraphQL

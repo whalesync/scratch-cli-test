@@ -45,16 +45,34 @@ export interface ConnectorSettingDefinition {
    * e.g. a Contacts-only deep-fetch toggle on a connector with many tables.
    */
   forTableWsIds?: string[];
+  /**
+   * Optional list of table-`wsId` PREFIXES this setting applies to — the
+   * dynamic-table counterpart of `forTableWsIds` (exact match can't target tables
+   * whose wsIds aren't known statically). A setting applies when the table's wsId
+   * is in `forTableWsIds` OR starts with any entry here. Use it to scope a setting
+   * to a CLASS of per-parent tables: e.g. YouTube mints one Videos table per channel
+   * as `videos_<channelId>`, so `forTableWsIdPrefixes: ['videos_']` targets every
+   * channel's Videos table while leaving Playlists/Channel/etc. unaffected. Omitting
+   * both fields = applies to all tables.
+   */
+  forTableWsIdPrefixes?: string[];
 }
 
 /**
- * A connector setting applies to a table when it declares no `forTableWsIds`
- * whitelist, or the table's wsId is in that whitelist. A scoped setting whose
- * table wsId can't be resolved is hidden (we can't confirm it applies). Shared
- * by the web client and the desktop app so the per-table filter is identical.
+ * A connector setting applies to a table when it declares no scoping at all
+ * (`forTableWsIds` and `forTableWsIdPrefixes` both empty/absent), OR the table's
+ * wsId is in `forTableWsIds`, OR the table's wsId starts with one of
+ * `forTableWsIdPrefixes` (the dynamic per-parent case, e.g. `videos_<channelId>`).
+ * A scoped setting whose table wsId can't be resolved is hidden (we can't confirm
+ * it applies). Shared by the web client and the desktop app so the per-table filter
+ * is identical.
  */
 export function settingAppliesToTable(setting: ConnectorSettingDefinition, tableWsId: string | undefined): boolean {
-  if (!setting.forTableWsIds || setting.forTableWsIds.length === 0) return true;
+  const exactWsIds = setting.forTableWsIds ?? [];
+  const wsIdPrefixes = setting.forTableWsIdPrefixes ?? [];
+  // No scoping declared → applies to every table (backwards-compatible default).
+  if (exactWsIds.length === 0 && wsIdPrefixes.length === 0) return true;
   if (!tableWsId) return false;
-  return setting.forTableWsIds.includes(tableWsId);
+  if (exactWsIds.includes(tableWsId)) return true;
+  return wsIdPrefixes.some((prefix) => tableWsId.startsWith(prefix));
 }
