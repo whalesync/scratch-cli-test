@@ -18,6 +18,27 @@ interface OAuthCallbackState {
 }
 
 /**
+ * Returns true if the given OAuth `redirectPrefix` points at a Whalesync (dusky) origin that we're
+ * willing to forward an OAuth result back to. Whalesync drives the Scratch OAuth endpoints directly
+ * (e.g. from its CRM Bridge connect flow) and passes a query-free callback URL on its own origin as
+ * the `redirectPrefix`; we forward `code`/`state` (and `realmId`/`error` where present) there the
+ * same way we forward to the scratch desktop app.
+ *
+ * Pinned to exact `.whalesync.com` subdomains plus `localhost` (local dev) — this is not an open
+ * redirect, the suffix check pins it to Whalesync. Mirrors the host check dusky uses for its own
+ * connector OAuth callbacks (`dusky/pages/oauth-callback/connector/[connectorType].tsx`).
+ */
+const isWhalesyncRedirectPrefix = (redirectPrefix: string | undefined): boolean => {
+  if (!redirectPrefix) return false;
+  try {
+    const url = new URL(redirectPrefix);
+    return url.hostname.endsWith('.whalesync.com') || url.hostname === 'localhost';
+  } catch {
+    return false;
+  }
+};
+
+/**
  * This is the page that we go back to during an OAuth authorization flow after the user has just gone out to the OAuth
  * authorization screen for a provider (e.g. Webflow). It reads the original host/port that the request came from in the
  * OAuth state param, then redirects back there to finish the flow.
@@ -64,6 +85,18 @@ export default function OAuthCallbackPage() {
         }
 
         if (error) {
+          // Whalesync (dusky) flow: forward the error back to its callback so it can surface the
+          // failure in its own wizard, the same way we forward a successful result below.
+          if (isWhalesyncRedirectPrefix(oAuthState.redirectPrefix)) {
+            const whalesyncUrl = new URL(oAuthState.redirectPrefix);
+            whalesyncUrl.searchParams.set('error', error);
+            const errorDescription = searchParams.get('error_description');
+            if (errorDescription) whalesyncUrl.searchParams.set('error_description', errorDescription);
+            whalesyncUrl.searchParams.set('state', oAuthStateString);
+            window.location.href = whalesyncUrl.toString();
+            return;
+          }
+
           // Check if user cancelled/denied the OAuth authorization
           const isDeniedError = error === 'access_denied' || error === 'user_cancelled_login';
 
@@ -97,10 +130,24 @@ export default function OAuthCallbackPage() {
           // so update state to show a confirmation instead of the loading spinner.
           setState({ status: 'desktop-redirect', desktopUrl: desktopUrlString });
           return;
-        } else {
-          // Otherwise send the result to the web client.
-          window.location.href = `${oAuthState.redirectPrefix}/oauth/callback-step-2${window.location.search}`;
         }
+
+        // Whalesync (dusky) flow: the redirectPrefix is a full, query-free callback URL on a
+        // Whalesync origin. Forward the OAuth result there directly, the same way we forward to the
+        // desktop app above.
+        if (isWhalesyncRedirectPrefix(oAuthState.redirectPrefix)) {
+          const whalesyncUrl = new URL(oAuthState.redirectPrefix);
+          whalesyncUrl.searchParams.set('code', code);
+          whalesyncUrl.searchParams.set('state', oAuthStateString);
+          whalesyncUrl.searchParams.set('service', oAuthState.service);
+          const realmId = searchParams.get('realmId');
+          if (realmId) whalesyncUrl.searchParams.set('realmId', realmId);
+          window.location.href = whalesyncUrl.toString();
+          return;
+        }
+
+        // Otherwise send the result to the web client.
+        window.location.href = `${oAuthState.redirectPrefix}/oauth/callback-step-2${window.location.search}`;
       } catch (error) {
         console.error('OAuth callback error:', error);
         const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
