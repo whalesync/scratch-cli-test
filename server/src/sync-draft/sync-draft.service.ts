@@ -87,7 +87,12 @@ export class SyncDraftService {
       // Only resolve the source sync (and pay that read) when actually creating.
       const initialized = sourceSyncId
         ? await this.initializeFromExistingSync(workbookId, sourceSyncId)
-        : { displayName: 'Untitled sync', schedule: null as string | null, tableMappings: [] as DraftTableMapping[] };
+        : {
+            displayName: 'Untitled sync',
+            schedule: null as string | null,
+            publishAfterSync: false,
+            tableMappings: [] as DraftTableMapping[],
+          };
 
       return tx.syncDraft.create({
         data: {
@@ -96,6 +101,7 @@ export class SyncDraftService {
           version: 1,
           displayName: initialized.displayName,
           schedule: initialized.schedule,
+          publishAfterSync: initialized.publishAfterSync,
           sourceSyncId,
           tableMappings: initialized.tableMappings as unknown as Prisma.InputJsonValue,
         },
@@ -130,6 +136,7 @@ export class SyncDraftService {
     const data: Prisma.SyncDraftUpdateInput = { version: { increment: 1 } };
     if (dto.displayName !== undefined) data.displayName = dto.displayName;
     if (dto.schedule !== undefined) data.schedule = dto.schedule;
+    if (dto.publishAfterSync !== undefined) data.publishAfterSync = dto.publishAfterSync;
     if (dto.tableMappings !== undefined) {
       data.tableMappings = dto.tableMappings as unknown as Prisma.InputJsonValue;
     }
@@ -288,6 +295,7 @@ export class SyncDraftService {
       mappings: { version: 2, tableMappings: v2TableMappings },
       validateMappings: true,
       schedule: draft.schedule ?? '',
+      publishAfterSync: draft.publishAfterSync,
     };
 
     let syncId: SyncId;
@@ -611,7 +619,12 @@ export class SyncDraftService {
   private async initializeFromExistingSync(
     workbookId: WorkbookId,
     syncId: SyncId,
-  ): Promise<{ displayName: string; schedule: string | null; tableMappings: DraftTableMapping[] }> {
+  ): Promise<{
+    displayName: string;
+    schedule: string | null;
+    publishAfterSync: boolean;
+    tableMappings: DraftTableMapping[];
+  }> {
     const sync = await this.syncService.getSync(syncId);
     if (!sync || sync.workbookId !== workbookId) {
       throw new NotFoundException(`Sync ${syncId} not found in workbook ${workbookId}`);
@@ -625,7 +638,12 @@ export class SyncDraftService {
       select: { cronExpression: true },
     });
 
-    return { displayName: sync.displayName, schedule: scheduleRow?.cronExpression ?? null, tableMappings };
+    return {
+      displayName: sync.displayName,
+      schedule: scheduleRow?.cronExpression ?? null,
+      publishAfterSync: sync.publishAfterSync,
+      tableMappings,
+    };
   }
 
   private convertTableMappingToDraft(tm: TableMappingV2, index: number, syncId: SyncId): DraftTableMapping {

@@ -26,6 +26,12 @@ export interface SyncDraft {
   schedule: string | null;
   /** Set when initialized from an existing sync (edit flow); apply diffs against it. */
   sourceSyncId: SyncId | null;
+  /**
+   * Whether apply should configure the resulting Sync to auto-publish after a
+   * successful sync (mirrors SaveSyncBody.publishAfterSync). Defaults to false
+   * for a blank draft; seeded from the existing sync in the edit flow.
+   */
+  publishAfterSync: boolean;
   /** The desired-state working copy. */
   tableMappings: DraftTableMapping[];
   /** Set once the draft has been applied; an archived draft is never edited or re-applied. */

@@ -797,6 +797,10 @@ model SyncDraft {
   /// Set when initialized from an existing sync (edit flow); apply diffs against it.
   sourceSyncId String?
 
+  /// Whether apply should configure the resulting Sync to auto-publish after a
+  /// successful sync (mirrors SaveSyncBody.publishAfterSync).
+  publishAfterSync Boolean @default(false)
+
   /// The desired-state working copy: DraftTableMapping[].
   /// @see packages/shared-types/src/dto/sync-draft/sync-draft-content.ts
   tableMappings Json

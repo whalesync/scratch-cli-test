@@ -34,6 +34,8 @@ export const patchSyncDraftSchema = z.object({
   displayName: z.string().min(1).optional(),
   /** Cron expression, or `null` to clear the schedule. */
   schedule: z.string().nullable().optional(),
+  /** Whether the resulting sync should auto-publish after a successful sync. */
+  publishAfterSync: z.boolean().optional(),
   tableMappings: draftTableMappingsSchema.optional(),
 });
 export type PatchSyncDraftDto = z.infer<typeof patchSyncDraftSchema>;

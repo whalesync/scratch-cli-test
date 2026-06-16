@@ -354,7 +354,7 @@ export class SyncService {
         // Sentinel-v1 on the frozen column; the real shape lives in mappingsV2.
         mappings: SENTINEL_EMPTY_V1_MAPPINGS as unknown as Prisma.InputJsonValue,
         mappingsV2: v2Mappings as unknown as Prisma.InputJsonValue,
-        publishAfterSync: false,
+        publishAfterSync: body.publishAfterSync ?? false,
         syncTablePairs: {
           create: v2Mappings.tableMappings.map((tm) => ({
             id: createSyncId(),
