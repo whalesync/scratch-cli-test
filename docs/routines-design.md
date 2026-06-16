@@ -14,14 +14,14 @@ The term "routine" is approachable for non-technical users. It conveys something
 2. **Minimal UI** — No visual workflow builder. Users edit routine files through Scratch's existing file editor. The UI shows which routines exist and their run status.
 3. **Sequential execution** — Steps run one after another. If a step fails, the routine stops.
 4. **One at a time** — A routine can only have one active run at a time.
-5. **Reuse existing infrastructure** — Scheduling uses the existing `Schedule` table and `ScheduleEvaluatorService` with a new `ROUTINE` action type.
+5. **Reuse existing infrastructure** — Scheduling uses the existing `Schedule` table and `SchedulerService` with a new `ROUTINE` action type.
 
 ## Routine File Format
 
-Routine files live in `.scratch/routines/` within the workbook's git repo.
+Routine files live in `routines/` at the root of the workbook config repo — the same repo that already holds `syncs/` and `transformers/`. They are deliberately **not** stored under `.scratch/`: the CLI's config-repo checkout excludes that path, which would hide routines from local workspaces. See [CLI Support](#cli-support).
 
 ```yaml
-# .scratch/routines/daily-content-sync.yaml
+# routines/daily-content-sync.yaml
 name: Daily Content Sync
 schedule: "0 9 * * MON-FRI" # optional, 5-field cron expression
 steps:
@@ -37,36 +37,48 @@ steps:
 
 ### Fields
 
+
 | Field      | Required | Description                                                    |
 | ---------- | -------- | -------------------------------------------------------------- |
 | `name`     | Yes      | Human-readable label for the routine                           |
 | `schedule` | No       | Cron expression (5-field). If omitted, routine is manual-only. |
 | `steps`    | Yes      | Ordered list of steps to execute                               |
+| `comment`  | Yes      | Note or comment to provide context or reminders                |
+
 
 ### Step Fields
 
-| Field        | Required | Description                                                                   |
-| ------------ | -------- | ----------------------------------------------------------------------------- |
-| `action`     | Yes      | One of: `pull`, `sync`, `publish-plan`, `publish`                             |
-| `folder`     | No       | Target folder path (e.g. `/blog/posts`). If omitted, applies to all folders.  |
-| `connection` | No       | Target connection name. If omitted, applies to all connections in the folder. |
+
+| Field        | Required | Description                                                                                          |
+| ------------ | -------- | ---------------------------------------------------------------------------------------------------- |
+| `action`     | Yes      | One of: `pull`, `sync`, `publish-plan`, `publish`                                                    |
+| `name`       | No       | Optional. Human-readable label for the step                                                          |
+| `folder`     | No       | Target folder path (e.g. `/blog/posts`) OR DataFolderId (dfd_*). If omitted, applies to all folders. |
+| `connection` | No       | Target connection name or ID (coa_*). If omitted, applies to all connections in the folder.          |
+| `comment`    | No       | Optional note or comment you can add to the step, to provide context                                 |
+
 
 ### Available Actions
 
-| Action         | Description                                                   | Maps to Job Type           |
-| -------------- | ------------------------------------------------------------- | -------------------------- |
-| `pull`         | Pull data from external service into Scratch                  | `pull-linked-folder-files` |
-| `sync`         | Run a sync (transform/copy between folders)                   | `sync-data-folders`        |
-| `publish-plan` | Build a publish plan (diff dirty vs main)                     | `publish-plan`             |
-| `publish`      | Execute the publish plan, pushing changes to external service | `publish-run`              |
+
+| Action         | Description                                                                | Maps to Job Type           |
+| -------------- | -------------------------------------------------------------------------- | -------------------------- |
+| `pull`         | Pull data from external service into Scratch                               | `pull-linked-folder-files` |
+| `sync`         | Run a sync (transform/copy between folders)                                | `sync-data-folders`        |
+| `publish-plan` | Build a publish plan (diff dirty vs main) for review; does **not** publish | `publish` (plan only)      |
+| `publish`      | Build the plan **and** execute it, pushing approved changes to the service | `publish` (plan + run)     |
+
+
+> **Note on publish actions.** There is no standalone `publish-plan` or `publish-run` job type. Both `publish-plan` and `publish` run as the single `publish` job (`JobType.Publish`); the only difference is the `runAfterPlan` flag the job carries, plus a synchronous pipeline-creation step in front of it. The user-facing action names are unchanged — only the under-the-hood mapping differs. See [Publishing: Plan vs. Run](#publishing-plan-vs-run).
 
 ### Validation Rules
 
 - `name` must be a non-empty string
 - `steps` must contain at least one step
 - `action` must be one of the allowed action types
-- `folder`, if provided, must be a valid POSIX path starting with `/`
+- `folder`, if provided, must be a valid POSIX path starting with `/` OR if it starts with `dfd`_. In either case the folder must resolve to a DataFolder in the workbook
 - `schedule`, if provided, must be valid 5-field cron syntax with a minimum interval of 5 minutes
+- Step `name`, if provided, must be unique inside the list of steps
 - File must have a `.yaml` or `.yml` extension
 
 ## Architecture
@@ -82,7 +94,7 @@ This means there is no drift between "what the file says" and "what the database
 
 ### Discovery: Reload Routines
 
-The **Reload Routines** action reads all `.scratch/routines/*.yaml` files from the workbook's git repo and:
+The **Reload Routines** action reads all `routines/*.yaml` files from the workbook config repo and:
 
 1. Parses and validates each YAML file
 2. For routines with a `schedule:` field — upserts a `Schedule` record (action = `ROUTINE`, entityId = file path)
@@ -95,7 +107,7 @@ Future enhancement: automatically reload routines after git operations (pull, pu
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Git Repo (.scratch/routines/)                      │
+│  Workbook config repo (routines/)                   │
 │                                                     │
 │  daily-content-sync.yaml ─► Routine definition      │
 │  weekly-full-publish.yaml ─► Routine definition     │
@@ -116,18 +128,23 @@ Future enhancement: automatically reload routines after git operations (pull, pu
 
 ### Database Changes
 
-**Existing `Schedule` table** — add a new action type:
+**Existing `Schedule` table** — add a new `ROUTINE` action type. Only `ROUTINE` is new; the pull/publish/sync values already exist (the pull action has since been split into full/incremental and connection-wide variants):
 
 ```prisma
 enum ScheduleAction {
+  /// @deprecated Equivalent to FULL_PULL; retained for runtime tolerance until a cleanup migration drops it.
   PULL
+  FULL_PULL
+  INCREMENTAL_PULL
+  CONNECTION_FULL_PULL          // entityId is a ConnectorAccountId; fans out to every linked table
+  CONNECTION_INCREMENTAL_PULL   // entityId is a ConnectorAccountId; fans out to every linked table
   PUBLISH
   SYNC
-  ROUTINE  // NEW — triggers a routine run
+  ROUTINE                       // NEW — triggers a routine run
 }
 ```
 
-For `ROUTINE` schedules, `entityId` stores the routine file path (e.g. `.scratch/routines/daily-sync.yaml`). This is the key used to find and parse the YAML at trigger time.
+For `ROUTINE` schedules, `entityId` stores the routine file path (e.g. `routines/daily-sync.yaml`). This is the key used to find and parse the YAML at trigger time.
 
 **New tables** — execution history only:
 
@@ -140,7 +157,7 @@ model RoutineRun {
   workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
   workbookId String
 
-  /// The routine file path, e.g. ".scratch/routines/daily-sync.yaml"
+  /// The routine file path, e.g. "routines/daily-sync.yaml"
   /// Stored here so run history is readable even if the file is later deleted.
   routineFilePath String
 
@@ -204,6 +221,10 @@ model RoutineRunStep {
   /// Reference to the DbJob created for this step (if applicable)
   jobId String?
 
+  /// For publish-plan / publish steps: the PublishPlan pipeline created for this step.
+  /// Lets a staged (plan-only) publish be located from run history. Null for other actions.
+  pipelineId String?
+
   @@unique([runId, stepIndex])
   @@index([runId])
 }
@@ -232,7 +253,7 @@ server/src/routine/
 User clicks "Run"              Schedule fires (ROUTINE action)
        │                              │
        ▼                              ▼
-  RoutineController          ScheduleEvaluatorService
+  RoutineController          SchedulerService
        │                              │
        └──────────┬───────────────────┘
                   ▼
@@ -246,14 +267,26 @@ User clicks "Run"              Schedule fires (ROUTINE action)
                             │
                             ├─ For each step (sequential):
                             │   ├─ Update step status → "running"
-                            │   ├─ Map action to job type
-                            │   ├─ Enqueue job via BullEnqueuerService
+                            │   ├─ Resolve action → job, enqueue via BullEnqueuerService
+                            │   │   (publish actions create a pipeline first; see "Publishing: Plan vs. Run")
                             │   ├─ Wait for job completion (poll DbJob)
                             │   ├─ On success → step status "completed", next step
                             │   └─ On failure → step status "failed", run status "failed", stop
                             │
                             └─ All steps done → run status "completed"
 ```
+
+### Publishing: Plan vs. Run
+
+`publish-plan` and `publish` are **not** two job types — both run as a single `publish` job (`JobType.Publish`). The plan-only vs. plan-and-run distinction is the job's `runAfterPlan` flag, and each publish step is preceded by a synchronous pipeline-creation step. The executor handles a publish step in three calls, mirroring how `SchedulerService` fires a scheduled `PUBLISH`:
+
+1. **Create the pipeline** — `PublishPlanBuildService.createPipeline(workbookId, userId, connectorAccountId)` creates a `PublishPlan` row (status `Planning`) and returns a `pipelineId`. The step's target `folder` is resolved to its `connectorAccountId` for this call (a folder without a `connectorAccountId` is not publishable — fail the step with a clear message).
+2. **Enqueue the publish job** — `BullEnqueuerService.enqueuePlanPipelineJob(workbookId, actor, pipelineId, connectorAccountId, runAfterPlan, folderPath, …)`. The single `publish` job builds the plan (diff dirty vs main) and then branches on `runAfterPlan`:
+  - `publish-plan` step → `runAfterPlan: false` → the job stops after planning, leaving the plan staged for the user to review and publish manually.
+  - `publish` step → `runAfterPlan: true` → the job continues into `PublishPlanRunService.runPipeline(...)`, pushing approved changes to the external service.
+3. **Link the job to the pipeline** — `PublishPlanBuildService.setActiveJob(pipelineId, jobId)`.
+
+The resulting `publish` job id is stored on `RoutineRunStep.jobId` and polled for completion exactly like any other step. Consider also recording the `pipelineId` on the step (see [Database Changes](#database-changes)) so a `publish-plan` step's staged plan is discoverable from run history.
 
 ### Schedule Integration
 
@@ -262,7 +295,7 @@ When `reload` finds a routine with a `schedule:` field, it upserts a `Schedule` 
 ```typescript
 // Pseudo-code in routine.service.ts
 async reloadRoutines(workbookId: string) {
-  const yamlFiles = await this.scratchGitService.listFiles(repoId, '.scratch/routines/');
+  const yamlFiles = await this.scratchGitService.listFiles(repoId, 'routines/');
 
   for (const file of yamlFiles) {
     const content = await this.scratchGitService.readFile(repoId, file.path);
@@ -288,7 +321,7 @@ async reloadRoutines(workbookId: string) {
 }
 ```
 
-The existing `ScheduleEvaluatorService` already handles the cron evaluation loop, atomic claims, and multi-instance safety. For `ROUTINE` action, instead of enqueuing a single job, it calls `RoutineService.triggerRun()`.
+The existing `SchedulerService` already handles the cron evaluation loop, atomic claims, and multi-instance safety. For `ROUTINE` action, instead of enqueuing a single job, it calls `RoutineService.triggerRun()`.
 
 ### Waiting for Job Completion
 
@@ -318,6 +351,10 @@ POST   /workbooks/:workbookId/routine-runs/:runId/cancel        Cancel a running
 
 ## Client UI
 
+The new UI will be built only in the Scratch Web Client and will be guarded by hind the dev tools flag for now. 
+
+NOTE: Scratch Desktop UI is out of scope for the initial implementation.
+
 ### Sidebar Section
 
 A new **Routines** section in the workbook sidebar, alongside the existing **Syncs** section.
@@ -336,9 +373,36 @@ Accessible from the routine's sidebar entry or a detail panel:
 - Expandable to see per-step status and errors
 - Retained for 30 days
 
+## CLI Support
+
+The `scratchmd` CLI needs **no new code** to make routine files available locally — storing them at `routines/` (config-repo root) is precisely what makes that work. This section explains the materialization path and what is intentionally deferred.
+
+### How routine files reach the local workspace
+
+Routine files ride along with the workbook config repo, exactly like `syncs/` and `transformers/`:
+
+1. At `scratchmd workspaces init`, the CLI clones the workbook config repo (bare) and checks it out into `<workspace>/.scratch/workspace/`.
+2. That checkout is a **sparse worktree** whose pattern is `/*` minus `.scratch` — i.e. *everything at the repo root except a `.scratch/` directory* (`setup_sparse_worktree` in [scratch-git-2/src/cli/git_ops/local.rs](/scratch-git-2/src/cli/git_ops/local.rs)).
+3. Because `routines/` lives at the repo root (not under `.scratch/`), it is included by `/*` and materializes to `<workspace>/.scratch/workspace/routines/*.yaml`, right next to `syncs/` and `transformers/`. The user reads and edits routine YAML through the same flow they already use for those files.
+
+> **This is the entire reason routines are stored at `routines/` and not `.scratch/routines/`.** Under `.scratch/`, the bare clone would still fetch the objects, but the sparse checkout would exclude them and they would never appear in the user's workspace. The server is unaffected either way — it reads YAML directly from the bare repo's git tree (via the git service), never from a materialized worktree.
+
+### ⚠️ No incremental pull of the config repo
+
+The CLI materializes the workbook config repo **only at `workspaces init`** (and on `workspaces init --force`, which re-clones). There is currently **no incremental pull that refreshes the config repo** — `scratchmd files download` operates on per-connection record repos, not the config repo. Consequences:
+
+- A routine added or edited on the server (or by another user) will **not** appear in an already-initialized local workspace until it is re-initialized.
+- Locally edited routine YAML has no dedicated push-back command; it round-trips only through git plumbing the user runs by hand.
+
+Keeping local routines in sync on an ongoing basis would be **new CLI work** (an incremental config-repo fetch + re-materialize) and is independent of the storage-path decision above.
+
+### Advanced routine support is out of scope for v1
+
+The initial implementation treats the CLI purely as a place to **view and edit** routine files. Driving routines from the CLI — listing routines, triggering a manual run, watching run status, cancelling a run — would mean new CLI commands calling the [REST API](#rest-api) (`POST …/routines/trigger`, `GET …/routine-runs`, etc.). That is **explicitly deferred**: routines are server-executed and managed through the web UI for v1. The CLI gains routine-run commands only if later demand justifies them.
+
 ## Relationship to Existing Schedule System
 
-The existing `Schedule` table and `ScheduleEvaluatorService` (from `schedule-system-design.md`) handle per-entity scheduling for pull, publish, and sync. Routines reuse this infrastructure by adding a `ROUTINE` action type.
+The existing `Schedule` table and `SchedulerService` (in `server/src/schedule/`) handle per-entity scheduling for pull, publish, and sync. Routines reuse this infrastructure by adding a `ROUTINE` action type.
 
 **v1: Coexistence.** Both standalone schedules and routine schedules run through the same evaluator. A sync can have its own schedule AND be a step in a routine.
 
@@ -356,34 +420,56 @@ The existing `Schedule` table and `ScheduleEvaluatorService` (from `schedule-sys
 
 ### Phase 2: Execution Engine
 
-6. Create `routine-executor.service.ts` — sequential step execution with job polling
-7. Map routine actions to existing `BullEnqueuerService` methods
-8. Add manual trigger endpoint + cancel endpoint
-9. Wire up `RoutineRun` and `RoutineRunStep` status tracking
+1. Create `routine-executor.service.ts` — sequential step execution with job polling
+2. Map routine actions to existing `BullEnqueuerService` methods
+3. Add manual trigger endpoint + cancel endpoint
+4. Wire up `RoutineRun` and `RoutineRunStep` status tracking
 
 ### Phase 3: Schedule Integration
 
-10. Extend `ScheduleEvaluatorService` to handle `ROUTINE` action — call `RoutineService.triggerRun()` instead of enqueuing a single job
-11. Test end-to-end: YAML with `schedule:` → reload → schedule fires → routine executes
+1. Extend `SchedulerService` to handle `ROUTINE` action — call `RoutineService.triggerRun()` instead of enqueuing a single job
+2. Test end-to-end: YAML with `schedule:` → reload → schedule fires → routine executes
 
 ### Phase 4: Client UI
 
-12. Add Routines sidebar section to workbook UI
-13. Routine list with status indicators and "Run" / "Reload" buttons
-14. Run history panel with per-step detail
-15. Wire up API calls
+1. Add Routines sidebar section to workbook UI
+2. Routine list with status indicators and "Run" / "Reload" buttons
+3. Run history panel with per-step detail
+4. Wire up API calls
 
 ### Phase 5: Cleanup & Polish
 
-16. Run history cleanup job (delete runs older than 30 days)
-17. Workbook deletion cleanup (cascades handle `RoutineRun` via FK; application logic cleans up `Schedule` records with action `ROUTINE`)
-18. Error handling and logging throughout
+1. Run history cleanup job (delete runs older than 30 days)
+2. Workbook deletion cleanup (cascades handle `RoutineRun` via FK; application logic cleans up `Schedule` records with action `ROUTINE`)
+3. Error handling and logging throughout
 
 ## Open Questions
 
 1. **Step timeout** — 30 minutes per step is a reasonable default, but some publish operations on large folders could take longer. Should timeout be configurable per step?
-2. **Folder resolution** — When a step specifies `folder: /blog/posts`, how do we resolve this to a `DataFolderId`? By exact path match in the workbook? What if the folder doesn't exist yet?
-3. **Sync resolution** — When a step specifies `action: sync`, how do we identify which sync to run? By folder? By sync name? Syncs currently have auto-generated names.
-4. **Publish semantics** — Should `publish` as a routine step always include both plan + run? Or should the user explicitly list both `publish-plan` and `publish` steps? The explicit approach is more transparent.
-5. **Notification (future)** — When we add notifications, should they be per-routine or per-workbook? Email, in-app, or webhook?
-6. **Routine file conflicts** — If two users edit the same routine file, git handles the merge. But if a routine is running when its definition changes, should the in-progress run use the old or new definition? (Current design: old — the YAML is read once at trigger time and snapshotted into the run.)
+
+- ANSWER: yes, we should support a configurable timeout for each step with an enforced maximum based on the action. For example, pull actions can have a longer timeout than sync actions.
+
+1. **Folder resolution** — When a step specifies `folder: /blog/posts`, how do we resolve this to a `DataFolderId`? By exact path match in the workbook? What if the folder doesn't exist yet?
+
+- ANSWER: yes, this should be the exact path in the workbook
+
+1. **Sync resolution** — When a step specifies `action: sync`, how do we identify which sync to run? By folder? By sync name? Syncs currently have auto-generated names.
+
+- ANSWER: this should use the Sync ID. We can provide tools to the user to easily get the ID
+
+1. **Publish semantics** — Should `publish` as a routine step always include both plan + run? Or should the user explicitly list both `publish-plan` and `publish` steps? The explicit approach is more transparent.
+
+- ANSWER: Start with two options: `publish` does both the plan and runs the publish. `publish-plan` will only run the plan, allowing the user to review an manually trigger the publish. Both map to the single `publish` job, distinguished by its `runAfterPlan` flag — see [Publishing: Plan vs. Run](#publishing-plan-vs-run).
+
+1. **Routine file conflicts** — If two users edit the same routine file, git handles the merge. But if a routine is running when its definition changes, should the in-progress run use the old or new definition? (Current design: old — the YAML is read once at trigger time and snapshotted into the run.)
+
+- ANSWER: use the old version.
+
+## Step Execution Mechanism (BullMQ patterns)
+
+The question of **how the executor waits for each step's job to finish** — and whether the "poll `DbJob` status every 5 s" loop described in [Waiting for Job Completion](#waiting-for-job-completion) is robust against hung runs — is evaluated in depth in a companion document:
+
+**→ [Routines: Step Execution & BullMQ Job Orchestration](./routines-step-execution.md)**
+
+In short: the proposed polling loop is the one coordinator in the system with no durable owner — if the instance running `execute()` restarts mid-run, the step's job still completes but nothing advances the `RoutineRun`, and (unlike `DbJob`s) nothing reaps it. Keeping each action as its own `DbJob` (as this design already does) rules out collapsing the routine into a single job, so that doc recommends modeling the routine as a **BullMQ flow of per-step jobs** — advancement lives durably in Redis rather than in one process's memory — reached via a durable event-driven orchestrator as the v1 stepping-stone. It also proposes a **self-planning publish job** so a publish step is enqueued as one self-contained `DbJob` like `pull` and `sync`. Read it before implementing [Phase 2](#phase-2-execution-engine).
+
