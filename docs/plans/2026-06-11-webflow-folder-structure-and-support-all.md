@@ -333,11 +333,27 @@ expanding this plan if a larger gap appears. No body/DOM content.
 
 - **(A3/#6 →E2E)** during a connection's batch: scheduled fire deferred, in-flight job
   drained, enqueued job dequeued, a live web save / `/upload-patch/commit` rejected;
-  all succeed after re-enable.
+  all succeed after re-enable. ✅ **Done** — `server/test/integration/webflow-migration-live-pipeline.spec.ts`
+  drives the real `ConnectionQuiesceService.quiesceConnection`/`unquiesceConnection` against real
+  Postgres with seeded `PublishPlan`/`DbJob`/`Schedule` rows: it asserts the connection's non-terminal
+  publish plan + its in-flight publish & sync jobs are cancelled (the sync job's connection resolved
+  through real `SyncTablePair` FKs), a sibling connection's plan/job in the same workbook survive
+  (cancel + gate are connection-scoped), both gates (`assertConnectionNotMigrating` + the enqueue gate
+  `assertEnqueueAllowedForJob`) reject with 409 while locked, the enabled schedule is disabled+marked
+  (user-disabled left alone), and after release the lock clears, both gates pass, the schedule is
+  restored, a `workbook-updated` event fires, and the cancelled work stays cancelled. A second test
+  pins the **drain-timeout / abort-and-skip** contract: a worker that never stops fails the drain with
+  `ConnectionDrainTimeoutError` while STILL holding the lock (the migration releases-and-skips in its
+  `finally`). The only stubbed seam is `JobService.getActiveBullJobDatas` (the live BullMQ `active`
+  poll — no worker runs in a test); seeded jobs carry no `bullJobId`, so `systemCancelJob` takes its
+  pure-DB path. Requires the localdev Postgres (`yarn test:integration`); no Redis/scratch-git needed.
 - **(#11)** a user-disabled schedule stays disabled after the batch; crash mid-batch →
-  re-run repairs schedule state.
+  re-run repairs schedule state. ✅ **Done** — the "user-disabled stays disabled" half is asserted in
+  the live-pipeline spec above; the marker-driven crash-repair re-run is pinned in
+  `connection-quiesce-db.spec.ts`.
 - **(#12 →E2E)** stale desktop clone with un-uploaded edits: salvage runs before re-clone;
-  no work lost.
+  no work lost. — Desktop/CLI (T5), covered by the Rust unit tests; the live salvage-before-wipe
+  remains a manual canary gate.
 
 ### Client unit
 
