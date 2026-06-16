@@ -502,3 +502,221 @@ pub(crate) fn worktree_checkout_path(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn git_available() -> bool {
+        git_command().arg("--version").output().is_ok()
+    }
+
+    fn run_git(cwd: &Path, args: &[&str]) {
+        let status = git_command()
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .unwrap_or_else(|err| panic!("failed to spawn git {args:?}: {err}"));
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+
+    fn commit_all(cwd: &Path, message: &str) {
+        run_git(cwd, &["add", "-A"]);
+        run_git(
+            cwd,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-m",
+                message,
+            ],
+        );
+    }
+
+    fn init_source(tmp: &Path) -> PathBuf {
+        let source = tmp.join("source");
+        fs::create_dir_all(&source).unwrap();
+        run_git(&source, &["init", "-b", "main"]);
+        source
+    }
+
+    /// Clone the fully-committed source worktree into a bare repo so
+    /// `diff_name_status` can resolve both `main~1` and `main`.
+    fn clone_bare(tmp: &Path, source: &Path) -> PathBuf {
+        let bare = tmp.join("bare.git");
+        run_git(
+            tmp,
+            &[
+                "clone",
+                "--bare",
+                source.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        bare
+    }
+
+    const NON_ASCII_PATH: &str = "Pakkamælingar/skýrsla.json";
+    const NON_ASCII_RENAMED_PATH: &str = "Pakkamælingar/nýskýrsla.json";
+
+    fn assert_no_octal_escapes(entries: &[(String, String)]) {
+        for (_status, path) in entries {
+            assert!(
+                !path.contains('\\') && !path.contains("303") && !path.contains("246"),
+                "path looks octal-escaped: {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn diff_name_status_added_non_ascii() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(&source.join("base.json"), "{}");
+        commit_all(&source, "base");
+        write_file(&source.join(NON_ASCII_PATH), "{\"r\":1}");
+        commit_all(&source, "add non-ascii");
+        let bare = clone_bare(tmp.path(), &source);
+
+        let entries = diff_name_status(&bare, "main~1", "main").unwrap();
+        assert_eq!(
+            entries,
+            vec![("added".to_string(), NON_ASCII_PATH.to_string())]
+        );
+    }
+
+    #[test]
+    fn diff_name_status_modified_non_ascii() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(&source.join(NON_ASCII_PATH), "{\"r\":1}");
+        commit_all(&source, "base");
+        write_file(&source.join(NON_ASCII_PATH), "{\"r\":2}");
+        commit_all(&source, "modify non-ascii");
+        let bare = clone_bare(tmp.path(), &source);
+
+        let entries = diff_name_status(&bare, "main~1", "main").unwrap();
+        assert_eq!(
+            entries,
+            vec![("modified".to_string(), NON_ASCII_PATH.to_string())]
+        );
+    }
+
+    #[test]
+    fn diff_name_status_deleted_non_ascii() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(&source.join(NON_ASCII_PATH), "{\"r\":1}");
+        commit_all(&source, "base");
+        fs::remove_file(source.join(NON_ASCII_PATH)).unwrap();
+        commit_all(&source, "delete non-ascii");
+        let bare = clone_bare(tmp.path(), &source);
+
+        let entries = diff_name_status(&bare, "main~1", "main").unwrap();
+        assert_eq!(
+            entries,
+            vec![("deleted".to_string(), NON_ASCII_PATH.to_string())]
+        );
+    }
+
+    #[test]
+    fn diff_name_status_renamed_non_ascii() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(&source.join(NON_ASCII_PATH), "{\"r\":1}");
+        commit_all(&source, "base");
+        // Identical content so git scores the rename at 100%.
+        run_git(&source, &["mv", NON_ASCII_PATH, NON_ASCII_RENAMED_PATH]);
+        commit_all(&source, "rename non-ascii");
+        let bare = clone_bare(tmp.path(), &source);
+
+        let entries = diff_name_status(&bare, "main~1", "main").unwrap();
+        assert_no_octal_escapes(&entries);
+        // The new path must always round-trip as UTF-8, regardless of whether
+        // the environment's `diff.renames` is on (single "renamed" entry) or
+        // off (delete + add).
+        assert!(
+            entries.iter().any(|(_, p)| p == NON_ASCII_RENAMED_PATH),
+            "renamed-to path missing: {entries:?}"
+        );
+        // When rename detection fires (git default), it must carry the new path
+        // — this exercises the third-tab-field extraction with a UTF-8 name.
+        for (status, path) in &entries {
+            if status == "renamed" {
+                assert_eq!(path, NON_ASCII_RENAMED_PATH);
+            }
+        }
+    }
+
+    #[test]
+    fn diff_name_status_strips_scratch_entries() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(&source.join("base.json"), "{}");
+        commit_all(&source, "base");
+        write_file(&source.join(".scratch/foo.json"), "{}");
+        write_file(&source.join(NON_ASCII_PATH), "{\"r\":1}");
+        commit_all(&source, "add scratch + data");
+        let bare = clone_bare(tmp.path(), &source);
+
+        let entries = diff_name_status(&bare, "main~1", "main").unwrap();
+        assert_eq!(
+            entries,
+            vec![("added".to_string(), NON_ASCII_PATH.to_string())],
+            ".scratch/ entries must be excluded"
+        );
+    }
+
+    #[test]
+    fn diff_name_status_no_octal_escapes_in_any_path() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(&source.join("base.json"), "{}");
+        commit_all(&source, "base");
+        write_file(&source.join(NON_ASCII_PATH), "{\"r\":1}");
+        write_file(&source.join("Pakkamælingar/has space.json"), "{\"r\":2}");
+        commit_all(&source, "add non-ascii files");
+        let bare = clone_bare(tmp.path(), &source);
+
+        let entries = diff_name_status(&bare, "main~1", "main").unwrap();
+        assert!(!entries.is_empty(), "expected diff entries");
+        assert_no_octal_escapes(&entries);
+    }
+}

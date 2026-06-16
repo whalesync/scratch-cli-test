@@ -69,7 +69,7 @@ where
 {
     let git_dir = bare_repo.to_str().unwrap_or_default();
     let ls_output = git_command()
-        .args(["--git-dir", git_dir, "ls-tree", "-r", treeish])
+        .args(["--git-dir", git_dir, "ls-tree", "-r", "-z", treeish])
         .output()
         .context("failed to run git ls-tree")?;
     if !ls_output.status.success() {
@@ -77,17 +77,22 @@ where
         anyhow::bail!("git ls-tree failed: {}", stderr.trim());
     }
 
+    // `-z` emits NUL-terminated records of the form `<mode> <type> <hash>\t<path>`
+    // (no `<size>` field — that only appears with `--long`). Under `-z`, git
+    // writes raw path bytes regardless of `core.quotePath`, so non-ASCII names,
+    // spaces, quotes, tabs and newlines all come through verbatim. This avoids
+    // the octal-escaping that previously corrupted non-ASCII paths (DEV-10402).
     let mut paths: Vec<String> = Vec::new();
-    for line in ls_output.stdout.split(|&b| b == b'\n') {
-        if line.is_empty() {
+    for record in ls_output.stdout.split(|&b| b == 0) {
+        if record.is_empty() {
             continue;
         }
-        let line_str = String::from_utf8_lossy(line);
-        let Some(tab_pos) = line_str.find('\t') else {
+        let record_str = String::from_utf8_lossy(record);
+        let Some(tab_pos) = record_str.find('\t') else {
             continue;
         };
-        let meta = &line_str[..tab_pos];
-        let path = &line_str[tab_pos + 1..];
+        let meta = &record_str[..tab_pos];
+        let path = &record_str[tab_pos + 1..];
 
         let parts: Vec<&str> = meta.split(' ').collect();
         if parts.len() < 3 {
@@ -99,7 +104,7 @@ where
         if !keep(path) {
             continue;
         }
-        paths.push(path.replace('\\', "/"));
+        paths.push(path.to_string());
     }
     Ok(paths)
 }
@@ -120,8 +125,11 @@ where
     let git_dir = bare_repo.to_str().unwrap_or_default();
 
     // Step 1: enumerate (mode, hash, path) entries via ls-tree.
+    // `-z` emits NUL-terminated records `<mode> <type> <hash>\t<path>` with raw
+    // path bytes (no octal-escaping), so non-ASCII names round-trip verbatim
+    // regardless of `core.quotePath`. See DEV-10402.
     let ls_output = git_command()
-        .args(["--git-dir", git_dir, "ls-tree", "-r", treeish])
+        .args(["--git-dir", git_dir, "ls-tree", "-r", "-z", treeish])
         .output()
         .context("failed to run git ls-tree")?;
     if !ls_output.status.success() {
@@ -130,16 +138,16 @@ where
     }
 
     let mut entries: Vec<(String, String)> = Vec::new();
-    for line in ls_output.stdout.split(|&b| b == b'\n') {
-        if line.is_empty() {
+    for record in ls_output.stdout.split(|&b| b == 0) {
+        if record.is_empty() {
             continue;
         }
-        let line_str = String::from_utf8_lossy(line);
-        let Some(tab_pos) = line_str.find('\t') else {
+        let record_str = String::from_utf8_lossy(record);
+        let Some(tab_pos) = record_str.find('\t') else {
             continue;
         };
-        let meta = &line_str[..tab_pos];
-        let path = &line_str[tab_pos + 1..];
+        let meta = &record_str[..tab_pos];
+        let path = &record_str[tab_pos + 1..];
 
         let parts: Vec<&str> = meta.split(' ').collect();
         if parts.len() < 3 {
@@ -212,7 +220,7 @@ where
         let mut trailing = [0u8; 1];
         reader.read_exact(&mut trailing).ok();
 
-        out.insert(path.replace('\\', "/"), normalize_crlf(blob));
+        out.insert(path.clone(), normalize_crlf(blob));
     }
 
     writer_thread
@@ -277,6 +285,12 @@ mod tests {
     ///   - b.txt
     ///   - data/d.json
     ///   - nested/c.json
+    ///   - Pakkamælingar/has space.json   (non-ASCII folder + space in name)
+    ///   - Pakkamælingar/skýrsla.json     (non-ASCII folder + non-ASCII name)
+    ///   - quote"name.json                (literal double-quote — only survives `-z`)
+    ///
+    /// The last three guard DEV-10402: with git's default `core.quotePath=on`
+    /// these names would come back octal-escaped/quoted and get mangled.
     fn make_bare_repo() -> (TempDir, PathBuf) {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("source");
@@ -288,6 +302,9 @@ mod tests {
         write_file(&source.join("b.txt"), "not json");
         write_file(&source.join("data/d.json"), "{\"d\":4}");
         write_file(&source.join("nested/c.json"), "{\"c\":3}");
+        write_file(&source.join("Pakkamælingar/has space.json"), "{\"r\":2}");
+        write_file(&source.join("Pakkamælingar/skýrsla.json"), "{\"r\":1}");
+        write_file(&source.join("quote\"name.json"), "{\"r\":3}");
         run_git(&source, &["add", "-A"]);
         run_git(
             &source,
@@ -325,10 +342,15 @@ mod tests {
         assert_eq!(
             paths,
             vec![
+                // Sorted by Unicode code point: uppercase `P` (0x50) precedes the
+                // lowercase ASCII names, which precede `q` (0x71).
+                "Pakkamælingar/has space.json".to_string(),
+                "Pakkamælingar/skýrsla.json".to_string(),
                 "a.json".to_string(),
                 "b.txt".to_string(),
                 "data/d.json".to_string(),
                 "nested/c.json".to_string(),
+                "quote\"name.json".to_string(),
             ]
         );
     }
@@ -346,9 +368,12 @@ mod tests {
         assert_eq!(
             paths,
             vec![
+                "Pakkamælingar/has space.json".to_string(),
+                "Pakkamælingar/skýrsla.json".to_string(),
                 "a.json".to_string(),
                 "data/d.json".to_string(),
                 "nested/c.json".to_string(),
+                "quote\"name.json".to_string(),
             ]
         );
     }
@@ -374,5 +399,171 @@ mod tests {
         let (_tmp, bare) = make_bare_repo();
         let paths = list_tree_paths_filtered(&bare, "refs/heads/main", |_| false).unwrap();
         assert!(paths.is_empty());
+    }
+
+    // --- DEV-10402: non-ASCII / special-character path regression tests ---
+
+    #[test]
+    fn list_tree_paths_filtered_returns_exact_utf8_non_ascii_path() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        let paths = list_tree_paths_filtered(&bare, "refs/heads/main", |_| true).unwrap();
+        assert!(
+            paths.contains(&"Pakkamælingar/skýrsla.json".to_string()),
+            "expected verbatim UTF-8 path, got {paths:?}"
+        );
+        // No octal-escape artifacts anywhere.
+        for path in &paths {
+            assert!(
+                !path.contains('\\') && !path.contains("303") && !path.contains("246"),
+                "path looks octal-escaped: {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_tree_paths_filtered_no_phantom_nested_segments() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        let paths = list_tree_paths_filtered(&bare, "refs/heads/main", |_| true).unwrap();
+        // The original bug split `Pakkamælingar` into `Pakkam/303/246lingar`.
+        for path in &paths {
+            assert!(
+                !path.starts_with("Pakkam/"),
+                "phantom nesting introduced: {path:?}"
+            );
+            for segment in path.split('/') {
+                assert!(
+                    segment != "303" && segment != "246",
+                    "octal byte became a path segment: {path:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn list_tree_paths_filtered_prefix_predicate_matches_non_ascii_folder() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        // Guards the "real folder shows empty" symptom: the desktop scopes a
+        // folder read by its UTF-8 prefix, which must match the parsed paths.
+        let mut paths = list_tree_paths_filtered(&bare, "refs/heads/main", |p| {
+            p.starts_with("Pakkamælingar/")
+        })
+        .unwrap();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                "Pakkamælingar/has space.json".to_string(),
+                "Pakkamælingar/skýrsla.json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_tree_paths_filtered_handles_space_in_name() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        let paths = list_tree_paths_filtered(&bare, "refs/heads/main", |_| true).unwrap();
+        assert!(
+            paths.contains(&"Pakkamælingar/has space.json".to_string()),
+            "space in name not preserved, got {paths:?}"
+        );
+    }
+
+    #[test]
+    fn list_tree_paths_filtered_handles_quote_in_name() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        // Passes only because of `-z`: `core.quotePath=false` still wraps a `"`
+        // in C-quotes, but `-z` emits raw bytes.
+        let paths = list_tree_paths_filtered(&bare, "refs/heads/main", |_| true).unwrap();
+        assert!(
+            paths.contains(&"quote\"name.json".to_string()),
+            "double-quote in name not preserved, got {paths:?}"
+        );
+    }
+
+    #[test]
+    fn read_tree_files_filtered_keys_by_exact_utf8_path() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        let files = read_tree_files_filtered(&bare, "refs/heads/main", |_| true).unwrap();
+        assert_eq!(
+            files
+                .get("Pakkamælingar/skýrsla.json")
+                .map(|b| b.as_slice()),
+            Some(b"{\"r\":1}".as_slice()),
+            "expected UTF-8 key with correct contents; keys: {:?}",
+            files.keys().collect::<Vec<_>>()
+        );
+        for key in files.keys() {
+            assert!(
+                !key.contains('\\') && !key.contains("303") && !key.contains("246"),
+                "FileMap key looks octal-escaped: {key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_tree_files_filtered_prefix_predicate_reads_non_ascii_folder() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        let files = read_tree_files_filtered(&bare, "refs/heads/main", |p| {
+            p.starts_with("Pakkamælingar/")
+        })
+        .unwrap();
+        assert_eq!(
+            files.len(),
+            2,
+            "folder must not read empty: {:?}",
+            files.keys().collect::<Vec<_>>()
+        );
+        for key in files.keys() {
+            assert!(
+                key.strip_prefix("Pakkamælingar/").is_some(),
+                "key does not match folder prefix: {key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_tree_files_filtered_roundtrip_path_equality() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let (_tmp, bare) = make_bare_repo();
+        let mut list_paths = list_tree_paths_filtered(&bare, "refs/heads/main", |_| true).unwrap();
+        let files = read_tree_files_filtered(&bare, "refs/heads/main", |_| true).unwrap();
+        let mut map_keys: Vec<String> = files.keys().cloned().collect();
+        list_paths.sort();
+        map_keys.sort();
+        assert_eq!(
+            list_paths, map_keys,
+            "list_tree_paths_filtered and read_tree_files_filtered disagree on paths"
+        );
     }
 }

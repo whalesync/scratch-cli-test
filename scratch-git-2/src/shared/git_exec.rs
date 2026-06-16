@@ -99,28 +99,42 @@ impl GitCommandLike for tokio::process::Command {
 
 /// Build a `std::process::Command` that invokes git. Use this in place of
 /// `std::process::Command::new("git")` everywhere.
+///
+/// Every git invocation in this crate flows through here, so this is the single
+/// place we force `core.quotePath=false`. Git's default (`core.quotePath=on`)
+/// octal-escapes and double-quotes any non-ASCII byte in the path output of
+/// `ls-tree` / `diff` (e.g. `Pakkamælingar` → `"Pakkam\303\246lingar"`), which
+/// our parsers then mangle into phantom nested folders. `-c` is a global git
+/// option that lands before the subcommand, so it applies to every callsite
+/// (`ls-tree`, `diff`, `cat-file`, `init`, `clone`, `commit`, `fetch`, …).
+/// See DEV-10402.
 pub fn git_command() -> std::process::Command {
-    match resolve_bundled_git() {
+    let mut cmd = match resolve_bundled_git() {
         Some(bin) => {
             let mut cmd = std::process::Command::new(&bin);
             apply_bundle_env(&mut cmd, &bin);
             cmd
         }
         None => std::process::Command::new("git"),
-    }
+    };
+    cmd.args(["-c", "core.quotePath=false"]);
+    cmd
 }
 
 /// Build a `tokio::process::Command` that invokes git. Use this in place of
-/// `tokio::process::Command::new("git")`.
+/// `tokio::process::Command::new("git")`. Forces `core.quotePath=false` for the
+/// same reason as [`git_command`] (DEV-10402).
 pub fn git_command_async() -> tokio::process::Command {
-    match resolve_bundled_git() {
+    let mut cmd = match resolve_bundled_git() {
         Some(bin) => {
             let mut cmd = tokio::process::Command::new(&bin);
             apply_bundle_env(&mut cmd, &bin);
             cmd
         }
         None => tokio::process::Command::new("git"),
-    }
+    };
+    cmd.args(["-c", "core.quotePath=false"]);
+    cmd
 }
 
 #[cfg(test)]
@@ -199,5 +213,85 @@ mod tests {
         let git = bin.join("git");
         std::fs::write(&git, b"").unwrap();
         assert_eq!(derive_exec_path(&git), None);
+    }
+
+    /// Collect a command's args as owned strings for assertions.
+    fn args_of(cmd: &std::process::Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// `["a", "b"]` appears as a consecutive pair anywhere in `args`.
+    fn contains_consecutive(args: &[String], first: &str, second: &str) -> bool {
+        args.windows(2)
+            .any(|window| window[0] == first && window[1] == second)
+    }
+
+    #[test]
+    fn git_command_includes_quote_path_false_on_path_git() {
+        let _guard = env_lock();
+        std::env::remove_var(ENV_VAR);
+        let cmd = git_command();
+        let args = args_of(&cmd);
+        assert!(
+            contains_consecutive(&args, "-c", "core.quotePath=false"),
+            "expected `-c core.quotePath=false` in {args:?}"
+        );
+    }
+
+    #[test]
+    fn git_command_async_includes_quote_path_false() {
+        let _guard = env_lock();
+        std::env::remove_var(ENV_VAR);
+        let cmd = git_command_async();
+        let args = args_of(cmd.as_std());
+        assert!(
+            contains_consecutive(&args, "-c", "core.quotePath=false"),
+            "expected `-c core.quotePath=false` in {args:?}"
+        );
+    }
+
+    #[test]
+    fn git_command_includes_quote_path_false_with_bundled_git() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let git_path = bin_dir.join("git");
+        std::fs::write(&git_path, b"#!/bin/sh\n").unwrap();
+
+        std::env::set_var(ENV_VAR, &git_path);
+        let cmd = git_command();
+        std::env::remove_var(ENV_VAR);
+
+        // Resolved to the bundled binary, and the flag is still appended.
+        assert_eq!(cmd.get_program(), git_path.as_os_str());
+        let args = args_of(&cmd);
+        assert!(
+            contains_consecutive(&args, "-c", "core.quotePath=false"),
+            "expected `-c core.quotePath=false` in {args:?}"
+        );
+    }
+
+    #[test]
+    fn quote_path_flag_precedes_subcommand() {
+        let _guard = env_lock();
+        std::env::remove_var(ENV_VAR);
+        let mut cmd = git_command();
+        cmd.args(["--git-dir", "x", "ls-tree"]);
+        let args = args_of(&cmd);
+        let flag_index = args
+            .iter()
+            .position(|a| a == "core.quotePath=false")
+            .expect("flag present");
+        let subcommand_index = args
+            .iter()
+            .position(|a| a == "ls-tree")
+            .expect("subcommand present");
+        assert!(
+            flag_index < subcommand_index,
+            "flag must precede the subcommand: {args:?}"
+        );
     }
 }

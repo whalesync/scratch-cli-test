@@ -646,6 +646,57 @@ fn update_main_worktree_after_pull_returns_diff_when_main_advances() {
     );
 }
 
+/// DEV-10402: a record under a non-ASCII folder name must round-trip verbatim
+/// through `diff_name_status` (the master-advance change detection). This is the
+/// end-to-end guard for the CLI side of the bug — with the old
+/// `core.quotePath=on` + `replace('\\', "/")` behavior the path came back as
+/// `Pakkam/303/246lingar/...` and broke folder attribution.
+#[test]
+fn update_main_worktree_after_pull_handles_non_ascii_paths() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let ctx = make_connection_context(tmp.path(), &fixture.local_bare);
+
+    // Materialize the worktree at the current main first.
+    let initial = update_main_worktree_after_pull(&ctx, "test-token").unwrap();
+    assert!(!initial.moved);
+
+    // Advance origin/main with a record under a non-ASCII folder name.
+    run_git(&fixture.source_dir, &["checkout", "main"]);
+    write_file(
+        &fixture.source_dir.join("Pakkamælingar/skýrsla.json"),
+        "{\"id\":\"r1\"}",
+    );
+    commit_all(&fixture.source_dir, "add non-ascii record");
+    run_git(&fixture.source_dir, &["push", "origin", "main"]);
+
+    run_git(
+        &ctx.bare_repo,
+        &["fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"],
+    );
+
+    let result = update_main_worktree_after_pull(&ctx, "test-token").unwrap();
+    assert!(result.moved, "master moved ⇒ moved=true");
+    assert!(
+        result
+            .changed_paths
+            .contains(&"Pakkamælingar/skýrsla.json".to_string()),
+        "non-ASCII path must round-trip verbatim; got {:?}",
+        result.changed_paths
+    );
+    for path in &result.changed_paths {
+        assert!(
+            !path.contains('\\') && !path.contains("303") && !path.contains("246"),
+            "changed path looks octal-escaped: {path:?}"
+        );
+    }
+}
+
 /// Verify that batched `read_tree_files` returns correct paths and blob contents
 /// for a repo with nested directories, multiple files, and a non-blob entry.
 #[test]
