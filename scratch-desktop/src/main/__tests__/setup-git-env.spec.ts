@@ -3,6 +3,7 @@
 // (the Xcode CLT stub) on a clean macOS machine. These tests pin the path
 // derivation and the packaged-vs-dev env behavior of configureBundledGitEnvironment().
 
+import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The module only imports `app` from electron; a tiny mock keeps vitest from
@@ -43,12 +44,14 @@ describe('setup-git-env', () => {
   describe('bundledGitBinaryPath', () => {
     it('returns the unix bin/git path off Resources on macOS/Linux', () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-      expect(bundledGitBinaryPath()).toBe(`${RESOURCES}/git/bin/git`);
+      // Build the expected path with join() so it uses the same host separator
+      // as bundledGitBinaryPath — otherwise this assertion fails on a Windows host.
+      expect(bundledGitBinaryPath()).toBe(join(RESOURCES, 'git', 'bin', 'git'));
     });
 
     it('returns the mingw64 git.exe path on Windows', () => {
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-      expect(bundledGitBinaryPath()).toBe(`${RESOURCES}/git/mingw64/bin/git.exe`);
+      expect(bundledGitBinaryPath()).toBe(join(RESOURCES, 'git', 'mingw64', 'bin', 'git.exe'));
     });
   });
 
@@ -64,7 +67,7 @@ describe('setup-git-env', () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       appMock.isPackaged = true;
       configureBundledGitEnvironment();
-      expect(process.env.SCRATCH_GIT_BIN).toBe(`${RESOURCES}/git/bin/git`);
+      expect(process.env.SCRATCH_GIT_BIN).toBe(join(RESOURCES, 'git', 'bin', 'git'));
     });
 
     it('strips inherited GIT_EXEC_PATH / GIT_TEMPLATE_DIR when packaged', () => {

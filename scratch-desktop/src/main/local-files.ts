@@ -1178,7 +1178,10 @@ export async function readDiffGridDataPage(
   opts: ReadDiffGridDataOptions,
   onProgress?: (line: string) => void,
 ): Promise<DiffGridResult> {
-  const cliFolder = relative(workspacePath, folderPath);
+  // POSIX-normalise: the CLI (folder_index) splits this on `/` to find the
+  // connection (first segment). A Windows backslash path would make the whole
+  // "<conn>\<folder>" the connection name → "connection '...' not in marker".
+  const cliFolder = relative(workspacePath, folderPath).split(sep).join('/');
 
   // Map sortBy to a CLI sort column. Unknown/row-status sorts fall back to 'filename'.
   let cliSortBy = 'filename';

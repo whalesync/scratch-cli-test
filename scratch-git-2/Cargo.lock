@@ -832,7 +832,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -893,7 +893,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2571,7 +2571,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2712,39 +2712,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
-name = "libffi"
-version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0498fe5655f857803e156523e644dcdcdc3b3c7edda42ea2afdae2e09b2db87b"
-dependencies = [
- "libc",
- "libffi-sys",
-]
-
-[[package]]
-name = "libffi-sys"
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71d4f1d4ce15091955144350b75db16a96d4a63728500122706fb4d29a26afbb"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
-]
-
-[[package]]
-name = "libloading"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if",
  "windows-link",
@@ -3071,7 +3042,7 @@ version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "427802e8ec3a734331fec1035594a210ce1ff4dc5bc1950530920ab717964ea3"
 dependencies = [
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -3595,7 +3566,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3971,7 +3942,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3984,7 +3955,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4025,7 +3996,7 @@ dependencies = [
 [[package]]
 name = "rustpython-codegen"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "ahash",
  "bitflags",
@@ -4048,7 +4019,7 @@ dependencies = [
 [[package]]
 name = "rustpython-common"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "ascii",
  "bitflags",
@@ -4075,7 +4046,7 @@ dependencies = [
 [[package]]
 name = "rustpython-compiler"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "rustpython-codegen",
  "rustpython-compiler-core",
@@ -4089,7 +4060,7 @@ dependencies = [
 [[package]]
 name = "rustpython-compiler-core"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "bitflags",
  "bitflagset",
@@ -4104,7 +4075,7 @@ dependencies = [
 [[package]]
 name = "rustpython-derive"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "rustpython-compiler",
  "rustpython-derive-impl",
@@ -4114,7 +4085,7 @@ dependencies = [
 [[package]]
 name = "rustpython-derive-impl"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "itertools",
  "maplit",
@@ -4130,7 +4101,7 @@ dependencies = [
 [[package]]
 name = "rustpython-doc"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "phf 0.13.1",
 ]
@@ -4138,7 +4109,7 @@ dependencies = [
 [[package]]
 name = "rustpython-literal"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "hexf-parse",
  "is-macro",
@@ -4222,7 +4193,7 @@ dependencies = [
 [[package]]
 name = "rustpython-sre_engine"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "bitflags",
  "num_enum",
@@ -4233,7 +4204,7 @@ dependencies = [
 [[package]]
 name = "rustpython-vm"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "ahash",
  "ascii",
@@ -4255,8 +4226,6 @@ dependencies = [
  "itertools",
  "junction",
  "libc",
- "libffi",
- "libloading 0.9.0",
  "log",
  "malachite-bigint",
  "memchr",
@@ -4303,7 +4272,7 @@ dependencies = [
 [[package]]
 name = "rustpython-wtf8"
 version = "0.5.0"
-source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=613427c807c193566b46759445c991809ebbb682#613427c807c193566b46759445c991809ebbb682"
+source = "git+https://github.com/whalesync/rustpython-vm-patched?rev=97d9051caeee60488882e0c4edf16f5e1e7805f5#97d9051caeee60488882e0c4edf16f5e1e7805f5"
 dependencies = [
  "ascii",
  "bstr",
@@ -4385,6 +4354,7 @@ dependencies = [
  "clap",
  "dashmap",
  "dirs",
+ "dunce",
  "flate2",
  "futures",
  "gix",
@@ -4745,7 +4715,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5505,7 +5475,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -5598,15 +5568,6 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
-dependencies = [
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.59.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets 0.52.6",
 ]

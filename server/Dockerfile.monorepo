@@ -21,6 +21,9 @@ COPY ./packages/shared-types/src/ /app/packages/shared-types/src/
 # Copy server package files (needed for workspace resolution)
 COPY ./server/package.json /app/server/package.json
 COPY ./server/prisma/ /app/server/prisma/
+# scripts/ is needed at install time: server's postinstall runs
+# `node scripts/prisma-generate.cjs`, which fails with MODULE_NOT_FOUND otherwise.
+COPY ./server/scripts/ /app/server/scripts/
 
 # Install all workspace dependencies at root level to properly hoist dependencies
 # This ensures packages like @wix/auto_sdk_blog_draft-posts are available in root node_modules

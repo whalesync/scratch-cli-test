@@ -122,12 +122,11 @@ Bootstrap test desktop release:
 
 # -----------------------------------------------------------------------------
 # BUILD CLI — cross-compile scratchmd for darwin-arm64, linux-x64, windows-x64.
-# Also cross-compile the scratchmd-native cdylib (slice H.4 of DEV-10144) for
-# darwin-arm64 + linux-x64-gnu and drop the .node files into the same
-# cli-binaries/<triple>/ tree so the desktop's afterPack hook can copy the
-# platform-correct .node into the packaged Resources/bin/. Windows napi is
-# deferred — the desktop's local cell-edit actions throw at runtime on Windows
-# until that lands; same surface as it was before slice H.
+# Also cross-compile the scratchmd-native cdylib for darwin-arm64 + linux-x64-gnu
+# (via zig) and win32-x64 (via cargo-xwin — see the Windows block below), then
+# drop the .node files into the same cli-binaries/<triple>/ tree so the desktop's
+# afterPack hook can copy the platform-correct .node into the packaged
+# Resources/bin/.
 #
 # Single job per variant (all targets in one cargo run) to keep the cross-
 # compile cache happy — parallel jobs would race on `pull-push`. The job
@@ -169,6 +168,22 @@ Bootstrap test desktop release:
     - cargo zigbuild --release -p scratchmd-native --target x86_64-unknown-linux-gnu
     - cp target/aarch64-apple-darwin/release/libscratchmd_native.dylib cli-binaries/aarch64-apple-darwin/scratchmd-native.darwin-arm64.node
     - cp target/x86_64-unknown-linux-gnu/release/libscratchmd_native.so cli-binaries/x86_64-unknown-linux-gnu/scratchmd-native.linux-x64-gnu.node
+    # scratchmd-native for Windows MUST target MSVC, not gnu: napi-rs's gnu build
+    # path (napi-build::windows::setup_gnu) hard-requires a libnode.dll that
+    # Node/Electron don't ship, whereas the MSVC path resolves the Node-API
+    # symbols from the host process at load time and is the correct ABI for
+    # Electron (itself MSVC-built). zig can't target msvc, so we cross-compile
+    # with cargo-xwin (clang-cl + lld-link + the Windows CRT/SDK that xwin
+    # fetches; nasm is for ring's asm). The .node lands in the windows-GNU
+    # cli-binaries dir because afterPack.cjs keys that dir on the CLI's rust
+    # target — the loader only cares about the win32-x64 filename, not which
+    # compiler produced the addon. cargo-xwin and the msvc target persist in the
+    # cached CARGO_HOME between runs; only the first run pays the install cost.
+    - apt-get update -qq && apt-get install -y --no-install-recommends clang lld llvm nasm
+    - rustup target add x86_64-pc-windows-msvc
+    - cargo install --locked cargo-xwin
+    - XWIN_ACCEPT_LICENSE=1 cargo xwin build --release -p scratchmd-native --target x86_64-pc-windows-msvc
+    - cp target/x86_64-pc-windows-msvc/release/scratchmd_native.dll cli-binaries/x86_64-pc-windows-gnu/scratchmd-native.win32-x64.node
 
 Build CLI for prod desktop release:
   extends: .build_cli_for_desktop

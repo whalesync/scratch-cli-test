@@ -42,6 +42,10 @@ open = "5"
 anyhow = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 dirs = "5"
+# canonicalize() without the Windows `\\?\` verbatim prefix — Git-for-Windows
+# (system git in dev, bundled dugite git when packaged) cannot write into
+# verbatim paths, so plain std::fs::canonicalize breaks `git clone --bare`.
+dunce = "1"
 chrono = { version = "0.4", default-features = false, features = ["now", "serde"] }
 urlencoding = "2"
 rayon = "1.11.0"
@@ -52,10 +56,14 @@ jsonschema = { version = "0.46", default-features = false }
 sha2 = "0.10"
 
 [patch.crates-io]
-# Fix for x86_64-pc-windows-gnu (MinGW): get_tz_info was gated on cfg(target_env="msvc")
-# but is referenced unconditionally on cfg(windows) targets. Upstream bug in rustpython-vm 0.5.0.
+# Two patches on the `fix/windows-gnu-get-tz-info` branch:
+#  1. get_tz_info was gated on cfg(target_env="msvc") but referenced unconditionally
+#     on cfg(windows) targets (breaks x86_64-pc-windows-gnu / MinGW). Upstream bug in 0.5.0.
+#  2. libffi/libloading made optional (gated behind host_env, which we don't enable):
+#     they were unconditional deps, dragging libffi-sys into our compiler-only build. Its
+#     MASM Win64 trampoline can't be cross-compiled to msvc with cargo-xwin (no ml64.exe).
 # https://github.com/whalesync/rustpython-vm-patched/tree/fix/windows-gnu-get-tz-info
-rustpython-vm = { git = "https://github.com/whalesync/rustpython-vm-patched", rev = "613427c807c193566b46759445c991809ebbb682" }
+rustpython-vm = { git = "https://github.com/whalesync/rustpython-vm-patched", rev = "97d9051caeee60488882e0c4edf16f5e1e7805f5" }
 
 [dev-dependencies]
 tempfile = "3"
