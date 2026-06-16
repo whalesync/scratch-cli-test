@@ -8,7 +8,7 @@
 // persisted index, no `refreshFolder` step. Mirrors the fixture conventions in
 // accept-field.test.mjs. Run with `node --test __tests__/` from the napi crate
 // root after building the `.node` addon (CI runs
-// scratch-desktop/scripts/build-native.sh first).
+// scratch-desktop/scripts/build-native.cjs first).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +29,7 @@ function loadNative() {
   const filename = `scratchmd-native.${platform}-${arch}${abi}.node`;
   const path = join(__dirname, '..', filename);
   if (!existsSync(path)) {
-    throw new Error(`${filename} not found. Build it first via scratch-desktop/scripts/build-native.sh.`);
+    throw new Error(`${filename} not found. Build it first via scratch-desktop/scripts/build-native.cjs.`);
   }
   return require(path);
 }

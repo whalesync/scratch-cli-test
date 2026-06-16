@@ -22,7 +22,7 @@ const require = createRequire(import.meta.url);
 function loadNative() {
   // Match the desktop loader's dev-path resolution: the prebuilt .node lives
   // next to the napi crate's Cargo.toml. CI runs `napi build --release` (or
-  // `scratch-desktop/scripts/build-native.sh`) before the tests.
+  // `scratch-desktop/scripts/build-native.cjs`) before the tests.
   const platform = process.platform;
   const arch = process.arch;
   const abi = platform === 'linux' ? '-gnu' : '';

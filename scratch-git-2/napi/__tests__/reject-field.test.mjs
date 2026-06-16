@@ -5,7 +5,7 @@
 // case that locks the invariant in.
 //
 // Run from this directory with `node --test reject-field.test.mjs`. The
-// binary must already be built (see `scratch-desktop/scripts/build-native.sh`).
+// binary must already be built (see `scratch-desktop/scripts/build-native.cjs`).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +27,7 @@ function loadNative() {
   const path = join(__dirname, '..', filename);
   if (!existsSync(path)) {
     throw new Error(
-      `${filename} not found. Build it first with scratch-desktop/scripts/build-native.sh.`,
+      `${filename} not found. Build it first with scratch-desktop/scripts/build-native.cjs.`,
     );
   }
   return require(path);

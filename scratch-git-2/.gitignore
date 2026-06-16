@@ -5,6 +5,6 @@ repos/
 cli-binaries/
 
 # napi-rs cdylib artifacts (slice H.2 of DEV-10144). Built locally via
-# scratch-desktop/scripts/build-native.sh; the .node is renamed from the
+# scratch-desktop/scripts/build-native.cjs; the .node is renamed from the
 # dylib in target/release/. Don't commit binaries.
 napi/*.node

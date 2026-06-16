@@ -25,7 +25,7 @@ function loadNative() {
   const path = join(__dirname, '..', filename);
   if (!existsSync(path)) {
     throw new Error(
-      `${filename} not found. Build it first via scratch-desktop/scripts/build-native.sh.`,
+      `${filename} not found. Build it first via scratch-desktop/scripts/build-native.cjs.`,
     );
   }
   return require(path);
