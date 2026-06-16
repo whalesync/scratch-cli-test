@@ -4385,6 +4385,7 @@ dependencies = [
  "clap",
  "dashmap",
  "dirs",
+ "dunce",
  "flate2",
  "futures",
  "gix",

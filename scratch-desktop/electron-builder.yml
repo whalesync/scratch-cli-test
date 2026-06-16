@@ -14,6 +14,20 @@ files:
   - '!dist-release-*/**'
   - '!docs/**'
   - '!scripts/**'
+  # Build inputs / local noise that must never end up in app.asar. The git
+  # bundle is the dugite-native source tree afterPack.cjs copies into
+  # Resources/git (~50 MB) — the asar copy would be dead weight. Logs/txt are
+  # excluded both to slim the asar AND so a log written into this dir during
+  # packaging can't shift asar offsets and corrupt the archive.
+  - '!.git-bundle/**'
+  - '!.git-bundle-cache/**'
+  - '!*.log'
+  - '!*.txt'
+  - '!icon-1024.png'
+  - '!{BUILDS.md,CLAUDE.md,UI_SYSTEM.md}'
+  - '!.env'
+  - '!.env.*'
+  - '!*.gitlab-ci*.yml'
   # Renderer-only packages — Vite already inlines these into out/renderer, so the
   # node_modules copies inside app.asar are dead weight (~140 MB unpacked).
   # Verified by grepping src/main and src/preload: none import these at runtime.

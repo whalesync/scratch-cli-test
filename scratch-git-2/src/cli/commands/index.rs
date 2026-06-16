@@ -202,7 +202,9 @@ pub fn refresh_files_columns_only_command(
 }
 
 pub(crate) fn resolve_workspace(start: &std::path::Path) -> anyhow::Result<PathBuf> {
-    let abs = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    // dunce::canonicalize avoids the Windows `\\?\` verbatim prefix (Git-for-Windows
+    // can't use verbatim paths; see config::workspaces / workspaces::init_v2).
+    let abs = dunce::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     Ok(markers::find_nearest_workspace(&abs).unwrap_or(abs))
 }
 

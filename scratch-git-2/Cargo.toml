@@ -42,6 +42,10 @@ open = "5"
 anyhow = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 dirs = "5"
+# canonicalize() without the Windows `\\?\` verbatim prefix — Git-for-Windows
+# (system git in dev, bundled dugite git when packaged) cannot write into
+# verbatim paths, so plain std::fs::canonicalize breaks `git clone --bare`.
+dunce = "1"
 chrono = { version = "0.4", default-features = false, features = ["now", "serde"] }
 urlencoding = "2"
 rayon = "1.11.0"

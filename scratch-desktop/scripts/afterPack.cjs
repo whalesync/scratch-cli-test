@@ -11,10 +11,14 @@
  *   scratch-git-2/cli-binaries/<rust-target>/scratchmd
  *   scratch-git-2/cli-binaries/<rust-target>/scratchmd-native.<platform>-<arch>[-<abi>].node
  *
- * Windows napi is not built yet (slice H.4 scoped to mac+linux); on win32
- * the .node copy is skipped with a warning, matching pre-H behavior where
- * Windows users would hit "binary not found" at cell-edit time. Tracked as a
- * separate follow-up.
+ * Windows napi IS built and bundled now. The addon targets MSVC (napi-rs's
+ * gnu path needs a libnode.dll Electron doesn't ship; MSVC is the right ABI for
+ * Electron anyway) — built natively by build-win.cjs locally, and cross-built
+ * with cargo-xwin in CI (.gitlab-ci-release.yml). It still lives in the
+ * windows-GNU cli-binaries dir because this dir is keyed on the CLI's rust
+ * target; the loader only matches on the win32-x64 filename, not the compiler.
+ * If a future platform/arch lacks a napi build, nativeFilenameFor() returns
+ * null and the copy is skipped with a warning (cell-edit IPC then throws there).
  */
 
 const fs = require('fs');
@@ -35,6 +39,7 @@ const TARGET_MAP = {
 function nativeFilenameFor(platform, arch) {
   if (platform === 'darwin') return `scratchmd-native.darwin-${arch}.node`;
   if (platform === 'linux' && arch === 'x64') return `scratchmd-native.linux-x64-gnu.node`;
+  if (platform === 'win32' && arch === 'x64') return `scratchmd-native.win32-x64.node`;
   return null;
 }
 

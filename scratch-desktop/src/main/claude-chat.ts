@@ -294,6 +294,8 @@ class ClaudeChatService {
       cwd: workspacePath,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Don't flash a console window when spawning the agent CLI on Windows.
+      windowsHide: true,
     });
 
     this.activeTurnsByRequestId.set(requestId, { requestId, child, webContentsId: sender.id, workspacePath });

@@ -1,58 +1,28 @@
-import { Alert, Box, Center, Group, Loader, Stack } from '@mantine/core';
+import { Alert, Box, Center, Loader, Stack } from '@mantine/core';
 import { Workspace } from '@spinner/shared-types';
-import { Cloud, Download } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ButtonPrimaryLight } from '../components/base/buttons';
-import { Text12Medium, Text12Regular, Text13Regular, Text16Medium, TextTitle1 } from '../components/base/text';
-import { ConnectorIcon } from '../components/ConnectorIcon';
-import { StyledLucideIcon } from '../components/icons/StyledLucideIcon';
-import { getConnectorLogoUrl, useConnectorsMetadata } from '../hooks/use-connectors-metadata';
+import { Text12Medium, Text13Regular, TextTitle1 } from '../components/base/text';
+import { CloudWorkspaceCard, DownloadingWorkspaceCard } from '../components/WorkspaceCard';
 import { trackCancelPickParentFolder, trackFirstRunDownload } from '../lib/posthog';
 import { scratchApiClient } from '../lib/scratch-api-client';
 
-function WorkspaceServiceIcons({ workspace }: { workspace: Workspace }) {
-  const { data: connectorsMetadata } = useConnectorsMetadata();
-  const services: string[] = [];
-  const seen = new Set<string>();
-  for (const f of workspace.dataFolders ?? []) {
-    const s = f.connectorService;
-    if (s && !seen.has(s)) {
-      seen.add(s);
-      services.push(s);
-    }
-  }
-  if (services.length === 0) return null;
-  return (
-    <Group gap={6}>
-      {services.map((service) => (
-        <ConnectorIcon
-          key={service}
-          connector={service}
-          src={getConnectorLogoUrl(connectorsMetadata, service)}
-          size={18}
-        />
-      ))}
-    </Group>
-  );
-}
-
 export function WelcomePage() {
   const navigate = useNavigate();
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState(false);
+  const [downloadingWorkspaceId, setDownloadingWorkspaceId] = useState<Workspace['id'] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       try {
-        const workspaces = await scratchApiClient.workspaces.list(undefined, 'updatedAt', 'desc');
-        if (workspaces.length === 0) {
+        const remoteWorkspaces = await scratchApiClient.workspaces.list(undefined, 'updatedAt', 'desc');
+        if (remoteWorkspaces.length === 0) {
           void navigate('/', { replace: true });
           return;
         }
-        setWorkspace(workspaces[0]);
+        setWorkspaces(remoteWorkspaces);
       } catch {
         void navigate('/', { replace: true });
         return;
@@ -61,37 +31,38 @@ export function WelcomePage() {
     })();
   }, [navigate]);
 
-  const handleDownload = useCallback(async () => {
-    if (!workspace) return;
-    setError(null);
-    try {
-      const parentFolder = await window.scratchDesktop.pickParentFolder();
-      if (!parentFolder) {
-        void trackCancelPickParentFolder(workspace.id, 'download');
-        return;
+  const handleDownload = useCallback(
+    async (workspace: Workspace) => {
+      // Ignore extra clicks once a download is in flight.
+      if (downloadingWorkspaceId) return;
+      setError(null);
+      try {
+        const parentFolder = await window.scratchDesktop.pickParentFolder();
+        if (!parentFolder) {
+          void trackCancelPickParentFolder(workspace.id, 'download');
+          return;
+        }
+
+        setDownloadingWorkspaceId(workspace.id);
+        void trackFirstRunDownload(workspace.id);
+        await window.scratchDesktop.initWorkspace(workspace.id, parentFolder);
+        void window.scratchPreferences.setCurrentWorkspaceId(workspace.id);
+        void navigate(`/workspace/${workspace.id}`, { replace: true });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Download failed. Check the folder is writable and try again.');
+        setDownloadingWorkspaceId(null);
       }
+    },
+    [downloadingWorkspaceId, navigate],
+  );
 
-      setDownloading(true);
-      void trackFirstRunDownload(workspace.id);
-      await window.scratchDesktop.initWorkspace(workspace.id, parentFolder);
-      void window.scratchPreferences.setCurrentWorkspaceId(workspace.id);
-      void navigate(`/workspace/${workspace.id}`, { replace: true });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Download failed. Check the folder is writable and try again.');
-    } finally {
-      setDownloading(false);
-    }
-  }, [workspace, navigate]);
-
-  if (loading || !workspace) {
+  if (loading) {
     return (
       <Center h="100vh">
         <Loader size="sm" />
       </Center>
     );
   }
-
-  const workspaceName = workspace.name || 'Untitled Workspace';
 
   return (
     <Box
@@ -108,46 +79,26 @@ export function WelcomePage() {
           One quick step
         </Text12Medium>
 
-        <TextTitle1>Download your workspace</TextTitle1>
+        <TextTitle1>Download a workspace</TextTitle1>
 
         <Text13Regular c="dimmed">
-          Scratch keeps <span style={{ fontWeight: 600 }}>{workspaceName}</span> on your computer, powered by our
-          servers. Pick a folder to download it into — your agents will work with your data right there.
+          Scratch keeps your workspaces on your computer, powered by our servers. Pick one to download — your agents
+          will work with its data right there. You can download the others anytime from the home screen.
         </Text13Regular>
 
-        {/* Static workspace card — mirrors CloudWorkspaceCard visual style */}
-        <Box
-          style={{
-            borderRadius: 10,
-            padding: '14px 18px',
-            background: '#fff',
-            border: '1px solid var(--mantine-color-gray-2)',
-            boxShadow: '0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04)',
-          }}
-        >
-          <Group justify="space-between" align="center" wrap="nowrap" mb={8}>
-            <Text16Medium lineClamp={1} style={{ minWidth: 0 }}>
-              {workspaceName}
-            </Text16Medium>
-            <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
-              <StyledLucideIcon Icon={Cloud} size="sm" c="dimmed" />
-              <Text12Regular c="dimmed">In the cloud</Text12Regular>
-            </Group>
-          </Group>
-          <WorkspaceServiceIcons workspace={workspace} />
-        </Box>
-
-        <ButtonPrimaryLight
-          fullWidth
-          size="md"
-          leftSection={
-            downloading ? <Loader size="xs" color="white" /> : <StyledLucideIcon Icon={Download} size="sm" />
-          }
-          onClick={() => void handleDownload()}
-          disabled={downloading}
-        >
-          {downloading ? 'Downloading\u2026' : 'Choose folder & download'}
-        </ButtonPrimaryLight>
+        <Stack gap={0}>
+          {workspaces.map((workspace) =>
+            downloadingWorkspaceId === workspace.id ? (
+              <DownloadingWorkspaceCard key={workspace.id} workspace={workspace} />
+            ) : (
+              <CloudWorkspaceCard
+                key={workspace.id}
+                workspace={workspace}
+                onDownload={() => void handleDownload(workspace)}
+              />
+            ),
+          )}
+        </Stack>
 
         {error && (
           <Alert color="red" variant="light" radius="md">

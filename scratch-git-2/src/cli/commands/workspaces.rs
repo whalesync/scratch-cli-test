@@ -429,8 +429,11 @@ async fn init(
 fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> anyhow::Result<i64> {
     let _t = PhaseTimer::new("init_v2 (total)");
     std::fs::create_dir_all(target_dir)?;
-    // Canonicalize so all derived layout paths are absolute.
-    let target_dir = target_dir.canonicalize()?;
+    // Canonicalize so all derived layout paths are absolute. dunce avoids the
+    // Windows `\\?\` verbatim prefix that std::fs::canonicalize emits — those
+    // paths flow into `git clone --bare` below, and Git-for-Windows can't write
+    // into a verbatim path (fails creating HEAD).
+    let target_dir = dunce::canonicalize(target_dir)?;
     let target_dir = target_dir.as_path();
     let layout = WorkspaceLayout::for_cli(target_dir);
     let connections: Vec<markers::ConnectionEntry> = wb
