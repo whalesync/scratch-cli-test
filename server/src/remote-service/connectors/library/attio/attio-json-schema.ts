@@ -7,6 +7,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_VIRTUAL_FIELDS,
+  X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
@@ -272,14 +273,14 @@ export async function buildAttioListTableSpec(
         },
         { [X_SCRATCH_READONLY]: true, description: 'Attio list-entry id triple' },
       ),
-      // `createListEntry` requires these on the file, so they must be
-      // writable for a new entry to be created from the grid. They are
-      // semantically **write-once** (settable on create, not meaningfully
-      // editable after) but the publish pipeline has no create-only/write-once
-      // flag today, so they are left fully writable. TODO (STATE.md + DEV
-      // ticket): lock to write-once once the pipeline supports it.
-      parent_record_id: Type.String(),
-      parent_object: Type.String(),
+      // `createListEntry` requires these on the file, so they are editable
+      // while the entry is new — but a list entry can't be re-parented, so they
+      // are **write-once**: once the entry exists remotely the desktop renders
+      // them read-only (combining `x-scratch-write-once` with the row's
+      // new-vs-existing state) and the scratch-git validator warns if they are
+      // changed on an existing entry. See X_SCRATCH_WRITE_ONCE (DEV-10408).
+      parent_record_id: Type.String({ [X_SCRATCH_WRITE_ONCE]: true }),
+      parent_object: Type.String({ [X_SCRATCH_WRITE_ONCE]: true }),
       created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
       entry_values: entryValuesSchema,
     },
@@ -348,17 +349,20 @@ export function buildAttioMembersTableSpec(id: EntityId): BaseJsonTableSpec {
  *
  * Read-only: `id`, `completed_at`, `created_by_actor`, `created_at` (all
  * system-set). `content_plaintext` is settable on create but **immutable on
- * update** (Attio rejects content changes); it's left writable here — the
- * pipeline has no write-once flag yet (DEV-10408), so editing it on an
- * existing task is a no-op. `linked_records` / `assignees` are arrays (leaves
- * in the grid; editable as whole-array replacements through the raw file).
+ * update** (Attio rejects content changes), so it is marked **write-once**
+ * (`x-scratch-write-once`): editable while the task is new, read-only once it
+ * exists remotely (DEV-10408). `linked_records` / `assignees` are arrays
+ * (leaves in the grid; editable as whole-array replacements through the raw file).
  */
 export function buildAttioTasksTableSpec(id: EntityId): BaseJsonTableSpec {
   const ro = { [X_SCRATCH_READONLY]: true } as const;
   const schema = Type.Object(
     {
       id: Type.Object({ workspace_id: Type.String(), task_id: Type.String() }, { ...ro, description: 'Attio task id' }),
-      content_plaintext: Type.String({ description: 'Task content (write-once: settable on create, immutable after)' }),
+      content_plaintext: Type.String({
+        description: 'Task content (write-once: settable on create, immutable after)',
+        [X_SCRATCH_WRITE_ONCE]: true,
+      }),
       is_completed: Type.Boolean(),
       completed_at: Type.Union([Type.String({ format: 'date-time' }), Type.Null()], ro),
       deadline_at: Type.Union([Type.String({ format: 'date-time' }), Type.Null()]),

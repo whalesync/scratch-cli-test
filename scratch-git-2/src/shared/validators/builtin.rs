@@ -115,15 +115,20 @@ fn invalid_length_params() -> Option<ValidationResult> {
     })
 }
 
-/// Enforces `required` and `x-scratch-readonly` constraints from `schema.json`.
+/// Enforces `required`, `x-scratch-readonly`, and `x-scratch-write-once`
+/// constraints from `schema.json`.
 ///
 /// Required check: a field is violated when it is absent from the record, null,
 /// or an empty string. Empty string is treated as "not provided" because the DB
 /// stores empty text for blank inputs and the connector would never publish "".
 ///
-/// Readonly check: only when `ctx.master_record` is `Some`. A field whose master
-/// value differs from the working-copy value emits a Warning (the push code drops
-/// readonly fields automatically; this is advisory).
+/// Readonly check: a read-only field changed against master (existing record) OR
+/// set at all on a new record emits a Warning — it is never user-writable.
+///
+/// Write-once check: a write-once field is editable while the record is NEW (no
+/// master), so setting it then is clean; once the record EXISTS (master present)
+/// a changed value emits a Warning. This is the create-only counterpart to
+/// read-only. Both are advisory — the push code drops the rejected values.
 ///
 /// Returns one `RecordValidationResult` per violated field. Clean records return an
 /// empty Vec — no rows are written to the DB.
@@ -283,6 +288,41 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
         }
     }
 
+    // ── Write-once check ──────────────────────────────────────────────────────
+    // A write-once field (`x-scratch-write-once`) may be set while the record is
+    // NEW (no master) — that's the only time it can be written — but must not
+    // change once the record exists remotely. So, unlike read-only, setting it on
+    // a new record is expected and clean; we only warn when an EXISTING record's
+    // value differs from master. See X_SCRATCH_WRITE_ONCE in @spinner/shared-types.
+    if let Some(properties) = schema_obj.get("properties").and_then(|v| v.as_object()) {
+        for (field_name, props) in properties {
+            if props.get("x-scratch-write-once").and_then(|v| v.as_bool()) != Some(true) {
+                continue;
+            }
+            // On a new record (no master) write-once fields are editable — skip.
+            let master = match &ctx.master_record {
+                Some(master) => master,
+                None => continue,
+            };
+            let working = ctx.record.get(field_name.as_str());
+            let master_val = master.get(field_name.as_str());
+            if working != master_val {
+                results.push(RecordValidationResult {
+                    field_path: field_name.clone(),
+                    level: ValidationLevel::Warning,
+                    message: Some("Updated write-once field".to_string()),
+                    description: Some(format!(
+                        "Field {} is write-once (set on create only). The change from {} to {} will be ignored during publishing.",
+                        field_name,
+                        format_validation_value(master_val),
+                        format_validation_value(working)
+                    )),
+                    fixable: false,
+                });
+            }
+        }
+    }
+
     // Deduplicate by field_path: hand-rolled checks run last and take precedence
     // over JSONSchema errors for the same field (better messages, null/empty-string
     // awareness). Reverse so retain keeps the last occurrence of each field_path.
@@ -319,6 +359,14 @@ mod tests {
         let mut props = serde_json::Map::new();
         for f in fields {
             props.insert(f.to_string(), json!({ "x-scratch-readonly": true }));
+        }
+        json!({ "schema": { "required": [], "properties": props } })
+    }
+
+    fn schema_with_write_once(fields: &[&str]) -> serde_json::Value {
+        let mut props = serde_json::Map::new();
+        for f in fields {
+            props.insert(f.to_string(), json!({ "x-scratch-write-once": true }));
         }
         json!({ "schema": { "required": [], "properties": props } })
     }
@@ -536,6 +584,49 @@ mod tests {
         // This test documents current behaviour.)
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].field_path, "id");
+    }
+
+    // ── write-once tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn write_once_changed_on_existing_is_warning() {
+        // Existing record (master present): changing a write-once field warns.
+        let schema = schema_with_write_once(&["parent_object"]);
+        let ctx = record_ctx(
+            json!({"parent_object": "people"}),
+            Some(json!({"parent_object": "companies"})),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "parent_object");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("Updated write-once field")
+        );
+    }
+
+    #[test]
+    fn write_once_unchanged_on_existing_is_clean() {
+        let schema = schema_with_write_once(&["parent_object"]);
+        let ctx = record_ctx(
+            json!({"parent_object": "companies"}),
+            Some(json!({"parent_object": "companies"})),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn write_once_set_on_new_record_is_clean() {
+        // The key divergence from read-only: setting a write-once field on a NEW
+        // record (no master) is exactly how it's meant to be used — no warning.
+        let schema = schema_with_write_once(&["parent_object"]);
+        let ctx = record_ctx(json!({"parent_object": "companies"}), None, schema);
+        let results = enforce_schema(&ctx);
+        assert!(results.is_empty());
     }
 
     #[test]

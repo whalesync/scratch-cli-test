@@ -10,6 +10,20 @@ export const X_SCRATCH_PREFIX = 'x-scratch-';
 // A field is readonly if the value of this key is true.
 export const X_SCRATCH_READONLY = 'x-scratch-readonly';
 
+// A field is "write-once" if the value of this key is true: it may be set while
+// the record is brand-new (created locally, not yet published to the external
+// service) but becomes read-only once the record exists remotely. Use this for
+// fields the service accepts on create but rejects (or ignores) on update —
+// e.g. Attio task `content` (PATCH rejects it) and a list entry's
+// `parent_record_id`/`parent_object` (a list entry can't be re-parented).
+//
+// Contrast with X_SCRATCH_READONLY, which is *always* read-only. Editability is
+// computed as `readonly || (writeOnce && !recordIsNew)`. The "is new" signal
+// comes from the local diff status (no published master = new). Agents reading
+// schema.json may populate a write-once field when CREATING a record but must
+// NOT change it on an existing record.
+export const X_SCRATCH_WRITE_ONCE = 'x-scratch-write-once';
+
 // The native, connector-specific data type of the field.
 export const X_SCRATCH_CONNECTOR_DATA_TYPE = 'x-scratch-connector-data-type';
 

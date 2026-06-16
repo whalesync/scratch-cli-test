@@ -2,6 +2,10 @@ export type ColumnDataType = 'string' | 'number' | 'integer' | 'boolean' | 'arra
 
 export interface ColumnAttributes {
   readOnly: boolean;
+  // Write-once: editable only while the record is new (not yet published), then
+  // read-only. Combine with the record's new-vs-existing state at the edit site:
+  // `readOnly || (writeOnce && !recordIsNew)`. See X_SCRATCH_WRITE_ONCE.
+  writeOnce: boolean;
   required: boolean;
   connectorDataType?: string;
   remoteFieldId?: string | string[];

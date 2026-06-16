@@ -22,10 +22,10 @@
 **Resolution:** Read-only is now derived from **`is_writable === false`** (+ `is_archived`) via `isAttributeReadonly` in `valueArraySchemaForAttribute`; the default view already derives column `readonly` from the schema flag. **Correction to the original TODO:** do **NOT** key off `is_system_attribute` — verified live (2026-06-12) that Attio sets it `true` for *writable* standard fields (`name`/`description`/`domains`), so using it would wrongly lock them. `is_writable` is the precise signal (false only for computed/system-managed: `record_id`, `created_at`, `*_interaction`, `logo_url`, follower counts), and it's present on both object and list attributes.
 **Acceptance:** unit tests cover writable-system / non-writable / absent-flag / list-scoped. Remaining: confirm in desktop that a non-writable attribute renders read-only.
 
-## P3 — List-entry parent fields: writable now, write-once later
-**Status:** ✅ APPROVED — code + unit tests landed 2026-06-12.
-**Decision:** The pipeline has **no write-once/create-only support** (only `x-scratch-readonly`; the `writeOnce` flag in `wordpress-types.ts` is unused, read by nothing). So `parent_record_id` + `parent_object` are now **writable** (schema + default view) and **visible** in the grid, so a list entry can be created from the UI. They are semantically write-once; leaving them editable-after-create is the accepted interim cost.
-**Follow-up:** **DEV-10408** (assigned to Ivan) — add write-once support to the pipeline, then lock these fields. STATE.md TODO added.
+## P3 — List-entry parent fields: write-once
+**Status:** ✅ APPROVED — code + unit tests landed 2026-06-12; **upgraded to true write-once 2026-06-15 (DEV-10408).**
+**Decision (updated):** `parent_record_id` + `parent_object` are now marked **`x-scratch-write-once`** — editable when creating a list entry from the grid, read-only once the entry exists remotely (a list entry can't be re-parented). This replaced the 2026-06-12 interim of "fully writable" once the write-once mechanism shipped.
+**Follow-up:** **DEV-10408 resolved** — `x-scratch-write-once` added across shared-types/desktop/validator (see ARCHIVE/LOG). Copper set-on-create FKs can adopt the same flag.
 **Acceptance:** unit tests assert parent fields writable + visible while id/created_at stay read-only. Remaining: confirm grid create end-to-end in desktop.
 
 ## P4 — Expose Workspace members as a read-only reference table

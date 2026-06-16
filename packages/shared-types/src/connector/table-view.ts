@@ -52,6 +52,12 @@ export type TableViewCol = {
   type?: TablePropertyType;
   readonly?: boolean;
 
+  // Write-once: editable while the record is brand-new (not yet published) but
+  // read-only once it exists remotely. The renderer combines this with the row's
+  // new-vs-existing state: `readonly || (writeOnce && !recordIsNew)`. See
+  // X_SCRATCH_WRITE_ONCE in json-schema.ts.
+  writeOnce?: boolean;
+
   // Optional declarative instruction for deriving this column's DISPLAY string
   // from its raw value (e.g. flatten a Notion rich-text array to plain_text).
   // The renderer runs it through the generic, fail-closed applier in
@@ -85,6 +91,9 @@ export type TableViewSubfield = {
   // Hint to the renderer on how to format.
   type?: TablePropertyType;
   readonly?: boolean;
+
+  // Write-once: editable only while the record is new. See TableViewCol.writeOnce.
+  writeOnce?: boolean;
 };
 
 export type TablePropertyType =

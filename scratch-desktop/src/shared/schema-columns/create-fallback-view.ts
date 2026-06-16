@@ -45,6 +45,7 @@ function colDefToViewCol(colDef: ColumnDefinition): TableViewCol {
     path: colDef.id,
     type: mapDataTypeToPropertyType(colDef.dataType, colDef.format),
     readonly: colDef.attributes.readOnly || undefined,
+    writeOnce: colDef.attributes.writeOnce || undefined,
     hidden: false,
   };
 }

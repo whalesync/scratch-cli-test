@@ -592,6 +592,29 @@ function isColumnReadonly(viewCol: TableViewCol | undefined): boolean {
   return false;
 }
 
+/** Returns true if the column (or the active subfield) is write-once (editable only on new records). */
+function isColumnWriteOnce(viewCol: TableViewCol | undefined): boolean {
+  if (viewCol?.writeOnce) return true;
+  if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
+    return viewCol.subfields[viewCol.selectedSubfield].writeOnce === true;
+  }
+  return false;
+}
+
+/** A row is "new" when it has no published master (created locally, not yet published). */
+function isNewRecordRow(row: DiffRow | undefined): boolean {
+  return row?.__rowStatus === 'added' || row?.__rowStatus === 'addedUnpublished';
+}
+
+/**
+ * Effective cell editability. A readonly column is never editable; a write-once
+ * column is editable only while the record is new (no published master) and
+ * locks once it exists remotely. See X_SCRATCH_WRITE_ONCE.
+ */
+function isCellReadonly(viewCol: TableViewCol | undefined, row: DiffRow | undefined): boolean {
+  return isColumnReadonly(viewCol) || (isColumnWriteOnce(viewCol) && !isNewRecordRow(row));
+}
+
 /** Returns the effective TablePropertyType, preferring the active subfield's type when one is selected. */
 function resolveEffectiveType(viewCol: TableViewCol | undefined): TablePropertyType | undefined {
   if (viewCol?.selectedSubfield != null && viewCol.subfields?.[viewCol.selectedSubfield]) {
@@ -2142,7 +2165,9 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const rowBg = getRowTint(status);
       const rowTextColor = getRowTextColor(status);
       const viewCol = viewColMap.get(colId);
-      const isReadOnly = isColumnReadonly(viewCol);
+      // Effective read-only for THIS cell: a write-once column is editable while
+      // the record is new (no published master) and locks once it exists remotely.
+      const isReadOnly = isCellReadonly(viewCol, r);
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
       const effectivePath = resolveEffectivePath(colId, viewCol);
       const val = getByPath(r.__raw, effectivePath);
@@ -2656,7 +2681,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return;
       }
 
-      const fieldPath = resolveEffectivePath(colId, viewColMap.get(colId));
+      const viewCol = viewColMap.get(colId);
+      // Defense-in-depth: reject edits to readonly columns and to write-once
+      // columns on an existing record (allowOverlay already blocks the editor,
+      // but a paste/fill could still target the cell). New records stay editable.
+      if (isCellReadonly(viewCol, r)) {
+        return;
+      }
+
+      const fieldPath = resolveEffectivePath(colId, viewCol);
       acceptGridCellChange(r.__filename, fieldPath, editableCellToString(newValue), 'grid overlay save');
     },
     [acceptGridCellChange, columns, pagedRows, viewColMap],

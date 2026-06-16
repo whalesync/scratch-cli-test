@@ -581,6 +581,19 @@ const fieldSchema = Type.String();
 fieldSchema[READONLY_FLAG] = true;
 ```
 
+### `x-scratch-write-once`
+
+Mark fields the service accepts **on create but rejects (or ignores) on update** — i.e. set-on-create-only fields (e.g. Attio task `content`, a list entry's `parent_record_id`/`parent_object`, Copper set-on-create FKs). This is the create-only counterpart to `x-scratch-readonly`: the field is **writable while the record is new (not yet published) and read-only once it exists remotely**.
+
+```typescript
+import { X_SCRATCH_WRITE_ONCE } from '@spinner/shared-types';
+
+const fieldSchema = Type.String();
+fieldSchema[X_SCRATCH_WRITE_ONCE] = true;
+```
+
+Effects across the stack (all derived from this one flag): the desktop grid/detail view compute editability as `readonly || (writeOnce && !recordIsNew)` (new-vs-existing from the row's diff status); the default-view builder copies the flag onto the `TableViewCol`; and the scratch-git `enforce_schema` validator warns when a write-once field changes on an **existing** record (silent on new records). Do **not** also mark a write-once field `x-scratch-readonly` — that would block setting it on create.
+
 ### `x-scratch-connector-data-type`
 
 Preserve the native API field type for display and transformation purposes.
@@ -1152,7 +1165,7 @@ A default view is a `TableView` object set on `tableSpec.defaultView` in your `f
 
 **7. Use banner groups sparingly.** Groups add visual structure but also complexity. Use them when a service has a clear logical grouping that users expect (e.g. address fields, SEO metadata). Don't group for the sake of grouping — a flat column list is often clearer.
 
-**8. Mark readonly fields.** Read the `x-scratch-readonly` annotation from the schema and propagate it to the column. This prevents users from trying to edit computed fields.
+**8. Mark readonly (and write-once) fields.** Read the `x-scratch-readonly` annotation from the schema and propagate it to the column — this prevents users from trying to edit computed fields. Do the same for `x-scratch-write-once` (copy it onto the `TableViewCol`): the frontend renders a write-once column as editable on a brand-new record and read-only once the record exists. Drive both from the schema annotation rather than a hardcoded field list, so there is one source of truth.
 
 **9. Format display names.** Convert field IDs to human-readable names: `featured_media` → `Featured Media`, `fieldData.slug` → `Slug`.
 

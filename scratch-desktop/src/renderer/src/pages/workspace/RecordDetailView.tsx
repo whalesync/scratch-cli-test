@@ -28,7 +28,7 @@ import { RecordFieldsGrid, type FieldValueViewMode, type RecordFieldRow } from '
 interface DiffRecordColumn {
   id: string;
   displayName: string;
-  attributes: { readOnly: boolean; required: boolean; nested: boolean };
+  attributes: { readOnly: boolean; writeOnce?: boolean; required: boolean; nested: boolean };
 }
 
 interface DiffRecordData {
@@ -715,8 +715,19 @@ export const RecordDetailView = memo(function RecordDetailView({
     const changedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__changedFields);
     const unpublishedFields = isRowLevel ? new Set<string>() : new Set(recordData.row.__unpublishedFields);
     const recordColumnIdSet = new Set(recordData.columns.map((c) => c.id));
-    const readOnlyFields =
-      readonlyFieldsProp ?? new Set(recordData.columns.filter((c) => c.attributes.readOnly).map((c) => c.id));
+    // A write-once field is editable only while the record is new (no published
+    // master); once it exists remotely it joins the read-only set. See X_SCRATCH_WRITE_ONCE.
+    // The `readonlyFieldsProp` (from the grid) carries the server view's read-only
+    // columns but is row-independent, so it cannot express write-once-on-existing. We
+    // therefore always layer the row-aware read-only/write-once computation on top of
+    // it rather than letting the prop short-circuit it.
+    const isNewRecord = recordData.row.__rowStatus === 'added' || recordData.row.__rowStatus === 'addedUnpublished';
+    const readOnlyFields = new Set<string>(readonlyFieldsProp ?? []);
+    for (const column of recordData.columns) {
+      if (column.attributes.readOnly || (column.attributes.writeOnce && !isNewRecord)) {
+        readOnlyFields.add(column.id);
+      }
+    }
     // Show all columns from columnOrder — don't filter against recordData.columns.
     // Fields with subfields (e.g. title: {raw, rendered}) may not appear in the CLI's
     // flat column list but are still readable via getByPath on the display data.

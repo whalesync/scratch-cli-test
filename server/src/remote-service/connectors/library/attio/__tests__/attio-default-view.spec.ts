@@ -1,5 +1,10 @@
 import { Type } from '@sinclair/typebox';
-import { TableViewCol, X_SCRATCH_CONNECTOR_DATA_TYPE, X_SCRATCH_READONLY } from '@spinner/shared-types';
+import {
+  TableViewCol,
+  X_SCRATCH_CONNECTOR_DATA_TYPE,
+  X_SCRATCH_READONLY,
+  X_SCRATCH_WRITE_ONCE,
+} from '@spinner/shared-types';
 import {
   AttioObjectViewConfig,
   buildAttioDefaultView,
@@ -56,10 +61,10 @@ function makeListSchema() {
       },
       { [X_SCRATCH_READONLY]: true },
     ),
-    // Writable (settable on create) — mirrors the real list schema; write-once
-    // not yet supported by the pipeline. See attio-json-schema.ts.
-    parent_record_id: Type.String(),
-    parent_object: Type.String(),
+    // Write-once (settable on create, not re-parentable) — mirrors the real
+    // list schema. See attio-json-schema.ts.
+    parent_record_id: Type.String({ [X_SCRATCH_WRITE_ONCE]: true }),
+    parent_object: Type.String({ [X_SCRATCH_WRITE_ONCE]: true }),
     created_at: Type.String({ format: 'date-time', [X_SCRATCH_READONLY]: true }),
     entry_values: Type.Object({
       stage: attr('status'),
@@ -281,9 +286,12 @@ describe('buildAttioDefaultView (list)', () => {
     expect(parentObjectCol.hidden).toBeUndefined();
   });
 
-  it('should leave parent_record_id and parent_object writable (write-once not yet supported)', () => {
+  it('should mark parent_record_id and parent_object write-once (not read-only) on the view column', () => {
     const parentRecordCol = view.cols.find((c) => c.kind === 'col' && c.path === 'parent_record_id') as TableViewCol;
     const parentObjectCol = view.cols.find((c) => c.kind === 'col' && c.path === 'parent_object') as TableViewCol;
+    expect(parentRecordCol.writeOnce).toBe(true);
+    expect(parentObjectCol.writeOnce).toBe(true);
+    // Write-once must NOT be read-only, or the grid would block creating a new entry.
     expect(parentRecordCol.readonly).toBeUndefined();
     expect(parentObjectCol.readonly).toBeUndefined();
   });

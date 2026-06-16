@@ -299,6 +299,9 @@ and will be overwritten on the next pull.
 
 The schema is written using JSON Schema notation, with some important extensions:
 - x-scratch-readonly: indicates the field's data MUST NOT be modified.
+- x-scratch-write-once: the field may be set ONLY when creating a new record; once the
+  record exists remotely it is effectively read-only. You may populate it on a brand-new
+  record, but MUST NOT change it on an existing record (the change is ignored on publish).
 - x-scratch-connector-data-type: the service-specific type for the field, use only for context
 - x-scratch-agent-instructions: a plain-text hint written for you (the agent). When present,
   read it carefully — it explains a non-obvious structural detail, a soft relationship between
@@ -502,6 +505,9 @@ To create a new record, add a new `.json` file in the appropriate table folder.
   schema (e.g. `id`, `createdAt`, `updatedAt`, `archived`) are managed by the
   remote service and will be ignored on publish. Leaving them out keeps your
   files clean.
+- **Write-once fields CAN be set here.** Fields marked `"x-scratch-write-once": true`
+  are settable only at creation time (e.g. a list entry's parent). Set them now if
+  needed — you will not be able to change them once the record exists.
 
 ## Updating records
 
@@ -514,6 +520,10 @@ Edit the JSON file in place. Only change the fields you intend to update.
   (`"contentMediaType": "text/html"`), preserve valid HTML structure.
 - **Do not modify read-only fields.** Changes to read-only fields will be
   silently ignored on publish.
+- **Do not modify write-once fields on an existing record.** Fields marked
+  `"x-scratch-write-once": true` are settable only at creation; on an existing
+  record they behave as read-only and changes are ignored on publish (the
+  validator emits a warning).
 
 ## Deleting records
 
@@ -652,6 +662,12 @@ two checks:
    - For existing records: warns if the working-copy value differs from the
      master-branch value, and shows both values in the description.
 
+3. **Write-once fields** — fields marked `"x-scratch-write-once": true` in
+   `schema.properties` may be set when creating a record but not changed afterward.
+   - For new records (no master): never warns — setting the value is expected.
+   - For existing records: warns if the working-copy value differs from the
+     master-branch value (the change will be ignored on publish).
+
 ```json
 { "validator": "enforce_schema" }
 ```
@@ -665,6 +681,7 @@ No `params`. Good default to add to every table.
 | Required field absent, null, or empty | `error` | `field 'slug' is required but missing or null` |
 | Read-only field changed on existing record | `warning` | `Updated read-only field` (description includes old → new values) |
 | Read-only field set on new record | `warning` | `Updated read-only field` (description: value will be ignored) |
+| Write-once field changed on existing record | `warning` | `Updated write-once field` (description includes old → new values) |
 
 ---
 

@@ -102,3 +102,13 @@ Backfilled the planning docs and executed the approved plan items P2 & P3:
 [00:35:00] [Manual Edits] Implemented P1 FK declaration: `foreignKeyOptionsForAttribute` → `x-scratch-foreign-key` on single-target record-reference (object-id→slug via `listObjects`) + actor-reference (→ workspace_members). +4 unit tests. Validated live in pulled schema: people/deals references all resolved to target tables. **FK ✅**
 [00:45:00] [Service API] Field-type matrix: set 11 custom-field types on atlas (text/number/checkbox/date/rating/select/multiselect/currency/status/location/phone) in one edit→push → all confirmed in API. select/status terse-write→object-read ✓; date no tz shift; multiselect 2 options. **Pass 2 / Milestone 7 ✅**
 [00:50:00] [Manual Edits] Reverted all test edits (atlas, tasks, person) — `files unpublished` empty. Updated PLAN (P1/P6 ✅), STATE (field-type matrix, FK table, milestones 4-7, entities table), LOG.
+
+## 2026-06-15 — write-once feature (DEV-10408), separate branch `dev-10408-write-once-fields`
+
+Implemented the generic **write-once** field mechanism (the DEV-10408 follow-up from P3/P6), with Attio as the proving ground. Connector code, no live ops here — desktop/live validation pending.
+
+[--:--:--] [Manual Edits] shared-types: added `X_SCRATCH_WRITE_ONCE = 'x-scratch-write-once'` (json-schema.ts) + `writeOnce?: boolean` on `TableViewCol`/`TableViewSubfield` (table-view.ts).
+[--:--:--] [Manual Edits] Attio: marked list-entry `parent_record_id`/`parent_object` and task `content_plaintext` `x-scratch-write-once` (dropped their interim plain-writable state); `attio-default-view.ts` `buildFixedCol`/`buildValueCol` now derive `writeOnce` from the schema, mirroring `readonly`. Updated specs (write-once asserted, not readonly).
+[--:--:--] [Manual Edits] Desktop: `ColumnAttributes.writeOnce` + parse in `build-column-definitions.ts`; `FolderDataGrid` `isColumnWriteOnce`/`isNewRecordRow`/`isCellReadonly` (effective editability = `readOnly || (writeOnce && !isNew)`, new = `__rowStatus` added/addedUnpublished) in `getCellContent` + `onCellEdited`; `RecordDetailView` adds write-once cols to `readOnlyFields` only when the record is not new. Vitest + eslint clean.
+[--:--:--] [Manual Edits] scratch-git: `enforce_schema` (builtin.rs) warns when a write-once field changes on an EXISTING record (master present), silent on NEW (master None) — the create-only counterpart to readonly. +3 cargo tests (all pass).
+[--:--:--] [Manual Edits] Docs: CONNECTOR_GUIDE.md (`x-scratch-write-once` section + default-view guideline), connector-build.md (create-only-fields gotcha), generate_docs.rs (agent-facing create/update guidance + validator table), attio STATE/PLAN updated (DEV-10408 resolved).

@@ -4,6 +4,7 @@ import {
   X_SCRATCH_PREFIX,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
+  X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
 import type { ColumnAttributes, ColumnDataType, ColumnDefinition } from './types';
 
@@ -178,6 +179,7 @@ function walkProperties(schema: Record<string, unknown>, prefix: string): Column
 
     const attributes: ColumnAttributes = {
       readOnly: rawProp[X_SCRATCH_READONLY] === true,
+      writeOnce: rawProp[X_SCRATCH_WRITE_ONCE] === true,
       required: requiredSet.has(key),
       connectorDataType: getString(rawProp[X_SCRATCH_CONNECTOR_DATA_TYPE]),
       remoteFieldId: parseRemoteFieldId(rawProp[X_SCRATCH_REMOTE_FIELD_ID]),

@@ -5,6 +5,7 @@ import {
   TableViewCol,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_READONLY,
+  X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
 
 // ── Top-level fixed fields ──
@@ -16,8 +17,9 @@ import {
 const HIDDEN_FIXED_FIELDS = new Set(['web_url']);
 
 // Fixed fields that are always readonly (system-generated, not editable via the API).
-// `parent_record_id` / `parent_object` are writable (settable on create) until
-// the pipeline supports write-once — see attio-json-schema.ts.
+// `parent_record_id` / `parent_object` are NOT here: they are **write-once**
+// (`x-scratch-write-once` in the schema) — editable on a new entry, read-only
+// once it exists. `buildFixedCol` derives that flag from the schema.
 const READONLY_FIXED_FIELDS = new Set(['id', 'created_at', 'web_url']);
 
 // ── Attio attribute type mapping ──
@@ -249,6 +251,7 @@ function isAlwaysReadonlyValueField(attrSlug: string): boolean {
 function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): TableViewCol {
   const hidden = HIDDEN_FIXED_FIELDS.has(fieldId) || undefined;
   const isReadonly = READONLY_FIXED_FIELDS.has(fieldId) || fieldSchema?.[X_SCRATCH_READONLY] === true;
+  const isWriteOnce = fieldSchema?.[X_SCRATCH_WRITE_ONCE] === true;
 
   return {
     kind: 'col',
@@ -256,6 +259,7 @@ function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): Table
     name: formatFieldName(fieldId),
     type: mapFixedFieldType(fieldSchema),
     readonly: isReadonly || undefined,
+    writeOnce: isWriteOnce || undefined,
     hidden,
   };
 }
@@ -264,6 +268,7 @@ function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): Table
 function buildValueCol(attrSlug: string, attrSchema: TSchema | undefined, valuesKey: string): TableViewCol {
   const connectorDataType = attrSchema?.[X_SCRATCH_CONNECTOR_DATA_TYPE] as string | undefined;
   const isReadonly = attrSchema?.[X_SCRATCH_READONLY] === true || isAlwaysReadonlyValueField(attrSlug);
+  const isWriteOnce = attrSchema?.[X_SCRATCH_WRITE_ONCE] === true;
   const hidden = isHiddenValueField(attrSlug) || undefined;
 
   return {
@@ -272,6 +277,7 @@ function buildValueCol(attrSlug: string, attrSchema: TSchema | undefined, values
     name: formatFieldName(attrSlug),
     type: mapValueType(connectorDataType),
     readonly: isReadonly || undefined,
+    writeOnce: isWriteOnce || undefined,
     hidden,
   };
 }

@@ -1317,7 +1317,7 @@ export async function readDiffGridDataPage(
       id,
       displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
       dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+      attributes: { readOnly: false, writeOnce: false, required: false, nested: id.includes('.') },
     }));
     columns = [...schemaColumns, ...extraCols];
   } else {
@@ -1326,7 +1326,7 @@ export async function readDiffGridDataPage(
       id,
       displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
       dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+      attributes: { readOnly: false, writeOnce: false, required: false, nested: id.includes('.') },
     }));
   }
 
@@ -1547,7 +1547,7 @@ export async function readDiffRecordData(
       id,
       displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
       dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+      attributes: { readOnly: false, writeOnce: false, required: false, nested: id.includes('.') },
     }));
     columns = [...schemaCols, ...extraCols];
   } else {
@@ -1555,7 +1555,7 @@ export async function readDiffRecordData(
       id,
       displayName: id.includes('.') ? id.slice(id.lastIndexOf('.') + 1) : id,
       dataType: 'unknown' as const,
-      attributes: { readOnly: false, required: false, nested: id.includes('.') },
+      attributes: { readOnly: false, writeOnce: false, required: false, nested: id.includes('.') },
     }));
   }
 

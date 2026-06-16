@@ -1,3 +1,4 @@
+import { X_SCRATCH_READONLY, X_SCRATCH_WRITE_ONCE } from '@spinner/shared-types';
 import { describe, expect, it } from 'vitest';
 import { buildColumnDefinitions } from '../build-column-definitions';
 import type { ColumnDefinition } from '../types';
@@ -131,6 +132,24 @@ describe('buildColumnDefinitions — edge cases', () => {
     expect(byId(columns, 'fields.Computed').attributes.required).toBe(false);
     expect(byId(columns, 'fields.Editable').attributes.readOnly).toBe(false);
     expect(byId(columns, 'fields.Editable').attributes.required).toBe(false);
+  });
+
+  it('parses x-scratch-write-once into attributes.writeOnce, independent of read-only', () => {
+    const columns = buildColumnDefinitions({
+      schema: {
+        type: 'object',
+        properties: {
+          parent_object: { type: 'string', [X_SCRATCH_WRITE_ONCE]: true },
+          name: { type: 'string' },
+          record_id: { type: 'string', [X_SCRATCH_READONLY]: true },
+        },
+      },
+    });
+    expect(byId(columns, 'parent_object').attributes.writeOnce).toBe(true);
+    expect(byId(columns, 'parent_object').attributes.readOnly).toBe(false);
+    expect(byId(columns, 'name').attributes.writeOnce).toBe(false);
+    expect(byId(columns, 'record_id').attributes.writeOnce).toBe(false);
+    expect(byId(columns, 'record_id').attributes.readOnly).toBe(true);
   });
 
   it('normalizes scalar types for a flat schema', () => {

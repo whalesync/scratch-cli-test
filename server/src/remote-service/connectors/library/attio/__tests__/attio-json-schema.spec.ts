@@ -5,8 +5,9 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
   X_SCRATCH_VIRTUAL_FIELDS,
+  X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
-import { buildAttioListTableSpec, buildAttioObjectTableSpec } from '../attio-json-schema';
+import { buildAttioListTableSpec, buildAttioObjectTableSpec, buildAttioTasksTableSpec } from '../attio-json-schema';
 import { AttioAttribute } from '../attio-types';
 
 function makeAttribute(
@@ -272,15 +273,29 @@ describe('attio-json-schema foreign keys', () => {
   });
 });
 
-describe('attio-json-schema list-entry parent fields (write-once not yet supported)', () => {
+describe('attio-json-schema list-entry parent fields (write-once)', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('leaves parent_record_id / parent_object writable so a list entry can be created from the grid', async () => {
+  it('marks parent_record_id / parent_object write-once, not read-only, so an entry can be created but not re-parented', async () => {
     mockClient.listListAttributes.mockResolvedValue([makeAttribute({ api_slug: 'stage', type: 'status' })]);
     const spec = await buildAttioListTableSpec(mockEntityId, 'pipeline-1', 'Sales Pipeline', mockClient);
+    expect(spec.schema.properties.parent_record_id[X_SCRATCH_WRITE_ONCE]).toBe(true);
+    expect(spec.schema.properties.parent_object[X_SCRATCH_WRITE_ONCE]).toBe(true);
+    // Write-once is distinct from read-only: these must stay editable on a new entry.
     expect(spec.schema.properties.parent_record_id[X_SCRATCH_READONLY]).toBeUndefined();
     expect(spec.schema.properties.parent_object[X_SCRATCH_READONLY]).toBeUndefined();
     // The id triple and created_at stay read-only.
+    expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
+    expect(spec.schema.properties.created_at[X_SCRATCH_READONLY]).toBe(true);
+  });
+});
+
+describe('attio-json-schema tasks content (write-once)', () => {
+  it('marks content_plaintext write-once (settable on create, immutable after) and not read-only', () => {
+    const spec = buildAttioTasksTableSpec(mockEntityId);
+    expect(spec.schema.properties.content_plaintext[X_SCRATCH_WRITE_ONCE]).toBe(true);
+    expect(spec.schema.properties.content_plaintext[X_SCRATCH_READONLY]).toBeUndefined();
+    // System-set fields stay read-only.
     expect(spec.schema.properties.id[X_SCRATCH_READONLY]).toBe(true);
     expect(spec.schema.properties.created_at[X_SCRATCH_READONLY]).toBe(true);
   });
