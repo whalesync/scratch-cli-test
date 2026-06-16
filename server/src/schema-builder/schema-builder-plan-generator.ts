@@ -5,9 +5,11 @@ import type {
   CreateTableSpec,
   FieldMappingNote,
   ForeignKeyTarget,
+  TableMappingNote,
   TablePropertyType,
 } from '@spinner/shared-types';
 import type { SchemaField } from 'src/utils/schema-helpers';
+import { allocateUniqueName, normalizeNameForUniqueness } from './schema-builder-unique-names';
 
 /**
  * Plan generation for create-schema (DEV-10378): turn one or more existing
@@ -74,6 +76,8 @@ export interface GeneratedPlan {
   /** Add-fields plans for sources whose destination table already exists. */
   fieldPlans: CreateSchemaFieldsPlan[];
   notes: FieldMappingNote[];
+  /** One entry per new table renamed (suffixed) to avoid a name collision. */
+  tableNotes: TableMappingNote[];
 }
 
 export function generateCreatePlanFromSources(args: {
@@ -81,6 +85,14 @@ export function generateCreatePlanFromSources(args: {
   /** The single destination connector account every source targets. */
   destinationConnectorAccountId: string;
   linkedTableMappings?: PlanGeneratorLinkedTableMapping[];
+  /**
+   * Display names of tables that already exist on the destination under the
+   * create parent (e.g. an Airtable base). A new table whose name collides with
+   * one of these — or with another new table in this plan — is given a numeric
+   * suffix and recorded in `tableNotes`. The service supplies these from
+   * `connector.listTables()`; absent ⇒ only in-plan collisions are resolved.
+   */
+  existingDestinationTableNames?: string[];
 }): GeneratedPlan {
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
@@ -95,8 +107,17 @@ export function generateCreatePlanFromSources(args: {
   }
 
   const notes: FieldMappingNote[] = [];
+  const tableNotes: TableMappingNote[] = [];
   const tables: CreateTableSpec[] = [];
   const fieldPlans: CreateSchemaFieldsPlan[] = [];
+
+  // Table names already taken in the destination's create namespace: tables that
+  // already exist under the create parent (frozen) plus every table this plan adds
+  // (grows as we go). A new table whose name collides gets a numeric suffix.
+  const existingDestinationTableNames = new Set(
+    (args.existingDestinationTableNames ?? []).map(normalizeNameForUniqueness),
+  );
+  const takenTableNames = new Set(existingDestinationTableNames);
 
   for (const source of args.sources) {
     if (source.existingDestination) {
@@ -118,11 +139,31 @@ export function generateCreatePlanFromSources(args: {
         mappingByLinkedId,
         notes,
       );
-      tables.push({ name: source.tableName, fields, ref: source.ref });
+      // Classify the collision BEFORE allocating: `takenTableNames` merges existing
+      // and in-plan names, so the distinction must be read off the frozen set first.
+      const conflictsWithExistingTable = existingDestinationTableNames.has(
+        normalizeNameForUniqueness(source.tableName),
+      );
+      const tableName = allocateUniqueName(source.tableName, takenTableNames);
+      if (tableName !== source.tableName) {
+        tableNotes.push({
+          sourceDataFolderId: source.dataFolderId,
+          ref: source.ref,
+          tableName,
+          renamedFromName: source.tableName,
+          reason: conflictsWithExistingTable ? 'conflicts_with_existing_table' : 'duplicate_in_plan',
+          message: conflictsWithExistingTable
+            ? `a table named "${source.tableName}" already exists on the destination; renamed to "${tableName}"`
+            : `another table named "${source.tableName}" is being created in this plan; renamed to "${tableName}"`,
+        });
+      }
+      // `ref` is unchanged by the rename, so cross-table foreign keys (resolved by
+      // ref, not name) still wire up correctly.
+      tables.push({ name: tableName, fields, ref: source.ref });
     }
   }
 
-  return { tables, fieldPlans, notes };
+  return { tables, fieldPlans, notes, tableNotes };
 }
 
 /**
@@ -140,7 +181,7 @@ function buildAddFieldsPlanForSource(
   mappingByLinkedId: Map<string, string[]>,
   notes: FieldMappingNote[],
 ): CreateSchemaFieldsPlan {
-  const existingDestinationFieldNames = new Set(existingDestination.fieldNames.map(normalizeFieldName));
+  const existingDestinationFieldNames = new Set(existingDestination.fieldNames.map(normalizeNameForUniqueness));
   const fields = collectCreateFieldSpecsForSource(
     source,
     { allowSiblingRefForeignKeys: false, markPrimaryField: false, existingDestinationFieldNames },
@@ -175,8 +216,21 @@ function collectCreateFieldSpecsForSource(
   notes: FieldMappingNote[],
 ): CreateFieldSpec[] {
   const fields: CreateFieldSpec[] = [];
+  // Field names already taken in this table's namespace: the destination's current
+  // fields (add-fields case) plus every field we emit here. An emitted field whose
+  // name collides gets a numeric suffix + a 'renamed' note. A COPY of the
+  // existing-destination set, so the frozen original still drives the 'exists' skip.
+  const takenFieldNames = new Set(options.existingDestinationFieldNames ?? []);
   for (const schemaField of source.schemaFields) {
-    const spec = mapSchemaFieldToCreateFieldSpec(source, schemaField, options, linkedIdToRef, mappingByLinkedId, notes);
+    const spec = mapSchemaFieldToCreateFieldSpec(
+      source,
+      schemaField,
+      options,
+      takenFieldNames,
+      linkedIdToRef,
+      mappingByLinkedId,
+      notes,
+    );
     if (spec) fields.push(spec);
   }
   return fields;
@@ -186,11 +240,16 @@ function collectCreateFieldSpecsForSource(
  * Map one source field to a create-field spec, or return null (with an
  * explanatory note) when it should be omitted: the id column, a field the
  * destination already has, or an unresolvable/sibling-ref foreign key.
+ *
+ * A field that IS emitted is given a name unique within the table (via
+ * `takenFieldNames`): if its requested name collides, a numeric suffix is
+ * appended and the note records `renamedFromName`.
  */
 function mapSchemaFieldToCreateFieldSpec(
   source: PlanGeneratorSource,
   schemaField: SchemaField,
   options: CreateFieldSpecOptions,
+  takenFieldNames: Set<string>,
   linkedIdToRef: Map<string, string>,
   mappingByLinkedId: Map<string, string[]>,
   notes: FieldMappingNote[],
@@ -198,16 +257,18 @@ function mapSchemaFieldToCreateFieldSpec(
   // The destination auto-creates its own id column — never recreate it.
   if (source.idFieldPath !== undefined && schemaField.path === source.idFieldPath) return null;
 
-  const fieldName = schemaField.displayLabel ?? lastPathSegment(schemaField.path);
+  const requestedFieldName = schemaField.displayLabel ?? lastPathSegment(schemaField.path);
 
   // Add-fields diff: a field the destination already has is skipped, not recreated.
-  if (options.existingDestinationFieldNames?.has(normalizeFieldName(fieldName))) {
+  // Checked against the FROZEN existing-destination set (not the growing taken set)
+  // so a second NEW field of the same name is renamed rather than mistaken for "exists".
+  if (options.existingDestinationFieldNames?.has(normalizeNameForUniqueness(requestedFieldName))) {
     notes.push({
       sourceDataFolderId: source.dataFolderId,
       sourceFieldPath: schemaField.path,
-      fieldName,
+      fieldName: requestedFieldName,
       status: 'exists',
-      message: `a field named "${fieldName}" already exists on the destination table; skipped`,
+      message: `a field named "${requestedFieldName}" already exists on the destination table; skipped`,
     });
     return null;
   }
@@ -215,6 +276,9 @@ function mapSchemaFieldToCreateFieldSpec(
   const isPrimary =
     options.markPrimaryField && source.primaryFieldPath !== undefined && schemaField.path === source.primaryFieldPath;
 
+  // Resolve a foreignKey up front so an unsupported one is omitted (and its note
+  // pushed) BEFORE a unique name slot is allocated to a field we won't emit.
+  let foreignKeyType: CreateFieldType | null = null;
   if (schemaField.foreignKey) {
     const resolution = resolveForeignKey(schemaField.foreignKey.linkedTableId, linkedIdToRef, mappingByLinkedId);
     // A sibling `{ ref }` target can't be expressed when adding fields to an
@@ -225,7 +289,7 @@ function mapSchemaFieldToCreateFieldSpec(
       notes.push({
         sourceDataFolderId: source.dataFolderId,
         sourceFieldPath: schemaField.path,
-        fieldName,
+        fieldName: requestedFieldName,
         status: 'unsupported',
         message: isSiblingRefTarget
           ? `foreignKey to a table being created in the same plan can't be added to an existing destination table; provide a linkedTableMappings entry; field omitted`
@@ -233,27 +297,45 @@ function mapSchemaFieldToCreateFieldSpec(
       });
       return null;
     }
-    const fieldType: CreateFieldType = { kind: 'foreignKey', target: resolution };
+    foreignKeyType = { kind: 'foreignKey', target: resolution };
+  }
+
+  // This field will be emitted — give it a name unique within the table.
+  const fieldName = allocateUniqueName(requestedFieldName, takenFieldNames);
+  const renamedFromName = fieldName !== requestedFieldName ? requestedFieldName : undefined;
+  const renameClause = renamedFromName ? `renamed from "${renamedFromName}" to keep field names unique` : undefined;
+
+  if (foreignKeyType) {
     notes.push({
       sourceDataFolderId: source.dataFolderId,
       sourceFieldPath: schemaField.path,
       fieldName,
       status: 'mapped',
       mappedKind: 'foreignKey',
+      ...(renameClause ? { message: renameClause } : {}),
+      ...(renamedFromName ? { renamedFromName } : {}),
     });
-    return buildFieldSpec(fieldName, fieldType, isPrimary, schemaField.description);
+    return buildFieldSpec(fieldName, foreignKeyType, isPrimary, schemaField.description);
   }
 
   const inferred = inferLogicalFieldType(schemaField, source.viewTypeByPath?.[schemaField.path]);
+  const message = composeNoteMessage(renameClause, inferred.message);
   notes.push({
     sourceDataFolderId: source.dataFolderId,
     sourceFieldPath: schemaField.path,
     fieldName,
     status: inferred.status,
     mappedKind: inferred.fieldType.kind,
-    message: inferred.message,
+    ...(message ? { message } : {}),
+    ...(renamedFromName ? { renamedFromName } : {}),
   });
   return buildFieldSpec(fieldName, inferred.fieldType, isPrimary, schemaField.description);
+}
+
+/** Join the non-empty note clauses (e.g. a rename clause and a type-mapping clause) with "; ". */
+function composeNoteMessage(...clauses: (string | undefined)[]): string | undefined {
+  const present = clauses.filter((clause): clause is string => Boolean(clause));
+  return present.length > 0 ? present.join('; ') : undefined;
 }
 
 export interface InferredFieldType {
@@ -356,13 +438,4 @@ function buildFieldSpec(
 function lastPathSegment(path: string): string {
   const segments = path.split('.');
   return segments[segments.length - 1] || path;
-}
-
-/**
- * Field-name identity for the add-fields diff: trim + lowercase, matching the
- * server's `validateNamesAgainstExisting` and the client's duplicate-name check,
- * so the plan and the eventual /schema/fields create agree on what "exists".
- */
-function normalizeFieldName(name: string): string {
-  return name.trim().toLowerCase();
 }

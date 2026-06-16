@@ -259,3 +259,168 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
     });
   });
 });
+
+describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', () => {
+  it('suffixes a duplicate field name within a table and records renamedFromName', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: 'Contacts',
+      remoteTableIds: ['tblContacts'],
+      schemaFields: [
+        field({ path: 'a', type: 'string', displayLabel: 'Email' }),
+        field({ path: 'b', type: 'string', displayLabel: 'Email' }),
+      ],
+    };
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(tables[0].fields.map((f) => f.name)).toEqual(['Email', 'Email 2']);
+    const renamedNote = notes.find((note) => note.sourceFieldPath === 'b');
+    expect(renamedNote).toMatchObject({ fieldName: 'Email 2', renamedFromName: 'Email', status: 'mapped' });
+    expect(renamedNote?.message).toContain('renamed from "Email"');
+  });
+
+  it('treats duplicate field names case-insensitively', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: 'Contacts',
+      remoteTableIds: ['tblContacts'],
+      schemaFields: [
+        field({ path: 'a', type: 'string', displayLabel: 'Name' }),
+        field({ path: 'b', type: 'string', displayLabel: 'name' }),
+      ],
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(tables[0].fields.map((f) => f.name)).toEqual(['Name', 'name 2']);
+  });
+
+  it('dedupes field names independently per table (same name across tables is fine)', () => {
+    const t1: PlanGeneratorSource = {
+      ref: 't1',
+      dataFolderId: 't1',
+      tableName: 'T1',
+      remoteTableIds: ['tbl1'],
+      schemaFields: [field({ path: 'a', type: 'string', displayLabel: 'Name' })],
+    };
+    const t2: PlanGeneratorSource = {
+      ref: 't2',
+      dataFolderId: 't2',
+      tableName: 'T2',
+      remoteTableIds: ['tbl2'],
+      schemaFields: [field({ path: 'a', type: 'string', displayLabel: 'Name' })],
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [t1, t2],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(tables.find((t) => t.ref === 't1')?.fields.map((f) => f.name)).toEqual(['Name']);
+    expect(tables.find((t) => t.ref === 't2')?.fields.map((f) => f.name)).toEqual(['Name']);
+  });
+
+  it('suffixes a duplicate NEW field while still skipping one that matches an existing destination field', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: 'Contacts',
+      remoteTableIds: ['tblContacts'],
+      schemaFields: [
+        field({ path: 'a', type: 'string', displayLabel: 'Name' }), // already on destination → skipped
+        field({ path: 'b', type: 'string', displayLabel: 'Color' }), // new → Color
+        field({ path: 'c', type: 'string', displayLabel: 'Color' }), // duplicate new → Color 2
+      ],
+      existingDestination: { dataFolderId: 'destContacts', remoteTableId: ['tblDest'], fieldNames: ['Name'] },
+    };
+    const { fieldPlans, notes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['Color', 'Color 2']);
+    expect(notes.find((note) => note.sourceFieldPath === 'a')).toMatchObject({ status: 'exists' });
+    expect(notes.find((note) => note.sourceFieldPath === 'c')).toMatchObject({
+      fieldName: 'Color 2',
+      renamedFromName: 'Color',
+    });
+  });
+
+  it('suffixes around an existing destination field name when deduping new fields', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'contacts',
+      dataFolderId: 'contacts',
+      tableName: 'Contacts',
+      remoteTableIds: ['tblContacts'],
+      schemaFields: [
+        field({ path: 'b', type: 'string', displayLabel: 'Color' }),
+        field({ path: 'c', type: 'string', displayLabel: 'Color' }),
+      ],
+      existingDestination: { dataFolderId: 'destContacts', remoteTableId: ['tblDest'], fieldNames: ['Color 2'] },
+    };
+    const { fieldPlans } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+    });
+    // 'Color' is free; the duplicate skips the existing 'Color 2' and becomes 'Color 3'.
+    expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['Color', 'Color 3']);
+  });
+});
+
+describe('generateCreatePlanFromSources — duplicate table names (DEV-10441)', () => {
+  const makeSource = (ref: string, tableName: string): PlanGeneratorSource => ({
+    ref,
+    dataFolderId: ref,
+    tableName,
+    remoteTableIds: [`tbl_${ref}`],
+    schemaFields: [field({ path: 'name', type: 'string' })],
+  });
+
+  it('suffixes a table name that duplicates another new table in the same plan', () => {
+    const { tables, tableNotes } = generateCreatePlanFromSources({
+      sources: [makeSource('a', 'Tasks'), makeSource('b', 'Tasks')],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(tables.map((t) => t.name)).toEqual(['Tasks', 'Tasks 2']);
+    // refs are preserved despite the rename, so FK wiring is unaffected.
+    expect(tables.map((t) => t.ref)).toEqual(['a', 'b']);
+    expect(tableNotes).toHaveLength(1);
+    expect(tableNotes[0]).toMatchObject({
+      ref: 'b',
+      tableName: 'Tasks 2',
+      renamedFromName: 'Tasks',
+      reason: 'duplicate_in_plan',
+    });
+  });
+
+  it('suffixes a table name that conflicts with an existing destination table', () => {
+    const { tables, tableNotes } = generateCreatePlanFromSources({
+      sources: [makeSource('a', 'Tasks')],
+      destinationConnectorAccountId: 'destConn',
+      existingDestinationTableNames: ['tasks'], // case-insensitive
+    });
+
+    expect(tables.map((t) => t.name)).toEqual(['Tasks 2']);
+    expect(tableNotes[0]).toMatchObject({
+      tableName: 'Tasks 2',
+      renamedFromName: 'Tasks',
+      reason: 'conflicts_with_existing_table',
+    });
+  });
+
+  it('emits no table note when no rename is needed', () => {
+    const { tables, tableNotes } = generateCreatePlanFromSources({
+      sources: [makeSource('a', 'Tasks'), makeSource('b', 'Notes')],
+      destinationConnectorAccountId: 'destConn',
+      existingDestinationTableNames: ['Other'],
+    });
+
+    expect(tables.map((t) => t.name)).toEqual(['Tasks', 'Notes']);
+    expect(tableNotes).toEqual([]);
+  });
+});

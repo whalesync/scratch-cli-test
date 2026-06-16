@@ -151,6 +151,15 @@ export function CreateSchemaModal({
     clearResults();
   };
 
+  // Clear all form + result state on close so the next launch starts from a
+  // clean form (the modal stays mounted between launches, so state would
+  // otherwise persist). Also resets the mode back to the default tab.
+  const handleClose = () => {
+    doReset();
+    setMode('createTables');
+    onClose();
+  };
+
   // "Copy from folder": run planFromFolder for the chosen source folder against this
   // (destination) connector, then prefill the editor with the generated plan. When an
   // existing destination table is chosen, the plan is an add-fields diff instead of a
@@ -169,7 +178,11 @@ export function CreateSchemaModal({
         ],
         destinationConnectorAccountId: connectorAccountId,
       });
-      setPlanResult({ notes: response.notes, destinationSupportsCreation: response.destinationSupportsCreation });
+      setPlanResult({
+        notes: response.notes,
+        tableNotes: response.tableNotes,
+        destinationSupportsCreation: response.destinationSupportsCreation,
+      });
 
       const fieldPlan = response.fieldPlans[0];
       if (fieldPlan) {
@@ -318,7 +331,7 @@ export function CreateSchemaModal({
   );
 
   return (
-    <Modal opened={opened} onClose={onClose} title={title} size="80%">
+    <Modal opened={opened} onClose={handleClose} title={title} size="80%">
       <Stack gap="lg">
         <SegmentedControl
           fullWidth

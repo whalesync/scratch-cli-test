@@ -96,6 +96,7 @@ export interface FieldMappingNote {
   /** Which source folder this field came from. */
   sourceDataFolderId: string;
   sourceFieldPath: string;
+  /** The field's FINAL name in the plan — already suffixed if it was renamed to deduplicate. */
   fieldName: string;
   /**
    * `mapped`/`downgraded`/`unsupported` describe how the source field maps to a
@@ -105,6 +106,36 @@ export interface FieldMappingNote {
   status: 'mapped' | 'downgraded' | 'unsupported' | 'exists';
   mappedKind?: CreateFieldKind;
   message?: string;
+  /**
+   * Set when the field was renamed to keep field names unique within the table
+   * (a numeric suffix was appended): the original, pre-suffix name. `fieldName`
+   * holds the final name actually used in the plan.
+   */
+  renamedFromName?: string;
+}
+
+/**
+ * Outcome of resolving a generated table's name. Emitted ONLY when a new table
+ * had to be renamed (a numeric suffix appended) to avoid a collision — either
+ * with another new table in the same plan, or with a table that already exists
+ * on the destination (scoped to the create parent). `tableName` is the final
+ * name used in the plan; nothing is renamed silently.
+ */
+export interface TableMappingNote {
+  /** Which source folder this table was generated from. */
+  sourceDataFolderId: string;
+  /** The table's correlation ref in the plan (unchanged by the rename). */
+  ref: string;
+  /** The final table name actually used in the plan (post-suffix). */
+  tableName: string;
+  /** The original, pre-suffix name. */
+  renamedFromName: string;
+  /**
+   * `duplicate_in_plan` — collided with another table being created in this plan;
+   * `conflicts_with_existing_table` — collided with a table already on the destination.
+   */
+  reason: 'duplicate_in_plan' | 'conflicts_with_existing_table';
+  message: string;
 }
 
 /**
@@ -142,5 +173,11 @@ export interface GenerateCreatePlanResponse {
   fieldPlans: CreateSchemaFieldsPlan[];
   /** Per-field mapping outcome — nothing is dropped silently. */
   notes: FieldMappingNote[];
+  /**
+   * Per-table rename outcome — one entry for each new table whose name had to be
+   * suffixed to avoid a collision (in-plan or with an existing destination table).
+   * Empty when no table was renamed.
+   */
+  tableNotes: TableMappingNote[];
   destinationSupportsCreation: boolean;
 }

@@ -283,10 +283,19 @@ export class SchemaBuilderService {
       });
     }
 
-    const { tables, fieldPlans, notes } = generateCreatePlanFromSources({
+    // When the plan creates at least one NEW table, fetch the destination's
+    // existing table names (scoped to the create parent) so the generator can
+    // resolve name conflicts up front instead of failing opaquely at create time.
+    const createsNewTable = sources.some((source) => !source.existingDestination);
+    const existingDestinationTableNames = createsNewTable
+      ? await this.existingDestinationTableNamesForParent(connector, dto.remoteParentId)
+      : [];
+
+    const { tables, fieldPlans, notes, tableNotes } = generateCreatePlanFromSources({
       sources,
       destinationConnectorAccountId: dto.destinationConnectorAccountId,
       linkedTableMappings: dto.linkedTableMappings,
+      existingDestinationTableNames,
     });
 
     const plan: CreateSchemaTablesDto = {
@@ -296,7 +305,40 @@ export class SchemaBuilderService {
       materializeLocally: false,
     };
 
-    return { plan, fieldPlans, notes, destinationSupportsCreation: connector.supportsSchemaCreation() };
+    return { plan, fieldPlans, notes, tableNotes, destinationSupportsCreation: connector.supportsSchemaCreation() };
+  }
+
+  /**
+   * Display names of tables that already exist on the destination connection,
+   * scoped to the create parent (`remoteParentId`) so we only flag genuine
+   * collisions — e.g. tables in the SAME Airtable base / Postgres schema /
+   * Webflow site, not every table the account can see. The parent id is
+   * `TablePreview.id.remoteId[0]` for the connectors that support table creation
+   * and equals the `remoteParentId[0]` chosen from `listCreateDestinations`; when
+   * no parent is given, every table is considered.
+   *
+   * Degrades gracefully: if listing fails we log and return `[]` so plan
+   * generation still succeeds (in-plan duplicates are still resolved) — we simply
+   * can't check the new name against the remote service.
+   */
+  private async existingDestinationTableNamesForParent(
+    connector: Connector,
+    remoteParentId: string[] | undefined,
+  ): Promise<string[]> {
+    let tables: Awaited<ReturnType<Connector['listTables']>>;
+    try {
+      tables = await connector.listTables();
+    } catch (error) {
+      WSLogger.warn({
+        source: SOURCE,
+        message: 'Could not list destination tables for create-plan conflict detection; skipping',
+        error: errorMessage(error),
+      });
+      return [];
+    }
+    const parentId = remoteParentId?.[0];
+    const scopedTables = parentId === undefined ? tables : tables.filter((table) => table.id.remoteId[0] === parentId);
+    return scopedTables.map((table) => table.displayName);
   }
 
   /**

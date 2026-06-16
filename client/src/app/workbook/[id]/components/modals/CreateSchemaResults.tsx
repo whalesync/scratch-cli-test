@@ -10,6 +10,7 @@ import type {
   CreateSchemaTablesResponse,
   CreateTableResult,
   FieldMappingNote,
+  TableMappingNote,
   ValidateSchemaResponse,
 } from '@spinner/shared-types';
 
@@ -17,6 +18,7 @@ type CreateResult = CreateSchemaTablesResponse | CreateSchemaFieldsResponse;
 
 export interface PlanResult {
   notes: FieldMappingNote[];
+  tableNotes: TableMappingNote[];
   destinationSupportsCreation: boolean;
 }
 
@@ -82,6 +84,7 @@ function PlanResultView({ planResult }: { planResult: PlanResult }) {
   const unsupported = planResult.notes.filter((note) => note.status === 'unsupported');
   const exists = planResult.notes.filter((note) => note.status === 'exists');
   const mapped = planResult.notes.filter((note) => note.status === 'mapped');
+  const tableNotes = planResult.tableNotes;
   // All notes, most-severe first, for the collapsible details panel.
   const orderedNotes = [...unsupported, ...downgraded, ...exists, ...mapped];
 
@@ -101,30 +104,55 @@ function PlanResultView({ planResult }: { planResult: PlanResult }) {
           {mappedCount} field{mappedCount === 1 ? '' : 's'} mapped
           {downgraded.length > 0 ? `, ${downgraded.length} downgraded` : ''}
           {exists.length > 0 ? `, ${exists.length} already on destination (skipped)` : ''}
-          {unsupported.length > 0 ? `, ${unsupported.length} unsupported (omitted)` : ''}.
+          {unsupported.length > 0 ? `, ${unsupported.length} unsupported (omitted)` : ''}
+          {tableNotes.length > 0 ? `, ${tableNotes.length} table${tableNotes.length === 1 ? '' : 's'} renamed` : ''}.
         </Text13Regular>
       </Alert>
-      {orderedNotes.length > 0 && (
-        <Accordion variant="contained">
-          <Accordion.Item value="plan-notes">
-            <Accordion.Control>Field mapping notes ({orderedNotes.length})</Accordion.Control>
-            <Accordion.Panel>
-              <Stack gap="sm">
-                {orderedNotes.map((note, index) => (
-                  <Stack key={index} gap={2}>
-                    <Group gap="xs" align="center" wrap="nowrap">
-                      <Badge color={noteColor(note.status)}>{note.status}</Badge>
-                      <Text13Medium>{note.fieldName}</Text13Medium>
-                      {note.mappedKind && (
-                        <TextMono12Regular c="var(--fg-muted)">→ {note.mappedKind}</TextMono12Regular>
-                      )}
-                    </Group>
-                    {note.message && <Text12Regular c="var(--fg-secondary)">{note.message}</Text12Regular>}
-                  </Stack>
-                ))}
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
+      {(orderedNotes.length > 0 || tableNotes.length > 0) && (
+        <Accordion variant="contained" multiple>
+          {tableNotes.length > 0 && (
+            <Accordion.Item value="table-notes">
+              <Accordion.Control>Table name changes ({tableNotes.length})</Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap="sm">
+                  {tableNotes.map((note, index) => (
+                    <Stack key={index} gap={2}>
+                      <Group gap="xs" align="center" wrap="nowrap">
+                        <Badge color="gray">renamed</Badge>
+                        <Text13Medium>{note.renamedFromName}</Text13Medium>
+                        <TextMono12Regular c="var(--fg-muted)">→ {note.tableName}</TextMono12Regular>
+                      </Group>
+                      <Text12Regular c="var(--fg-secondary)">{note.message}</Text12Regular>
+                    </Stack>
+                  ))}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          )}
+          {orderedNotes.length > 0 && (
+            <Accordion.Item value="plan-notes">
+              <Accordion.Control>Field mapping notes ({orderedNotes.length})</Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap="sm">
+                  {orderedNotes.map((note, index) => (
+                    <Stack key={index} gap={2}>
+                      <Group gap="xs" align="center" wrap="nowrap">
+                        <Badge color={noteColor(note.status)}>{note.status}</Badge>
+                        <Text13Medium>{note.fieldName}</Text13Medium>
+                        {note.renamedFromName && (
+                          <TextMono12Regular c="var(--fg-muted)">was: {note.renamedFromName}</TextMono12Regular>
+                        )}
+                        {note.mappedKind && (
+                          <TextMono12Regular c="var(--fg-muted)">→ {note.mappedKind}</TextMono12Regular>
+                        )}
+                      </Group>
+                      {note.message && <Text12Regular c="var(--fg-secondary)">{note.message}</Text12Regular>}
+                    </Stack>
+                  ))}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          )}
         </Accordion>
       )}
     </Stack>

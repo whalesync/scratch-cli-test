@@ -29,6 +29,9 @@ function connectorStub(overrides: Partial<Connector>): Connector {
   return {
     service: 'AIRTABLE',
     supportsSchemaCreation: () => false,
+    // Default to no existing tables so plan generation finds no conflicts; tests
+    // that exercise table-name conflict detection override this.
+    listTables: () => Promise.resolve([]),
     ...overrides,
   } as unknown as Connector;
 }
@@ -292,6 +295,79 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
           destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
         })
         .expect(400);
+    });
+
+    it('renames a new table that conflicts with an existing destination table under the parent (DEV-10441)', async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({
+          listTables: jest
+            .fn()
+            .mockResolvedValue([{ id: { wsId: 'w', remoteId: ['baseX', 'tblExisting'] }, displayName: 'Authors' }]),
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({
+          sources: [{ dataFolderId: 'src_authors' }],
+          destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
+          remoteParentId: ['baseX'],
+        })
+        .expect(201);
+
+      expect(res.body.plan.tables[0].name).toBe('Authors 2');
+      expect(res.body.tableNotes).toHaveLength(1);
+      expect(res.body.tableNotes[0]).toMatchObject({
+        tableName: 'Authors 2',
+        renamedFromName: 'Authors',
+        reason: 'conflicts_with_existing_table',
+      });
+    });
+
+    it('ignores a same-named table under a different parent (scoping by remoteParentId)', async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({
+          listTables: jest
+            .fn()
+            .mockResolvedValue([{ id: { wsId: 'w2', remoteId: ['baseY', 'tblOther'] }, displayName: 'Authors' }]),
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({
+          sources: [{ dataFolderId: 'src_authors' }],
+          destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
+          remoteParentId: ['baseX'],
+        })
+        .expect(201);
+
+      expect(res.body.plan.tables[0].name).toBe('Authors');
+      expect(res.body.tableNotes).toEqual([]);
+    });
+
+    it('still generates a plan when listing destination tables fails (graceful degradation)', async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({ listTables: jest.fn().mockRejectedValue(new Error('boom')) }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({
+          sources: [{ dataFolderId: 'src_authors' }],
+          destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID,
+          remoteParentId: ['baseX'],
+        })
+        .expect(201);
+
+      expect(res.body.plan.tables[0].name).toBe('Authors');
+      expect(res.body.tableNotes).toEqual([]);
     });
   });
 });
