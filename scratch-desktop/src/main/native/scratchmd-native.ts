@@ -5,7 +5,7 @@
  *   - **Packaged**: `Resources/bin/scratchmd-native.<platform>-<arch>[-<abi>].node`
  *     bundled by electron-builder's `extraResources` glob (see `electron-builder.yml`).
  *   - **Dev** (`yarn dev`): `<repoRoot>/scratch-git-2/napi/scratchmd-native.<platform>-<arch>[-<abi>].node`,
- *     produced by `scratch-desktop/scripts/build-native.cjs` (wired into
+ *     produced by `scratch-desktop/scripts/build-native.sh` (wired into
  *     `predev` so `yarn dev` rebuilds it automatically).
  *
  * No IPC handlers consume this yet — slice H.3 wires the three cell-edit
@@ -82,7 +82,7 @@ function loadNative(): NativeModule {
   if (!existsSync(path)) {
     const hint = app.isPackaged
       ? 'Bundled scratchmd-native addon missing — app may be corrupted.'
-      : 'scratchmd-native addon not found. Run `yarn build:native` (scratch-desktop/scripts/build-native.cjs) to build it.';
+      : 'scratchmd-native addon not found. Run scratch-desktop/scripts/build-native.sh to build it.';
     throw new Error(`${hint} Expected at: ${path}`);
   }
   cached = requireNative(path) as NativeModule;

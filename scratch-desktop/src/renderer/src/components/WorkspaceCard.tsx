@@ -5,7 +5,7 @@ import { Workspace } from '@spinner/shared-types';
 import { Download, MoreHorizontal } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ButtonSecondaryOutline, IconButtonGhost } from './base/buttons';
-import { Text12Medium, TextTitle4 } from './base/text';
+import { Text12Medium, Text16Medium, TextTitle4 } from './base/text';
 import { StyledLucideIcon } from './icons/StyledLucideIcon';
 
 function useConnectorServices(workspace: Workspace): string[] {
@@ -88,9 +88,9 @@ export function DownloadedWorkspaceCard({
       }}
     >
       <Box style={{ flex: 1, minWidth: 0 }}>
-        <TextTitle4 mb={6} lineClamp={1}>
+        <Text16Medium mb={6} lineClamp={1}>
           {workspace.name || 'Untitled Workspace'}
-        </TextTitle4>
+        </Text16Medium>
         <ServiceIcons workspace={workspace} />
       </Box>
       <Box
@@ -133,24 +133,6 @@ export function CloudWorkspaceCard({
   isFirst?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
-  const services = useConnectorServices(workspace);
-  // Longhand border properties (never the `border` shorthand): React warns when
-  // a shorthand (`border`) and a longhand (`borderTop`) for the same property
-  // coexist and one updates on rerender — which happened here because the
-  // standalone card animates its border color on hover while the grouped card
-  // sets a top-divider longhand.
-  const borderStyles: React.CSSProperties = inGroup
-    ? {
-        borderWidth: 0,
-        borderTopWidth: isFirst ? 0 : 1,
-        borderTopStyle: 'solid',
-        borderTopColor: 'var(--mantine-color-gray-2)',
-      }
-    : {
-        borderWidth: 1,
-        borderStyle: 'dashed',
-        borderColor: hovered ? 'var(--mantine-color-gray-5)' : 'var(--mantine-color-gray-4)',
-      };
   return (
     <Box
       role="button"
@@ -168,23 +150,25 @@ export function CloudWorkspaceCard({
         marginBottom: inGroup ? 0 : 6,
         borderRadius: inGroup ? 0 : 10,
         background: hovered ? 'var(--mantine-color-gray-1)' : inGroup ? 'transparent' : '#fbfbf9',
-        ...borderStyles,
+        border: inGroup
+          ? 'none'
+          : `1px dashed ${hovered ? 'var(--mantine-color-gray-5)' : 'var(--mantine-color-gray-4)'}`,
+        borderTop: inGroup && !isFirst ? '1px solid var(--mantine-color-gray-2)' : undefined,
         cursor: 'pointer',
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <Box style={{ flex: 1, minWidth: 0 }}>
+      <Group gap={12} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
         <TextTitle4
           c="var(--fg-secondary)"
           lineClamp={1}
-          mb={services.length > 0 ? 6 : 0}
           style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}
         >
           {workspace.name || 'Untitled Workspace'}
         </TextTitle4>
-        {services.length > 0 && <ServiceIcons workspace={workspace} faded size={18} />}
-      </Box>
+        <ServiceIcons workspace={workspace} faded size={18} />
+      </Group>
       <Box onClick={(e) => e.stopPropagation()} style={{ visibility: hovered ? 'visible' : 'hidden' }}>
         <ButtonSecondaryOutline
           size="xs"
@@ -226,9 +210,9 @@ export function PendingWorkspaceCard({
       }}
     >
       <Box style={{ flex: 1, minWidth: 0 }}>
-        <TextTitle4 mb={8} lineClamp={1}>
+        <Text16Medium mb={8} lineClamp={1}>
           {workspace.name || 'Untitled Workspace'}
-        </TextTitle4>
+        </Text16Medium>
         <Group gap="sm" wrap="nowrap">
           <Progress value={100} animated striped color={color} size="sm" style={{ flex: 1 }} />
           <Text12Medium c={ink} style={{ minWidth: 86, textAlign: 'right' }}>

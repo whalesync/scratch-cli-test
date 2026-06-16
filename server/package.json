@@ -31,7 +31,7 @@
     "test:integration": "jest --config ./test/integration/jest-integration.json",
     "apiget:driver": "node --env-file-if-exists=src/scripts/apiget-fixtures/.env -r tsconfig-paths/register -r ts-node/register src/scripts/apiget-driver.ts",
     "generate": "prisma generate",
-    "postinstall": "node scripts/prisma-generate.cjs",
+    "postinstall": "prisma generate",
     "migrate": "prisma migrate deploy",
     "genmigration": "prisma migrate dev"
   },

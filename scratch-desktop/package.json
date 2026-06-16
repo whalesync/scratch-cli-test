@@ -7,10 +7,10 @@
   "homepage": "https://scratch.md",
   "license": "UNLICENSED",
   "scripts": {
-    "build:native": "node scripts/build-native.cjs",
-    "predev": "node scripts/build-native.cjs",
+    "build:native": "bash scripts/build-native.sh",
+    "predev": "bash scripts/build-native.sh",
     "dev": "electron-vite dev",
-    "prebuild": "node scripts/build-native.cjs",
+    "prebuild": "bash scripts/build-native.sh",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
@@ -18,15 +18,14 @@
     "prettier:check": "prettier --check \"src/**/*.ts\" \"src/**/*.tsx\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "postinstall": "node scripts/ensure-electron-binary.cjs && node scripts/install-app-deps.cjs",
+    "postinstall": "electron-builder install-app-deps",
     "build:mac": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --mac",
     "build:mac:unsigned": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} CSC_IDENTITY='-' electron-builder --mac --config electron-builder.unsigned-mac.yml",
     "build:mac:local": "bash scripts/build_mac_local.sh",
     "build:mac:local-signed": "bash scripts/build_mac_local_signed.sh",
     "build:mac:prod-local": "bash scripts/build_mac_prod_local.sh",
     "run:mac": "OPEN_DEVTOOLS=1 ./dist/mac/Scratch.app/Contents/MacOS/Scratch",
-    "build:linux": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --linux",
-    "build:win": "node scripts/build-win.cjs"
+    "build:linux": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --linux"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.1",

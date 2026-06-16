@@ -83,16 +83,6 @@ import {
 // /usr/bin/git (the Xcode CLT stub) on a clean macOS machine. No-op in dev.
 configureBundledGitEnvironment();
 
-// Point the scratchmd CLI (spawned children) and the in-process napi at the
-// same Scratch server the desktop authenticated against — credentials are keyed
-// by hostname, so a mismatched compiled DEFAULT_SERVER_URL surfaces as "Not
-// authenticated". scratchmdEnv() inherits process.env; refreshed on login in
-// the auth:save-credentials handler below.
-const storedServerUrlAtStartup = getCredentials().serverUrl;
-if (storedServerUrlAtStartup) {
-  process.env.SCRATCH_URL = storedServerUrlAtStartup;
-}
-
 const appStartTime = performance.now();
 
 const PROTOCOL = 'scratch';
@@ -543,12 +533,6 @@ ipcMain.handle(
   'auth:save-credentials',
   async (_, creds: { apiToken: string; email?: string; tokenExpiresAt?: string; serverUrl: string }) => {
     saveCredentials(creds);
-    // Keep scratchmd (spawned CLI + in-process napi) pointed at this server;
-    // scratchmdEnv() inherits process.env. Credentials are keyed by hostname,
-    // so SCRATCH_URL must match the server we just stored.
-    if (creds.serverUrl) {
-      process.env.SCRATCH_URL = creds.serverUrl;
-    }
 
     // Sync credentials to the scratchmd CLI so it can authenticate without a separate login
     if (creds.apiToken && creds.email && creds.tokenExpiresAt) {
@@ -854,21 +838,6 @@ ipcMain.handle('scratch:show-workspace-log', async (_, workspacePath: string) =>
   }
 });
 ipcMain.handle('scratch:open-in-terminal', (_, folderPath: string) => {
-  if (process.platform === 'win32') {
-    // Open a VISIBLE PowerShell window at the folder. Launch via `cmd /c start`
-    // so PowerShell gets its own new console window (showing it is the whole
-    // point); the transient cmd launcher is hidden via windowsHide. PowerShell
-    // inherits the folder as its working directory from `cwd`, so there's no
-    // path to quote. `start`'s first (empty) quoted arg is the window title.
-    spawn('cmd.exe', ['/c', 'start', '', 'powershell.exe', '-NoExit'], {
-      cwd: folderPath,
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    }).unref();
-    return;
-  }
-  // macOS: open Terminal.app at the folder.
   spawn('open', ['-a', 'Terminal', folderPath], { stdio: 'ignore', detached: true }).unref();
 });
 ipcMain.on(

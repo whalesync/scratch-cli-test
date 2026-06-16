@@ -227,18 +227,13 @@ interface ScratchmdLiveCommandOptions {
 // ── Binary path resolution ──
 
 export function getScratchmdBinaryPath(): string {
-  // Windows executables need the `.exe` suffix for child_process.spawn to find
-  // them (unlike a shell, spawn does not auto-append it). afterPack.cjs bundles
-  // the Windows CLI as `scratchmd.exe`, and the dev build emits
-  // `target/debug/scratchmd.exe`.
-  const binaryName = process.platform === 'win32' ? 'scratchmd.exe' : 'scratchmd';
   if (!app.isPackaged) {
     // Dev mode: resolve from the repo root (app.getAppPath() points to src/main in dev)
     const repoRoot = resolve(app.getAppPath(), '..');
-    return join(repoRoot, 'scratch-git-2', 'target', 'debug', binaryName);
+    return join(repoRoot, 'scratch-git-2', 'target', 'debug', 'scratchmd');
   }
   // Packaged: use the bundled binary in Resources/bin/
-  return join(process.resourcesPath, 'bin', binaryName);
+  return join(process.resourcesPath, 'bin', 'scratchmd');
 }
 
 // DEV-10196: in packaged builds we ship a bundled git binary so non-dev users
@@ -255,21 +250,10 @@ export function getScratchmdBinaryPath(): string {
 // See setup-git-env.ts for the per-platform Resources/git layout written by
 // scripts/afterPack.cjs.
 function scratchmdEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-
-  // SCRATCH_URL is set on process.env at startup and on login (see index.ts),
-  // so the spawned CLI inherits it here and targets the same Scratch server the
-  // desktop authenticated against — without it the CLI falls back to its
-  // compiled DEFAULT_SERVER_URL (localhost:3010 in a plain dev build), whose
-  // hostname won't match the stored credentials → "Not authenticated".
-
   if (!app.isPackaged) {
-    return env;
+    return process.env;
   }
-
-  // DEV-10318: in packaged builds, resolve git (and the in-process napi's git
-  // shell-outs) to the bundled binary; strip stale exec/template paths.
-  env.SCRATCH_GIT_BIN = bundledGitBinaryPath();
+  const env: NodeJS.ProcessEnv = { ...process.env, SCRATCH_GIT_BIN: bundledGitBinaryPath() };
   delete env.GIT_EXEC_PATH;
   delete env.GIT_TEMPLATE_DIR;
   return env;
@@ -290,8 +274,6 @@ export function runScratchmdCapture(
       cwd,
       env: scratchmdEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Don't flash a console window when spawning scratchmd.exe on Windows.
-      windowsHide: true,
     });
 
     let stdout = '';
@@ -387,9 +369,7 @@ export async function reindexFolderIndex(
   workspacePath: string,
   folder: string,
 ): Promise<{ stdout: string; stderr: string }> {
-  // The CLI / folder_index split the folder on POSIX `/`; normalize so a Windows
-  // `path.relative` backslash path doesn't become the whole "connection name".
-  return runScratchmd(['index', 'rebuild-folder', '--folder', folder.replace(/\\/g, '/')], workspacePath);
+  return runScratchmd(['index', 'rebuild-folder', '--folder', folder], workspacePath);
 }
 
 /**
@@ -403,7 +383,7 @@ export async function reindexFiles(
   filenames: string[],
   opts?: { validate?: boolean },
 ): Promise<{ stdout: string; stderr: string }> {
-  const args = ['index', 'refresh-files-full', '--folder', folder.replace(/\\/g, '/')];
+  const args = ['index', 'refresh-files-full', '--folder', folder];
   for (const f of filenames) args.push('--file', f);
   if (opts?.validate) args.push('--validate');
   return runScratchmd(args, workspacePath);
@@ -476,7 +456,7 @@ export async function readRecords(
   opts: ReadRecordsOptions,
   onProgress?: (line: string) => void,
 ): Promise<ReadRecordsResult> {
-  const args = ['paginate-records', '--folder', opts.folder.replace(/\\/g, '/')];
+  const args = ['paginate-records', '--folder', opts.folder];
   if (opts.offset !== undefined) args.push('--offset', String(opts.offset));
   if (opts.limit !== undefined) args.push('--limit', String(opts.limit));
   if (opts.sortBy) args.push('--sort-by', opts.sortBy);
@@ -523,8 +503,6 @@ export function startScratchmdLiveCommand(
       cwd,
       env: scratchmdEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Don't flash a console window when spawning scratchmd.exe on Windows.
-      windowsHide: true,
     });
 
     child.on('spawn', () => {
@@ -612,8 +590,6 @@ export function startScratchmdLiveSequence(
         cwd,
         env: scratchmdEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
-        // Don't flash a console window when spawning scratchmd.exe on Windows.
-        windowsHide: true,
       });
 
       child.on('spawn', () => {
@@ -791,7 +767,7 @@ export async function acceptFieldChanges(
   fieldName: string,
 ): Promise<FieldActionResult> {
   return runScratchmdJson<FieldActionResult>(
-    ['--json', 'files', 'accept-field', '--folder', folderPath.replace(/\\/g, '/'), '--field', fieldName],
+    ['--json', 'files', 'accept-field', '--folder', folderPath, '--field', fieldName],
     workspacePath,
   );
 }
@@ -802,7 +778,7 @@ export async function rejectFieldChanges(
   fieldName: string,
 ): Promise<FieldActionResult> {
   return runScratchmdJson<FieldActionResult>(
-    ['--json', 'files', 'reject-field', '--folder', folderPath.replace(/\\/g, '/'), '--field', fieldName],
+    ['--json', 'files', 'reject-field', '--folder', folderPath, '--field', fieldName],
     workspacePath,
   );
 }
@@ -911,7 +887,7 @@ export async function getReviewStats(workspacePath: string): Promise<ReviewStat[
 export async function getFolderValidationSample(workspacePath: string, folder: string): Promise<ValidationResultRow[]> {
   try {
     return await runScratchmdJson<ValidationResultRow[]>(
-      ['validation', 'get-folder-problems', '--folder', folder.replace(/\\/g, '/'), '--limit', '100'],
+      ['validation', 'get-folder-problems', '--folder', folder, '--limit', '100'],
       workspacePath,
     );
   } catch {

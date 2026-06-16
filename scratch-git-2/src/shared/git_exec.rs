@@ -118,15 +118,6 @@ pub fn git_command() -> std::process::Command {
         None => std::process::Command::new("git"),
     };
     cmd.args(["-c", "core.quotePath=false"]);
-    // Suppress git's console window on Windows. Without this, every git
-    // shell-out flashes a console — both from a hidden spawned scratchmd and
-    // from the in-process napi addon (which has no console for git to attach to).
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
     cmd
 }
 
@@ -143,12 +134,6 @@ pub fn git_command_async() -> tokio::process::Command {
         None => tokio::process::Command::new("git"),
     };
     cmd.args(["-c", "core.quotePath=false"]);
-    // Suppress git's console window on Windows (see git_command()).
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
     cmd
 }
 

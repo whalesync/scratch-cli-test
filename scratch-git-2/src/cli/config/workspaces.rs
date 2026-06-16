@@ -80,10 +80,9 @@ pub fn remove(workbook_id: &str) -> anyhow::Result<Option<PathBuf>> {
 }
 
 fn upsert_at(registry: &Path, workbook_id: &str, workspace_path: &Path) -> anyhow::Result<()> {
-    // dunce::canonicalize avoids the Windows `\\?\` verbatim prefix so the
-    // registered path stays usable by Git-for-Windows on later commands.
-    let canonical =
-        dunce::canonicalize(workspace_path).unwrap_or_else(|_| workspace_path.to_path_buf());
+    let canonical = workspace_path
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_path.to_path_buf());
 
     let mut file = read_file_at(registry);
     file.version = "1".to_string();
