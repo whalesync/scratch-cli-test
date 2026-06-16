@@ -34,6 +34,7 @@ import { PublishPlanModule } from './publish-plan/publish-plan.module';
 import { ConnectorAccountModule } from './remote-service/connector-account/connector-account.module';
 import { ConnectorsModule } from './remote-service/connectors/connectors.module';
 import { ShopifyWebhooksModule } from './remote-service/connectors/library/shopify/controllers/shopify-webhooks.module';
+import { RoutineModule } from './routine/routine.module';
 import { ScheduleModule } from './schedule/schedule.module';
 import { SchemaBuilderModule } from './schema-builder/schema-builder.module';
 import { ScratchGitModule } from './scratch-git/scratch-git.module';
@@ -74,6 +75,7 @@ import { WorkerModule } from './worker/workers.module';
     JobModule,
     PublishPlanModule,
     ScheduleModule,
+    RoutineModule,
     SchemaBuilderModule,
     ShopifyWebhooksModule,
     McpModule,

@@ -3,6 +3,8 @@ export * from './connector-account';
 export * from './data-folder';
 export * from './job';
 export * from './organization';
+export * from './routine';
+export * from './routine-run';
 export * from './schedule';
 export * from './sync';
 export * from './sync-draft';

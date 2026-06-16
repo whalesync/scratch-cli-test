@@ -144,6 +144,22 @@ describe('SchedulerService', () => {
     expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
   });
 
+  it('skips ROUTINE schedules at the top of the loop without claiming or enqueuing', async () => {
+    const schedule = makeSchedule({ action: 'ROUTINE', entityId: 'routines/daily.yaml' });
+    scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+
+    await service.evaluateSchedules();
+
+    // The guard runs before every downstream step (which would throw or misbehave on ROUTINE).
+    expect(dbService.client.workbook.findUnique).not.toHaveBeenCalled();
+    expect(dbService.client.dbJob.count).not.toHaveBeenCalled();
+    expect(scheduleService.atomicClaim).not.toHaveBeenCalled();
+    expect(scheduleService.entityExists).not.toHaveBeenCalled();
+    expect(scheduleService.disableSchedule).not.toHaveBeenCalled();
+    expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
+    expect(bullEnqueuerService.enqueuePullLinkedFolderFilesJob).not.toHaveBeenCalled();
+  });
+
   it('skips workbook when a created job exists (busy check)', async () => {
     const schedule = makeSchedule();
     scheduleService.findDueSchedules.mockResolvedValue([schedule]);

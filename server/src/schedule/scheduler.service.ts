@@ -45,6 +45,20 @@ export class SchedulerService {
 
     for (const schedule of dueSchedules) {
       try {
+        // ROUTINE schedules have no executor yet (added in a later phase). Skip them at the
+        // top of the loop — BEFORE atomicClaim/entityExists/enqueueJob — because every one of
+        // those breaks on ROUTINE: wasRecentlyTriggered → actionToJobType throws, enqueueJob's
+        // switch has no ROUTINE case, and skipping before atomicClaim preserves `nextRunAt` so
+        // the routine fires on its next natural tick once the executor exists.
+        if (schedule.action === 'ROUTINE') {
+          WSLogger.debug({
+            source: 'SchedulerService.evaluateSchedules',
+            message: `Skipping ROUTINE schedule ${schedule.id} (routine execution not yet implemented)`,
+          });
+          skipped++;
+          continue;
+        }
+
         // Skip schedules whose workbook is flagged for deletion. The hard-delete worker
         // will tear the schedule rows down via Workbook cascade; suppressing fires here
         // avoids enqueueing jobs that the BullEnqueuer guard would reject anyway.

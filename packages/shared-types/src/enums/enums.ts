@@ -69,6 +69,16 @@ export enum ScheduleAction {
   CONNECTION_INCREMENTAL_PULL = 'CONNECTION_INCREMENTAL_PULL',
   PUBLISH = 'PUBLISH',
   SYNC = 'SYNC',
+  /** Triggers a routine run. entityId is the routine file path. Execution lands in a later phase. */
+  ROUTINE = 'ROUTINE',
+}
+
+/** The action a single routine step performs. The wire values match the YAML `action:` field. */
+export enum RoutineAction {
+  PULL = 'pull',
+  SYNC = 'sync',
+  PUBLISH_PLAN = 'publish-plan',
+  PUBLISH = 'publish',
 }
 
 export enum TableDiscoveryMode {

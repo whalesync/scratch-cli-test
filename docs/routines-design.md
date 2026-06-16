@@ -43,7 +43,7 @@ steps:
 | `name`     | Yes      | Human-readable label for the routine                           |
 | `schedule` | No       | Cron expression (5-field). If omitted, routine is manual-only. |
 | `steps`    | Yes      | Ordered list of steps to execute                               |
-| `comment`  | Yes      | Note or comment to provide context or reminders                |
+| `comment`  | No       | Optional note or comment to provide context or reminders       |
 
 
 ### Step Fields

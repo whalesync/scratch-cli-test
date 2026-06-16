@@ -37,6 +37,8 @@ export enum IdPrefixes {
   WORKSPACE_INVITE = 'win_', // Workspace invite
   ASSET = 'ast_', // Asset
   MCP_CLIENT = 'mcc_', // MCP OAuth client
+  ROUTINE_RUN = 'rrn_', // Routine run (execution history)
+  ROUTINE_RUN_STEP = 'rrs_', // Routine run step
 }
 
 type PrefixedId<T extends IdPrefixes> = `${T}${string}`;
@@ -340,4 +342,26 @@ export function isMcpClientId(id: unknown): id is McpClientId {
 
 export function createMcpClientId(): McpClientId {
   return createId(IdPrefixes.MCP_CLIENT) as McpClientId;
+}
+
+// ------- RoutineRun -------
+export type RoutineRunId = PrefixedId<IdPrefixes.ROUTINE_RUN>;
+
+export function isRoutineRunId(id: unknown): id is RoutineRunId {
+  return isId(id, IdPrefixes.ROUTINE_RUN);
+}
+
+export function createRoutineRunId(): RoutineRunId {
+  return createId(IdPrefixes.ROUTINE_RUN) as RoutineRunId;
+}
+
+// ------- RoutineRunStep -------
+export type RoutineRunStepId = PrefixedId<IdPrefixes.ROUTINE_RUN_STEP>;
+
+export function isRoutineRunStepId(id: unknown): id is RoutineRunStepId {
+  return isId(id, IdPrefixes.ROUTINE_RUN_STEP);
+}
+
+export function createRoutineRunStepId(): RoutineRunStepId {
+  return createId(IdPrefixes.ROUTINE_RUN_STEP) as RoutineRunStepId;
 }

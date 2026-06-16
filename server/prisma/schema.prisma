@@ -60,6 +60,9 @@ enum ScheduleAction {
   CONNECTION_INCREMENTAL_PULL
   PUBLISH
   SYNC
+  /// Triggers a routine run. entityId is the routine file path (e.g. "routines/daily-sync.yaml").
+  /// Execution is added in a later phase; until then the scheduler evaluator skips ROUTINE schedules.
+  ROUTINE
 }
 
 /// The external app that owns and manages a workbook, if any. A null
@@ -208,6 +211,7 @@ model Workbook {
   syncs                Sync[]
   syncDrafts           SyncDraft[]
   assets               Asset[]
+  routineRuns          RoutineRun[]
   workspacePermissions WorkspacePermission[]
   workspaceInvites     WorkspaceInvites[]
 
@@ -869,6 +873,96 @@ model Schedule {
   @@index([workbookId])
   @@index([enabled, nextRunAt])
   @@index([entityId])
+}
+
+//#endregion
+
+//#region Routine
+
+/// Execution history for a single run of a routine (a file-defined workflow pipeline).
+/// The routine *definition* is never stored in the DB — it lives as a YAML file in the
+/// workbook config repo under routines/. Only run history is persisted here.
+/// NOTE: Keep this in sync with packages/shared-types/src/db/routine-run.ts
+model RoutineRun {
+  id        String   @id // type: RoutineRunId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workbook   Workbook @relation(fields: [workbookId], references: [id], onDelete: Cascade)
+  workbookId String
+
+  /// The routine file path, e.g. "routines/daily-sync.yaml".
+  /// Stored here so run history is readable even if the file is later deleted.
+  routineFilePath String
+
+  /// The routine name at the time of this run (snapshot from YAML).
+  routineName String
+
+  /// "pending" | "running" | "completed" | "failed" | "cancelled"
+  status String @default("pending")
+
+  /// Which trigger started this run: "manual" | "schedule"
+  trigger String
+
+  /// User who triggered the run (null for schedule-triggered runs).
+  triggeredByUserId String?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  /// Error message if the run failed.
+  error String?
+
+  /// Index of the step currently executing (0-based).
+  currentStepIndex Int @default(0)
+
+  steps RoutineRunStep[]
+
+  @@index([workbookId])
+  @@index([routineFilePath])
+  @@index([status])
+}
+
+/// Per-step execution record within a RoutineRun.
+/// NOTE: Keep this in sync with packages/shared-types/src/db/routine-run.ts
+model RoutineRunStep {
+  id        String   @id // type: RoutineRunStepId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  run   RoutineRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId String
+
+  /// 0-based position in the routine's step list.
+  stepIndex Int
+
+  /// The action type: "pull" | "sync" | "publish-plan" | "publish".
+  action String
+
+  /// Target folder path (if specified on the step).
+  folder String?
+
+  /// Target connection name or id (if specified on the step).
+  connection String?
+
+  /// "pending" | "running" | "completed" | "failed" | "skipped"
+  status String @default("pending")
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  /// Error message if this step failed.
+  error String?
+
+  /// Reference to the DbJob created for this step (if applicable). No FK — DbJob.id is a string.
+  jobId String?
+
+  /// For publish-plan / publish steps: the PublishPlan pipeline created for this step.
+  /// Lets a staged (plan-only) publish be located from run history. Null for other actions.
+  pipelineId String?
+
+  @@unique([runId, stepIndex])
+  @@index([runId])
 }
 
 //#endregion

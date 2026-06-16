@@ -131,6 +131,86 @@ export class ScheduleService {
     await this.db.client.schedule.delete({ where: { id: scheduleId } });
   }
 
+  // ── Routine schedules ────────────────────────────────────────────────────────
+  // Routine schedules use action ROUTINE with `entityId` = the routine YAML file path.
+  // They are managed exclusively by RoutineService.reloadRoutines (not the public
+  // schedule CRUD endpoints), so the create/upsert/delete helpers below are the only
+  // writers. Cron values are already validated (5-field, ≥5 min) by the routine parser;
+  // these methods re-check generic cron validity as a DB-write guard.
+
+  /** Returns the ROUTINE schedule rows for a workbook (one per scheduled routine file). */
+  async findRoutineSchedules(workbookId: WorkbookId): Promise<ScheduleEntity[]> {
+    const schedules = await this.db.client.schedule.findMany({
+      where: { workbookId, action: PrismaScheduleAction.ROUTINE },
+    });
+    return schedules.map((s) => new ScheduleEntity(s));
+  }
+
+  /**
+   * Upserts the ROUTINE schedule for a routine file (keyed by workbook + file path).
+   * On update, deliberately leaves `enabled` untouched so reload never silently
+   * re-enables a routine schedule a user (or a migration) disabled.
+   */
+  async upsertRoutineSchedule(
+    workbookId: WorkbookId,
+    routine: { filePath: string; name: string; cronExpression: string },
+    actor: Actor,
+  ): Promise<ScheduleEntity> {
+    const workbook = await this.db.client.workbook.findFirst({ where: { id: workbookId } });
+    if (!workbook) {
+      throw new NotFoundException(`Workbook ${workbookId} not found`);
+    }
+
+    this.validateCronExpression(routine.cronExpression);
+    const nextRunAt = this.computeNextRunAt(routine.cronExpression);
+
+    const schedule = await this.db.client.schedule.upsert({
+      where: {
+        workbookId_action_entityId: {
+          workbookId,
+          action: PrismaScheduleAction.ROUTINE,
+          entityId: routine.filePath,
+        },
+      },
+      create: {
+        id: createScheduleId(),
+        workbookId,
+        organizationId: workbook.organizationId,
+        userId: actor.userId,
+        name: routine.name,
+        action: PrismaScheduleAction.ROUTINE,
+        entityId: routine.filePath,
+        cronExpression: routine.cronExpression,
+        enabled: true,
+        nextRunAt,
+      },
+      update: {
+        name: routine.name,
+        cronExpression: routine.cronExpression,
+        nextRunAt,
+      },
+    });
+    return new ScheduleEntity(schedule);
+  }
+
+  /** Deletes the ROUTINE schedule for a routine file, if any. Idempotent no-op otherwise. */
+  async deleteRoutineScheduleByFilePath(workbookId: WorkbookId, filePath: string): Promise<void> {
+    await this.db.client.schedule.deleteMany({
+      where: { workbookId, action: PrismaScheduleAction.ROUTINE, entityId: filePath },
+    });
+  }
+
+  /**
+   * Deletes ROUTINE schedules whose routine file is no longer present. Pass the file
+   * paths still on disk; everything else is removed. An empty `validFilePaths` removes
+   * all ROUTINE schedules for the workbook (correct: no routine files remain).
+   */
+  async deleteOrphanedRoutineSchedules(workbookId: WorkbookId, validFilePaths: string[]): Promise<void> {
+    await this.db.client.schedule.deleteMany({
+      where: { workbookId, action: PrismaScheduleAction.ROUTINE, entityId: { notIn: validFilePaths } },
+    });
+  }
+
   /** Validates a cron expression is syntactically valid and meets the minimum interval requirement. */
   private validateCronExpression(cronExpression: string): void {
     let parsed;
@@ -173,6 +253,13 @@ export class ScheduleService {
         select: { id: true },
       });
       return sync !== null;
+    } else if (action === PrismaScheduleAction.ROUTINE) {
+      // For ROUTINE schedules `entityId` is a routine file path, not a DB id. Its existence
+      // is validated by reload (which reads git); ScheduleService can't read git, so treat
+      // it as existing. The scheduler also skips ROUTINE schedules until the executor lands,
+      // so this branch is currently unreached — returning true (not false) prevents an
+      // accidental disableSchedule() if that ordering ever changes.
+      return true;
     }
     return false;
   }
