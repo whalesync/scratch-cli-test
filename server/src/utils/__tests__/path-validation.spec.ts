@@ -39,6 +39,28 @@ describe('validateRecordPath', () => {
     expectError('outside-data-folder', () => validateRecordPath('Companies', folders));
   });
 
+  it('gives an actionable outside-data-folder message that names the stale-clone cause + the re-clone recovery (T5)', () => {
+    // A stale local clone whose folder layout predates a server-side restructure
+    // (DEV-9698) uploads paths the server no longer knows. The reject must point
+    // the user at the fix rather than just stating the path is unknown.
+    try {
+      validateRecordPath('Old Site/Blog/rec1.json', folders);
+    } catch (err) {
+      expect(err).toBeInstanceOf(PathValidationError);
+      const message = (err as PathValidationError).message;
+      // Stable prefix (tests/callers key off the code, but the leading phrasing
+      // is preserved) + the offending path.
+      expect(message).toContain('Path is not inside any known DataFolder');
+      expect(message).toContain('Old Site/Blog/rec1.json');
+      // Actionable cause + recovery.
+      expect(message).toContain('folder structure changed on the server');
+      expect(message).toContain('workspaces init');
+      expect(message).toContain('--force');
+      return;
+    }
+    throw new Error('Expected PathValidationError but none was thrown');
+  });
+
   it('skips inside-folder check when dataFolders is empty', () => {
     expect(validateRecordPath('Anything/rec1.json', [])).toBe('Anything/rec1.json');
   });

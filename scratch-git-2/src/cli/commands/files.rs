@@ -592,12 +592,34 @@ async fn run_download(
         );
     }
 
-    let folders_by_conn = fetch_folders_by_connection(
+    let server_state = fetch_connection_server_state(
         &workspace_server_url,
         &workspace_marker,
         &workspace_marker.workbook.id,
     )
     .await;
+
+    // Refuse the pull if the server restructured a folder layout (DEV-9698) for
+    // a connection we're about to download — the recorded structure version no
+    // longer matches the server. Bail BEFORE re-anchor/materialize so a stale
+    // clone's accepted-patches.json is never mangled by the folder move; the
+    // user re-clones (which salvages any un-uploaded edits first). Scoped to the
+    // selected `contexts` so working in a healthy connection isn't blocked by an
+    // unrelated stale one. Checked ahead of the unreviewed-edits pre-flight
+    // because a re-clone supersedes accepting/discarding edits.
+    let downloaded_connection_ids: HashSet<&str> =
+        contexts.iter().map(|c| c.connection_id.as_str()).collect();
+    let structure_drift: Vec<StructureVersionDrift> =
+        detect_structure_version_drift(&workspace_marker, &server_state)
+            .into_iter()
+            .filter(|d| downloaded_connection_ids.contains(d.connection_id.as_str()))
+            .collect();
+    if !structure_drift.is_empty() {
+        print_structure_change_reinit_result(&structure_drift, json)?;
+        anyhow::bail!(
+            "This workspace's folder structure changed on the server and needs to be reinitialized."
+        );
+    }
 
     // Pre-flight: refuse the pull if any connection has unreviewed
     // working-tree edits. All-or-nothing — partial pulls leave the workspace
@@ -630,8 +652,10 @@ async fn run_download(
         if contexts.len() > 1 && !json {
             println!("Downloading {}...", ctx.conn_dir_name);
         }
-        let empty = Vec::new();
-        let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
+        let folders: &[DataFolder] = server_state
+            .get(&ctx.connection_id)
+            .map(|s| s.data_folders.as_slice())
+            .unwrap_or(&[]);
         let mut download_result = download_single_repo(ctx, &workspace_dir, &token, folders)?;
         // `update_main_worktree_after_pull` is best-effort — failures here shouldn't
         // bubble up because the dirty-side download already succeeded. Fall
@@ -831,6 +855,9 @@ async fn sync_workspace_structure(
                 service: ca.service.clone(),
                 repo_path: ca.repo_path.clone(),
                 dir_name,
+                // A freshly added connection records the server's current
+                // structure version, same as a fresh `init` (DEV-9698).
+                structure_version: ca.version,
             });
         }
     }
@@ -3114,10 +3141,32 @@ pub async fn download_workbook(
     // refusing here would fail downstream operations the user didn't directly
     // trigger. Old-layout workspaces show up only on user-initiated commands.
     let contexts = build_connection_contexts(&workspace_dir, &workspace_marker, None)?;
-    let folders_by_conn =
-        fetch_folders_by_connection(base_url, &workspace_marker, workbook_id).await;
+    let server_state =
+        fetch_connection_server_state(base_url, &workspace_marker, workbook_id).await;
 
-    refresh_workbook_for_contexts(&workspace_dir, &contexts, &folders_by_conn, token)
+    // If the server restructured a connection's folders (DEV-9698), skip the
+    // best-effort refresh entirely rather than re-anchoring a stale clone onto
+    // the moved layout. The action that triggered this refresh already
+    // succeeded server-side; the user hits the actionable re-clone prompt on
+    // their next explicit `scratchmd files download`. Mirrors the unreviewed-
+    // edits skip below — warn, don't fail the caller.
+    let downloaded_connection_ids: HashSet<&str> =
+        contexts.iter().map(|c| c.connection_id.as_str()).collect();
+    let structure_drift: Vec<StructureVersionDrift> =
+        detect_structure_version_drift(&workspace_marker, &server_state)
+            .into_iter()
+            .filter(|d| downloaded_connection_ids.contains(d.connection_id.as_str()))
+            .collect();
+    if !structure_drift.is_empty() {
+        eprintln!(
+            "Warning: skipping local refresh — the folder structure for {} connection(s) changed on the server. Re-clone the workspace (`scratchmd workspaces init {} --force`) to continue.",
+            structure_drift.len(),
+            workbook_id
+        );
+        return Ok(());
+    }
+
+    refresh_workbook_for_contexts(&workspace_dir, &contexts, &server_state, token)
 }
 
 /// Inner refresh loop for the programmatic post-server-mutation path. Holds
@@ -3134,7 +3183,7 @@ pub async fn download_workbook(
 fn refresh_workbook_for_contexts(
     workspace_dir: &Path,
     contexts: &[ConnectionContext],
-    folders_by_conn: &HashMap<String, Vec<DataFolder>>,
+    server_state: &HashMap<String, ConnectionServerState>,
     token: &str,
 ) -> anyhow::Result<()> {
     let _lock = crate::config::workspace_lock::acquire(workspace_dir)?;
@@ -3172,8 +3221,10 @@ fn refresh_workbook_for_contexts(
     }
 
     for ctx in contexts {
-        let empty = Vec::new();
-        let folders = folders_by_conn.get(&ctx.connection_id).unwrap_or(&empty);
+        let folders: &[DataFolder] = server_state
+            .get(&ctx.connection_id)
+            .map(|s| s.data_folders.as_slice())
+            .unwrap_or(&[]);
         download_single_repo(ctx, workspace_dir, token, folders)?;
         if update_main_worktree_after_pull(ctx, token).is_ok() {
             let _ = sync_schema_files_from_worktree(ctx);
@@ -3182,15 +3233,25 @@ fn refresh_workbook_for_contexts(
     Ok(())
 }
 
-/// Fetch fresh DataFolder metadata for each connection so download can
-/// reconcile empty folders after materialization. Best-effort: on any auth or
-/// network error, returns an empty map — file merge still proceeds, only the
-/// empty-folder reconcile is skipped.
-async fn fetch_folders_by_connection(
+/// The server's current view of one connection, as needed by download: the
+/// fresh DataFolder metadata (to reconcile empty folders after materialization)
+/// and the connector's folder-structure version (to detect a server-side
+/// restructure that leaves the local clone stale — DEV-9698).
+struct ConnectionServerState {
+    data_folders: Vec<DataFolder>,
+    /// Server `ConnectorAccount.version`. `0` when an older server omits it.
+    structure_version: i32,
+}
+
+/// Fetch each connection's server-side state (DataFolders + structure version)
+/// in a single workbook GET. Best-effort: on any auth or network error, returns
+/// an empty map — file merge still proceeds, only the empty-folder reconcile +
+/// structure-drift check are skipped.
+async fn fetch_connection_server_state(
     base_url: &str,
     workspace_marker: &markers::WorkspaceMarker,
     workbook_id: &str,
-) -> HashMap<String, Vec<DataFolder>> {
+) -> HashMap<String, ConnectionServerState> {
     let server_url = if workspace_marker.workbook.server_url.is_empty() {
         base_url
     } else {
@@ -3206,13 +3267,111 @@ async fn fetch_folders_by_connection(
         Ok(wb) => wb
             .connector_accounts
             .into_iter()
-            .map(|ca| (ca.id, ca.data_folders))
+            .map(|ca| {
+                (
+                    ca.id,
+                    ConnectionServerState {
+                        data_folders: ca.data_folders,
+                        structure_version: ca.version,
+                    },
+                )
+            })
             .collect(),
         Err(e) => {
             eprintln!("  Note: could not fetch folder metadata for reconcile: {e}");
             HashMap::new()
         }
     }
+}
+
+/// One connection whose locally-recorded folder-structure version no longer
+/// matches the server's. Produced by [`detect_structure_version_drift`].
+struct StructureVersionDrift {
+    /// The connector account id — used to scope the bail to the connections
+    /// actually being downloaded.
+    connection_id: String,
+    /// The connection's worktree directory name (what the user sees on disk).
+    connection_dir_name: String,
+    #[allow(dead_code)]
+    recorded_version: i32,
+    #[allow(dead_code)]
+    server_version: i32,
+}
+
+/// Generic, connector-agnostic detection: compare each connection's recorded
+/// folder-structure version (captured in the workspace marker at clone time)
+/// against the server's current `ConnectorAccount.version`. A difference means
+/// the server restructured this connection's folder layout (e.g. the DEV-9698
+/// Webflow flat→nested migration) and the local clone is stale.
+///
+/// This is purely an integer comparison — the CLI frontend stays free of any
+/// connector-specific knowledge of *what* the layout is. `0` on either side is
+/// treated as "unknown / not recorded" (a marker written before the field
+/// existed, or an older server that doesn't send it) and never trips detection,
+/// so it can only fire on a genuine version change between two known values.
+fn detect_structure_version_drift(
+    marker: &markers::WorkspaceMarker,
+    server_state: &HashMap<String, ConnectionServerState>,
+) -> Vec<StructureVersionDrift> {
+    marker
+        .connections
+        .iter()
+        .filter_map(|c| {
+            let recorded = c.structure_version;
+            let server = server_state
+                .get(&c.id)
+                .map(|s| s.structure_version)
+                .unwrap_or(0);
+            if recorded != 0 && server != 0 && recorded != server {
+                Some(StructureVersionDrift {
+                    connection_id: c.id.clone(),
+                    connection_dir_name: if c.dir_name.is_empty() {
+                        c.display_name.clone()
+                    } else {
+                        c.dir_name.clone()
+                    },
+                    recorded_version: recorded,
+                    server_version: server,
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Print the structured `workspace_needs_reinit` result for a folder-structure
+/// change (reason `structure_changed`). Mirrors
+/// [`print_workspace_needs_reinit_result`] so the desktop pattern-matches the
+/// same JSON envelope; only the `reason` + copy differ. Caller bails after.
+fn print_structure_change_reinit_result(
+    drift: &[StructureVersionDrift],
+    json: bool,
+) -> anyhow::Result<()> {
+    let affected: Vec<String> = drift
+        .iter()
+        .map(|d| d.connection_dir_name.clone())
+        .collect();
+    let recommendation = "The folder structure for these connection(s) changed on the server. Run `scratchmd workspaces init <workbook-id> --force` to re-sync your local copy. Edits staged for publish are backed up first; accept or publish any other in-progress changes before re-cloning to keep them.";
+    if json {
+        let output = serde_json::json!({
+            "status": "workspace_needs_reinit",
+            "reason": "structure_changed",
+            "affectedConnections": affected,
+            "recommendation": recommendation,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    println!("This workspace's folder structure changed on the server and needs to be re-synced.");
+    println!();
+    println!("Affected connection(s):");
+    for name in &affected {
+        println!("  {name}");
+    }
+    println!();
+    println!("{recommendation}");
+    Ok(())
 }
 
 /// Refuse to operate on workspaces that were initialized under the

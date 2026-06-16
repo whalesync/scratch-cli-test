@@ -93,6 +93,7 @@ export function WorkspacePage() {
   const [pullAllMode, setPullAllMode] = useState<'full' | 'incremental' | null>(null);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
   const [reinitModalOpen, setReinitModalOpen] = useState(false);
+  const [reinitReason, setReinitReason] = useState<string | undefined>(undefined);
   // selectedFolderPath lives in component state (not the Zustand store) so it
   // resets cleanly when this component remounts on workspace switch (see
   // `<WorkspacePage key={id} />` in App.tsx). Storing it in the module-level
@@ -544,6 +545,7 @@ export function WorkspacePage() {
         // Refusal came from a different workspace's CLI call — ignore on this page.
         return;
       }
+      setReinitReason(event.reason);
       setReinitModalOpen(true);
     });
     return unsubscribe;
@@ -660,6 +662,7 @@ export function WorkspacePage() {
           opened={reinitModalOpen}
           workbookId={workspace.id}
           localPath={localPath}
+          reason={reinitReason}
           onClose={() => setReinitModalOpen(false)}
           onReinitialized={() => {
             setReinitModalOpen(false);

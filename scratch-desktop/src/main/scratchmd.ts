@@ -209,6 +209,11 @@ function broadcastWorkspaceNeedsReinit(payload: WorkspaceNeedsReinitPayload, cwd
   const event: WorkspaceNeedsReinitEvent = {
     workspacePath: cwd ?? '',
     affectedConnections: payload.affectedConnections,
+    // Carry the reason + recommendation through so the renderer can tailor its
+    // copy (e.g. a DEV-9698 `structure_changed` re-clone reassures the user
+    // their un-uploaded edits are preserved, rather than warning of discard).
+    reason: payload.reason,
+    recommendation: payload.recommendation,
   };
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send(WORKSPACE_NEEDS_REINIT_CHANNEL, event);

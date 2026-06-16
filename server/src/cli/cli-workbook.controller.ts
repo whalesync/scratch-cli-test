@@ -137,6 +137,10 @@ export class CliWorkbookController {
       service: ca.service,
       repoPath: ca.repoPath ?? undefined,
       gitUrl: `${baseUrl}/cli/v1/workbooks/${id}/connectors/${ca.id}/git`,
+      // The folder-structure version pin. The CLI uses this to detect that a
+      // connection's layout was restructured server-side (DEV-9698) and that a
+      // stale local clone must be re-cloned.
+      version: ca.version,
       dataFolders: ca.dataFolders.map((df) => ({ id: df.id, name: df.name, path: df.path })),
     }));
 

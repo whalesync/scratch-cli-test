@@ -10,6 +10,12 @@ interface ReinitWorkspaceModalProps {
   opened: boolean;
   workbookId: string;
   localPath: string;
+  /**
+   * Why the CLI asked for a re-clone (from the `workspace_needs_reinit` event).
+   * `'structure_changed'` (DEV-9698) tailors the copy to a server-side folder
+   * restructure; anything else falls back to the legacy "older version" wording.
+   */
+  reason?: string;
   onClose: () => void;
   onReinitialized: () => void;
 }
@@ -18,6 +24,7 @@ export function ReinitWorkspaceModal({
   opened,
   workbookId,
   localPath,
+  reason,
   onClose,
   onReinitialized,
 }: ReinitWorkspaceModalProps) {
@@ -60,9 +67,14 @@ export function ReinitWorkspaceModal({
         {phase === 'confirm' && (
           <>
             <Text13Regular>
-              This workspace was created on an older version of Scratch and needs to be reinitialized.
+              {reason === 'structure_changed'
+                ? "This workspace's folder structure changed on the server and needs to be re-synced."
+                : 'This workspace was created on an older version of Scratch and needs to be reinitialized.'}
             </Text13Regular>
-            <Text13Regular c="dimmed">Any unpublished edits will be discarded.</Text13Regular>
+            <Text13Regular c="dimmed">
+              Edits you&apos;ve staged for publish are backed up on disk first. To keep any other in-progress changes,
+              accept or publish them before re-syncing.
+            </Text13Regular>
             <Group justify="flex-end" gap="sm">
               <ButtonSecondaryOutline onClick={onClose}>Cancel</ButtonSecondaryOutline>
               <ButtonPrimaryLight onClick={() => void handleReinitialize()}>Reinitialize workspace</ButtonPrimaryLight>

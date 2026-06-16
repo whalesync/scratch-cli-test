@@ -260,6 +260,14 @@ pub struct ConnectorAccount {
     pub repo_path: String,
     #[serde(rename = "gitUrl", default)]
     pub git_url: String,
+    /// The connector account's on-disk folder *structure* version
+    /// (`ConnectorAccount.version` server-side). Recorded in the workspace
+    /// marker at `init` and compared against the server's current value on
+    /// download to detect a server-side folder restructure (DEV-9698) that
+    /// leaves the local clone stale. Defaults to `0` ("unknown") when an older
+    /// server omits it — detection treats `0` as "not recorded" and never fires.
+    #[serde(default)]
+    pub version: i32,
     #[serde(rename = "dataFolders", default)]
     pub data_folders: Vec<DataFolder>,
 }

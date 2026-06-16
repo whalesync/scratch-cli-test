@@ -337,10 +337,14 @@ async fn init(
     };
     let target_dir = PathBuf::from(output_dir).join(&wb_name);
 
-    // Check if already initialized
+    // Check if already initialized. A forced re-clone NEVER silently destroys
+    // un-uploaded work — `clear_existing_workspace_preserving_pending_edits`
+    // moves a workspace with pending accepted edits aside instead of deleting
+    // it, and returns where (reported below).
+    let mut salvaged_to: Option<PathBuf> = None;
     if let Some(existing) = find_existing_workspace(output_dir, workbook_id) {
         if force {
-            std::fs::remove_dir_all(&existing)?;
+            salvaged_to = clear_existing_workspace_preserving_pending_edits(&existing)?;
         } else if json {
             anyhow::bail!(
                 "Workspace {} is already initialized at {} (use --force to overwrite)",
@@ -358,7 +362,16 @@ async fn init(
                 println!("Cancelled.");
                 return Ok(());
             }
-            std::fs::remove_dir_all(&existing)?;
+            salvaged_to = clear_existing_workspace_preserving_pending_edits(&existing)?;
+        }
+        if let Some(salvage_path) = &salvaged_to {
+            // To stderr so it surfaces in both human and `--json` modes without
+            // corrupting the JSON document on stdout.
+            eprintln!(
+                "Preserved your previous local workspace (it had un-uploaded edits) at:\n  {}\nYour accepted-but-unpublished edits are in {}/.scratch/connections/<connection>/accepted-patches.json",
+                salvage_path.display(),
+                salvage_path.display()
+            );
         }
     }
 
@@ -381,6 +394,9 @@ async fn init(
                 "directory": target_dir.display().to_string(),
                 "fileCount": total_files,
                 "elapsedMs": elapsed_ms,
+                // Where the previous workspace's un-uploaded edits were preserved
+                // before this re-clone, if any (DEV-9698 non-destructive salvage).
+                "salvagedTo": salvaged_to.as_ref().map(|p| p.display().to_string()),
             }))?
         );
     } else {
@@ -397,6 +413,13 @@ async fn init(
         for ca in &wb.connector_accounts {
             let dir_name = connector_dir_name(&ca.display_name);
             println!("    {}/", dir_name);
+        }
+        if let Some(salvage_path) = &salvaged_to {
+            println!();
+            println!(
+                "  Note: your previous workspace had un-uploaded edits — preserved at {}",
+                salvage_path.display()
+            );
         }
         println!();
     }
@@ -419,6 +442,9 @@ fn init_v2(wb: &Workbook, target_dir: &Path, server_url: &str, token: &str) -> a
             service: ca.service.clone(),
             repo_path: ca.repo_path.clone(),
             dir_name: connector_dir_name(&ca.display_name),
+            // Snapshot the connector's folder-structure version at clone time so a
+            // later server-side restructure (DEV-9698) is detectable on download.
+            structure_version: ca.version,
         })
         .collect();
     let org_id = derive_workbook_org_id(wb);
@@ -606,6 +632,17 @@ fn find_existing_workspace(output_dir: &str, workbook_id: &str) -> Option<PathBu
         if !entry.file_type().ok()?.is_dir() {
             continue;
         }
+        // A preserved (salvaged) workspace backup keeps a valid marker with the
+        // same workbook id; never return it as the live workspace, or a second
+        // `init --force` would clear the backup and clone into the still-occupied
+        // live directory.
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .contains(SALVAGE_DIR_INFIX)
+        {
+            continue;
+        }
         let marker_path = markers::marker_path(&entry.path());
         let content = std::fs::read_to_string(&marker_path).ok()?;
         let value: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
@@ -623,6 +660,86 @@ fn find_existing_workspace(output_dir: &str, workbook_id: &str) -> Option<PathBu
 
 fn connector_dir_name(display_name: &str) -> String {
     markers::sanitize_filename(display_name)
+}
+
+/// Clear an existing workspace to make room for a fresh `init --force` clone —
+/// but NEVER silently destroy un-uploaded work. If any connection has accepted-
+/// but-not-yet-published edits (a non-empty `accepted-patches.json`), the whole
+/// workspace is *moved* aside to `<name>.salvaged-<timestamp>` instead of being
+/// deleted. A single atomic rename preserves everything (worktree edits **and**
+/// the accepted patches, which ARE the upload wire format), so the user can
+/// recover. Returns the salvage path when it preserved, `None` when it
+/// plain-removed (nothing pending to lose).
+///
+/// This is what makes the DEV-9698 forced re-clone non-destructive: a stale
+/// clone whose folders moved server-side must be re-cloned, and re-clone must
+/// not throw away edits the user staged before the migration.
+fn clear_existing_workspace_preserving_pending_edits(
+    existing: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
+    if !workspace_has_pending_accepted_edits(existing) {
+        std::fs::remove_dir_all(existing)?;
+        return Ok(None);
+    }
+    let salvage_path = choose_salvage_path(existing);
+    std::fs::rename(existing, &salvage_path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to preserve existing workspace at {} (move to {}): {e}",
+            existing.display(),
+            salvage_path.display()
+        )
+    })?;
+    Ok(Some(salvage_path))
+}
+
+/// Infix marking a directory as a preserved (salvaged) workspace backup, not a
+/// live workspace. `find_existing_workspace` skips dirs containing it so a
+/// second `init --force` can never pick a backup as the workspace to re-clone.
+const SALVAGE_DIR_INFIX: &str = ".salvaged-";
+
+/// True when any connection in the workspace has a non-empty
+/// `accepted-patches.json` — i.e. accepted edits the user has not yet published.
+/// Conservative on every uncertainty (preserve, never delete): an unreadable
+/// marker, or an `accepted-patches.json` that fails to load (corrupt, or written
+/// by a newer scratchmd) is treated as "might have pending work".
+fn workspace_has_pending_accepted_edits(existing: &Path) -> bool {
+    let marker_path = markers::marker_path(existing);
+    let marker = match markers::read(&marker_path) {
+        Ok(markers::Marker::Workspace(m)) => m,
+        _ => return existing.join(".scratch").exists(),
+    };
+    let layout = WorkspaceLayout::for_cli(existing);
+    marker.connections.iter().any(|c| {
+        if c.dir_name.is_empty() {
+            return false;
+        }
+        let conn_dir = layout.connection_root_path(&c.dir_name);
+        // `load` returns Ok(empty) for a missing/empty file; it only errors on a
+        // genuinely unparseable / too-new file — exactly the case where we can't
+        // be sure there's no pending work, so preserve (`unwrap_or(true)`).
+        crate::shared::accepted_patches::load(&conn_dir)
+            .map(|f| !f.patches.is_empty())
+            .unwrap_or(true)
+    })
+}
+
+/// Pick a non-colliding salvage path next to the existing workspace:
+/// `<name>.salvaged-<YYYYMMDD-HHMMSS>`, suffixed `-1`, `-2`, … on collision
+/// (two re-clones within the same second).
+fn choose_salvage_path(existing: &Path) -> PathBuf {
+    let parent = existing.parent().unwrap_or_else(|| Path::new("."));
+    let base_name = existing
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace");
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let mut candidate = parent.join(format!("{base_name}{SALVAGE_DIR_INFIX}{stamp}"));
+    let mut counter = 1;
+    while candidate.exists() {
+        candidate = parent.join(format!("{base_name}{SALVAGE_DIR_INFIX}{stamp}-{counter}"));
+        counter += 1;
+    }
+    candidate
 }
 
 fn derive_workbook_repo_id(wb: &Workbook) -> Option<String> {

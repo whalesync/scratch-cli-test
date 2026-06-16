@@ -37,6 +37,26 @@ describe('parseWorkspaceNeedsReinitPayload', () => {
     expect(parsed!.connectionsWithSparseCheckout).toEqual(['Stripe']);
   });
 
+  it('parses a DEV-9698 structure_changed payload and preserves its reason + recommendation', () => {
+    // The folder-restructure re-clone signal: same envelope, different reason.
+    // The renderer keys its copy off this reason, so it must survive the parse.
+    const stdout = JSON.stringify({
+      status: 'workspace_needs_reinit',
+      reason: 'structure_changed',
+      affectedConnections: ['Marketing Site'],
+      recommendation:
+        'The folder structure for these connection(s) changed on the server. Run `scratchmd workspaces init <workbook-id> --force` to re-sync your local copy. Edits staged for publish are backed up first; accept or publish any other in-progress changes before re-cloning to keep them.',
+    });
+    const parsed = parseWorkspaceNeedsReinitPayload(stdout);
+    expect(parsed).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(parsed!.reason).toBe('structure_changed');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(parsed!.affectedConnections).toEqual(['Marketing Site']);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(parsed!.recommendation).toContain('backed up first');
+  });
+
   it('falls back to stderr marker detection when stdout is not JSON (non --json mode)', () => {
     const stdout = 'This workspace was created on an older version of Scratch and needs to be reinitialized.\n';
     const stderr = 'Error: This workspace was created on an older version of Scratch and needs to be reinitialized.\n';

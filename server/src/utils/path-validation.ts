@@ -72,7 +72,18 @@ export function validateRecordPath(rawPath: string, dataFolders: ReadonlyArray<D
   if (dataFolders.length > 0 && !isInsideKnownDataFolder(normalized, dataFolders)) {
     throw new PathValidationError(
       'outside-data-folder',
-      `Path is not inside any known DataFolder for this connector: ${rawPath}`,
+      // Keep the leading "Path is not inside any known DataFolder" phrasing + the
+      // code stable (callers/tests key off the code) but make the message
+      // actionable: the dominant real-world cause is a stale local clone whose
+      // folder layout predates a server-side restructure (e.g. the DEV-9698
+      // Webflow flat→nested migration), so the upload references paths the
+      // server no longer knows. Point the user straight at the recovery.
+      `Path is not inside any known DataFolder for this connector: ${rawPath}. ` +
+        `This usually means the workspace's folder structure changed on the server ` +
+        `(e.g. a folder was moved or restructured) and your local copy is out of date. ` +
+        `Re-clone the workspace to continue — run \`scratchmd workspaces init <workbook-id> --force\`, ` +
+        `or click "Reinitialize" in Scratch desktop. Edits staged for publish are backed up first; ` +
+        `accept or publish any other in-progress changes before re-cloning to keep them.`,
       rawPath,
     );
   }

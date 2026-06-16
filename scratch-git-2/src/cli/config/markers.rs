@@ -35,6 +35,14 @@ pub struct ConnectionEntry {
     pub repo_path: String,
     #[serde(rename = "dirName", default)]
     pub dir_name: String,
+    /// The connector's folder-structure version (server `ConnectorAccount.version`)
+    /// captured when this connection was cloned. On download the CLI re-fetches
+    /// the server's current value and, if it differs, knows the server
+    /// restructured this connection's folder layout (DEV-9698) and the local
+    /// clone is stale. `0` means "not recorded" — markers written before this
+    /// field existed deserialize to `0` and are skipped by drift detection.
+    #[serde(rename = "structureVersion", default)]
+    pub structure_version: i32,
 }
 
 // ── Connector marker ────────────────────────────────────────────────────────

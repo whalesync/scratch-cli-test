@@ -43,6 +43,7 @@ fn workbook_with_repo_paths(repo_paths: &[&str]) -> Workbook {
                 service: "AIRTABLE".to_string(),
                 repo_path: (*repo_path).to_string(),
                 git_url: String::new(),
+                version: 1,
                 data_folders: vec![],
             })
             .collect(),
@@ -183,6 +184,7 @@ fn init_v2_produces_workspace_structure_expected_by_desktop() {
             service: "WORDPRESS".to_string(),
             repo_path: "org_test/wkb_test123/ca_conn1".to_string(),
             git_url: remote_bare.to_str().unwrap().to_string(),
+            version: 1,
             data_folders: vec![],
         }],
         git_url: String::new(), // no workbook config repo — init_workbook_repo will skip
@@ -616,6 +618,7 @@ fn init_v2_sets_up_multiple_connections_in_parallel() {
                 service: "WORDPRESS".to_string(),
                 repo_path: format!("org_test/wkb_multi/ca_{slug}"),
                 git_url: bare.to_str().unwrap().to_string(),
+                version: 1,
                 data_folders: vec![],
             })
             .collect(),
@@ -661,6 +664,7 @@ fn init_v2_continues_when_one_connection_fails() {
                 service: "WORDPRESS".to_string(),
                 repo_path: "org_test/wkb_partial/ca_good".to_string(),
                 git_url: good_bare.to_str().unwrap().to_string(),
+                version: 1,
                 data_folders: vec![],
             },
             ConnectorAccount {
@@ -674,6 +678,7 @@ fn init_v2_continues_when_one_connection_fails() {
                     .to_str()
                     .unwrap()
                     .to_string(),
+                version: 1,
                 data_folders: vec![],
             },
         ],
@@ -712,6 +717,7 @@ fn init_v2_bails_when_all_connections_fail() {
                 service: "WORDPRESS".to_string(),
                 repo_path: "org_test/wkb_all_fail/ca_a".to_string(),
                 git_url: tmp.path().join("nope-a.git").to_str().unwrap().to_string(),
+                version: 1,
                 data_folders: vec![],
             },
             ConnectorAccount {
@@ -720,6 +726,7 @@ fn init_v2_bails_when_all_connections_fail() {
                 service: "WORDPRESS".to_string(),
                 repo_path: "org_test/wkb_all_fail/ca_b".to_string(),
                 git_url: tmp.path().join("nope-b.git").to_str().unwrap().to_string(),
+                version: 1,
                 data_folders: vec![],
             },
         ],
@@ -758,4 +765,191 @@ fn init_v2_succeeds_with_zero_connections() {
     init_v2(&wb, &workspace_dir, "http://localhost:3010", "fake-token")
         .expect("init should succeed when the workbook has no connectors");
     assert!(workspace_dir.join(".scratch/workspace").exists());
+}
+
+// ── Non-destructive forced re-clone salvage (DEV-9698 T5) ────────────────────
+
+/// Build a minimal on-disk workspace (marker + one connection) for salvage
+/// tests, optionally seeding a non-empty `accepted-patches.json`.
+fn make_fake_workspace(parent: &Path, conn_dir: &str, with_pending: bool) -> std::path::PathBuf {
+    let ws = parent.join("My Workbook");
+    std::fs::create_dir_all(ws.join(".scratch")).unwrap();
+    let conn = markers::ConnectionEntry {
+        id: "ca_0".to_string(),
+        display_name: conn_dir.to_string(),
+        service: "WEBFLOW".to_string(),
+        repo_path: "org/wkb/ca_0".to_string(),
+        dir_name: conn_dir.to_string(),
+        structure_version: 1,
+    };
+    markers::write_workspace(
+        &ws,
+        "wkb_test",
+        "My Workbook",
+        "org",
+        "http://localhost",
+        &[conn],
+    )
+    .unwrap();
+    if with_pending {
+        let layout = WorkspaceLayout::for_cli(&ws);
+        let conn_root = layout.connection_root_path(conn_dir);
+        let file = crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: vec![crate::shared::re_anchor::AnchoredPatch {
+                path: format!("{conn_dir}/rec_1.json"),
+                kind: crate::shared::re_anchor::PatchKind::Update,
+                patch: serde_json::json!({ "name": "edited" }),
+                revert: false,
+            }],
+        };
+        crate::shared::accepted_patches::save_atomic(&conn_root, &file).unwrap();
+    }
+    ws
+}
+
+#[test]
+fn workspace_has_pending_accepted_edits_true_with_nonempty_accepted_patches() {
+    let tmp = TempDir::new().unwrap();
+    let ws = make_fake_workspace(tmp.path(), "Webflow Site", true);
+    assert!(workspace_has_pending_accepted_edits(&ws));
+}
+
+#[test]
+fn workspace_has_pending_accepted_edits_false_without_accepted_patches() {
+    let tmp = TempDir::new().unwrap();
+    let ws = make_fake_workspace(tmp.path(), "Webflow Site", false);
+    assert!(!workspace_has_pending_accepted_edits(&ws));
+}
+
+#[test]
+fn clear_preserves_workspace_with_pending_edits_instead_of_deleting() {
+    let tmp = TempDir::new().unwrap();
+    let ws = make_fake_workspace(tmp.path(), "Webflow Site", true);
+
+    let salvaged_to = clear_existing_workspace_preserving_pending_edits(&ws).unwrap();
+
+    let salvage_path =
+        salvaged_to.expect("a workspace with pending edits must be preserved, not deleted");
+    assert!(
+        !ws.exists(),
+        "original workspace path should be vacated by the move"
+    );
+    assert!(salvage_path.exists(), "salvage directory should exist");
+    assert!(
+        salvage_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains(".salvaged-"),
+        "salvage dir should be named <name>.salvaged-<ts>"
+    );
+    // The accepted-patches.json (the upload wire format) must survive the move.
+    let preserved_patches = salvage_path
+        .join(".scratch")
+        .join("connections")
+        .join("Webflow Site")
+        .join("accepted-patches.json");
+    assert!(
+        preserved_patches.exists(),
+        "accepted edits must be preserved in the salvage dir"
+    );
+}
+
+#[test]
+fn clear_deletes_workspace_without_pending_edits() {
+    let tmp = TempDir::new().unwrap();
+    let ws = make_fake_workspace(tmp.path(), "Webflow Site", false);
+
+    let salvaged_to = clear_existing_workspace_preserving_pending_edits(&ws).unwrap();
+
+    assert!(
+        salvaged_to.is_none(),
+        "a clean workspace should be deleted, not salvaged"
+    );
+    assert!(!ws.exists(), "workspace should be removed");
+}
+
+#[test]
+fn choose_salvage_path_is_a_timestamped_sibling() {
+    let tmp = TempDir::new().unwrap();
+    let ws = tmp.path().join("My Workbook");
+    std::fs::create_dir_all(&ws).unwrap();
+    let salvage = choose_salvage_path(&ws);
+    assert_eq!(salvage.parent(), ws.parent());
+    let name = salvage.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(name.starts_with("My Workbook.salvaged-"), "got {name}");
+    assert!(!salvage.exists(), "the chosen path must not already exist");
+}
+
+#[test]
+fn workspace_has_pending_accepted_edits_true_when_patches_file_is_unparseable() {
+    // A corrupt or newer-format accepted-patches.json must be treated as "might
+    // have pending work" — never deleted out from under the user.
+    let tmp = TempDir::new().unwrap();
+    let ws = make_fake_workspace(tmp.path(), "Webflow Site", false);
+    let conn_root = WorkspaceLayout::for_cli(&ws).connection_root_path("Webflow Site");
+    std::fs::create_dir_all(&conn_root).unwrap();
+    // version 999 — a file a newer scratchmd wrote; `load` refuses it.
+    std::fs::write(
+        conn_root.join("accepted-patches.json"),
+        br#"{"version":999,"patches":[]}"#,
+    )
+    .unwrap();
+
+    assert!(workspace_has_pending_accepted_edits(&ws));
+    let salvaged_to = clear_existing_workspace_preserving_pending_edits(&ws).unwrap();
+    assert!(
+        salvaged_to.is_some(),
+        "an unparseable patches file must be preserved, not deleted"
+    );
+}
+
+#[test]
+fn find_existing_workspace_ignores_salvage_backups() {
+    let tmp = TempDir::new().unwrap();
+    let out = tmp.path();
+    // A live workspace and a salvaged backup, both with the same workbook id.
+    make_fake_workspace(out, "Webflow Site", false); // "My Workbook"
+    let salvage_dir = out.join("My Workbook.salvaged-20260101-000000");
+    std::fs::create_dir_all(salvage_dir.join(".scratch")).unwrap();
+    markers::write_workspace(
+        &salvage_dir,
+        "wkb_test",
+        "My Workbook",
+        "org",
+        "http://localhost",
+        &[],
+    )
+    .unwrap();
+
+    let found = find_existing_workspace(out.to_str().unwrap(), "wkb_test")
+        .expect("the live workspace should be found");
+    assert!(
+        !found.to_string_lossy().contains(".salvaged-"),
+        "must not return the salvage backup, got {}",
+        found.display()
+    );
+    assert_eq!(found.file_name().unwrap(), "My Workbook");
+}
+
+#[test]
+fn find_existing_workspace_skips_lone_salvage_backup() {
+    let tmp = TempDir::new().unwrap();
+    let out = tmp.path();
+    let salvage_dir = out.join("My Workbook.salvaged-20260101-000000");
+    std::fs::create_dir_all(salvage_dir.join(".scratch")).unwrap();
+    markers::write_workspace(
+        &salvage_dir,
+        "wkb_test",
+        "My Workbook",
+        "org",
+        "http://localhost",
+        &[],
+    )
+    .unwrap();
+
+    assert!(
+        find_existing_workspace(out.to_str().unwrap(), "wkb_test").is_none(),
+        "a salvage backup alone must not count as an existing workspace"
+    );
 }

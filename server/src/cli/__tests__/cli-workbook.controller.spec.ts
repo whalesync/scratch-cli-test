@@ -190,6 +190,8 @@ describe('CliWorkbookController', () => {
           displayName: 'My Airtable',
           service: 'airtable',
           repoPath: `${ACTOR_ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
+          // The folder-structure version pin (DEV-9698) the CLI compares against.
+          version: 2,
           dataFolders: [{ id: 'df2', name: 'Table1' }],
         },
       ]);
@@ -204,6 +206,9 @@ describe('CliWorkbookController', () => {
           service: 'airtable',
           repoPath: `${ACTOR_ORG_ID}--${WORKBOOK_ID}--${CONNECTOR_ID}`,
           gitUrl: `https://scratch.test/cli/v1/workbooks/${WORKBOOK_ID}/connectors/${CONNECTOR_ID}/git`,
+          // The connector-account structure version must be forwarded so the
+          // CLI can detect a stale clone after a server-side folder restructure.
+          version: 2,
           dataFolders: [{ id: 'df2', name: 'Table1' }],
         },
       ]);

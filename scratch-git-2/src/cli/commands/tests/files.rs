@@ -21,6 +21,7 @@ fn workspace_marker(connections: &[(&str, &str)]) -> markers::WorkspaceMarker {
                 service: "AIRTABLE".to_string(),
                 repo_path: (*repo_path).to_string(),
                 dir_name: (*dir_name).to_string(),
+                structure_version: 0,
             })
             .collect(),
     }
@@ -3410,8 +3411,9 @@ fn refresh_workbook_skips_when_any_field_is_unreviewed() {
     );
 
     let local_main_before = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
-    let folders: HashMap<String, Vec<DataFolder>> = HashMap::new();
-    refresh_workbook_for_contexts(&workspace_dir, &[ctx.clone()], &folders, "test-token").unwrap();
+    let server_state: HashMap<String, ConnectionServerState> = HashMap::new();
+    refresh_workbook_for_contexts(&workspace_dir, &[ctx.clone()], &server_state, "test-token")
+        .unwrap();
 
     // Worktree untouched — user's in-flight typing preserved.
     let working = std::fs::read_to_string(ctx.worktree_dir.join("posts/seed.json")).unwrap();
@@ -3456,8 +3458,9 @@ fn refresh_workbook_advances_main_when_clean() {
         "server change",
     );
 
-    let folders: HashMap<String, Vec<DataFolder>> = HashMap::new();
-    refresh_workbook_for_contexts(&workspace_dir, &[ctx.clone()], &folders, "test-token").unwrap();
+    let server_state: HashMap<String, ConnectionServerState> = HashMap::new();
+    refresh_workbook_for_contexts(&workspace_dir, &[ctx.clone()], &server_state, "test-token")
+        .unwrap();
 
     // Local main advanced.
     let local_main = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
@@ -3852,4 +3855,81 @@ fn reconcile_materializes_failed_publish_patch_value_to_worktree() {
         "{\n  \"v\": 2\n}\n",
         "rec_b (failed publish) must show apply(new_main, surviving_patch) canonical bytes"
     );
+}
+
+// ── Structure-version drift detection (DEV-9698 T5) ──────────────────────────
+
+/// Build a server-state map keyed by the helper's `conn_<dir_name>` ids, each
+/// with the given structure version and no folders.
+fn server_state_for(entries: &[(&str, i32)]) -> HashMap<String, ConnectionServerState> {
+    entries
+        .iter()
+        .map(|(dir_name, version)| {
+            (
+                format!("conn_{dir_name}"),
+                ConnectionServerState {
+                    data_folders: Vec::new(),
+                    structure_version: *version,
+                },
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn structure_drift_none_when_recorded_matches_server() {
+    let mut marker = workspace_marker(&[("Webflow", "repo_a")]);
+    marker.connections[0].structure_version = 2;
+    let server = server_state_for(&[("Webflow", 2)]);
+    assert!(detect_structure_version_drift(&marker, &server).is_empty());
+}
+
+#[test]
+fn structure_drift_detected_when_versions_differ() {
+    let mut marker = workspace_marker(&[("Webflow", "repo_a")]);
+    marker.connections[0].structure_version = 1;
+    let server = server_state_for(&[("Webflow", 2)]);
+    let drift = detect_structure_version_drift(&marker, &server);
+    assert_eq!(drift.len(), 1);
+    assert_eq!(drift[0].connection_dir_name, "Webflow");
+    assert_eq!(drift[0].recorded_version, 1);
+    assert_eq!(drift[0].server_version, 2);
+}
+
+#[test]
+fn structure_drift_skips_unrecorded_local_version_zero() {
+    // A marker written before the field existed records 0 — never trip on it,
+    // even though the server now reports a real version.
+    let marker = workspace_marker(&[("Webflow", "repo_a")]); // structure_version defaults to 0
+    let server = server_state_for(&[("Webflow", 2)]);
+    assert!(detect_structure_version_drift(&marker, &server).is_empty());
+}
+
+#[test]
+fn structure_drift_skips_when_server_reports_zero() {
+    // An older server that doesn't send the version yields 0 — treat as unknown.
+    let mut marker = workspace_marker(&[("Webflow", "repo_a")]);
+    marker.connections[0].structure_version = 2;
+    let server = server_state_for(&[("Webflow", 0)]);
+    assert!(detect_structure_version_drift(&marker, &server).is_empty());
+}
+
+#[test]
+fn structure_drift_skips_connection_missing_from_server() {
+    // No server entry for the connection → unknown (0) → no drift.
+    let mut marker = workspace_marker(&[("Webflow", "repo_a")]);
+    marker.connections[0].structure_version = 2;
+    let server: HashMap<String, ConnectionServerState> = HashMap::new();
+    assert!(detect_structure_version_drift(&marker, &server).is_empty());
+}
+
+#[test]
+fn structure_drift_reports_only_changed_connections() {
+    let mut marker = workspace_marker(&[("Webflow", "repo_a"), ("Airtable", "repo_b")]);
+    marker.connections[0].structure_version = 1; // Webflow migrated 1 -> 2
+    marker.connections[1].structure_version = 1; // Airtable unchanged
+    let server = server_state_for(&[("Webflow", 2), ("Airtable", 1)]);
+    let drift = detect_structure_version_drift(&marker, &server);
+    assert_eq!(drift.len(), 1);
+    assert_eq!(drift[0].connection_dir_name, "Webflow");
 }

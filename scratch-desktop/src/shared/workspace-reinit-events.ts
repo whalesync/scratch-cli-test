@@ -10,6 +10,16 @@
 export interface WorkspaceNeedsReinitEvent {
   workspacePath: string;
   affectedConnections: string[];
+  /**
+   * Why the CLI asked for a re-clone. `'old_layout_pre_slice_f'` is the legacy
+   * multi-worktree layout; `'structure_changed'` (DEV-9698) is a server-side
+   * folder restructure that left this clone stale. Left as a widenable string
+   * so a new CLI reason never breaks an older renderer. The renderer tailors
+   * its copy to the reason.
+   */
+  reason?: string;
+  /** Human-readable next step from the CLI payload, surfaced verbatim when present. */
+  recommendation?: string;
 }
 
 export const WORKSPACE_NEEDS_REINIT_CHANNEL = 'scratch:workspace-needs-reinit';

@@ -46,6 +46,15 @@ export class CliConnectorAccountDto {
   readonly service?: string;
   readonly repoPath?: string;
   readonly gitUrl?: string;
+  /**
+   * The connector account's on-disk folder *structure* version (the
+   * `ConnectorAccount.version` column). The CLI records this in the workspace
+   * marker at `init` and compares it against the server's current value on
+   * download: a change means the server restructured this connection's folder
+   * layout (e.g. the DEV-9698 Webflow flat→nested migration) and the local
+   * clone is stale and must be re-cloned. Generic — no connector knowledge.
+   */
+  readonly version?: number;
   readonly dataFolders?: CliDataFolderDto[];
 }
 
