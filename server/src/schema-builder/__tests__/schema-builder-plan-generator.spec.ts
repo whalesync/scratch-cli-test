@@ -115,6 +115,7 @@ describe('generateCreatePlanFromSources', () => {
       dataFolderId: 'posts',
       tableName: 'Posts',
       remoteTableIds: ['tblPosts'],
+      idFieldPath: 'id',
       schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblMissing' } })],
     };
     const { tables, notes } = generateCreatePlanFromSources({
@@ -218,6 +219,35 @@ describe('generateCreatePlanFromSources — injected source-record-id field', ()
     expect(matching).toHaveLength(1);
     // The pre-existing source field is left as-is — not relabelled as the source id.
     expect(matching[0].isSourceRecordId).toBeUndefined();
+  });
+
+  it('emits a mapped note feeding the injected field from the source remote-id path', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [sourceWith({ connectorService: 'POSTGRES', idFieldPath: 'id.record_id' })],
+      destinationConnectorAccountId: 'destConn',
+    });
+    const injected = tables[0].fields.find((f) => f.isSourceRecordId);
+    expect(injected?.name).toBe('postgres_record_id');
+    // The note pairs the source's idColumnRemoteId path with the injected field name,
+    // so the client/sync knows where to source this column's value from.
+    expect(notes.find((note) => note.fieldName === 'postgres_record_id')).toEqual({
+      sourceDataFolderId: 'posts',
+      sourceFieldPath: 'id.record_id',
+      fieldName: 'postgres_record_id',
+      status: 'mapped',
+      mappedKind: 'text',
+    });
+  });
+
+  it('does not inject (or emit a note) when the source has no remote-id path', () => {
+    const { tables, notes } = generateCreatePlanFromSources({
+      sources: [sourceWith({ connectorService: 'POSTGRES', idFieldPath: undefined })],
+      destinationConnectorAccountId: 'destConn',
+    });
+    // No source identity to preserve -> no point creating the field.
+    expect(tables[0].fields.some((f) => f.isSourceRecordId)).toBe(false);
+    expect(tables[0].fields.some((f) => f.name === 'postgres_record_id')).toBe(false);
+    expect(notes.some((note) => note.fieldName === 'postgres_record_id')).toBe(false);
   });
 
   it('does not inject into an add-fields plan for an existing destination table', () => {
@@ -356,6 +386,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       dataFolderId: 'contacts',
       tableName: 'Contacts',
       remoteTableIds: ['tblContacts'],
+      idFieldPath: 'id',
       schemaFields: [
         field({ path: 'a', type: 'string', displayLabel: 'Email' }),
         field({ path: 'b', type: 'string', displayLabel: 'Email' }),
@@ -378,6 +409,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       dataFolderId: 'contacts',
       tableName: 'Contacts',
       remoteTableIds: ['tblContacts'],
+      idFieldPath: 'id',
       schemaFields: [
         field({ path: 'a', type: 'string', displayLabel: 'Name' }),
         field({ path: 'b', type: 'string', displayLabel: 'name' }),
@@ -396,6 +428,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       dataFolderId: 't1',
       tableName: 'T1',
       remoteTableIds: ['tbl1'],
+      idFieldPath: 'id',
       schemaFields: [field({ path: 'a', type: 'string', displayLabel: 'Name' })],
     };
     const t2: PlanGeneratorSource = {
@@ -403,6 +436,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       dataFolderId: 't2',
       tableName: 'T2',
       remoteTableIds: ['tbl2'],
+      idFieldPath: 'id',
       schemaFields: [field({ path: 'a', type: 'string', displayLabel: 'Name' })],
     };
     const { tables } = generateCreatePlanFromSources({

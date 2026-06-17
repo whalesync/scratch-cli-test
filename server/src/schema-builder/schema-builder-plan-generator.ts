@@ -152,11 +152,24 @@ export function generateCreatePlanFromSources(args: {
         mappingByLinkedId,
         notes,
       );
-      // Always give the destination table a column to sync the source record's
-      // remote id into, so a synced row always knows where it came from. Skipped
-      // only if a same-named field already exists (the source already has one).
+      // Give the destination table a column to sync the source record's remote id
+      // into, so a synced row always knows where it came from. Skipped when a
+      // same-named field already exists (the source already has one) or when the
+      // source has no known remote-id path to map from (see buildSourceRecordIdField).
       const sourceRecordIdField = buildSourceRecordIdField(source, fields, args.destinationConnectorService);
-      if (sourceRecordIdField) fields.push(sourceRecordIdField);
+      if (sourceRecordIdField && source.idFieldPath !== undefined) {
+        fields.push(sourceRecordIdField);
+        // Record where this injected field is fed from: the source's remote-id
+        // path (`idColumnRemoteId`). The client/sync reads `sourceFieldPath ->
+        // fieldName` from notes to wire the source identity into this column.
+        notes.push({
+          sourceDataFolderId: source.dataFolderId,
+          sourceFieldPath: source.idFieldPath,
+          fieldName: sourceRecordIdField.name,
+          status: 'mapped',
+          mappedKind: 'text',
+        });
+      }
       // Classify the collision BEFORE allocating: `takenTableNames` merges existing
       // and in-plan names, so the distinction must be read off the frozen set first.
       const conflictsWithExistingTable = existingDestinationTableNames.has(
@@ -450,15 +463,21 @@ function resolveForeignKey(
  * a `_source_` infix (`postgres_source_record_id`) so it doesn't read like the
  * destination's own record id.
  *
- * Returns null when a field of the same name already exists on the source (the
- * destination would otherwise get a duplicate), in which case the existing field
- * already serves the purpose.
+ * Returns null when:
+ *  - the source has no known remote-id path (`idFieldPath`): the whole point of
+ *    the field is to store the source's identity on the destination row for
+ *    record matching, which is impossible without a source id to copy, so there
+ *    is nothing to put in it; or
+ *  - a field of the same name already exists on the source (the destination would
+ *    otherwise get a duplicate), in which case the existing field already serves
+ *    the purpose.
  */
 function buildSourceRecordIdField(
   source: PlanGeneratorSource,
   existingFields: CreateFieldSpec[],
   destinationConnectorService?: Service,
 ): CreateFieldSpec | null {
+  if (source.idFieldPath === undefined) return null;
   const servicePrefix = source.connectorService ? source.connectorService.toLowerCase() : 'source';
   const sourceAndDestinationAreSameService =
     source.connectorService !== undefined && source.connectorService === destinationConnectorService;
