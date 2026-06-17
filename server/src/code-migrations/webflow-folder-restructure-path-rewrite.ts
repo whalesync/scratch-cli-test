@@ -17,6 +17,21 @@ import { PrismaClient } from '@prisma/client';
 import { FolderMovePathRewriteInput } from './webflow-folder-restructure-backfill';
 
 /**
+ * Interactive-transaction ceiling for a single folder's atomic rewrite. The
+ * `FileReference.sourceFilePath` UPDATE dominates and scales with the number of
+ * references under the folder — a real Webflow collection with ~875k references
+ * took ~81s for that UPDATE alone, far past Prisma's **5s default** interactive
+ * timeout, which aborted (and cleanly rolled back) the largest collections
+ * mid-rewrite (DEV-9698). Ten minutes gives ample headroom while still bounding a
+ * runaway. The migration is admin-gated and runs against a quiesced connection,
+ * so holding a transaction this long can't contend with live traffic.
+ */
+const FOLDER_MOVE_REWRITE_TRANSACTION_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Max time to wait for a free pooled connection before the transaction errors. */
+const FOLDER_MOVE_REWRITE_TRANSACTION_MAX_WAIT_MS = 30 * 1000;
+
+/**
  * Apply, in ONE atomic Postgres transaction, the full path rewrite for a folder
  * move from `oldFolderPath` to `newFolderPath` (both leading-slash):
  *   - `DataFolder.path` := new, `DataFolder.version` := `targetFolderVersion`
@@ -59,50 +74,51 @@ export async function applyWebflowFolderMovePathRewrite(
   const oldFolderPathNoLeadingSlash = oldFolderPath.replace(/^\//, '');
   const newFolderPathNoLeadingSlash = newFolderPath.replace(/^\//, '');
 
-  await prisma.$transaction(async (tx) => {
-    // DataFolder.path is the one leading-slash column. Also the idempotency commit point:
-    // `targetFolderVersion` is 2 (nested) for the forward migration, 1 (flat) for the inverse.
-    await tx.dataFolder.update({
-      where: { id: folderId },
-      data: { path: newFolderPath, version: targetFolderVersion },
-    });
+  await prisma.$transaction(
+    async (tx) => {
+      // DataFolder.path is the one leading-slash column. Also the idempotency commit point:
+      // `targetFolderVersion` is 2 (nested) for the forward migration, 1 (flat) for the inverse.
+      await tx.dataFolder.update({
+        where: { id: folderId },
+        data: { path: newFolderPath, version: targetFolderVersion },
+      });
 
-    // FileIndex.folderPath (no leading slash) equals the folder path exactly
-    // (records are direct children) → exact-match updateMany.
-    await tx.fileIndex.updateMany({
-      where: { workbookId, folderPath: oldFolderPathNoLeadingSlash },
-      data: { folderPath: newFolderPathNoLeadingSlash },
-    });
+      // FileIndex.folderPath (no leading slash) equals the folder path exactly
+      // (records are direct children) → exact-match updateMany.
+      await tx.fileIndex.updateMany({
+        where: { workbookId, folderPath: oldFolderPathNoLeadingSlash },
+        data: { folderPath: newFolderPathNoLeadingSlash },
+      });
 
-    // FileReference.sourceFilePath (no leading slash): full file paths under the
-    // folder, on every branch (main + dirty). Boundary-prefix rewrite.
-    await tx.$executeRaw`
+      // FileReference.sourceFilePath (no leading slash): full file paths under the
+      // folder, on every branch (main + dirty). Boundary-prefix rewrite.
+      await tx.$executeRaw`
       UPDATE "FileReference"
       SET "sourceFilePath" = ${newFolderPathNoLeadingSlash} || substring("sourceFilePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
       WHERE "workbookId" = ${workbookId}
         AND left("sourceFilePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
     `;
 
-    // SyncMatchKeys.filePath (no leading slash): keyed by dataFolderId; a match
-    // key's filePath always lives in its own dataFolder, so filtering on this
-    // folder id catches both the source-side and destination-side keys.
-    await tx.$executeRaw`
+      // SyncMatchKeys.filePath (no leading slash): keyed by dataFolderId; a match
+      // key's filePath always lives in its own dataFolder, so filtering on this
+      // folder id catches both the source-side and destination-side keys.
+      await tx.$executeRaw`
       UPDATE "SyncMatchKeys"
       SET "filePath" = ${newFolderPathNoLeadingSlash} || substring("filePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
       WHERE "dataFolderId" = ${folderId}
         AND left("filePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
     `;
 
-    // SyncRemoteIdMapping.destinationFilePath (no leading slash) points into the
-    // DESTINATION folder but its row is keyed by the SOURCE folder id (finding #9).
-    // So when THIS folder is a sync destination, resolve the affected rows via the
-    // table pair's destinationDataFolderId → (syncId, sourceDataFolderId), then rewrite.
-    const destinationPairs = await tx.syncTablePair.findMany({
-      where: { destinationDataFolderId: folderId },
-      select: { syncId: true, sourceDataFolderId: true },
-    });
-    for (const pair of destinationPairs) {
-      await tx.$executeRaw`
+      // SyncRemoteIdMapping.destinationFilePath (no leading slash) points into the
+      // DESTINATION folder but its row is keyed by the SOURCE folder id (finding #9).
+      // So when THIS folder is a sync destination, resolve the affected rows via the
+      // table pair's destinationDataFolderId → (syncId, sourceDataFolderId), then rewrite.
+      const destinationPairs = await tx.syncTablePair.findMany({
+        where: { destinationDataFolderId: folderId },
+        select: { syncId: true, sourceDataFolderId: true },
+      });
+      for (const pair of destinationPairs) {
+        await tx.$executeRaw`
         UPDATE "SyncRemoteIdMapping"
         SET "destinationFilePath" = ${newFolderPathNoLeadingSlash} || substring("destinationFilePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
         WHERE "syncId" = ${pair.syncId}
@@ -110,22 +126,27 @@ export async function applyWebflowFolderMovePathRewrite(
           AND "destinationFilePath" IS NOT NULL
           AND left("destinationFilePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
       `;
-    }
+      }
 
-    // RecreatedIdMap.folder (no leading slash) is the folder path exactly (not a
-    // file), scoped per (workbook, account) → exact-match updateMany.
-    await tx.recreatedIdMap.updateMany({
-      where: { workbookId, connectorAccountId, folder: oldFolderPathNoLeadingSlash },
-      data: { folder: newFolderPathNoLeadingSlash },
-    });
+      // RecreatedIdMap.folder (no leading slash) is the folder path exactly (not a
+      // file), scoped per (workbook, account) → exact-match updateMany.
+      await tx.recreatedIdMap.updateMany({
+        where: { workbookId, connectorAccountId, folder: oldFolderPathNoLeadingSlash },
+        data: { folder: newFolderPathNoLeadingSlash },
+      });
 
-    // UploadPatchMeta.filePath (no leading slash): full file paths, scoped per (workbook, account).
-    await tx.$executeRaw`
+      // UploadPatchMeta.filePath (no leading slash): full file paths, scoped per (workbook, account).
+      await tx.$executeRaw`
       UPDATE "UploadPatchMeta"
       SET "filePath" = ${newFolderPathNoLeadingSlash} || substring("filePath" FROM char_length(${oldFolderPathNoLeadingSlash}) + 1)
       WHERE "workbookId" = ${workbookId}
         AND "connectorAccountId" = ${connectorAccountId}
         AND left("filePath", char_length(${oldFolderPathNoLeadingSlash}) + 1) = ${oldFolderPathNoLeadingSlash} || '/'
     `;
-  });
+    },
+    {
+      timeout: FOLDER_MOVE_REWRITE_TRANSACTION_TIMEOUT_MS,
+      maxWait: FOLDER_MOVE_REWRITE_TRANSACTION_MAX_WAIT_MS,
+    },
+  );
 }
