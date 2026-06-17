@@ -1,0 +1,15 @@
+{
+  "//": "Editor-sanity config only. These scripts are NOT compiled — they run directly via `node file.ts` (Node 22 type-stripping). There is no node_modules here, so full type-checking is not expected; this just keeps editors from complaining about .ts import specifiers.",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2023",
+    "lib": ["es2023"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  },
+  "include": ["**/*.ts"]
+}

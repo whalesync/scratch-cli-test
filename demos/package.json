@@ -1,0 +1,14 @@
+{
+  "name": "@scratch/demos",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sales-demo tooling for Scratch (DEV-10438). Presenter-run, NOT part of the product build graph.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "seed:webflow": "node webflow-cms-seo/seed.ts",
+    "reset:webflow": "node webflow-cms-seo/reset.ts"
+  }
+}

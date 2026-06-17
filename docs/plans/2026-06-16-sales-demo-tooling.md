@@ -1,7 +1,7 @@
 # Sales Demo Tooling for Scratch (DEV-10438)
 
 **Date**: 2026-06-16
-**Status**: Planned
+**Status**: In Progress
 **Author**: Curtis Fonger
 **Linear**: [DEV-10438](https://linear.app/whalesync/issue/DEV-10438/tooling-for-sales-demos-for-scratch)
 **Demo story design**: `~/.gstack/projects/whalesync-spinner/cfonger-find-scratch-demo-scenarios-design-20260616-125132.md` (office-hours, APPROVED 2026-06-16) — locked the Webflow demo's buyer, wow, hero flaw, and reveal (see "Demo #1 story" below).
@@ -136,8 +136,39 @@ The first demo is fully designed. See the design doc linked in the header for th
 
 ### Hard pre-build gates (verify before committing to the build)
 
-- [ ] **G1 — Rich-text round-trip:** pull a Blog Posts Collection item, insert an `<a>` internal link into the body, publish back, confirm it renders on the live site intact. If the connector exposes the body as a locked/opaque object, this demo doesn't work as designed.
-- [ ] **G2 — Desktop diff legibility:** confirm Scratch **Desktop** renders rich-text body diffs (inserted `<a>` anchors) clearly enough for the quality-then-scale reveal.
+- [x] **G1 — Rich-text round-trip:** ✅ VERIFIED 2026-06-16 at the Webflow API substrate level (integration-test account, Recipes collection). Rich-text fields return HTML strings; writing `<p>…<a href="/recipe/…">…</a>…</p>` into a field round-tripped **byte-for-byte** (Webflow's sanitizer preserved the anchor). Throwaway draft item created + deleted (HTTP 204), existing data untouched. Because the connector stores raw API responses verbatim, this carries through pull→edit→publish; full through-Scratch confirmation folds into T1.2/T1.8.
+  - **Finding:** the integration-test site has **no blog** (only Recipes / Menu Items / Mackerels). The seed must **create a Blog Posts collection** (`POST /v2/sites/{id}/collections`) or target a dedicated demo site. Added seed scope, not a blocker.
+- [ ] **G2 — Desktop diff legibility:** confirm Scratch **Desktop** renders rich-text body diffs (inserted `<a>` anchors) clearly enough for the quality-then-scale reveal. (Requires the running Desktop app — not checkable headlessly.)
+
+## Bootstrap & reset mechanics (RUN-TESTED against local server, 2026-06-17)
+
+**Decisions:** one **persistent** demo workbook (reused + re-pulled, not recreated per call). Scratch **Desktop auto-shows** a CLI-triggered pull (no "refresh" beat needed). The connector (Webflow) is reset via the **raw service API** — `scratchmd` never publishes; the only *Scratch* publish is the presenter, live in Desktop. `scratchmd auth login` is long-lived (one-time).
+
+**Webflow site publish (so items are live, not staged):** `seed`/`ready` issue a Webflow **site publish** via the raw API (`POST /sites/{id}/publish`, `publishToWebflowSubdomain:true`), and `reset` republishes after deleting; `DEMO_SKIP_PUBLISH=1` opts out. **Live rendering (resolved for the test site):** posts render at `…/demo-blog-posts/<slug>` (verified HTTP 200, body + links shown). This needed a **one-time Designer step** — a collection-page template for `Blog Posts (Demo)` — because the API can't create page templates. Done for the integration-test site; a new demo site would need it once. `reset` only deletes items (keeps the collection), so the template persists across reseeds. (Per-item publish `/collections/{id}/items/publish` 404s for this collection, so we publish the whole shared test site.)
+
+**Key CLI gotchas (learned the hard way during the run-test):**
+- **`--workspace <id>` is a GROUP-level flag**, placed between the group and the action: `connections --workspace <id> list`, `linked --workspace <id> add …`. It is NOT a per-action flag (`connections list --workspace …` errors) and NOT global-before-group. `auth` and `workspaces` are global. (`files` has no `--workspace` flag — but we don't use `files`; see reset below.)
+- **Webflow `linked available` returns a COMPOSITE table id** `"<siteId>,<collectionId>"`. It must be passed as **two repeatable `--table-id` flags** (`--table-id <siteId> --table-id <collectionId>`) so the server gets `tableId` as a 2-element array. Passing the joined string as one value 500s with `Cannot read properties of undefined (reading 'startsWith')` (the connector destructures `collectionId` from element 2).
+- Avoid a `/` in the workbook name — `workspaces init` turns it into a nested dir. Demo workbook is **"Webflow CMS-SEO Demo"**.
+
+**`bootstrap.ts` — idempotent find-or-create** (every entity has `list --json` + `create`), verified end-to-end (40 records pulled):
+
+| Step | Find (reuse) | Create |
+| --- | --- | --- |
+| Auth | `scratchmd auth status` | `scratchmd auth login` |
+| Workbook | `workspaces list --json` (match by name) | `workspaces create "<name>" --json` → `.id` |
+| Connection | `connections --workspace <wb> list --json` | `connections --workspace <wb> add --service WEBFLOW --param apiKey=<key> --name … --json` → `.id` |
+| Linked folder | `linked --workspace <wb> list --json` | `linked --workspace <wb> available <conn> --json` (find `Blog Posts (Demo)`, split its composite id) → `linked --workspace <wb> add --connection-id … --table-id <siteId> --table-id <collectionId> --name … --json` → `.id` |
+| Checkout | — | `workspaces init <wb> --output <dir> --force` (download target for pull) |
+| Pull | — | `linked --workspace <wb> pull <folderId> --mode full` (auto-polls + downloads; no `--no-wait`) |
+
+Server URL via `--scratch-url` / `SCRATCH_URL` / `scratchmd.config.yaml`. For local testing we use a fresh dev build (`scratch-git-2/target/debug/scratchmd`, defaults to `localhost:3010`) via `SCRATCHMD_BIN`; for prod the Homebrew binary defaults to prod.
+
+**Reset-to-baseline sequence (the full `ready`) — RUN-TESTED, reconciles to 40 records:**
+1. Raw Webflow API: `reset.ts` + `seed.ts` (service → link-free baseline; deletes+recreates items, new IDs).
+2. `linked --workspace <wb> pull <folderId> --mode full` — re-pull. A **full pull reconciles deletions** (verified: 40 in, not 80), so the churned item IDs are handled cleanly.
+
+**No `files discard-all` needed.** Earlier analysis assumed edits live in the CLI checkout, but the demo edits happen in **Scratch Desktop** (its own checkout); the CLI checkout is never edited, so a pull never refuses. Published Desktop edits are reverted by the service reset + re-pull (which Desktop syncs). Unpublished Desktop edits would be discarded in Desktop — out of scope for the CLI reset. (`cliCanPublish` is irrelevant — we never publish via CLI.)
 
 ## Repo layout
 
@@ -159,7 +190,7 @@ The first demo is fully designed. See the design doc linked in the header for th
   shopify-ecommerce-seo/ ...      # same shape
 ```
 
-**Tooling choice:** TypeScript run via `ts-node` (matches the repo, lets seed scripts reuse `shared-types` and axios; type-safe fixtures), shelling out to the `scratchmd` binary for the Scratch side. The `/demos/` dir stays **out of the product build graph** (it's tooling, not shipped code) — exclude from Turborepo build/lint or give it its own minimal config.
+**Tooling choice (DECIDED + built):** plain TypeScript run **directly by Node 22's built-in type-stripping** (`node file.ts`) — **zero-install**: no `ts-node`/`tsx`, no `axios` (native `fetch`), no `node_modules` in `/demos`. The `/demos` dir is naturally **out of the product build graph** (the root `workspaces` list is explicit and doesn't glob `demos/`). The Scratch side (bootstrap) shells out to the `scratchmd` binary.
 
 ## Target environment (DECIDED)
 
@@ -171,19 +202,19 @@ The first demo is fully designed. See the design doc linked in the header for th
 
 ## Phase 0 — Shared harness + prerequisites
 
-- [ ] **T0.1** Create `/demos/` with `README.md` and `shared/` (scratchmd wrapper, env loader, service-client factory). Exclude from the product build/lint graph.
-- [ ] **T0.2** Decide target environment (Open Question #1) and document the demo user/account in the README.
-- [ ] **T0.3** Confirm `scratchmd auth login` flow and `cliCanPublish` setting for the demo user (needed only for the publish fallback).
+- [x] **T0.1** `/demos/` created with `README.md`, `package.json`, `tsconfig.json`, and `shared/` (`env.ts` parses `server/.env.integration`; `webflow.ts` is a native-fetch Webflow v2 client; `scratchmd.ts` wraps the CLI). ✅ 2026-06-16.
+- [x] **T0.2** Target environment decided (prod) and documented in `demos/README.md`. ✅ 2026-06-16.
+- [ ] **T0.3** Confirm `scratchmd auth login` flow and `cliCanPublish` setting for the demo user (needed only for the publish fallback). — pending, ties to T1.4.
 
 ## Phase 1 — Webflow CMS+SEO demo (end-to-end; the reference implementation)
 
 - [ ] **T1.0** Pass the hard pre-build gates **G1** (rich-text round-trip) and **G2** (Desktop diff legibility) from "Demo #1 story". If either fails, stop and rethink the demo before building.
-- [ ] **T1.1** `fixtures/` — author ~40 blog posts as deliberate **topical clusters** with **link-free** rich-text bodies (the internal-links baseline). This authoring is the highest-risk-to-quality work — the links Scratch adds are only impressive if the clusters make good links self-evident.
-- [ ] **T1.2** `seed.ts` — create the Webflow Blog Posts Collection + items (link-free bodies) via the Webflow API.
-- [ ] **T1.3** `reset.ts` — delete/overwrite demo-owned items, re-writing bodies back to the link-free fixtures (idempotent; service-level; never reproduces AI output).
-- [ ] **T1.4** `bootstrap.ts` — `workspaces create` → `connections add --service WEBFLOW` → `linked available`/`linked add` → `linked pull --mode full`.
-- [ ] **T1.5** `ready.ts` — orchestrate reset → seed → bootstrap; print the workbook URL to open in Scratch Desktop.
-- [ ] **T1.6** `run-of-show.md` — Scratch **Desktop** presenter script: the exact AI prompt to add internal links, the **quality-then-scale** reveal (1–2 detailed diffs → aggregate count), the publish-to-Webflow beat, and the fallback.
+- [x] **T1.1** `fixtures.ts` — **40 link-free posts in 9 topical clusters** (Sourdough, Coffee, Knife Skills, Tea, Grilling, Pasta, Fermentation, Cocktails, Cheese), bodies that reference sibling topics so links are self-evident. Seeded live to 40 + verified (40 items, all link-free). ✅ 2026-06-16.
+- [x] **T1.2** `seed.ts` — ensures `Blog Posts (Demo)` collection + fields, creates posts from fixtures. **Idempotent** (re-run skips existing slugs). Verified live against the integration-test site (12 posts, all link-free). ✅ 2026-06-16.
+- [x] **T1.3** `reset.ts` — deletes all items in the demo collection; **strictly scoped to `demo-blog-posts`** (verified: Recipes/Menu/Mackerels untouched). Found+fixed an import side-effect (constants extracted to `constants.ts`, run-as-main guards added). Verified reset→re-seed loop. ✅ 2026-06-16.
+- [x] **T1.4** `bootstrap.ts` — **RUN-TESTED against the local server** ✅ 2026-06-17. Idempotent find-or-create of workbook + Webflow connection + linked folder via `shared/scratchmd.ts`, then full pull → **40 records pulled**. Surfaced + fixed three CLI gotchas (group-level `--workspace`, composite `--table-id` split, workbook-name slash) — see "Bootstrap & reset mechanics". Built a fresh dev `scratchmd` (defaults to localhost) for testing.
+- [x] **T1.5** `ready.ts` — full reset-to-baseline, **RUN-TESTED** ✅ 2026-06-17: raw-API reset→seed then `linked pull --mode full`; the workbook reconciled to **40 records (not 80)** despite item-ID churn. `files discard-all` dropped (not needed — CLI checkout is never edited). `DEMO_SKIP_WORKBOOK_RESET=1` does service-only.
+- [x] **T1.6** `run-of-show.md` — Scratch **Desktop** presenter script ✅ 2026-06-16: pre-call reset checklist, the verbatim AI prompt, the **quality-then-scale** reveal (Sourdough hydration post as the detail beat → aggregate count), accept+publish, "prove it landed" via the Webflow CMS, a fallback ladder, and a cluster-map appendix. Also serves as the manual test script for the first live run.
 - [ ] **T1.7** Pre-approved patch set for the live-AI fallback (now part of the design, not optional).
 - [ ] **T1.8** Dry-run the whole demo end-to-end; fix sharp edges; lock the harness shape.
 
