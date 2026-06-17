@@ -204,6 +204,25 @@ describe('buildPipedriveJsonTableSpec', () => {
     expect(spec.schema.properties.update_time[X_SCRATCH_READONLY]).toBe(true);
   });
 
+  it('marks activity person_id/org_id read-only (v2 read-only relations set via participants) — DEV-10453', async () => {
+    mockClient.getFields.mockResolvedValue([
+      makeField({ field_code: 'subject', field_name: 'Subject', field_type: 'varchar', is_custom_field: false }),
+      makeField({ field_code: 'person_id', field_name: 'Person', field_type: 'people', is_custom_field: false }),
+      makeField({ field_code: 'org_id', field_name: 'Organization', field_type: 'org', is_custom_field: false }),
+    ]);
+
+    const spec = await buildPipedriveJsonTableSpec(
+      { wsId: 'activities', remoteId: ['activities'] },
+      'activities',
+      mockClient as unknown as PipedriveApiClient,
+    );
+
+    expect(spec.schema.properties.person_id[X_SCRATCH_READONLY]).toBe(true);
+    expect(spec.schema.properties.org_id[X_SCRATCH_READONLY]).toBe(true);
+    // A writable system field stays writable.
+    expect(spec.schema.properties.subject[X_SCRATCH_READONLY]).toBeUndefined();
+  });
+
   it('omits custom_fields property when there are no custom fields', async () => {
     mockClient.getFields.mockResolvedValue([
       makeField({ field_code: 'id', field_name: 'ID', field_type: 'int', is_custom_field: false }),

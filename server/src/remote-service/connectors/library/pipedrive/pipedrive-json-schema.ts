@@ -11,10 +11,27 @@ import { PipedriveApiClient } from './pipedrive-api-client';
 import { STATIC_SYSTEM_SCHEMAS } from './pipedrive-static-schemas';
 import { ENTITY_CONFIG, ENTITY_DISPLAY_NAMES, PipedriveEntityType, PipedriveField } from './pipedrive-types';
 
+/** Read-only system fields present on (essentially) every Pipedrive entity. */
+const COMMON_READONLY_SYSTEM_FIELDS: readonly string[] = ['id', 'add_time', 'update_time'];
+
 /**
- * Read-only system field keys that should never be written to.
+ * Per-entity read-only system fields, keyed on the stored record's field code, used to set
+ * `X_SCRATCH_READONLY` on the schema so the UI marks them non-editable and the user sees a field
+ * is non-writable before they edit it. Activities carry the extra entries because they are
+ * read-only in Pipedrive v2: `person_id`/`org_id` are set through the writable `participants`
+ * array, and `private`/`marked_as_done_time` are read-only system fields.
  */
-const READONLY_SYSTEM_FIELDS = new Set(['id', 'add_time', 'update_time']);
+const ENTITY_READONLY_FIELDS: Record<PipedriveEntityType, ReadonlySet<string>> = {
+  deals: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+  persons: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+  organizations: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+  products: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+  activities: new Set([...COMMON_READONLY_SYSTEM_FIELDS, 'person_id', 'org_id', 'private', 'marked_as_done_time']),
+  leads: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+  notes: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+  pipelines: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+  stages: new Set(COMMON_READONLY_SYSTEM_FIELDS),
+};
 
 /**
  * Convert a Pipedrive field type to a TypeBox schema.
@@ -222,8 +239,10 @@ export async function buildPipedriveJsonTableSpec(
         [X_SCRATCH_REMOTE_FIELD_ID]: field.field_code,
       };
 
-      // Mark system read-only fields
-      if (READONLY_SYSTEM_FIELDS.has(field.field_code)) {
+      // Mark read-only system fields so the UI surfaces them as non-editable and the user
+      // sees the field is non-writable before they edit it. For v2 activities this includes
+      // `person_id`/`org_id` — read-only relations set via the writable `participants` array.
+      if (ENTITY_READONLY_FIELDS[entityType].has(field.field_code)) {
         annotations[X_SCRATCH_READONLY] = true;
       }
 
