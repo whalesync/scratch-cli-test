@@ -54,6 +54,12 @@ export type PublishPublicProgress = {
    * of showing a generic failure.
    */
   blockedDirtyDrift?: { connectorAccountId: string; dirtyCount: number };
+  /**
+   * DEV-10436 (routines, self-planning publish): the resolved PublishPlan id, set on
+   * terminal (completed/failed) checkpoints so a routine step can record it on
+   * RoutineRunStep.pipelineId. Intermediate planning/running checkpoints omit it.
+   */
+  pipelineId?: string;
 };
 
 // ── Job Definition ───────────────────────────────────────────────────
@@ -63,7 +69,12 @@ export type PublishJobDefinition = JobDefinitionBuilder<
   {
     workbookId: WorkbookId;
     userId: string;
-    pipelineId: string;
+    /**
+     * The PublishPlan to plan/run. Omitted for a "self-planning" publish job
+     * (DEV-10436, routines): when empty, the handler creates its own pipeline via
+     * `createPipeline()` instead of relying on a caller to pre-create one.
+     */
+    pipelineId?: string;
     connectorAccountId?: string;
     runAfterPlan?: boolean;
     folderPath?: string;
@@ -187,11 +198,41 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
       latestErrorInfo = errorInfo;
     };
 
-    try {
-      const getPhaseCount = async (pipelineId: string, phase: string) =>
-        this.db.client.publishPlanOperation.count({ where: { planId: pipelineId, phase } });
+    // The resolved PublishPlan id. Hoisted out of the try so the catch block can cancel
+    // the right pipeline — including one this job creates itself (self-planning).
+    let pipelineId: string | undefined;
 
-      let pipelineId: string;
+    try {
+      const getPhaseCount = async (planId: string, phase: string) =>
+        this.db.client.publishPlanOperation.count({ where: { planId, phase } });
+
+      if (!data.pipelineId) {
+        // Self-planning publish (DEV-10436, routines): no caller pre-created a pipeline
+        // (the UI/CLI/scheduler create one up front so they can navigate to it
+        // immediately; a routine step has no such need). Create it here so the job is a
+        // single self-contained DbJob — enqueued exactly like pull/sync.
+        const created = await this.publishPlanService.createPipeline(
+          data.workbookId,
+          data.userId,
+          data.connectorAccountId,
+        );
+        pipelineId = created.pipelineId;
+
+        // Link the running job back to the new pipeline (the 3rd call of the caller's
+        // createPipeline → enqueue → setActiveJob shape, relocated into the job).
+        // activeJobId stores the BullMQ job id (consumers look up the DbJob via
+        // `where: { bullJobId: activeJobId }`), but params.jobId is the DbJob id — so
+        // resolve our own bullJobId from the DbJob row the enqueuer already created.
+        // Gated on the self-planning case so existing callers (which set activeJobId
+        // themselves) are untouched and we never double-write it.
+        const selfDbJob = await this.db.client.dbJob.findUnique({
+          where: { id: jobId },
+          select: { bullJobId: true },
+        });
+        if (selfDbJob?.bullJobId) {
+          await this.publishPlanService.setActiveJob(pipelineId, selfDbJob.bullJobId);
+        }
+      }
 
       // If the pipeline is already planned/partially-run, skip replanning to avoid duplicate entries.
       const existingPlan = data.pipelineId
@@ -207,7 +248,10 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           data.workbookId,
           data.userId,
           data.connectorAccountId,
-          data.pipelineId,
+          // Self-created id for a self-planning job, otherwise the caller's id. Always
+          // set here, so buildPipeline reuses this 'planning' row rather than taking its
+          // own inline-create branch.
+          pipelineId ?? data.pipelineId,
           data.folderPath,
           data.filePath,
           data.expectedBaseDirtyHead,
@@ -238,6 +282,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
             renameFilesExecuted: 0,
             ...plannedTotals,
             errorCount: 0,
+            pipelineId,
           },
           jobProgress: {},
           connectorProgress: {},
@@ -316,6 +361,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           // show why a record failed, not just that something did.
           failedCount: runResult.failedCount ?? 0,
           failedOperations: runResult.failedOperations ?? [],
+          pipelineId,
         },
         jobProgress: {},
         connectorProgress: {},
@@ -372,12 +418,13 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         // (with the "server changed while you were reviewing" lead) rather than a
         // generic failure. The job still ends `failed` (we re-throw) so it never
         // proceeds to a run phase.
-        await this.publishPlanService.cancelPipeline(data.pipelineId);
+        if (pipelineId) await this.publishPlanService.cancelPipeline(pipelineId);
         await checkpoint({
           publicProgress: {
             status: 'failed',
             ...zeroCounts,
             blockedDirtyDrift: { connectorAccountId: error.connectorAccountId, dirtyCount: error.dirtyCount },
+            ...(pipelineId && { pipelineId }),
           },
           jobProgress: {},
           connectorProgress: {},
@@ -400,7 +447,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         });
       } else if (isCanceled) {
         // If aborted during plan, cancelPipeline is safe. The UI handles resuming.
-        await this.publishPlanService.cancelPipeline(data.pipelineId);
+        if (pipelineId) await this.publishPlanService.cancelPipeline(pipelineId);
         WSLogger.warn({
           source: 'PublishJob',
           message: 'Publish job canceled',
@@ -412,6 +459,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           publicProgress: {
             status: 'failed',
             ...zeroCounts,
+            ...(pipelineId && { pipelineId }),
           },
           jobProgress: {},
           connectorProgress: {},

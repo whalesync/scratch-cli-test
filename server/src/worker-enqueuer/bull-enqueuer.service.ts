@@ -214,6 +214,47 @@ export class BullEnqueuerService implements OnModuleDestroy {
     );
   }
 
+  /**
+   * Enqueue a "self-planning" publish job (DEV-10436, routines): a JobType.Publish job
+   * with NO pre-created pipeline. The handler creates its own PublishPlan when it runs
+   * (see PublishJobHandler), so the caller skips the createPipeline → enqueue →
+   * setActiveJob 3-call shape. Use this when the caller doesn't need the pipelineId
+   * synchronously — a routine step discovers it from the finished job's progress.
+   */
+  async enqueueSelfPlanningPublishJob(
+    workbookId: WorkbookId,
+    actor: Actor,
+    connectorAccountId: string | undefined,
+    runAfterPlan: boolean | undefined,
+    folderPath: string | undefined,
+    runContext: RunContext,
+  ): Promise<Job> {
+    const id = `publish-${workbookId}-${createPlainId()}`;
+    const data: PublishJobDefinition['data'] = {
+      workbookId,
+      userId: actor.userId,
+      type: JobType.Publish,
+      trigger: runContext.trigger,
+      ...(connectorAccountId && { connectorAccountId }),
+      ...(runAfterPlan && { runAfterPlan }),
+      ...(folderPath && { folderPath }),
+    };
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
+        progress: undefined,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
+      data,
+      id,
+    );
+  }
+
   async enqueueRunPipelineJob(
     workbookId: WorkbookId,
     actor: Actor,
