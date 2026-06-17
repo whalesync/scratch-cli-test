@@ -1,3 +1,4 @@
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
@@ -5,7 +6,9 @@ import { ScheduleService } from 'src/schedule/schedule.service';
 import { RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { Actor } from 'src/users/types';
 import { RoutineParserService } from '../routine-parser.service';
+import { RoutineReferenceValidatorService } from '../routine-reference-validator.service';
 import { RoutineService } from '../routine.service';
+import { RoutineValidationContext } from '../routine.types';
 
 const WORKBOOK_ID = 'wkb_test1234' as WorkbookId;
 const ACTOR: Actor = { userId: 'usr_test1234', organizationId: 'org_test1234' };
@@ -15,16 +18,30 @@ function fileRef(path: string): RepoFileRef {
   return { name, path, type: 'file' };
 }
 
+/** An empty validation context — no folders or connections resolve, so any reference is "not found". */
+function emptyValidationContext(): RoutineValidationContext {
+  return {
+    foldersByPath: new Map(),
+    foldersById: new Map(),
+    connectionsByName: new Map(),
+    connectionsById: new Map(),
+  };
+}
+
 describe('RoutineService', () => {
   let routineRunFindMany: jest.Mock;
   let workbookFindFirst: jest.Mock;
   let listRepoFiles: jest.Mock;
   let getRepoFile: jest.Mock;
+  let commitFilesToBranch: jest.Mock;
+  let deleteFilesFromBranch: jest.Mock;
   let upsertRoutineSchedule: jest.Mock;
   let deleteRoutineScheduleByFilePath: jest.Mock;
   let deleteOrphanedRoutineSchedules: jest.Mock;
   let findRoutineSchedules: jest.Mock;
   let logEvent: jest.Mock;
+  let validateRoutine: jest.Mock;
+  let loadContext: jest.Mock;
   let service: RoutineService;
 
   beforeEach(() => {
@@ -32,11 +49,15 @@ describe('RoutineService', () => {
     workbookFindFirst = jest.fn().mockResolvedValue({ organizationId: 'org_test1234' });
     listRepoFiles = jest.fn().mockResolvedValue([]);
     getRepoFile = jest.fn();
+    commitFilesToBranch = jest.fn().mockResolvedValue({ created: [], updated: [], unchanged: [] });
+    deleteFilesFromBranch = jest.fn().mockResolvedValue(undefined);
     upsertRoutineSchedule = jest.fn().mockResolvedValue(undefined);
     deleteRoutineScheduleByFilePath = jest.fn().mockResolvedValue(undefined);
     deleteOrphanedRoutineSchedules = jest.fn().mockResolvedValue(undefined);
     findRoutineSchedules = jest.fn().mockResolvedValue([]);
     logEvent = jest.fn().mockResolvedValue(undefined);
+    validateRoutine = jest.fn().mockResolvedValue([]);
+    loadContext = jest.fn().mockResolvedValue(emptyValidationContext());
 
     const db = {
       client: {
@@ -45,7 +66,12 @@ describe('RoutineService', () => {
       },
     } as unknown as DbService;
 
-    const scratchGitService = { listRepoFiles, getRepoFile } as unknown as ScratchGitService;
+    const scratchGitService = {
+      listRepoFiles,
+      getRepoFile,
+      commitFilesToBranch,
+      deleteFilesFromBranch,
+    } as unknown as ScratchGitService;
     const scheduleService = {
       upsertRoutineSchedule,
       deleteRoutineScheduleByFilePath,
@@ -53,8 +79,19 @@ describe('RoutineService', () => {
       findRoutineSchedules,
     } as unknown as ScheduleService;
     const auditLogService = { logEvent } as unknown as AuditLogService;
+    const referenceValidator = {
+      validateRoutine,
+      loadContext,
+    } as unknown as RoutineReferenceValidatorService;
 
-    service = new RoutineService(db, scratchGitService, scheduleService, new RoutineParserService(), auditLogService);
+    service = new RoutineService(
+      db,
+      scratchGitService,
+      scheduleService,
+      new RoutineParserService(),
+      referenceValidator,
+      auditLogService,
+    );
   });
 
   describe('reloadRoutines', () => {
@@ -140,6 +177,25 @@ describe('RoutineService', () => {
       // Orphan cleanup still runs (with an empty list) to clear any stale ROUTINE schedules.
       expect(deleteOrphanedRoutineSchedules).toHaveBeenCalledWith(WORKBOOK_ID, []);
     });
+
+    it('surfaces referenceWarnings for a parsed routine with a broken reference, without dropping its schedule', async () => {
+      listRepoFiles.mockResolvedValue([fileRef('routines/a.yaml')]);
+      // Parses fine, but `/gone` resolves to nothing in the (empty) validation context.
+      getRepoFile.mockResolvedValue({
+        content: 'name: A\nschedule: "0 9 * * *"\nsteps:\n  - action: pull\n    folder: /gone\n',
+      });
+
+      const routines = await service.reloadRoutines(WORKBOOK_ID, ACTOR);
+
+      expect(routines[0].parseError).toBeNull();
+      expect(routines[0].referenceWarnings).toEqual(['steps.0.folder: folder "/gone" not found in this workbook']);
+      // The routine still parses, so its schedule is upserted (not deleted) despite the broken reference.
+      expect(upsertRoutineSchedule).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        { filePath: 'routines/a.yaml', name: 'A', cronExpression: '0 9 * * *' },
+        ACTOR,
+      );
+    });
   });
 
   describe('listRoutines', () => {
@@ -170,6 +226,193 @@ describe('RoutineService', () => {
         scheduleEnabled: false,
         latestRun: { id: 'rrn_run00001', status: 'completed', trigger: 'manual' },
       });
+    });
+
+    it('lists the routines folder with NO trailing slash', async () => {
+      // Regression guard: scratch-git's tree walk splits the folder on "/", so "routines/" resolves
+      // to an empty subdir and returns nothing — routines would never appear. Must be "routines".
+      await service.listRoutines(WORKBOOK_ID);
+      expect(listRepoFiles).toHaveBeenCalledWith(expect.any(String), 'main', 'routines');
+    });
+  });
+
+  describe('getRoutineFileContent', () => {
+    it('returns the raw file content', async () => {
+      getRepoFile.mockResolvedValue({ content: 'name: A\nsteps:\n  - action: pull\n' });
+
+      const result = await service.getRoutineFileContent(WORKBOOK_ID, 'routines/a.yaml');
+
+      expect(result).toEqual({ path: 'routines/a.yaml', content: 'name: A\nsteps:\n  - action: pull\n' });
+    });
+
+    it('throws NotFound when the file does not exist', async () => {
+      getRepoFile.mockResolvedValue(null);
+
+      await expect(service.getRoutineFileContent(WORKBOOK_ID, 'routines/missing.yaml')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it.each([
+      ['outside routines/', 'syncs/a.yaml'],
+      ['a nested path', 'routines/sub/a.yaml'],
+      ['a non-yaml extension', 'routines/a.txt'],
+      ['parent traversal', 'routines/../secret.yaml'],
+      ['an empty path', ''],
+    ])('rejects %s with BadRequest', async (_label, path) => {
+      await expect(service.getRoutineFileContent(WORKBOOK_ID, path)).rejects.toThrow(BadRequestException);
+      expect(getRepoFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createRoutineFile', () => {
+    const SCHEDULED_YAML = 'name: Sched\nschedule: "0 9 * * *"\nsteps:\n  - action: pull\n';
+
+    it('commits the file, upserts its schedule, audit-logs, and returns the joined routine', async () => {
+      getRepoFile.mockResolvedValue(null); // does not already exist
+
+      const routine = await service.createRoutineFile(
+        WORKBOOK_ID,
+        { path: 'routines/new.yaml', content: SCHEDULED_YAML },
+        ACTOR,
+      );
+
+      expect(commitFilesToBranch).toHaveBeenCalledWith(
+        expect.any(String),
+        'main',
+        [{ path: 'routines/new.yaml', content: SCHEDULED_YAML }],
+        expect.stringContaining('Create routine routines/new.yaml'),
+      );
+      expect(upsertRoutineSchedule).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        { filePath: 'routines/new.yaml', name: 'Sched', cronExpression: '0 9 * * *' },
+        ACTOR,
+      );
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'create' }));
+      expect(routine).toMatchObject({ filePath: 'routines/new.yaml', name: 'Sched', parseError: null });
+    });
+
+    it('throws Conflict and does not commit when the file already exists', async () => {
+      getRepoFile.mockResolvedValue({ content: 'name: Existing\nsteps:\n  - action: pull\n' });
+
+      await expect(
+        service.createRoutineFile(WORKBOOK_ID, { path: 'routines/dup.yaml', content: SCHEDULED_YAML }, ACTOR),
+      ).rejects.toThrow(ConflictException);
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequest and does not commit when the YAML is invalid', async () => {
+      getRepoFile.mockResolvedValue(null);
+
+      await expect(
+        service.createRoutineFile(
+          WORKBOOK_ID,
+          { path: 'routines/bad.yaml', content: 'name: Bad\nsteps: []\n' }, // empty steps → invalid
+          ACTOR,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+      // Reference validation must not run until the structural parse passes.
+      expect(validateRoutine).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequest and does not commit when a referenced folder does not exist', async () => {
+      getRepoFile.mockResolvedValue(null);
+      validateRoutine.mockResolvedValue(['steps.0.folder: folder "/path/to/folder" not found in this workbook']);
+
+      await expect(
+        service.createRoutineFile(
+          WORKBOOK_ID,
+          { path: 'routines/new.yaml', content: 'name: R\nsteps:\n  - action: pull\n    folder: /path/to/folder\n' },
+          ACTOR,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(validateRoutine).toHaveBeenCalledTimes(1);
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('rejects a path outside routines/ before any git access', async () => {
+      await expect(
+        service.createRoutineFile(WORKBOOK_ID, { path: 'syncs/evil.yaml', content: SCHEDULED_YAML }, ACTOR),
+      ).rejects.toThrow(BadRequestException);
+      expect(getRepoFile).not.toHaveBeenCalled();
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateRoutineFile', () => {
+    it('commits and removes the schedule when the schedule field is gone', async () => {
+      getRepoFile.mockResolvedValue({ content: 'name: Old\nsteps:\n  - action: pull\n' });
+
+      await service.updateRoutineFile(
+        WORKBOOK_ID,
+        { path: 'routines/a.yaml', content: 'name: Manual\nsteps:\n  - action: sync\n' },
+        ACTOR,
+      );
+
+      expect(commitFilesToBranch).toHaveBeenCalledWith(
+        expect.any(String),
+        'main',
+        [{ path: 'routines/a.yaml', content: 'name: Manual\nsteps:\n  - action: sync\n' }],
+        expect.stringContaining('Update routine routines/a.yaml'),
+      );
+      expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/a.yaml');
+      expect(upsertRoutineSchedule).not.toHaveBeenCalled();
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'update' }));
+    });
+
+    it('throws NotFound and does not commit when the file is missing', async () => {
+      getRepoFile.mockResolvedValue(null);
+
+      await expect(
+        service.updateRoutineFile(
+          WORKBOOK_ID,
+          { path: 'routines/missing.yaml', content: 'name: X\nsteps:\n  - action: pull\n' },
+          ACTOR,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequest and does not commit when a referenced connection does not exist', async () => {
+      getRepoFile.mockResolvedValue({ content: 'name: Old\nsteps:\n  - action: pull\n' });
+      validateRoutine.mockResolvedValue(['steps.0.connection: connection "ghost" not found in this workbook']);
+
+      await expect(
+        service.updateRoutineFile(
+          WORKBOOK_ID,
+          { path: 'routines/a.yaml', content: 'name: A\nsteps:\n  - action: pull\n    connection: ghost\n' },
+          ACTOR,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(validateRoutine).toHaveBeenCalledTimes(1);
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteRoutineFile', () => {
+    it('deletes the file and its schedule and audit-logs', async () => {
+      getRepoFile.mockResolvedValue({ content: 'name: A\nsteps:\n  - action: pull\n' });
+
+      await service.deleteRoutineFile(WORKBOOK_ID, 'routines/a.yaml', ACTOR);
+
+      expect(deleteFilesFromBranch).toHaveBeenCalledWith(
+        expect.any(String),
+        'main',
+        ['routines/a.yaml'],
+        expect.stringContaining('Delete routine routines/a.yaml'),
+      );
+      expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/a.yaml');
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'delete' }));
+    });
+
+    it('throws NotFound and does not delete when the file is missing', async () => {
+      getRepoFile.mockResolvedValue(null);
+
+      await expect(service.deleteRoutineFile(WORKBOOK_ID, 'routines/missing.yaml', ACTOR)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(deleteFilesFromBranch).not.toHaveBeenCalled();
     });
   });
 });

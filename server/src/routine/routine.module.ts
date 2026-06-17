@@ -8,6 +8,7 @@ import { ScheduleModule } from 'src/schedule/schedule.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
 import { RoutineParserService } from './routine-parser.service';
+import { RoutineReferenceValidatorService } from './routine-reference-validator.service';
 import { RoutineController } from './routine.controller';
 import { RoutineService } from './routine.service';
 
@@ -26,7 +27,7 @@ import { RoutineService } from './routine.service';
     RateLimiterModule,
   ],
   controllers: [RoutineController],
-  providers: [RoutineService, RoutineParserService],
+  providers: [RoutineService, RoutineParserService, RoutineReferenceValidatorService],
   exports: [RoutineService],
 })
 export class RoutineModule {}

@@ -18,6 +18,9 @@ export enum PostHogEvents {
   OPEN_IN_DESKTOP_INTERSTITIAL_FALLBACK = 'open_in_desktop_interstitial_fallback',
   DOWNLOAD_DESKTOP_APP = 'download_desktop_app',
   DOWNLOAD_CLI = 'download_cli',
+  ROUTINE_CREATED = 'routine_created',
+  ROUTINE_UPDATED = 'routine_updated',
+  ROUTINE_DELETED = 'routine_deleted',
 }
 
 export function captureEvent(eventName: PostHogEvents, additionalProperties: Record<string, unknown> = {}): void {
@@ -89,6 +92,18 @@ export function trackUserSignIn(user: ScratchPadUser): void {
 
 export function trackRunSync(syncId: string, workbookId: string): void {
   captureEvent(PostHogEvents.RUN_SYNC, { syncId, workbookId });
+}
+
+export function trackRoutineCreated(workbookId: string, path: string): void {
+  captureEvent(PostHogEvents.ROUTINE_CREATED, { workbookId, path });
+}
+
+export function trackRoutineUpdated(workbookId: string, path: string): void {
+  captureEvent(PostHogEvents.ROUTINE_UPDATED, { workbookId, path });
+}
+
+export function trackRoutineDeleted(workbookId: string, path: string): void {
+  captureEvent(PostHogEvents.ROUTINE_DELETED, { workbookId, path });
 }
 
 export function trackPullFiles(workbookId: string, mode?: 'full' | 'incremental'): void {

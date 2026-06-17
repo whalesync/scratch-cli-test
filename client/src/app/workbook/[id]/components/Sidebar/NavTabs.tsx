@@ -2,6 +2,7 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Regular, Text13Regular } from '@/app/components/base/text';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
 import { SWR_KEYS } from '@/lib/api/keys';
@@ -17,6 +18,7 @@ import {
   RocketIcon,
   ScrollTextIcon,
   SquareIcon,
+  WorkflowIcon,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
@@ -39,6 +41,9 @@ export function NavTabs() {
 
   const { user } = useScratchPadUser();
   const publishHistoryEnabled = isExperimentEnabled('ENABLE_PUBLISH_HISTORY', user);
+  // Routines ship behind the dev-tools gate for now (DEV-10446); the surface itself is a normal
+  // feature and graduates to all users once the routine runner is complete and tested.
+  const { isDevToolsEnabled } = useDevTools();
   const { activeJobs } = useWorkbookActiveJobs(workbookId);
   const { data: dirtyStatus } = useSWR(
     SWR_KEYS.dirtyFiles.hasDirty(workbookId),
@@ -70,6 +75,17 @@ export function NavTabs() {
       href: `/workbook/${params.id}/syncs`,
       disabled: false,
     },
+    ...(isDevToolsEnabled
+      ? [
+          {
+            id: 'routines',
+            label: 'Routines',
+            icon: WorkflowIcon,
+            href: `/workbook/${params.id}/routines`,
+            disabled: false,
+          },
+        ]
+      : []),
     {
       id: 'runs',
       label: 'Runs',

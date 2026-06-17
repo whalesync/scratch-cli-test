@@ -13,8 +13,10 @@ export const RoutineEntity = {
     parseResult: RoutineParseResult;
     schedule: { id: ScheduleId; enabled: boolean } | null;
     latestRun: PrismaRoutineRun | null;
+    /** Semantic warnings for a parsed routine's broken folder/connection references. Defaults to none. */
+    referenceWarnings?: string[];
   }): Routine {
-    const { filePath, parseResult, schedule, latestRun } = args;
+    const { filePath, parseResult, schedule, latestRun, referenceWarnings = [] } = args;
 
     const joined = {
       filePath,
@@ -24,7 +26,16 @@ export const RoutineEntity = {
     };
 
     if ('error' in parseResult) {
-      return { ...joined, name: null, schedule: null, comment: null, steps: [], parseError: parseResult.error };
+      // Unparseable content has no steps to reference-check, so warnings are always empty here.
+      return {
+        ...joined,
+        name: null,
+        schedule: null,
+        comment: null,
+        steps: [],
+        parseError: parseResult.error,
+        referenceWarnings: [],
+      };
     }
 
     const { routine } = parseResult;
@@ -35,6 +46,7 @@ export const RoutineEntity = {
       comment: routine.comment,
       steps: routine.steps,
       parseError: null,
+      referenceWarnings,
     };
   },
 };

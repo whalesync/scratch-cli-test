@@ -82,6 +82,10 @@ export const SWR_KEYS = {
   schedules: {
     list: (workbookId: WorkbookId) => ['schedules', 'list', workbookId] as const,
   },
+  routines: {
+    list: (workbookId: WorkbookId) => ['routines', 'list', workbookId] as const,
+    file: (workbookId: WorkbookId, path: string) => ['routines', 'file', workbookId, path] as const,
+  },
   dataFolders: {
     list: (workbookId: WorkbookId) => ['data-folders', 'list', workbookId] as const,
     detail: (dataFolderId: DataFolderId) => ['data-folders', 'detail', dataFolderId] as const,

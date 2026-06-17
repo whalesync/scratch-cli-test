@@ -1,5 +1,6 @@
 'use client';
 
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { useWorkbookUIStore } from '@/stores/workbook-ui-store';
 import { Box, Stack } from '@mantine/core';
 import type { Workspace } from '@spinner/shared-types';
@@ -13,6 +14,7 @@ import { WorkbookErrorAlert } from './shared/WorkbookErrorAlert';
 import { FileTree, type FileTreeMode } from './Sidebar/FileTree';
 import { NavTabs } from './Sidebar/NavTabs';
 import { ProjectSwitcher } from './Sidebar/ProjectSwitcher';
+import { RoutinesList } from './Sidebar/RoutinesList';
 import { SidebarFooter } from './Sidebar/SidebarFooter';
 import { SyncsList } from './Sidebar/SyncsList';
 
@@ -26,6 +28,7 @@ const MAX_SIDEBAR_WIDTH = 500;
 
 export function WorkbookLayout({ workbook, children }: WorkbookLayoutProps) {
   const pathname = usePathname();
+  const { isDevToolsEnabled } = useDevTools();
   const sidebarWidth = useWorkbookUIStore((state) => state.sidebarWidth);
   const setSidebarWidth = useWorkbookUIStore((state) => state.setSidebarWidth);
 
@@ -38,6 +41,7 @@ export function WorkbookLayout({ workbook, children }: WorkbookLayoutProps) {
   const sidebarMode = useMemo(() => {
     const segment = pathname.split('/').at(3);
     if (segment === 'syncs') return 'syncs';
+    if (segment === 'routines') return 'routines';
     if (segment === 'review') return 'review';
     if (segment === 'runs') return 'runs';
     return 'files';
@@ -100,6 +104,7 @@ export function WorkbookLayout({ workbook, children }: WorkbookLayoutProps) {
           {/* Sidebar Content */}
           <Box style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             {sidebarMode === 'syncs' && <SyncsList workbookId={workbook.id} />}
+            {sidebarMode === 'routines' && isDevToolsEnabled && <RoutinesList workbookId={workbook.id} />}
             {(sidebarMode === 'files' || sidebarMode === 'review') && (
               <FileTree workbook={workbook} mode={fileTreeMode} />
             )}

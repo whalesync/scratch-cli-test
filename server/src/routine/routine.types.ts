@@ -32,6 +32,40 @@ export interface ParsedRoutine {
 /** Result of parsing a single routine file: either the parsed definition or a message. */
 export type RoutineParseResult = { routine: ParsedRoutine } | { error: string };
 
+/** One data folder, reduced to what reference validation needs. */
+export interface ValidationFolder {
+  /** DataFolderId ("dfd_..."). */
+  id: string;
+  /** Folder path, normalized to drop the leading slash that `DataFolder.path` stores. */
+  path: string;
+  /** The connection this folder belongs to, or null for an unlinked (scratch) folder. */
+  connectorAccountId: string | null;
+}
+
+/** One connection, reduced to what reference validation needs. */
+export interface ValidationConnection {
+  /** ConnectorAccountId ("coa_..."). */
+  id: string;
+  /** The human-readable connection name (unique per workbook). */
+  displayName: string;
+}
+
+/**
+ * An in-memory snapshot of a workbook's data folders + connections, loaded once and reused
+ * to validate one routine (create/update) or many (list/reload) without per-step queries.
+ * Built by {@link RoutineReferenceValidatorService.loadContext}.
+ */
+export interface RoutineValidationContext {
+  /** All folders keyed by normalized (no-leading-slash) path. A path may map to many folders (ambiguity across connections). */
+  foldersByPath: Map<string, ValidationFolder[]>;
+  /** All folders keyed by DataFolderId ("dfd_..."). */
+  foldersById: Map<string, ValidationFolder>;
+  /** All connections keyed by lowercased displayName (users hand-type names → case-insensitive match). */
+  connectionsByName: Map<string, ValidationConnection>;
+  /** All connections keyed by ConnectorAccountId ("coa_..."). */
+  connectionsById: Map<string, ValidationConnection>;
+}
+
 /**
  * Validate a routine `schedule:` value. Returns an error message, or null when valid.
  * Routines require a 5-field cron with a ≥5-minute interval (see

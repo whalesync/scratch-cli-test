@@ -18,6 +18,7 @@ import { createPaymentApi } from './resources/payment';
 import { createPermissionsApi } from './resources/permissions';
 import { createProgressApi } from './resources/progress';
 import { createPublishApi } from './resources/publish';
+import { createRoutineApi } from './resources/routine';
 import { createScheduleApi } from './resources/schedule';
 import { createSchemaApi } from './resources/schema';
 import { createSyncApi } from './resources/sync';
@@ -61,6 +62,7 @@ export function createScratchApiClient(config: ScratchApiClientConfig) {
     permissions: createPermissionsApi(http),
     progress: createProgressApi(http),
     publish: createPublishApi(http),
+    routine: createRoutineApi(http),
     schedule: createScheduleApi(http),
     schema: createSchemaApi(http),
     sync: createSyncApi(http),
