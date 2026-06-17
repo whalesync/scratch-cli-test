@@ -18,8 +18,51 @@ export interface SchemaCreationCapabilities {
   requiresPrimaryField: boolean;
   /** Allowed field kinds for the primary field, if constrained (e.g. ['text']). */
   primaryFieldKinds?: CreateFieldKind[];
+  /**
+   * The service's own user-facing name for the primary field, so a frontend can
+   * label it the way the service does instead of hardcoding "Name" — Airtable's
+   * "Primary field", Notion's "Title", etc. Set only when `requiresPrimaryField`
+   * is true.
+   */
+  primaryFieldDisplayName?: string;
   maxTableNameLength?: number;
   maxFieldNameLength?: number;
+}
+
+/**
+ * Connector-level prerequisites a generated plan must satisfy before it can be
+ * submitted to /schema/tables. Derived on the server from the destination
+ * connector's SchemaCreationCapabilities and surfaced declaratively so no
+ * frontend hardcodes which services need what — a client reads these and brings
+ * the plan into compliance (e.g. designates a primary field) before offering
+ * "Create". Grouped into one object so future connector prerequisites have a
+ * home without another top-level response field.
+ *
+ * Always present on the plan; a connector with no special needs yields
+ * all-permissive defaults (`requiresPrimaryField === false`) so the client can
+ * treat the object uniformly.
+ */
+export interface CreateSchemaPrerequisites {
+  /**
+   * Each table in the plan must designate exactly one primary/title field (a
+   * `CreateTableSpec` field with `isPrimary === true`). True for connectors with
+   * a mandatory title column (e.g. Airtable, Notion); creation is rejected at
+   * validation time otherwise.
+   */
+  requiresPrimaryField: boolean;
+  /**
+   * When `requiresPrimaryField` is true, the field kinds allowed for that primary
+   * field if the connector constrains them (e.g. Notion's `['text', 'longText']`).
+   * Omitted when any supported kind may be the primary field.
+   */
+  primaryFieldKinds?: CreateFieldKind[];
+  /**
+   * The user-facing name to label the primary field with — the service's own term
+   * when it has one (Airtable's "Primary field", Notion's "Title"), otherwise a
+   * generic default ("Name field"). Always present when `requiresPrimaryField` is
+   * true and omitted otherwise, so the client never has to supply its own fallback.
+   */
+  primaryFieldDisplayName?: string;
 }
 
 /** Per-field outcome of a create operation. */
@@ -179,5 +222,11 @@ export interface GenerateCreatePlanResponse {
    * Empty when no table was renamed.
    */
   tableNotes: TableMappingNote[];
+  /**
+   * Connector prerequisites the plan must satisfy before it can be created (e.g.
+   * Airtable/Notion require each table to designate a primary field). Always
+   * present; all-permissive when the destination connector has no special needs.
+   */
+  prerequisites: CreateSchemaPrerequisites;
   destinationSupportsCreation: boolean;
 }

@@ -41,6 +41,8 @@ describe('AIRTABLE_SCHEMA_CREATION_CAPABILITIES', () => {
       'phone',
       'currency',
     ]);
+    // Airtable calls its mandatory first column the "Primary field".
+    expect(AIRTABLE_SCHEMA_CREATION_CAPABILITIES.primaryFieldDisplayName).toBe('Primary field');
   });
 
   it('excludes checkbox/select/multiSelect/link kinds from the primary field', () => {

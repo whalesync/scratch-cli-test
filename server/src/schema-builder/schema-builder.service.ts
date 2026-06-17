@@ -5,6 +5,7 @@ import {
   CreateFieldSpec,
   CreateSchemaFieldsDto,
   CreateSchemaFieldsResponse,
+  CreateSchemaPrerequisites,
   CreateSchemaStatus,
   CreateSchemaTablesDto,
   CreateSchemaTablesResponse,
@@ -130,6 +131,26 @@ export class SchemaBuilderService {
     if (capabilities) {
       const issues = validateTablesAgainstCapabilities(dto, capabilities);
       if (issues.length > 0) {
+        // The thrown BadRequestException only reaches the client as a per-table
+        // "create-schema validation failed" summary; the actionable detail (which
+        // field, which capability constraint) lives in `issues` and would otherwise
+        // never be observable server-side. Log it before throwing so support can
+        // debug from the logs alone.
+        WSLogger.error({
+          source: SOURCE,
+          message: 'create-schema table validation failed against connector capabilities',
+          workbookId,
+          connectorAccountId: dto.connectorAccountId,
+          service: connector.service,
+          capabilities,
+          tables: dto.tables.map((table, tableIndex) => ({
+            index: tableIndex,
+            ref: table.ref,
+            name: table.name,
+            fieldCount: table.fields.length,
+          })),
+          issues,
+        });
         throw new BadRequestException({ message: 'create-schema validation failed', issues });
       }
     }
@@ -174,6 +195,22 @@ export class SchemaBuilderService {
       );
     }
     if (issues.length > 0) {
+      // See createTables: surface the actionable per-issue detail in the logs, since
+      // the client only sees the opaque "create-schema validation failed" summary.
+      WSLogger.error({
+        source: SOURCE,
+        message: 'create-schema field validation failed against connector capabilities / existing names',
+        workbookId,
+        connectorAccountId: dto.connectorAccountId,
+        service: connector.service,
+        remoteTableId: dto.remoteTableId,
+        fields: dto.fields.map((field, fieldIndex) => ({
+          index: fieldIndex,
+          name: field.name,
+          kind: field.fieldType.kind,
+        })),
+        issues,
+      });
       throw new BadRequestException({ message: 'create-schema validation failed', issues });
     }
 
@@ -307,7 +344,14 @@ export class SchemaBuilderService {
       materializeLocally: false,
     };
 
-    return { plan, fieldPlans, notes, tableNotes, destinationSupportsCreation: connector.supportsSchemaCreation() };
+    return {
+      plan,
+      fieldPlans,
+      notes,
+      tableNotes,
+      prerequisites: schemaCreationPrerequisitesFromCapabilities(connector.getSchemaCreationCapabilities?.()),
+      destinationSupportsCreation: connector.supportsSchemaCreation(),
+    };
   }
 
   /**
@@ -575,6 +619,34 @@ function lastPathSegment(path: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Default label for a required primary field when the connector mandates one but
+ * declares no service-specific name. Centralizing the fallback here means every
+ * frontend can read `primaryFieldDisplayName` directly instead of reinventing it.
+ */
+const DEFAULT_PRIMARY_FIELD_DISPLAY_NAME = 'Name field';
+
+/**
+ * Project the connector's full SchemaCreationCapabilities down to the subset the
+ * client needs to bring a plan into compliance before creating it. A connector
+ * that declares no capabilities (or doesn't require a primary field) yields the
+ * all-permissive default so the client can treat the object uniformly. When a
+ * primary field IS required, `primaryFieldDisplayName` is always populated —
+ * either the connector's own term or the generic `DEFAULT_PRIMARY_FIELD_DISPLAY_NAME`.
+ */
+function schemaCreationPrerequisitesFromCapabilities(
+  capabilities: SchemaCreationCapabilities | undefined,
+): CreateSchemaPrerequisites {
+  const requiresPrimaryField = capabilities?.requiresPrimaryField ?? false;
+  return {
+    requiresPrimaryField,
+    ...(capabilities?.primaryFieldKinds ? { primaryFieldKinds: capabilities.primaryFieldKinds } : {}),
+    ...(requiresPrimaryField
+      ? { primaryFieldDisplayName: capabilities?.primaryFieldDisplayName ?? DEFAULT_PRIMARY_FIELD_DISPLAY_NAME }
+      : {}),
+  };
 }
 
 function aggregateTableStatus(results: CreateTableResult[]): CreateSchemaStatus {

@@ -40,6 +40,7 @@ export const NOTION_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   supportedFieldKinds: [...CREATE_FIELD_KINDS],
   requiresPrimaryField: true,
   primaryFieldKinds: ['text', 'longText'],
+  primaryFieldDisplayName: 'Title',
 };
 
 /**

@@ -245,6 +245,69 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       ]);
     });
 
+    it("surfaces the destination connector's prerequisites on the plan (primary field required)", async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      // A connector that mandates a primary/title field (Airtable / Notion shape).
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({
+          getSchemaCreationCapabilities: () => ({
+            supportedFieldKinds: ['text', 'longText'],
+            requiresPrimaryField: true,
+            primaryFieldKinds: ['text', 'longText'],
+            primaryFieldDisplayName: 'Title',
+          }),
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
+        .expect(201);
+
+      expect(res.body.prerequisites).toEqual({
+        requiresPrimaryField: true,
+        primaryFieldKinds: ['text', 'longText'],
+        primaryFieldDisplayName: 'Title',
+      });
+    });
+
+    it('falls back to a generic primary-field label when a requiring connector declares no name', async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+      // Requires a primary field but declares no service-specific name for it.
+      connectorsService.getConnector.mockResolvedValue(
+        connectorStub({
+          getSchemaCreationCapabilities: () => ({
+            supportedFieldKinds: ['text', 'longText'],
+            requiresPrimaryField: true,
+          }),
+        }),
+      );
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
+        .expect(201);
+
+      expect(res.body.prerequisites).toEqual({
+        requiresPrimaryField: true,
+        primaryFieldDisplayName: 'Name field',
+      });
+    });
+
+    it('defaults prerequisites to all-permissive when the connector declares no capabilities', async () => {
+      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
+      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
+
+      const res = await request(app.getHttpServer())
+        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
+        .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
+        .expect(201);
+
+      expect(res.body.prerequisites).toEqual({ requiresPrimaryField: false });
+    });
+
     it('diffs against an existing destination folder and emits an add-fields plan', async () => {
       const destinationFolder = {
         id: 'dst_authors',

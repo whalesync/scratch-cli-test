@@ -94,6 +94,7 @@ export const AIRTABLE_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities =
   supportedFieldKinds: [...CREATE_FIELD_KINDS],
   requiresPrimaryField: true,
   primaryFieldKinds: CREATE_FIELD_KINDS.filter(isAirtablePrimaryEligibleKind),
+  primaryFieldDisplayName: 'Primary field',
   maxTableNameLength: AIRTABLE_MAX_NAME_LENGTH,
   maxFieldNameLength: AIRTABLE_MAX_NAME_LENGTH,
 };

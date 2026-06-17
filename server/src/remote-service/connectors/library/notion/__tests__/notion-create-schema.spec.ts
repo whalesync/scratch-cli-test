@@ -154,6 +154,8 @@ describe('NOTION_SCHEMA_CREATION_CAPABILITIES', () => {
   it('supports every logical field kind and requires a text-like primary field', () => {
     expect(NOTION_SCHEMA_CREATION_CAPABILITIES.requiresPrimaryField).toBe(true);
     expect(NOTION_SCHEMA_CREATION_CAPABILITIES.primaryFieldKinds).toEqual(['text', 'longText']);
+    // Notion calls its mandatory primary property the "Title".
+    expect(NOTION_SCHEMA_CREATION_CAPABILITIES.primaryFieldDisplayName).toBe('Title');
     expect(NOTION_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).toEqual(
       expect.arrayContaining([
         'text',
