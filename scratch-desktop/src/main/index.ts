@@ -55,6 +55,7 @@ import {
   getValidationStats,
   listUnpushedChanges,
   listUnreviewedChanges,
+  refreshFolderIndex,
   reindexFiles,
   rejectFieldChanges,
   restoreDeletedRecord as restoreDeletedRecordViaCli,
@@ -66,7 +67,11 @@ import {
 } from './scratchmd';
 import { configureBundledGitEnvironment } from './setup-git-env';
 import { initAutoUpdater } from './updater';
-import { getValidationConfigs, writeValidationConfig } from './validation-config';
+import {
+  ensureSchemaValidatorSeededInEveryFolder,
+  getValidationConfigs,
+  writeValidationConfig,
+} from './validation-config';
 import { attachWindowStatePersistence, getRestoredWindowState } from './window-state';
 import { WorkspaceFileWatchService } from './workspace-file-watch';
 import {
@@ -471,6 +476,37 @@ async function withWorkspaceInternalMutation<T>(workspacePath: string, action: (
   // produced by external `scratchmd` CLI runs from a terminal.
 }
 
+/**
+ * Seed the `enforce_schema` validator into every folder that still lacks it, then populate the
+ * validation problems table for the folders that were just seeded.
+ *
+ * Seeding only writes `validation.json`. The cached `validation_results` table that powers the
+ * Validation panel and sidebar counts is filled by an explicit validate run, so without this a
+ * freshly-seeded folder shows zero problems until its grid is opened (the grid validates live).
+ * We revalidate only the *newly-seeded* folders — `index refresh-folder --validate` is mtime-aware
+ * and the seeder returns nothing once every folder already has the validator, so this is a no-op in
+ * steady state. Best-effort throughout: a seeding or revalidation failure must never fail the pull
+ * (or mount) that triggered it.
+ */
+async function seedSchemaValidatorsAndPopulateProblems(workspacePath: string): Promise<void> {
+  let newlySeededFolders: Array<{ connectionDirName: string; folderPath: string }> = [];
+  try {
+    newlySeededFolders = await ensureSchemaValidatorSeededInEveryFolder(workspacePath);
+  } catch (error) {
+    console.debug('[validation] auto-seed enforce_schema failed:', error);
+    return;
+  }
+
+  for (const { connectionDirName, folderPath } of newlySeededFolders) {
+    const workspaceRelativeFolder = folderPath ? `${connectionDirName}/${folderPath}` : connectionDirName;
+    try {
+      await refreshFolderIndex(workspacePath, workspaceRelativeFolder, { validate: true });
+    } catch (error) {
+      console.debug(`[validation] revalidate after seeding ${workspaceRelativeFolder} failed:`, error);
+    }
+  }
+}
+
 // Per-(workspace, connection) async queue for folder-index reads. The CLI stores one SQLite
 // file per connection (workspace/.repos/{conn}.db), so two concurrent paginate-records calls
 // against any folders within the same connection race on the same DB. During a large lazy
@@ -793,7 +829,20 @@ ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string
   // `files download` reindexes the affected folders itself (per-path,
   // scoped to the actually-changed records, plus a master diff for
   // connections whose published state advanced). No follow-up CLI call.
-  return withWorkspaceInternalMutation(workspacePath, () => runScratchmd(args, workspacePath));
+  return withWorkspaceInternalMutation(workspacePath, async () => {
+    const downloadResult = await runScratchmd(args, workspacePath);
+    // Re-seed schema validators after every pull. A pull can materialize folders for a
+    // connection that was not on disk when the workspace was first seeded on load — e.g. a
+    // newly-connected service, or a connection still being pulled when the mount-time seed ran.
+    // Seeding here, the single choke point every pull path flows through (connection-change pull,
+    // focus-sync pull, re-download), guarantees schema validation is present for those
+    // late-arriving folders instead of relying on each renderer pull handler to re-trigger it.
+    // It also populates the problems table for the just-seeded folders so their validation counts
+    // surface in the panel/sidebar without waiting for the grid to be opened. The writes land
+    // inside this internal-mutation window, so they do not provoke a spurious file-watch refresh.
+    await seedSchemaValidatorsAndPopulateProblems(workspacePath);
+    return downloadResult;
+  });
 });
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
@@ -1192,6 +1241,12 @@ ipcMain.handle(
       folderPath,
       entries as Parameters<typeof writeValidationConfig>[3],
     ),
+);
+ipcMain.handle('files:ensure-schema-validator-seeded', async (_, workspacePath: string) =>
+  // Wrap in the internal-mutation window so the seeded `validation.json` writes (under `.scratch/`)
+  // and the follow-up revalidation do not trip the workspace file watcher into a spurious
+  // schema/view hot-reload in the renderer.
+  withWorkspaceInternalMutation(workspacePath, () => seedSchemaValidatorsAndPopulateProblems(workspacePath)),
 );
 ipcMain.handle(
   'files:accept-cell-input-text',

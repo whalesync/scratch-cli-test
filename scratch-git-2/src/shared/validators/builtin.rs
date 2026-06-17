@@ -256,7 +256,7 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                             level: ValidationLevel::Warning,
                             message: Some("Updated read-only field".to_string()),
                             description: Some(format!(
-                                "Field {} changed from {} to {}. The new value will be ignored during publishing.",
+                                "Field {} changed from {} to {}. The new value may cause an error when publishing.",
                                 field_name,
                                 format_validation_value(master_val),
                                 format_validation_value(working)
@@ -534,7 +534,7 @@ mod tests {
         );
         assert_eq!(
             results[0].description.as_deref(),
-            Some("Field id changed from 1 to 99. The new value will be ignored during publishing.")
+            Some("Field id changed from 1 to 99. The new value may cause an error when publishing.")
         );
     }
 

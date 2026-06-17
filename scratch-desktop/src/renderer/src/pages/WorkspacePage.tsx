@@ -296,6 +296,16 @@ export function WorkspacePage() {
     setDataRefreshKey((current) => current + 1);
   }, []);
 
+  // Ensure schema validation always runs by seeding an `enforce_schema` validator into every folder,
+  // so a read-only field edited by the user surfaces as a warning in the Validation panel before they
+  // publish. Best-effort, fire-and-forget; writes only under `.scratch/` so it never gates publish.
+  // (DEV-10453.)
+  const seedSchemaValidators = useCallback((path: string) => {
+    void window.scratchFiles
+      .ensureSchemaValidatorSeeded(path)
+      .catch((err) => console.debug('[validation] auto-seed enforce_schema failed:', err));
+  }, []);
+
   const handlePullAndRefresh = useCallback(async () => {
     if (!localPath) return;
     try {
@@ -303,8 +313,9 @@ export function WorkspacePage() {
     } catch (err) {
       console.debug('[workspace] connection-change pull failed:', err);
     }
+    seedSchemaValidators(localPath);
     handleDataRefresh();
-  }, [handleDataRefresh, localPath]);
+  }, [handleDataRefresh, localPath, seedSchemaValidators]);
 
   const handleToggleWatching = useCallback(async () => {
     if (!localPath) return;
@@ -367,9 +378,10 @@ export function WorkspacePage() {
         if (snapshot.connectionCount === 0) {
           setShowConnectionsPanel(true);
         }
+        if (snapshot.localPath) seedSchemaValidators(snapshot.localPath);
       }
     });
-  }, [fetchWorkspace, setShowConnectionsPanel]);
+  }, [fetchWorkspace, setShowConnectionsPanel, seedSchemaValidators]);
 
   const workspaceId = workspace?.id;
 

@@ -96,3 +96,103 @@ export async function writeValidationConfig(
   const filePath = join(dir, VALIDATION_FILENAME);
   await writeFile(filePath, formatRecordJson(entries), 'utf8');
 }
+
+// ---------------------------------------------------------------------------
+// Auto-seeding the schema validator (DEV-10453)
+// ---------------------------------------------------------------------------
+
+/**
+ * The record-scoped schema validator we auto-seed into every folder. `enforce_schema` validates each
+ * record against its folder schema; its read-only check (an `x-scratch-readonly` field changed vs the
+ * published `master` value) is what surfaces a read-only edit to the user as an advisory warning — the
+ * "bubble it up earlier" behavior that replaces silently stripping read-only fields on publish.
+ */
+const AUTO_SEEDED_ENFORCE_SCHEMA_ENTRY: ValidatorConfigEntry = {
+  validator: 'enforce_schema',
+  note: 'Auto-seeded by Scratch Desktop — validates each record against its folder schema (advisory).',
+};
+
+/**
+ * Split a workspace-relative leaf-folder name (e.g. `pipedrive/Deals`) into its connection dir name and
+ * connection-relative folder path — the `(connection, folderPath)` shape `writeValidationConfig` expects.
+ */
+function splitLeafFolderName(leafFolderName: string): { connectionDirName: string; folderPath: string } {
+  const firstSlashIndex = leafFolderName.indexOf('/');
+  if (firstSlashIndex === -1) return { connectionDirName: leafFolderName, folderPath: '' };
+  return {
+    connectionDirName: leafFolderName.slice(0, firstSlashIndex),
+    folderPath: leafFolderName.slice(firstSlashIndex + 1),
+  };
+}
+
+/**
+ * Decide which leaf folders still need an `enforce_schema` validator entry, and the full entry list to
+ * write for each. Pure (no I/O) so it is unit-testable. A folder already containing an `enforce_schema`
+ * entry is skipped (idempotent); otherwise `enforce_schema` is appended after any existing user
+ * validators, preserving their order.
+ */
+export function computeFoldersNeedingSchemaValidatorSeed(
+  leafFolderNames: string[],
+  existingConfigs: ValidatorConfig[],
+): Array<{ connectionDirName: string; folderPath: string; entriesToWrite: ValidatorConfigEntry[] }> {
+  const existingEntriesByConnectionAndFolderPath = new Map<string, ValidatorConfigEntry[]>(
+    existingConfigs.map((config) => [`${config.connection}/${config.folderPath}`, config.entries]),
+  );
+
+  const foldersToSeed: Array<{
+    connectionDirName: string;
+    folderPath: string;
+    entriesToWrite: ValidatorConfigEntry[];
+  }> = [];
+
+  for (const leafFolderName of leafFolderNames) {
+    const { connectionDirName, folderPath } = splitLeafFolderName(leafFolderName);
+    if (!connectionDirName) continue;
+
+    const existingEntries = existingEntriesByConnectionAndFolderPath.get(`${connectionDirName}/${folderPath}`) ?? [];
+    if (existingEntries.some((entry) => entry.validator === 'enforce_schema')) continue;
+
+    foldersToSeed.push({
+      connectionDirName,
+      folderPath,
+      entriesToWrite: [...existingEntries, AUTO_SEEDED_ENFORCE_SCHEMA_ENTRY],
+    });
+  }
+
+  return foldersToSeed;
+}
+
+/**
+ * Ensure every data leaf folder in the workspace has an `enforce_schema` validator entry so schema
+ * validation (and its read-only-edit warning) always runs. Idempotent and order-preserving (see
+ * {@link computeFoldersNeedingSchemaValidatorSeed}). Writes only under `.scratch/`, which is excluded
+ * from the publish/review diff, so it never blocks publish or pollutes the user's record diff.
+ * Best-effort — callers should swallow/log errors.
+ *
+ * Note: a folder whose entry was removed via the Validation UI is re-seeded on the next workspace load
+ * (the rule is "always applied"); deliberate removal is not currently honored.
+ *
+ * @returns the (connectionDirName, folderPath) pairs newly seeded this run.
+ */
+export async function ensureSchemaValidatorSeededInEveryFolder(
+  workspacePath: string,
+): Promise<Array<{ connectionDirName: string; folderPath: string }>> {
+  // Imported dynamically so this module (and its unit tests) don't pull in the heavier local-files /
+  // native dependency graph at load time.
+  const { listFolders } = await import('./local-files');
+  const [leafFolders, existingConfigs] = await Promise.all([
+    listFolders(workspacePath),
+    getValidationConfigs(workspacePath),
+  ]);
+
+  const foldersToSeed = computeFoldersNeedingSchemaValidatorSeed(
+    leafFolders.map((folder) => folder.name),
+    existingConfigs,
+  );
+
+  for (const { connectionDirName, folderPath, entriesToWrite } of foldersToSeed) {
+    await writeValidationConfig(workspacePath, connectionDirName, folderPath, entriesToWrite);
+  }
+
+  return foldersToSeed.map(({ connectionDirName, folderPath }) => ({ connectionDirName, folderPath }));
+}

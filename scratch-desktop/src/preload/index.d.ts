@@ -448,6 +448,7 @@ interface ScratchFilesAPI {
     folderPath: string,
     entries: ValidatorConfigEntry[],
   ) => Promise<void>;
+  ensureSchemaValidatorSeeded: (workspacePath: string) => Promise<void>;
   acceptFieldEditFromInputText: (
     folderPath: string,
     workspacePath: string,

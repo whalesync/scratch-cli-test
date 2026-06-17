@@ -547,6 +547,8 @@ const scratchFiles = {
     folderPath: string,
     entries: ValidatorConfigEntry[],
   ): Promise<void> => invoke('files:write-validation-config', workspacePath, connection, folderPath, entries),
+  ensureSchemaValidatorSeeded: (workspacePath: string): Promise<void> =>
+    invoke('files:ensure-schema-validator-seeded', workspacePath),
   acceptFieldEditFromInputText: (
     folderPath: string,
     workspacePath: string,

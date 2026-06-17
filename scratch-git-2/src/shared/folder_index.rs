@@ -1758,6 +1758,16 @@ fn validate_page_records(
         } else {
             vec![]
         };
+        // Load the folder schema once, alongside the validator config. Record-scoped validators
+        // (notably `enforce_schema`) need it to check JSONSchema conformance, required fields, and
+        // read-only edits; passing `None` here silently disables them — the validator hits its
+        // `ctx.schema.get("schema")` guard and returns no violations. The schema lives next to
+        // `validation.json` in the same `.scratch` folder. A missing or unparseable schema falls
+        // back to `None`, preserving the no-op behavior for schema-less folders.
+        let folder_schema: Option<serde_json::Value> =
+            std::fs::read(validation_json_path.with_file_name("schema.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok());
         let workspace_dir = resolve_workspace_dir(workspace);
         // Master content comes from refs/heads/main post-Slice-F. Load once
         // and reuse across the stale_filenames loop.
@@ -1833,7 +1843,7 @@ fn validate_page_records(
                     filename,
                     &working_json,
                     master_json.as_ref(),
-                    None,
+                    folder_schema.as_ref(),
                     &config,
                     &workspace_dir,
                 )?

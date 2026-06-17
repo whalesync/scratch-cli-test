@@ -393,6 +393,24 @@ export async function reindexFolderIndex(
 }
 
 /**
+ * Smart, mtime-aware refresh of one folder's index (skips files that are already fresh). With
+ * `validate: true`, also runs validators for files whose validation is stale and populates the
+ * `validation_results` problems table — the table that powers the Validation panel and sidebar
+ * counts. Much cheaper than {@link reindexFolderIndex} for a folder that is already mostly indexed.
+ */
+export async function refreshFolderIndex(
+  workspacePath: string,
+  folder: string,
+  opts?: { validate?: boolean },
+): Promise<{ stdout: string; stderr: string }> {
+  // The CLI / folder_index split the folder on POSIX `/`; normalize so a Windows
+  // `path.relative` backslash path doesn't become the whole "connection name".
+  const args = ['index', 'refresh-folder', '--folder', folder.replace(/\\/g, '/')];
+  if (opts?.validate) args.push('--validate');
+  return runScratchmd(args, workspacePath);
+}
+
+/**
  * Incrementally update base row + columns for specific files (reads all 3 trees).
  * Much cheaper than reindexFolderIndex for targeted dirty/master mutations on known files.
  * Pass `validate: true` to also run validators on the refreshed files.

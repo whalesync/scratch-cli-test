@@ -148,7 +148,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   page: 1,
   diffViewMode: null,
   currentWorkbookId: null,
-  validateEnabled: false,
+  validateEnabled: true,
 
   // --- Actions ---
   setSelectedRecordFilename: (filename) => {
@@ -242,7 +242,7 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
       activeCenterTab: 'chat',
     }),
   hydrateWorkbookSettings: (settings) => {
-    set({ validateEnabled: settings.validateEnabled ?? false });
+    set({ validateEnabled: settings.validateEnabled ?? true });
   },
   setValidateEnabled: (enabled) => {
     set({ validateEnabled: enabled });
