@@ -26,6 +26,7 @@ import {
   Loader,
   Popover,
   ScrollArea,
+  SegmentedControl,
   Stack,
   Table,
   Text,
@@ -199,6 +200,19 @@ export function RunsView() {
     [searchParams, router],
   );
 
+  const setTypeFilter = useCallback(
+    (type: string) => {
+      const next = new URLSearchParams(searchParams.toString());
+      if (type === 'all') {
+        next.delete('type');
+      } else {
+        next.set('type', type);
+      }
+      router.replace(`?${next.toString()}`, { scroll: false });
+    },
+    [searchParams, router],
+  );
+
   const loadMore = useCallback(() => {
     const nextLimit = runsParams.limit + LOAD_MORE_PAGE_SIZE;
     const next = new URLSearchParams(searchParams.toString());
@@ -262,17 +276,16 @@ export function RunsView() {
     );
   }
 
-  if (jobs.length === 0) {
+  // When there are no jobs and no filters, show a full-screen empty state. When a filter
+  // yields no results we fall through to the normal layout instead, so the header (and its
+  // type filter) stays visible and the user can switch back to "All".
+  if (jobs.length === 0 && !hasFilters) {
     return (
       <Center h="100%">
         <Stack align="center" gap="xs">
           <ClockIcon size={24} color="var(--mantine-color-gray-5)" />
-          <Text c="dimmed">{hasFilters ? 'No matching runs' : 'No runs yet'}</Text>
-          <Text12Regular c="dimmed">
-            {hasFilters
-              ? 'Try removing a filter to see more results'
-              : 'Jobs will appear here when you run syncs or publish changes'}
-          </Text12Regular>
+          <Text c="dimmed">No runs yet</Text>
+          <Text12Regular c="dimmed">Jobs will appear here when you run syncs or publish changes</Text12Regular>
         </Stack>
       </Center>
     );
@@ -287,12 +300,23 @@ export function RunsView() {
       <Group
         h={48}
         px="md"
-        justify="flex-end"
+        justify="space-between"
         style={{
           borderBottom: '1px solid var(--fg-divider)',
           flexShrink: 0,
         }}
       >
+        <SegmentedControl
+          size="xs"
+          value={runsParams.type ?? 'all'}
+          onChange={setTypeFilter}
+          data={[
+            { value: 'all', label: 'All' },
+            { value: 'pull', label: 'Pull' },
+            { value: 'publish', label: 'Publish' },
+            { value: 'sync', label: 'Sync' },
+          ]}
+        />
         <Group gap="xs">
           <Text12Regular c="dimmed">{jobs.length} jobs</Text12Regular>
           <IconButtonToolbar onClick={() => mutate()} title="Refresh">
@@ -301,22 +325,9 @@ export function RunsView() {
         </Group>
       </Group>
 
-      {/* Filter chips */}
-      {hasFilters && (
+      {/* Filter chips (type is controlled by the SegmentedControl in the header) */}
+      {(runsParams.syncId || runsParams.dataFolderId) && (
         <Group px="md" py={8} gap="xs" style={{ borderBottom: '1px solid var(--fg-divider)', flexShrink: 0 }}>
-          {runsParams.type && (
-            <Badge
-              variant="light"
-              size="sm"
-              rightSection={
-                <ActionIcon variant="transparent" size={14} onClick={() => removeFilter('type')}>
-                  <XIcon size={10} />
-                </ActionIcon>
-              }
-            >
-              Type: {getTypeLabel(runsParams.type as JobType)}
-            </Badge>
-          )}
           {runsParams.syncId && (
             <Badge
               variant="light"
@@ -349,6 +360,15 @@ export function RunsView() {
 
       {/* Table */}
       <ScrollArea style={{ flex: 1 }}>
+        {jobs.length === 0 && (
+          <Center py={48}>
+            <Stack align="center" gap="xs">
+              <ClockIcon size={24} color="var(--mantine-color-gray-5)" />
+              <Text c="dimmed">No matching runs</Text>
+              <Text12Regular c="dimmed">Try a different type or remove a filter to see more results</Text12Regular>
+            </Stack>
+          </Center>
+        )}
         {activeJobs.length > 0 && (
           <Box>
             <Box px="md" py={6}>
