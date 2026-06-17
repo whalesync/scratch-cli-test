@@ -4,12 +4,14 @@ import { Badge } from '@/app/components/base/badge';
 import { ButtonPrimarySolid } from '@/app/components/base/buttons';
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ModalWrapper } from '@/app/components/ModalWrapper';
+import { useWorkbook } from '@/hooks/use-workbook';
 import { useWorkspacePermissions } from '@/hooks/use-workspace-permissions';
 import { useScratchPadUser } from '@/hooks/useScratchpadUser';
-import { ActionIcon, Group, Table, Text, TextInput } from '@mantine/core';
+import { ActionIcon, Group, Table, Text, TextInput, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { WorkbookId, WorkspaceInviteId, WorkspacePermissionId } from '@spinner/shared-types';
-import { Trash2Icon, UserPlusIcon } from 'lucide-react';
+import { Trash2Icon, UserPlusIcon, UserRoundXIcon } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 interface WorkspacePermissionsModalProps {
@@ -19,7 +21,9 @@ interface WorkspacePermissionsModalProps {
 }
 
 export function WorkspacePermissionsModal({ opened, onClose, workbookId }: WorkspacePermissionsModalProps) {
+  const router = useRouter();
   const { user } = useScratchPadUser();
+  const { workbook } = useWorkbook(opened ? workbookId : null);
   const { permissions, invites, isLoading, addPermission, removePermission, removeInvite } = useWorkspacePermissions(
     opened ? workbookId : null,
   );
@@ -45,6 +49,7 @@ export function WorkspacePermissionsModal({ opened, onClose, workbookId }: Works
   };
 
   const handleRemove = async (permissionId: WorkspacePermissionId) => {
+    const removedPermissionBelongsToCurrentUser = permissions.find((p) => p.id === permissionId)?.userId === user?.id;
     try {
       await removePermission(permissionId);
     } catch (e) {
@@ -54,6 +59,13 @@ export function WorkspacePermissionsModal({ opened, onClose, workbookId }: Works
         color: 'red',
       });
       console.error(e);
+      return;
+    }
+    // After removing your own access you can no longer view this workbook, so leave
+    // it for the workbooks list.
+    if (removedPermissionBelongsToCurrentUser) {
+      onClose();
+      router.push('/workbook');
     }
   };
 
@@ -125,35 +137,56 @@ export function WorkspacePermissionsModal({ opened, onClose, workbookId }: Works
                 </Table.Td>
               </Table.Tr>
             ) : (
-              permissions.map((p) => (
-                <Table.Tr key={p.id}>
-                  <Table.Td>
-                    <Group gap="xs" wrap="nowrap">
-                      <Text size="xs">{p.userName}</Text>
-                      {p.isAdmin && <Badge color="black">Admin</Badge>}
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" ff="monospace">
-                      {p.userEmail}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs">{p.role}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <ActionIcon
-                      variant="subtle"
-                      color="red"
-                      size="sm"
-                      disabled={p.userId === user?.id}
-                      onClick={() => handleRemove(p.id)}
-                    >
-                      <Trash2Icon size={14} />
-                    </ActionIcon>
-                  </Table.Td>
-                </Table.Tr>
-              ))
+              permissions.map((p) => {
+                const isWorkspaceCreatorOwner = p.userId === workbook?.userId;
+                const isCurrentUsersOwnPermission = p.userId === user?.id;
+                const isOnlyUserWithAccess = permissions.length === 1;
+                // The workspace owner can never be removed (by anyone), and you can't
+                // remove yourself if you're the only user with access.
+                const removeIsDisabled =
+                  isWorkspaceCreatorOwner || (isCurrentUsersOwnPermission && isOnlyUserWithAccess);
+                const disabledTooltipLabel = isWorkspaceCreatorOwner
+                  ? "You can't remove the workspace owner"
+                  : "You can't remove the only user with access";
+                const removeButton = (
+                  <ActionIcon
+                    variant="subtle"
+                    color="red"
+                    size="sm"
+                    disabled={removeIsDisabled}
+                    onClick={() => handleRemove(p.id)}
+                  >
+                    <UserRoundXIcon size={14} />
+                  </ActionIcon>
+                );
+                return (
+                  <Table.Tr key={p.id}>
+                    <Table.Td>
+                      <Group gap="xs" wrap="nowrap">
+                        <Text size="xs">{p.userName}</Text>
+                        {p.isAdmin && <Badge color="black">Admin</Badge>}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" ff="monospace">
+                        {p.userEmail}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs">{p.role}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      {removeIsDisabled ? (
+                        <Tooltip label={disabledTooltipLabel}>
+                          <span>{removeButton}</span>
+                        </Tooltip>
+                      ) : (
+                        removeButton
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })
             )}
           </Table.Tbody>
         </Table>

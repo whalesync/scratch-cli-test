@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import {
   createWorkspaceInviteId,
   createWorkspacePermissionId,
@@ -186,6 +186,31 @@ export class WorkspacePermissionsService {
       where: { id: workspacePermissionId },
       include: WorkspacePermissionCluster._validator.include,
     });
+
+    // Backstop for the UI rule (DEV-10456): the workspace creator owner can never be
+    // removed (by anyone), and a user can't remove their own access if they are the
+    // only user with access. Removal of other (non-owner) users is unaffected.
+    if (permission) {
+      const workbook = await this.db.client.workbook.findUnique({
+        where: { id: permission.workbookId },
+        select: { userId: true },
+      });
+
+      const permissionBeingRemovedBelongsToCreatorOwner = workbook?.userId === permission.userId;
+      if (permissionBeingRemovedBelongsToCreatorOwner) {
+        throw new ForbiddenException('The workspace owner cannot be removed.');
+      }
+
+      const userIsRemovingTheirOwnPermission = permission.userId === actor.userId;
+      if (userIsRemovingTheirOwnPermission) {
+        const numberOfUsersWithAccessToWorkbook = await this.db.client.workspacePermission.count({
+          where: { workbookId: permission.workbookId },
+        });
+        if (numberOfUsersWithAccessToWorkbook <= 1) {
+          throw new ForbiddenException('You cannot remove the only user with access to the workspace.');
+        }
+      }
+    }
 
     await this.db.client.workspacePermission.delete({
       where: { id: workspacePermissionId },

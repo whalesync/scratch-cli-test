@@ -2,19 +2,23 @@ import { ButtonPrimarySolid, IconButtonGhost } from '@/components/base/buttons';
 import { Text12Regular, Text13Medium, Text13Regular, TextMono12Regular, TextTitle4 } from '@/components/base/text';
 import { StyledLucideIcon } from '@/components/icons/StyledLucideIcon';
 import { useCurrentUser } from '@/hooks/use-current-user';
+import { useWorkspace } from '@/hooks/use-workspace';
 import { useWorkspacePermissions } from '@/hooks/use-workspace-permissions';
-import { Badge, Group, Stack, Table, TextInput } from '@mantine/core';
+import { Badge, Group, Stack, Table, TextInput, Tooltip } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { WorkspaceInviteId, WorkspacePermissionId } from '@spinner/shared-types';
-import { Trash2Icon, UserPlusIcon } from 'lucide-react';
+import { Trash2Icon, UserPlusIcon, UserRoundXIcon } from 'lucide-react';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 interface WorkspacePermissionsSettingsProps {
   workbookId: string;
 }
 
 export function WorkspacePermissionsSettings({ workbookId }: WorkspacePermissionsSettingsProps) {
+  const navigate = useNavigate();
   const { user } = useCurrentUser();
+  const { workspace } = useWorkspace(workbookId);
   const { permissions, invites, isLoading, addPermission, removePermission, removeInvite } =
     useWorkspacePermissions(workbookId);
   const [email, setEmail] = useState('');
@@ -39,6 +43,7 @@ export function WorkspacePermissionsSettings({ workbookId }: WorkspacePermission
   };
 
   const handleRemove = async (permissionId: WorkspacePermissionId) => {
+    const removedPermissionBelongsToCurrentUser = permissions.find((p) => p.id === permissionId)?.userId === user?.id;
     try {
       await removePermission(permissionId);
     } catch (e) {
@@ -48,6 +53,12 @@ export function WorkspacePermissionsSettings({ workbookId }: WorkspacePermission
         color: 'red',
       });
       console.debug(e);
+      return;
+    }
+    // After removing your own access you can no longer view this workspace, so leave
+    // it for the home page workspace listings.
+    if (removedPermissionBelongsToCurrentUser) {
+      void navigate('/');
     }
   };
 
@@ -114,35 +125,56 @@ export function WorkspacePermissionsSettings({ workbookId }: WorkspacePermission
                 </Table.Td>
               </Table.Tr>
             ) : (
-              permissions.map((p) => (
-                <Table.Tr key={p.id}>
-                  <Table.Td>
-                    <Group gap="xs" wrap="nowrap">
-                      <Text12Regular>{p.userName}</Text12Regular>
-                      {p.isAdmin && (
-                        <Badge size="sm" radius="sm" variant="light" color="gray">
-                          Admin
-                        </Badge>
+              permissions.map((p) => {
+                const isWorkspaceCreatorOwner = p.userId === workspace?.userId;
+                const isCurrentUsersOwnPermission = p.userId === user?.id;
+                const isOnlyUserWithAccess = permissions.length === 1;
+                // The workspace owner can never be removed (by anyone), and you can't
+                // remove yourself if you're the only user with access.
+                const removeIsDisabled =
+                  isWorkspaceCreatorOwner || (isCurrentUsersOwnPermission && isOnlyUserWithAccess);
+                const disabledTooltipLabel = isWorkspaceCreatorOwner
+                  ? "You can't remove the workspace owner"
+                  : "You can't remove the only user with access";
+                const removeButton = (
+                  <IconButtonGhost
+                    disabled={removeIsDisabled}
+                    onClick={() => void handleRemove(p.id)}
+                    aria-label={`Remove ${p.userName}`}
+                  >
+                    <StyledLucideIcon Icon={UserRoundXIcon} size="sm" c="var(--mantine-color-red-6)" />
+                  </IconButtonGhost>
+                );
+                return (
+                  <Table.Tr key={p.id}>
+                    <Table.Td>
+                      <Group gap="xs" wrap="nowrap">
+                        <Text12Regular>{p.userName}</Text12Regular>
+                        {p.isAdmin && (
+                          <Badge size="sm" radius="sm" variant="light" color="gray">
+                            Admin
+                          </Badge>
+                        )}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <TextMono12Regular>{p.userEmail}</TextMono12Regular>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text12Regular>{p.role}</Text12Regular>
+                    </Table.Td>
+                    <Table.Td>
+                      {removeIsDisabled ? (
+                        <Tooltip label={disabledTooltipLabel}>
+                          <span>{removeButton}</span>
+                        </Tooltip>
+                      ) : (
+                        removeButton
                       )}
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <TextMono12Regular>{p.userEmail}</TextMono12Regular>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text12Regular>{p.role}</Text12Regular>
-                  </Table.Td>
-                  <Table.Td>
-                    <IconButtonGhost
-                      disabled={p.userId === user?.id}
-                      onClick={() => void handleRemove(p.id)}
-                      aria-label={`Remove ${p.userName}`}
-                    >
-                      <StyledLucideIcon Icon={Trash2Icon} size="sm" c="var(--mantine-color-red-6)" />
-                    </IconButtonGhost>
-                  </Table.Td>
-                </Table.Tr>
-              ))
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })
             )}
           </Table.Tbody>
         </Table>

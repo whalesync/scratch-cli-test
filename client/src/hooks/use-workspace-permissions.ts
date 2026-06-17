@@ -71,7 +71,10 @@ export const useWorkspacePermissions = (workbookId: WorkbookId | null): UseWorks
     async (permissionId: WorkspacePermissionId) => {
       if (!workbookId) return;
       await scratchApiClient.permissions.removePermission(workbookId, permissionId);
-      await mutate();
+      // Best-effort refresh: when a user removes their own access the list endpoint
+      // returns 403 (they can no longer read the workbook), but the removal already
+      // succeeded, so don't surface the revalidation failure as a removal error.
+      await mutate().catch(() => undefined);
     },
     [workbookId, mutate],
   );
