@@ -136,6 +136,14 @@ export class RouteUrls {
     this.signInPageUrl,
     this.signUpPageUrl,
     this.signOutPageUrl,
+    // The OAuth provider's registered redirect_uri lands here. This page only base64-decodes the
+    // `state` param and forwards the result on (to the scratch:// desktop app, a Whalesync/dusky
+    // origin, or the scratch-web callback-step-2) — it never reads user or auth data, so it must be
+    // reachable without a scratch.md login. Anchored as a RegExp so it matches ONLY /oauth/callback
+    // and NOT /oauth/callback-step-2 (which exchanges the code and stays auth-gated): isPublicRoute
+    // uses an unanchored `new RegExp(pattern)`, where the bare string '/oauth/callback' would also
+    // match the step-2 path as a substring.
+    /^\/oauth\/callback$/,
   ];
 
   /**

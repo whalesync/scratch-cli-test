@@ -8,7 +8,7 @@ import { Alert, Container, Group, Loader, Stack } from '@mantine/core';
 import { OAuthStatePayload } from '@spinner/shared-types';
 import { CheckCircle2Icon, CircleXIcon, InfoIcon } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 
 interface OAuthCallbackState {
   status: 'loading' | 'error' | 'denied' | 'desktop-redirect';
@@ -46,7 +46,7 @@ const isWhalesyncRedirectPrefix = (redirectPrefix: string | undefined): boolean 
  * e.g. If this came from `localhost`, the OAuth flow will send the browser to `test.scratch.md`, which will then
  * redirect back to `localhost`.
  */
-export default function OAuthCallbackPage() {
+function OAuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [state, setState] = useState<OAuthCallbackState>({ status: 'loading' });
@@ -239,5 +239,31 @@ export default function OAuthCallbackPage() {
         )}
       </Stack>
     </Container>
+  );
+}
+
+/**
+ * `OAuthCallbackContent` reads the OAuth result from the URL via `useSearchParams()`, which forces a
+ * client-side render. Next.js requires such a component to sit under a Suspense boundary, otherwise
+ * the whole page bails out of static prerendering and the build fails. The fallback mirrors the
+ * inner "loading" state so there's no visual flash before the redirect runs.
+ */
+export default function OAuthCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <Container size="sm" py="xl">
+          <Stack align="center" gap="lg">
+            <Loader size="lg" />
+            <TextTitle2>Connecting your account...</TextTitle2>
+            <Text13Regular c="dimmed" ta="center">
+              Please wait while we complete the OAuth connection.
+            </Text13Regular>
+          </Stack>
+        </Container>
+      }
+    >
+      <OAuthCallbackContent />
+    </Suspense>
   );
 }
