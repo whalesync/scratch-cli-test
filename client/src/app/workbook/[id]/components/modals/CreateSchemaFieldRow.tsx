@@ -69,6 +69,7 @@ export function CreateSchemaFieldRow({
             value={field.name}
             onChange={(event) => onChange({ name: event.currentTarget.value })}
             error={hasDuplicateName ? 'Duplicate field name in this table' : undefined}
+            disabled={field.isSourceRecordId}
             style={{ flex: 1 }}
           />
           <Select
@@ -77,12 +78,22 @@ export function CreateSchemaFieldRow({
             value={field.kind}
             onChange={(value) => value && onChange({ kind: value as CreateFieldKind })}
             allowDeselect={false}
+            disabled={field.isSourceRecordId}
             w={160}
           />
-          <IconButtonGhost aria-label="Remove field" onClick={onRemove}>
-            <StyledLucideIcon Icon={Trash2Icon} size="sm" c="var(--mantine-color-red-6)" />
-          </IconButtonGhost>
+          {!field.isSourceRecordId && (
+            <IconButtonGhost aria-label="Remove field" onClick={onRemove}>
+              <StyledLucideIcon Icon={Trash2Icon} size="sm" c="var(--mantine-color-red-6)" />
+            </IconButtonGhost>
+          )}
         </Group>
+
+        {field.isSourceRecordId && (
+          <Text12Regular c="var(--fg-secondary)">
+            Holds the source record&apos;s id so synced rows always reference their origin. This field is required and
+            can&apos;t be removed or renamed.
+          </Text12Regular>
+        )}
 
         {renderKindInputs(
           field,

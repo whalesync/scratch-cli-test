@@ -132,6 +132,16 @@ export const createFieldSpecSchema = z.object({
    * injects its own default.
    */
   isPrimary: z.boolean().optional(),
+  /**
+   * Marks this as the field that holds the SOURCE record's remote id — injected
+   * into a generated create-table plan so the destination table always has a
+   * column to sync the originating record's id into (named for the source
+   * service, e.g. `postgres_record_id`). This is a Scratch-side annotation for
+   * our own bookkeeping, not a connector/DB constraint; it does NOT imply
+   * `required`. Clients must surface it as a mandatory field — not removable or
+   * renamable in the plan editor.
+   */
+  isSourceRecordId: z.boolean().optional(),
 });
 export type CreateFieldSpec = z.infer<typeof createFieldSpecSchema>;
 

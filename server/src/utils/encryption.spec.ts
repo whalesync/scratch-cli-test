@@ -1,6 +1,12 @@
 import { EncryptionService } from './encryption';
 
 describe('EncryptionService', () => {
+  // Every encrypt/decrypt runs scrypt (deliberately CPU-intensive) and this suite
+  // does dozens serially. Locally that's ~2s, but under heavy parallel CI load a
+  // single scrypt call can starve past Jest's 5s default and flake. Give the suite
+  // generous headroom — it's a timeout-only flake, not a correctness issue.
+  jest.setTimeout(30_000);
+
   let encryptionService: EncryptionService;
   const testMasterKey = 'a'.repeat(32); // 32 character master key
 

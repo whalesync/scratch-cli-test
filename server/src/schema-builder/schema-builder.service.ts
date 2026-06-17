@@ -278,6 +278,7 @@ export class SchemaBuilderService {
         primaryFieldPath: toDotPath(stored.titleColumnRemoteId),
         idFieldPath: typeof stored.idColumnRemoteId === 'string' ? stored.idColumnRemoteId : undefined,
         remoteTableIds: folder.tableId,
+        ...(folder.connectorService ? { connectorService: folder.connectorService } : {}),
         ...(viewTypeByPath ? { viewTypeByPath } : {}),
         ...(existingDestination ? { existingDestination } : {}),
       });
@@ -294,6 +295,7 @@ export class SchemaBuilderService {
     const { tables, fieldPlans, notes, tableNotes } = generateCreatePlanFromSources({
       sources,
       destinationConnectorAccountId: dto.destinationConnectorAccountId,
+      destinationConnectorService: connector.service,
       linkedTableMappings: dto.linkedTableMappings,
       existingDestinationTableNames,
     });

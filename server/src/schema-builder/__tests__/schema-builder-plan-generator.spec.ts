@@ -96,8 +96,9 @@ describe('generateCreatePlanFromSources', () => {
 
     const postsTable = tables.find((table) => table.ref === 'posts');
     expect(postsTable).toBeDefined();
-    // id column is skipped; title + author remain.
-    expect(postsTable?.fields.map((f) => f.name)).toEqual(['title', 'author']);
+    // id column is skipped; title + author remain, plus the injected source-record-id
+    // field (generic name here since this source has no connectorService).
+    expect(postsTable?.fields.map((f) => f.name)).toEqual(['title', 'author', 'source_record_id']);
     const authorField = postsTable?.fields.find((f) => f.name === 'author');
     expect(authorField?.fieldType).toEqual({ kind: 'foreignKey', target: { ref: 'authors' } });
 
@@ -121,7 +122,8 @@ describe('generateCreatePlanFromSources', () => {
       destinationConnectorAccountId: 'destConn',
     });
 
-    expect(tables[0].fields).toHaveLength(0);
+    // The unresolvable FK is omitted; only the injected source-record-id remains.
+    expect(tables[0].fields.map((f) => f.name)).toEqual(['source_record_id']);
     expect(notes.find((note) => note.sourceFieldPath === 'author')).toMatchObject({ status: 'unsupported' });
   });
 
@@ -143,6 +145,93 @@ describe('generateCreatePlanFromSources', () => {
       kind: 'foreignKey',
       target: { existingRemoteTableId: ['destTbl'] },
     });
+  });
+});
+
+describe('generateCreatePlanFromSources — injected source-record-id field', () => {
+  const sourceWith = (overrides: Partial<PlanGeneratorSource>): PlanGeneratorSource => ({
+    ref: 'posts',
+    dataFolderId: 'posts',
+    tableName: 'Posts',
+    remoteTableIds: ['tblPosts'],
+    idFieldPath: 'id',
+    schemaFields: [field({ path: 'id', type: 'string' }), field({ path: 'title', type: 'string' })],
+    ...overrides,
+  });
+
+  it('injects a text field named for the source connector service, marked isSourceRecordId', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [sourceWith({ connectorService: 'POSTGRES' })],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    const injected = tables[0].fields.find((f) => f.name === 'postgres_record_id');
+    expect(injected).toEqual({
+      name: 'postgres_record_id',
+      fieldType: { kind: 'text' },
+      description: 'Remote id of the source record this row was synced from.',
+      isSourceRecordId: true,
+    });
+    // It is bookkeeping-only — never the DB-level required flag, never primary.
+    expect(injected?.required).toBeUndefined();
+    expect(injected?.isPrimary).toBeUndefined();
+  });
+
+  it('disambiguates with a _source_ infix when source and destination are the same service', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [sourceWith({ connectorService: 'POSTGRES' })],
+      destinationConnectorAccountId: 'destConn',
+      destinationConnectorService: 'POSTGRES',
+    });
+    expect(tables[0].fields.some((f) => f.name === 'postgres_source_record_id' && f.isSourceRecordId)).toBe(true);
+    expect(tables[0].fields.some((f) => f.name === 'postgres_record_id')).toBe(false);
+  });
+
+  it('keeps the plain name when source and destination services differ', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [sourceWith({ connectorService: 'POSTGRES' })],
+      destinationConnectorAccountId: 'destConn',
+      destinationConnectorService: 'AIRTABLE',
+    });
+    expect(tables[0].fields.some((f) => f.name === 'postgres_record_id' && f.isSourceRecordId)).toBe(true);
+  });
+
+  it('falls back to a generic name when the source has no connector service', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [sourceWith({})],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(tables[0].fields.some((f) => f.name === 'source_record_id' && f.isSourceRecordId)).toBe(true);
+  });
+
+  it('does not inject when a same-named field already exists on the source (case-insensitive)', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        sourceWith({
+          connectorService: 'POSTGRES',
+          schemaFields: [field({ path: 'id', type: 'string' }), field({ path: 'Postgres_Record_Id', type: 'string' })],
+        }),
+      ],
+      destinationConnectorAccountId: 'destConn',
+    });
+    const matching = tables[0].fields.filter((f) => f.name.toLowerCase() === 'postgres_record_id');
+    expect(matching).toHaveLength(1);
+    // The pre-existing source field is left as-is — not relabelled as the source id.
+    expect(matching[0].isSourceRecordId).toBeUndefined();
+  });
+
+  it('does not inject into an add-fields plan for an existing destination table', () => {
+    const { tables, fieldPlans } = generateCreatePlanFromSources({
+      sources: [
+        sourceWith({
+          connectorService: 'POSTGRES',
+          existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], fieldNames: [] },
+        }),
+      ],
+      destinationConnectorAccountId: 'destConn',
+    });
+    expect(tables).toHaveLength(0);
+    expect(fieldPlans[0].fields.some((f) => f.isSourceRecordId)).toBe(false);
   });
 });
 
@@ -277,7 +366,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       destinationConnectorAccountId: 'destConn',
     });
 
-    expect(tables[0].fields.map((f) => f.name)).toEqual(['Email', 'Email 2']);
+    expect(tables[0].fields.map((f) => f.name)).toEqual(['Email', 'Email 2', 'source_record_id']);
     const renamedNote = notes.find((note) => note.sourceFieldPath === 'b');
     expect(renamedNote).toMatchObject({ fieldName: 'Email 2', renamedFromName: 'Email', status: 'mapped' });
     expect(renamedNote?.message).toContain('renamed from "Email"');
@@ -298,7 +387,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       sources: [source],
       destinationConnectorAccountId: 'destConn',
     });
-    expect(tables[0].fields.map((f) => f.name)).toEqual(['Name', 'name 2']);
+    expect(tables[0].fields.map((f) => f.name)).toEqual(['Name', 'name 2', 'source_record_id']);
   });
 
   it('dedupes field names independently per table (same name across tables is fine)', () => {
@@ -320,8 +409,8 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       sources: [t1, t2],
       destinationConnectorAccountId: 'destConn',
     });
-    expect(tables.find((t) => t.ref === 't1')?.fields.map((f) => f.name)).toEqual(['Name']);
-    expect(tables.find((t) => t.ref === 't2')?.fields.map((f) => f.name)).toEqual(['Name']);
+    expect(tables.find((t) => t.ref === 't1')?.fields.map((f) => f.name)).toEqual(['Name', 'source_record_id']);
+    expect(tables.find((t) => t.ref === 't2')?.fields.map((f) => f.name)).toEqual(['Name', 'source_record_id']);
   });
 
   it('suffixes a duplicate NEW field while still skipping one that matches an existing destination field', () => {

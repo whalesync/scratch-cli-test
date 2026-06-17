@@ -234,8 +234,15 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       expect(res.body.fieldPlans).toEqual([]);
       expect(res.body.plan.tables).toHaveLength(1);
       expect(res.body.plan.tables[0].name).toBe('Authors');
-      // id is skipped (destination owns it); name (primary) + bio + age remain.
-      expect(res.body.plan.tables[0].fields.map((f: { name: string }) => f.name)).toEqual(['name', 'bio', 'age']);
+      // id is skipped (destination owns it); name (primary) + bio + age remain, plus
+      // the injected source-record-id field (generic name: the source folder mock has
+      // no connectorService).
+      expect(res.body.plan.tables[0].fields.map((f: { name: string }) => f.name)).toEqual([
+        'name',
+        'bio',
+        'age',
+        'source_record_id',
+      ]);
     });
 
     it('diffs against an existing destination folder and emits an add-fields plan', async () => {

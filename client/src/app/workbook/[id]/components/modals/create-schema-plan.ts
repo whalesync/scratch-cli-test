@@ -52,6 +52,12 @@ export interface EditorField {
   kind: CreateFieldKind;
   isPrimary: boolean;
   required: boolean;
+  /**
+   * True for the auto-injected field that holds the source record's remote id.
+   * The editor renders it as mandatory: its name and data type are locked and it
+   * cannot be removed. Round-trips to the wire `CreateFieldSpec.isSourceRecordId`.
+   */
+  isSourceRecordId: boolean;
   description: string;
   // number / currency precision (text input, parsed on submit)
   precision: string;
@@ -96,6 +102,7 @@ export function makeEmptyField(): EditorField {
     kind: 'text',
     isPrimary: false,
     required: false,
+    isSourceRecordId: false,
     description: '',
     precision: '',
     format: 'plain',
@@ -205,6 +212,7 @@ export function toCreateFieldSpec(field: EditorField): CreateFieldSpec {
     ...(field.description.trim() ? { description: field.description.trim() } : {}),
     ...(field.required ? { required: true } : {}),
     ...(field.isPrimary ? { isPrimary: true } : {}),
+    ...(field.isSourceRecordId ? { isSourceRecordId: true } : {}),
   };
 }
 
@@ -279,6 +287,7 @@ export function editorFieldFromSpec(spec: CreateFieldSpec): EditorField {
     kind: spec.fieldType.kind,
     isPrimary: spec.isPrimary ?? false,
     required: spec.required ?? false,
+    isSourceRecordId: spec.isSourceRecordId ?? false,
     description: spec.description ?? '',
   };
   const fieldType = spec.fieldType;

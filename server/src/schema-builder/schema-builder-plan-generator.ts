@@ -5,6 +5,7 @@ import type {
   CreateTableSpec,
   FieldMappingNote,
   ForeignKeyTarget,
+  Service,
   TableMappingNote,
   TablePropertyType,
 } from '@spinner/shared-types';
@@ -36,6 +37,12 @@ export interface PlanGeneratorSource {
   primaryFieldPath?: string;
   /** Dot path of the id/PK column to skip (the destination creates its own id). */
   idFieldPath?: string;
+  /**
+   * The source folder's connector service (e.g. 'POSTGRES'). Used to name the
+   * injected source-record-id field (`postgres_record_id`). When absent the
+   * field falls back to a generic `source_record_id` name.
+   */
+  connectorService?: Service;
   /**
    * Remote table identifiers for THIS source. A sibling source's foreignKey
    * whose `linkedTableId` matches one of these resolves to an in-plan `{ ref }`.
@@ -84,6 +91,12 @@ export function generateCreatePlanFromSources(args: {
   sources: PlanGeneratorSource[];
   /** The single destination connector account every source targets. */
   destinationConnectorAccountId: string;
+  /**
+   * The destination connector's service. Used only to name the injected
+   * source-record-id field: when source and destination are the same service the
+   * name is disambiguated (`postgres_source_record_id` rather than `postgres_record_id`).
+   */
+  destinationConnectorService?: Service;
   linkedTableMappings?: PlanGeneratorLinkedTableMapping[];
   /**
    * Display names of tables that already exist on the destination under the
@@ -139,6 +152,11 @@ export function generateCreatePlanFromSources(args: {
         mappingByLinkedId,
         notes,
       );
+      // Always give the destination table a column to sync the source record's
+      // remote id into, so a synced row always knows where it came from. Skipped
+      // only if a same-named field already exists (the source already has one).
+      const sourceRecordIdField = buildSourceRecordIdField(source, fields, args.destinationConnectorService);
+      if (sourceRecordIdField) fields.push(sourceRecordIdField);
       // Classify the collision BEFORE allocating: `takenTableNames` merges existing
       // and in-plan names, so the distinction must be read off the frozen set first.
       const conflictsWithExistingTable = existingDestinationTableNames.has(
@@ -419,6 +437,42 @@ function resolveForeignKey(
   const existingRemoteTableId = mappingByLinkedId.get(linkedTableId);
   if (existingRemoteTableId !== undefined) return { existingRemoteTableId };
   return null;
+}
+
+/**
+ * Build the injected source-record-id field for a create-table plan: a `text`
+ * column named for the source service (`postgres_record_id`, `airtable_record_id`,
+ * …, or `source_record_id` when the service is unknown), marked `isSourceRecordId`
+ * so clients render it as a mandatory, non-removable field. Remote ids are read as
+ * strings (see `readRecordIdAsString`), so `text` is the right logical type.
+ *
+ * When source and destination are the SAME service, the name is disambiguated with
+ * a `_source_` infix (`postgres_source_record_id`) so it doesn't read like the
+ * destination's own record id.
+ *
+ * Returns null when a field of the same name already exists on the source (the
+ * destination would otherwise get a duplicate), in which case the existing field
+ * already serves the purpose.
+ */
+function buildSourceRecordIdField(
+  source: PlanGeneratorSource,
+  existingFields: CreateFieldSpec[],
+  destinationConnectorService?: Service,
+): CreateFieldSpec | null {
+  const servicePrefix = source.connectorService ? source.connectorService.toLowerCase() : 'source';
+  const sourceAndDestinationAreSameService =
+    source.connectorService !== undefined && source.connectorService === destinationConnectorService;
+  const fieldName = sourceAndDestinationAreSameService
+    ? `${servicePrefix}_source_record_id`
+    : `${servicePrefix}_record_id`;
+  const existingFieldNames = new Set(existingFields.map((field) => normalizeNameForUniqueness(field.name)));
+  if (existingFieldNames.has(normalizeNameForUniqueness(fieldName))) return null;
+  return {
+    name: fieldName,
+    fieldType: { kind: 'text' },
+    description: 'Remote id of the source record this row was synced from.',
+    isSourceRecordId: true,
+  };
 }
 
 function buildFieldSpec(
