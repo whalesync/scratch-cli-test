@@ -172,12 +172,17 @@ Distinction: a custom **field** is a **column on an entity** (Contacts/Opportuni
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
 
-- **Live spec:** none yet — 📄 ❌ (no `server/test/integration/gohighlevel-connector.spec.ts`).
-- **Runs in CI pipeline:** ❌.
-- **Credentials / env vars:** — (no live suite).
-- **Capabilities covered:** schemas ❌ · pull ❌ · publish (CRUD) ❌ · error handling ❌.
-- **State model:** n/a — no live suite.
-- **Notes:** No live integration spec yet (has unit tests). Reviewed by `/connector-build` (see **Last run**).
+- **Live spec:** `server/test/integration/gohighlevel-connector.spec.ts` — 📄 ✅. **Live-verified green 2026-06-18 (7/7, ran twice)** against the WhaleSync Location.
+- **Runs in CI pipeline:** ✅ **wired** — `GOHIGHLEVEL_API_TOKEN` ← `INTEGRATION_TEST_GOHIGHLEVEL_API_TOKEN` (masked) + `GOHIGHLEVEL_LOCATION_ID` ← `INTEGRATION_TEST_GOHIGHLEVEL_LOCATION_ID` in the post-deploy job.
+- **Account:** uses the **WhaleSync Location** (`57eAggUmMecWhpP8kkis`) for both local and CI for now (same PIT, stored as the masked CI/CD var). A separate dedicated CI Location is a future nicety. ⚠️ Confirm the agency is **paid, not a trial** (durability).
+- **Credentials / env vars:** `GOHIGHLEVEL_API_TOKEN` (Private Integration Token, `pit-…`, read+write for contacts) + `GOHIGHLEVEL_LOCATION_ID` — local in `server/.env.integration`.
+- **Capabilities covered:** schemas ✅ (listTables + contacts spec) · pull ✅ (contacts) · publish (CRUD) ✅ (**Contacts** create→read-back→update→delete, self-seeding) · error handling ✅ (invalid token + unknown table). Opportunities/Custom-Objects: gated follow-ups (need a UI fixture — see Seeding).
+- **State model:** Self-provisioning — creates/cleans its own `scratch-it-<ts>` contact; no pre-seeded fixtures. **Read-back uses the search-backed full pull (`pullRecordFiles`) with a short poll**, NOT `pullRecordFilesByIds`: GHL's `GET /contacts/{id}` 400s ("not found") for a just-created contact (read-after-write lag, ~tens of seconds) and omits companyName/city. The CRUD test runs ~45s because of that polling.
+- **Seeding (decision — best coverage on a fresh CI account, hybrid):**
+  - **Automated, idempotent** (`bootstrap-gohighlevel-test-data.ts`, planned): create `scratch_it_<type>` **custom fields** on Contacts via `POST /locations/{id}/customFields` (verified API-creatable per LOG.md — EMAIL is not a dataType, option types take `options:[]`, TIME needs `dateTimeValidation`). This unlocks coverage of the connector's most bug-prone path: the `customFields` array ↔ keyed `custom_fields` reshape + per-field diff. **Records always self-seed.**
+  - **One-time UI fixture** (pipelines + custom-object *schemas* are UI-only — no API create): create a "Scratch Test Pipeline" (+stages) and optional custom object once in the UI; the Opportunities (CRUD + `contactId` FK) and Custom-Object suites gate on their ids (`GOHIGHLEVEL_TEST_PIPELINE_ID`, …) and skip when unset.
+  - **Robust core = Contacts (+ custom fields)** — fully automated, runs on any Location, fresh or populated.
+- **Notes:** Watch the historical **contact-create-returns-no-remote-id** flag — the create test asserts a non-empty id, so a regression fails loudly.
 
 ## Open issues
 - **✅ FIXED (2026-06-09) — generic read-only entities showed only the `id` column** (Ivan flagged it on Calendar Groups). `buildGenericEntityJsonTableSpec` declared only the id property, so the desktop table view rendered a single `id` column for all 13 read-only entities — the data was present verbatim (`additionalProperties: true`), just not as columns. These entities have **no field-metadata API** (see [Endpoints](#endpoints-what-the-connector-calls) → Schema source = static from OpenAPI), so per the product rule (hardcode only when no introspection) the fix enumerates each entity's response-DTO fields from HighLevel's **published OpenAPI** into `GOHIGHLEVEL_ENTITY_FIELDS` (`gohighlevel-entities.ts`); `buildGenericEntityJsonTableSpec` types the columns from it (all read-only; `additionalProperties` kept). **✅ Verified live (server watch-reloaded, fresh connection `coa_QJiXjIC7DU`, full re-pull):** regenerated `schema.json` shows Calendar Groups→**6 cols** (id, locationId, name, description, slug, isActive), Calendars→56, Products→17, Users→13; Forms/Surveys genuinely 3 per the OpenAPI. Build + lint clean.
