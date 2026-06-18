@@ -754,16 +754,27 @@ export class YouTubeConnector extends Connector {
       const changed = changedFields[i];
       const videoId = file.id as string;
       const changedSnippet = (changed.snippet as Record<string, unknown> | undefined) ?? changed;
-      const updateData: Record<string, unknown> = {
-        title: changedSnippet.title,
-        description: changedSnippet.description,
-        categoryId: changedSnippet.categoryId,
-        defaultLanguage: changedSnippet.defaultLanguage,
-        tags: changedSnippet.tags,
-      };
+
+      // `videos.update?part=snippet` REPLACES the snippet, and YouTube requires BOTH
+      // `title` and `categoryId` on every snippet write. So we cannot send only the
+      // changed fields: a title-only edit 400s ("invalid categoryId"), a
+      // description-only edit 400s ("empty title"), and even a passing sparse write
+      // would wipe the fields we omitted. Merge the changes over the video's existing
+      // snippet so the full writable set is always present.
+      const writableSnippetFields = ['title', 'description', 'categoryId', 'defaultLanguage', 'tags'] as const;
+      const snippetChanged = writableSnippetFields.some((field) => changedSnippet[field] !== undefined);
 
       let persisted: YouTubeVideo | undefined;
-      if (Object.values(updateData).some((value) => value !== undefined)) {
+      if (snippetChanged) {
+        const existingSnippet = (file.snippet as Record<string, unknown> | undefined) ?? {};
+        const mergedSnippet = { ...existingSnippet, ...changedSnippet };
+        const updateData: Record<string, unknown> = {
+          title: mergedSnippet.title,
+          description: mergedSnippet.description,
+          categoryId: mergedSnippet.categoryId,
+          defaultLanguage: mergedSnippet.defaultLanguage,
+          tags: mergedSnippet.tags,
+        };
         persisted = await this.apiClient.updateVideo(videoId, updateData);
       }
 

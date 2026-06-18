@@ -118,6 +118,7 @@ Auth: `Authorization: Bearer <accessToken>`. Array params serialized as repeated
 ## Edge cases discovered
 - ASR (auto-generated) caption tracks can't be updated → connector hides them (`isDraft:true`) and creates a replacement track.
 - `videos.list` hydrate omitted `contentDetails` before this revival → duration/definition/caption columns were always empty; now requested.
+- **`videos.update?part=snippet` REPLACES the snippet and requires BOTH `title` and `categoryId` on every write** (unlike `playlists.update`, which only needs `title` — that's why editing a playlist title worked but a video title didn't). Live-verified 2026-06-18 on `ZMdOc6uwF8I`: title-only PUT → `400 invalid categoryId`; description-only PUT → `400 empty video title`; title+description+categoryId → `200`. **Fixed** in `updateVideos`: merge the sparse `changedFields` over the file's existing `snippet`, then send the writable subset (title/description/categoryId/defaultLanguage/tags), so required + unchanged fields are always present (and a title-only edit no longer wipes the description). This corrects the optimistic Milestone-5 "video title UPDATE" note — sparse title/description edits were in fact 400ing until this fix.
 
 ## Gotchas
 - Connector is `metadata.visible:false` (dev-only). To connect via the web app, flip to `true` locally (don't commit) — OAuth connectors can't be CLI-connected.
