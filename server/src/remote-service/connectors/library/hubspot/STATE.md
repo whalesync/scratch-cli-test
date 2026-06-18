@@ -159,6 +159,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
 - **State model:** Fully deterministic — `beforeEach` resets the fake store and seeds it; not a live-API test.
 - **Notes:** Fake-backed. Validates connector code/shape, not real HubSpot behaviour.
+- [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).
 
 ## Open issues
 - (link Linear issues for ❌ cells)

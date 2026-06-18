@@ -28,6 +28,13 @@ const API_KEY = process.env.AFFINITY_API_KEY;
 // `TENANT_*_ID` constants in affinity-connector.ts.
 const TENANT_TABLE_IDS = new Set(['persons', 'companies', 'opportunities', 'notes', 'entity-files', 'users']);
 
+// Stable fixture list (DEV-10130): the list-dependent assertions used to key off
+// `listTables[0]`, which is order- and content-dependent and drifts as the workspace
+// changes. They now anchor to a dedicated, preserved list whose name carries this
+// marker — `[Do Not Touch] People (Scratch Int Test)` (a person-type list seeded with
+// a few `[Do Not Touch] … (Scratch Int Test)` persons). See affinity/STATE.md → Test account.
+const FIXTURE_LIST_MARKER = '(Scratch Int Test)';
+
 function createConnector(): AffinityConnector {
   return new AffinityConnector(API_KEY!);
 }
@@ -40,12 +47,24 @@ describeIfKey('AffinityConnector — live API', () => {
   let allTables: TablePreview[];
   let tenantTables: TablePreview[];
   let listTables: TablePreview[];
+  let fixtureList: TablePreview;
 
   beforeAll(async () => {
     connector = createConnector();
     allTables = await connector.listTables();
     tenantTables = allTables.filter((t) => TENANT_TABLE_IDS.has(t.id.remoteId[0]));
     listTables = allTables.filter((t) => !TENANT_TABLE_IDS.has(t.id.remoteId[0]));
+
+    // Anchor the list-dependent assertions to the preserved fixture list (not listTables[0]).
+    const found = listTables.find((t) => t.displayName.includes(FIXTURE_LIST_MARKER));
+    if (!found) {
+      throw new Error(
+        `Affinity fixture list not found — expected a list whose name contains "${FIXTURE_LIST_MARKER}" ` +
+          `(e.g. "[Do Not Touch] People (Scratch Int Test)"). It must be preserved in the test workspace; ` +
+          `see server/src/remote-service/connectors/library/affinity/STATE.md → Test account for how to recreate it.`,
+      );
+    }
+    fixtureList = found;
   });
 
   // -------------------------------------------------------------------------
@@ -106,12 +125,12 @@ describeIfKey('AffinityConnector — live API', () => {
     let listSpec: BaseJsonTableSpec;
 
     beforeAll(async () => {
-      listSpec = await connector.fetchJsonTableSpec(listTables[0].id);
+      listSpec = await connector.fetchJsonTableSpec(fixtureList.id);
     });
 
     it('builds a spec with list-entry top-level fields', () => {
-      expect(listSpec.id).toEqual(listTables[0].id);
-      expect(listSpec.name).toBe(listTables[0].displayName);
+      expect(listSpec.id).toEqual(fixtureList.id);
+      expect(listSpec.name).toBe(fixtureList.displayName);
       expect(listSpec.idColumnRemoteId).toBe('id');
 
       const props = (listSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
@@ -190,7 +209,7 @@ describeIfKey('AffinityConnector — live API', () => {
 
   describe('pullRecordFiles (user list)', () => {
     it('streams the first page of list entries with field data inline', async () => {
-      const tableSpec = await connector.fetchJsonTableSpec(listTables[0].id);
+      const tableSpec = await connector.fetchJsonTableSpec(fixtureList.id);
 
       const allFiles: ConnectorFile[] = [];
       let callbacks = 0;
@@ -249,7 +268,7 @@ describeIfKey('AffinityConnector — live API', () => {
     });
 
     it('produces a non-empty filename suggestion for at least one record', async () => {
-      const tableSpec = await connector.fetchJsonTableSpec(listTables[0].id);
+      const tableSpec = await connector.fetchJsonTableSpec(fixtureList.id);
 
       const sampleFiles: ConnectorFile[] = [];
       try {
@@ -340,6 +359,12 @@ describeIfKey('AffinityConnector — v2 inline-fields verification', () => {
       // Pick the first user list that has entries — skip tenant tables.
       const allTables = await connector.listTables();
       const userLists = allTables.filter((t) => !TENANT_TABLE_IDS.has(t.id.remoteId[0]));
+      // Prefer the stable fixture list (deterministic + always seeded with entries) so the
+      // N+1 verification doesn't depend on whichever other workspace list happens to have data.
+      userLists.sort(
+        (a, b) =>
+          Number(b.displayName.includes(FIXTURE_LIST_MARKER)) - Number(a.displayName.includes(FIXTURE_LIST_MARKER)),
+      );
 
       let chosenSpec: BaseJsonTableSpec | undefined;
       let chosenName: string | undefined;

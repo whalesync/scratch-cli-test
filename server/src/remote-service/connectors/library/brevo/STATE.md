@@ -159,6 +159,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
 - **State model:** State-agnostic: fixed entity schema + self-provisioning CRUD (`scratch-test-<ts>` suffix).
 - **Notes:** Mailing-lists pull expects ≥1 list to exist.
+- [ ] **Confirm CS + IP** (next connector-build pass) — the Create-schema / Incremental-polling values in `docs/connector-build.md` are best-effort (not code-verified). Probe the service API (partial schema creation — e.g. custom fields — counts as 🟠) and update the table to ✅/🟠/❌.
 
 ## Open issues
 - (link Linear issues for ❌ cells)

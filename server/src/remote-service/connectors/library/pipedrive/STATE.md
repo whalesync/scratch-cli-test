@@ -159,6 +159,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
 - **State model:** **Fully self-provisioning and state-agnostic** — the model to copy: each entity create→update→delete in its own block, best-effort `afterAll` sweep. Covers full + incremental pull.
 - **Notes:** Works against a free trial + default sample data; no hand-seeded fixtures.
+- [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).
 
 ## Open issues
 - (link Linear issues for ❌ cells)

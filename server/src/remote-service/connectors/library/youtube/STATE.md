@@ -133,6 +133,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ❌ · pull ❌ · publish (CRUD) ❌ · error handling ❌.
 - **State model:** n/a — no live suite.
 - **Notes:** No live integration spec yet — has unit tests (`__tests__/youtube-connector.spec.ts`, mocked). OAuth-only (consent-screen test user); manual CLI verification is recorded elsewhere in this doc.
+- [ ] **Confirm CS + IP** (next connector-build pass) — the Create-schema / Incremental-polling values in `docs/connector-build.md` are best-effort (not code-verified). Probe the service API (partial schema creation — e.g. custom fields — counts as 🟠) and update the table to ✅/🟠/❌.
 
 ## Open issues
 - (none filed yet)

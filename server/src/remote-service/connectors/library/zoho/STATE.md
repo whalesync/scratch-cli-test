@@ -216,6 +216,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
 - **State model:** Self-provisioning over standard Zoho modules (`ScratchIT` prefix). CRUD gated behind `ZOHO_ALLOW_CREATE=1` (shared-org record cap).
 - **Notes:** OAuth refresh-token creds (CLI Self-Client). The refresh token rotates — needs maintenance for long-lived CI use.
+- [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).
 
 ## Open issues
 - (none filed yet — the two code findings above are low-severity polish, not ❌)

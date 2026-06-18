@@ -128,6 +128,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
 - **State model:** CRUD self-provisions tasks inside a pre-existing list (`CLICKUP_TEST_LIST_ID`); the suite skips without that id.
 - **Notes:** Write-shape translation is cross-checked against a direct ClickUp API call.
+- [ ] **Confirm CS + IP** (next connector-build pass) — the Create-schema / Incremental-polling values in `docs/connector-build.md` are best-effort (not code-verified). Probe the service API (partial schema creation — e.g. custom fields — counts as 🟠) and update the table to ✅/🟠/❌.
 
 ## Open issues
 - v1 scope: `assignees`/`tags`/`parent` writes, custom-field column expansion, declarative FK on relationship fields, and a `defaultView` are fast-follows.

@@ -16,7 +16,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 
 | Connector | OAuth | Creds | CS | IP | Visible | Acct upkeep | IT 📄 | IT ✅ | Last Run |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| [Affinity](../server/src/remote-service/connectors/library/affinity/STATE.md) | ❌ | ✅ | 🟠 | ❌ | 👁️ | Paid | ✅ | ❌ | 2026-06-12 |
+| [Affinity](../server/src/remote-service/connectors/library/affinity/STATE.md) | ❌ | ✅ | 🟠 | ❌ | 👁️ | Paid | ✅ | ✅ | 2026-06-18 |
 | [Airtable](../server/src/remote-service/connectors/library/airtable/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ✅ | ✅ | |
 | [Attio](../server/src/remote-service/connectors/library/attio/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free tier | ✅ | ✅ | 2026-06-10 |
 | [Audienceful](../server/src/remote-service/connectors/library/audienceful/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free tier | ❌ | ❌ | |

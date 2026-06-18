@@ -16,6 +16,9 @@
 - **Scratch side:** workbook `affinity` / `wkb_Vrr3D1LQJ5` · connection `coa_NC1s7DlJ8B` · local workspace `/Users/ijd/repos/spinner/local/cli-v4/affinity/affinity`
 - **Auth method:** `user_provided_params` (API key) — **CLI-connectable**: `scratchmd connections ... add --service AFFINITY --param apiKey=<k>`. No OAuth offered by Affinity (confirm — see Milestone 9 / TODOs).
 - **Provenance:** Adopted from existing human-built code on 2026-06-10 (cold-read; see [SKILL.md → Adopting a human-built connector](/.claude/skills/connector-build/SKILL.md)).
+- **Preserved fixtures (DO NOT DELETE — DEV-10130):** the spec anchors its list-dependent assertions to a stable, named list instead of `listTables[0]`:
+  - List **`[Do Not Touch] People (Scratch Int Test)`** (id `354526`, person-type), seeded with 3 persons **`[Do Not Touch] IT Person 1–3 (Scratch Int Test)`** (ids 268071110/112/115). The spec finds it by the name marker `(Scratch Int Test)`.
+  - **To recreate** (if deleted), with the v2 Bearer key: `POST https://api.affinity.co/lists {name:"[Do Not Touch] People (Scratch Int Test)", type:0, is_public:true}`, then per person `POST /persons {first_name,last_name,emails:[…]}` + `POST /lists/<listId>/list-entries {entity_id:<personId>}`. (Raw v1 calls — the connector has no create-list method; the v2 Bearer authorizes them.)
 
 ## Metadata
 
@@ -265,12 +268,13 @@ All found during the 2026-06-11/12 live write passes:
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
 
-- **Live spec:** `server/test/integration/affinity-connector.spec.ts` — 📄 ✅.
-- **Runs in CI pipeline:** ❌ — self-skips (`describeIfKey`) until its credential is wired as a GitLab CI/CD variable.
-- **Credentials / env vars:** `AFFINITY_API_KEY` — local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables.
+- **Live spec:** `server/test/integration/affinity-connector.spec.ts` — 📄 ✅. **Live-verified green 2026-06-18 (17/17, ran twice).**
+- **Runs in CI pipeline:** ✅ **wired** — `AFFINITY_API_KEY` ← `INTEGRATION_TEST_AFFINITY_API_KEY` (masked) in the post-deploy job. ⚠️ Runs against the **production** Affinity org, including a write round-trip that creates+deletes a throwaway person each run (self-cleans) — consider gating writes / a scheduled cadence.
+- **Credentials / env vars:** `AFFINITY_API_KEY` (v2 Bearer key) — local in `server/.env.integration`; CI = the masked var above.
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
-- **State model:** Mixed — the CRUD round-trip self-provisions (create→update→delete), but `listTables`/schema assertions are pinned to exact sandbox content (hardcoded `TENANT_TABLE_IDS`, a specific user-created list, `spec.name` `toBe` checks) → **drift-prone**.
-- **Notes:** **DEV-10130**: the schema/`listTables` assertions currently fail against the drifted sandbox — de-brittle to shape assertions before wiring into CI.
+- **State model:** **DEV-10130 resolved** — the list-dependent assertions no longer key off `listTables[0]`; they anchor to the **preserved fixture list** `[Do Not Touch] People (Scratch Int Test)` (found by the `(Scratch Int Test)` name marker — see Test account → Preserved fixtures), so the suite is drift-proof. Tenant-table assertions key off connector constants (already stable); the write round-trip self-provisions its own person.
+- **Notes:** Coverage preserved (same assertions, re-anchored). If the fixture list is ever deleted the `beforeAll` throws a clear message with recreation steps. CS = 🟠 (Affinity has field-creation APIs, not implemented); IP = ❌ (DEV-10159: modified-since silently ignored).
+- [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP = ❌ is settled (DEV-10159: modified-since silently ignored).
 
 ## Open issues
 

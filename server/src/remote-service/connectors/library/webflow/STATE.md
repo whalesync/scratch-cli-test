@@ -159,6 +159,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
 - **State model:** Picks the first non-Assets/Pages CMS collection dynamically and self-provisions a full create→update→archive→unarchive→delete cycle; needs a site with ≥1 collection.
 - **Notes:** Assets suite exercises upload + reference shapes and self-provisions an Image field if not configured. Uploaded assets linger (no Webflow delete API).
+- [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).
 
 ## Open issues
 - (link Linear issues for ❌ cells)

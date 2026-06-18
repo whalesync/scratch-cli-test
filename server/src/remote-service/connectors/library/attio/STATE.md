@@ -196,6 +196,7 @@ Automated **live-API** coverage in `server/test/integration/`, and whether it ru
 - **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅ (invalid-token reject).
 - **State model:** Self-provisioning CRUD over the 3 standard objects (companies/people/deals); standard-object slugs are stable. The `spinner_test_*` custom attributes + `spinner_test_pipeline` list are bootstrapped **once** per workspace (idempotent) — durable on this free workspace (not the dev-program one, which periodically wipes data).
 - **Notes:** One-time bootstrap `npx ts-node scripts/bootstrap-attio-test-data.ts` (idempotent) provisions the `spinner_test_*` attributes + list + seed records. CRUD records self-clean in `afterAll`.
+- [ ] **Confirm CS + IP** (next connector-build pass) — the Create-schema / Incremental-polling values in `docs/connector-build.md` are best-effort (not code-verified). Probe the service API (partial schema creation — e.g. custom fields — counts as 🟠) and update the table to ✅/🟠/❌.
 
 ## Open issues
 - (none filed — DEV-10303 is the review; gaps tracked in TODOs above)

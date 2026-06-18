@@ -214,6 +214,7 @@ Redis pub/sub → WebSocket gateway → connected clients. Multiple server insta
 - **Inspecting a live database (read-only):** It is OK to connect to the prod (or test) database to debug user issues or investigate live data using `terraform/tools/connect_to_gcp_db_readonly.sh <env>` (`env` = `test`|`production`). It opens an IAP SSH tunnel and connects as the `readonly` Postgres user against the `scratchpad` database with read-only guardrails (`default_transaction_read_only=on`, `statement_timeout=30s`). Pass a SQL string as the second argument for a one-shot query, or omit it for an interactive `psql` shell. Requires an authenticated `gcloud` CLI. This is read-only only — never use a read-write DB connection against prod.
 - Project management: [Linear](https://linear.app/whalesync/team/DEV)
 - When adding new data resources to a Workbook (database tables, git repos, files on disk, etc.), ensure they are cleaned up in `WorkbookService.delete` (`server/src/workbook/workbook.service.ts`). If the new table has a foreign key to Workbook with `onDelete: Cascade`, Prisma handles it automatically. Otherwise, add explicit deletion before the workbook record is deleted.
+- **When a connector change goes in, keep its docs current:** update the affected connector's `STATE.md` (`server/src/remote-service/connectors/library/<connector>/STATE.md`) and the cross-connector table in [`docs/connector-build.md`](/docs/connector-build.md) so support/auth/test-coverage cells (OAuth/Creds/CS/IP/Visible/IT) reflect the change.
 
 ## Additional Resources
 
