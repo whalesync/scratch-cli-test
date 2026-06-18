@@ -1,8 +1,9 @@
 # Create-Schema API Contract for the Scratch Server
 
-- **Status:** In Progress
+- **Status:** Resolved
 - **Created:** 2026-06-10
 - **Author:** Chris Hoefgen
+- **Resolved:** 2026-06-18 — the API-contract pass shipped (`server/src/schema-builder/`, shared-types `dto/schema/`, `client.schema.*`) and a connector now executes it: the Postgres connector implements the seam (DEV-10381, `pg-common/pg-create-schema.ts`). Deferred items remain documented in "As-built notes" (concurrency precondition #7, `refreshLocalSchema`, PostHog tracking, remote field-name check, frontend UI/CLI) as out-of-scope future passes.
 - **Linear:** [DEV-10378](https://linear.app/whalesync/issue/DEV-10378)
 
 > Design + implementation plan. **This pass defines the API contract** — REST

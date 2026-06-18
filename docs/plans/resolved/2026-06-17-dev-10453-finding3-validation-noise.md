@@ -1,8 +1,9 @@
 # DEV-10453 — Finding 3: enforce_schema floods verbatim records with false-positive errors (handoff)
 
-- **Status:** In Progress
+- **Status:** Resolved
 - **Author:** Chris Hoefgen
 - **Created:** 2026-06-17
+- **Resolved:** 2026-06-18 — noise eliminated via the connector-schema route (Option B): Pipedrive fields made optional by default (`ee9e661a`), date columns typed `date-time` in Pipedrive & Postgres (`52f309a5`), Pipedrive schemas matched to verbatim v2 data (`1df74056`), and a validator-level empty-string tolerance plus Webflow/Moco schema fixes (`ef296a09`). The three keystone bugs were fixed in `3066e008` (desktop) and the `folder_index.rs` schema-load fix.
 - **Linear:** [DEV-10453](https://linear.app/whalesync/issue/DEV-10453)
 
 > **Purpose.** Self-contained handoff for a fresh session investigating **finding 3** — the validation

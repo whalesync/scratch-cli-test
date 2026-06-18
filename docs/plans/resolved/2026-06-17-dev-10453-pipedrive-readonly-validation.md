@@ -1,8 +1,9 @@
 # DEV-10453 — Pipedrive publish read-only fields → surface via validation (handoff)
 
-- **Status:** In Progress
+- **Status:** Resolved
 - **Author:** Chris Hoefgen
 - **Created:** 2026-06-17
+- **Resolved:** 2026-06-18 — both branches landed on master: Pipedrive read-only fields marked in the schema (`74f3170a`) and desktop validation default-on + auto-seed with the read-only-edit warning surfacing (`3066e008`). The resulting validation-noise blocker is tracked and resolved in the companion finding-3 plan. Remaining items in "Open questions" (honor deliberate removal, server-side hard gate D-ii, CLI/web parity) are deferred future considerations, not blocking work.
 - **Linear:** [DEV-10453](https://linear.app/whalesync/issue/DEV-10453)
 
 > **Purpose of this doc.** A self-contained handoff so a fresh session can continue this work on
