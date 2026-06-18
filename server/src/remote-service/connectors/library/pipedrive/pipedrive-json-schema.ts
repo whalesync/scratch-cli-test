@@ -34,6 +34,46 @@ const ENTITY_READONLY_FIELDS: Record<PipedriveEntityType, ReadonlySet<string>> =
 };
 
 /**
+ * Per-entity field codes that Pipedrive's write API genuinely requires on create
+ * and that are always present on an existing record's GET response. These are the
+ * ONLY fields that belong in the schema's `required` array.
+ *
+ * Everything else is optional by default (see {@link buildPipedriveJsonTableSpec}).
+ * We store the verbatim Pipedrive GET response, so most fields are legitimately
+ * null/absent on any given record; marking them all `required` (TypeBox's default
+ * for `Type.Object`) produced false-positive "required but missing" validation
+ * errors and, worse, marked read-only fields (`id`, `update_time`, …) as both
+ * required AND read-only — an impossible-to-satisfy combination. For anything not
+ * listed here, the Pipedrive write API stays the final backstop. (DEV-10453)
+ *
+ * Invariant: every code listed here MUST be a writable field. A read-only field
+ * can never be required; {@link buildPipedriveJsonTableSpec} enforces this by
+ * dropping any read-only field from the computed `required` array.
+ *
+ * Custom fields are never required — we have no introspected mandatory metadata
+ * for them, so they default to optional. (A future enhancement could derive this
+ * map from the Fields endpoint's mandatory flag instead of hardcoding it.)
+ */
+const ENTITY_REQUIRED_FIELDS: Record<PipedriveEntityType, ReadonlySet<string>> = {
+  deals: new Set(['title']),
+  persons: new Set(['name']),
+  organizations: new Set(['name']),
+  products: new Set(['name']),
+  // Activities: `subject` is optional on create in v2 (Pipedrive auto-generates it
+  // from the activity type when omitted), so nothing is required.
+  activities: new Set<string>(),
+  leads: new Set(['title']),
+  notes: new Set(['content']),
+  pipelines: new Set(['name']),
+  stages: new Set(['name', 'pipeline_id']),
+};
+
+/** Whether a field schema has been annotated read-only via {@link X_SCRATCH_READONLY}. */
+function isFieldSchemaReadonly(fieldSchema: TSchema): boolean {
+  return (fieldSchema as { [X_SCRATCH_READONLY]?: unknown })[X_SCRATCH_READONLY] === true;
+}
+
+/**
  * Convert a Pipedrive field type to a TypeBox schema.
  */
 export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | null {
@@ -279,10 +319,13 @@ export async function buildPipedriveJsonTableSpec(
   const schemaProperties: Record<string, TSchema> = { ...systemProperties };
   if (Object.keys(customProperties).length > 0) {
     if (config.customFieldPlacement === 'nested') {
-      // v2 entities nest custom fields under a `custom_fields` object.
-      schemaProperties['custom_fields'] = Type.Object(customProperties, {
+      // v2 entities nest custom fields under a `custom_fields` object. Custom
+      // fields are optional by default, so drop the `required` array TypeBox adds.
+      const customFieldsObject = Type.Object(customProperties, {
         description: 'Custom fields',
       });
+      delete customFieldsObject.required;
+      schemaProperties['custom_fields'] = customFieldsObject;
     } else {
       // v1 entities (leads) carry custom fields as top-level hash keys.
       Object.assign(schemaProperties, customProperties);
@@ -293,6 +336,20 @@ export async function buildPipedriveJsonTableSpec(
     $id: `pipedrive/${entityType}`,
     title: ENTITY_DISPLAY_NAMES[entityType],
   });
+
+  // Pipedrive fields are optional by default. TypeBox's `Type.Object` marks every
+  // property `required`; replace that with only the fields Pipedrive genuinely
+  // requires on create, and never a read-only field (the read-only ⇒ not-required
+  // invariant). Anything else is optional and the Pipedrive write API is the
+  // final backstop. See ENTITY_REQUIRED_FIELDS. (DEV-10453)
+  const requiredFieldNames = [...ENTITY_REQUIRED_FIELDS[entityType]].filter(
+    (fieldCode) => fieldCode in schemaProperties && !isFieldSchemaReadonly(schemaProperties[fieldCode]),
+  );
+  if (requiredFieldNames.length > 0) {
+    schema.required = requiredFieldNames;
+  } else {
+    delete schema.required;
+  }
 
   return {
     id,

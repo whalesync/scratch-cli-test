@@ -299,6 +299,12 @@ describe('buildPipedriveJsonTableSpec', () => {
       expect(spec.schema.properties).toHaveProperty('content');
       expect(spec.schema.properties).toHaveProperty('deal_id');
       expect(spec.schema.properties).not.toHaveProperty('custom_fields');
+      // All six parent-attachment targets are modelled — Pipedrive requires one of
+      // them on create, but that "one of" constraint can't live in a flat required
+      // array, so each is an optional property (DEV-10453).
+      expect(spec.schema.properties).toHaveProperty('lead_id');
+      expect(spec.schema.properties).toHaveProperty('project_id');
+      expect(spec.schema.properties).toHaveProperty('task_id');
       // The server-hydrated stub objects are read-only.
       expect(spec.schema.properties.person[X_SCRATCH_READONLY]).toBe(true);
     });
@@ -352,6 +358,95 @@ describe('buildPipedriveJsonTableSpec', () => {
       expect(spec.name).toBe('Stages');
       expect(spec.schema.properties.pipeline_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: 'pipelines' });
       expect(spec.schema.properties.update_time['x-scratch-last-modified-field']).toBeUndefined();
+    });
+  });
+
+  // The schema's `required` array must list ONLY genuinely create-required writable
+  // fields — never a read-only field, and not "every field" (TypeBox's default).
+  describe('required array (optional-by-default; read-only ⇒ not-required) — DEV-10453', () => {
+    it('requires only the create-mandatory writable field and never read-only fields (deals)', async () => {
+      mockClient.getFields.mockResolvedValue([
+        makeField({ field_code: 'id', field_name: 'ID', field_type: 'int' }),
+        makeField({ field_code: 'title', field_name: 'Title', field_type: 'varchar' }),
+        makeField({ field_code: 'value', field_name: 'Value', field_type: 'monetary' }),
+        makeField({ field_code: 'add_time', field_name: 'Created', field_type: 'date' }),
+        makeField({ field_code: 'update_time', field_name: 'Updated', field_type: 'date' }),
+        makeField({ field_code: 'owner_id', field_name: 'Owner', field_type: 'user' }),
+        makeField({ field_code: 'abc123hash', field_name: 'My Custom', field_type: 'varchar', is_custom_field: true }),
+      ]);
+
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'deals', remoteId: ['deals'] },
+        'deals',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      // Title is the only required field.
+      expect(spec.schema.required).toEqual(['title']);
+      // Read-only system fields are NOT required (the core DEV-10453 invariant).
+      expect(spec.schema.required).not.toContain('id');
+      expect(spec.schema.required).not.toContain('add_time');
+      expect(spec.schema.required).not.toContain('update_time');
+      // A read-only-by-type field (user) is not required either.
+      expect(spec.schema.required).not.toContain('owner_id');
+      // A writable but non-mandatory field is optional.
+      expect(spec.schema.required).not.toContain('value');
+      // The custom_fields wrapper is optional...
+      expect(spec.schema.required).not.toContain('custom_fields');
+      // ...and individual custom fields are optional (no nested required array).
+      expect(spec.schema.properties.custom_fields.required).toBeUndefined();
+    });
+
+    it('marks no field required when the entity has no create-mandatory field (activities)', async () => {
+      mockClient.getFields.mockResolvedValue([
+        makeField({ field_code: 'id', field_name: 'ID', field_type: 'int' }),
+        makeField({ field_code: 'subject', field_name: 'Subject', field_type: 'varchar' }),
+        makeField({ field_code: 'person_id', field_name: 'Person', field_type: 'people' }),
+        makeField({ field_code: 'org_id', field_name: 'Organization', field_type: 'org' }),
+      ]);
+
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'activities', remoteId: ['activities'] },
+        'activities',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      // subject is optional on create in v2, so nothing is required at all.
+      expect(spec.schema.required).toBeUndefined();
+    });
+
+    it('requires create-mandatory writable fields for a static entity and excludes read-only ones (stages)', async () => {
+      const spec = await buildPipedriveJsonTableSpec(
+        { wsId: 'stages', remoteId: ['stages'] },
+        'stages',
+        mockClient as unknown as PipedriveApiClient,
+      );
+
+      expect(spec.schema.required).toEqual(expect.arrayContaining(['name', 'pipeline_id']));
+      expect(spec.schema.required).toHaveLength(2);
+      expect(spec.schema.required).not.toContain('id');
+      expect(spec.schema.required).not.toContain('add_time');
+      expect(spec.schema.required).not.toContain('update_time');
+    });
+
+    it('requires only content for notes and title for leads, never their read-only fields', async () => {
+      const notes = await buildPipedriveJsonTableSpec(
+        { wsId: 'notes', remoteId: ['notes'] },
+        'notes',
+        mockClient as unknown as PipedriveApiClient,
+      );
+      expect(notes.schema.required).toEqual(['content']);
+      expect(notes.schema.required).not.toContain('id');
+
+      mockClient.getFields.mockResolvedValue([]);
+      const leads = await buildPipedriveJsonTableSpec(
+        { wsId: 'leads', remoteId: ['leads'] },
+        'leads',
+        mockClient as unknown as PipedriveApiClient,
+      );
+      expect(leads.schema.required).toEqual(['title']);
+      expect(leads.schema.required).not.toContain('id');
+      expect(leads.schema.required).not.toContain('creator_id');
     });
   });
 });

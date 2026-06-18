@@ -74,6 +74,14 @@ function readonlyNested(): TSchema {
 /**
  * Leads system fields (`/v1/leads`). `id` is a UUID string; the deal-shared
  * custom fields are appended flat at the top level by the schema builder.
+ *
+ * Conditional create requirement (not expressible in a flat `required` array):
+ * Pipedrive requires every lead to be linked to a person OR an organization —
+ * `person_id` is "required unless organization_id is specified" and vice-versa.
+ * Only `title` is unconditionally required, so it is the lone entry in the
+ * schema's `required` set; marking either link field alone required would be a
+ * false requirement. Both are writable so the user can supply the link, and the
+ * Pipedrive write API rejects a lead created with neither. (DEV-10453)
  */
 const LEADS_SYSTEM_SCHEMA: Record<string, TSchema> = {
   id: readonly(stringOrNull()),
@@ -90,6 +98,7 @@ const LEADS_SYSTEM_SCHEMA: Record<string, TSchema> = {
     { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'monetary' },
   ),
   expected_close_date: dateOrNull(),
+  // One of person_id / organization_id is required on create (see schema doc above).
   person_id: foreignKey(numberOrNull(), 'persons'),
   organization_id: foreignKey(numberOrNull(), 'organizations'),
   is_archived: booleanOrNull(),
@@ -112,6 +121,16 @@ const LEADS_SYSTEM_SCHEMA: Record<string, TSchema> = {
  * Notes system fields (`/v1/notes`). Notes have no custom fields. The embedded
  * `organization`/`person`/`deal`/`lead`/`user` objects are server-hydrated stubs
  * stored verbatim and never written back.
+ *
+ * Conditional create requirement (not expressible in a flat `required` array):
+ * Pipedrive requires every note to be attached to a parent — one of
+ * `deal_id`/`lead_id`/`person_id`/`org_id`/`project_id`/`task_id` ("required
+ * unless one of the others is specified") — in addition to `content`. Only
+ * `content` is unconditionally required, so it is the lone entry in the schema's
+ * `required` set; the Pipedrive write API rejects a note created with no parent
+ * link. `project_id`/`task_id` reference Pipedrive Projects/Tasks, which this
+ * connector does not model as tables, so they are plain numeric ids rather than
+ * foreign keys. (DEV-10453)
  */
 const NOTES_SYSTEM_SCHEMA: Record<string, TSchema> = {
   id: readonly(numberOrNull()),
@@ -121,6 +140,9 @@ const NOTES_SYSTEM_SCHEMA: Record<string, TSchema> = {
   org_id: foreignKey(numberOrNull(), 'organizations'),
   // Leads use UUID ids, so a note's lead_id is a string.
   lead_id: foreignKey(stringOrNull(), 'leads'),
+  // Projects/tasks aren't Scratch tables, so these parent links are plain ids.
+  project_id: numberOrNull(),
+  task_id: numberOrNull(),
   content: stringOrNull(),
   add_time: readonly(stringOrNull()),
   update_time: { ...readonly(stringOrNull()), [X_SCRATCH_LAST_MODIFIED_FIELD]: true },
@@ -129,6 +151,8 @@ const NOTES_SYSTEM_SCHEMA: Record<string, TSchema> = {
   pinned_to_person_flag: booleanOrNull(),
   pinned_to_organization_flag: booleanOrNull(),
   pinned_to_lead_flag: booleanOrNull(),
+  pinned_to_project_flag: booleanOrNull(),
+  pinned_to_task_flag: booleanOrNull(),
   last_update_user_id: readonly(numberOrNull()),
   organization: readonlyNested(),
   person: readonlyNested(),
