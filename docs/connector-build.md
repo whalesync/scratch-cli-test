@@ -12,42 +12,44 @@ At-a-glance feature + test support across **every** connector in `server/src/rem
 
 **Legend:** ✅ available and implemented · ❌ not available · 🟠 (orange dash) available but not implemented — _we should implement it_.
 
-Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-provided params), using the legend above. **Visible** — 👁️ shown in the product vs 🔒 hidden / dev-only (`metadata.visible`). **Acct upkeep** — how easily a dedicated test account stays alive (its maintenance cost), roughly easiest→hardest: **Free tier** (durable, no card — incl. permanent free plans) · **Free dev** (developer construct: sandbox / dev store / test mode) · **Self-host** (you run it) · **Trial → paid** (time-limited, then pay to keep it) · **Paid** (no test tier — today only the company's production org) · **n/a**. **IT 📄** — a live-API integration spec exists in `server/test/integration/` (✅) or not (❌). **IT ✅** — that spec actually **runs in the post-deploy CI pipeline** today (`environment tests for test env post-deploy`); ❌ means the spec exists but self-skips because its credential isn't wired as a GitLab CI/CD variable. **Last Run** — date the `/connector-build` skill last reviewed the connector (empty = the skill has never run for it; its `STATE.md` is a template clone with only the Integration-tests section filled). (The OAuth account used for the connection is recorded in each connector's `STATE.md`, not here.)
+Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-provided params), using the legend above. **CS** (Create schema) / **IP** (Incremental polling) — same legend: ✅ implemented in the connector · 🟠 the service supports it (incl. **partial**, e.g. creating custom fields/collections) but the connector doesn't yet · ❌ not available / not applicable. **Visible** — 👁️ shown in the product vs 🔒 hidden / dev-only (`metadata.visible`). **Acct upkeep** — how easily a dedicated test account stays alive (its maintenance cost), roughly easiest→hardest: **Free tier** (durable, no card — incl. permanent free plans) · **Free dev** (developer construct: sandbox / dev store / test mode) · **Self-host** (you run it) · **Trial → paid** (time-limited, then pay to keep it) · **Paid** (no test tier — today only the company's production org) · **n/a**. **IT 📄** — a live-API integration spec exists in `server/test/integration/` (✅) or not (❌). **IT ✅** — that spec actually **runs in the post-deploy CI pipeline** today (`environment tests for test env post-deploy`); ❌ means the spec exists but self-skips because its credential isn't wired as a GitLab CI/CD variable. **Last Run** — date the `/connector-build` skill last reviewed the connector (empty = the skill has never run for it; its `STATE.md` is a template clone with only the Integration-tests section filled). (The OAuth account used for the connection is recorded in each connector's `STATE.md`, not here.)
 
-| Connector | OAuth | Creds | Visible | Acct upkeep | IT 📄 | IT ✅ | Last Run |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| [Affinity](../server/src/remote-service/connectors/library/affinity/STATE.md) | ❌ | ✅ | 👁️ | Paid | ✅ | ❌ | 2026-06-12 |
-| [Airtable](../server/src/remote-service/connectors/library/airtable/STATE.md) | ✅ | ✅ | 👁️ | Free tier | ✅ | ❌ | |
-| [Attio](../server/src/remote-service/connectors/library/attio/STATE.md) | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | 2026-06-10 |
-| [Audienceful](../server/src/remote-service/connectors/library/audienceful/STATE.md) | 🟠 | ✅ | 👁️ | Free tier | ❌ | ❌ | |
-| [Brevo](../server/src/remote-service/connectors/library/brevo/STATE.md) | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | |
-| [ClickUp](../server/src/remote-service/connectors/library/clickup/STATE.md) | 🟠 | ✅ | 🔒 | Free tier | ✅ | ❌ | 2026-06-10 |
-| [Copper](../server/src/remote-service/connectors/library/copper/STATE.md) | 🟠 | ✅ | 👁️ | Trial → paid | ❌ | ❌ | 2026-06-10 |
-| [Generic API](../server/src/remote-service/connectors/library/generic-api/STATE.md) | ❌ | ✅ | 👁️ | n/a (any API) | ❌ | ❌ | |
-| [GoHighLevel](../server/src/remote-service/connectors/library/gohighlevel/STATE.md) | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ✅ | 2026-06-18 |
-| [HubSpot](../server/src/remote-service/connectors/library/hubspot/STATE.md) | 🟠 | ✅ | 👁️ | Free tier | ✅ | ✅\* | |
-| [Intercom](../server/src/remote-service/connectors/library/intercom/STATE.md) | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
-| [Linear](../server/src/remote-service/connectors/library/linear/STATE.md) | ✅ | ✅ | 👁️ | Free tier | ❌ | ❌ | |
-| [Memberstack](../server/src/remote-service/connectors/library/memberstack/STATE.md) | 🟠 | ✅ | 👁️ | Free dev | ❌ | ❌ | |
-| [Moco](../server/src/remote-service/connectors/library/moco/STATE.md) | 🟠 | ✅ | 👁️ | Trial → paid | ❌ | ❌ | |
-| [Notion](../server/src/remote-service/connectors/library/notion/STATE.md) | ✅ | ✅ | 👁️ | Free tier | ✅ | ✅ | |
-| [Pipedrive](../server/src/remote-service/connectors/library/pipedrive/STATE.md) | ✅ | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
-| [Postgres](../server/src/remote-service/connectors/library/postgres/STATE.md) | ❌ | ✅ | 🔒 | Self-host | ✅† | ❌ | |
-| [QuickBooks](../server/src/remote-service/connectors/library/quickbooks/STATE.md) | ✅ | ❌ | 👁️ | Free dev | ❌ | ❌ | |
-| [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | 🟠 | ✅ | 👁️ | Free dev | ❌ | ❌ | |
-| [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | 🟠 | ✅ | 👁️ | Free dev | ✅ | ❌ | |
-| [Supabase](../server/src/remote-service/connectors/library/supabase/STATE.md) | ✅ | ✅ | 👁️ | Free tier | ❌ | ❌ | |
-| [Webflow](../server/src/remote-service/connectors/library/webflow/STATE.md) | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | |
-| [Wix (Blog)](../server/src/remote-service/connectors/library/wix/wix-blog/STATE.md) | ✅ | ❌ | 👁️ | Free tier | ❌ | ❌ | |
-| [WordPress](../server/src/remote-service/connectors/library/wordpress/STATE.md) | ❌ | ✅ | 👁️ | Self-host | ❌ | ❌ | |
-| [YouTube](../server/src/remote-service/connectors/library/youtube/STATE.md) | ✅ | ❌ | 👁️ | Free tier | ❌ | ❌ | 2026-06-15 |
-| [Zoho CRM](../server/src/remote-service/connectors/library/zoho/STATE.md) | ✅ | ❌ | 👁️ | Free tier | ✅ | ❌ | 2026-06-10 |
+| Connector | OAuth | Creds | CS | IP | Visible | Acct upkeep | IT 📄 | IT ✅ | Last Run |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| [Affinity](../server/src/remote-service/connectors/library/affinity/STATE.md) | ❌ | ✅ | 🟠 | ❌ | 👁️ | Paid | ✅ | ❌ | 2026-06-12 |
+| [Airtable](../server/src/remote-service/connectors/library/airtable/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ✅ | ✅ | |
+| [Attio](../server/src/remote-service/connectors/library/attio/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free tier | ✅ | ✅ | 2026-06-10 |
+| [Audienceful](../server/src/remote-service/connectors/library/audienceful/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free tier | ❌ | ❌ | |
+| [Brevo](../server/src/remote-service/connectors/library/brevo/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free tier | ✅ | ❌ | |
+| [ClickUp](../server/src/remote-service/connectors/library/clickup/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 🔒 | Free tier | ✅ | ❌ | 2026-06-10 |
+| [Copper](../server/src/remote-service/connectors/library/copper/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Trial → paid | ❌ | ❌ | 2026-06-10 |
+| [Generic API](../server/src/remote-service/connectors/library/generic-api/STATE.md) | ❌ | ✅ | ❌ | 🟠 | 👁️ | n/a (any API) | ❌ | ❌ | |
+| [GoHighLevel](../server/src/remote-service/connectors/library/gohighlevel/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Trial → paid | ✅ | ✅ | 2026-06-18 |
+| [HubSpot](../server/src/remote-service/connectors/library/hubspot/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ✅\* | |
+| [Intercom](../server/src/remote-service/connectors/library/intercom/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
+| [Linear](../server/src/remote-service/connectors/library/linear/STATE.md) | ✅ | ✅ | ❌ | ✅ | 👁️ | Free tier | ❌ | ❌ | |
+| [Memberstack](../server/src/remote-service/connectors/library/memberstack/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
+| [Moco](../server/src/remote-service/connectors/library/moco/STATE.md) | 🟠 | ✅ | ❌ | ✅ | 👁️ | Trial → paid | ❌ | ❌ | |
+| [Notion](../server/src/remote-service/connectors/library/notion/STATE.md) | ✅ | ✅ | ✅ | ✅ | 👁️ | Free tier | ✅ | ✅ | |
+| [Pipedrive](../server/src/remote-service/connectors/library/pipedrive/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Trial → paid | ✅ | ❌ | |
+| [Postgres](../server/src/remote-service/connectors/library/postgres/STATE.md) | ❌ | ✅ | ✅ | ✅ | 🔒 | Self-host | ✅† | ❌ | |
+| [QuickBooks](../server/src/remote-service/connectors/library/quickbooks/STATE.md) | ✅ | ❌ | ❌ | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
+| [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
+| [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | 🟠 | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
+| [Supabase](../server/src/remote-service/connectors/library/supabase/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Free tier | ❌ | ❌ | |
+| [Webflow](../server/src/remote-service/connectors/library/webflow/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | |
+| [Wix (Blog)](../server/src/remote-service/connectors/library/wix/wix-blog/STATE.md) | ✅ | ❌ | 🟠 | 🟠 | 👁️ | Free tier | ❌ | ❌ | |
+| [WordPress](../server/src/remote-service/connectors/library/wordpress/STATE.md) | ❌ | ✅ | 🟠 | ✅ | 👁️ | Self-host | ❌ | ❌ | |
+| [YouTube](../server/src/remote-service/connectors/library/youtube/STATE.md) | ✅ | ❌ | ❌ | 🟠 | 👁️ | Free tier | ❌ | ❌ | 2026-06-15 |
+| [Zoho CRM](../server/src/remote-service/connectors/library/zoho/STATE.md) | ✅ | ❌ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | 2026-06-10 |
 
 > **`*` HubSpot — runs via an in-process fake, not the live API.** `hubspot-connector.spec.ts` drives `test-api-fakes/hubspot` (no key needed), so it executes on every pipeline run — but it validates connector code against a fake, not the real HubSpot API. The only **live** connector suite wired into CI today is **Notion**; every other live suite self-skips until its `INTEGRATION_TEST_<SVC>_*` variable is set.
 >
 > **`†` Postgres — partial.** Coverage is `postgres-create-schema.spec.ts` + `postgres-incremental-pull.spec.ts` only (schema-creation + incremental pull), and they run against the CI job's **own `postgres:16` sidecar**, not a third-party service. There is no core CRUD connector spec.
 >
 > **OAuth `🟠` on connectors with no Last Run is provisional.** For connectors the `/connector-build` skill hasn't reviewed, `🟠` means "OAuth not implemented (`supportedAuthMethods` is `user_provided_params` only) and the service is expected to offer it" — the available-vs-not call is confirmed on a skill pass. `❌` is reserved for connectors with no OAuth path at all (connection-string DBs: Postgres; basic/app-password: WordPress; the schema-driven Generic API).
+>
+> **CS / IP — `✅` is code-verified; `🟠`/`❌` are best-effort.** `✅` means the connector implements it: **CS** (createTable/createFields) = Airtable, Notion, Postgres; **IP** (`incrementalPull` + `supportsIncrementalPull`) = Airtable, HubSpot, Intercom, Linear, Moco, Notion, Pipedrive, Postgres, Supabase, Webflow, WordPress, Zoho. For the rest, `🟠` = the service supports it (partial schema creation such as custom fields counts) but the connector doesn't yet, and `❌` = no schema-creation / no modified-since concept — both confirmed on a `/connector-build` pass. **Affinity IP = `❌`** is evidence-based (DEV-10159: the modified-since filter is silently ignored on persons/companies/list-entries).
 >
 > **Acct upkeep is best-effort for un-reviewed connectors.** Confirmed for the skill-built ones (those with a Last Run): ClickUp/Attio/Zoho/YouTube = free tier, Copper = trial-only/no-free-tier, GoHighLevel = trial → paid, Affinity = the company's production org (no separate test tier). For the rest the value reflects the service's known offering at a glance and should be confirmed when a dedicated test account is actually provisioned.
 >

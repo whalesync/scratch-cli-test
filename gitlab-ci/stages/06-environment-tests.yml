@@ -34,6 +34,12 @@ environment tests for test env post-deploy:
     # lives in server/.env.integration so the suite can be reproduced locally.
     GOHIGHLEVEL_API_TOKEN: "${INTEGRATION_TEST_GOHIGHLEVEL_API_TOKEN}"
     GOHIGHLEVEL_LOCATION_ID: "${INTEGRATION_TEST_GOHIGHLEVEL_LOCATION_ID}"
+    # Airtable — dedicated test account. AIRTABLE_API_KEY runs the record-CRUD spec; AIRTABLE_TEST_BASE_ID
+    # also enables the create-schema suite. ⚠️ TEMPORARY: create-schema CANNOT delete tables (no
+    # delete-table API) so it adds a `scratch_it_<ts>` table per run to the throwaway base (cap: 1000
+    # tables/base). Here only to confirm it works — move to a deeper/scheduled pass + trash the base periodically.
+    AIRTABLE_API_KEY: "${INTEGRATION_TEST_AIRTABLE_API_KEY}"
+    AIRTABLE_TEST_BASE_ID: "${INTEGRATION_TEST_AIRTABLE_TEST_BASE_ID}"
 
     # Whalesync shadow-user / session admin-channel test (whalesync-shadow-user.spec.ts). Drives the
     RUN_WHALESYNC_INTEGRATION: "true"
