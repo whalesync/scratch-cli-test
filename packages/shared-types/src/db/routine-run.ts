@@ -1,4 +1,5 @@
 import { RoutineRunId, RoutineRunStepId, WorkbookId } from '../ids';
+import type { RoutineStepOptions } from './routine';
 
 ///
 /// NOTE: Keep this in sync with server/prisma/schema.prisma RoutineRun + RoutineRunStep models
@@ -30,6 +31,8 @@ export interface RoutineRunStep {
   sync: string | null;
   /** The step's timeout in seconds (snapshot from `timeout:`). Null = the per-action default. */
   timeoutSeconds: number | null;
+  /** Action-specific config snapshot from the step's `options:` map (e.g. `{ fullPull: true }`). Null if none. */
+  options: RoutineStepOptions | null;
   status: RoutineRunStepStatus;
   startedAt: string | null;
   finishedAt: string | null;

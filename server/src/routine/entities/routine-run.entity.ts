@@ -8,6 +8,7 @@ import {
   RoutineRunStepStatus,
   RoutineRunSummary,
   RoutineRunTrigger,
+  RoutineStepOptions,
   WorkbookId,
 } from '@spinner/shared-types';
 
@@ -45,6 +46,7 @@ export const RoutineRunEntity = {
       connection: step.connection,
       sync: step.sync,
       timeoutSeconds: step.timeoutSeconds,
+      options: (step.options as RoutineStepOptions | null) ?? null,
       status: step.status as RoutineRunStepStatus,
       startedAt: step.startedAt ? step.startedAt.toISOString() : null,
       finishedAt: step.finishedAt ? step.finishedAt.toISOString() : null,

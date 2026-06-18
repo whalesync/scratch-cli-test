@@ -8,6 +8,7 @@ import {
   RoutineRun,
   RoutineRunId,
   RoutineRunTrigger,
+  RoutineStepOptions,
   SyncId,
   WorkbookId,
 } from '@spinner/shared-types';
@@ -126,6 +127,8 @@ export class RoutineExecutorService {
               connection: step.connection,
               sync: step.sync,
               timeoutSeconds: step.timeout,
+              // Json column rejects a bare `null`; use Prisma.DbNull for "no options".
+              options: step.options === null ? Prisma.DbNull : (step.options as Prisma.InputJsonValue),
               status: 'pending',
             })),
           },
@@ -368,15 +371,18 @@ export class RoutineExecutorService {
             })`,
           );
         }
-        // Routines run as explicit batch operations where completeness matters more than latency,
-        // so a routine pull is always a FULL pull (the safe superset).
+        // Routine pulls default to INCREMENTAL (cheaper; the pull job auto-demotes to full on the
+        // first run or when the connector lacks incremental support). A step can force a full
+        // re-fetch via the YAML `options.fullPull: true` flag, snapshotted onto the run step.
+        const stepOptions = step.options as RoutineStepOptions | null;
+        const pullMode: 'full' | 'incremental' = stepOptions?.fullPull ? 'full' : 'incremental';
         return this.bullEnqueuer.enqueuePullLinkedFolderFilesJob(
           workbookId,
           actor,
           dataFolderIds,
           undefined,
           runContext,
-          'full',
+          pullMode,
         );
       }
       case RoutineAction.PUBLISH_PLAN:

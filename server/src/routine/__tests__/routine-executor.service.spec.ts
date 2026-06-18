@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await */
 import { ConflictException } from '@nestjs/common';
 import { Prisma, type DbJob } from '@prisma/client';
-import { RoutineAction, RoutineRunId, WorkbookId } from '@spinner/shared-types';
+import { RoutineAction, RoutineRunId, RoutineStepOptions, WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
 import { JobService } from 'src/job/job.service';
@@ -38,6 +38,7 @@ interface FakeStep {
   connection: string | null;
   sync: string | null;
   timeoutSeconds: number | null;
+  options: RoutineStepOptions | null;
   status: string;
   jobId: string | null;
   pipelineId: string | null;
@@ -53,7 +54,7 @@ function singleFolderContext(): RoutineValidationContext {
     foldersById: new Map([['dfd_1', { id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' }]]),
     connectionsByName: new Map([['airtable', { id: 'coa_1', displayName: 'Airtable' }]]),
     connectionsById: new Map([['coa_1', { id: 'coa_1', displayName: 'Airtable' }]]),
-    syncsById: new Map([['sync_1', { id: 'sync_1', displayName: 'Blog Sync' }]]),
+    syncsById: new Map([['syn_1', { id: 'syn_1', displayName: 'Blog Sync' }]]),
   };
 }
 
@@ -65,8 +66,9 @@ function makeStep(index: number, action: RoutineAction, overrides: Partial<FakeS
     action,
     folder: null,
     connection: null,
-    sync: action === RoutineAction.SYNC ? 'sync_1' : null,
+    sync: action === RoutineAction.SYNC ? 'syn_1' : null,
     timeoutSeconds: null,
+    options: null,
     status: 'pending',
     jobId: null,
     pipelineId: null,
@@ -240,14 +242,15 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[0].status).toBe('completed');
     expect(steps[1].status).toBe('completed');
     expect(steps[1].pipelineId).toBe('pln_1');
-    // Every step job of the run is tagged with trigger 'routine' and the RoutineRunId.
+    // Every step job is tagged with trigger 'routine' + the RoutineRunId; routine pulls default to
+    // incremental (this step has no fullPull flag).
     expect(enqueuePull).toHaveBeenCalledWith(
       WORKBOOK_ID,
       expect.anything(),
       ['dfd_1'],
       undefined,
       expect.objectContaining({ trigger: 'routine', routineRunId: RUN_ID }),
-      'full',
+      'incremental',
     );
     // publish: runAfterPlan true (PUBLISH), folderPath leading-slash.
     expect(enqueuePublish).toHaveBeenCalledWith(
@@ -258,6 +261,36 @@ describe('RoutineExecutorService.execute', () => {
       '/blog/posts',
       expect.objectContaining({ trigger: 'routine', routineRunId: RUN_ID }),
     );
+  });
+
+  it('forces a full pull when the step options set fullPull', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PULL, { options: { fullPull: true } })];
+    const db = makeFakeDb(run, steps);
+
+    const enqueuePull = jest.fn().mockResolvedValue({ id: 'pull-job' });
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: enqueuePull,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(dbJobResult({ status: 'completed', error: null, progress: null })),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(enqueuePull).toHaveBeenCalledWith(
+      WORKBOOK_ID,
+      expect.anything(),
+      ['dfd_1'],
+      undefined,
+      expect.anything(),
+      'full',
+    );
+    expect(run.status).toBe('completed');
   });
 
   it('fails the run and skips the rest when a step fails', async () => {
@@ -420,6 +453,7 @@ describe('RoutineExecutorService.triggerRun', () => {
         sync: null,
         comment: null,
         timeout: null,
+        options: null,
       },
     ],
   };

@@ -55,6 +55,7 @@ function routineWithSteps(steps: Partial<RoutineStep>[]): ParsedRoutine {
       sync: step.sync ?? null,
       comment: step.comment ?? null,
       timeout: step.timeout ?? null,
+      options: step.options ?? null,
     })),
   };
 }
@@ -242,19 +243,19 @@ describe('validateRoutineReferences', () => {
     ]);
   });
 
-  it('resolves a sync step by its sync_ id', () => {
-    const context = buildContext([], [], [{ id: 'sync_1', displayName: 'Blog → Webflow' }]);
-    const routine = routineWithSteps([{ action: RoutineAction.SYNC, sync: 'sync_1' }]);
+  it('resolves a sync step by its syn_ id', () => {
+    const context = buildContext([], [], [{ id: 'syn_1', displayName: 'Blog → Webflow' }]);
+    const routine = routineWithSteps([{ action: RoutineAction.SYNC, sync: 'syn_1' }]);
 
     expect(validateRoutineReferences(routine, context)).toEqual([]);
   });
 
-  it('flags a sync step whose sync_ id does not exist', () => {
-    const context = buildContext([], [], [{ id: 'sync_1', displayName: 'Blog → Webflow' }]);
-    const routine = routineWithSteps([{ action: RoutineAction.SYNC, sync: 'sync_missing' }]);
+  it('flags a sync step whose syn_ id does not exist', () => {
+    const context = buildContext([], [], [{ id: 'syn_1', displayName: 'Blog → Webflow' }]);
+    const routine = routineWithSteps([{ action: RoutineAction.SYNC, sync: 'syn_missing' }]);
 
     expect(validateRoutineReferences(routine, context)).toEqual([
-      'steps.0.sync: sync "sync_missing" not found in this workbook',
+      'steps.0.sync: sync "syn_missing" not found in this workbook',
     ]);
   });
 });
@@ -266,7 +267,7 @@ describe('RoutineReferenceValidatorService.loadContext', () => {
       { id: 'dfd_2', path: null, connectorAccountId: null },
     ]);
     const connectorAccountFindMany = jest.fn().mockResolvedValue([{ id: 'coa_1', displayName: 'Airtable Prod' }]);
-    const syncFindMany = jest.fn().mockResolvedValue([{ id: 'sync_1', displayName: 'Blog → Webflow' }]);
+    const syncFindMany = jest.fn().mockResolvedValue([{ id: 'syn_1', displayName: 'Blog → Webflow' }]);
     const db = {
       client: {
         dataFolder: { findMany: dataFolderFindMany },
@@ -290,7 +291,7 @@ describe('RoutineReferenceValidatorService.loadContext', () => {
       where: { workbookId: WORKBOOK_ID },
       select: { id: true, displayName: true },
     });
-    expect(context.syncsById.get('sync_1')).toEqual({ id: 'sync_1', displayName: 'Blog → Webflow' });
+    expect(context.syncsById.get('syn_1')).toEqual({ id: 'syn_1', displayName: 'Blog → Webflow' });
 
     // Path key is normalized (leading slash dropped); a null-path folder is excluded from foldersByPath...
     expect(context.foldersByPath.get('Blog/Posts')).toEqual([

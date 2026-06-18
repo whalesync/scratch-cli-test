@@ -151,7 +151,7 @@ export function resolveConnectionInContext(
   return context.connectionsByName.get(connection.toLowerCase()) ?? null;
 }
 
-/** Resolves a step's `sync` (a "sync_..." id) against the context. */
+/** Resolves a step's `sync` (a "syn_..." id) against the context. */
 export function resolveSyncInContext(syncId: string, context: RoutineValidationContext): ValidationSync | null {
   return context.syncsById.get(syncId) ?? null;
 }

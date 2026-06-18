@@ -1,4 +1,4 @@
-import { RoutineAction, RoutineStep } from '@spinner/shared-types';
+import { isDataFolderId, isSyncId, RoutineAction, RoutineStep } from '@spinner/shared-types';
 import { CronExpressionParser } from 'cron-parser';
 import { z } from 'zod';
 
@@ -53,7 +53,7 @@ export interface ValidationConnection {
 
 /** One sync, reduced to what reference validation needs. */
 export interface ValidationSync {
-  /** SyncId ("sync_..."). */
+  /** SyncId ("syn_..."). */
   id: string;
   /** The human-readable sync name (used in error messages). */
   displayName: string;
@@ -73,7 +73,7 @@ export interface RoutineValidationContext {
   connectionsByName: Map<string, ValidationConnection>;
   /** All connections keyed by ConnectorAccountId ("coa_..."). */
   connectionsById: Map<string, ValidationConnection>;
-  /** All syncs keyed by SyncId ("sync_..."). */
+  /** All syncs keyed by SyncId ("syn_..."). */
   syncsById: Map<string, ValidationSync>;
 }
 
@@ -109,13 +109,22 @@ export function validateRoutineCronExpression(schedule: string): string | null {
 
 /** A step's `folder` must be a POSIX path ("/blog/posts") or a DataFolderId ("dfd_..."). */
 function isValidStepFolder(folder: string): boolean {
-  return folder.startsWith('/') || folder.startsWith('dfd_');
+  return folder.startsWith('/') || isDataFolderId(folder);
 }
 
-/** A step's `sync` must be a SyncId ("sync_..."). Syncs have auto-generated names, so only the id is accepted. */
+/** A step's `sync` must be a SyncId ("syn_..."). Syncs have auto-generated names, so only the id is accepted. */
 function isValidStepSync(sync: string): boolean {
-  return sync.startsWith('sync_');
+  return isSyncId(sync);
 }
+
+/**
+ * Action-specific step config (the step's `options:` map). Strict so a typo'd option key is
+ * rejected rather than silently ignored. New action options are declared here; per-action
+ * validity (e.g. `fullPull` only on pull steps) is enforced in the step superRefine below.
+ */
+const routineStepOptionsSchema = z.strictObject({
+  fullPull: z.boolean().optional(),
+});
 
 const routineStepYamlSchema = z.strictObject({
   action: z.nativeEnum(RoutineAction),
@@ -131,9 +140,10 @@ const routineStepYamlSchema = z.strictObject({
     })
     .optional(),
   connection: z.string().min(1).optional(),
-  sync: z.string().min(1).refine(isValidStepSync, { message: "sync must be a SyncId ('sync_...')" }).optional(),
+  sync: z.string().min(1).refine(isValidStepSync, { message: "sync must be a SyncId ('syn_...')" }).optional(),
   comment: z.string().optional(),
   timeout: z.number().int().positive().optional(),
+  options: routineStepOptionsSchema.optional(),
 });
 
 export const routineYamlSchema = z
@@ -200,6 +210,17 @@ export const routineYamlSchema = z
           path: ['steps', index, 'sync'],
         });
       }
+
+      // `fullPull` forces a full (re-fetch-everything) pull instead of the default incremental one,
+      // which is meaningless for any non-pull action. Reject it so a user can't quietly set a no-op
+      // option on a sync/publish step.
+      if (step.options?.fullPull !== undefined && step.action !== RoutineAction.PULL) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `'fullPull' is only valid on pull steps (got a "${step.action}" step)`,
+          path: ['steps', index, 'options', 'fullPull'],
+        });
+      }
     });
 
     if (routine.schedule !== undefined) {
@@ -224,6 +245,7 @@ export function toParsedRoutine(data: z.infer<typeof routineYamlSchema>): Parsed
       sync: step.sync ?? null,
       comment: step.comment ?? null,
       timeout: step.timeout ?? null,
+      options: step.options ?? null,
     })),
   };
 }

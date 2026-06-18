@@ -9,6 +9,7 @@ import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackRoutineCreated, trackRoutineDeleted, trackRoutineTriggered, trackRoutineUpdated } from '@/lib/posthog';
 import { useRoutineDraftStore } from '@/stores/routine-draft-store';
+import { useSyncStore } from '@/stores/sync-store';
 import { yaml } from '@codemirror/lang-yaml';
 import { EditorView } from '@codemirror/view';
 import { Alert, Badge, Box, Button, Group, Stack, Tooltip, useMantineColorScheme } from '@mantine/core';
@@ -111,7 +112,7 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
   // child — not this editor host. (A host re-render mid-edit can make @uiw/react-codemirror's controlled
   // `value` reconciliation overwrite the document and drop the user's latest keystrokes.) The built-once
   // completion source reads this ref on every keystroke.
-  const completionDataRef = useRef<RoutineCompletionData>({ actions: [], connections: [], folders: [] });
+  const completionDataRef = useRef<RoutineCompletionData>({ actions: [], connections: [], folders: [], syncs: [] });
 
   // The live editor view, captured on creation. We read its document at save time so a save always
   // persists exactly what the user sees — the controlled `content` state can briefly lag the document
@@ -464,8 +465,8 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
 }
 
 /**
- * Subscribes to the workbook's connections and folders and writes them into `dataRef` for the editor's
- * autocomplete. Rendered as `null` and kept separate from {@link RoutineEditor} on purpose: SWR
+ * Subscribes to the workbook's connections, folders, and syncs and writes them into `dataRef` for the
+ * editor's autocomplete. Rendered as `null` and kept separate from {@link RoutineEditor} on purpose: SWR
  * revalidations of this data then re-render only this component, never the editor host. If the editor
  * host re-rendered on those async loads, @uiw/react-codemirror's controlled-`value` reconciliation could
  * overwrite the document mid-edit (e.g. just after an autocomplete pick), desyncing it from what is saved.
@@ -479,6 +480,14 @@ function RoutineCompletionDataSync({
 }) {
   const { connectorAccounts } = useConnectorAccounts(workbookId);
   const { folders } = useDataFolders(workbookId);
+  const syncs = useSyncStore((state) => state.syncs);
+  const fetchSyncs = useSyncStore((state) => state.fetchSyncs);
+
+  // Ensure syncs are loaded for a sync step's `sync:` autocomplete — the routines page can be opened
+  // without the syncs view (which normally populates the store) ever having mounted.
+  useEffect(() => {
+    fetchSyncs(workbookId);
+  }, [workbookId, fetchSyncs]);
 
   useEffect(() => {
     dataRef.current = {
@@ -495,8 +504,9 @@ function RoutineCompletionDataSync({
         connectorDisplayName: folder.connectorDisplayName,
         connectorService: folder.connectorService,
       })),
+      syncs: syncs.map((sync) => ({ id: sync.id, displayName: sync.displayName })),
     };
-  }, [connectorAccounts, folders, dataRef]);
+  }, [connectorAccounts, folders, syncs, dataRef]);
 
   return null;
 }

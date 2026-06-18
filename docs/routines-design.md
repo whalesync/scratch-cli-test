@@ -55,7 +55,24 @@ steps:
 | `name`       | No       | Optional. Human-readable label for the step                                                          |
 | `folder`     | No       | Target folder path (e.g. `/blog/posts`) OR DataFolderId (dfd_*). If omitted, applies to all folders. |
 | `connection` | No       | Target connection name or ID (coa_*). If omitted, applies to all connections in the folder.          |
+| `options`    | No       | Action-specific settings as a nested map (see [Step Options](#step-options)).                        |
 | `comment`    | No       | Optional note or comment you can add to the step, to provide context                                 |
+
+#### Step Options
+
+`options` holds settings that only apply to a particular action. Keeping them in one nested map (rather than as new top-level fields) means new action options can be added without changing the step shape or adding a database column.
+
+| Option     | Action | Description                                                                                        |
+| ---------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `fullPull` | `pull` | `true` forces a full re-pull. Omitted/`false` = the default incremental pull (the pull job auto-demotes to full on the first run or when the connector lacks incremental support). |
+
+```yaml
+steps:
+  - action: pull
+    folder: /blog/posts
+    options:
+      fullPull: true # force a full re-pull instead of the default incremental
+```
 
 
 ### Available Actions
@@ -79,6 +96,7 @@ steps:
 - `folder`, if provided, must be a valid POSIX path starting with `/` OR if it starts with `dfd`_. In either case the folder must resolve to a DataFolder in the workbook
 - `schedule`, if provided, must be valid 5-field cron syntax with a minimum interval of 5 minutes
 - Step `name`, if provided, must be unique inside the list of steps
+- `options`, if provided, must contain only recognized keys, and each key must be valid for the step's action (e.g. `fullPull` is only valid on `pull` steps). Routine pulls are incremental by default; `options.fullPull: true` forces a full re-pull.
 - File must have a `.yaml` or `.yml` extension
 
 ## Architecture
@@ -208,6 +226,10 @@ model RoutineRunStep {
 
   /// Target connection (if specified)
   connection String?
+
+  /// Action-specific config snapshot from the step's `options:` map (e.g. `{ "fullPull": true }`).
+  /// One JSON column so new per-action options don't each need a dedicated column. Null when none.
+  options Json?
 
   /// "pending" | "running" | "completed" | "failed" | "skipped"
   status String @default("pending")

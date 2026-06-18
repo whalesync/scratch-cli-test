@@ -1,4 +1,4 @@
-import { CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
+import { CompletionContext, type CompletionResult, type CompletionSource } from '@codemirror/autocomplete';
 import { EditorState } from '@codemirror/state';
 import { routineCompletionSource, type RoutineCompletionData } from '../routine-completion-extension';
 
@@ -19,13 +19,30 @@ const COMPLETION_DATA: RoutineCompletionData = {
     // A folder with no path — we fall back to inserting its id.
     { id: 'dfd_orphan', path: null, name: 'orphan', connectorDisplayName: null, connectorService: null },
   ],
+  syncs: [
+    { id: 'syn_blog', displayName: 'Blog Sync' },
+    { id: 'syn_docs', displayName: 'Docs Sync' },
+  ],
 };
 
 const source = routineCompletionSource(() => COMPLETION_DATA);
 
-/** Runs the source with the cursor at the end of `doc`. */
+/**
+ * Runs a completion source at the end of `doc`. `routineCompletionSource` is always synchronous, so we
+ * assert it never returns a Promise — that narrows the union the `CompletionSource` type allows down to
+ * the `CompletionResult | null` the assertions expect.
+ */
+function runCompletion(completionSource: CompletionSource, doc: string, explicit = false): CompletionResult | null {
+  const result = completionSource(new CompletionContext(EditorState.create({ doc }), doc.length, explicit));
+  if (result instanceof Promise) {
+    throw new Error('routineCompletionSource should be synchronous, but it returned a Promise');
+  }
+  return result;
+}
+
+/** Runs the shared `source` with the cursor at the end of `doc`. */
 function completeAtEndOf(doc: string, explicit = false): CompletionResult | null {
-  return source(new CompletionContext(EditorState.create({ doc }), doc.length, explicit));
+  return runCompletion(source, doc, explicit);
 }
 
 function labelsOf(result: CompletionResult | null): string[] {
@@ -116,6 +133,113 @@ describe('routineCompletionSource', () => {
     });
   });
 
+  describe('step options', () => {
+    it('offers the `options` key on a pull step', () => {
+      expect(labelsOf(completeAtEndOf('steps:\n  - action: pull\n    '))).toContain('options');
+    });
+
+    it('hides the `options` key on a sync step (no options defined), but keeps the other fields', () => {
+      const labels = labelsOf(completeAtEndOf('steps:\n  - action: sync\n    '));
+      expect(labels).not.toContain('options');
+      expect(labels).toContain('name');
+    });
+
+    it('still offers `options` when the step action is not known yet', () => {
+      expect(labelsOf(completeAtEndOf('steps:\n  - folder: /x\n    '))).toContain('options');
+    });
+
+    it('scaffolds a nested map via a custom apply on the `options` key', () => {
+      const optionsKey = completeAtEndOf('steps:\n  - action: pull\n    ')?.options.find((o) => o.label === 'options');
+      expect(typeof optionsKey?.apply).toBe('function');
+    });
+
+    it('suggests action-specific option keys inside an options block', () => {
+      expect(labelsOf(completeAtEndOf('steps:\n  - action: pull\n    options:\n      '))).toEqual(['fullPull']);
+    });
+
+    it('filters option keys by the partially typed key, anchored at its start', () => {
+      const doc = 'steps:\n  - action: pull\n    options:\n      full';
+      const result = completeAtEndOf(doc);
+      expect(labelsOf(result)).toContain('fullPull');
+      expect(result?.from).toBe(doc.length - 'full'.length);
+    });
+
+    it('gives option keys an apply that chains into the value list', () => {
+      const fullPull = completeAtEndOf('steps:\n  - action: pull\n    options:\n      ')?.options.find(
+        (o) => o.label === 'fullPull',
+      );
+      expect(typeof fullPull?.apply).toBe('function');
+    });
+
+    it('offers no option keys inside a sync step options block (implicit)', () => {
+      expect(completeAtEndOf('steps:\n  - action: sync\n    options:\n      ')).toBeNull();
+    });
+
+    it('offers all options when the enclosing step action is unknown', () => {
+      expect(labelsOf(completeAtEndOf('steps:\n  - folder: /x\n    options:\n      '))).toContain('fullPull');
+    });
+
+    it('offers true/false for a boolean option value', () => {
+      const doc = 'steps:\n  - action: pull\n    options:\n      fullPull: ';
+      const result = completeAtEndOf(doc);
+      expect(labelsOf(result)).toEqual(['true', 'false']);
+      expect(result?.from).toBe(doc.length);
+    });
+
+    it('anchors the boolean value at a partially typed token', () => {
+      const doc = 'steps:\n  - action: pull\n    options:\n      fullPull: tr';
+      const result = completeAtEndOf(doc);
+      expect(labelsOf(result)).toContain('true');
+      expect(result?.from).toBe(doc.length - 'tr'.length);
+    });
+  });
+
+  describe('sync field', () => {
+    it('offers the `sync` key on a sync step', () => {
+      expect(labelsOf(completeAtEndOf('steps:\n  - action: sync\n    '))).toContain('sync');
+    });
+
+    it('hides the `sync` key on a pull step', () => {
+      expect(labelsOf(completeAtEndOf('steps:\n  - action: pull\n    '))).not.toContain('sync');
+    });
+
+    it('offers the `sync` key when the step action is not known yet', () => {
+      expect(labelsOf(completeAtEndOf('steps:\n  - \n    '))).toContain('sync');
+    });
+
+    it('hides `folder` and `connection` on a sync step (invalid there), keeping `sync`/`name`', () => {
+      const labels = labelsOf(completeAtEndOf('steps:\n  - action: sync\n    '));
+      expect(labels).not.toContain('folder');
+      expect(labels).not.toContain('connection');
+      expect(labels).toEqual(expect.arrayContaining(['sync', 'name', 'comment', 'timeout']));
+    });
+
+    it('keeps `folder` and `connection` on a pull step', () => {
+      const labels = labelsOf(completeAtEndOf('steps:\n  - action: pull\n    '));
+      expect(labels).toEqual(expect.arrayContaining(['folder', 'connection']));
+    });
+
+    it('suggests sync ids with the display name as detail, anchored at the value', () => {
+      const doc = 'steps:\n  - action: sync\n    sync: ';
+      const result = completeAtEndOf(doc);
+      expect(labelsOf(result)).toEqual(['syn_blog', 'syn_docs']);
+      expect(result?.options.find((o) => o.label === 'syn_blog')?.detail).toBe('Blog Sync');
+      expect(result?.from).toBe(doc.length);
+    });
+
+    it('anchors the sync id at a partially typed token', () => {
+      const doc = 'steps:\n  - action: sync\n    sync: syn_bl';
+      const result = completeAtEndOf(doc);
+      expect(labelsOf(result)).toContain('syn_blog');
+      expect(result?.from).toBe(doc.length - 'syn_bl'.length);
+    });
+
+    it('stays silent for sync values when none are loaded and completion is implicit', () => {
+      const emptySource = routineCompletionSource(() => ({ actions: [], connections: [], folders: [], syncs: [] }));
+      expect(runCompletion(emptySource, '    sync: ', false)).toBeNull();
+    });
+  });
+
   describe('top-level keys', () => {
     it('offers top-level keys on an empty document', () => {
       expect(labelsOf(completeAtEndOf(''))).toEqual(expect.arrayContaining(['name', 'steps', 'schedule', 'comment']));
@@ -140,16 +264,14 @@ describe('routineCompletionSource', () => {
   });
 
   describe('empty live data', () => {
-    const emptySource = routineCompletionSource(() => ({ actions: [], connections: [], folders: [] }));
+    const emptySource = routineCompletionSource(() => ({ actions: [], connections: [], folders: [], syncs: [] }));
 
     it('stays silent for folder values when nothing is loaded and completion is implicit', () => {
-      const doc = '    folder: ';
-      expect(emptySource(new CompletionContext(EditorState.create({ doc }), doc.length, false))).toBeNull();
+      expect(runCompletion(emptySource, '    folder: ', false)).toBeNull();
     });
 
     it('returns an (empty) result when the user explicitly requests completion', () => {
-      const doc = '    folder: ';
-      const result = emptySource(new CompletionContext(EditorState.create({ doc }), doc.length, true));
+      const result = runCompletion(emptySource, '    folder: ', true);
       expect(result).not.toBeNull();
       expect(result?.options).toHaveLength(0);
     });

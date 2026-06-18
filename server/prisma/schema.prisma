@@ -958,6 +958,11 @@ model RoutineRunStep {
   /// per-action default. Snapshotted so the executor never re-reads a since-edited routine file.
   timeoutSeconds Int?
 
+  /// Action-specific config snapshot from the step's `options:` map (e.g. `{ "fullPull": true }` for
+  /// a pull step). A single JSON column so new per-action options don't each need a dedicated column.
+  /// Snapshotted so the executor never re-reads a since-edited routine file. Null when none are set.
+  options Json?
+
   /// "pending" | "running" | "completed" | "failed" | "skipped"
   status String @default("pending")
 

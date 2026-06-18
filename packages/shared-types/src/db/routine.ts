@@ -8,6 +8,22 @@ import { RoutineRunStatus, RoutineRunTrigger } from './routine-run';
 /// server parses out of the YAML and returns over the wire. See docs/routines-design.md.
 ///
 
+/**
+ * Action-specific configuration for a routine step, stored as a single JSON blob (the step's
+ * `options:` map in YAML, and the `RoutineRunStep.options` column). Each key is only meaningful
+ * for the relevant action — e.g. `fullPull` applies to `pull` steps. New action options are added
+ * here rather than as new top-level step fields / dedicated DB columns, so the storage stays
+ * extensible. Generic per-step settings that apply to every action (like `timeout`) stay top-level.
+ */
+export interface RoutineStepOptions {
+  /**
+   * Pull steps only: force a FULL pull (re-fetch everything) instead of the default incremental
+   * pull. Omitted/false = incremental (which the pull job auto-demotes to full on the first run or
+   * when the connector lacks incremental support).
+   */
+  fullPull?: boolean;
+}
+
 /** A single step in a routine definition (parsed from the YAML `steps:` list). */
 export interface RoutineStep {
   /** One of: pull | sync | publish-plan | publish. */
@@ -24,6 +40,8 @@ export interface RoutineStep {
   comment: string | null;
   /** Optional per-step timeout in seconds. Enforced by the executor, capped per action. */
   timeout: number | null;
+  /** Action-specific config (see {@link RoutineStepOptions}). Null when the step sets no options. */
+  options: RoutineStepOptions | null;
 }
 
 /** A compact summary of a routine's most recent run, for list/sidebar display. */

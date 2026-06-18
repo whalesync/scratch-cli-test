@@ -7,7 +7,7 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete';
-import type { Extension } from '@codemirror/state';
+import type { Extension, Line, Text } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 
 /**
@@ -43,12 +43,21 @@ export interface RoutineFolderOption {
   connectorService: string | null;
 }
 
+/** A sync the user can reference from a `sync:` field on a sync step. */
+export interface RoutineSyncOption {
+  /** SyncId (`syn_…`) — the value we insert (the routine `sync:` field takes only the id). */
+  id: string;
+  /** Human-readable sync name — shown as the dim detail (syncs have auto-generated names). */
+  displayName: string;
+}
+
 /** Live data the completion source reads on every keystroke via the getter passed to the factory. */
 export interface RoutineCompletionData {
   /** RoutineAction wire values: `pull`, `sync`, `publish-plan`, `publish`. */
   actions: readonly string[];
   connections: readonly RoutineConnectionOption[];
   folders: readonly RoutineFolderOption[];
+  syncs: readonly RoutineSyncOption[];
 }
 
 /** A one-line description of each action, shown as the completion's dim detail. */
@@ -59,34 +68,88 @@ const ACTION_DETAIL_BY_WIRE_VALUE: Record<string, string> = {
   publish: 'Publish approved changes to the service',
 };
 
-/** Step field keys, in the order we surface them. `thenComplete` chains into that field's value list. */
-const STEP_FIELD_KEY_SPECS: ReadonlyArray<{
+/** A key completion spec: either a plain `insert` (+ optional value chaining) or a fully custom
+ *  `customApply` (used by `options`, which scaffolds a nested map at the right indentation). */
+interface RoutineKeySpec {
   label: string;
   detail: string;
-  insert: string;
-  thenComplete: boolean;
+  insert?: string;
+  thenComplete?: boolean;
   boost?: number;
-}> = [
+  customApply?: (view: EditorView, completion: Completion, from: number, to: number) => void;
+  /** When set, the key is only offered for these actions (or when the step's action isn't known yet). */
+  onlyForActions?: ReadonlyArray<string>;
+  /** When set, the key is hidden for these actions (e.g. `folder`/`connection` are invalid on sync steps). */
+  hiddenForActions?: ReadonlyArray<string>;
+}
+
+/** Step field keys, in the order we surface them. `thenComplete` chains into that field's value list. */
+const STEP_FIELD_KEY_SPECS: ReadonlyArray<RoutineKeySpec> = [
   { label: 'action', detail: 'What this step does (required)', insert: 'action: ', thenComplete: true, boost: 1 },
-  { label: 'folder', detail: 'Target folder — path or dfd_…', insert: 'folder: ', thenComplete: true },
-  { label: 'connection', detail: 'Target connection — name or coa_…', insert: 'connection: ', thenComplete: true },
+  {
+    label: 'folder',
+    detail: 'Target folder — path or dfd_…',
+    insert: 'folder: ',
+    thenComplete: true,
+    hiddenForActions: ['sync'],
+  },
+  {
+    label: 'connection',
+    detail: 'Target connection — name or coa_…',
+    insert: 'connection: ',
+    thenComplete: true,
+    hiddenForActions: ['sync'],
+  },
+  {
+    label: 'sync',
+    detail: 'Sync to run — a syn_… id (sync steps only)',
+    insert: 'sync: ',
+    thenComplete: true,
+    onlyForActions: ['sync'],
+  },
+  { label: 'options', detail: 'Action-specific settings (e.g. fullPull)', customApply: applyOptionsScaffold },
   { label: 'name', detail: 'Optional step label', insert: 'name: ', thenComplete: false },
   { label: 'comment', detail: 'Optional note', insert: 'comment: ', thenComplete: false },
   { label: 'timeout', detail: 'Optional per-step timeout in seconds', insert: 'timeout: ', thenComplete: false },
 ];
 
 /** Top-level keys. `steps` scaffolds the first list item and chains into the step-field list. */
-const TOP_LEVEL_KEY_SPECS: ReadonlyArray<{
-  label: string;
-  detail: string;
-  insert: string;
-  thenComplete: boolean;
-  boost?: number;
-}> = [
+const TOP_LEVEL_KEY_SPECS: ReadonlyArray<RoutineKeySpec> = [
   { label: 'name', detail: 'Routine name (required)', insert: 'name: ', thenComplete: false, boost: 1 },
   { label: 'steps', detail: 'List of steps (required)', insert: 'steps:\n  - ', thenComplete: true },
   { label: 'schedule', detail: 'Cron schedule (optional)', insert: 'schedule: ', thenComplete: false },
   { label: 'comment', detail: 'Optional note', insert: 'comment: ', thenComplete: false },
+];
+
+/** One action-specific step option: the YAML key plus its dim detail. */
+interface RoutineOptionSpec {
+  label: string;
+  detail: string;
+}
+
+/**
+ * Action-specific step options keyed by RoutineAction wire value — mirrors `RoutineStepOptions` in
+ * `@spinner/shared-types`. Adding a new option here is all it takes to surface it in the editor.
+ * Actions with an empty list (sync / publish*) have no options today.
+ */
+const OPTION_SPECS_BY_ACTION: Record<string, ReadonlyArray<RoutineOptionSpec>> = {
+  pull: [{ label: 'fullPull', detail: 'Force a full re-pull instead of the default incremental' }],
+  sync: [],
+  'publish-plan': [],
+  publish: [],
+};
+
+/** Every option across actions, de-duplicated by label — offered when the step's action isn't known yet. */
+const ALL_OPTION_SPECS: ReadonlyArray<RoutineOptionSpec> = Object.values(OPTION_SPECS_BY_ACTION)
+  .flat()
+  .filter((spec, index, all) => all.findIndex((other) => other.label === spec.label) === index);
+
+/** Option keys whose value is a boolean — so we offer true/false after the colon. */
+const BOOLEAN_OPTION_LABELS = new Set<string>(['fullPull']);
+
+const BOOLEAN_VALUE_OPTIONS: Completion[] = [
+  { label: 'true', type: 'keyword' },
+  { label: 'false', type: 'keyword' },
 ];
 
 // Value contexts: the `key:` is already on the line, so we complete what comes after it. The leading `-?`
@@ -94,6 +157,9 @@ const TOP_LEVEL_KEY_SPECS: ReadonlyArray<{
 const ACTION_VALUE_LINE = /^[ \t]*-?[ \t]*action:[ \t]*(\S*)$/;
 const FOLDER_VALUE_LINE = /^[ \t]*folder:[ \t]*(\S*)$/;
 const CONNECTION_VALUE_LINE = /^[ \t]*connection:[ \t]*(\S*)$/;
+const SYNC_VALUE_LINE = /^[ \t]*-?[ \t]*sync:[ \t]*(\S*)$/;
+// An indented `<key>: <value>` line — used to offer boolean values for known option keys (e.g. `fullPull`).
+const NESTED_KEY_VALUE_LINE = /^[ \t]+([A-Za-z][A-Za-z0-9]*):[ \t]*(\S*)$/;
 
 // Key contexts: a bare word with no colon yet. A step field is indented (optionally after a `- `); a
 // top-level key sits at column 0.
@@ -119,20 +185,15 @@ function applyInsertThenMaybeComplete(insertText: string, thenComplete: boolean)
   };
 }
 
-/** Builds a key completion that inserts `<key>: ` (or a custom scaffold) and chains where useful. */
-function buildKeyCompletion(spec: {
-  label: string;
-  detail: string;
-  insert: string;
-  thenComplete: boolean;
-  boost?: number;
-}): Completion {
+/** Builds a key completion that inserts `<key>: ` (or runs a custom scaffold) and chains where useful. */
+function buildKeyCompletion(spec: RoutineKeySpec): Completion {
   return {
     label: spec.label,
     type: 'property',
     detail: spec.detail,
     boost: spec.boost,
-    apply: applyInsertThenMaybeComplete(spec.insert, spec.thenComplete),
+    apply:
+      spec.customApply ?? applyInsertThenMaybeComplete(spec.insert ?? `${spec.label}: `, spec.thenComplete ?? false),
   };
 }
 
@@ -179,6 +240,112 @@ function buildConnectionValueOptions(data: RoutineCompletionData): Completion[] 
   }));
 }
 
+function buildSyncValueOptions(data: RoutineCompletionData): Completion[] {
+  // The routine `sync:` field takes only the SyncId, so we insert the id (the label) and surface the
+  // human-readable name as the dim detail.
+  return data.syncs.map((sync) => ({
+    label: sync.id,
+    type: 'variable',
+    detail: sync.displayName || undefined,
+  }));
+}
+
+/** Width of a line's leading whitespace — used to compare YAML nesting depth. */
+function leadingWhitespaceWidth(text: string): number {
+  return /^[ \t]*/.exec(text)?.[0].length ?? 0;
+}
+
+/**
+ * Finds the `action:` of the routine step that contains `fromLine`, scanning upward. Returns the wire
+ * action (e.g. `pull`) or null when there's no action above this point in the step (not typed yet, or
+ * written below). Stops at the step's `- ` list-item boundary so it never leaks a neighbouring step's action.
+ */
+function findStepActionForLine(doc: Text, fromLine: Line): string | null {
+  for (let lineNumber = fromLine.number; lineNumber >= 1; lineNumber--) {
+    const text = doc.line(lineNumber).text;
+    if (lineNumber !== fromLine.number && text.trim() === '') continue;
+    const actionMatch = /^[ \t]*-?[ \t]*action:[ \t]*(\S+)/.exec(text);
+    if (actionMatch) return actionMatch[1];
+    // A `- ` line above the cursor starts this (action-less) step or a previous one — either way the
+    // current step's action isn't above here.
+    if (lineNumber !== fromLine.number && /^[ \t]*-/.test(text)) return null;
+  }
+  return null;
+}
+
+/**
+ * When `currentLine` is nested directly under an `options:` mapping, returns the enclosing step's
+ * action (or null when unknown); otherwise returns null. "Nested under options" means the nearest
+ * preceding line with shallower indentation is an `options:` key carrying no inline value.
+ */
+function findEnclosingOptionsContext(doc: Text, currentLine: Line): { action: string | null } | null {
+  const currentIndent = leadingWhitespaceWidth(currentLine.text);
+  for (let lineNumber = currentLine.number - 1; lineNumber >= 1; lineNumber--) {
+    const ancestor = doc.line(lineNumber);
+    if (ancestor.text.trim() === '') continue;
+    if (leadingWhitespaceWidth(ancestor.text) >= currentIndent) continue;
+    // First strictly-shallower line is our YAML parent.
+    if (/^[ \t]*options:[ \t]*$/.test(ancestor.text)) {
+      return { action: findStepActionForLine(doc, ancestor) };
+    }
+    return null;
+  }
+  return null;
+}
+
+/** The `options:` step-key scaffold: inserts `options:` + a nested indent and opens the option-key list. */
+function applyOptionsScaffold(view: EditorView, completion: Completion, from: number, to: number): void {
+  // Nest option keys two columns past where `options` begins, regardless of the step's own indentation.
+  const line = view.state.doc.lineAt(from);
+  const nestedIndent = ' '.repeat(from - line.from + 2);
+  const insert = `options:\n${nestedIndent}`;
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: from + insert.length },
+    annotations: pickedCompletion.of(completion),
+  });
+  startCompletion(view);
+}
+
+/** Builds an option-key completion that inserts `<key>: ` and chains into its value list (true/false). */
+function buildOptionKeyCompletion(spec: RoutineOptionSpec): Completion {
+  return {
+    label: spec.label,
+    type: 'property',
+    detail: spec.detail,
+    apply: applyInsertThenMaybeComplete(`${spec.label}: `, true),
+  };
+}
+
+/** Options valid for an action — all of them when the action isn't known yet (so the user isn't blocked). */
+function optionSpecsForAction(action: string | null): ReadonlyArray<RoutineOptionSpec> {
+  return action === null ? ALL_OPTION_SPECS : (OPTION_SPECS_BY_ACTION[action] ?? []);
+}
+
+/** Whether to surface the `options` step key at all — hidden for actions that define no options. */
+function actionSupportsOptions(action: string | null): boolean {
+  return action === null || (OPTION_SPECS_BY_ACTION[action]?.length ?? 0) > 0;
+}
+
+/**
+ * Whether a step-field key should be offered for the enclosing step's action. `options` follows the
+ * action→options map; an `onlyForActions` allowlist (e.g. `sync`) shows only for those actions; a
+ * `hiddenForActions` denylist (e.g. `folder`/`connection` on a sync step) hides for those actions; an
+ * unknown action shows everything so the user is never blocked.
+ */
+function isStepKeyVisibleForAction(spec: RoutineKeySpec, action: string | null): boolean {
+  if (spec.label === 'options') {
+    return actionSupportsOptions(action);
+  }
+  if (spec.onlyForActions) {
+    return action === null || spec.onlyForActions.includes(action);
+  }
+  if (spec.hiddenForActions) {
+    return action === null || !spec.hiddenForActions.includes(action);
+  }
+  return true;
+}
+
 function buildValueResult(context: CompletionContext, typedValue: string, options: Completion[]): CompletionResult {
   return { from: context.pos - typedValue.length, options, validFor: VALUE_VALID_FOR };
 }
@@ -220,11 +387,46 @@ export function routineCompletionSource(getData: () => RoutineCompletionData): C
       return buildValueResult(context, connectionValueMatch[1], options);
     }
 
+    const syncValueMatch = SYNC_VALUE_LINE.exec(textBeforeCursor);
+    if (syncValueMatch) {
+      const options = buildSyncValueOptions(data);
+      if (options.length === 0 && !context.explicit) {
+        return null;
+      }
+      return buildValueResult(context, syncValueMatch[1], options);
+    }
+
+    // A known boolean option key awaiting its value (e.g. `      fullPull: tr`) completes to true/false.
+    const nestedValueMatch = NESTED_KEY_VALUE_LINE.exec(textBeforeCursor);
+    if (nestedValueMatch && BOOLEAN_OPTION_LABELS.has(nestedValueMatch[1])) {
+      return buildValueResult(context, nestedValueMatch[2], BOOLEAN_VALUE_OPTIONS);
+    }
+
     const stepFieldKeyMatch = STEP_FIELD_KEY_LINE.exec(textBeforeCursor);
     if (stepFieldKeyMatch) {
       const hasDash = Boolean(stepFieldKeyMatch[1]);
       const typedKey = stepFieldKeyMatch[2];
-      const options = STEP_FIELD_KEY_SPECS.map(buildKeyCompletion);
+
+      // An indented bare-word line nested under `options:` completes OPTION keys (filtered to the
+      // enclosing step's action), not step fields. Option children never carry a `- `, so a dashed
+      // line is always a step item.
+      if (!hasDash) {
+        const optionsContext = findEnclosingOptionsContext(context.state.doc, line);
+        if (optionsContext) {
+          const optionSpecs = optionSpecsForAction(optionsContext.action);
+          if (optionSpecs.length === 0 && !context.explicit) {
+            return null;
+          }
+          return buildKeyResult(context, typedKey, optionSpecs.map(buildOptionKeyCompletion));
+        }
+      }
+
+      // Offer only the keys valid for this step's action — e.g. `sync` on a sync step, `options` on a
+      // pull step. An unknown action shows everything so the user is never blocked.
+      const stepAction = findStepActionForLine(context.state.doc, line);
+      const options = STEP_FIELD_KEY_SPECS.filter((spec) => isStepKeyVisibleForAction(spec, stepAction)).map(
+        buildKeyCompletion,
+      );
       // On a blank field line (no key typed, no dash yet) also offer the new-step scaffold; with a dash the
       // user is already inside a step item, so a second `- ` would be wrong.
       if (typedKey.length === 0 && !hasDash) {

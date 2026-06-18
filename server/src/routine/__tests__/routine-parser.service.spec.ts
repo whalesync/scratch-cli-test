@@ -32,7 +32,7 @@ steps:
     comment: pull the posts
     timeout: 600
   - action: publish
-    folder: dfd_abc123
+    folder: dfd_0123456789
 `;
     const routine = expectRoutine(parser.parse(yaml));
     expect(routine.name).toBe('Daily Content Sync');
@@ -47,16 +47,18 @@ steps:
       sync: null,
       comment: 'pull the posts',
       timeout: 600,
+      options: null,
     });
     // Optional fields default to null, not undefined (wire fidelity).
     expect(routine.steps[1]).toEqual({
       action: RoutineAction.PUBLISH,
       name: null,
-      folder: 'dfd_abc123',
+      folder: 'dfd_0123456789',
       connection: null,
       sync: null,
       comment: null,
       timeout: null,
+      options: null,
     });
   });
 
@@ -74,39 +76,60 @@ steps:
         sync: null,
         comment: null,
         timeout: null,
+        options: null,
       },
     ]);
   });
 
-  it('parses a sync step addressed by its sync_ id', () => {
-    const routine = expectRoutine(parser.parse('name: Sync\nsteps:\n  - action: sync\n    sync: sync_abc123\n'));
+  it('parses a sync step addressed by its syn_ id', () => {
+    const routine = expectRoutine(parser.parse('name: Sync\nsteps:\n  - action: sync\n    sync: syn_0123456789\n'));
     expect(routine.steps[0]).toEqual({
       action: RoutineAction.SYNC,
       name: null,
       folder: null,
       connection: null,
-      sync: 'sync_abc123',
+      sync: 'syn_0123456789',
       comment: null,
       timeout: null,
+      options: null,
     });
+  });
+
+  it('parses a pull step with options.fullPull', () => {
+    const routine = expectRoutine(
+      parser.parse('name: Full\nsteps:\n  - action: pull\n    options:\n      fullPull: true\n'),
+    );
+    expect(routine.steps[0].options).toEqual({ fullPull: true });
+  });
+
+  it("rejects the 'fullPull' option on a non-pull step", () => {
+    const error = expectError(
+      parser.parse('name: Bad\nsteps:\n  - action: publish\n    options:\n      fullPull: true\n'),
+    );
+    expect(error).toMatch(/fullPull.*only valid on pull/i);
+  });
+
+  it('rejects an unknown option key (strict)', () => {
+    const error = expectError(parser.parse('name: Bad\nsteps:\n  - action: pull\n    options:\n      bogus: true\n'));
+    expect(error).toBeTruthy();
   });
 
   it('rejects a sync step with no sync field', () => {
     expect(expectError(parser.parse('name: Bad\nsteps:\n  - action: sync\n'))).toMatch(/sync.*require|require.*sync/i);
   });
 
-  it('rejects a sync id that is not a sync_ id', () => {
+  it('rejects a sync id that is not a syn_ id', () => {
     const error = expectError(parser.parse('name: Bad\nsteps:\n  - action: sync\n    sync: not-a-sync-id\n'));
     expect(error).toMatch(/sync/i);
   });
 
   it("rejects a 'sync' field on a non-sync step", () => {
-    const error = expectError(parser.parse('name: Bad\nsteps:\n  - action: pull\n    sync: sync_abc123\n'));
+    const error = expectError(parser.parse('name: Bad\nsteps:\n  - action: pull\n    sync: syn_0123456789\n'));
     expect(error).toMatch(/sync.*only valid on sync/i);
   });
 
   it('rejects a folder on a sync step', () => {
-    const yaml = 'name: Bad\nsteps:\n  - action: sync\n    sync: sync_abc123\n    folder: /blog\n';
+    const yaml = 'name: Bad\nsteps:\n  - action: sync\n    sync: syn_0123456789\n    folder: /blog\n';
     expect(expectError(parser.parse(yaml))).toMatch(/sync steps must not set 'folder'/i);
   });
 
