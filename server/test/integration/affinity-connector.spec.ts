@@ -39,6 +39,44 @@ function createConnector(): AffinityConnector {
   return new AffinityConnector(API_KEY!);
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** By-id pull → the single person record (or undefined when Affinity reports it absent). */
+async function pullPersonById(
+  connector: AffinityConnector,
+  tableSpec: BaseJsonTableSpec,
+  id: number,
+): Promise<Record<string, unknown> | undefined> {
+  const files: ConnectorFile[] = [];
+  await connector.pullRecordFilesByIds(tableSpec, [String(id)], ({ files: batch }) => {
+    files.push(...batch);
+    return Promise.resolve();
+  });
+  return files[0] as unknown as Record<string, unknown> | undefined;
+}
+
+/**
+ * Poll a fresh by-id read until `predicate` holds. Affinity's GET lags a write
+ * (read-after-write), so an immediate read right after a PUT/DELETE can still
+ * return the stale record — poll until the change lands rather than trusting a
+ * single read. Returns the last record seen (undefined when the person is gone).
+ */
+async function waitForPerson(
+  connector: AffinityConnector,
+  tableSpec: BaseJsonTableSpec,
+  id: number,
+  predicate: (person: Record<string, unknown> | undefined) => boolean,
+  { tries = 8, delayMs = 2000 } = {},
+): Promise<Record<string, unknown> | undefined> {
+  let person: Record<string, unknown> | undefined;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    person = await pullPersonById(connector, tableSpec, id);
+    if (predicate(person)) return person;
+    await sleep(delayMs);
+  }
+  return person;
+}
+
 // Skip the entire suite if no key is configured (so CI stays green).
 const describeIfKey = API_KEY ? describe : describe.skip;
 
@@ -489,33 +527,34 @@ describeIfKey('AffinityConnector — v1 write round-trip (P2)', () => {
       // CREATE
       const [created] = await connector.createRecords(tableSpec, [newPersonFile]);
       createdId = (created as unknown as { id: number }).id;
-      expect(typeof createdId).toBe('number');
+      if (typeof createdId !== 'number') {
+        throw new Error(`createRecords returned no numeric id (got ${String(createdId)})`);
+      }
+      const personId = createdId;
       expect((created as unknown as { firstName: string }).firstName).toBe('ZZZ-Integration');
 
       // UPDATE basics (firstName → v1 PUT)
       const fileWithId = { ...newPersonFile, id: createdId, firstName: 'ZZZ-Integration-Renamed' } as ConnectorFile;
-      const [updated] = await connector.updateRecords(
+      await connector.updateRecords(tableSpec, [fileWithId], [{ firstName: 'ZZZ-Integration-Renamed' }]);
+      // Affinity's GET lags the PUT (read-after-write), so updateRecords' immediate
+      // re-fetch can hand back the stale name. Poll a fresh by-id read until the
+      // rename lands rather than asserting on that one (possibly stale) response.
+      const renamedPerson = await waitForPerson(
+        connector,
         tableSpec,
-        [fileWithId],
-        [{ firstName: 'ZZZ-Integration-Renamed' }],
+        personId,
+        (person) => person?.firstName === 'ZZZ-Integration-Renamed',
       );
-      expect((updated as unknown as { firstName: string }).firstName).toBe('ZZZ-Integration-Renamed');
+      expect(renamedPerson?.firstName).toBe('ZZZ-Integration-Renamed');
 
       // DELETE
       await connector.deleteRecords(tableSpec, [fileWithId]);
       createdId = undefined; // deleted; skip the finally cleanup
 
-      // Verify gone: a by-id pull yields nothing.
-      const pulledAfterDelete: ConnectorFile[] = [];
-      await connector.pullRecordFilesByIds(
-        tableSpec,
-        [String((fileWithId as unknown as { id: number }).id)],
-        ({ files }) => {
-          pulledAfterDelete.push(...files);
-          return Promise.resolve();
-        },
-      );
-      expect(pulledAfterDelete).toHaveLength(0);
+      // Verify gone: poll a by-id read until it yields nothing (Affinity's GET can
+      // briefly still return a just-deleted record — read-after-write lag again).
+      const deletedPerson = await waitForPerson(connector, tableSpec, personId, (person) => person === undefined);
+      expect(deletedPerson).toBeUndefined();
     } finally {
       if (createdId !== undefined) {
         // Best-effort cleanup if an assertion failed before the delete.
