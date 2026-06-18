@@ -224,12 +224,21 @@ For **each entity** (static) or **field-type** (dynamic), cover and mark the cel
 
 | Operation | How / how you CONFIRM |
 |-----------|-----------------------|
-| **Pull** | record in service → `linked pull` → appears locally, verbatim |
+| **Pull** | record in service → `linked pull` → appears locally, verbatim → **validate its schema** (see below) |
 | **Create→Pull** | create in the **service UI** → `linked pull` → appears locally |
 | **Edit→Push** | **manually edit** local JSON → `files accept` → `files upload` → `files publish` → **confirm in the service** |
 | **New→Push** | **manually create** local JSON (temp name, no read-only fields) → accept → upload → publish → service creates it; **remote id flows back into the file** |
 | **Delete→Push** | **delete** local JSON → accept → upload → publish → gone in service |
 | **FK** | [Stage D](#stage-d--foreign-keys--associations) |
+
+**Validate the schema right after the first pull — before testing edits.** A connector whose pulled records don't conform to their own `schema.json` has a **broken schema** (usual cause: it over-declares `required`, or generated a type/format the verbatim API response doesn't match). Records are the source of truth — **fix the schema, never reshape the data**. Check it with the CLI's `enforce_schema` validator (read-only; no DB or server needed):
+
+```bash
+scratchmd validation dry-run --folder "<connection>/<folder>" --file <record>.json \
+  --validation '[{"validator":"enforce_schema"}]'
+```
+
+An empty `[]` means the schema is sound. Any `"level":"error"` entry (e.g. `field 'address' is required but missing or null`, or a type/format mismatch) is a schema bug to fix in `<connector>-json-schema.ts` before Pass 1 continues. (`--folder` auto-loads that folder's `schema.json`; the inline `--validation` makes `enforce_schema` fire even when no `validation.json` is configured. To persist results into the problems table instead, use `scratchmd index refresh-folder --folder "<connection>/<folder>" --validate`.) Real example found this way: Copper's Companies schema declared 15 `required` fields while the verbatim API omits blank ones, so pulled records errored — the schema was over-declaring `required`.
 
 ### The publish flow is THREE steps, in order
 ```

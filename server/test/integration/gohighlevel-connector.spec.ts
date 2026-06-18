@@ -16,11 +16,13 @@
  * for contacts (+ opportunities/objects/customFields read for discovery). See
  * gohighlevel/STATE.md → Test account.
  *
- * NB (from STATE.md): GHL `GET /contacts/{id}` is unreliable — it OMITS companyName/city
- * AND 400s ("not found") for a just-created contact (read-after-write lag). The connector's
- * `pullRecordFilesByIds` uses that get-by-id, so this suite verifies writes through the
- * search-backed full pull (`pullRecordFiles`) with a short poll for eventual consistency.
- * Watch the historical "contact create returns no remote id" flag.
+ * NB (from STATE.md): GHL `GET /contacts/{id}` 400s ("not found") for a JUST-created
+ * contact (read-after-write lag), so the CREATE read-back uses the search-backed full
+ * pull (`pullRecordFiles`) with a poll for eventual consistency. Once the record exists,
+ * get-by-id is the reliable, INSTANT read (no search-index lag), so the UPDATE and DELETE
+ * read-backs use get-by-id (`pullRecordFilesByIds`) — this is what keeps the update
+ * assertion from flaking on slow search reindexing. Watch the historical "contact create
+ * returns no remote id" flag.
  *
  * ⚠️ SCAFFOLD — written from the connector code + STATE.md; not yet live-run (no token
  * at authoring time). Confirm green against a real Location before flipping STATE.md
@@ -44,8 +46,10 @@ const TEST_PREFIX = `scratch-it-${Date.now()}`;
 
 jest.setTimeout(120_000);
 
+// API_TOKEN is defined whenever this runs: the suite is gated on describeIfCreds (API_TOKEN && LOCATION_ID).
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 function createConnector(token = API_TOKEN!): GoHighLevelConnector {
-  return new GoHighLevelConnector(token, LOCATION_ID); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  return new GoHighLevelConnector(token, LOCATION_ID);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,7 +76,7 @@ async function waitForContact(
   connector: GoHighLevelConnector,
   spec: BaseJsonTableSpec,
   predicate: (c: Record<string, unknown>) => boolean,
-  { tries = 8, delayMs = 2000 } = {},
+  { tries = 20, delayMs = 3000 } = {},
 ): Promise<Record<string, unknown> | null> {
   for (let attempt = 0; attempt < tries; attempt++) {
     const match = (await pullAllContacts(connector, spec)).find((c) => predicate(c as Record<string, unknown>));
@@ -82,16 +86,55 @@ async function waitForContact(
   return null;
 }
 
-/** Poll until no contact matches `predicate` (used to confirm a delete landed). */
-async function waitUntilGone(
+/**
+ * Fetch a single contact by id via the connector's get-by-id path
+ * (`pullRecordFilesByIds`). Unlike the search-backed pull, this reads the record
+ * directly, so it reflects a write immediately — no search-index lag. Returns
+ * null when GHL reports the contact gone (get-by-id 404s after a delete).
+ */
+async function getContactById(
   connector: GoHighLevelConnector,
   spec: BaseJsonTableSpec,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  const files: ConnectorFile[] = [];
+  await connector.pullRecordFilesByIds(spec, [id], async ({ files: batch }) => {
+    files.push(...batch);
+    return Promise.resolve();
+  });
+  return (files[0] as Record<string, unknown> | undefined) ?? null;
+}
+
+/**
+ * Poll get-by-id until `predicate` holds — confirms an UPDATE landed. The record
+ * already exists, so get-by-id returns it with the new value on the first try in
+ * practice; the retries only guard a transient hiccup. (Create can't use this:
+ * GHL's get-by-id 400s for a just-created contact, so it uses the search poll.)
+ */
+async function waitByIdUntil(
+  connector: GoHighLevelConnector,
+  spec: BaseJsonTableSpec,
+  id: string,
   predicate: (c: Record<string, unknown>) => boolean,
-  { tries = 8, delayMs = 2000 } = {},
+  { tries = 15, delayMs = 2000 } = {},
+): Promise<Record<string, unknown> | null> {
+  for (let attempt = 0; attempt < tries; attempt++) {
+    const record = await getContactById(connector, spec, id);
+    if (record && predicate(record)) return record;
+    await sleep(delayMs);
+  }
+  return null;
+}
+
+/** Poll get-by-id until the contact is gone (404 → null) — confirms a DELETE. */
+async function waitByIdUntilGone(
+  connector: GoHighLevelConnector,
+  spec: BaseJsonTableSpec,
+  id: string,
+  { tries = 15, delayMs = 2000 } = {},
 ): Promise<boolean> {
   for (let attempt = 0; attempt < tries; attempt++) {
-    const stillThere = (await pullAllContacts(connector, spec)).some((c) => predicate(c as Record<string, unknown>));
-    if (!stillThere) return true;
+    if ((await getContactById(connector, spec, id)) === null) return true;
     await sleep(delayMs);
   }
   return false;
@@ -202,15 +245,13 @@ describeIfCreds('GoHighLevelConnector — live API', () => {
       expect(afterCreate?.firstName).toBe('Scratch');
 
       await connector.updateRecords(contactsSpec, [{ id: contactId } as ConnectorFile], [{ lastName: 'Renamed' }]);
-      const afterUpdate = await waitForContact(
-        connector,
-        contactsSpec,
-        (c) => c.id === contactId && c.lastName === 'Renamed',
-      );
+      // get-by-id reads the record directly (no search-index lag), so the update is
+      // visible immediately — this is the read path that stops the flake.
+      const afterUpdate = await waitByIdUntil(connector, contactsSpec, contactId, (c) => c.lastName === 'Renamed');
       expect(afterUpdate).not.toBeNull();
 
       await connector.deleteRecords(contactsSpec, [{ id: contactId } as ConnectorFile]);
-      const gone = await waitUntilGone(connector, contactsSpec, (c) => c.id === contactId);
+      const gone = await waitByIdUntilGone(connector, contactsSpec, contactId);
       expect(gone).toBe(true);
     });
   });

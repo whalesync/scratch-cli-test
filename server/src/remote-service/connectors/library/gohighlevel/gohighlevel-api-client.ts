@@ -74,6 +74,29 @@ export class GoHighLevelError extends Error {
 }
 
 /**
+ * True when an error from a HighLevel get-by-id means "this record does not
+ * exist". HighLevel signals that two ways: a 404, and — for a record the read
+ * replica hasn't caught up to (just created) or that was just deleted — a 400
+ * whose body reads `"… not found for id:…"`. A get-by-id refetch uses this to
+ * skip a missing record instead of throwing. (Non-429 HTTP errors reach here
+ * wrapped as a {@link GoHighLevelError} by the response interceptor; the raw
+ * AxiosError branch is a defensive fallback.)
+ */
+export function isGoHighLevelNotFoundError(error: unknown): boolean {
+  if (error instanceof GoHighLevelError) {
+    if (error.statusCode === 404) return true;
+    if (error.statusCode !== 400) return false;
+    const data = error.responseData;
+    const message =
+      typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string'
+        ? data.message
+        : error.message;
+    return /not found/i.test(message);
+  }
+  return axios.isAxiosError(error) && error.response?.status === 404;
+}
+
+/**
  * Low-level API client for the HighLevel (GoHighLevel) v2 API.
  *
  * Authenticates with a **Private Integration Token** (PIT) — an API-key-style
@@ -296,14 +319,18 @@ export class GoHighLevelApiClient {
   }
 
   /**
-   * Fetch a single contact by ID. Returns null on 404 (already deleted).
+   * Fetch a single contact by ID. Returns null when HighLevel reports the
+   * contact absent — a 404, or the 400 "Contact not found for id:…" it returns
+   * for a just-created (read replica lag) or just-deleted contact (see
+   * {@link isGoHighLevelNotFoundError}) — so a get-by-id refetch skips it
+   * rather than throwing.
    */
   async getContact(contactId: string): Promise<GoHighLevelContact | null> {
     try {
       const response = await this.get<GoHighLevelContactByIdResponse>(`/contacts/${contactId}`);
       return response.data.contact ?? null;
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
+      if (isGoHighLevelNotFoundError(error)) {
         return null;
       }
       throw error;

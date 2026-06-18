@@ -1,4 +1,4 @@
-import { Type, type TSchema } from '@sinclair/typebox';
+import { Type, type TObject, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { customFieldColumnKey } from './copper-custom-fields';
@@ -297,6 +297,21 @@ const ENTITY_PROPERTY_BUILDERS: Record<CopperEntityType, () => Record<string, TS
 };
 
 /**
+ * Pin a Copper entity schema's `required` array to the record `id` only.
+ *
+ * Copper returns blank fields as `null` (and omits some entirely), so in a
+ * verbatim record every field except the id is genuinely optional. TypeBox's
+ * `Type.Object`, however, lists every non-`Optional` property in `required`,
+ * which makes the CLI's `enforce_schema` validator reject real pulled records
+ * whose blank fields came back null ("field 'X' is required but missing or
+ * null"). `id` is the one field Copper always returns non-null, so it is the
+ * only field we require — the schema must describe the data, not reject it.
+ */
+function pinRequiredToIdOnly(schema: TObject): void {
+  schema.required = ['id'];
+}
+
+/**
  * Build a {@link BaseJsonTableSpec} for a Copper entity. The discovered custom
  * field definitions become one typed sub-property each on the keyed
  * `custom_fields` object (so each renders as its own editable column), an
@@ -322,6 +337,7 @@ export function buildCopperJsonTableSpec(
     // does not turn `custom_fields` into an opaque leaf column.
     [X_SCRATCH_AGENT_INSTRUCTIONS]: buildCustomFieldsAgentInstructions(customFieldDefinitions),
   });
+  pinRequiredToIdOnly(schema);
 
   return {
     id,
@@ -383,6 +399,7 @@ export function buildCopperReferenceTableSpec(id: EntityId, refType: CopperRefer
     $id: `copper/${refType}`,
     title: config.displayName,
   });
+  pinRequiredToIdOnly(schema);
 
   return {
     id,

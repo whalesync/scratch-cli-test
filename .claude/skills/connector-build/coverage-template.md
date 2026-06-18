@@ -28,7 +28,7 @@ and BOTH for MIXED (delete the unused one).
 
 ## Metadata
 - **Type:** STATIC | DYNAMIC | STATIC · custom fields supported (mixed)
-- **Template version:** 2026-06-16 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
+- **Template version:** 2026-06-18 — the `coverage-template.md` version this STATE.md is reconciled to. **On resume, compare against the template's current `Template version`; if this is older, the template has evolved — apply every [Template changelog](#template-changelog) entry newer than this date to bring this doc's structure up to date, then bump this value to the template's current version.**
 - **Last run:** <YYYY-MM-DD> · scratchmd + gstack · Tester: <name>
 
 Legend: ✅ verified · ⬜ not yet · ➖ N/A · ❌ broken.
@@ -40,7 +40,7 @@ At-a-glance progress through the build journey, so anyone can see where this con
 |---|---|:--:|---|
 | 1 | **Account ready** (registered / logged into the service web app) | ⬜ | |
 | 2 | **Connected** (connection created, health OK) | ⬜ | |
-| 3 | **First fetch** (pulled ≥1 record) | ⬜ | |
+| 3 | **First fetch** (pulled ≥1 record, **schema validated** — `scratchmd validation dry-run --folder "<conn>/<folder>" --file <rec>.json --validation '[{"validator":"enforce_schema"}]'` → `[]`) | ⬜ | |
 | 4 | **All entities seeded & fetched** (every main entity has a record, pulled in) | ⬜ | |
 | 5 | **Full write CRUD** (create + edit + delete exercised, push) | ⬜ | |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ⬜ | |
@@ -199,6 +199,7 @@ Direct URLs to common screens so the agent jumps straight there instead of click
 ## Template changelog
 **Very concise — one line per template version.** When you change the template's *structure* (add/rename/remove a section, table column, or required rule), bump `Template version` (Metadata) to today's date and add an entry here describing what changed. Each connector's STATE.md reconciles to the newest version on its next `/connector-build` run (apply every entry newer than the STATE.md's `Template version`). Don't log typo/wording fixes — only structural changes a STATE.md would need to mirror.
 
+- **2026-06-18** — **Milestone 3 (First fetch)** now also requires **schema validation**: right after pulling, run the CLI's `enforce_schema` validator (`scratchmd validation dry-run --folder "<conn>/<folder>" --file <rec>.json --validation '[{"validator":"enforce_schema"}]'` → `[]`) and fix any schema bug (over-declared `required`, type/format mismatch) before continuing. Documented in SKILL.md Stage C (Pull row + a how-to paragraph).
 - **2026-06-16** — Added an **Integration tests** section (placed directly before **Open issues**): the automated live-API spec in `server/test/integration/`, whether it runs in the post-deploy CI job, the credentials/env vars it needs, which of the four capabilities (schemas / pull / publish / error handling) it covers, and its state model (self-provisioning vs pre-seeded-fixture-dependent). Mirrors the new **IT 📄 / IT ✅** columns in `docs/connector-build.md`. Also added **Milestone 10 — Integration test** (required: a live-API spec wired into post-deploy CI) and an **optional-but-recommended seed-script** line to the Integration tests section (idempotent `scripts/bootstrap-<svc>-test-data.ts` to seed a fresh long-lived account).
 - **2026-06-10** — Added Milestone 9 **OAuth** (final / pre-release) and an **OAuth** section (requires / endpoints / app-client location / status / blockers); added an OAuth-app row to UI quick-links. Added a **TODOs — known pending tasks** section directly below Milestones. Added an **OAuth account** field to the Test account section (the account owning/authorizing the OAuth connection lives here, not in the cross-connector summary table). **Endpoints** section now leads with an **"API version & client"** block (API version + is-it-latest + required version header; SDK/hand-rolled client + pinned-vs-newest version; currency verdict). Added a **batch-breaking fields** sub-table to **Bulk operation limits / pagination** (fields that need a dedicated add/remove or sub-resource call and so can't be combined into the normal batched update).
 - **2026-06-09** — Baseline. Sections: Test account · Metadata (+ Template version) · Milestones (**8-row**, incl. "View(s) built") · Objects (3 tables) · Entities×Ops / Field-types×Ops · Endpoints · Bulk limits/pagination · Incremental polling · Foreign keys · Edge cases · Gotchas · Open issues · UI quick-links · Template changelog.

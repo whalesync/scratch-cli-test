@@ -18,6 +18,19 @@ describe('buildCopperJsonTableSpec', () => {
     expect(spec.name).toBe('People');
   });
 
+  // Copper returns blank fields as null, and the CLI's enforce_schema validator
+  // rejects a `required` field whose value is null. TypeBox marks every
+  // non-Optional property required by default, so the only field we may require
+  // is the always-present `id` — otherwise verbatim records fail validation.
+  it.each<CopperEntityType>(['people', 'companies', 'opportunities', 'leads', 'tasks', 'projects'])(
+    'requires only `id` so null-valued blank fields pass enforce_schema (%s)',
+    (entityType) => {
+      const { spec } = specProperties(entityType);
+      const schema = spec.schema as unknown as { required?: string[] };
+      expect(schema.required).toEqual(['id']);
+    },
+  );
+
   it('marks system fields read-only', () => {
     const { properties } = specProperties('people');
     for (const field of ['id', 'date_created', 'date_modified', 'date_last_contacted', 'interaction_count']) {

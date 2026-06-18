@@ -383,7 +383,7 @@ describe("Affinity tenant tables (pull)", () => {
 
     const topLevel = tables.filter((t) => !t.parentPath);
     const topLevelNames = topLevel.map((t) => t.displayName).sort();
-    expect(topLevelNames).toEqual(["Companies", "Entity Files", "Notes", "Opportunities", "People"]);
+    expect(topLevelNames).toEqual(["Companies", "Entity Files", "Notes", "Opportunities", "People", "Users"]);
 
     // Each tenant table uses its sentinel string as the remote id.
     const peopleTable = tables.find((t) => t.displayName === "People");
@@ -438,7 +438,7 @@ describe("Affinity tenant tables (pull)", () => {
       .filter((t) => !t.parentPath)
       .map((t) => t.displayName)
       .sort();
-    expect(topLevel).toEqual(["Companies", "Entity Files", "Notes", "Opportunities", "People"]);
+    expect(topLevel).toEqual(["Companies", "Entity Files", "Notes", "Opportunities", "People", "Users"]);
 
     // The user list is grouped under "Lists/" (single-level, not per-entity-type).
     const userList = tables.find((t) => t.displayName === "User Created List");
