@@ -21,14 +21,32 @@ locals {
   # Country codes in flow logs are ISO 3166-1 alpha-3 lowercase (e.g. "usa", "gbr").
   # "%2F" is the literal "/" in the log name.
   flow_log_base_filter = "resource.type=\"gce_subnetwork\" AND logName=\"projects/${var.gcp_project_id}/logs/compute.googleapis.com%2Fvpc_flows\""
+  # RFC 1918 private address space. Any flow whose destination is one of these is staying
+  # inside private network space (our VPC subnets, or the peered ranges that back Google
+  # managed services like Memorystore Redis and Cloud SQL reached over Private Services
+  # Access) — it is not egress to the public internet, so it must never trip the external
+  # egress metrics. Cloud Run reaching internal services (e.g. api-service -> Memorystore
+  # Redis on 6379 at a 10.x address via Direct VPC egress) lands here.
+  # Subnet containment must use ip_in_net(field, subnet) — Cloud Logging's "=" operator
+  # does a literal STRING compare, so dest_ip="10.0.0.0/8" never matches "10.167.0.3"
+  # (verified against prod flow logs). ip_in_net is a per-subnet predicate, so we OR one
+  # call per range and negate the group.
+  rfc1918_private_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  rfc1918_private_dest_clause = join(" OR ", [
+    for cidr in local.rfc1918_private_cidrs : "ip_in_net(jsonPayload.connection.dest_ip, \"${cidr}\")"
+  ])
   # Egress leaving the VPC to the public internet: this side is the source, the far side
   # has no internal GCE instance metadata (dest_instance is only set when the destination
-  # is a VM in our VPC), and the destination is not a Google managed service. The
-  # dest_google_service exclusion drops legitimate Private Services Access / Google API
-  # traffic (e.g. cloudsql-proxy -> sqladmin.googleapis.com on 5432) that otherwise looks
-  # like external egress. Field paths must be unquoted — the quoted form
-  # ("jsonPayload.dest_instance":*) is rejected by Cloud Logging's metric validation.
-  flow_log_external_egress = "${local.flow_log_base_filter} AND jsonPayload.reporter=\"SRC\" AND NOT jsonPayload.dest_instance:* AND NOT jsonPayload.dest_google_service:*"
+  # is a VM in our VPC), the destination is not a Google managed service, and the
+  # destination IP is a public (non-RFC-1918) address. The dest_google_service exclusion
+  # drops legitimate Private Services Access / Google API traffic (e.g. cloudsql-proxy ->
+  # sqladmin.googleapis.com on 5432); the RFC 1918 exclusion drops traffic that stays
+  # inside private network space (VPC subnets + peered Google-managed-service ranges),
+  # which dest_google_service / dest_instance do not always tag (e.g. Cloud Run ->
+  # Memorystore Redis on 6379 at a 10.x address via Direct VPC egress). Field paths must
+  # be unquoted — the quoted form ("jsonPayload.dest_instance":*) is rejected by Cloud
+  # Logging's metric validation.
+  flow_log_external_egress = "${local.flow_log_base_filter} AND jsonPayload.reporter=\"SRC\" AND NOT jsonPayload.dest_instance:* AND NOT jsonPayload.dest_google_service:* AND NOT (${local.rfc1918_private_dest_clause})"
   # Admin / DB / cache ports that should never be the target of egress to the internet.
   # This is intended to flag possible data exfiltration.
   # It should NOT flag any legitimate connection that Scratch makes for syncing data, e.g. HTTPS, Postgres, etc.
