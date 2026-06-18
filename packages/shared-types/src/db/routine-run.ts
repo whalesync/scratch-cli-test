@@ -26,6 +26,10 @@ export interface RoutineRunStep {
   action: string;
   folder: string | null;
   connection: string | null;
+  /** For `sync` steps: the SyncId that ran. Null for non-sync actions. */
+  sync: string | null;
+  /** The step's timeout in seconds (snapshot from `timeout:`). Null = the per-action default. */
+  timeoutSeconds: number | null;
   status: RoutineRunStepStatus;
   startedAt: string | null;
   finishedAt: string | null;

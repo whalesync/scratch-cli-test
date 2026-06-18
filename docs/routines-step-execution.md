@@ -8,6 +8,33 @@ This document evaluates the step-execution mechanism proposed in the [routines d
 
 The short version: the polling loop is the one part of the design with no durable owner. Every other long-running coordinator in this codebase is either a BullMQ job on the worker role (crash-recovered by the stalled mechanism) or a short, atomically-claimed `@Cron` evaluator. The executor loop is neither — it is in-memory state on whichever instance happened to handle the trigger, and nothing reaps it if that instance goes away. That is the source of the hung-run risk.
 
+## Implementation status (DEV-10436)
+
+> **v1 (Option A) is implemented.** The proposed in-memory 5 s poll loop was never built; the durable, event-driven orchestrator below shipped instead. v2 (Option C — a BullMQ flow) remains future work.
+
+Shipped in two slices:
+
+- **Slice 1 — self-planning publish job (MR !2759, merged).** `JobType.Publish` self-creates its `PublishPlan` when enqueued without a `pipelineId` and writes the resolved `pipelineId` + `failedCount`/`failedOperations` onto its terminal progress. Enqueue via `BullEnqueuerService.enqueueSelfPlanningPublishJob(...)`; the existing web/desktop publish path is untouched.
+- **Slice 2 — the Option A execution engine (this MR).** One `DbJob` per step, driven by a durable orchestrator:
+  - `RoutineExecutorService` (`server/src/routine/routine-executor.service.ts`) — `triggerRun` (snapshots the YAML, creates `RoutineRun` + `RoutineRunStep` rows, fires the loop fire-and-forget), `cancelRun`, and `execute` (atomic run claim → per step: enqueue the action → `await job.waitUntilFinished(getQueueEvents(), perStepTimeoutMs)` → classify outcome → advance `currentStepIndex`; `markRunCompleted` only after the last step).
+  - `RoutineRunReaperService` (`server/src/cron/routine-run-reaper.service.ts`, `@Cron` every 5 min) — the crash backstop.
+  - `QueueEvents` added to `BullEnqueuerService` on its own Redis connection (`getQueueEvents()`).
+  - Scheduler `ROUTINE` dispatch (`scheduler.service.ts` → `evaluateRoutineSchedule`): `atomicClaim` then `RoutineExecutorService.triggerRun(..., 'schedule')`.
+  - REST `POST …/routines/trigger` + `POST …/routine-runs/:runId/cancel`, client API methods, and the dev-tools UI (Run button, run-status, run-history panel with cancel).
+  - Migration `20260617120000_routine_execution_engine`: `RoutineRunStep.sync`, `RoutineRunStep.timeoutSeconds`, and a partial unique index on `RoutineRun (workbookId, routineFilePath) WHERE status IN ('pending','running')`.
+
+**How the build refined this doc's plan:**
+
+- **No new lease column.** The run claim reuses `status` + `updatedAt` (a guarded `updateMany`), not a `routineRunDriverInstanceId`. The reaper's liveness signal is _structural_, not a heartbeat: it resumes a `running` run only when the current step's `DbJob` is already terminal (the driver is blocked in `waitUntilFinished` and cannot heartbeat).
+- **A transactional per-step claim closes the double-drive window.** Before enqueuing a step, `runStep` claims it in a transaction gated on the run still being `running` AND on `currentStepIndex` — so even two concurrent drivers enqueue each step at most once (the loser yields). This is what makes Option A's hand-built durability actually safe.
+- **Per-step timeout defaults to the per-action max** (`ROUTINE_STEP_TIMEOUT_MAX_SECONDS`), not a flat 30 min, enforced as the `waitUntilFinished` ttl; on timeout the step's job is always `JobService.cancelJob`-ed before the run is failed.
+- **`failedCount` → complete-with-warning, not fail.** A publish whose connector rejected some records completes the step (the warning is recorded on `RoutineRunStep.error`, `pipelineId` is captured) and the run continues — the connector accepted the rest. (This doc framed it only as "inspect `failedCount`"; the product decision was to warn, not hard-fail.)
+- **`sync` steps are addressed by a new `sync:` (`sync_…` id) step field** — folder→sync is 1:N, so a folder cannot identify a single sync.
+- **One-active-run-per-routine is the partial unique index above**, surfaced as Prisma `P2002` → `409` on a concurrent trigger.
+- **No circular NestJS module dependency.** Trigger/execute live in a standalone `RoutineExecutionModule` that does NOT import `ScheduleModule`, so `RoutineModule`, `ScheduleModule`, and `CronModule` all depend on it acyclically (rather than a `forwardRef`).
+
+The rest of this document is the original evaluation that led here; it is unchanged below.
+
 ## Design requirements
 
 Routines are a YAML-defined pipeline system in the spirit of GitLab CI / GitHub Actions: a routine is a graph of discrete actions, and each action is a first-class unit of work. Two requirements follow from that framing and constrain every option below:
@@ -146,8 +173,8 @@ Reasoning, decisively:
 
 **Phased migration:**
 
-- **v1 — Option A.** Lowest risk, smallest delta from the proposed design, and it reuses the existing per-action enqueuers verbatim. Concretely: add the **self-planning publish job**; replace the 5 s poll with `QueueEvents` + `job.waitUntilFinished(queueEvents, perActionTimeoutMs)`; on timeout, **always** `JobService.cancelJob` the step before failing the run (so no publish keeps shipping after the run is marked failed); inspect `publicProgress.failedCount` for publish steps, not just `DbJob.status`; and add `RoutineRunReaperService` (a `@Cron`, in the spirit of `StaleJobReaperService`) as the crash backstop. This ships the per-step-`DbJob` model with durable-enough recovery.
-- **v2 — Option C.** Move the chaining into a flow so advancement is durable in Redis and the reaper stops being load-bearing. The self-planning publish job and the per-step `DbJob` rows carry over unchanged; what changes is the enqueue path (flow with pre-created `DbJob`s) and dropping the orchestrator loop in favor of the step-status listener + finalizer root.
+- **v1 — Option A. ✅ Shipped (DEV-10436, see [Implementation status](#implementation-status-dev-10436)).** Lowest risk, smallest delta from the proposed design, and it reuses the existing per-action enqueuers verbatim. Concretely: add the **self-planning publish job**; replace the 5 s poll with `QueueEvents` + `job.waitUntilFinished(queueEvents, perActionTimeoutMs)`; on timeout, **always** `JobService.cancelJob` the step before failing the run (so no publish keeps shipping after the run is marked failed); inspect `publicProgress.failedCount` for publish steps, not just `DbJob.status`; and add `RoutineRunReaperService` (a `@Cron`, in the spirit of `StaleJobReaperService`) as the crash backstop. This ships the per-step-`DbJob` model with durable-enough recovery.
+- **v2 — Option C. ⬜ Future work.** Move the chaining into a flow so advancement is durable in Redis and the reaper stops being load-bearing. The self-planning publish job and the per-step `DbJob` rows carry over unchanged; what changes is the enqueue path (flow with pre-created `DbJob`s) and dropping the orchestrator loop in favor of the step-status listener + finalizer root.
 
 Pick A and stop there only if near-term routines need dynamic/conditional step logic (`rules:`-style) that a statically-enqueued flow cannot express. Otherwise converge on C.
 

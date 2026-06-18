@@ -7,8 +7,7 @@ import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { ScheduleModule } from 'src/schedule/schedule.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
-import { RoutineParserService } from './routine-parser.service';
-import { RoutineReferenceValidatorService } from './routine-reference-validator.service';
+import { RoutineExecutionModule } from './routine-execution.module';
 import { RoutineController } from './routine.controller';
 import { RoutineService } from './routine.service';
 
@@ -16,6 +15,8 @@ import { RoutineService } from './routine.service';
   // MetricsModule + ScratchConfigModule are required so the controller-level guards
   // (ApiRateLimitGuard → CustomMetricsService + ScratchConfigService) resolve in this
   // module's context — mirrors ScheduleModule, whose controller uses the same guards.
+  // RoutineExecutionModule provides the parser/validator (used by RoutineService) and the
+  // RoutineExecutorService (used by the controller's trigger/cancel endpoints).
   imports: [
     DbModule,
     MetricsModule,
@@ -25,9 +26,10 @@ import { RoutineService } from './routine.service';
     ScratchGitModule,
     AuditLogModule,
     RateLimiterModule,
+    RoutineExecutionModule,
   ],
   controllers: [RoutineController],
-  providers: [RoutineService, RoutineParserService, RoutineReferenceValidatorService],
+  providers: [RoutineService],
   exports: [RoutineService],
 })
 export class RoutineModule {}

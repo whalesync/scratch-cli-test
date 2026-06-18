@@ -4,6 +4,7 @@ import { Schedule } from '@prisma/client';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { RoutineExecutorService } from 'src/routine/routine-executor.service';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { ScheduleService } from '../schedule.service';
@@ -50,6 +51,7 @@ describe('SchedulerService', () => {
   let dbService: jest.Mocked<DbService>;
   let dataFolderService: jest.Mocked<DataFolderService>;
   let publishPlanBuildService: jest.Mocked<PublishPlanBuildService>;
+  let routineExecutorService: jest.Mocked<RoutineExecutorService>;
 
   beforeEach(() => {
     // Silence logger during tests
@@ -93,12 +95,17 @@ describe('SchedulerService', () => {
       setActiveJob: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<PublishPlanBuildService>;
 
+    routineExecutorService = {
+      triggerRun: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<RoutineExecutorService>;
+
     service = new SchedulerService(
       scheduleService,
       bullEnqueuerService,
       dbService,
       dataFolderService,
       publishPlanBuildService,
+      routineExecutorService,
     );
   });
 
@@ -144,20 +151,31 @@ describe('SchedulerService', () => {
     expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
   });
 
-  it('skips ROUTINE schedules at the top of the loop without claiming or enqueuing', async () => {
+  it('claims a due ROUTINE schedule and triggers a schedule-driven run (no per-job checks)', async () => {
     const schedule = makeSchedule({ action: 'ROUTINE', entityId: 'routines/daily.yaml' });
     scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+    scheduleService.atomicClaim.mockResolvedValue(schedule);
 
     await service.evaluateSchedules();
 
-    // The guard runs before every downstream step (which would throw or misbehave on ROUTINE).
-    expect(dbService.client.workbook.findUnique).not.toHaveBeenCalled();
+    // ROUTINE claims first (advancing nextRunAt), then triggers the run...
+    expect(scheduleService.atomicClaim).toHaveBeenCalledWith(SCHEDULE_ID, expect.any(Date));
+    expect(routineExecutorService.triggerRun).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/daily.yaml', 'schedule');
+    // ...and skips the per-job paths (which assume a single JobType and would misbehave on ROUTINE).
     expect(dbService.client.dbJob.count).not.toHaveBeenCalled();
-    expect(scheduleService.atomicClaim).not.toHaveBeenCalled();
     expect(scheduleService.entityExists).not.toHaveBeenCalled();
-    expect(scheduleService.disableSchedule).not.toHaveBeenCalled();
     expect(bullEnqueuerService.enqueueSyncDataFoldersJob).not.toHaveBeenCalled();
     expect(bullEnqueuerService.enqueuePullLinkedFolderFilesJob).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when a ROUTINE trigger fails (e.g. already running) — logs and moves on', async () => {
+    const schedule = makeSchedule({ action: 'ROUTINE', entityId: 'routines/daily.yaml' });
+    scheduleService.findDueSchedules.mockResolvedValue([schedule]);
+    scheduleService.atomicClaim.mockResolvedValue(schedule);
+    routineExecutorService.triggerRun.mockRejectedValue(new Error('already running'));
+
+    await expect(service.evaluateSchedules()).resolves.not.toThrow();
+    expect(routineExecutorService.triggerRun).toHaveBeenCalled();
   });
 
   it('skips workbook when a created job exists (busy check)', async () => {

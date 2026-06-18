@@ -21,6 +21,8 @@ export enum PostHogEvents {
   ROUTINE_CREATED = 'routine_created',
   ROUTINE_UPDATED = 'routine_updated',
   ROUTINE_DELETED = 'routine_deleted',
+  ROUTINE_TRIGGERED = 'routine_triggered',
+  ROUTINE_RUN_CANCELLED = 'routine_run_cancelled',
 }
 
 export function captureEvent(eventName: PostHogEvents, additionalProperties: Record<string, unknown> = {}): void {
@@ -104,6 +106,14 @@ export function trackRoutineUpdated(workbookId: string, path: string): void {
 
 export function trackRoutineDeleted(workbookId: string, path: string): void {
   captureEvent(PostHogEvents.ROUTINE_DELETED, { workbookId, path });
+}
+
+export function trackRoutineTriggered(workbookId: string, path: string): void {
+  captureEvent(PostHogEvents.ROUTINE_TRIGGERED, { workbookId, path });
+}
+
+export function trackRoutineRunCancelled(workbookId: string, runId: string): void {
+  captureEvent(PostHogEvents.ROUTINE_RUN_CANCELLED, { workbookId, runId });
 }
 
 export function trackPullFiles(workbookId: string, mode?: 'full' | 'incremental'): void {

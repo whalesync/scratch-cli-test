@@ -1,12 +1,22 @@
 import { RoutineAction, RoutineStep, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { RoutineReferenceValidatorService, validateRoutineReferences } from '../routine-reference-validator.service';
-import { ParsedRoutine, RoutineValidationContext, ValidationConnection, ValidationFolder } from '../routine.types';
+import {
+  ParsedRoutine,
+  RoutineValidationContext,
+  ValidationConnection,
+  ValidationFolder,
+  ValidationSync,
+} from '../routine.types';
 
 const WORKBOOK_ID = 'wkb_test1234' as WorkbookId;
 
-/** Builds a validation context from already-normalized (no-leading-slash) folders + connections. */
-function buildContext(folders: ValidationFolder[], connections: ValidationConnection[]): RoutineValidationContext {
+/** Builds a validation context from already-normalized (no-leading-slash) folders + connections + syncs. */
+function buildContext(
+  folders: ValidationFolder[],
+  connections: ValidationConnection[],
+  syncs: ValidationSync[] = [],
+): RoutineValidationContext {
   const foldersByPath = new Map<string, ValidationFolder[]>();
   const foldersById = new Map<string, ValidationFolder>();
   for (const folder of folders) {
@@ -24,7 +34,11 @@ function buildContext(folders: ValidationFolder[], connections: ValidationConnec
     connectionsById.set(connection.id, connection);
     connectionsByName.set(connection.displayName.toLowerCase(), connection);
   }
-  return { foldersByPath, foldersById, connectionsByName, connectionsById };
+  const syncsById = new Map<string, ValidationSync>();
+  for (const sync of syncs) {
+    syncsById.set(sync.id, sync);
+  }
+  return { foldersByPath, foldersById, connectionsByName, connectionsById, syncsById };
 }
 
 /** Builds a ParsedRoutine from a list of partial steps (action defaults to pull). */
@@ -38,6 +52,7 @@ function routineWithSteps(steps: Partial<RoutineStep>[]): ParsedRoutine {
       name: step.name ?? null,
       folder: step.folder ?? null,
       connection: step.connection ?? null,
+      sync: step.sync ?? null,
       comment: step.comment ?? null,
       timeout: step.timeout ?? null,
     })),
@@ -226,6 +241,22 @@ describe('validateRoutineReferences', () => {
       'steps.2.folder: folder "dfd_x" not found in this workbook',
     ]);
   });
+
+  it('resolves a sync step by its sync_ id', () => {
+    const context = buildContext([], [], [{ id: 'sync_1', displayName: 'Blog → Webflow' }]);
+    const routine = routineWithSteps([{ action: RoutineAction.SYNC, sync: 'sync_1' }]);
+
+    expect(validateRoutineReferences(routine, context)).toEqual([]);
+  });
+
+  it('flags a sync step whose sync_ id does not exist', () => {
+    const context = buildContext([], [], [{ id: 'sync_1', displayName: 'Blog → Webflow' }]);
+    const routine = routineWithSteps([{ action: RoutineAction.SYNC, sync: 'sync_missing' }]);
+
+    expect(validateRoutineReferences(routine, context)).toEqual([
+      'steps.0.sync: sync "sync_missing" not found in this workbook',
+    ]);
+  });
 });
 
 describe('RoutineReferenceValidatorService.loadContext', () => {
@@ -235,10 +266,12 @@ describe('RoutineReferenceValidatorService.loadContext', () => {
       { id: 'dfd_2', path: null, connectorAccountId: null },
     ]);
     const connectorAccountFindMany = jest.fn().mockResolvedValue([{ id: 'coa_1', displayName: 'Airtable Prod' }]);
+    const syncFindMany = jest.fn().mockResolvedValue([{ id: 'sync_1', displayName: 'Blog → Webflow' }]);
     const db = {
       client: {
         dataFolder: { findMany: dataFolderFindMany },
         connectorAccount: { findMany: connectorAccountFindMany },
+        sync: { findMany: syncFindMany },
       },
     } as unknown as DbService;
     const service = new RoutineReferenceValidatorService(db);
@@ -253,6 +286,11 @@ describe('RoutineReferenceValidatorService.loadContext', () => {
       where: { workbookId: WORKBOOK_ID },
       select: { id: true, displayName: true },
     });
+    expect(syncFindMany).toHaveBeenCalledWith({
+      where: { workbookId: WORKBOOK_ID },
+      select: { id: true, displayName: true },
+    });
+    expect(context.syncsById.get('sync_1')).toEqual({ id: 'sync_1', displayName: 'Blog → Webflow' });
 
     // Path key is normalized (leading slash dropped); a null-path folder is excluded from foldersByPath...
     expect(context.foldersByPath.get('Blog/Posts')).toEqual([

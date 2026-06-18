@@ -1,15 +1,14 @@
 import type { Routine, RoutineFileContent } from '../../db/routine';
+import type { RoutineRun } from '../../db/routine-run';
 import type { CreateRoutineFileDto } from '../../dto/routine/create-routine-file.dto';
 import type { UpdateRoutineFileDto } from '../../dto/routine/update-routine-file.dto';
 import type { Http } from '../http';
 
 /**
  * Routine operations for a workbook. Routines are YAML files in the workbook config repo under
- * `routines/`; `list`/`reload` return the parsed+joined view, while the `*File` methods read and
- * write the raw YAML text the editor edits. Reached as `client.routine.*`. CLIENT-ONLY.
- *
- * NOTE: triggering a run and reading run history are intentionally absent — the routine executor
- * lands on a separate branch. Add `trigger`/`listRuns`/`getRun` here once it does.
+ * `routines/`; `list`/`reload` return the parsed+joined view, the `*File` methods read and write
+ * the raw YAML text the editor edits, and `trigger`/`cancelRun`/`listRuns`/`getRun` drive and
+ * observe routine runs. Reached as `client.routine.*`. CLIENT-ONLY.
  */
 export function createRoutineApi(http: Http) {
   return {
@@ -60,6 +59,41 @@ export function createRoutineApi(http: Http) {
         params: { path },
         fallbackMessage: 'Failed to delete routine',
       });
+    },
+
+    /** POST /workbooks/:id/routines/trigger — start a manual run of one routine (409 if already running). */
+    trigger: async (workbookId: string, filePath: string): Promise<RoutineRun> => {
+      const res = await http.post<RoutineRun>(
+        `/workbooks/${workbookId}/routines/trigger`,
+        { filePath },
+        { fallbackMessage: 'Failed to trigger routine' },
+      );
+      return res.data;
+    },
+
+    /** GET /workbooks/:id/routine-runs[?routineFilePath=…] — list run history, newest first. */
+    listRuns: async (workbookId: string, routineFilePath?: string): Promise<RoutineRun[]> => {
+      const res = await http.get<RoutineRun[]>(`/workbooks/${workbookId}/routine-runs`, {
+        params: routineFilePath ? { routineFilePath } : undefined,
+        fallbackMessage: 'Failed to list routine runs',
+      });
+      return res.data;
+    },
+
+    /** GET /workbooks/:id/routine-runs/:runId — fetch a single run with its per-step detail. */
+    getRun: async (workbookId: string, runId: string): Promise<RoutineRun> => {
+      const res = await http.get<RoutineRun>(`/workbooks/${workbookId}/routine-runs/${runId}`, {
+        fallbackMessage: 'Failed to read routine run',
+      });
+      return res.data;
+    },
+
+    /** POST /workbooks/:id/routine-runs/:runId/cancel — cancel a running routine run. */
+    cancelRun: async (workbookId: string, runId: string): Promise<RoutineRun> => {
+      const res = await http.post<RoutineRun>(`/workbooks/${workbookId}/routine-runs/${runId}/cancel`, undefined, {
+        fallbackMessage: 'Failed to cancel routine run',
+      });
+      return res.data;
     },
   };
 }

@@ -1,7 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
-import { ParsedRoutine, RoutineValidationContext, ValidationConnection, ValidationFolder } from './routine.types';
+import {
+  ParsedRoutine,
+  RoutineValidationContext,
+  ValidationConnection,
+  ValidationFolder,
+  ValidationSync,
+} from './routine.types';
 
 /**
  * Validates that the data a routine references — each step's `folder` and `connection` —
@@ -19,14 +25,19 @@ import { ParsedRoutine, RoutineValidationContext, ValidationConnection, Validati
 export class RoutineReferenceValidatorService {
   constructor(private readonly db: DbService) {}
 
-  /** Loads every data folder + connection for a workbook ONCE into lookup maps (two queries). */
+  /** Loads every data folder + connection + sync for a workbook ONCE into lookup maps (three queries). */
   async loadContext(workbookId: WorkbookId): Promise<RoutineValidationContext> {
-    const [dataFolders, connectorAccounts] = await Promise.all([
+    const [dataFolders, connectorAccounts, syncs] = await Promise.all([
       this.db.client.dataFolder.findMany({
         where: { workbookId },
         select: { id: true, path: true, connectorAccountId: true },
       }),
       this.db.client.connectorAccount.findMany({
+        where: { workbookId },
+        select: { id: true, displayName: true },
+      }),
+      // eslint-disable-next-line no-restricted-syntax -- existence-only lookup (id + displayName); does not read sync mappings, so SyncService is unnecessary
+      this.db.client.sync.findMany({
         where: { workbookId },
         select: { id: true, displayName: true },
       }),
@@ -63,7 +74,12 @@ export class RoutineReferenceValidatorService {
       connectionsByName.set(account.displayName.toLowerCase(), connection);
     }
 
-    return { foldersByPath, foldersById, connectionsByName, connectionsById };
+    const syncsById = new Map<string, ValidationSync>();
+    for (const sync of syncs) {
+      syncsById.set(sync.id, { id: sync.id, displayName: sync.displayName });
+    }
+
+    return { foldersByPath, foldersById, connectionsByName, connectionsById, syncsById };
   }
 
   /** Convenience: load the workbook's validation context, then validate a single routine. */
@@ -91,11 +107,20 @@ export function validateRoutineReferences(routine: ParsedRoutine, context: Routi
   routine.steps.forEach((step, stepIndex) => {
     const stepPrefix = `steps.${stepIndex}`;
 
+    // A sync step is addressed solely by its SyncId — resolve that and skip folder/connection
+    // (the structural validator already forbids folder/connection on sync steps).
+    if (step.sync !== null) {
+      if (!resolveSyncInContext(step.sync, context)) {
+        errors.push(`${stepPrefix}.sync: sync "${step.sync}" not found in this workbook`);
+      }
+      return;
+    }
+
     // A null `connection` means "all connections" and a null `folder` means "all folders" — both
     // are valid wildcards, so there is nothing to resolve.
     let resolvedConnection: ValidationConnection | null = null;
     if (step.connection !== null) {
-      resolvedConnection = resolveConnection(step.connection, context);
+      resolvedConnection = resolveConnectionInContext(step.connection, context);
       if (!resolvedConnection) {
         errors.push(`${stepPrefix}.connection: connection "${step.connection}" not found in this workbook`);
       }
@@ -112,12 +137,53 @@ export function validateRoutineReferences(routine: ParsedRoutine, context: Routi
   return errors;
 }
 
-/** Resolves a step's `connection` (a "coa_..." id or a connection name) against the context. */
-function resolveConnection(connection: string, context: RoutineValidationContext): ValidationConnection | null {
+/**
+ * Resolves a step's `connection` (a "coa_..." id or a connection name) against the context.
+ * Exported so the executor resolves a step's target the same way the validator checks it.
+ */
+export function resolveConnectionInContext(
+  connection: string,
+  context: RoutineValidationContext,
+): ValidationConnection | null {
   if (connection.startsWith('coa_')) {
     return context.connectionsById.get(connection) ?? null;
   }
   return context.connectionsByName.get(connection.toLowerCase()) ?? null;
+}
+
+/** Resolves a step's `sync` (a "sync_..." id) against the context. */
+export function resolveSyncInContext(syncId: string, context: RoutineValidationContext): ValidationSync | null {
+  return context.syncsById.get(syncId) ?? null;
+}
+
+/**
+ * Resolves a step's `folder` to the matching folders, scoped to a resolved connection when given.
+ * A `dfd_` id resolves to that single folder; a POSIX path resolves to every folder at that path
+ * (possibly several across connections). Returns [] when nothing matches. The executor uses this to
+ * turn a step's `folder`/`connection` into concrete DataFolders; the validator's `validateStepFolder`
+ * remains the authority for surfacing *why* a folder doesn't resolve.
+ */
+export function resolveFoldersInContext(
+  folder: string,
+  resolvedConnection: ValidationConnection | null,
+  context: RoutineValidationContext,
+): ValidationFolder[] {
+  if (folder.startsWith('dfd_')) {
+    const folderById = context.foldersById.get(folder);
+    if (!folderById) {
+      return [];
+    }
+    if (resolvedConnection && folderById.connectorAccountId !== resolvedConnection.id) {
+      return [];
+    }
+    return [folderById];
+  }
+
+  const foldersAtPath = context.foldersByPath.get(normalizeFolderPath(folder)) ?? [];
+  if (!resolvedConnection) {
+    return foldersAtPath;
+  }
+  return foldersAtPath.filter((candidate) => candidate.connectorAccountId === resolvedConnection.id);
 }
 
 /**

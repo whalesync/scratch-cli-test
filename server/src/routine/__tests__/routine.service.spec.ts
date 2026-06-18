@@ -18,13 +18,14 @@ function fileRef(path: string): RepoFileRef {
   return { name, path, type: 'file' };
 }
 
-/** An empty validation context — no folders or connections resolve, so any reference is "not found". */
+/** An empty validation context — no folders, connections, or syncs resolve, so any reference is "not found". */
 function emptyValidationContext(): RoutineValidationContext {
   return {
     foldersByPath: new Map(),
     foldersById: new Map(),
     connectionsByName: new Map(),
     connectionsById: new Map(),
+    syncsById: new Map(),
   };
 }
 
@@ -126,7 +127,7 @@ describe('RoutineService', () => {
 
     it('deletes the schedule for a routine without a schedule field', async () => {
       listRepoFiles.mockResolvedValue([fileRef('routines/manual.yaml')]);
-      getRepoFile.mockResolvedValue({ content: 'name: Manual\nsteps:\n  - action: sync\n' });
+      getRepoFile.mockResolvedValue({ content: 'name: Manual\nsteps:\n  - action: pull\n' });
 
       await service.reloadRoutines(WORKBOOK_ID, ACTOR);
 
@@ -346,14 +347,14 @@ describe('RoutineService', () => {
 
       await service.updateRoutineFile(
         WORKBOOK_ID,
-        { path: 'routines/a.yaml', content: 'name: Manual\nsteps:\n  - action: sync\n' },
+        { path: 'routines/a.yaml', content: 'name: Manual\nsteps:\n  - action: pull\n' },
         ACTOR,
       );
 
       expect(commitFilesToBranch).toHaveBeenCalledWith(
         expect.any(String),
         'main',
-        [{ path: 'routines/a.yaml', content: 'name: Manual\nsteps:\n  - action: sync\n' }],
+        [{ path: 'routines/a.yaml', content: 'name: Manual\nsteps:\n  - action: pull\n' }],
         expect.stringContaining('Update routine routines/a.yaml'),
       );
       expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/a.yaml');

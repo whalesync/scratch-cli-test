@@ -5,6 +5,7 @@ import { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
+import { RoutineExecutorService } from 'src/routine/routine-executor.service';
 import { Actor } from 'src/users/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
@@ -25,6 +26,7 @@ export class SchedulerService {
     private readonly db: DbService,
     private readonly dataFolderService: DataFolderService,
     private readonly publishPlanBuildService: PublishPlanBuildService,
+    private readonly routineExecutorService: RoutineExecutorService,
   ) {
     WSLogger.info({ source: 'SchedulerService', message: 'Schedule evaluator initializing...' });
   }
@@ -45,26 +47,27 @@ export class SchedulerService {
 
     for (const schedule of dueSchedules) {
       try {
-        // ROUTINE schedules have no executor yet (added in a later phase). Skip them at the
-        // top of the loop — BEFORE atomicClaim/entityExists/enqueueJob — because every one of
-        // those breaks on ROUTINE: wasRecentlyTriggered → actionToJobType throws, enqueueJob's
-        // switch has no ROUTINE case, and skipping before atomicClaim preserves `nextRunAt` so
-        // the routine fires on its next natural tick once the executor exists.
-        if (schedule.action === 'ROUTINE') {
-          WSLogger.debug({
-            source: 'SchedulerService.evaluateSchedules',
-            message: `Skipping ROUTINE schedule ${schedule.id} (routine execution not yet implemented)`,
-          });
-          skipped++;
-          continue;
-        }
-
         // Skip schedules whose workbook is flagged for deletion. The hard-delete worker
         // will tear the schedule rows down via Workbook cascade; suppressing fires here
         // avoids enqueueing jobs that the BullEnqueuer guard would reject anyway.
         const pending = await this.isWorkbookPendingDelete(schedule.workbookId);
         if (pending) {
           skipped++;
+          continue;
+        }
+
+        // ROUTINE schedules don't enqueue a single job — they trigger a multi-step run. They take
+        // their own path (claim + triggerRun) and skip the per-job checks below, which all assume a
+        // single JobType: wasRecentlyTriggered → actionToJobType throws, entityId is a file path (not
+        // a DB entity for entityExists), "one run at a time" is per-routine (triggerRun's unique
+        // index), and isWorkbookBusy would wrongly suppress a routine for an unrelated job.
+        if (schedule.action === 'ROUTINE') {
+          const didTrigger = await this.evaluateRoutineSchedule(schedule);
+          if (didTrigger) {
+            triggered++;
+          } else {
+            skipped++;
+          }
           continue;
         }
 
@@ -315,6 +318,32 @@ export class SchedulerService {
       source: 'SchedulerService.enqueueJob',
       message: `Enqueued ${schedule.action} job for schedule ${schedule.id} (entity: ${schedule.entityId})`,
     });
+  }
+
+  /**
+   * Handle a due ROUTINE schedule: claim it (advancing `nextRunAt` so a failed trigger doesn't
+   * retry every 10s), then trigger a schedule-driven run. Returns whether a run was triggered. A
+   * 409 (routine already running) or 404 (file deleted) is logged and treated as "not triggered".
+   */
+  private async evaluateRoutineSchedule(schedule: Schedule): Promise<boolean> {
+    const nextRunAt = this.scheduleService.computeNextRunAt(schedule.cronExpression);
+    const claimed = await this.scheduleService.atomicClaim(schedule.id, nextRunAt);
+    if (!claimed) {
+      return false;
+    }
+
+    try {
+      await this.routineExecutorService.triggerRun(schedule.workbookId as WorkbookId, schedule.entityId, 'schedule');
+      return true;
+    } catch (error) {
+      WSLogger.warn({
+        source: 'SchedulerService.evaluateRoutineSchedule',
+        message: `Did not trigger ROUTINE schedule ${schedule.id} (${schedule.entityId}): ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      });
+      return false;
+    }
   }
 
   /**

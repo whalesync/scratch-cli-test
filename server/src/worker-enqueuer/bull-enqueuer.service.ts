@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import { createPlainId, DataFolderId, JobType, RunId, SyncId, WorkbookId } from '@spinner/shared-types';
-import { Job, Queue } from 'bullmq';
+import { Job, Queue, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
@@ -23,6 +23,12 @@ import { TemporarySyncWithPullJobDefinition } from '../worker/jobs/job-definitio
 export class BullEnqueuerService implements OnModuleDestroy {
   private redis?: IORedis;
   private queue?: Queue;
+  // QueueEvents blocks on a Redis stream, so it gets its OWN connection (sharing the Queue's is
+  // discouraged by BullMQ). Lets a caller (the routine executor) await a job across instances via
+  // `job.waitUntilFinished(getQueueEvents(), ttl)` — the Worker's local `on('completed')` only fires
+  // on the instance that ran the job, which is never the one driving a routine.
+  private queueEventsRedis?: IORedis;
+  private queueEvents?: QueueEvents;
 
   constructor(
     private readonly configService: ScratchConfigService,
@@ -46,12 +52,33 @@ export class BullEnqueuerService implements OnModuleDestroy {
           attempts: 1,
         },
       });
+
+      this.queueEventsRedis = new IORedis({
+        host: this.configService.getRedisHost(),
+        port: this.configService.getRedisPort(),
+        password: this.configService.getRedisPassword(),
+        maxRetriesPerRequest: null,
+      });
+      this.queueEvents = new QueueEvents('worker-queue', { connection: this.queueEventsRedis });
     }
   }
 
   async onModuleDestroy() {
     await this.queue?.close();
+    await this.queueEvents?.close();
     await this.redis?.quit();
+    await this.queueEventsRedis?.quit();
+  }
+
+  /**
+   * The shared QueueEvents for 'worker-queue'. Pass to `job.waitUntilFinished(queueEvents, ttlMs)`
+   * to await a job's terminal state from any instance. Throws if jobs are disabled (no Redis).
+   */
+  getQueueEvents(): QueueEvents {
+    if (!this.queueEvents) {
+      throw new Error('Expected queueEvents to not be undefined');
+    }
+    return this.queueEvents;
   }
 
   async getJob(jobId: string): Promise<Job | undefined> {

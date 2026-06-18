@@ -18,16 +18,10 @@ import { Actor } from 'src/users/types';
 import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { RoutineRunEntity } from './entities/routine-run.entity';
 import { RoutineEntity } from './entities/routine.entity';
+import { assertValidRoutineFilePath, ROUTINES_DIRECTORY } from './routine-file-path';
 import { RoutineParserService } from './routine-parser.service';
 import { RoutineReferenceValidatorService, validateRoutineReferences } from './routine-reference-validator.service';
 import { ParsedRoutine, RoutineParseResult } from './routine.types';
-
-/**
- * Directory in the workbook config repo that holds routine YAML files. Repo-relative with NO
- * trailing slash: scratch-git's tree walk splits the folder on "/", so "routines/" would resolve
- * to a non-existent empty subdir and list nothing. Routine file paths are `${ROUTINES_DIRECTORY}/x.yaml`.
- */
-const ROUTINES_DIRECTORY = 'routines';
 
 /** Cap on runs returned by the list endpoint (newest first). */
 const ROUTINE_RUNS_LIST_LIMIT = 100;
@@ -127,7 +121,7 @@ export class RoutineService {
 
   /** Reads the raw YAML text of a single routine file. 404 if it doesn't exist. */
   async getRoutineFileContent(workbookId: WorkbookId, path: string): Promise<RoutineFileContent> {
-    this.assertValidRoutineFilePath(path);
+    assertValidRoutineFilePath(path);
     const repoId = await this.resolveConfigRepoId(workbookId);
     const file = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, path);
     if (file === null) {
@@ -142,7 +136,7 @@ export class RoutineService {
    * unless the YAML is a valid routine. On success, reconciles the file's ROUTINE schedule.
    */
   async createRoutineFile(workbookId: WorkbookId, dto: CreateRoutineFileDto, actor: Actor): Promise<Routine> {
-    this.assertValidRoutineFilePath(dto.path);
+    assertValidRoutineFilePath(dto.path);
     const repoId = await this.resolveConfigRepoId(workbookId);
 
     const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, dto.path);
@@ -181,7 +175,7 @@ export class RoutineService {
    * the file's ROUTINE schedule (e.g. removing it when a `schedule:` field is deleted).
    */
   async updateRoutineFile(workbookId: WorkbookId, dto: UpdateRoutineFileDto, actor: Actor): Promise<Routine> {
-    this.assertValidRoutineFilePath(dto.path);
+    assertValidRoutineFilePath(dto.path);
     const repoId = await this.resolveConfigRepoId(workbookId);
 
     const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, dto.path);
@@ -216,7 +210,7 @@ export class RoutineService {
 
   /** Deletes a routine file and its ROUTINE schedule (if any). 404 if the file doesn't exist. */
   async deleteRoutineFile(workbookId: WorkbookId, path: string, actor: Actor): Promise<void> {
-    this.assertValidRoutineFilePath(path);
+    assertValidRoutineFilePath(path);
     const repoId = await this.resolveConfigRepoId(workbookId);
 
     const existing = await this.scratchGitService.getRepoFile(repoId, MAIN_BRANCH, path);
@@ -336,32 +330,6 @@ export class RoutineService {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
     return getWorkbookRepoPath(workbook.organizationId, workbookId);
-  }
-
-  /**
-   * Guards every file write/read against escaping the `routines/` directory: the path must be a
-   * single `.yaml`/`.yml` file directly under `routines/`, with no `..` traversal. This is a
-   * security boundary — without it a caller could read or overwrite arbitrary config-repo files.
-   */
-  private assertValidRoutineFilePath(path: string): void {
-    if (!path) {
-      throw new BadRequestException('routine file path is required');
-    }
-    const directoryPrefix = `${ROUTINES_DIRECTORY}/`;
-    const errorPrefix = `Invalid routine file path "${path}":`;
-    if (!path.startsWith(directoryPrefix)) {
-      throw new BadRequestException(`${errorPrefix} must be inside "${directoryPrefix}"`);
-    }
-    if (path.includes('..')) {
-      throw new BadRequestException(`${errorPrefix} must not contain ".."`);
-    }
-    const fileName = path.slice(directoryPrefix.length);
-    if (fileName.length === 0 || fileName.includes('/')) {
-      throw new BadRequestException(`${errorPrefix} must be a single file directly under "${directoryPrefix}"`);
-    }
-    if (!fileName.endsWith('.yaml') && !fileName.endsWith('.yml')) {
-      throw new BadRequestException(`${errorPrefix} must end with .yaml or .yml`);
-    }
   }
 
   /**

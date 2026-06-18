@@ -43,6 +43,8 @@ export const RoutineRunEntity = {
       action: step.action,
       folder: step.folder,
       connection: step.connection,
+      sync: step.sync,
+      timeoutSeconds: step.timeoutSeconds,
       status: step.status as RoutineRunStepStatus,
       startedAt: step.startedAt ? step.startedAt.toISOString() : null,
       finishedAt: step.finishedAt ? step.finishedAt.toISOString() : null,

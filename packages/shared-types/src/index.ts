@@ -65,6 +65,7 @@ export * from './dto/publish-plan/publish-job-responses.dto';
 export * from './dto/publish-plan/publish-plan.dto';
 export * from './dto/routine/create-routine-file.dto';
 export * from './dto/routine/routine-run-list-query.dto';
+export * from './dto/routine/trigger-routine.dto';
 export * from './dto/routine/update-routine-file.dto';
 export * from './dto/schedule/create-schedule.dto';
 export * from './dto/schedule/update-schedule.dto';

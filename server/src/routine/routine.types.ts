@@ -10,9 +10,10 @@ import { z } from 'zod';
 export const ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES = 5;
 
 /**
- * Maximum per-step timeout (seconds), keyed by action. Forward-looking: the value is
- * validated here but not enforced until the step executor lands (a later phase). Pull
- * actions get a longer ceiling than sync/plan actions (large full pulls take longer).
+ * Maximum per-step timeout (seconds), keyed by action. Validated here, and enforced by
+ * RoutineExecutorService: an unspecified `timeout` defaults to this per-action max, and a
+ * specified one is capped at it. Pull actions get a longer ceiling than sync/plan actions
+ * (large full pulls take longer).
  */
 export const ROUTINE_STEP_TIMEOUT_MAX_SECONDS: Record<RoutineAction, number> = {
   [RoutineAction.PULL]: 60 * 60,
@@ -50,6 +51,14 @@ export interface ValidationConnection {
   displayName: string;
 }
 
+/** One sync, reduced to what reference validation needs. */
+export interface ValidationSync {
+  /** SyncId ("sync_..."). */
+  id: string;
+  /** The human-readable sync name (used in error messages). */
+  displayName: string;
+}
+
 /**
  * An in-memory snapshot of a workbook's data folders + connections, loaded once and reused
  * to validate one routine (create/update) or many (list/reload) without per-step queries.
@@ -64,6 +73,8 @@ export interface RoutineValidationContext {
   connectionsByName: Map<string, ValidationConnection>;
   /** All connections keyed by ConnectorAccountId ("coa_..."). */
   connectionsById: Map<string, ValidationConnection>;
+  /** All syncs keyed by SyncId ("sync_..."). */
+  syncsById: Map<string, ValidationSync>;
 }
 
 /**
@@ -101,6 +112,11 @@ function isValidStepFolder(folder: string): boolean {
   return folder.startsWith('/') || folder.startsWith('dfd_');
 }
 
+/** A step's `sync` must be a SyncId ("sync_..."). Syncs have auto-generated names, so only the id is accepted. */
+function isValidStepSync(sync: string): boolean {
+  return sync.startsWith('sync_');
+}
+
 const routineStepYamlSchema = z.strictObject({
   action: z.nativeEnum(RoutineAction),
   // NOTE: the design's field table marks the routine-level `comment` as required, but its
@@ -115,6 +131,7 @@ const routineStepYamlSchema = z.strictObject({
     })
     .optional(),
   connection: z.string().min(1).optional(),
+  sync: z.string().min(1).refine(isValidStepSync, { message: "sync must be a SyncId ('sync_...')" }).optional(),
   comment: z.string().optional(),
   timeout: z.number().int().positive().optional(),
 });
@@ -150,6 +167,39 @@ export const routineYamlSchema = z
           });
         }
       }
+
+      // A sync step is addressed by its SyncId (folder/connection are meaningless for it); every
+      // other action is addressed by folder/connection and must not carry a `sync`. Enforcing this
+      // at the boundary keeps a user from quietly mis-targeting a step.
+      if (step.action === RoutineAction.SYNC) {
+        if (step.sync === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            message: "sync steps require a 'sync' field (the SyncId to run)",
+            path: ['steps', index, 'sync'],
+          });
+        }
+        if (step.folder !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            message: "sync steps must not set 'folder' — target the sync via 'sync'",
+            path: ['steps', index, 'folder'],
+          });
+        }
+        if (step.connection !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            message: "sync steps must not set 'connection' — target the sync via 'sync'",
+            path: ['steps', index, 'connection'],
+          });
+        }
+      } else if (step.sync !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `'sync' is only valid on sync steps (got a "${step.action}" step)`,
+          path: ['steps', index, 'sync'],
+        });
+      }
     });
 
     if (routine.schedule !== undefined) {
@@ -171,6 +221,7 @@ export function toParsedRoutine(data: z.infer<typeof routineYamlSchema>): Parsed
       name: step.name ?? null,
       folder: step.folder ?? null,
       connection: step.connection ?? null,
+      sync: step.sync ?? null,
       comment: step.comment ?? null,
       timeout: step.timeout ?? null,
     })),

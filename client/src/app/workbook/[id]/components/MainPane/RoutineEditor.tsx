@@ -4,9 +4,10 @@ import { Text13Regular, TextMono12Regular } from '@/app/components/base/text';
 import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/ConfirmDialog';
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
+import { useRoutineRuns } from '@/hooks/use-routine-runs';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
-import { trackRoutineCreated, trackRoutineDeleted, trackRoutineUpdated } from '@/lib/posthog';
+import { trackRoutineCreated, trackRoutineDeleted, trackRoutineTriggered, trackRoutineUpdated } from '@/lib/posthog';
 import { useRoutineDraftStore } from '@/stores/routine-draft-store';
 import { yaml } from '@codemirror/lang-yaml';
 import { EditorView } from '@codemirror/view';
@@ -19,6 +20,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { routineCompletionExtension, type RoutineCompletionData } from '../shared/routine-completion-extension';
+import { RoutineRunHistory } from './RoutineRunHistory';
 
 interface RoutineEditorProps {
   workbookId: WorkbookId;
@@ -127,12 +129,18 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
     { revalidateOnFocus: false },
   );
 
+  // The run count drives the layout: once this routine has run history, the history panel grows to
+  // take half the height (a 50/50 split with the editor). Shares SWR cache with the panel's own call.
+  const { runs: routineRuns } = useRoutineRuns(isCreate ? null : workbookId, filePath);
+  const hasRunHistory = routineRuns.length > 0;
+
   const [content, setContent] = useState('');
   const [savedContent, setSavedContent] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
   const [isContentInitialized, setIsContentInitialized] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isTriggering, setIsTriggering] = useState(false);
 
   // Reset editor state whenever we navigate to a different routine (or to "new").
   useEffect(() => {
@@ -255,6 +263,26 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
     });
   }, [openConfirm, filePath, workbookId, mutate, router]);
 
+  const handleRun = useCallback(async () => {
+    setIsTriggering(true);
+    try {
+      await scratchApiClient.routine.trigger(workbookId, filePath);
+      trackRoutineTriggered(workbookId, filePath);
+      // Refresh the run history + the sidebar's last-run dot.
+      await Promise.all([
+        mutate(SWR_KEYS.routines.runs(workbookId, filePath)),
+        mutate(SWR_KEYS.routines.list(workbookId)),
+      ]);
+      notifications.show({ title: 'Routine started', message: filePath, color: 'green' });
+    } catch (err) {
+      // 409 (already running) and other failures surface with the server's message verbatim.
+      const message = err instanceof Error ? err.message : 'Failed to start routine.';
+      notifications.show({ title: 'Could not start routine', message, color: 'red' });
+    } finally {
+      setIsTriggering(false);
+    }
+  }, [workbookId, filePath, mutate]);
+
   // Cmd+S / Ctrl+S to save.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -309,20 +337,22 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
         </Group>
 
         <Group gap="xs">
-          {/* TODO(routines-runner): enable and wire to POST /workbooks/:id/routines/trigger once the
-              routine executor lands (separate branch). Inert until then — `data-disabled` +
-              preventDefault keeps it visually disabled while still surfacing the tooltip on hover. */}
-          <Tooltip label="Run support is coming soon" position="bottom">
-            <Button
-              size="compact-xs"
-              variant="default"
-              leftSection={<PlayIcon size={12} />}
-              data-disabled
-              onClick={(e) => e.preventDefault()}
-            >
-              Run
-            </Button>
-          </Tooltip>
+          {/* Trigger a manual run. Only meaningful for a saved routine (a run reads the committed
+              YAML), and disabled while there are unsaved edits so the user runs what they see. */}
+          {!isCreate && (
+            <Tooltip label={hasChanges ? 'Save your changes before running' : 'Run this routine now'} position="bottom">
+              <Button
+                size="compact-xs"
+                variant="default"
+                leftSection={<PlayIcon size={12} />}
+                onClick={handleRun}
+                loading={isTriggering}
+                disabled={hasChanges}
+              >
+                Run
+              </Button>
+            </Tooltip>
+          )}
           {!isCreate && (
             <Button
               size="compact-xs"
@@ -412,6 +442,21 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
           />
         )}
       </Box>
+
+      {/* Run history (saved routines only). With history, it splits the space 50/50 with the editor
+          (both flex:1); with no runs yet, it stays a small panel below the editor. */}
+      {!isCreate && !showNotFound && (
+        <Box
+          style={{
+            overflow: 'auto',
+            borderTop: '0.5px solid var(--fg-divider)',
+            backgroundColor: 'var(--bg-base)',
+            ...(hasRunHistory ? { flex: 1, minHeight: 0 } : { flexShrink: 0, maxHeight: 280 }),
+          }}
+        >
+          <RoutineRunHistory workbookId={workbookId} routineFilePath={filePath} />
+        </Box>
+      )}
 
       <ConfirmDialog {...dialogProps} />
     </Stack>

@@ -918,6 +918,12 @@ model RoutineRun {
 
   steps RoutineRunStep[]
 
+  // NOTE: a PARTIAL UNIQUE INDEX enforces "one active run per routine file" —
+  //   UNIQUE (workbookId, routineFilePath) WHERE status IN ('pending','running')
+  // Prisma cannot express a partial (WHERE) index declaratively, so it is created by
+  // raw SQL in the migration (see migrations/.../add_routine_active_run_index). A
+  // concurrent trigger that races a live run hits P2002, which RoutineExecutorService
+  // maps to a 409. Keep this comment in sync with that migration.
   @@index([workbookId])
   @@index([routineFilePath])
   @@index([status])
@@ -944,6 +950,13 @@ model RoutineRunStep {
 
   /// Target connection name or id (if specified on the step).
   connection String?
+
+  /// For `sync` steps: the SyncId that ran (snapshot from the step's `sync:` field). Null for other actions.
+  sync String?
+
+  /// The step's timeout in seconds (snapshot from the step's `timeout:` field). Null = use the
+  /// per-action default. Snapshotted so the executor never re-reads a since-edited routine file.
+  timeoutSeconds Int?
 
   /// "pending" | "running" | "completed" | "failed" | "skipped"
   status String @default("pending")

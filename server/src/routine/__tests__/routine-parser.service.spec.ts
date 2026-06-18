@@ -44,6 +44,7 @@ steps:
       name: 'Pull posts',
       folder: '/blog/posts',
       connection: 'coa_123',
+      sync: null,
       comment: 'pull the posts',
       timeout: 600,
     });
@@ -53,19 +54,60 @@ steps:
       name: null,
       folder: 'dfd_abc123',
       connection: null,
+      sync: null,
       comment: null,
       timeout: null,
     });
   });
 
   it('parses a minimal routine (name + one step), nulling optional fields', () => {
-    const routine = expectRoutine(parser.parse('name: Minimal\nsteps:\n  - action: sync\n'));
+    const routine = expectRoutine(parser.parse('name: Minimal\nsteps:\n  - action: pull\n'));
     expect(routine.name).toBe('Minimal');
     expect(routine.schedule).toBeNull();
     expect(routine.comment).toBeNull();
     expect(routine.steps).toEqual([
-      { action: RoutineAction.SYNC, name: null, folder: null, connection: null, comment: null, timeout: null },
+      {
+        action: RoutineAction.PULL,
+        name: null,
+        folder: null,
+        connection: null,
+        sync: null,
+        comment: null,
+        timeout: null,
+      },
     ]);
+  });
+
+  it('parses a sync step addressed by its sync_ id', () => {
+    const routine = expectRoutine(parser.parse('name: Sync\nsteps:\n  - action: sync\n    sync: sync_abc123\n'));
+    expect(routine.steps[0]).toEqual({
+      action: RoutineAction.SYNC,
+      name: null,
+      folder: null,
+      connection: null,
+      sync: 'sync_abc123',
+      comment: null,
+      timeout: null,
+    });
+  });
+
+  it('rejects a sync step with no sync field', () => {
+    expect(expectError(parser.parse('name: Bad\nsteps:\n  - action: sync\n'))).toMatch(/sync.*require|require.*sync/i);
+  });
+
+  it('rejects a sync id that is not a sync_ id', () => {
+    const error = expectError(parser.parse('name: Bad\nsteps:\n  - action: sync\n    sync: not-a-sync-id\n'));
+    expect(error).toMatch(/sync/i);
+  });
+
+  it("rejects a 'sync' field on a non-sync step", () => {
+    const error = expectError(parser.parse('name: Bad\nsteps:\n  - action: pull\n    sync: sync_abc123\n'));
+    expect(error).toMatch(/sync.*only valid on sync/i);
+  });
+
+  it('rejects a folder on a sync step', () => {
+    const yaml = 'name: Bad\nsteps:\n  - action: sync\n    sync: sync_abc123\n    folder: /blog\n';
+    expect(expectError(parser.parse(yaml))).toMatch(/sync steps must not set 'folder'/i);
   });
 
   it('accepts the publish-plan action', () => {
@@ -104,7 +146,7 @@ name: Dupe
 steps:
   - action: pull
     name: step
-  - action: sync
+  - action: publish
     name: step
 `;
     expect(expectError(parser.parse(yaml))).toMatch(/duplicate step name/i);

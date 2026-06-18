@@ -21,7 +21,9 @@ import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { CreateRoutineFileDto } from './dto/create-routine-file.dto';
 import { RoutineRunListQueryDto } from './dto/routine-run-list-query.dto';
+import { TriggerRoutineDto } from './dto/trigger-routine.dto';
 import { UpdateRoutineFileDto } from './dto/update-routine-file.dto';
+import { RoutineExecutorService } from './routine-executor.service';
 import { RoutineService } from './routine.service';
 
 @Controller('workbooks/:workbookId')
@@ -30,6 +32,7 @@ import { RoutineService } from './routine.service';
 export class RoutineController {
   constructor(
     private readonly routineService: RoutineService,
+    private readonly routineExecutorService: RoutineExecutorService,
     private readonly workbookService: WorkbookService,
   ) {}
 
@@ -97,6 +100,18 @@ export class RoutineController {
     await this.routineService.deleteRoutineFile(workbookId, path, actor);
   }
 
+  /** Start a manual run of one routine. 409 if the routine already has an active run. A write — asserts writable. */
+  @Post('routines/trigger')
+  async trigger(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Body() dto: TriggerRoutineDto,
+    @Req() req: RequestWithUser,
+  ): Promise<RoutineRun> {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    return this.routineExecutorService.triggerRun(workbookId, dto.filePath, 'manual', actor);
+  }
+
   @Get('routine-runs')
   async listRuns(
     @Param('workbookId') workbookId: WorkbookId,
@@ -117,5 +132,17 @@ export class RoutineController {
     const actor = userToActor(req.user);
     await this.workbookService.assertReadableWorkbook(actor, workbookId);
     return this.routineService.getRun(workbookId, runId);
+  }
+
+  /** Cancel a running routine run (stops its in-flight step's job). A write — asserts writable. */
+  @Post('routine-runs/:runId/cancel')
+  async cancelRun(
+    @Param('workbookId') workbookId: WorkbookId,
+    @Param('runId') runId: string,
+    @Req() req: RequestWithUser,
+  ): Promise<RoutineRun> {
+    const actor = userToActor(req.user);
+    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    return this.routineExecutorService.cancelRun(workbookId, runId, actor);
   }
 }

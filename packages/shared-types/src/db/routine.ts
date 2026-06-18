@@ -18,9 +18,11 @@ export interface RoutineStep {
   folder: string | null;
   /** Target connection name or id ("coa_..."). Null = all connections in the folder. */
   connection: string | null;
+  /** For `sync` steps: the SyncId ("sync_...") identifying which sync to run. Required on sync steps, null otherwise. */
+  sync: string | null;
   /** Optional note for context. */
   comment: string | null;
-  /** Optional per-step timeout in seconds. Parsed but not enforced until the executor lands. */
+  /** Optional per-step timeout in seconds. Enforced by the executor, capped per action. */
   timeout: number | null;
 }
 
