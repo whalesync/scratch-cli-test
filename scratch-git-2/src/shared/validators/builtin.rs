@@ -179,6 +179,15 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                 ) {
                     continue;
                 }
+                // An empty string is the service's "blank/unset" sentinel — the same
+                // value the required check below treats as missing. A blank value is a
+                // verbatim "no value", not malformed data, so don't flag it for failing
+                // a `format` (email/date/uri) check or the `anyOf` that wraps a nullable
+                // formatted field. Many connectors return "" for an unset text field
+                // (e.g. Moco's email columns); flagging those buries the real warnings.
+                if error.instance().as_str() == Some("") {
+                    continue;
+                }
                 let pointer = error.instance_path().to_string();
                 let field_path = if pointer.is_empty() {
                     "(record)".to_string()
@@ -451,6 +460,46 @@ mod tests {
     }
 
     #[test]
+    fn empty_string_in_nullable_formatted_field_is_clean() {
+        // Connectors (e.g. Moco) return "" for an unset email; it is neither a valid
+        // email nor null, but a blank value is verbatim "no value" and must not be
+        // flagged for failing the format/anyOf conformance check (DEV-10453).
+        let schema = json!({ "schema": { "properties": {
+            "email": { "anyOf": [ { "type": "string", "format": "email" }, { "type": "null" } ] }
+        }}});
+        let ctx = record_ctx(json!({ "email": "" }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert!(
+            results.is_empty(),
+            "blank formatted field should be clean, got {} error(s)",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn empty_string_in_direct_formatted_field_is_clean() {
+        // Same exemption for a non-nullable formatted field (Format error, not AnyOf).
+        let schema = json!({ "schema": { "properties": {
+            "email": { "type": "string", "format": "email" }
+        }}});
+        let ctx = record_ctx(json!({ "email": "" }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn nonempty_invalid_formatted_field_still_errors() {
+        // Only "" is exempt — a non-empty malformed value is still flagged.
+        let schema = json!({ "schema": { "properties": {
+            "email": { "anyOf": [ { "type": "string", "format": "email" }, { "type": "null" } ] }
+        }}});
+        let ctx = record_ctx(json!({ "email": "not-an-email" }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "email");
+        assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    #[test]
     fn id_column_required_skipped_for_new_record() {
         // New record (master=None): id not yet assigned by remote — no required error.
         let ctx = record_ctx(json!({"name": "Alice"}), None, schema_with_id_column());
@@ -534,7 +583,9 @@ mod tests {
         );
         assert_eq!(
             results[0].description.as_deref(),
-            Some("Field id changed from 1 to 99. The new value may cause an error when publishing.")
+            Some(
+                "Field id changed from 1 to 99. The new value may cause an error when publishing."
+            )
         );
     }
 

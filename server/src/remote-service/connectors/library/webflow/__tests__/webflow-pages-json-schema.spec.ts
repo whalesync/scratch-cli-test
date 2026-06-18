@@ -113,5 +113,40 @@ describe('buildWebflowPagesJsonTableSpec', () => {
         },
       );
     });
+
+    // Webflow returns null for unset page fields (e.g. parentId, seo.*, openGraph.*),
+    // so the optional fields accept null to match the verbatim record. (DEV-10453)
+    describe('optional fields accept null', () => {
+      const allowsNull = (field: unknown): boolean => {
+        const anyOf = (field as { anyOf?: Array<{ type?: unknown }> }).anyOf;
+        return Array.isArray(anyOf) && anyOf.some((m) => m.type === 'null');
+      };
+      const subProps = (field: unknown): Record<string, Record<string, unknown>> =>
+        (field as { properties: Record<string, Record<string, unknown>> }).properties;
+
+      it.each(['title', 'slug', 'publishedPath', 'parentId', 'archived', 'draft', 'createdOn', 'lastUpdated'])(
+        'top-level field %s is nullable',
+        (field) => {
+          expect(allowsNull(props[field])).toBe(true);
+        },
+      );
+
+      it('keeps the read-only annotation on a nullable field (parentId)', () => {
+        expect((props.parentId as Record<string, unknown>)[X_SCRATCH_READONLY]).toBe(true);
+      });
+
+      it('makes seo.title and seo.description nullable', () => {
+        const seo = subProps(props.seo);
+        expect(allowsNull(seo.title)).toBe(true);
+        expect(allowsNull(seo.description)).toBe(true);
+      });
+
+      it('makes the openGraph sub-fields nullable', () => {
+        const og = subProps(props.openGraph);
+        for (const key of ['title', 'titleCopied', 'description', 'descriptionCopied']) {
+          expect(allowsNull(og[key])).toBe(true);
+        }
+      });
+    });
   });
 });

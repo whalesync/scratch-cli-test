@@ -1,4 +1,4 @@
-import { Type, type TSchema } from '@sinclair/typebox';
+import { Type, type TObject, type TSchema } from '@sinclair/typebox';
 import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_LAST_MODIFIED_FIELD,
@@ -81,6 +81,7 @@ function buildCompanySchema(): TSchema {
         description: 'Company type (required)',
       }),
       name: Type.String({ description: 'Company name (required)' }),
+      active: Type.Optional(Type.Boolean({ description: 'Active status' })),
       website: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Website URL' })),
       email: Type.Optional(
         Type.Union([Type.String({ format: 'email' }), Type.Null()], { description: 'Email address' }),
@@ -139,6 +140,18 @@ function buildCompanySchema(): TSchema {
       // Related entities (read-only)
       projects: Type.Optional(
         Type.Array(projectRefSchema, { description: 'Associated projects (read-only)', [X_SCRATCH_READONLY]: true }),
+      ),
+      invoice_format: Type.Optional(
+        Type.Union([Type.String(), Type.Null()], { description: 'Default invoice format' }),
+      ),
+      default_payment_means: Type.Optional(
+        Type.Union([Type.String(), Type.Null()], { description: 'Default payment means' }),
+      ),
+      archived_on: Type.Optional(
+        Type.Union([Type.String({ format: 'date' }), Type.Null()], {
+          description: 'Archive date (read-only)',
+          [X_SCRATCH_READONLY]: true,
+        }),
       ),
       created_at: Type.String({
         description: 'Created timestamp (read-only)',
@@ -293,8 +306,14 @@ function buildProjectSchema(): TSchema {
       billable: Type.Boolean({ description: 'Billable flag' }),
       fixed_price: Type.Boolean({ description: 'Fixed price project (required)' }),
       retainer: Type.Boolean({ description: 'Retainer project (required)' }),
-      start_date: Type.String({ format: 'date', description: 'Start date YYYY-MM-DD (required)' }),
-      finish_date: Type.String({ format: 'date', description: 'Finish date YYYY-MM-DD (required)' }),
+      // Verbatim GETs of undated/internal projects return null, so these are optional +
+      // nullable; the Moco write API still enforces them on create. (DEV-10453)
+      start_date: Type.Optional(
+        Type.Union([Type.String({ format: 'date' }), Type.Null()], { description: 'Start date YYYY-MM-DD' }),
+      ),
+      finish_date: Type.Optional(
+        Type.Union([Type.String({ format: 'date' }), Type.Null()], { description: 'Finish date YYYY-MM-DD' }),
+      ),
       color: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: 'Color (hex code)' })),
       currency: Type.String({ description: 'Currency code (required)' }),
       budget: Type.Optional(Type.Union([Type.Number(), Type.Null()], { description: 'Total budget' })),
@@ -447,11 +466,84 @@ function buildSchema(entityType: MocoEntityType): TSchema {
   }
 }
 
+/** Whether a field schema is annotated read-only via {@link X_SCRATCH_READONLY}. */
+function isFieldSchemaReadonly(fieldSchema: TSchema): boolean {
+  return (fieldSchema as { [X_SCRATCH_READONLY]?: unknown })[X_SCRATCH_READONLY] === true;
+}
+
+/** Whether a field schema already permits null (a `Type.Union([..., Type.Null()])`). */
+function fieldSchemaAlreadyAllowsNull(fieldSchema: TSchema): boolean {
+  const unionMembers = (fieldSchema as { anyOf?: Array<{ type?: unknown }> }).anyOf;
+  return Array.isArray(unionMembers) && unionMembers.some((member) => member.type === 'null');
+}
+
+/**
+ * Wrap a field schema in a nullable union, hoisting its `description` and `x-scratch-*`
+ * annotations onto the union (a sibling of `anyOf`) so the foreign-key, read-only and
+ * table-view lookups — which read them at the field's top level — keep working. Mirrors
+ * the Webflow connector's `makeWebflowFieldSchemaOptionalNullable`.
+ */
+function makeFieldSchemaNullableHoistingAnnotations(fieldSchema: TSchema): TSchema {
+  const nullableUnion = Type.Union([fieldSchema, Type.Null()]);
+  for (const annotationKey of Object.keys(fieldSchema)) {
+    if (annotationKey === 'description' || annotationKey.startsWith('x-scratch-')) {
+      (nullableUnion as Record<string, unknown>)[annotationKey] = (fieldSchema as Record<string, unknown>)[
+        annotationKey
+      ];
+    }
+  }
+  return nullableUnion;
+}
+
+/**
+ * Defensive nullable sweep: a verbatim Moco GET can return `null` for any unset optional
+ * field, so every optional (not-required) top-level property that does not already permit
+ * null is wrapped in a nullable union. Genuinely-required fields are left untouched. Runs
+ * before {@link removeReadonlyFieldsFromRequired} so the always-present read-only
+ * timestamps (still in `required` here) are skipped rather than made nullable. (DEV-10453)
+ */
+function makeOptionalPropertiesNullable(schema: TObject): void {
+  const requiredFieldNames = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const properties = schema.properties as Record<string, TSchema>;
+  for (const fieldName of Object.keys(properties)) {
+    if (requiredFieldNames.has(fieldName) || fieldSchemaAlreadyAllowsNull(properties[fieldName])) {
+      continue;
+    }
+    properties[fieldName] = Type.Optional(makeFieldSchemaNullableHoistingAnnotations(properties[fieldName]));
+  }
+}
+
+/**
+ * Read-only fields are never required. `Type.Object` marks every non-optional property
+ * required, which would flag a read-only system field (`id`, `created_at`, `updated_at`)
+ * as both required AND read-only — impossible to satisfy — and emit false-positive
+ * "required but missing" errors on verbatim records. Strip them from `required` (matching
+ * the Pipedrive fix). (DEV-10453)
+ */
+function removeReadonlyFieldsFromRequired(schema: TObject): void {
+  if (!Array.isArray(schema.required)) {
+    return;
+  }
+  const properties = schema.properties as Record<string, TSchema>;
+  const writableRequiredFieldNames = schema.required.filter(
+    (fieldName) => !isFieldSchemaReadonly(properties[fieldName]),
+  );
+  if (writableRequiredFieldNames.length > 0) {
+    schema.required = writableRequiredFieldNames;
+  } else {
+    delete schema.required;
+  }
+}
+
 /**
  * Build the JSON Table Spec for a Moco entity type.
  */
 export function buildMocoJsonTableSpec(id: EntityId, entityType: MocoEntityType): BaseJsonTableSpec {
-  const schema = buildSchema(entityType);
+  const schema = buildSchema(entityType) as TObject;
+  // Make the static schema match a verbatim Moco GET: optional fields can come back null,
+  // and read-only system fields must never be required. (DEV-10453)
+  makeOptionalPropertiesNullable(schema);
+  removeReadonlyFieldsFromRequired(schema);
 
   return {
     id,

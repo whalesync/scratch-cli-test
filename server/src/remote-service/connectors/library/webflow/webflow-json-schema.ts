@@ -109,9 +109,11 @@ export function webflowFieldToJsonSchema(field: Field): TSchema {
     case FieldType.File:
       schema = Type.Object(
         {
-          fileId: Type.Optional(Type.String()),
+          // Webflow returns `alt: null` (and may return `fileId: null`) on a set image,
+          // so these sub-fields must accept null, not just be absent (DEV-10453).
+          fileId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.String({ format: 'uri' }),
-          alt: Type.Optional(Type.String()),
+          alt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         },
         {
           description,
@@ -123,9 +125,10 @@ export function webflowFieldToJsonSchema(field: Field): TSchema {
     case FieldType.MultiImage:
       schema = Type.Array(
         Type.Object({
-          fileId: Type.Optional(Type.String()),
+          // Same null-tolerance as the single Image/File object above (DEV-10453).
+          fileId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           url: Type.String({ format: 'uri' }),
-          alt: Type.Optional(Type.String()),
+          alt: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
         {
           description,
@@ -153,6 +156,32 @@ export function webflowFieldToJsonSchema(field: Field): TSchema {
   schema[X_SCRATCH_READONLY] = field.isEditable === false ? true : undefined;
   schema[X_SCRATCH_REMOTE_FIELD_ID] = field.id;
   return schema;
+}
+
+/**
+ * Wrap an optional Webflow field schema so it also accepts `null`.
+ *
+ * Webflow returns `null` — not an absent key — for any unset optional field (e.g. an
+ * unset `category` MultiReference comes back as `null`, not `[]` or absent). `Type.Optional`
+ * alone only allows the key to be absent; it does not permit a present `null`, so the
+ * verbatim record fails JSON-Schema conformance ("null is not of type ..."). Wrapping the
+ * field in a nullable union fixes that while preserving round-trip fidelity (DEV-10453).
+ *
+ * The field's `description` and `x-scratch-*` annotations are hoisted onto the union (as a
+ * sibling of `anyOf`) so the foreign-key, asset, read-only and table-view lookups — which
+ * read them at the field's top level — keep working. The base type inside `anyOf[0]` still
+ * carries them too, which the default-view builder's `unwrapOptional` relies on.
+ */
+function makeWebflowFieldSchemaOptionalNullable(annotatedFieldSchema: TSchema): TSchema {
+  const nullableUnion = Type.Union([annotatedFieldSchema, Type.Null()]);
+  for (const annotationKey of Object.keys(annotatedFieldSchema)) {
+    if (annotationKey === 'description' || annotationKey.startsWith('x-scratch-')) {
+      (nullableUnion as Record<string, unknown>)[annotationKey] = (annotatedFieldSchema as Record<string, unknown>)[
+        annotationKey
+      ];
+    }
+  }
+  return Type.Optional(nullableUnion);
 }
 
 /**
@@ -227,8 +256,9 @@ export function buildWebflowJsonTableSpec(
     if (isRequired) {
       fieldDataProperties[field.slug] = fieldSchema;
     } else {
-      // Wrap optional fields in Type.Optional to exclude from required array
-      fieldDataProperties[field.slug] = Type.Optional(fieldSchema);
+      // Optional fields are excluded from the required array AND must accept null:
+      // Webflow returns null for any unset optional field (DEV-10453).
+      fieldDataProperties[field.slug] = makeWebflowFieldSchemaOptionalNullable(fieldSchema);
     }
 
     // Track title column (name field)
@@ -283,22 +313,26 @@ export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Site, struct
     {
       id: Type.String({ description: 'Unique asset identifier', [X_SCRATCH_READONLY]: true }),
       displayName: Type.String({ description: 'Display name of the asset' }),
-      hostedUrl: Type.Optional(
+      hostedUrl: makeWebflowFieldSchemaOptionalNullable(
         Type.String({
           description: 'Permanent CDN URL for the asset',
           format: 'uri',
           [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: false } satisfies AssetFieldOptions,
         }),
       ),
-      originalFileName: Type.Optional(Type.String({ description: 'Original file name at upload' })),
-      contentType: Type.Optional(Type.String({ description: 'MIME content type' })),
-      size: Type.Optional(Type.Number({ description: 'File size in bytes' })),
-      altText: Type.Optional(Type.String({ description: 'Visual description of the asset' })),
-      siteId: Type.Optional(Type.String({ description: 'Site that hosts this asset', [X_SCRATCH_READONLY]: true })),
-      createdOn: Type.Optional(
+      originalFileName: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'Original file name at upload' }),
+      ),
+      contentType: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'MIME content type' })),
+      size: makeWebflowFieldSchemaOptionalNullable(Type.Number({ description: 'File size in bytes' })),
+      altText: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'Visual description of the asset' })),
+      siteId: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'Site that hosts this asset', [X_SCRATCH_READONLY]: true }),
+      ),
+      createdOn: makeWebflowFieldSchemaOptionalNullable(
         Type.String({ description: 'When the asset was created', format: 'date-time', [X_SCRATCH_READONLY]: true }),
       ),
-      lastUpdated: Type.Optional(
+      lastUpdated: makeWebflowFieldSchemaOptionalNullable(
         Type.String({
           description: 'When the asset was last updated',
           format: 'date-time',
@@ -361,23 +395,33 @@ export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site, structu
   const schema = Type.Object(
     {
       id: Type.String({ description: 'Unique page identifier', [X_SCRATCH_READONLY]: true }),
-      title: Type.Optional(Type.String({ description: 'Title of the page' })),
-      slug: Type.Optional(Type.String({ description: 'URL slug of the page (derived from title)' })),
-      publishedPath: Type.Optional(
+      title: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'Title of the page' })),
+      slug: makeWebflowFieldSchemaOptionalNullable(
+        Type.String({ description: 'URL slug of the page (derived from title)' }),
+      ),
+      publishedPath: makeWebflowFieldSchemaOptionalNullable(
         Type.String({ description: 'Relative path of the published page URL', [X_SCRATCH_READONLY]: true }),
       ),
-      parentId: Type.Optional(
+      parentId: makeWebflowFieldSchemaOptionalNullable(
         Type.String({ description: 'Identifier of the parent folder', [X_SCRATCH_READONLY]: true }),
       ),
-      archived: Type.Optional(
+      archived: makeWebflowFieldSchemaOptionalNullable(
         Type.Boolean({ description: 'Whether the page has been archived', [X_SCRATCH_READONLY]: true }),
       ),
-      draft: Type.Optional(Type.Boolean({ description: 'Whether the page is a draft', [X_SCRATCH_READONLY]: true })),
+      draft: makeWebflowFieldSchemaOptionalNullable(
+        Type.Boolean({ description: 'Whether the page is a draft', [X_SCRATCH_READONLY]: true }),
+      ),
+      // Webflow returns the seo/openGraph objects with null sub-fields when unset, so the
+      // sub-fields accept null (DEV-10453).
       seo: Type.Optional(
         Type.Object(
           {
-            title: Type.Optional(Type.String({ description: 'SEO title shown in search engine results' })),
-            description: Type.Optional(Type.String({ description: 'SEO description shown in search engine results' })),
+            title: makeWebflowFieldSchemaOptionalNullable(
+              Type.String({ description: 'SEO title shown in search engine results' }),
+            ),
+            description: makeWebflowFieldSchemaOptionalNullable(
+              Type.String({ description: 'SEO description shown in search engine results' }),
+            ),
           },
           { description: 'SEO-related fields for the page' },
         ),
@@ -385,22 +429,22 @@ export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site, structu
       openGraph: Type.Optional(
         Type.Object(
           {
-            title: Type.Optional(Type.String({ description: 'Open Graph title' })),
-            titleCopied: Type.Optional(
+            title: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'Open Graph title' })),
+            titleCopied: makeWebflowFieldSchemaOptionalNullable(
               Type.Boolean({ description: 'Whether the OG title was copied from the SEO title' }),
             ),
-            description: Type.Optional(Type.String({ description: 'Open Graph description' })),
-            descriptionCopied: Type.Optional(
+            description: makeWebflowFieldSchemaOptionalNullable(Type.String({ description: 'Open Graph description' })),
+            descriptionCopied: makeWebflowFieldSchemaOptionalNullable(
               Type.Boolean({ description: 'Whether the OG description was copied from the SEO description' }),
             ),
           },
           { description: 'Open Graph fields for the page' },
         ),
       ),
-      createdOn: Type.Optional(
+      createdOn: makeWebflowFieldSchemaOptionalNullable(
         Type.String({ description: 'When the page was created', format: 'date-time', [X_SCRATCH_READONLY]: true }),
       ),
-      lastUpdated: Type.Optional(
+      lastUpdated: makeWebflowFieldSchemaOptionalNullable(
         Type.String({
           description: 'When the page was last updated',
           format: 'date-time',
