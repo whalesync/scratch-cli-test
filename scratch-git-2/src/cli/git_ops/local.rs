@@ -274,6 +274,73 @@ pub(crate) fn diff_name_status(
     Ok(entries)
 }
 
+/// Returns `(status, path)` pairs for working-tree files under `path_prefix` that differ from
+/// `HEAD` in `worktree_dir` — i.e. uncommitted local edits, which `diff_name_status` (which only
+/// diffs two committed tree-ish refs) cannot see. Runs `git -C <worktree> status --porcelain
+/// --untracked-files=all -- <prefix>`. Status is normalized to `"added"` (new/untracked),
+/// `"deleted"`, or `"modified"`. Paths are repo-relative (e.g. `routines/foo.yaml`); `.scratch/`
+/// is excluded for safety even though the pathspec already scopes the result.
+///
+/// `--untracked-files=all` is required: without it git collapses an entirely-new untracked
+/// directory to a single `?? routines/` entry instead of listing each file, which would break the
+/// "create the first routine in a fresh workspace" case.
+pub(crate) fn worktree_status_porcelain(
+    worktree_dir: &Path,
+    path_prefix: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let worktree = worktree_dir.to_str().unwrap_or_default();
+    let output = git_command()
+        .args([
+            "-C",
+            worktree,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            path_prefix,
+        ])
+        .output()
+        .context("failed to spawn git status --porcelain")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git status --porcelain failed: {}", stderr.trim());
+    }
+
+    let mut entries = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        // Porcelain v1 lines are `XY <path>` (2 status chars, a space, then the path). Untracked
+        // files use `??`; renames look like `R  old -> new`.
+        if line.len() < 4 {
+            continue;
+        }
+        let status_code = &line[0..2];
+        let mut path = &line[3..];
+
+        // For a rename/copy, the porcelain path is `old -> new`; report the new path.
+        if let Some(arrow) = path.find(" -> ") {
+            path = &path[arrow + 4..];
+        }
+
+        if path.starts_with(".scratch/") {
+            continue;
+        }
+
+        // Classify on either status column: a deletion in either, otherwise an add (untracked or
+        // staged-new), otherwise a modification.
+        let status = if status_code.contains('D') {
+            "deleted"
+        } else if status_code == "??" || status_code.contains('A') {
+            "added"
+        } else {
+            "modified"
+        };
+
+        entries.push((status.to_string(), path.to_string()));
+    }
+
+    Ok(entries)
+}
+
 /// Create a sparse git worktree at `worktree_path` tracking `refname`.
 /// Excludes `.scratch/**` from checkout (data files only).
 /// Removes and recreates the directory if it already exists.
@@ -641,6 +708,105 @@ mod tests {
         assert_eq!(
             entries,
             vec![("deleted".to_string(), NON_ASCII_PATH.to_string())]
+        );
+    }
+
+    #[test]
+    fn worktree_status_porcelain_classifies_and_scopes_routine_changes() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(
+            &source.join("routines/keep.yaml"),
+            "name: Keep\nsteps:\n  - action: pull\n",
+        );
+        write_file(
+            &source.join("routines/remove.yaml"),
+            "name: Remove\nsteps:\n  - action: pull\n",
+        );
+        write_file(&source.join("syncs/other.json"), "{}");
+        commit_all(&source, "base");
+
+        // Uncommitted local edits: one modified, one new (untracked), one deleted — plus an
+        // out-of-scope change under syncs/ that the `routines/` pathspec must exclude.
+        write_file(
+            &source.join("routines/keep.yaml"),
+            "name: Keep edited\nsteps:\n  - action: sync\n",
+        );
+        write_file(
+            &source.join("routines/new.yaml"),
+            "name: New\nsteps:\n  - action: pull\n",
+        );
+        fs::remove_file(source.join("routines/remove.yaml")).unwrap();
+        write_file(&source.join("syncs/other.json"), "{\"x\":1}");
+
+        let mut entries = worktree_status_porcelain(&source, "routines/").unwrap();
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![
+                ("added".to_string(), "routines/new.yaml".to_string()),
+                ("deleted".to_string(), "routines/remove.yaml".to_string()),
+                ("modified".to_string(), "routines/keep.yaml".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn worktree_status_porcelain_lists_files_in_an_entirely_new_untracked_dir() {
+        // Regression: without `--untracked-files=all`, git collapses a wholly-untracked directory
+        // to a single `?? routines/` entry. This is the "first routine in a fresh workspace" case.
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(&source.join("README.md"), "seed\n");
+        commit_all(&source, "base");
+
+        // routines/ does not exist in the repo yet — create two files under it.
+        write_file(
+            &source.join("routines/a.yaml"),
+            "name: A\nsteps:\n  - action: pull\n",
+        );
+        write_file(
+            &source.join("routines/b.yaml"),
+            "name: B\nsteps:\n  - action: pull\n",
+        );
+
+        let mut entries = worktree_status_porcelain(&source, "routines/").unwrap();
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![
+                ("added".to_string(), "routines/a.yaml".to_string()),
+                ("added".to_string(), "routines/b.yaml".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn worktree_status_porcelain_clean_worktree_is_empty() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let source = init_source(tmp.path());
+        write_file(
+            &source.join("routines/a.yaml"),
+            "name: A\nsteps:\n  - action: pull\n",
+        );
+        commit_all(&source, "base");
+
+        let entries = worktree_status_porcelain(&source, "routines/").unwrap();
+        assert!(
+            entries.is_empty(),
+            "expected clean worktree, got {entries:?}"
         );
     }
 

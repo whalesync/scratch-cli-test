@@ -12,6 +12,7 @@ import { PosthogModule } from 'src/posthog/posthog.module';
 import { PublishPlanModule } from 'src/publish-plan/publish-plan.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { ConnectorAccountModule } from 'src/remote-service/connector-account/connector-account.module';
+import { RoutineModule } from 'src/routine/routine.module';
 import { ScratchGitModule } from 'src/scratch-git/scratch-git.module';
 import { SyncModule } from 'src/sync/sync.module';
 import { WorkbookRepoService } from 'src/workbook/workbook-repo.service';
@@ -44,6 +45,7 @@ import { UploadPatchController } from './upload-patch.controller';
     AssetModule,
     AuditLogModule,
     MigrationLockModule,
+    RoutineModule,
   ],
   controllers: [
     CliAuthController,

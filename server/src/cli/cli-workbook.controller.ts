@@ -16,7 +16,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { DeleteWorkbookResponseDto, WorkbookId } from '@spinner/shared-types';
+import { DeleteWorkbookResponseDto, PushRoutineFilesResponse, WorkbookId } from '@spinner/shared-types';
 import type { Request, Response } from 'express';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -29,6 +29,8 @@ import { PublishPlanBuildDto, PublishPlanRunDto } from 'src/publish-plan/dto/pub
 import { PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import { PublishPlanCrudService } from 'src/publish-plan/publish-plan-crud.service';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
+import { PushRoutineFilesDto } from 'src/routine/dto/push-routine-files.dto';
+import { RoutineService } from 'src/routine/routine.service';
 import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { userToActor } from 'src/users/types';
 import { WorkbookRepoService, getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
@@ -67,6 +69,7 @@ export class CliWorkbookController {
     private readonly publishPlanBuildService: PublishPlanBuildService,
     private readonly publishPlanCrudService: PublishPlanCrudService,
     private readonly auditLogService: AuditLogService,
+    private readonly routineService: RoutineService,
   ) {
     this.gitBackendUrl = this.configService.getScratchGitBackendUrl();
   }
@@ -666,6 +669,25 @@ export class CliWorkbookController {
     });
 
     return result;
+  }
+
+  /**
+   * Batch-push routine files from the CLI (`scratchmd routines push`). Commits a set of upserts
+   * (created/edited routine YAML) and deletes to the config repo `main`, then reloads routines so
+   * schedules converge. The body's optional `baseHead` enables optimistic concurrency: a stale push
+   * is refused with `409 blocked_stale` (the CLI then pulls + retries) rather than clobbering newer
+   * routines. Validation, the concurrency guard, and the audit log all live in RoutineService.
+   */
+  @Post(':id/routines/push')
+  async pushRoutines(
+    @Req() req: RequestWithUser,
+    @Param('id') id: string,
+    @Body() dto: PushRoutineFilesDto,
+  ): Promise<PushRoutineFilesResponse> {
+    const actor = userToActor(req.user);
+    // Push is a mutation — block on pending workbooks.
+    await this.workbookService.assertWritableWorkbook(actor, id as WorkbookId);
+    return this.routineService.pushRoutineFiles(id as WorkbookId, dto, actor);
   }
 
   /**

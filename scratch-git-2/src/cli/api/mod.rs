@@ -164,6 +164,33 @@ impl ApiClient {
         self.do_request_void(Method::DELETE, path).await
     }
 
+    // ── Routines ────────────────────────────────────────────────────────────
+
+    /// Push routine files (`scratchmd routines push`). Posts upserts + deletes to the server,
+    /// which commits them to the workbook config repo `main` and reloads routines. Discriminates
+    /// the `409 blocked_stale` optimistic-concurrency response so the caller can prompt a
+    /// `routines pull` + retry rather than surface a raw server error.
+    pub async fn routines_push(
+        &self,
+        workbook_id: &str,
+        request: &RoutinesPushRequest,
+    ) -> ApiResult<RoutinesPushOutcome> {
+        let path = format!("workbooks/{}/routines/push", workbook_id);
+        match self.post::<_, RoutinesPushResponse>(&path, request).await {
+            Ok(response) => Ok(RoutinesPushOutcome::Pushed(response)),
+            Err(ApiError::ServerError { status: 409, body }) => {
+                match serde_json::from_str::<RoutinesPushBlockedStale>(&body) {
+                    Ok(stale) if stale.status == "blocked_stale" => {
+                        Ok(RoutinesPushOutcome::BlockedStale(stale))
+                    }
+                    // A 409 that isn't the structured stale envelope is a genuine error.
+                    _ => Err(ApiError::ServerError { status: 409, body }),
+                }
+            }
+            Err(other) => Err(other),
+        }
+    }
+
     // ── Auth endpoints (no token needed) ───────────────────────────────────
 
     /// Build an unauthenticated request with standard headers.
@@ -206,6 +233,53 @@ impl ApiClient {
         let resp = Self::check_response(resp).await?;
         Ok(resp.json().await?)
     }
+}
+
+// ── Routines push types ──────────────────────────────────────────────────────
+
+/// A single routine file to create or overwrite.
+#[derive(Debug, Serialize)]
+pub struct RoutineUpsert {
+    pub path: String,
+    pub content: String,
+}
+
+/// Request body for `POST /cli/v1/workbooks/:id/routines/push`. `base_head` is the client's local
+/// config-repo `main` SHA; omitted (`None`) skips the server's optimistic-concurrency guard.
+#[derive(Debug, Serialize)]
+pub struct RoutinesPushRequest {
+    pub upserts: Vec<RoutineUpsert>,
+    pub deletes: Vec<String>,
+    #[serde(rename = "baseHead", skip_serializing_if = "Option::is_none")]
+    pub base_head: Option<String>,
+}
+
+/// Success response: the new `main` SHA and the reconciled routines (kept opaque — the CLI only
+/// needs the count).
+#[derive(Debug, serde::Deserialize)]
+pub struct RoutinesPushResponse {
+    #[serde(default)]
+    pub head: String,
+    #[serde(default)]
+    pub routines: Vec<serde_json::Value>,
+}
+
+/// The `409 blocked_stale` envelope: `main` advanced past the client's `base_head`.
+#[derive(Debug, serde::Deserialize)]
+pub struct RoutinesPushBlockedStale {
+    #[serde(default)]
+    pub status: String,
+    #[serde(rename = "currentRemoteHead", default)]
+    pub current_remote_head: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// Outcome of a routines push: applied, or refused because the local copy is stale.
+#[derive(Debug)]
+pub enum RoutinesPushOutcome {
+    Pushed(RoutinesPushResponse),
+    BlockedStale(RoutinesPushBlockedStale),
 }
 
 // ── Auth response types ─────────────────────────────────────────────────────

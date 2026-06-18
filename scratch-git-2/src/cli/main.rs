@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 
 use api::{ApiClient, DEFAULT_SERVER_URL};
 use commands::{
-    auth, connections, files, index, linked, read_records, syncs, validation, workspaces,
+    auth, connections, files, index, linked, read_records, routines, syncs, validation, workspaces,
 };
 use config::project_config;
 
@@ -81,6 +81,11 @@ enum Commands {
         workspace: Option<String>,
         #[command(subcommand)]
         command: syncs::SyncsCommands,
+    },
+    /// Manage routines (pull / push / status of routine files)
+    Routines {
+        #[command(subcommand)]
+        command: routines::RoutinesCommands,
     },
     /// Regenerate AGENTS.md (+ CLAUDE.md symlink) and .scratch/docs/ in the current workspace
     #[command(name = "generate-docs")]
@@ -468,6 +473,8 @@ async fn main() {
                 }
             }
         }
+
+        Commands::Routines { command } => routines::run(command, &server_url, cli.json).await,
 
         Commands::PaginateRecords {
             workspace,

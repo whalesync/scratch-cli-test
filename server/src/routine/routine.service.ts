@@ -2,6 +2,9 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { RoutineRun as PrismaRoutineRun } from '@prisma/client';
 import {
   CreateRoutineFileDto,
+  PushRoutineFilesBlockedStaleDto,
+  PushRoutineFilesDto,
+  PushRoutineFilesResponse,
   Routine,
   RoutineFileContent,
   RoutineRun,
@@ -233,6 +236,104 @@ export class RoutineService {
       entityId: workbookId,
       organizationId: actor.organizationId,
     });
+  }
+
+  /**
+   * Batch-pushes routine files from the CLI: a set of upserts (created/edited files) and deletes
+   * (removed paths) committed to the config repo `main`, then reconciled via Reload Routines. This
+   * is the server side of `scratchmd routines push`.
+   *
+   * Fail-fast at the boundary: every path is bounds-checked and every upsert is parsed +
+   * reference-validated BEFORE anything is written, so an invalid push commits nothing. Optimistic
+   * concurrency: when `baseHead` is provided it must still match the repo's current `main` head,
+   * otherwise the push is refused with a 409 `blocked_stale` (the CLI prompts a `routines pull` +
+   * retry) — a stale push never clobbers newer routines.
+   *
+   * Unlike the single-file create/update endpoints this uses upsert semantics: a file is created or
+   * overwritten either way (no 409-on-exists), and deleting an absent file is a git-level no-op.
+   */
+  async pushRoutineFiles(
+    workbookId: WorkbookId,
+    dto: PushRoutineFilesDto,
+    actor: Actor,
+  ): Promise<PushRoutineFilesResponse> {
+    // 1. Validate every path (upserts + deletes) up front; reject a path listed in both.
+    for (const upsert of dto.upserts) {
+      assertValidRoutineFilePath(upsert.path);
+    }
+    for (const deletePath of dto.deletes) {
+      assertValidRoutineFilePath(deletePath);
+    }
+    const deletePathSet = new Set(dto.deletes);
+    const pathsBothUpsertedAndDeleted = dto.upserts
+      .map((upsert) => upsert.path)
+      .filter((path) => deletePathSet.has(path));
+    if (pathsBothUpsertedAndDeleted.length > 0) {
+      throw new BadRequestException(
+        `routine file path(s) cannot be both upserted and deleted: ${pathsBothUpsertedAndDeleted.join(', ')}`,
+      );
+    }
+
+    const repoId = await this.resolveConfigRepoId(workbookId);
+
+    // 2. Parse + reference-validate every upsert before any write (the server is authoritative on
+    //    references — the CLI cannot resolve a workbook's folders/connections).
+    for (const upsert of dto.upserts) {
+      const parseResult = this.parser.parse(upsert.content);
+      if ('error' in parseResult) {
+        throw new BadRequestException(`${upsert.path}: ${parseResult.error}`);
+      }
+      await this.assertRoutineReferencesExist(workbookId, parseResult.routine);
+    }
+
+    // 3. Optimistic-concurrency guard — refuse before any side effect if `main` moved.
+    if (dto.baseHead) {
+      const currentRemoteHead = await this.scratchGitService.getBranchHead(repoId, MAIN_BRANCH);
+      if (currentRemoteHead && dto.baseHead !== currentRemoteHead) {
+        const blockedStale: PushRoutineFilesBlockedStaleDto = {
+          status: 'blocked_stale',
+          baseHead: dto.baseHead,
+          currentRemoteHead,
+          message:
+            'Server routines have advanced past your local copy. Run `scratchmd routines pull`, then retry the push.',
+        };
+        throw new ConflictException(blockedStale);
+      }
+    }
+
+    // 4. Commit upserts then deletes (upserts first so a half-applied push never removes a file a
+    //    later step still needs; re-running push re-converges since it is diff-driven). Both calls
+    //    are no-ops on an empty list.
+    if (dto.upserts.length > 0) {
+      await this.scratchGitService.commitFilesToBranch(
+        repoId,
+        MAIN_BRANCH,
+        dto.upserts.map((upsert) => ({ path: upsert.path, content: upsert.content })),
+        `Push routines: ${dto.upserts.length} upsert(s) (${actor.userId})`,
+      );
+    }
+    if (dto.deletes.length > 0) {
+      await this.scratchGitService.deleteFilesFromBranch(
+        repoId,
+        MAIN_BRANCH,
+        dto.deletes,
+        `Push routines: ${dto.deletes.length} delete(s) (${actor.userId})`,
+      );
+    }
+
+    // 5. Reconcile all ROUTINE schedules from the just-committed files, then read the new head.
+    const routines = await this.reloadRoutines(workbookId, actor);
+    const head = (await this.scratchGitService.getBranchHead(repoId, MAIN_BRANCH)) ?? '';
+
+    await this.auditLogService.logEvent({
+      actor,
+      eventType: 'update',
+      message: `Pushed routines: ${dto.upserts.length} upsert(s), ${dto.deletes.length} delete(s)`,
+      entityId: workbookId,
+      organizationId: actor.organizationId,
+    });
+
+    return { head, routines };
   }
 
   // ── internals ────────────────────────────────────────────────────────────────

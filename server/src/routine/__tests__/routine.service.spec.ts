@@ -36,6 +36,7 @@ describe('RoutineService', () => {
   let getRepoFile: jest.Mock;
   let commitFilesToBranch: jest.Mock;
   let deleteFilesFromBranch: jest.Mock;
+  let getBranchHead: jest.Mock;
   let upsertRoutineSchedule: jest.Mock;
   let deleteRoutineScheduleByFilePath: jest.Mock;
   let deleteOrphanedRoutineSchedules: jest.Mock;
@@ -52,6 +53,7 @@ describe('RoutineService', () => {
     getRepoFile = jest.fn();
     commitFilesToBranch = jest.fn().mockResolvedValue({ created: [], updated: [], unchanged: [] });
     deleteFilesFromBranch = jest.fn().mockResolvedValue(undefined);
+    getBranchHead = jest.fn().mockResolvedValue(null);
     upsertRoutineSchedule = jest.fn().mockResolvedValue(undefined);
     deleteRoutineScheduleByFilePath = jest.fn().mockResolvedValue(undefined);
     deleteOrphanedRoutineSchedules = jest.fn().mockResolvedValue(undefined);
@@ -72,6 +74,7 @@ describe('RoutineService', () => {
       getRepoFile,
       commitFilesToBranch,
       deleteFilesFromBranch,
+      getBranchHead,
     } as unknown as ScratchGitService;
     const scheduleService = {
       upsertRoutineSchedule,
@@ -414,6 +417,128 @@ describe('RoutineService', () => {
         NotFoundException,
       );
       expect(deleteFilesFromBranch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pushRoutineFiles', () => {
+    const VALID = 'name: Daily\nsteps:\n  - action: pull\n';
+
+    it('commits upserts and deletes, reloads, and returns the new head', async () => {
+      getBranchHead.mockResolvedValue('headsha123');
+      // reloadRoutines reads the committed files back to reconcile + return them.
+      listRepoFiles.mockResolvedValue([fileRef('routines/new.yaml')]);
+      getRepoFile.mockResolvedValue({ content: VALID });
+
+      const result = await service.pushRoutineFiles(
+        WORKBOOK_ID,
+        { upserts: [{ path: 'routines/new.yaml', content: VALID }], deletes: ['routines/old.yaml'] },
+        ACTOR,
+      );
+
+      expect(commitFilesToBranch).toHaveBeenCalledWith(
+        expect.any(String),
+        'main',
+        [{ path: 'routines/new.yaml', content: VALID }],
+        expect.stringContaining('Push routines'),
+      );
+      expect(deleteFilesFromBranch).toHaveBeenCalledWith(
+        expect.any(String),
+        'main',
+        ['routines/old.yaml'],
+        expect.stringContaining('Push routines'),
+      );
+      expect(result.head).toBe('headsha123');
+      expect(result.routines).toHaveLength(1);
+      // The commit/delete messages above already assert the "Push routines" wording; here just
+      // confirm an audit event was logged for the push.
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'update' }));
+    });
+
+    it('refuses with 409 blocked_stale when baseHead no longer matches, with no side effects', async () => {
+      getBranchHead.mockResolvedValue('serverHeadAdvanced');
+
+      await expect(
+        service.pushRoutineFiles(
+          WORKBOOK_ID,
+          { upserts: [{ path: 'routines/a.yaml', content: VALID }], deletes: [], baseHead: 'staleLocalHead' },
+          ACTOR,
+        ),
+      ).rejects.toThrow(ConflictException);
+
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+      expect(deleteFilesFromBranch).not.toHaveBeenCalled();
+      expect(logEvent).not.toHaveBeenCalled();
+    });
+
+    it('proceeds (no staleness guard) when baseHead is omitted even though the head differs', async () => {
+      getBranchHead.mockResolvedValue('someServerHead');
+      listRepoFiles.mockResolvedValue([fileRef('routines/a.yaml')]);
+      getRepoFile.mockResolvedValue({ content: VALID });
+
+      await service.pushRoutineFiles(
+        WORKBOOK_ID,
+        { upserts: [{ path: 'routines/a.yaml', content: VALID }], deletes: [] },
+        ACTOR,
+      );
+
+      expect(commitFilesToBranch).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a path outside routines/ before any git call', async () => {
+      await expect(
+        service.pushRoutineFiles(
+          WORKBOOK_ID,
+          { upserts: [{ path: 'secrets/leak.yaml', content: VALID }], deletes: [] },
+          ACTOR,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(getBranchHead).not.toHaveBeenCalled();
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('rejects a path listed in both upserts and deletes', async () => {
+      await expect(
+        service.pushRoutineFiles(
+          WORKBOOK_ID,
+          { upserts: [{ path: 'routines/a.yaml', content: VALID }], deletes: ['routines/a.yaml'] },
+          ACTOR,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed YAML before the staleness check or any commit', async () => {
+      await expect(
+        service.pushRoutineFiles(
+          WORKBOOK_ID,
+          { upserts: [{ path: 'routines/a.yaml', content: 'steps: [] # missing name' }], deletes: [] },
+          ACTOR,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(getBranchHead).not.toHaveBeenCalled();
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unresolved reference before any commit', async () => {
+      validateRoutine.mockResolvedValue(['steps.0.connection: connection "ghost" not found in this workbook']);
+
+      await expect(
+        service.pushRoutineFiles(
+          WORKBOOK_ID,
+          {
+            upserts: [
+              { path: 'routines/a.yaml', content: 'name: A\nsteps:\n  - action: pull\n    connection: ghost\n' },
+            ],
+            deletes: [],
+          },
+          ACTOR,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(commitFilesToBranch).not.toHaveBeenCalled();
     });
   });
 });
