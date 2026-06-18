@@ -1,5 +1,5 @@
 import type { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
-import { JobType } from '@spinner/shared-types';
+import { type JobTrigger, JobType } from '@spinner/shared-types';
 import { WSLogger } from '../../../logger';
 import type { SyncService } from '../../../sync/sync.service';
 import { JobCanceledError } from '../../job-errors';
@@ -36,7 +36,7 @@ export type TemporarySyncWithPullJobDefinition = JobDefinitionBuilder<
     syncId: SyncId;
     organizationId: string;
     userId: string;
-    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
+    trigger?: JobTrigger;
   },
   TemporarySyncWithPullPublicProgress,
   Record<string, never>,

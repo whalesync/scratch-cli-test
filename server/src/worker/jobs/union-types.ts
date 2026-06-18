@@ -1,3 +1,4 @@
+import { RoutineRunId } from '@spinner/shared-types';
 import { Job as BullMQPlainJob } from 'bullmq';
 import { Progress } from './base-types';
 import { ApplyPatchesJobDefinition } from './job-definitions/apply-patches.job';
@@ -30,6 +31,7 @@ export type JobHandler<TDefinition extends JobDefinition> = {
   run: (params: {
     jobId: string;
     runId?: string;
+    routineRunId?: RoutineRunId;
     data: TDefinition['data'];
     progress: Progress<TDefinition['publicProgress'], TDefinition['initialJobProgress']>;
     abortSignal: AbortSignal;

@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { type DataFolderId, JobType, Service, type WorkbookId } from '@spinner/shared-types';
+import { type DataFolderId, type JobTrigger, JobType, Service, type WorkbookId } from '@spinner/shared-types';
 import type { ConnectorsService } from '../../../remote-service/connectors/connectors.service';
 import {
   type BaseJsonTableSpec,
@@ -42,7 +42,7 @@ export type PullFilesJobDefinition = JobDefinitionBuilder<
     userId: string;
     organizationId: string;
     filePaths: string[];
-    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
+    trigger?: JobTrigger;
     progress?: JsonSafeObject;
     initialPublicProgress?: PullFilesPublicProgress;
   },

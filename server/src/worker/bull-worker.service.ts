@@ -14,7 +14,7 @@ import { CustomMetricsService } from 'src/metrics/custom-metrics-service';
 import { JobService } from '../job/job.service';
 import { JobCanceledError } from './job-errors';
 import { JobHandlerService } from './job-handler.service';
-import { JobResult, Progress } from './jobs/base-types';
+import { JobResult, Progress, RunContext } from './jobs/base-types';
 import { JobData, JobProgress } from './jobs/union-types';
 
 @Injectable()
@@ -236,9 +236,11 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     };
 
     try {
+      const runContext = dbJob.runContext as RunContext | null;
       const result = await handler.run({
         jobId: dbJob.id,
         runId: dbJob.runId ?? undefined,
+        routineRunId: runContext?.routineRunId,
         data: jobData,
         checkpoint,
         progress: job.progress as JobProgress,

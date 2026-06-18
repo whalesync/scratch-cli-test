@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import type { DataFolderId, SyncId, WorkbookId } from '@spinner/shared-types';
-import { JobType, RunId, TransformerTypes, transformV1ToV2 } from '@spinner/shared-types';
+import type { DataFolderId, RoutineRunId, SyncId, WorkbookId } from '@spinner/shared-types';
+import { type JobTrigger, JobType, RunId, TransformerTypes, transformV1ToV2 } from '@spinner/shared-types';
 import { createHash } from 'crypto';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { UserCluster } from 'src/db/cluster-types';
@@ -56,7 +56,7 @@ export type SyncDataFoldersJobDefinition = JobDefinitionBuilder<
     syncId: SyncId;
     organizationId: string;
     userId: string;
-    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
+    trigger?: JobTrigger;
     progress?: JsonSafeObject;
     initialPublicProgress?: SyncDataFoldersPublicProgress;
   },
@@ -81,6 +81,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
   async run(params: {
     jobId: string;
     runId?: string;
+    routineRunId?: RoutineRunId;
     data: SyncDataFoldersJobDefinition['data'];
     progress: Progress<
       SyncDataFoldersJobDefinition['publicProgress'],
@@ -94,7 +95,7 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
       >,
     ) => Promise<void>;
   }) {
-    const { jobId, runId, data, checkpoint } = params;
+    const { jobId, runId, routineRunId, data, checkpoint } = params;
 
     WSLogger.info({
       source: 'SyncDataFoldersJob',
@@ -400,7 +401,9 @@ export class SyncDataFoldersJobHandler implements JobHandlerBuilder<SyncDataFold
               undefined,
               undefined,
               undefined,
-              createRunContext('job', { runId: runId as RunId, parentJobId: jobId }),
+              // Child job: triggered by this job (trigger stays 'job'), but it inherits routineRunId so
+              // a routine-driven publish-after-sync stays attributable to the run. Undefined otherwise.
+              createRunContext('job', { runId: runId as RunId, parentJobId: jobId, routineRunId }),
             );
 
             if (job.id === undefined) {

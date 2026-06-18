@@ -4,6 +4,7 @@ import {
   type DataFolderOptions,
   type FolderError,
   isGenericApiConnectorExtras,
+  type JobTrigger,
   JobType,
   type WorkbookId,
 } from '@spinner/shared-types';
@@ -72,7 +73,7 @@ export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
     dataFolderIds: DataFolderId[];
     userId: string;
     organizationId: string;
-    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
+    trigger?: JobTrigger;
     /**
      * Requested pull mode for the job. Omitted → `'full'` (the safe default
      * matching pre-incremental behavior). Only `'incremental'` is opt-in via

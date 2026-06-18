@@ -1,8 +1,4 @@
-export interface JobRunContext {
-  runId: string;
-  trigger: 'web' | 'scheduler' | 'cli' | 'job';
-  parentJobId?: string; // The DBJob ID of the job that triggered this job
-}
+import { RunContext } from '../../db/run-context';
 
 export interface GetAllJobsResponseDto {
   jobs: {
@@ -19,7 +15,7 @@ export interface GetAllJobsResponseDto {
     finishedOn?: string | null;
     createdAt: string;
     failedReason?: string | null;
-    runContext?: JobRunContext | null;
+    runContext?: RunContext | null;
   }[];
   total: number;
   limit: number;

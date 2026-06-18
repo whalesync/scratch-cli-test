@@ -1,4 +1,4 @@
-import { JobType, type PublishFailedOperation, type WorkbookId } from '@spinner/shared-types';
+import { type JobTrigger, JobType, type PublishFailedOperation, type WorkbookId } from '@spinner/shared-types';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishDirtyDriftError, type PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
@@ -82,7 +82,7 @@ export type PublishJobDefinition = JobDefinitionBuilder<
     /** DEV-10316 TOCTOU token — see PublishPlanBuildDto.expectedBaseDirtyHead. */
     expectedBaseDirtyHead?: string;
     executeSinglePhase?: boolean; // If only executing a single stage
-    trigger?: 'web' | 'scheduler' | 'cli' | 'job';
+    trigger?: JobTrigger;
   },
   PublishPublicProgress,
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type

@@ -240,12 +240,13 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[0].status).toBe('completed');
     expect(steps[1].status).toBe('completed');
     expect(steps[1].pipelineId).toBe('pln_1');
+    // Every step job of the run is tagged with trigger 'routine' and the RoutineRunId.
     expect(enqueuePull).toHaveBeenCalledWith(
       WORKBOOK_ID,
       expect.anything(),
       ['dfd_1'],
       undefined,
-      expect.anything(),
+      expect.objectContaining({ trigger: 'routine', routineRunId: RUN_ID }),
       'full',
     );
     // publish: runAfterPlan true (PUBLISH), folderPath leading-slash.
@@ -255,7 +256,7 @@ describe('RoutineExecutorService.execute', () => {
       'coa_1',
       true,
       '/blog/posts',
-      expect.anything(),
+      expect.objectContaining({ trigger: 'routine', routineRunId: RUN_ID }),
     );
   });
 

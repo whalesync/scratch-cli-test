@@ -1,4 +1,4 @@
-import { createRunId, RunId } from '@spinner/shared-types';
+import { createRunId, RoutineRunId, RunId, RunContext as SharedRunContext } from '@spinner/shared-types';
 import { Progress } from 'src/types/progress';
 import { JsonSafeObject } from 'src/utils/objects';
 
@@ -42,6 +42,7 @@ export type JobHandlerBuilder<TDefinition extends JobDefinitionBuilder<any, any,
         run: (params: {
           jobId: string;
           runId?: string;
+          routineRunId?: RoutineRunId;
           data: TData;
           checkpoint: (progress: Omit<Progress<TPublicProgress, TJobProgress>, 'timestamp'>) => Promise<void>;
           progress: Progress<TPublicProgress, TJobProgress>;
@@ -64,20 +65,19 @@ export type JobHandlerBuilder<TDefinition extends JobDefinitionBuilder<any, any,
 //       }
 //     : never;
 
-// TODO: create a shared-type for this context
-export interface RunContext extends JsonSafeObject {
-  runId: string;
-  trigger: 'web' | 'scheduler' | 'cli' | 'job';
-  parentJobId?: string; // The DBJob ID of the job that triggered this job
-}
+// The canonical RunContext lives in @spinner/shared-types so the web client and desktop app can
+// consume it. Intersect with JsonSafeObject on the server side so it stays assignable to the
+// JSON-typed slots it flows through (BullMQ job data, Prisma `Json`) without per-call-site casts.
+export type RunContext = SharedRunContext & JsonSafeObject;
 
 export function createRunContext(
   trigger: RunContext['trigger'],
-  options?: { runId?: RunId; parentJobId?: string },
+  options?: { runId?: RunId; parentJobId?: string; routineRunId?: RoutineRunId },
 ): RunContext {
   return {
     runId: options?.runId ?? createRunId(),
     trigger,
     ...(options?.parentJobId && { parentJobId: options.parentJobId }),
+    ...(options?.routineRunId && { routineRunId: options.routineRunId }),
   };
 }

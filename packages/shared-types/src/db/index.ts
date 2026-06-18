@@ -5,6 +5,7 @@ export * from './job';
 export * from './organization';
 export * from './routine';
 export * from './routine-run';
+export * from './run-context';
 export * from './schedule';
 export * from './sync';
 export * from './sync-draft';

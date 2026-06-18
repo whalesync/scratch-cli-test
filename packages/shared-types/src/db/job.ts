@@ -1,4 +1,4 @@
-import { JobRunContext } from '../dto/dev-tools/get-all-jobs.dto';
+import { RunContext } from './run-context';
 
 /**
  * A job (pull / publish / sync / etc.) as returned by the `/jobs` endpoints.
@@ -31,5 +31,5 @@ export interface Job<TPublicProgress = object> {
   processedOn?: string | null;
   finishedOn?: string | null;
   failedReason?: string | null;
-  runContext?: JobRunContext | null;
+  runContext?: RunContext | null;
 }

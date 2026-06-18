@@ -225,7 +225,9 @@ export class RoutineExecutorService {
     const actor = await this.buildActorForRun(claimedRun);
     const context = await this.referenceValidator.loadContext(workbookId);
     // One RunContext (and RunId) for every step job of this run so they group together for debugging.
-    const runContext = createRunContext('job', { parentJobId: runId });
+    // `trigger: 'routine'` marks these top-level step jobs; `routineRunId` links them (and any child
+    // jobs they spawn) back to this run.
+    const runContext = createRunContext('routine', { routineRunId: runId });
 
     const steps = await this.db.client.routineRunStep.findMany({
       where: { runId },
