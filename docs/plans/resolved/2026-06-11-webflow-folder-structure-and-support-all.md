@@ -1,9 +1,45 @@
 # Webflow: site-grouped folder structure + all-workbooks migration (DEV-9698)
 
 **Date**: 2026-06-11
-**Status**: In Progress
+**Status**: Resolved
 **Author**: Curtis Fonger
 **Linear**: [DEV-9698](https://linear.app/whalesync/issue/DEV-9698/proposal-support-all-of-webflow)
+
+## Rollout outcome (2026-06-18)
+
+All code (T1–T7) shipped to master, and the production migration was run to completion
+via the admin migrations UI, canary-first. **228 collections across 16 workbooks migrated
+from the flat `/<Site>/<Collection>` layout to the nested `/<Site>/Collections/<Collection>`
+layout, 0 errored.** 17 of 19 Webflow connector accounts are now v2. Every batch was
+verified against the prod DB (version flips + the sync invariant: `SyncMatchKeys` /
+`SyncRemoteIdMapping` rows followed their folders, counts preserved, zero stranded).
+
+Validated on real prod data: high-volume `FileReference` rewrite (Products, 875k refs),
+Airtable→Webflow destination sync at scale (ExtremeHiFi, ~37k match keys + ~37k dest
+id-mappings — finding #9), Webflow→Webflow cross-account sync (Ordotype, 21.6k + 11k),
+and legacy 3-segment `/Webflow/<Site>/<Collection>` paths (Right Side Capital).
+
+Two things surfaced during the rollout that this plan did not anticipate:
+
+1. **Tooling gap — the admin migrations UI couldn't dry-run.** The `dryRun` flag existed in
+   the DTO/controller but the UI never sent it and only showed `migratedIds`/`remainingCount`.
+   Added a **dry-run checkbox + a generic per-outcome result summary** to
+   `client/.../settings/dev/migrations/page.tsx` (with `MigrationDescriptor.supportsDryRun`
+   and `MigrationResult.dryRun` + `summary` in shared-types; the server rejects a dry-run for
+   a migration that doesn't support it). Committed `[server, client] DEV-9698 Add dry-run +
+   result summary to the code-migrations admin UI`.
+2. **Bug — the per-folder atomic rewrite inherited Prisma's default 5 s interactive-transaction
+   timeout.** The `FileReference.sourceFilePath` UPDATE for the largest collections exceeded it
+   (Products ~81 s) and aborted — a **clean atomic rollback, no corruption** (the ExtremeHiFi
+   canary caught it: 11/15 migrated, 4 errored, account left at v1). Fixed by passing
+   `{ timeout: 10 min, maxWait: 30 s }` to that one `$transaction` in
+   `webflow-folder-restructure-path-rewrite.ts` (+ a regression test). Committed `[server]
+   DEV-9698 Raise the Webflow folder-rewrite transaction timeout`; re-ran the stragglers green.
+
+The only non-migrating folders were two pre-site-grouping single-segment **dev/test** folders
+(`/Curtis Testing - Mackerels`, `/Ivan - dev testing - TestItems`) — correctly skip-warned
+(account stays v1, non-destructive); resolved by their owners deleting them. Deferred P2 work
+(Ecommerce / Forms / Users entities, asset editing) remains separate follow-ups.
 
 ## Implementation progress
 
