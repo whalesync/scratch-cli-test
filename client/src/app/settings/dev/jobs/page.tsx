@@ -17,6 +17,7 @@ import {
   Loader,
   Modal,
   Stack,
+  Switch,
   Table,
   Text,
   TextInput,
@@ -180,6 +181,7 @@ function groupJobsByRunId(jobs: Job[]): RunGroup[] {
 }
 
 const PAGE_SIZE = 100;
+const GROUPED_COLUMN_COUNT = 10;
 const ALL_STATUSES = ['created', 'active', 'completed', 'failed', 'canceled'] as const;
 
 export default function JobsDevPage() {
@@ -187,6 +189,7 @@ export default function JobsDevPage() {
   const [offset, setOffset] = useState(0);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [userIdFilter, setUserIdFilter] = useState('');
+  const [groupByRun, setGroupByRun] = useState(true);
   const { jobs, total, isLoading, error, mutate } = useJobsDevTools({
     limit: PAGE_SIZE,
     offset,
@@ -319,6 +322,12 @@ export default function JobsDevPage() {
                 Clear
               </Button>
             )}
+            <Switch
+              size="xs"
+              label="Group by run"
+              checked={groupByRun}
+              onChange={(event) => setGroupByRun(event.currentTarget.checked)}
+            />
           </Group>
 
           <Group justify="justify-end" gap="xl">
@@ -353,6 +362,7 @@ export default function JobsDevPage() {
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Job ID</Table.Th>
+                {!groupByRun && <Table.Th>Run ID</Table.Th>}
                 <Table.Th>Type</Table.Th>
                 <Table.Th>Trigger</Table.Th>
                 <Table.Th>Status</Table.Th>
@@ -365,16 +375,27 @@ export default function JobsDevPage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {runGroups.map((group, index) => (
-                <RunGroupRows
-                  key={group.groupKey}
-                  group={group}
-                  isFirst={index === 0}
-                  cancelingJobIds={cancelingJobIds}
-                  onCancelJob={handleCancelJob}
-                  onViewRaw={setViewRawJobId}
-                />
-              ))}
+              {groupByRun
+                ? runGroups.map((group) => (
+                    <RunGroupRows
+                      key={group.groupKey}
+                      group={group}
+                      cancelingJobIds={cancelingJobIds}
+                      onCancelJob={handleCancelJob}
+                      onViewRaw={setViewRawJobId}
+                    />
+                  ))
+                : jobs.map((job) => (
+                    <JobTreeRows
+                      key={job.dbJobId}
+                      node={{ job, children: [] }}
+                      depth={0}
+                      showRunIdColumn
+                      cancelingJobIds={cancelingJobIds}
+                      onCancelJob={handleCancelJob}
+                      onViewRaw={setViewRawJobId}
+                    />
+                  ))}
             </Table.Tbody>
           </Table>
         )}
@@ -387,22 +408,29 @@ export default function JobsDevPage() {
 
 function RunGroupRows({
   group,
-  isFirst,
   cancelingJobIds,
   onCancelJob,
   onViewRaw,
 }: {
   group: RunGroup;
-  isFirst: boolean;
   cancelingJobIds: Set<string>;
   onCancelJob: (bullJobId: string) => void;
   onViewRaw: (jobId: string | null) => void;
 }) {
   return (
     <>
-      {isFirst && (
+      {group.runId && (
         <Table.Tr>
-          <Table.Td colSpan={10} p={0} style={{ borderBottom: '2px solid var(--mantine-color-dark-4)' }} />
+          <Table.Td colSpan={GROUPED_COLUMN_COUNT} style={{ backgroundColor: 'var(--bg-selected)' }}>
+            <Group gap="xs">
+              <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace' }}>
+                {group.runId}
+              </Text>
+              <Badge size="xs" variant="light" color="gray">
+                {group.jobs.length} job{group.jobs.length === 1 ? '' : 's'}
+              </Badge>
+            </Group>
+          </Table.Td>
         </Table.Tr>
       )}
       {group.tree.map((node) => (
@@ -410,6 +438,7 @@ function RunGroupRows({
           key={node.job.dbJobId}
           node={node}
           depth={0}
+          showRunIdColumn={false}
           cancelingJobIds={cancelingJobIds}
           onCancelJob={onCancelJob}
           onViewRaw={onViewRaw}
@@ -422,12 +451,14 @@ function RunGroupRows({
 function JobTreeRows({
   node,
   depth,
+  showRunIdColumn,
   cancelingJobIds,
   onCancelJob,
   onViewRaw,
 }: {
   node: TreeNode;
   depth: number;
+  showRunIdColumn: boolean;
   cancelingJobIds: Set<string>;
   onCancelJob: (bullJobId: string) => void;
   onViewRaw: (jobId: string | null) => void;
@@ -461,6 +492,13 @@ function JobTreeRows({
             </Stack>
           </Group>
         </Table.Td>
+        {showRunIdColumn && (
+          <Table.Td>
+            <Text size="xs" c="dimmed" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              {job.runId || '-'}
+            </Text>
+          </Table.Td>
+        )}
         <Table.Td style={{ maxWidth: 120 }}>
           <Text size="sm" style={{ wordBreak: 'break-all' }}>
             {job.type}
@@ -542,6 +580,7 @@ function JobTreeRows({
           key={child.job.dbJobId}
           node={child}
           depth={depth + 1}
+          showRunIdColumn={showRunIdColumn}
           cancelingJobIds={cancelingJobIds}
           onCancelJob={onCancelJob}
           onViewRaw={onViewRaw}
