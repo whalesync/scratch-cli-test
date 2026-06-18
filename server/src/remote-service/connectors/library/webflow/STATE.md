@@ -153,12 +153,15 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
 
-- **Live spec:** `server/test/integration/webflow-connector.spec.ts (+ `webflow-connector-assets.spec.ts`, `webflow-migration-live-pipeline.spec.ts`)` — 📄 ✅.
-- **Runs in CI pipeline:** ❌ — self-skips (`describeIfKey`) until its credential is wired as a GitLab CI/CD variable.
-- **Credentials / env vars:** `WEBFLOW_API_KEY` (+ `WEBFLOW_IMAGE_COLLECTION_ID`, `WEBFLOW_IMAGE_FIELD_SLUG`) — local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables.
-- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
-- **State model:** Picks the first non-Assets/Pages CMS collection dynamically and self-provisions a full create→update→archive→unarchive→delete cycle; needs a site with ≥1 collection.
-- **Notes:** Assets suite exercises upload + reference shapes and self-provisions an Image field if not configured. Uploaded assets linger (no Webflow delete API).
+- **Live spec:** `server/test/integration/webflow-connector.spec.ts` (+ `webflow-connector-assets.spec.ts`, `webflow-migration-live-pipeline.spec.ts`) — 📄 ✅. **Live-verified green 2026-06-18 (14/14, ran twice).**
+- **Runs in CI pipeline:** ✅ **wired** — `WEBFLOW_API_KEY` ← `INTEGRATION_TEST_WEBFLOW_API_KEY` (masked) in the post-deploy job.
+- **Test account / fixture:** dedicated site **"Scratch Integration Tests"** (`6a3410d723e972d61bb4c4c8`), login `testing@whalesync.com`. **Site-scoped** token (isolates writes to this site). ⚠️ Webflow tokens **expire after 365 days of inactivity**.
+- **Seeding required (one-time):**
+  1. **A CMS collection** — the spec discovers the first non-Assets/Pages collection and self-provisions/cleans **its own items** there, but the *collection* must exist. Seeded `Scratch Int Test Posts` (`6a341279941bd7aba95c950c`) via `POST /v2/sites/{site}/collections {displayName, singularName}`. (CMS collections need the site/workspace plan to allow CMS.)
+  2. **Publish the site once** — `POST /v2/sites/{site}/publish {publishToWebflowSubdomain:true}`. CMS **live** ops (create/archive) return **409 on a never-published site**; once published it stays published, so CI is unaffected.
+- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD: create→update→archive→unarchive→delete) ✅ · error handling ✅ · assets (upload + reference shapes) ✅.
+- **State model:** Self-provisioning — creates/cleans its own CMS items (unique `scratch-…-<ts>` slugs); the assets suite self-provisions a temporary Image field (deleted in `afterAll`). Uploaded assets linger (no Webflow delete API).
+- **Notes:** A just-published site needs a moment to propagate before CMS live ops succeed (one-time 409 right after publishing) — irrelevant in CI since the site stays published. `WEBFLOW_IMAGE_COLLECTION_ID`/`WEBFLOW_IMAGE_FIELD_SLUG` stay optional (asset suite self-provisions).
 - [ ] **Confirm CS** (next connector-build pass) — the Create-schema value in `docs/connector-build.md` is best-effort. Probe whether the service can create tables/fields (even partially) via API and update the table. IP is settled (implemented).
 
 ## Open issues

@@ -45,6 +45,10 @@ environment tests for test env post-deploy:
     # creates+deletes a throwaway "ZZZ-Integration" person on prod each run (self-cleans). Consider
     # gating writes / a scheduled cadence later.
     AFFINITY_API_KEY: "${INTEGRATION_TEST_AFFINITY_API_KEY}"
+    # Webflow — dedicated test site "Scratch Integration Tests" (site-scoped token, login
+    # testing@whalesync.com). Seeding: the site has a CMS collection AND is published once
+    # (CMS live ops 409 on a never-published site). ⚠️ token expires after 365 days of inactivity.
+    WEBFLOW_API_KEY: "${INTEGRATION_TEST_WEBFLOW_API_KEY}"
 
     # Whalesync shadow-user / session admin-channel test (whalesync-shadow-user.spec.ts). Drives the
     RUN_WHALESYNC_INTEGRATION: "true"

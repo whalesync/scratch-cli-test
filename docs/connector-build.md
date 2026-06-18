@@ -37,7 +37,7 @@ Columns: **OAuth** / **Creds** — auth support (OAuth flow · API key / user-pr
 | [Shopify](../server/src/remote-service/connectors/library/shopify/STATE.md) | 🟠 | ✅ | 🟠 | 🟠 | 👁️ | Free dev | ❌ | ❌ | |
 | [Stripe](../server/src/remote-service/connectors/library/stripe/STATE.md) | 🟠 | ✅ | ❌ | 🟠 | 👁️ | Free dev | ✅ | ❌ | |
 | [Supabase](../server/src/remote-service/connectors/library/supabase/STATE.md) | ✅ | ✅ | 🟠 | ✅ | 👁️ | Free tier | ❌ | ❌ | |
-| [Webflow](../server/src/remote-service/connectors/library/webflow/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ❌ | |
+| [Webflow](../server/src/remote-service/connectors/library/webflow/STATE.md) | 🟠 | ✅ | 🟠 | ✅ | 👁️ | Free tier | ✅ | ✅ | |
 | [Wix (Blog)](../server/src/remote-service/connectors/library/wix/wix-blog/STATE.md) | ✅ | ❌ | 🟠 | 🟠 | 👁️ | Free tier | ❌ | ❌ | |
 | [WordPress](../server/src/remote-service/connectors/library/wordpress/STATE.md) | ❌ | ✅ | 🟠 | ✅ | 👁️ | Self-host | ❌ | ❌ | |
 | [YouTube](../server/src/remote-service/connectors/library/youtube/STATE.md) | ✅ | ❌ | ❌ | 🟠 | 👁️ | Free tier | ❌ | ❌ | 2026-06-15 |
