@@ -169,6 +169,16 @@ Distinction: a custom **field** is a **column on an entity** (Contacts/Opportuni
 - **GHL errors were opaque (IMPROVED).** Added an api-client response interceptor so HighLevel's real error body surfaces (was just "Request failed with status code 400"); e.g. duplicate-email now reads "This location does not allow duplicated contacts."
 - **Still open (separate, DEV-10175):** the CLI prints "Published 1 connection(s)" even when a record-level op fails (`completed-with-errors`). Check `files unpublished` / `PublishPlanOperation.status` to catch it until the CLI summary is fixed.
 
+## Integration tests
+Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
+
+- **Live spec:** none yet — 📄 ❌ (no `server/test/integration/gohighlevel-connector.spec.ts`).
+- **Runs in CI pipeline:** ❌.
+- **Credentials / env vars:** — (no live suite).
+- **Capabilities covered:** schemas ❌ · pull ❌ · publish (CRUD) ❌ · error handling ❌.
+- **State model:** n/a — no live suite.
+- **Notes:** No live integration spec yet (has unit tests). Reviewed by `/connector-build` (see **Last run**).
+
 ## Open issues
 - **✅ FIXED (2026-06-09) — generic read-only entities showed only the `id` column** (Ivan flagged it on Calendar Groups). `buildGenericEntityJsonTableSpec` declared only the id property, so the desktop table view rendered a single `id` column for all 13 read-only entities — the data was present verbatim (`additionalProperties: true`), just not as columns. These entities have **no field-metadata API** (see [Endpoints](#endpoints-what-the-connector-calls) → Schema source = static from OpenAPI), so per the product rule (hardcode only when no introspection) the fix enumerates each entity's response-DTO fields from HighLevel's **published OpenAPI** into `GOHIGHLEVEL_ENTITY_FIELDS` (`gohighlevel-entities.ts`); `buildGenericEntityJsonTableSpec` types the columns from it (all read-only; `additionalProperties` kept). **✅ Verified live (server watch-reloaded, fresh connection `coa_QJiXjIC7DU`, full re-pull):** regenerated `schema.json` shows Calendar Groups→**6 cols** (id, locationId, name, description, slug, isActive), Calendars→56, Products→17, Users→13; Forms/Surveys genuinely 3 per the OpenAPI. Build + lint clean.
 - **✅ FIXED (2026-06-09) — Opportunity write strips the hydrated `contact` object** (+ `notes`/`tasks`/`calendarEvents`). `buildOpportunityPayload` spread `...source` incl. the read-hydrated nested `contact`; sending it with a changed top-level `contactId` made **GHL silently ignore the `contactId` change**. Applied: `buildOpportunityPayload` now deletes those hydrated keys before write. Build + lint clean; **needs a server restart to verify live**.

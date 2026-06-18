@@ -187,6 +187,16 @@ Cross-cutting: base `https://api.attio.com`; `Authorization: Bearer <token>`, `A
 - List entries store a **pointer** (`parent_record_id`) to the parent record, not an embedded copy — the parent objects are first-class tables in the same workbook, so joins happen at read time.
 - `listNameCache` (api_slug → name) is populated by `listTables`; `fetchJsonTableSpec` falls back to `lookupListName` (re-lists) after a server restart.
 
+## Integration tests
+Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
+
+- **Live spec:** `server/test/integration/attio-connector.spec.ts` — 📄 ✅. **Verified green 2026-06-16 (27/27)** against the dedicated IT workspace.
+- **Runs in CI pipeline:** 🔄 **wired** — `ATTIO_API_KEY: "${INTEGRATION_TEST_ATTIO_API_KEY}"` added to the post-deploy job. Activates once the masked GitLab CI/CD variable `INTEGRATION_TEST_ATTIO_API_KEY` is set; until then it self-skips (`describeIfKey`).
+- **Credentials / env vars:** `ATTIO_API_KEY` — **dedicated free IT workspace** (login `testing+integration@whalesync.com`). Local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables (`INTEGRATION_TEST_ATTIO_API_KEY`, masked).
+- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅ (invalid-token reject).
+- **State model:** Self-provisioning CRUD over the 3 standard objects (companies/people/deals); standard-object slugs are stable. The `spinner_test_*` custom attributes + `spinner_test_pipeline` list are bootstrapped **once** per workspace (idempotent) — durable on this free workspace (not the dev-program one, which periodically wipes data).
+- **Notes:** One-time bootstrap `npx ts-node scripts/bootstrap-attio-test-data.ts` (idempotent) provisions the `spinner_test_*` attributes + list + seed records. CRUD records self-clean in `afterAll`.
+
 ## Open issues
 - (none filed — DEV-10303 is the review; gaps tracked in TODOs above)
 

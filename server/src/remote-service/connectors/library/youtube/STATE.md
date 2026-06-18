@@ -123,6 +123,16 @@ Auth: `Authorization: Bearer <accessToken>`. Array params serialized as repeated
 - Connector is `metadata.visible:false` (dev-only). To connect via the web app, flip to `true` locally (don't commit) — OAuth connectors can't be CLI-connected.
 - Sparse update returned only `snippet+id`; `updateRecords` now merges that onto the stored file so statistics/status/contentDetails/transcript survive the publish round-trip.
 
+## Integration tests
+Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
+
+- **Live spec:** none yet — 📄 ❌ (no `server/test/integration/youtube-connector.spec.ts`).
+- **Runs in CI pipeline:** ❌.
+- **Credentials / env vars:** — (no live suite).
+- **Capabilities covered:** schemas ❌ · pull ❌ · publish (CRUD) ❌ · error handling ❌.
+- **State model:** n/a — no live suite.
+- **Notes:** No live integration spec yet — has unit tests (`__tests__/youtube-connector.spec.ts`, mocked). OAuth-only (consent-screen test user); manual CLI verification is recorded elsewhere in this doc.
+
 ## Open issues
 - (none filed yet)
 

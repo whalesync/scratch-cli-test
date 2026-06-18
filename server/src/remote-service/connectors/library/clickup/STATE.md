@@ -119,6 +119,16 @@ Custom fields are **columns on the Task entity** (a field belongs to an entity) 
 - The connector pulls with `subtasks=true&include_closed=true` so a full pull captures everything; tasks page at 100/page (`last_page`).
 - Rate limit: ClickUp Free = 100 req/min per token; connector rate-limited to 90/60s and honours `X-RateLimit-Reset` / `Retry-After` on 429.
 
+## Integration tests
+Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
+
+- **Live spec:** `server/test/integration/clickup-connector.spec.ts` — 📄 ✅.
+- **Runs in CI pipeline:** ❌ — self-skips (`describeIfKey`) until its credential is wired as a GitLab CI/CD variable.
+- **Credentials / env vars:** `CLICKUP_API_TOKEN` (+ `CLICKUP_TEST_LIST_ID`) — local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables.
+- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
+- **State model:** CRUD self-provisions tasks inside a pre-existing list (`CLICKUP_TEST_LIST_ID`); the suite skips without that id.
+- **Notes:** Write-shape translation is cross-checked against a direct ClickUp API call.
+
 ## Open issues
 - v1 scope: `assignees`/`tags`/`parent` writes, custom-field column expansion, declarative FK on relationship fields, and a `defaultView` are fast-follows.
 

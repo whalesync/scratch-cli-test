@@ -207,6 +207,16 @@ Cross-cutting: base host `{api_domain}/crm/v8` (`api_domain` from token response
 - **page_token ceiling 100k.** Beyond it the connector fails loud (`MODULE_TOO_LARGE`) — Bulk Read is the v2 follow-up.
 - **Server stack required for the full scratchmd publish ladder.** Connection/clone/pull/accept/upload/publish need the Scratch server (3010) + git service (3100/3101) running; not exercised this run.
 
+## Integration tests
+Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
+
+- **Live spec:** `server/test/integration/zoho-connector.spec.ts` — 📄 ✅.
+- **Runs in CI pipeline:** ❌ — self-skips (`describeIfKey`) until its credential is wired as a GitLab CI/CD variable.
+- **Credentials / env vars:** `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN` (+ `ZOHO_DATA_CENTER`, `ZOHO_ALLOW_CREATE`) — local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables.
+- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
+- **State model:** Self-provisioning over standard Zoho modules (`ScratchIT` prefix). CRUD gated behind `ZOHO_ALLOW_CREATE=1` (shared-org record cap).
+- **Notes:** OAuth refresh-token creds (CLI Self-Client). The refresh token rotates — needs maintenance for long-lived CI use.
+
 ## Open issues
 - (none filed yet — the two code findings above are low-severity polish, not ❌)
 

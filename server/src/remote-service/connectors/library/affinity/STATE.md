@@ -262,6 +262,16 @@ All found during the 2026-06-11/12 live write passes:
 - **`/rate-limit` has no `/v2` prefix** (v1-era endpoint), unlike the rest of the v2 surface.
 - **v1 and v2 API keys are fully interchangeable** (tested live 2026-06-11: v1 key and v2 key each return 200 on both `GET /persons` (v1) and `GET /v2/lists` (v2), as `Bearer` **or** HTTP Basic key-as-password). One stored `apiKey` credential covers any future v1 write path — no second credential needed for DEV-10298 phase 2.
 
+## Integration tests
+Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
+
+- **Live spec:** `server/test/integration/affinity-connector.spec.ts` — 📄 ✅.
+- **Runs in CI pipeline:** ❌ — self-skips (`describeIfKey`) until its credential is wired as a GitLab CI/CD variable.
+- **Credentials / env vars:** `AFFINITY_API_KEY` — local in `server/.env.integration` (template `.env.integration.example`); CI in GitLab → Settings → CI/CD → Variables.
+- **Capabilities covered:** schemas ✅ · pull ✅ · publish (CRUD) ✅ · error handling ✅.
+- **State model:** Mixed — the CRUD round-trip self-provisions (create→update→delete), but `listTables`/schema assertions are pinned to exact sandbox content (hardcoded `TENANT_TABLE_IDS`, a specific user-created list, `spec.name` `toBe` checks) → **drift-prone**.
+- **Notes:** **DEV-10130**: the schema/`listTables` assertions currently fail against the drifted sandbox — de-brittle to shape assertions before wiring into CI.
+
 ## Open issues
 
 - **DEV-10298** — Update Affinity connector to support publishing (read-only → read-write). _Backlog, High._

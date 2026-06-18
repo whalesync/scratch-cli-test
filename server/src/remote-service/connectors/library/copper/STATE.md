@@ -191,6 +191,16 @@ The connector wires **one request per record** for all writes (`getBatchSize() =
 - `files publish` is 403'd unless `User.settings.cliCanPublish = true`.
 - Browser: the "Add Company" toolbar split-button and the dropdown menu item share the name — `$B click` is ambiguous; click the menu item via `$B js`. The Save button in the create modal can be covered by a "How did you hear about Copper?" survey toast; JS `.click()` bypasses it.
 
+## Integration tests
+Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
+
+- **Live spec:** none yet — 📄 ❌ (no `server/test/integration/copper-connector.spec.ts`).
+- **Runs in CI pipeline:** ❌.
+- **Credentials / env vars:** — (no live suite).
+- **Capabilities covered:** schemas ❌ · pull ❌ · publish (CRUD) ❌ · error handling ❌.
+- **State model:** n/a — no live suite.
+- **Notes:** No live integration spec yet (has unit tests). Reviewed by `/connector-build` (see **Last run**).
+
 ## Open issues
 - (none filed)
 

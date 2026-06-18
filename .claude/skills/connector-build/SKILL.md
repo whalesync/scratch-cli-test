@@ -301,6 +301,40 @@ Run this **last**, only once everything else is green. All testing is done with 
 
 ---
 
+## Integration test — the automated backstop
+
+**Required (Milestone 10).** Every connector ships a **live-API integration spec** at
+`server/test/integration/<svc>-connector.spec.ts` that exercises the four capabilities —
+**get schemas, pull, publish (CRUD), handle errors** — against the real service, then is wired into
+the **post-deploy CI job** so it runs on every merge to master and catches connector/API drift. This
+is the connector's regression net; the manual CLI round-trips prove it works *once*, the integration
+test proves it *keeps* working. (DEV-10304 is the umbrella; the cross-connector status lives in the
+**IT 📄 / IT ✅** columns of [`docs/connector-build.md`](/docs/connector-build.md), and each connector's
+STATE.md has an **Integration tests** section.)
+
+Build it like the references — `notion-connector.spec.ts` (read-paths + snapshot) and
+`attio-connector.spec.ts` (per-object CRUD round-trips via a `buildTestValues` helper):
+
+1. **Make it state-agnostic.** Prefer a suite that **seeds what it needs and cleans up** (create →
+   round-trip → `afterAll` delete, unique `scratch-it-<ts>` naming) over one that asserts on
+   pre-existing data — fixture-pinned suites rot (see Affinity / DEV-10130). Gate the whole suite on
+   its credential with `describeIfKey = KEY ? describe : describe.skip` so CI stays green when unset.
+2. **Verify writes independently** — read created records back through a **direct service-API call**
+   (not the connector), so a wrong write can't mask itself.
+3. **Use a dedicated, durable test account** — free/long-lived, never production (a connector test
+   creates/updates/deletes on every run). Record it in STATE.md's Test-account + Integration-tests
+   sections; put the key in 1Password and as a masked GitLab CI/CD variable.
+4. **Optional but recommended — a seed script.** When the suite needs **long-lived** fixtures that
+   can't be created cheaply per-run (custom fields/attributes, lists, reference/lookup records), write
+   an **idempotent** `scripts/bootstrap-<svc>-test-data.ts` that provisions them on a fresh account in
+   one command (re-running heals a wiped account). Reference: `scripts/bootstrap-attio-test-data.ts`.
+   This is what lets a brand-new dedicated account be stood up reproducibly.
+5. **Wire CI + flip the docs.** Add `<KEY>: "${INTEGRATION_TEST_<SVC>_*}"` to the post-deploy job in
+   `gitlab-ci/stages/06-environment-tests.yml`, create the masked GitLab variable, then update the
+   STATE.md Integration-tests section and the `docs/connector-build.md` IT columns.
+
+---
+
 ## Recovery — when stuck, nuke and recreate the workspace
 
 Local state (dirty branch, accepted-patches, SQLite index, partial pulls) can wedge. Don't fight it — the service and the server git are the source of truth.
@@ -345,7 +379,7 @@ One per connector at `server/src/remote-service/connectors/library/<connector>/S
    **(c) Scoped / non-top-level entities** — entities that are **not directly fetchable as a top-level entity**, for either reason: **(i) scoped to another entity** and reached only through it — CRM **notes fetched per-user** (`GET /users/{id}/notes`), ClickUp **comments per task** — so they ride the parent's **deep fetch**, embedded into the parent record; or **(ii) weird in some other way** that blocks top-level treatment — e.g. only reachable via search/export with no list endpoint, requires an unsupported auth/scope, returned only as a side-effect of another call, or a shape that can't be a standalone record. Each gets a row: what blocks top-level fetch, how we'd reach it (parent deep-fetch / special path), `Status` built/planned. Still first-class data we want — never silently dropped.
 
    Every object lands in exactly one table; every unbuilt one carries a `Status` and a one-line plan. "Tasks work" is not coverage of "ClickUp".
-5. A **Milestones** table near the top — a 9-row "where are we" tracker so anyone can see the connector's progress at a glance, each row ✅/🔄/⬜: **(1) account ready** (registered/logged into the web app) → **(2) connected** (health OK) → **(3) first fetch** (≥1 record pulled) → **(4) all entities seeded & fetched** → **(5) full write CRUD** (create+edit+delete pushed) → **(6) foreign keys tested** (CLI move parent→parent) → **(7) edge cases & quirks tested** → **(8) view(s) built** (default view with fields grouped logically — see [Building views](#building-views--group-by-existing-mechanics-never-invent)) → **(9) OAuth** (final/pre-release — create the OAuth client with the user via the browser, or document what it requires; see [OAuth — the final milestone](#oauth--the-final-milestone)).
+5. A **Milestones** table near the top — a 10-row "where are we" tracker so anyone can see the connector's progress at a glance, each row ✅/🔄/⬜: **(1) account ready** (registered/logged into the web app) → **(2) connected** (health OK) → **(3) first fetch** (≥1 record pulled) → **(4) all entities seeded & fetched** → **(5) full write CRUD** (create+edit+delete pushed) → **(6) foreign keys tested** (CLI move parent→parent) → **(7) edge cases & quirks tested** → **(8) view(s) built** (default view with fields grouped logically — see [Building views](#building-views--group-by-existing-mechanics-never-invent)) → **(9) OAuth** (final/pre-release — create the OAuth client with the user via the browser, or document what it requires; see [OAuth — the final milestone](#oauth--the-final-milestone)) → **(10) integration test** (a live-API spec covering schemas/pull/publish/errors, wired into post-deploy CI; see [Integration test — the automated backstop](#integration-test--the-automated-backstop)).
 
    Directly beneath the table, a **TODOs** section: a short, living checklist of known pending tasks — gaps surfaced while [adopting human-built code](#adopting-a-human-built-connector-code-exists-no-statemd), unfinished entities/fields, deferred edge cases, and follow-up issues — checked off as they land. It complements Milestones (coarse progress) and Open issues (only broken ❌ cells with Linear links).
 
