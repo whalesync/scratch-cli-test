@@ -79,7 +79,10 @@ export function buildWordPressDefaultView(schema: TSchema): TableView {
   }
 
   // ACF fields — each sub-property becomes its own top-level column (path: "acf.fieldName").
-  const acfSchema = unwrapOptional(properties['acf']);
+  // The acf container may be a union (`anyOf: [Object, EmptyArray]`) to tolerate
+  // WordPress's PHP empty-array quirk, so unwrap to the object member before reading
+  // its properties.
+  const acfSchema = unwrapToObjectSchema(unwrapOptional(properties['acf']));
   if (acfSchema) {
     const acfProps: Record<string, TSchema> =
       (acfSchema as TSchema & { properties?: Record<string, TSchema> }).properties ?? {};
@@ -119,6 +122,24 @@ function sortFields(fieldIds: string[]): string[] {
   rest.sort((a, b) => a.localeCompare(b));
 
   return [...inPriority, ...rest];
+}
+
+/**
+ * Unwrap a possibly-union schema (`anyOf: [Object, EmptyArray]`, produced for
+ * WordPress object fields to tolerate the PHP empty-array quirk) to the member
+ * carrying `.properties` — the real object schema. Returns the schema unchanged
+ * when it isn't a union or has no object member.
+ */
+function unwrapToObjectSchema(schema: TSchema): TSchema {
+  if (!schema) return schema;
+  const anyOf = (schema as TSchema & { anyOf?: TSchema[] }).anyOf;
+  if (Array.isArray(anyOf)) {
+    const objectMember = anyOf.find(
+      (member) => (member as TSchema & { properties?: Record<string, TSchema> }).properties !== undefined,
+    );
+    if (objectMember) return objectMember;
+  }
+  return schema;
 }
 
 /** Unwrap TypeBox Optional wrappers to get the inner schema. */

@@ -91,8 +91,90 @@ function resolveWordPressDataType(
 }
 
 /**
+ * PHP serializes an empty associative array as JSON `[]`, not `{}`. WordPress
+ * therefore returns object-typed fields (notably `meta` and `acf`) as `[]` when
+ * they have no entries. Accept that empty-array shape alongside the object so
+ * verbatim records don't trip the enforce-schema validator.
+ *
+ * Only an EMPTY array is tolerated (`maxItems: 0`): a populated associative array
+ * always serializes back to a JSON object, so a non-empty array in an object slot
+ * is genuinely malformed and should still surface as a validation error.
+ */
+function wordpressObjectSchemaThatMayBeEmptyArray(objectSchema: TSchema): TSchema {
+  return Type.Union([objectSchema, Type.Array(Type.Unknown(), { maxItems: 0 })]);
+}
+
+/** True when `schema` is a TypeBox union (it carries an `anyOf` member array). */
+function isUnionSchema(schema: TSchema): schema is TSchema & { anyOf: TSchema[] } {
+  return isArray((schema as { anyOf?: unknown }).anyOf);
+}
+
+/**
+ * Build a TypeBox schema for a single (non-null) WordPress JSON type. Factored out
+ * of `wordpressFieldToJsonSchema` so a field that declares multiple non-null types
+ * (e.g. `["integer","array"]`) can union the per-type schemas.
+ */
+function buildSingleWordPressTypeSchema(
+  jsonType: string,
+  field: WordPressArgument,
+  isAcf: boolean,
+  foreignKeyColumnIds: { remoteColumnId: string; foreignKeyRemoteTableId: string }[],
+  description: string | undefined,
+): TSchema {
+  switch (jsonType) {
+    case 'integer':
+      return Type.Integer({ description });
+
+    case 'number':
+      return Type.Number({ description });
+
+    case 'boolean':
+      return Type.Boolean({ description });
+
+    case 'string':
+      // We never assert a string `format`. WordPress's string serialization isn't
+      // guaranteed to satisfy the strict RFC checks the validator runs with formats
+      // on: date-times come back in the site's local timezone with no UTC offset
+      // (e.g. "2026-05-07T04:49:29", not valid RFC 3339), and URLs can contain
+      // unencoded Unicode in the filename (e.g. an emoji/CJK media `source_url`,
+      // not a valid RFC 3986 URI). Asserting `format` would reject those verbatim
+      // values. Columns still render correctly via the x-scratch-connector-data-type
+      // annotation (date/url/email), so dropping the format keyword is display-safe.
+      return Type.String({ description });
+
+    case 'array':
+      return Type.Array(Type.Unknown(), { description });
+
+    case 'object':
+      if (field.properties) {
+        const objectProperties: Record<string, TSchema> = {};
+        for (const [propId, propDef] of Object.entries(field.properties)) {
+          if (propDef) {
+            objectProperties[propId] = wordpressFieldToJsonSchema(propId, propDef, isAcf, foreignKeyColumnIds);
+          }
+        }
+        return wordpressObjectSchemaThatMayBeEmptyArray(Type.Object(objectProperties, { description }));
+      }
+      return wordpressObjectSchemaThatMayBeEmptyArray(Type.Record(Type.String(), Type.Unknown(), { description }));
+
+    default:
+      return Type.Unknown({ description });
+  }
+}
+
+/**
  * Convert a WordPress field argument to a TypeBox JSON Schema.
  * Annotates the schema with x-scratch metadata (readonly, foreign key, connector data type).
+ *
+ * Records are stored verbatim, so the schema is built to accept exactly what
+ * WordPress returns rather than what its OPTIONS metadata claims:
+ * - Every field is made nullable. WordPress returns `null` for unset values and its
+ *   OPTIONS under-declares this (e.g. media `post` is typed `integer` but is `null`
+ *   for unattached files), so we don't trust the declared (non-)nullability.
+ * - A field that declares several non-null types (e.g. `["integer","array","null"]`)
+ *   is unioned so each declared shape validates.
+ * - Enum fields become plain strings (their declared values aren't exhaustive), and
+ *   string `format`s are dropped (see `buildSingleWordPressTypeSchema`).
  */
 export function wordpressFieldToJsonSchema(
   fieldId: string,
@@ -101,10 +183,12 @@ export function wordpressFieldToJsonSchema(
   foreignKeyColumnIds: { remoteColumnId: string; foreignKeyRemoteTableId: string }[],
 ): TSchema {
   const description = fieldId;
-  const fieldType = isArray(field.type) ? field.type[0] : field.type;
   const dataType = resolveWordPressDataType(fieldId, field, isAcf, foreignKeyColumnIds);
 
-  // Handle rendered objects (title, content, excerpt, etc.)
+  // Handle rendered objects (title, content, excerpt, etc.). These always come
+  // back as a populated `{ raw, rendered }` object, so they stay a plain object
+  // (kept un-annotated and un-wrapped so the default-view rendered-object detection
+  // — which keys off `.properties.raw`/`.properties.rendered` — keeps working).
   if (field.properties?.rendered) {
     const topObjectSchema = Type.Object(
       {
@@ -134,64 +218,54 @@ export function wordpressFieldToJsonSchema(
     return topObjectSchema;
   }
 
-  let schema: TSchema;
+  const declaredJsonTypes = isArray(field.type) ? field.type : field.type === undefined ? [] : [field.type];
+  const nonNullJsonTypes = declaredJsonTypes.filter((jsonType) => jsonType !== 'null');
+
+  // Build the base schema from the declared non-null type(s).
+  let baseSchema: TSchema;
+  let baseAlreadyAcceptsNull = false;
   if (field.enum && field.enum.length > 0) {
-    // Handle enums
-    schema = Type.Union(
-      field.enum.map((val) => Type.Literal(val)),
+    // WordPress enums (status/format/comment_status/…) are advisory and NOT
+    // exhaustive: attachments use status "inherit", which the media endpoint's
+    // declared enum omits, and plugins add custom statuses/formats. Emit a plain
+    // string so verbatim values never fail validation; the ENUM connector-data-type
+    // annotation set below still records the enum-ness for the UI.
+    baseSchema = Type.String({ description });
+  } else if (nonNullJsonTypes.length === 0) {
+    // Type is absent (or only `"null"`) — accept anything (this also covers null).
+    baseSchema = Type.Unknown({ description });
+    baseAlreadyAcceptsNull = true;
+  } else if (nonNullJsonTypes.length === 1) {
+    baseSchema = buildSingleWordPressTypeSchema(nonNullJsonTypes[0], field, isAcf, foreignKeyColumnIds, description);
+  } else {
+    // Several non-null types (e.g. ["integer","array"]) — union them so each
+    // declared shape validates. The description sits on the union root below.
+    baseSchema = Type.Union(
+      nonNullJsonTypes.map((jsonType) =>
+        buildSingleWordPressTypeSchema(jsonType, field, isAcf, foreignKeyColumnIds, undefined),
+      ),
       { description },
     );
-  } else {
-    switch (fieldType) {
-      case 'integer':
-        schema = Type.Integer({ description });
-        break;
-
-      case 'number':
-        schema = Type.Number({ description });
-        break;
-
-      case 'boolean':
-        schema = Type.Boolean({ description });
-        break;
-
-      case 'string':
-        if (field.format === 'date-time') {
-          schema = Type.String({ description, format: 'date-time' });
-        } else if (field.format === 'uri') {
-          schema = Type.String({ description, format: 'uri' });
-        } else if (field.format === 'email') {
-          schema = Type.String({ description, format: 'email' });
-        } else {
-          schema = Type.String({ description });
-        }
-        break;
-
-      case 'array':
-        schema = Type.Array(Type.Unknown(), { description });
-        break;
-
-      case 'object':
-        if (field.properties) {
-          const objProps: Record<string, TSchema> = {};
-          for (const [propId, propDef] of Object.entries(field.properties)) {
-            if (propDef) {
-              objProps[propId] = wordpressFieldToJsonSchema(propId, propDef, isAcf, foreignKeyColumnIds);
-            }
-          }
-          schema = Type.Object(objProps, { description });
-        } else {
-          schema = Type.Record(Type.String(), Type.Unknown(), { description });
-        }
-        break;
-
-      default:
-        schema = Type.Unknown({ description });
-        break;
-    }
   }
 
-  // Set foreign key metadata for known FK fields (non-ACF only)
+  // Make every field nullable. WordPress returns `null` for unset values and its
+  // OPTIONS under-declares this (e.g. media `post` is typed `integer` but comes back
+  // `null`), so — since records are verbatim — accept `null` regardless of the
+  // declared type rather than trusting it. Reuse an existing union's members so the
+  // result stays a flat `anyOf` instead of a nested one.
+  let schema: TSchema;
+  if (baseAlreadyAcceptsNull) {
+    schema = baseSchema;
+  } else if (isUnionSchema(baseSchema)) {
+    schema = Type.Union([...baseSchema.anyOf, Type.Null()], { description });
+  } else {
+    schema = Type.Union([baseSchema, Type.Null()], { description });
+  }
+
+  // Set foreign key metadata for known FK fields (non-ACF only). All x-scratch
+  // annotations must land on the OUTERMOST schema (the union root when wrapped
+  // above) because the default-view builder and the `isReadonlyField`/`isForeignKey`
+  // ValuePointer helpers read them off the property root.
   if (!isAcf) {
     const fkDef = foreignKeyColumnIds.find((fk) => fk.remoteColumnId === fieldId);
     if (fkDef) {
@@ -252,12 +326,13 @@ export function buildWordPressJsonTableSpec(
     }
   }
 
-  // Inject static status field for post types using enum values from the OPTIONS response
+  // Inject a status column for post types. WordPress's declared status enum is not
+  // exhaustive — attachments (media) use "inherit", which the media endpoint's enum
+  // omits, and plugins add custom statuses — so we emit a nullable string rather than
+  // a strict enum union. The ENUM data-type annotation records the enum-ness for the
+  // UI without rejecting verbatim values.
   if (isPostType && statusField?.enum) {
-    const statusSchema = Type.Union(
-      statusField.enum.map((val) => Type.Literal(val)),
-      { description: 'Publication status' },
-    );
+    const statusSchema = Type.Union([Type.String(), Type.Null()], { description: 'Publication status' });
     statusSchema[X_SCRATCH_CONNECTOR_DATA_TYPE] = WordPressDataType.ENUM;
     properties[WORDPRESS_STATUS_COLUMN_ID] = Type.Optional(statusSchema);
   }
@@ -271,7 +346,13 @@ export function buildWordPressJsonTableSpec(
       const acfFieldSchema = wordpressFieldToJsonSchema(acfFieldId, acfFieldDef, true, foreignKeyColumnIds);
       acfFieldProperties[acfFieldId] = acfFieldDef.required ? acfFieldSchema : Type.Optional(acfFieldSchema);
     }
-    properties['acf'] = Type.Optional(Type.Object(acfFieldProperties, { description: 'Advanced Custom Fields' }));
+    // WordPress returns `acf: []` (PHP empty associative array) when a post type
+    // has no ACF values, so tolerate the empty-array shape alongside the object.
+    properties['acf'] = Type.Optional(
+      wordpressObjectSchemaThatMayBeEmptyArray(
+        Type.Object(acfFieldProperties, { description: 'Advanced Custom Fields' }),
+      ),
+    );
   }
 
   const schemaOptions: Record<string, unknown> = {
@@ -338,6 +419,11 @@ export function formatTableName(tableId: string): string {
 }
 
 const FIELD_PATH = '/properties';
+// NOTE: in a generated spec the `acf` container is now a union
+// (`anyOf: [Object, EmptyArray]`), so its real properties live at
+// `/properties/acf/anyOf/0/properties`. The helpers below are only exercised by
+// the self-contained pointer spec (which builds `acf` as a bare object), so this
+// path stays correct there; update it if a generated spec ever reads acf fields.
 const ACF_FIELD_PATH = '/properties/acf/properties';
 
 /**
