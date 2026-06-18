@@ -53,6 +53,18 @@ function dateOrNull(): TSchema {
   return Type.Union([Type.String({ format: 'date' }), Type.Null()]);
 }
 
+/**
+ * A nullable v1 monetary object (`{amount, currency}` or `null`). Unlike v2 deals' flat numeric
+ * system `value`, a v1 lead's `value` is genuinely an object — but Pipedrive returns `null` when
+ * it is unset, so the object must be wrapped in a nullable union (annotation on the outer union,
+ * matching the dynamic connector's composite fields). (DEV-10453, finding 3)
+ */
+function monetaryOrNull(): TSchema {
+  return Type.Union([Type.Object({ amount: numberOrNull(), currency: stringOrNull() }), Type.Null()], {
+    [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'monetary',
+  });
+}
+
 /** Tag a schema as read-only (never sent on create/update). */
 function readonly(schema: TSchema): TSchema {
   return { ...schema, [X_SCRATCH_READONLY]: true };
@@ -90,13 +102,7 @@ const LEADS_SYSTEM_SCHEMA: Record<string, TSchema> = {
   creator_id: readonly(numberOrNull()),
   // Lead label ids are UUID strings managed via the leadLabels endpoint.
   label_ids: Type.Array(Type.String()),
-  value: Type.Object(
-    {
-      amount: numberOrNull(),
-      currency: stringOrNull(),
-    },
-    { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'monetary' },
-  ),
+  value: monetaryOrNull(),
   expected_close_date: dateOrNull(),
   // One of person_id / organization_id is required on create (see schema doc above).
   person_id: foreignKey(numberOrNull(), 'persons'),

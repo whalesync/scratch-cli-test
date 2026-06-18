@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+import { FormatRegistry } from '@sinclair/typebox';
+import { Value } from '@sinclair/typebox/value';
 import {
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
@@ -12,6 +14,16 @@ import { PipedriveField } from '../pipedrive-types';
 jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'Pipedrive'),
 }));
+
+// The generated schema annotates strings with `format: 'date' | 'date-time'`. Nothing runs
+// Value.Check against these schemas at runtime (they are serialized and stored), so the codebase
+// registers no format validators. The regression lock below is a *structural* check, so register
+// permissive validators (any string) — otherwise TypeBox treats the unknown formats as failures.
+for (const format of ['date', 'date-time']) {
+  if (!FormatRegistry.Has(format)) {
+    FormatRegistry.Set(format, (value) => typeof value === 'string');
+  }
+}
 
 function makeField(overrides: Partial<PipedriveField> & { field_type: string }): PipedriveField {
   return {
@@ -78,22 +90,91 @@ describe('pipedriveFieldToJsonSchema', () => {
     expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('phone');
   });
 
-  it('maps monetary to object with CONNECTOR_DATA_TYPE annotation', () => {
-    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'monetary' }));
+  // DEV-10453 finding 3: in v2 only CUSTOM monetary fields are `{value, currency}` objects; the
+  // SYSTEM monetary fields (value/acv/arr/mrr) are flat decimal numbers, so an object schema fails
+  // verbatim records like `value: 15000`.
+  it('maps a CUSTOM monetary field to a nullable {value, currency} object with the monetary annotation', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'monetary', is_custom_field: true }));
     expect(schema).toBeDefined();
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(schema!.type).toBe('object');
+    // The annotation sits on the OUTER nullable union (sibling of anyOf), matching `picture`.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('monetary');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf).toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const objectBranch = schema!.anyOf.find((s: { type?: string }) => s.type === 'object');
+    expect(objectBranch?.properties).toHaveProperty('value');
+    expect(objectBranch?.properties).toHaveProperty('currency');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.some((s: { type?: string }) => s.type === 'null')).toBe(true);
   });
 
-  it('maps address to object with CONNECTOR_DATA_TYPE annotation', () => {
+  it('maps a SYSTEM monetary field (value/mrr/arr/acv) to Number | Null (v2 flat money)', () => {
+    const schema = pipedriveFieldToJsonSchema(
+      makeField({ field_type: 'monetary', field_code: 'value', is_custom_field: false }),
+    );
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.map((s: { type?: string }) => s.type).sort()).toEqual(['null', 'number']);
+  });
+
+  it('maps address to a nullable object with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'address' }));
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(schema!.type).toBe('object');
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('address');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf).toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.some((s: { type?: string }) => s.type === 'object')).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.some((s: { type?: string }) => s.type === 'null')).toBe(true);
+  });
+
+  // DEV-10453 finding 3: composite object field types must admit `null` (Pipedrive returns null
+  // for an empty address/monetary/daterange/timerange) or verbatim records fail validation.
+  it.each(['daterange', 'timerange', 'address'])(
+    'maps composite field type %s to a nullable union so empty (null) records validate',
+    (field_type) => {
+      const schema = pipedriveFieldToJsonSchema(makeField({ field_type }));
+      expect(schema).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(schema!.anyOf).toHaveLength(2);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      expect(schema!.anyOf.some((s: { type?: string }) => s.type === 'null')).toBe(true);
+    },
+  );
+
+  // DEV-10453 finding 3: emails/participants are arrays of objects (not strings) and project_id is
+  // a number (not a string). They're keyed on field_code because Pipedrive's metadata field_type
+  // misdescribes them — there is no dedicated `email`/`participants` field type.
+  it.each(['email', 'emails'])('maps the %s field_code to a contact array mirroring phone', (field_code) => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_code, field_type: 'varchar' }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.type).toBe('array');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('email');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.items.properties).toHaveProperty('value');
+  });
+
+  it('maps the participants field_code to a [{person_id, primary?}] array', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_code: 'participants', field_type: 'varchar' }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.type).toBe('array');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.items.properties).toHaveProperty('person_id');
+  });
+
+  it('maps the project_id field_code to Number | Null (stored numerically, not a string)', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_code: 'project_id', field_type: 'varchar' }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.map((s: { type?: string }) => s.type).sort()).toEqual(['null', 'number']);
   });
 
   it('maps enum with options to Union of Literals', () => {
@@ -463,5 +544,94 @@ describe('buildPipedriveJsonTableSpec', () => {
       expect(leads.schema.required).not.toContain('id');
       expect(leads.schema.required).not.toContain('creator_id');
     });
+  });
+});
+
+/**
+ * REGRESSION LOCK (DEV-10453, finding 3): validate verbatim Pipedrive v2 records against the schema
+ * the connector actually generates. This is the test that would have caught the structural
+ * type-mismatches that flooded `enforce_schema`: non-nullable composite objects that are `null` in
+ * the data, system monetary fields typed as objects when v2 returns flat numbers, and
+ * emails/participants typed as strings when they are arrays of objects. (Extra top-level keys like
+ * deals' root `currency` pass via the default `additionalProperties: true`.)
+ */
+describe('schema regression lock — verbatim v2 records validate against the generated schema', () => {
+  const mockClient = { getFields: jest.fn() };
+  beforeEach(() => jest.clearAllMocks());
+
+  /** Assert Value.Check passes, dumping the first few validation errors otherwise. */
+  function expectValid(schema: unknown, record: unknown): void {
+    const schemaT = schema as Parameters<typeof Value.Check>[0];
+    if (!Value.Check(schemaT, record)) {
+      const errors = [...Value.Errors(schemaT, record)].slice(0, 10).map((e) => `${e.path}: ${e.message}`);
+      throw new Error(`record did not validate against generated schema:\n${errors.join('\n')}`);
+    }
+    expect(Value.Check(schemaT, record)).toBe(true);
+  }
+
+  async function buildSpec(entityType: 'deals' | 'persons' | 'organizations' | 'activities', fields: PipedriveField[]) {
+    mockClient.getFields.mockResolvedValue(fields);
+    return buildPipedriveJsonTableSpec(
+      { wsId: entityType, remoteId: [entityType] },
+      entityType,
+      mockClient as unknown as PipedriveApiClient,
+    );
+  }
+
+  it('validates a deal with a flat numeric `value` and null mrr/arr/acv (v2 flat money)', async () => {
+    const spec = await buildSpec('deals', [
+      makeField({ field_code: 'title', field_type: 'varchar' }),
+      makeField({ field_code: 'value', field_type: 'monetary' }),
+      makeField({ field_code: 'mrr', field_type: 'monetary' }),
+      makeField({ field_code: 'arr', field_type: 'monetary' }),
+      makeField({ field_code: 'acv', field_type: 'monetary' }),
+    ]);
+    // `currency` is a root-level key not modelled in dealFields — it must pass as an extra property.
+    expectValid(spec.schema, {
+      title: '[Sample] Damone',
+      value: 15000,
+      currency: 'CAD',
+      mrr: null,
+      arr: null,
+      acv: null,
+    });
+  });
+
+  it('validates an activity with null location, a participants array, and a numeric project_id', async () => {
+    const spec = await buildSpec('activities', [
+      makeField({ field_code: 'subject', field_type: 'varchar' }),
+      makeField({ field_code: 'location', field_type: 'address' }),
+      makeField({ field_code: 'participants', field_type: 'varchar' }),
+      makeField({ field_code: 'project_id', field_type: 'varchar' }),
+    ]);
+    expectValid(spec.schema, {
+      subject: '[Sample] Context call',
+      location: null,
+      participants: [{ person_id: 4, primary: true }],
+      project_id: 1,
+    });
+    // An empty participants array (seen in the data) must also validate.
+    expectValid(spec.schema, { subject: 'x', location: null, participants: [], project_id: null });
+  });
+
+  it('validates a person with an emails array and an empty phones array', async () => {
+    const spec = await buildSpec('persons', [
+      makeField({ field_code: 'name', field_type: 'varchar' }),
+      makeField({ field_code: 'emails', field_type: 'varchar' }),
+      makeField({ field_code: 'phones', field_type: 'phone' }),
+    ]);
+    expectValid(spec.schema, {
+      name: '[Sample] Otto Miller',
+      emails: [{ label: 'work', value: 'otto.miller@itablee.eu', primary: true }],
+      phones: [],
+    });
+  });
+
+  it('validates an organization with a null address', async () => {
+    const spec = await buildSpec('organizations', [
+      makeField({ field_code: 'name', field_type: 'varchar' }),
+      makeField({ field_code: 'address', field_type: 'address' }),
+    ]);
+    expectValid(spec.schema, { name: '[Sample] iTable', address: null });
   });
 });

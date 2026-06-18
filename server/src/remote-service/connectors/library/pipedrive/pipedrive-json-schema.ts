@@ -38,6 +38,63 @@ function pipedriveDateFieldHoldsDateTime(field: PipedriveField): boolean {
 }
 
 /**
+ * Wrap a composite object/array schema in a nullable union, placing any annotations on the
+ * OUTER union (a sibling of `anyOf`), mirroring `case 'picture'`. Pipedrive returns `null`
+ * for an empty composite field (address/monetary/daterange/timerange), so a verbatim record
+ * only validates if the schema admits `null`. The frontend reads `x-scratch-connector-data-type`
+ * as a sibling key and unwraps nullable unions, so the annotation must live on the union, not
+ * the inner object. (DEV-10453, finding 3)
+ */
+function nullableCompositeFieldSchema(objectSchema: TSchema, annotations: Record<string, unknown> = {}): TSchema {
+  return Type.Union([objectSchema, Type.Null()], annotations);
+}
+
+/**
+ * Stored shapes for the handful of stable system field codes whose Pipedrive metadata
+ * `field_type` does NOT describe their verbatim v2 shape. Pipedrive has no dedicated
+ * `email`/`participants` field type (both arrive as `varchar`/default → `string | null`),
+ * and `project_id` is reported as a string-ish type but stored as a number. Keying on the
+ * field code — the same mechanism the builder already uses for `update_time`/`pipeline_id`
+ * and the ENTITY_* maps — is more robust than trusting the (ambiguous) metadata type.
+ *
+ * Returns `null` when the field code has no override, so the caller falls through to the
+ * normal `field_type` switch. (DEV-10453, finding 3)
+ */
+function pipedriveFieldCodeOverrideSchema(field: PipedriveField): TSchema | null {
+  switch (field.field_code) {
+    // Person/organization multi-value email: `[{label?, value, primary?}]` (may be `[]`).
+    // Mirrors the `phone` array shape (`case 'phone'`); Pipedrive exposes no `email` type.
+    case 'email':
+    case 'emails':
+      return Type.Array(
+        Type.Object({
+          value: Type.Union([Type.String(), Type.Null()]),
+          primary: Type.Optional(Type.Boolean()),
+          label: Type.Optional(Type.String()),
+        }),
+        { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'email' },
+      );
+
+    // Activity participants: `[{person_id, primary?}]` (may be `[]`).
+    case 'participants':
+      return Type.Array(
+        Type.Object({
+          person_id: Type.Number(),
+          primary: Type.Optional(Type.Boolean()),
+        }),
+      );
+
+    // Activity project link: a plain numeric Pipedrive Projects id (Projects aren't a Scratch
+    // table), stored as a number — not the string its metadata field_type implies.
+    case 'project_id':
+      return Type.Union([Type.Number(), Type.Null()]);
+
+    default:
+      return null;
+  }
+}
+
+/**
  * Per-entity read-only system fields, keyed on the stored record's field code, used to set
  * `X_SCRATCH_READONLY` on the schema so the UI marks them non-editable and the user sees a field
  * is non-writable before they edit it. Activities carry the extra entries because they are
@@ -100,6 +157,11 @@ function isFieldSchemaReadonly(fieldSchema: TSchema): boolean {
  * Convert a Pipedrive field type to a TypeBox schema.
  */
 export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | null {
+  // Stable system field codes whose verbatim v2 shape the metadata field_type misdescribes
+  // win over the type-based switch below (e.g. `emails`/`participants` are arrays, not strings).
+  const fieldCodeOverrideSchema = pipedriveFieldCodeOverrideSchema(field);
+  if (fieldCodeOverrideSchema) return fieldCodeOverrideSchema;
+
   const fieldType = field.field_type;
 
   switch (fieldType) {
@@ -131,16 +193,22 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
       return Type.Union([Type.String(), Type.Null()]);
 
     case 'daterange':
-      return Type.Object({
-        start_date: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
-        end_date: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
-      });
+      return nullableCompositeFieldSchema(
+        Type.Object({
+          start_date: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
+          end_date: Type.Union([Type.String({ format: 'date' }), Type.Null()]),
+        }),
+        { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'daterange' },
+      );
 
     case 'timerange':
-      return Type.Object({
-        start_time: Type.Union([Type.String(), Type.Null()]),
-        end_time: Type.Union([Type.String(), Type.Null()]),
-      });
+      return nullableCompositeFieldSchema(
+        Type.Object({
+          start_time: Type.Union([Type.String(), Type.Null()]),
+          end_time: Type.Union([Type.String(), Type.Null()]),
+        }),
+        { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'timerange' },
+      );
 
     case 'phone':
       return Type.Array(
@@ -153,17 +221,25 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
       );
 
     case 'monetary':
-      return Type.Object(
-        {
-          value: Type.Union([Type.Number(), Type.Null()]),
-          currency: Type.Union([Type.String(), Type.Null()]),
-        },
-        { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'monetary' },
-      );
+      // In Pipedrive v2 only CUSTOM monetary fields are `{value, currency}` objects; the SYSTEM
+      // monetary fields (`value`/`acv`/`arr`/`mrr`) are plain decimal numbers paired with a single
+      // root-level `currency` string (per the v2 migration guide). Typing a system field as an
+      // object floods verbatim records (`value: 15000`) with "is not of type object" errors. Both
+      // shapes are nullable — Pipedrive returns `null` for an empty monetary field. (DEV-10453)
+      if (field.is_custom_field) {
+        return nullableCompositeFieldSchema(
+          Type.Object({
+            value: Type.Union([Type.Number(), Type.Null()]),
+            currency: Type.Union([Type.String(), Type.Null()]),
+          }),
+          { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'monetary' },
+        );
+      }
+      return Type.Union([Type.Number(), Type.Null()]);
 
     case 'address':
-      return Type.Object(
-        {
+      return nullableCompositeFieldSchema(
+        Type.Object({
           value: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           street_number: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           route: Type.Optional(Type.Union([Type.String(), Type.Null()])),
@@ -174,7 +250,7 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
           country: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           postal_code: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           formatted_address: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-        },
+        }),
         { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'address' },
       );
 
