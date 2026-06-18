@@ -152,10 +152,14 @@ describe('buildNotionPropertiesForFields', () => {
 
 describe('NOTION_SCHEMA_CREATION_CAPABILITIES', () => {
   it('supports every logical field kind and requires a text-like primary field', () => {
-    expect(NOTION_SCHEMA_CREATION_CAPABILITIES.requiresPrimaryField).toBe(true);
-    expect(NOTION_SCHEMA_CREATION_CAPABILITIES.primaryFieldKinds).toEqual(['text', 'longText']);
+    const primaryField = NOTION_SCHEMA_CREATION_CAPABILITIES.primaryField;
+    expect(primaryField).not.toBeNull();
+    expect(primaryField?.kinds).toEqual(['text', 'longText']);
     // Notion calls its mandatory primary property the "Title".
-    expect(NOTION_SCHEMA_CREATION_CAPABILITIES.primaryFieldDisplayName).toBe('Title');
+    expect(primaryField?.displayName).toBe('Title');
+    expect(primaryField?.description).toMatch(/title/i);
+    // Notion has no good public docs page for this, so it ships without a link.
+    expect(primaryField?.docsLink).toBeUndefined();
     expect(NOTION_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).toEqual(
       expect.arrayContaining([
         'text',

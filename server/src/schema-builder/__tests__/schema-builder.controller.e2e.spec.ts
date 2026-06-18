@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument -- app.getHttpServer() vs supertest's App */
 import { ExecutionContext, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { CreateFieldResult, CreateTableResult } from '@spinner/shared-types';
+import { CreateFieldResult, CreateTableResult, PrimaryFieldRequirement } from '@spinner/shared-types';
 import { ZodValidationPipe } from 'nestjs-zod';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
@@ -249,14 +249,15 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
       dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
       dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
       // A connector that mandates a primary/title field (Airtable / Notion shape).
+      const primaryField: PrimaryFieldRequirement = {
+        displayName: 'Title',
+        description: 'Notion requires a title property.',
+        kinds: ['text', 'longText'],
+        docsLink: { label: 'Learn about the title property', url: 'https://example.test/title' },
+      };
       connectorsService.getConnector.mockResolvedValue(
         connectorStub({
-          getSchemaCreationCapabilities: () => ({
-            supportedFieldKinds: ['text', 'longText'],
-            requiresPrimaryField: true,
-            primaryFieldKinds: ['text', 'longText'],
-            primaryFieldDisplayName: 'Title',
-          }),
+          getSchemaCreationCapabilities: () => ({ supportedFieldKinds: ['text', 'longText'], primaryField }),
         }),
       );
 
@@ -265,38 +266,11 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
         .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
         .expect(201);
 
-      expect(res.body.prerequisites).toEqual({
-        requiresPrimaryField: true,
-        primaryFieldKinds: ['text', 'longText'],
-        primaryFieldDisplayName: 'Title',
-      });
+      // The whole primary-field requirement — label, helper text, allowed kinds, docs link — carries through verbatim.
+      expect(res.body.prerequisites).toEqual({ primaryField });
     });
 
-    it('falls back to a generic primary-field label when a requiring connector declares no name', async () => {
-      dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
-      dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
-      // Requires a primary field but declares no service-specific name for it.
-      connectorsService.getConnector.mockResolvedValue(
-        connectorStub({
-          getSchemaCreationCapabilities: () => ({
-            supportedFieldKinds: ['text', 'longText'],
-            requiresPrimaryField: true,
-          }),
-        }),
-      );
-
-      const res = await request(app.getHttpServer())
-        .post(`/workbook/${WORKBOOK_ID}/schema/plan-from-folder`)
-        .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
-        .expect(201);
-
-      expect(res.body.prerequisites).toEqual({
-        requiresPrimaryField: true,
-        primaryFieldDisplayName: 'Name field',
-      });
-    });
-
-    it('defaults prerequisites to all-permissive when the connector declares no capabilities', async () => {
+    it('reports a null primary-field requirement when the connector requires none', async () => {
       dbService.client.dataFolder.findUnique.mockResolvedValue(sourceFolder);
       dataFolderService.getStoredSchema.mockResolvedValue(sourceStoredSchema);
 
@@ -305,7 +279,7 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
         .send({ sources: [{ dataFolderId: 'src_authors' }], destinationConnectorAccountId: CONNECTOR_ACCOUNT_ID })
         .expect(201);
 
-      expect(res.body.prerequisites).toEqual({ requiresPrimaryField: false });
+      expect(res.body.prerequisites).toEqual({ primaryField: null });
     });
 
     it('diffs against an existing destination folder and emits an add-fields plan', async () => {

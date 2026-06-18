@@ -188,7 +188,7 @@ describe('POSTGRES_SCHEMA_CREATION_CAPABILITIES', () => {
       ]),
     );
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.supportedFieldKinds).toHaveLength(12);
-    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.requiresPrimaryField).toBe(false);
+    expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.primaryField).toBeNull();
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxTableNameLength).toBe(63);
     expect(POSTGRES_SCHEMA_CREATION_CAPABILITIES.maxFieldNameLength).toBe(63);
   });

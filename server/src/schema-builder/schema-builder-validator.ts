@@ -70,7 +70,8 @@ export function validateTablesAgainstCapabilities(
 
     issues.push(...validateFieldsAgainstCapabilities(table.fields, capabilities, `${tablePath}.fields`));
 
-    if (capabilities.requiresPrimaryField) {
+    if (capabilities.primaryField) {
+      const allowedPrimaryFieldKinds = capabilities.primaryField.kinds;
       const primaryFields = table.fields.filter((field) => field.isPrimary);
       if (primaryFields.length === 0) {
         issues.push({
@@ -78,14 +79,14 @@ export function validateTablesAgainstCapabilities(
           code: 'MISSING_PRIMARY_FIELD',
           message: 'this connector requires the table to designate exactly one field with isPrimary',
         });
-      } else if (capabilities.primaryFieldKinds && capabilities.primaryFieldKinds.length > 0) {
+      } else if (allowedPrimaryFieldKinds.length > 0) {
         // (zod already rejects >1 primary; here we only validate the single primary's kind.)
         const primary = primaryFields[0];
-        if (!capabilities.primaryFieldKinds.includes(primary.fieldType.kind)) {
+        if (!allowedPrimaryFieldKinds.includes(primary.fieldType.kind)) {
           issues.push({
             path: `${tablePath}.fields[${table.fields.indexOf(primary)}].fieldType.kind`,
             code: 'PRIMARY_FIELD_WRONG_KIND',
-            message: `the primary field must be one of: ${capabilities.primaryFieldKinds.join(', ')}`,
+            message: `the primary field must be one of: ${allowedPrimaryFieldKinds.join(', ')}`,
           });
         }
       }

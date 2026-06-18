@@ -30,23 +30,19 @@ describe('AIRTABLE_SCHEMA_CREATION_CAPABILITIES', () => {
   });
 
   it('mandates a primary field with text-like kinds only', () => {
-    expect(AIRTABLE_SCHEMA_CREATION_CAPABILITIES.requiresPrimaryField).toBe(true);
-    expect(AIRTABLE_SCHEMA_CREATION_CAPABILITIES.primaryFieldKinds).toEqual([
-      'text',
-      'longText',
-      'number',
-      'date',
-      'url',
-      'email',
-      'phone',
-      'currency',
-    ]);
+    const primaryField = AIRTABLE_SCHEMA_CREATION_CAPABILITIES.primaryField;
+    expect(primaryField).not.toBeNull();
+    expect(primaryField?.kinds).toEqual(['text', 'longText', 'number', 'date', 'url', 'email', 'phone', 'currency']);
     // Airtable calls its mandatory first column the "Primary field".
-    expect(AIRTABLE_SCHEMA_CREATION_CAPABILITIES.primaryFieldDisplayName).toBe('Primary field');
+    expect(primaryField?.displayName).toBe('Primary field');
+    // The requirement carries its own helper text and a docs link for the UI.
+    expect(primaryField?.description).toMatch(/primary field/i);
+    expect(primaryField?.docsLink?.url).toMatch(/^https:\/\//);
+    expect(primaryField?.docsLink?.label.length).toBeGreaterThan(0);
   });
 
   it('excludes checkbox/select/multiSelect/link kinds from the primary field', () => {
-    const primary = AIRTABLE_SCHEMA_CREATION_CAPABILITIES.primaryFieldKinds ?? [];
+    const primary = AIRTABLE_SCHEMA_CREATION_CAPABILITIES.primaryField?.kinds ?? [];
     expect(primary).not.toContain('boolean');
     expect(primary).not.toContain('select');
     expect(primary).not.toContain('multiSelect');

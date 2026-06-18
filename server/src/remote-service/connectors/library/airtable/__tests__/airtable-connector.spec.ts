@@ -349,8 +349,8 @@ describe('AirtableConnector schema creation', () => {
 
     const capabilities = connector.getSchemaCreationCapabilities();
     expect(capabilities.supportedFieldKinds).toHaveLength(12);
-    expect(capabilities.requiresPrimaryField).toBe(true);
-    expect(capabilities.primaryFieldKinds).not.toContain('boolean');
+    expect(capabilities.primaryField).not.toBeNull();
+    expect(capabilities.primaryField?.kinds).not.toContain('boolean');
     expect(capabilities.maxTableNameLength).toBe(255);
     expect(capabilities.maxFieldNameLength).toBe(255);
   });

@@ -40,12 +40,12 @@ const DEFAULT_CURRENCY_SCALE = 4;
  * Connector-declared capabilities consumed by the generic create-schema
  * validator. Postgres can represent every logical kind as a column and has no
  * mandatory title field (the read side derives the title column from name
- * heuristics, not a DDL marker — so `requiresPrimaryField` is false and the
- * `isPrimary` flag is ignored for DDL).
+ * heuristics, not a DDL marker — so `primaryField` is null and the `isPrimary`
+ * flag is ignored for DDL).
  */
 export const POSTGRES_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   supportedFieldKinds: [...CREATE_FIELD_KINDS],
-  requiresPrimaryField: false,
+  primaryField: null,
   maxTableNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
   maxFieldNameLength: POSTGRES_MAX_IDENTIFIER_LENGTH,
 };

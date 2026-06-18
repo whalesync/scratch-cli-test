@@ -596,7 +596,7 @@ describe('PostgresConnector schema creation', () => {
 
     const capabilities = connector.getSchemaCreationCapabilities();
     expect(capabilities.supportedFieldKinds).toHaveLength(12);
-    expect(capabilities.requiresPrimaryField).toBe(false);
+    expect(capabilities.primaryField).toBeNull();
     expect(capabilities.maxTableNameLength).toBe(63);
     expect(capabilities.maxFieldNameLength).toBe(63);
   });

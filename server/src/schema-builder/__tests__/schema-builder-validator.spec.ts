@@ -163,8 +163,12 @@ describe('createSchemaTablesSchema (zod contract)', () => {
 describe('validateTablesAgainstCapabilities', () => {
   const capabilities: SchemaCreationCapabilities = {
     supportedFieldKinds: ['text', 'number'],
-    requiresPrimaryField: true,
-    primaryFieldKinds: ['text'],
+    primaryField: {
+      displayName: 'Primary field',
+      description: 'A primary field is required.',
+      kinds: ['text'],
+      docsLink: { label: 'Learn more', url: 'https://example.test/primary-field' },
+    },
     maxFieldNameLength: 10,
   };
 

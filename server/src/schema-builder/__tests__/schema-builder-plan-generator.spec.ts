@@ -547,3 +547,119 @@ describe('generateCreatePlanFromSources — duplicate table names (DEV-10441)', 
     expect(tableNotes).toEqual([]);
   });
 });
+
+describe('generateCreatePlanFromSources — fallback primary field', () => {
+  // A source that designated NO title column (no primaryFieldPath), as happens
+  // when a Postgres table's headline column isn't named name/title/etc.
+  const sourceWithoutTitleColumn = (schemaFields: SchemaField[]): PlanGeneratorSource => ({
+    ref: 'people',
+    dataFolderId: 'people',
+    tableName: 'People',
+    remoteTableIds: ['tblPeople'],
+    schemaFields,
+  });
+
+  const primaryFieldNames = (table: { fields: { name: string; isPrimary?: boolean }[] }): string[] =>
+    table.fields.filter((f) => f.isPrimary).map((f) => f.name);
+
+  it('promotes the highest-priority primary-sounding field when the destination requires one', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        sourceWithoutTitleColumn([
+          field({ path: 'created_at', type: 'string' }),
+          field({ path: 'bio', type: 'string' }),
+          field({ path: 'full_name', type: 'string' }),
+        ]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationRequiresPrimaryField: true,
+    });
+
+    // `full_name` (normalizes to a listed candidate) wins over the non-candidate
+    // `created_at`/`bio`, even though it comes last in column order.
+    expect(primaryFieldNames(tables[0])).toEqual(['full_name']);
+  });
+
+  it('falls back to the first eligible field in column order when no name matches', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        sourceWithoutTitleColumn([field({ path: 'bio', type: 'string' }), field({ path: 'website', type: 'string' })]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationRequiresPrimaryField: true,
+    });
+
+    expect(primaryFieldNames(tables[0])).toEqual(['bio']);
+  });
+
+  it('only considers fields of an allowed kind, overriding name priority', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [
+        sourceWithoutTitleColumn([
+          // Best name, but a number kind Notion can't use as its title.
+          field({ path: 'title', type: 'number' }),
+          field({ path: 'description', type: 'string' }),
+        ]),
+      ],
+      destinationConnectorAccountId: 'destConn',
+      destinationRequiresPrimaryField: true,
+      destinationPrimaryFieldKinds: ['text', 'longText'],
+    });
+
+    expect(primaryFieldNames(tables[0])).toEqual(['description']);
+  });
+
+  it('does not promote a primary when the destination does not require one', () => {
+    const { tables } = generateCreatePlanFromSources({
+      sources: [sourceWithoutTitleColumn([field({ path: 'full_name', type: 'string' })])],
+      destinationConnectorAccountId: 'destConn',
+    });
+
+    expect(primaryFieldNames(tables[0])).toEqual([]);
+  });
+
+  it('keeps the source-designated primary and never marks a second', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'people',
+      dataFolderId: 'people',
+      tableName: 'People',
+      remoteTableIds: ['tblPeople'],
+      primaryFieldPath: 'handle',
+      schemaFields: [field({ path: 'handle', type: 'string' }), field({ path: 'name', type: 'string' })],
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      destinationRequiresPrimaryField: true,
+    });
+
+    // `handle` was the source's title column; `name` is NOT also promoted even
+    // though it's a stronger candidate name.
+    expect(primaryFieldNames(tables[0])).toEqual(['handle']);
+  });
+
+  it('leaves a degenerate table (only an id and a link) without a primary', () => {
+    const source: PlanGeneratorSource = {
+      ref: 'joins',
+      dataFolderId: 'joins',
+      tableName: 'Joins',
+      remoteTableIds: ['tblJoins'],
+      idFieldPath: 'id',
+      schemaFields: [
+        field({ path: 'id', type: 'string' }),
+        field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblPeople' } }),
+      ],
+      connectorService: 'POSTGRES',
+    };
+    const { tables } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+      // A foreignKey is allowed as a kind here, but it's still never primary-eligible.
+      destinationRequiresPrimaryField: true,
+      linkedTableMappings: [{ sourceLinkedTableId: 'tblPeople', destinationRemoteTableId: ['tblPeopleDest'] }],
+    });
+
+    // Only the link + injected source-record-id remain; neither is primary-eligible.
+    expect(primaryFieldNames(tables[0])).toEqual([]);
+  });
+});

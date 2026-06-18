@@ -43,7 +43,7 @@ export const DEFAULT_CURRENCY_PRECISION = 2;
 
 /**
  * Representative native Airtable field type for each logical kind. Used both to
- * compute `primaryFieldKinds` (a kind is primary-eligible iff its native type is
+ * compute `primaryField.kinds` (a kind is primary-eligible iff its native type is
  * not in `airtableFirstColumnIncompatibleTypes`) and to validate a designated
  * primary field's type in the connector — so the two can never drift.
  */
@@ -87,14 +87,21 @@ export function isAirtablePrimaryEligibleKind(kind: CreateFieldKind): boolean {
  * Connector-declared capabilities consumed by the generic create-schema
  * validator. Airtable can represent every logical kind, but (unlike Postgres) it
  * mandates a primary field as `fields[0]`, and that field's type cannot be one of
- * `airtableFirstColumnIncompatibleTypes` — so `requiresPrimaryField` is true and
- * `primaryFieldKinds` is the set of primary-eligible kinds.
+ * `airtableFirstColumnIncompatibleTypes` — so `primaryField` is set and its
+ * `kinds` is the set of primary-eligible kinds.
  */
 export const AIRTABLE_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   supportedFieldKinds: [...CREATE_FIELD_KINDS],
-  requiresPrimaryField: true,
-  primaryFieldKinds: CREATE_FIELD_KINDS.filter(isAirtablePrimaryEligibleKind),
-  primaryFieldDisplayName: 'Primary field',
+  primaryField: {
+    displayName: 'Primary field',
+    description:
+      "Airtable requires a primary field. It's the first column and describes each record, usually its name or title.",
+    kinds: CREATE_FIELD_KINDS.filter(isAirtablePrimaryEligibleKind),
+    docsLink: {
+      label: 'Learn about primary fields',
+      url: 'https://support.airtable.com/docs/the-primary-field',
+    },
+  },
   maxTableNameLength: AIRTABLE_MAX_NAME_LENGTH,
   maxFieldNameLength: AIRTABLE_MAX_NAME_LENGTH,
 };

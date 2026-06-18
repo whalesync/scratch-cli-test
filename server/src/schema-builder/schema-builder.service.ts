@@ -329,12 +329,22 @@ export class SchemaBuilderService {
       ? await this.existingDestinationTableNamesForParent(connector, dto.remoteParentId)
       : [];
 
+    // The destination's primary-field requirement drives the generator's fallback:
+    // when a connector mandates a primary field but the source designated none
+    // (its title column wasn't recognized), the generator promotes one so the plan
+    // is valid out of the box rather than failing create-time validation.
+    const destinationCapabilities = connector.getSchemaCreationCapabilities?.();
+
     const { tables, fieldPlans, notes, tableNotes } = generateCreatePlanFromSources({
       sources,
       destinationConnectorAccountId: dto.destinationConnectorAccountId,
       destinationConnectorService: connector.service,
       linkedTableMappings: dto.linkedTableMappings,
       existingDestinationTableNames,
+      destinationRequiresPrimaryField: destinationCapabilities?.primaryField != null,
+      ...(destinationCapabilities?.primaryField
+        ? { destinationPrimaryFieldKinds: destinationCapabilities.primaryField.kinds }
+        : {}),
     });
 
     const plan: CreateSchemaTablesDto = {
@@ -349,7 +359,7 @@ export class SchemaBuilderService {
       fieldPlans,
       notes,
       tableNotes,
-      prerequisites: schemaCreationPrerequisitesFromCapabilities(connector.getSchemaCreationCapabilities?.()),
+      prerequisites: schemaCreationPrerequisitesFromCapabilities(destinationCapabilities),
       destinationSupportsCreation: connector.supportsSchemaCreation(),
     };
   }
@@ -622,31 +632,16 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Default label for a required primary field when the connector mandates one but
- * declares no service-specific name. Centralizing the fallback here means every
- * frontend can read `primaryFieldDisplayName` directly instead of reinventing it.
- */
-const DEFAULT_PRIMARY_FIELD_DISPLAY_NAME = 'Name field';
-
-/**
  * Project the connector's full SchemaCreationCapabilities down to the subset the
- * client needs to bring a plan into compliance before creating it. A connector
- * that declares no capabilities (or doesn't require a primary field) yields the
- * all-permissive default so the client can treat the object uniformly. When a
- * primary field IS required, `primaryFieldDisplayName` is always populated —
- * either the connector's own term or the generic `DEFAULT_PRIMARY_FIELD_DISPLAY_NAME`.
+ * client needs to bring a plan into compliance before creating it. The connector's
+ * `primaryField` requirement (or `null`) carries straight through, so a connector
+ * that declares no capabilities or no primary field yields `{ primaryField: null }`
+ * and the client can treat the object uniformly.
  */
 function schemaCreationPrerequisitesFromCapabilities(
   capabilities: SchemaCreationCapabilities | undefined,
 ): CreateSchemaPrerequisites {
-  const requiresPrimaryField = capabilities?.requiresPrimaryField ?? false;
-  return {
-    requiresPrimaryField,
-    ...(capabilities?.primaryFieldKinds ? { primaryFieldKinds: capabilities.primaryFieldKinds } : {}),
-    ...(requiresPrimaryField
-      ? { primaryFieldDisplayName: capabilities?.primaryFieldDisplayName ?? DEFAULT_PRIMARY_FIELD_DISPLAY_NAME }
-      : {}),
-  };
+  return { primaryField: capabilities?.primaryField ?? null };
 }
 
 function aggregateTableStatus(results: CreateTableResult[]): CreateSchemaStatus {

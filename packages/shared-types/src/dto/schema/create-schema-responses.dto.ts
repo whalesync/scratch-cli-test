@@ -6,25 +6,44 @@ import type { CreateFieldKind, CreateFieldSpec, CreateSchemaTablesDto } from './
  * server constructs them; nobody validates them as untrusted input.
  */
 
+/** A link into a connector's own documentation. */
+export interface SchemaDocsLink {
+  /** Link text, e.g. "Learn about primary fields". */
+  label: string;
+  url: string;
+}
+
+/**
+ * Everything about a connector's mandatory primary/title field, grouped into one
+ * object so these details don't sprawl across the capability/prerequisite shapes.
+ * The WHOLE object is `null` when the connector requires no primary field (see
+ * `SchemaCreationCapabilities.primaryField` and `CreateSchemaPrerequisites.primaryField`).
+ */
+export interface PrimaryFieldRequirement {
+  /** The service's user-facing name for the field: Airtable's "Primary field", Notion's "Title". */
+  displayName: string;
+  /**
+   * Connector-worded explanation of the requirement, shown as helper text next to
+   * the field picker (e.g. "Airtable requires a primary field. It's the first
+   * column and describes each record, usually its name or title.").
+   */
+  description: string;
+  /** The field kinds allowed for the primary field (e.g. Notion's `['text', 'longText']`). */
+  kinds: CreateFieldKind[];
+  /** Link to the connector's own docs explaining the primary field, when one exists. */
+  docsLink?: SchemaDocsLink;
+}
+
 /**
  * Declarative, connector-agnostic description of what a connector can create.
  * The generic validator consumes this to fail fast (without hardcoding connector
  * rules in the server or any frontend); a connector with a mandatory title field
- * (Notion, Webflow) sets `requiresPrimaryField`.
+ * (Airtable, Notion) provides `primaryField`, others set it to `null`.
  */
 export interface SchemaCreationCapabilities {
   supportedFieldKinds: CreateFieldKind[];
-  /** The connector requires the table to designate a primary/title field. */
-  requiresPrimaryField: boolean;
-  /** Allowed field kinds for the primary field, if constrained (e.g. ['text']). */
-  primaryFieldKinds?: CreateFieldKind[];
-  /**
-   * The service's own user-facing name for the primary field, so a frontend can
-   * label it the way the service does instead of hardcoding "Name" — Airtable's
-   * "Primary field", Notion's "Title", etc. Set only when `requiresPrimaryField`
-   * is true.
-   */
-  primaryFieldDisplayName?: string;
+  /** The connector's primary-field requirement, or `null` when no primary field is required. */
+  primaryField: PrimaryFieldRequirement | null;
   maxTableNameLength?: number;
   maxFieldNameLength?: number;
 }
@@ -35,34 +54,18 @@ export interface SchemaCreationCapabilities {
  * connector's SchemaCreationCapabilities and surfaced declaratively so no
  * frontend hardcodes which services need what — a client reads these and brings
  * the plan into compliance (e.g. designates a primary field) before offering
- * "Create". Grouped into one object so future connector prerequisites have a
- * home without another top-level response field.
- *
- * Always present on the plan; a connector with no special needs yields
- * all-permissive defaults (`requiresPrimaryField === false`) so the client can
- * treat the object uniformly.
+ * "Create". A single object so future connector prerequisites have a home without
+ * another top-level response field. Always present on the plan.
  */
 export interface CreateSchemaPrerequisites {
   /**
-   * Each table in the plan must designate exactly one primary/title field (a
-   * `CreateTableSpec` field with `isPrimary === true`). True for connectors with
-   * a mandatory title column (e.g. Airtable, Notion); creation is rejected at
-   * validation time otherwise.
+   * The destination connector's primary-field requirement, or `null` when no
+   * primary field is required. When non-null, every table in the plan must
+   * designate exactly one primary field (a `CreateTableSpec` field with
+   * `isPrimary === true`) of an allowed `kinds`, or creation is rejected at
+   * validation time.
    */
-  requiresPrimaryField: boolean;
-  /**
-   * When `requiresPrimaryField` is true, the field kinds allowed for that primary
-   * field if the connector constrains them (e.g. Notion's `['text', 'longText']`).
-   * Omitted when any supported kind may be the primary field.
-   */
-  primaryFieldKinds?: CreateFieldKind[];
-  /**
-   * The user-facing name to label the primary field with — the service's own term
-   * when it has one (Airtable's "Primary field", Notion's "Title"), otherwise a
-   * generic default ("Name field"). Always present when `requiresPrimaryField` is
-   * true and omitted otherwise, so the client never has to supply its own fallback.
-   */
-  primaryFieldDisplayName?: string;
+  primaryField: PrimaryFieldRequirement | null;
 }
 
 /** Per-field outcome of a create operation. */

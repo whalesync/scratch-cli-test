@@ -1,4 +1,5 @@
 import type {
+  CreateFieldKind,
   CreateFieldSpec,
   CreateFieldType,
   CreateSchemaFieldsPlan,
@@ -106,6 +107,22 @@ export function generateCreatePlanFromSources(args: {
    * `connector.listTables()`; absent ⇒ only in-plan collisions are resolved.
    */
   existingDestinationTableNames?: string[];
+  /**
+   * Whether the destination connector requires every new table to designate a
+   * primary field. When true and a source named no title column (so no field was
+   * marked `isPrimary`), the generator promotes a fallback primary — see
+   * `designateFallbackPrimaryFieldIfMissing` — so the plan is valid out of the box
+   * for connectors like Airtable and Notion instead of failing create-time
+   * validation. Defaults to false (no primary needed; nothing is promoted).
+   */
+  destinationRequiresPrimaryField?: boolean;
+  /**
+   * The field kinds the destination allows for a primary field, if constrained
+   * (e.g. Notion's `['text', 'longText']`). The fallback primary is chosen only
+   * among fields of an allowed kind. Absent ⇒ any non-foreignKey data field is
+   * eligible.
+   */
+  destinationPrimaryFieldKinds?: CreateFieldKind[];
 }): GeneratedPlan {
   // linkedTableId → in-plan table ref (for resolving sibling foreign keys).
   const linkedIdToRef = new Map<string, string>();
@@ -169,6 +186,13 @@ export function generateCreatePlanFromSources(args: {
           status: 'mapped',
           mappedKind: 'text',
         });
+      }
+      // If the destination requires a primary field but the source designated none
+      // (its title column wasn't recognized — e.g. a Postgres table whose headline
+      // column isn't named `name`/`title`/…), promote one now so the plan is valid
+      // for connectors like Airtable and Notion rather than failing validation.
+      if (args.destinationRequiresPrimaryField) {
+        designateFallbackPrimaryFieldIfMissing(fields, args.destinationPrimaryFieldKinds);
       }
       // Classify the collision BEFORE allocating: `takenTableNames` merges existing
       // and in-plan names, so the distinction must be read off the frozen set first.
@@ -492,6 +516,89 @@ function buildSourceRecordIdField(
     description: 'Remote id of the source record this row was synced from.',
     isSourceRecordId: true,
   };
+}
+
+/**
+ * Field names — normalized (lowercased, separators stripped) — that read like a
+ * record's human title, in descending priority. Used to pick a fallback primary
+ * field when the destination requires one but the source named no title column.
+ * The first entries are the strongest, conventional title columns; the rest are
+ * common stand-ins (people, posts, tickets, accounts). A field matching an
+ * earlier entry wins; with no match the generator falls back to the first
+ * eligible field in column order.
+ */
+const PRIMARY_FIELD_NAME_CANDIDATES_IN_PRIORITY_ORDER = [
+  'name',
+  'title',
+  'displayname',
+  'fullname',
+  'label',
+  'subject',
+  'heading',
+  'headline',
+  'summary',
+  'slug',
+  'username',
+  'key',
+  'identifier',
+  'email',
+];
+
+/** Lowercase and strip non-alphanumerics so "Display Name", "display_name", and "displayName" all match. */
+function normalizeFieldNameForPrimaryMatch(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** Priority of a field's name as a title (lower is better); non-candidates sort last. */
+function primaryNamePriorityOf(field: CreateFieldSpec): number {
+  const index = PRIMARY_FIELD_NAME_CANDIDATES_IN_PRIORITY_ORDER.indexOf(normalizeFieldNameForPrimaryMatch(field.name));
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+/**
+ * A field can serve as a table's primary/title field only if it's a real data
+ * column (not the injected source-record-id), not a foreign key (a link can't be
+ * a title), and — when the destination constrains primary kinds — of an allowed
+ * kind.
+ */
+function isFieldEligibleAsPrimary(
+  field: CreateFieldSpec,
+  destinationPrimaryFieldKinds: CreateFieldKind[] | undefined,
+): boolean {
+  if (field.isSourceRecordId) return false;
+  if (field.fieldType.kind === 'foreignKey') return false;
+  if (destinationPrimaryFieldKinds && !destinationPrimaryFieldKinds.includes(field.fieldType.kind)) return false;
+  return true;
+}
+
+/**
+ * Promote a primary field in place when the destination requires one and none was
+ * designated from the source's title column. Chooses the highest-priority
+ * primary-sounding name among the eligible fields, falling back to the first
+ * eligible field in column order. Leaves the table without a primary only when no
+ * field is eligible at all (a degenerate table of just an id and/or links) — which
+ * the create-time validator then reports rather than this guessing wrongly.
+ */
+function designateFallbackPrimaryFieldIfMissing(
+  fields: CreateFieldSpec[],
+  destinationPrimaryFieldKinds: CreateFieldKind[] | undefined,
+): void {
+  if (fields.some((field) => field.isPrimary)) return;
+  const eligibleFields = fields.filter((field) => isFieldEligibleAsPrimary(field, destinationPrimaryFieldKinds));
+  if (eligibleFields.length === 0) return;
+
+  // Start from the first eligible field (the column-order fallback) and keep the
+  // earliest field with a strictly better title-name priority.
+  let chosenField = eligibleFields[0];
+  let chosenPriority = primaryNamePriorityOf(chosenField);
+  for (const field of eligibleFields) {
+    const priority = primaryNamePriorityOf(field);
+    if (priority < chosenPriority) {
+      chosenField = field;
+      chosenPriority = priority;
+    }
+  }
+  chosenField.isPrimary = true;
 }
 
 function buildFieldSpec(

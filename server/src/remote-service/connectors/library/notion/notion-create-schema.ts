@@ -33,14 +33,16 @@ export type NotionPropertiesMap = Record<string, NotionPropertyConfig>;
 /**
  * Connector-declared capabilities consumed by the generic create-schema
  * validator. Notion can represent every logical kind as a property, and every
- * data source MUST have exactly one `title` property — so `requiresPrimaryField`
- * is true and the primary field (mapped to Notion's `title`) must be text-like.
+ * data source MUST have exactly one `title` property — so `primaryField` is set
+ * and the primary field (mapped to Notion's `title`) must be text-like.
  */
 export const NOTION_SCHEMA_CREATION_CAPABILITIES: SchemaCreationCapabilities = {
   supportedFieldKinds: [...CREATE_FIELD_KINDS],
-  requiresPrimaryField: true,
-  primaryFieldKinds: ['text', 'longText'],
-  primaryFieldDisplayName: 'Title',
+  primaryField: {
+    displayName: 'Title',
+    description: 'Notion requires a title property. It names each record and appears at the top of every page.',
+    kinds: ['text', 'longText'],
+  },
 };
 
 /**
