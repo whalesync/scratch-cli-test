@@ -46,13 +46,28 @@ describe('pipedriveFieldToJsonSchema', () => {
     expect(schema!.anyOf).toHaveLength(2);
   });
 
-  it('maps date to String(format: date) | Null', () => {
-    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'date' }));
+  it('maps a date-only field to String(format: date) | Null', () => {
+    // `field_code: 'test_field'` is not a `_time` timestamp field, so it stays date-only.
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'date', field_code: 'due_date' }));
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const stringType = schema!.anyOf?.find((s: { type?: string }) => s.type === 'string');
     expect(stringType?.format).toBe('date');
   });
+
+  // DEV-10453 finding 3: Pipedrive types its timestamp system fields as `field_type: 'date'`
+  // but returns full RFC 3339 date-times; mapping them to `format: 'date'` floods verbatim
+  // records with false-positive format errors. `_time`-suffixed date fields get `date-time`.
+  it.each(['add_time', 'update_time', 'marked_as_done_time'])(
+    'maps the timestamp field %s to String(format: date-time) | Null',
+    (field_code) => {
+      const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'date', field_code }));
+      expect(schema).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const stringType = schema!.anyOf?.find((s: { type?: string }) => s.type === 'string');
+      expect(stringType?.format).toBe('date-time');
+    },
+  );
 
   it('maps phone to array with CONNECTOR_DATA_TYPE annotation', () => {
     const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'phone' }));

@@ -101,6 +101,19 @@ This is **pre-existing latent strictness** — it never mattered because `enforc
 these records (bug #3). Turning validation on by default + auto-seeding `enforce_schema` + fixing #3 is
 what surfaces it. Other connectors with verbatim records likely have the same latent problem.
 
+> **Confirmed in another connector — fixed 2026-06-17.** The Postgres-based connectors (Supabase + the
+> generic Postgres connector, which share `pg-common`) had the same date-vs-date-time mismatch: a
+> Postgres `date` column was typed `format: 'date'`, but the `node-postgres` driver parses the `date`
+> OID (1082) into a JS `Date`, which serializes to a full RFC 3339 date-time on disk
+> (e.g. `"1944-11-19T00:00:00.000Z"`), never `YYYY-MM-DD`. So every verbatim row failed the `anyOf` — one
+> error per record on every `date` column. Fixed in
+> [`pg-type-mapping.ts`](../../server/src/remote-service/connectors/library/pg-common/pg-type-mapping.ts)
+> by mapping `PG_DATE_TYPES` to `format: 'date-time'` (display is unaffected — both `date` and `timestamp`
+> already share `pgType: TIMESTAMP`, which the view renders as a date column). Tests in
+> [`pg-type-mapping.spec.ts`](../../server/src/remote-service/connectors/library/pg-common/__tests__/pg-type-mapping.spec.ts).
+> Like the Pipedrive fix, the live workspace needs a **re-pull** to regenerate `schema.json` before the
+> errors clear.
+
 ### Worked example — the `add_time` / date-time `anyOf` error
 
 A representative noise error:
@@ -125,13 +138,29 @@ Mechanics:
   `field_type: 'date'` but returns full ISO timestamps; there is no date-time case, so they inherit the
   stricter `format: 'date'`.
 
-**Resolution — do this (first option).** Map the timestamp-valued system fields (`add_time`,
-`update_time`, `marked_as_done_time`, and any other datetime-bearing `'date'` field) to
+**Resolution — done (first option). ✅ APPLIED 2026-06-17.** Map the timestamp-valued system fields
+(`add_time`, `update_time`, `marked_as_done_time`, and any other datetime-bearing `'date'` field) to
 `format: 'date-time'` instead of `'date'` in `pipedriveFieldToJsonSchema`. `format: 'date-time'` accepts
 `"2026-06-04T14:14:02Z"`, so it clears the error while keeping format validation meaningful. Alternatives
 considered and **not** chosen: relax `case 'date'` to a plain `Type.String()` with no format (cheapest,
 but drops date validation entirely); or sniff datetime-shaped values at schema-build time (more complex,
 brittle). After changing the connector, **re-pull** to regenerate `schema.json` on disk, then revalidate.
+
+> **Implementation.** Added helper `pipedriveDateFieldHoldsDateTime(field)` in
+> [`pipedrive-json-schema.ts`](../../server/src/remote-service/connectors/library/pipedrive/pipedrive-json-schema.ts):
+> a `field_type: 'date'` field is treated as a date-time when its `field_code` ends in `_time` —
+> Pipedrive's own convention for timestamp system fields (`add_time`/`update_time`/`marked_as_done_time`/
+> `won_time`/`lost_time`/`close_time`/…), while date-only fields end in `_date` or are custom hash codes,
+> and clock-time `due_time` is `field_type: 'time'` (handled separately). `case 'date'` then emits
+> `format: 'date-time'` for those and `format: 'date'` otherwise. This is metadata-driven (reads the field
+> code, not the value) and generalises across every entity, so it needs no per-field list. Tests added in
+> [`pipedrive-json-schema.spec.ts`](../../server/src/remote-service/connectors/library/pipedrive/__tests__/pipedrive-json-schema.spec.ts);
+> server `test`/`lint`/`prettier:check`/`typecheck` all clean. **Still requires a re-pull** to regenerate
+> the on-disk `schema.json` before the live workspace stops emitting the 2 date-time errors/record.
+>
+> **Scope:** this clears only the **date-time** slice (≈2 of ≈16 errors/record). The dominant noise —
+> the `required` bulk (~12/record) and the `participants` anyOf (1/record) — is **not** addressed here;
+> see Option A (scope the validator) or the rest of Option B (derive `required` from Pipedrive metadata).
 
 ## Decision space (pick a direction)
 

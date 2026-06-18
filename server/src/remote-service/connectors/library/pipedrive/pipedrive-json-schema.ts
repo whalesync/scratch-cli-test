@@ -15,6 +15,29 @@ import { ENTITY_CONFIG, ENTITY_DISPLAY_NAMES, PipedriveEntityType, PipedriveFiel
 const COMMON_READONLY_SYSTEM_FIELDS: readonly string[] = ['id', 'add_time', 'update_time'];
 
 /**
+ * Decide whether a Pipedrive `field_type: 'date'` field actually holds a full
+ * RFC 3339 date-time rather than a `YYYY-MM-DD` date-only value.
+ *
+ * Pipedrive types BOTH true date-only fields and full-timestamp system fields as
+ * `field_type: 'date'`, but returns the latter as date-times like
+ * `"2026-06-04T14:14:02Z"`. Mapping every `'date'` field to `format: 'date'` makes
+ * those timestamp fields fail format validation on otherwise-verbatim records,
+ * flooding the validator with false positives (DEV-10453, finding 3).
+ *
+ * Pipedrive's own naming convention separates the two cleanly: timestamp system
+ * fields end in `_time` (`add_time`, `update_time`, `marked_as_done_time`,
+ * `won_time`, `lost_time`, `close_time`, `stage_change_time`, …), while date-only
+ * fields end in `_date` (`due_date`, `expected_close_date`) or are custom fields
+ * (40-char hash codes that never end in `_time`). Clock-time fields like `due_time`
+ * are `field_type: 'time'`, so they are handled by `case 'time'` and never reach
+ * the `'date'` case. Reading the field code (metadata) — rather than sniffing the
+ * stored value — keeps this connector-local and generalises across every entity.
+ */
+function pipedriveDateFieldHoldsDateTime(field: PipedriveField): boolean {
+  return field.field_code.endsWith('_time');
+}
+
+/**
  * Per-entity read-only system fields, keyed on the stored record's field code, used to set
  * `X_SCRATCH_READONLY` on the schema so the UI marks them non-editable and the user sees a field
  * is non-writable before they edit it. Activities carry the extra entries because they are
@@ -96,8 +119,13 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
     case 'boolean':
       return Type.Union([Type.Boolean(), Type.Null()]);
 
-    case 'date':
-      return Type.Union([Type.String({ format: 'date' }), Type.Null()]);
+    case 'date': {
+      // Timestamp-valued system fields (`add_time`, `update_time`, `marked_as_done_time`, …)
+      // are typed `'date'` by Pipedrive but return RFC 3339 date-times, so they need
+      // `format: 'date-time'`; true date-only fields keep `format: 'date'`.
+      const dateFormat = pipedriveDateFieldHoldsDateTime(field) ? 'date-time' : 'date';
+      return Type.Union([Type.String({ format: dateFormat }), Type.Null()]);
+    }
 
     case 'time':
       return Type.Union([Type.String(), Type.Null()]);

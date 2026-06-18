@@ -46,7 +46,15 @@ export function mapScalarPgType(typeName: string): { schema: TSchema; pgType: Po
   if (PG_TEXT_TYPES.has(t)) return { schema: Type.String(), pgType: PostgresColumnType.TEXT };
   if (PG_TIMESTAMP_TYPES.has(t))
     return { schema: Type.String({ format: 'date-time' }), pgType: PostgresColumnType.TIMESTAMP };
-  if (PG_DATE_TYPES.has(t)) return { schema: Type.String({ format: 'date' }), pgType: PostgresColumnType.TIMESTAMP };
+  // A Postgres `date` column is typed `format: 'date-time'`, not `'date'`, because the
+  // `node-postgres` driver parses the `date` OID (1082) into a JS `Date`, which serializes to a
+  // full RFC 3339 date-time on disk (e.g. `"1944-11-19T00:00:00.000Z"`) rather than `YYYY-MM-DD`.
+  // The stored value is therefore always a date-time, so `format: 'date'` would never match it and
+  // floods otherwise-verbatim records with false-positive format errors (DEV-10453). Display is
+  // unaffected: both date and timestamp columns share `pgType: TIMESTAMP`, which the view renders
+  // as a `date` column regardless of this format.
+  if (PG_DATE_TYPES.has(t))
+    return { schema: Type.String({ format: 'date-time' }), pgType: PostgresColumnType.TIMESTAMP };
   if (PG_JSON_TYPES.has(t)) return { schema: Type.Unknown(), pgType: PostgresColumnType.JSONB };
   return { schema: Type.Unknown(), pgType: PostgresColumnType.TEXT };
 }
