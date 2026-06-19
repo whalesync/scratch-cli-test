@@ -269,23 +269,33 @@ async fn add(
         );
     }
 
-    // Check if any table is disabled
-    if let Ok(table_list) = client
+    // Fetch the available tables once: used both for the disabled check and to
+    // default the folder name to the table's human display name when --name is omitted.
+    let table_list = client
         .list_connection_tables(workbook_id, connection_id)
         .await
-    {
-        let requested = table_ids.join(",");
-        for t in &table_list.tables {
+        .ok();
+
+    let requested = table_ids.join(",");
+    if let Some(list) = &table_list {
+        for t in &list.tables {
             if t.id.to_string() == requested && t.disabled {
                 anyhow::bail!("Table \"{}\" is not available for linking.", t.display_name);
             }
         }
     }
 
-    let display_name = if name.is_empty() {
-        table_ids[0].clone()
-    } else {
+    let display_name = if !name.is_empty() {
         name.to_string()
+    } else {
+        // Default to the table's display name (e.g. a Framer collection name like
+        // "Field Types") rather than its opaque remote id, so the folder isn't
+        // labeled by an id in the UI. Fall back to the id only if the lookup fails.
+        table_list
+            .as_ref()
+            .and_then(|list| list.tables.iter().find(|t| t.id.to_string() == requested))
+            .map(|t| t.display_name.clone())
+            .unwrap_or_else(|| table_ids[0].clone())
     };
 
     let req = CreateLinkedTableRequest {
