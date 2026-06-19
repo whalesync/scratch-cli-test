@@ -132,6 +132,7 @@ type BaseJsonTableSpec = {
   mainContentColumnRemoteId?: EntityId['remoteId'];
   slugFieldPath?: string; // Lodash dot-path for filename slug (e.g. 'fieldData.slug')
   basePath?: string[]; // Root path grouping (e.g. site name, base name)
+  remoteWebUrl?: string; // Deep link to the table in the SERVICE's web UI (e.g. https://airtable.com/{baseId}/{tableId}); omit if not constructible
   generatedAt?: string; // ISO 8601 timestamp of schema generation
   defaultView?: TableView; // Pre-built column layout (see Section 8)
 };
@@ -243,6 +244,7 @@ Key considerations:
 
 - Set `idColumnRemoteId` to a lodash dot-path that locates the record's remote id, wrapped in the `idPath()` constructor — e.g. `idPath('id')` for flat ids, `idPath('id.record_id')` when the API returns an id object (Attio). The path is read with `lodash.get` everywhere; never with bracket access. Helpers `readRecordId`, `readRecordIdAsString`, `writeRecordId`, `clearRecordId`, and `recordWithId` (in `connectors/types.ts`) are the canonical accessors — use them instead of raw lodash so future readers see the intent at every call site.
 - Optionally set `titleColumnRemoteId` (display name), `mainContentColumnRemoteId` (markdown body), `slugFieldPath` (lodash dot-path for filename slug, e.g. `'fieldData.slug'`)
+- Set `remoteWebUrl` to a deep link to this table in the **service's own web UI** (a URL on _their_ site, not a Scratch URL) when the service exposes a stable, constructible link — e.g. Airtable `https://airtable.com/{baseId}/{tableId}`, Notion `https://www.notion.so/{databaseId-without-dashes}`, Stripe `https://dashboard.stripe.com/{entity}`. It is stamped onto `DataFolder.remoteWebUrl` at folder-create time and refreshed on every pull, and the client uses it to offer an "open in {service}" link. **Omit it rather than emit a guessed or broken URL** — a wrong link is worse than none.
 - Annotate fields with `x-scratch-*` extensions (see [Section 5](#5-json-schema-extensions))
 
 ### `pullRecordFiles()`

@@ -359,6 +359,9 @@ export class DataFolderService {
         connectorAccountId,
         connectorService: service,
         path: folderPath,
+        // Connector-built deep link to the table in the service's own web UI
+        // (null for services with no constructible link). Refreshed on every pull.
+        remoteWebUrl: tableSpec.remoteWebUrl ?? null,
         lock: 'pull',
         // Connector-declared folder-structure version (DEV-9698). Defaults to 1;
         // a connector that evolves its on-disk layout (e.g. Webflow nested

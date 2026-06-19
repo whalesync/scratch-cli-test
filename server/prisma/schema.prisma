@@ -382,6 +382,12 @@ model DataFolder {
   // Path of this folder in the File Store that contains the actual files
   path String?
 
+  // Deep link to this table in the external service's own web UI (a URL on THEIR
+  // site, e.g. https://airtable.com/{baseId}/{tableId}), for an "open in {service}"
+  // link in the client. Connector-populated during schema building; null when the
+  // service has no constructible deep link.
+  remoteWebUrl String?
+
   // Lock indicating an operation in progress: "pull", "publish", or null
   lock String?
 

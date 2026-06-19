@@ -246,6 +246,16 @@ export type BaseJsonTableSpec = {
   basePath?: string[];
 
   /**
+   * A deep link to this table in the external service's own web UI, so the
+   * client can offer a "open in {service}" link. This is a URL on the SERVICE's
+   * site (e.g. https://airtable.com/{baseId}/{tableId}), not a Scratch URL.
+   * Stamped onto `DataFolder.remoteWebUrl` at folder-create time and refreshed
+   * on every pull. Only set it for services that expose a stable, constructible
+   * deep link — omit it rather than emit a guessed/broken URL.
+   */
+  remoteWebUrl?: string;
+
+  /**
    * The connector's on-disk folder *structure* version for this table, stamped
    * onto `DataFolder.version` at folder-create time. Lets a connector evolve its
    * layout (e.g. Webflow's flat→nested collections, DEV-9698) while keeping

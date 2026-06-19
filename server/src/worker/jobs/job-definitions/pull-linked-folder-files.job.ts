@@ -1208,7 +1208,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     jobId: string;
   }): Promise<void> {
     const { folderCtx, fetchResult, jobId } = params;
-    const { dataFolder, effectiveMode, pullStartedAt } = folderCtx;
+    const { dataFolder, effectiveMode, pullStartedAt, tableSpec } = folderCtx;
 
     // Compose the watermark update atomically with clearing the lock so a
     // crash between commit and finalize re-runs the same window next time
@@ -1226,6 +1226,9 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // one — otherwise leave it unchanged.
     const finalizeData: Prisma.DataFolderUpdateInput = {
       lock: null,
+      // Keep the deep link to the service's web UI fresh — the connector rebuilds
+      // it from the just-fetched table spec, so a changed/added link lands here.
+      remoteWebUrl: tableSpec.remoteWebUrl ?? null,
     };
     if (effectiveMode === 'full') {
       finalizeData.lastFullPullAt = pullStartedAt;

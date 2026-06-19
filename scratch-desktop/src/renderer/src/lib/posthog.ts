@@ -19,6 +19,7 @@ export enum PostHogEvents {
   PUBLISH_REVIEW_ON_WEB = 'publish_review_on_web',
   REFRESH_FOLDER_DATA_GRID = 'refresh_folder_data_grid',
   SHOW_FOLDER_INFO = 'show_folder_info',
+  OPEN_TABLE_IN_SERVICE = 'open_table_in_service',
   APP_STARTED = 'app_started',
   APP_EXITED = 'app_exited',
   CHECK_FOR_UPDATES = 'check_for_updates',
@@ -190,6 +191,15 @@ export async function trackRefreshFolderDataGrid(workspaceId: string, folderPath
 
 export async function trackShowFolderInfo(workspaceId: string, dataFolderId: string): Promise<void> {
   await captureEvent(PostHogEvents.SHOW_FOLDER_INFO, { workspaceId, dataFolderId });
+}
+
+/** The user opened a table's deep link in the external service's web UI (leaves the app). */
+export async function trackOpenTableInService(
+  workspaceId: string,
+  dataFolderId: string,
+  service: string | null,
+): Promise<void> {
+  await captureEvent(PostHogEvents.OPEN_TABLE_IN_SERVICE, { workspaceId, dataFolderId, service });
 }
 
 export async function trackAppStarted(props: { isPackaged: boolean }): Promise<void> {

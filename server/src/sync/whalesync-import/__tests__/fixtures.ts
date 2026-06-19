@@ -206,6 +206,7 @@ export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
     connectorDisplayName: null,
     connectorService: Service.AIRTABLE,
     path: '/products',
+    remoteWebUrl: null,
     lock: null,
     version: 1,
     tableId: ['appAAA', 'tblPROD'],

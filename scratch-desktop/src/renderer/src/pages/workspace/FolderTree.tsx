@@ -6,7 +6,8 @@ import { DataFolder, IncrementalPullSupport } from '@spinner/shared-types';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder, FolderLock } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { useConfirmModal } from '../../components/ConfirmModal';
-import { trackPullTable, trackShowFolderInfo } from '../../lib/posthog';
+import { getServiceName, useConnectorsMetadata } from '../../hooks/use-connectors-metadata';
+import { trackOpenTableInService, trackPullTable, trackShowFolderInfo } from '../../lib/posthog';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { ColumnDefinitionsModal } from './ColumnDefinitionsModal';
 import { DataFolderInfoModal } from './DataFolderInfoModal';
@@ -160,6 +161,7 @@ interface FolderTreeNodeProps {
   dataFoldersByConnection: Map<string, DataFolder[]>;
   onRequestPull: (request: PullRequest) => void;
   onShowFolderInfo: (request: FolderInfoRequest) => void;
+  onViewInService: (folder: DataFolder) => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
   reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
 }
@@ -177,9 +179,11 @@ function FolderTreeNodeRow({
   dataFoldersByConnection,
   onRequestPull,
   onShowFolderInfo,
+  onViewInService,
   validationByFolder,
   reviewByFolder,
 }: FolderTreeNodeProps) {
+  const { data: connectorsMetadata } = useConnectorsMetadata();
   const hasChildren = node.children.size > 0;
   const [expanded, setExpanded] = useState(true);
 
@@ -236,6 +240,14 @@ function FolderTreeNodeRow({
       if (mappedFolder && node.folder) {
         items.push({ id: 'info-sep', label: '', type: 'separator' });
         items.push({ id: 'show-info', label: 'Get Info' });
+        // Deep link to this table in the external service's own web UI. Only shown
+        // for services that provide a constructible link (remoteWebUrl).
+        if (mappedFolder.remoteWebUrl) {
+          items.push({
+            id: 'view-in-service',
+            label: `View in ${getServiceName(connectorsMetadata, mappedFolder.connectorService ?? '')}`,
+          });
+        }
       }
 
       if (isDevToolsEnabled && node.folder) {
@@ -300,9 +312,13 @@ function FolderTreeNodeRow({
         if (id === 'show-info' && mappedFolder && node.folder) {
           onShowFolderInfo({ folder: mappedFolder, localFolder: node.folder, workingCopyPath: path });
         }
+        if (id === 'view-in-service' && mappedFolder) {
+          onViewInService(mappedFolder);
+        }
       });
     },
     [
+      connectorsMetadata,
       dataFolderByLocalPath,
       dataFoldersByConnection,
       depth,
@@ -313,6 +329,7 @@ function FolderTreeNodeRow({
       onRequestPull,
       onShowColumnDefs,
       onShowFolderInfo,
+      onViewInService,
       workspacePath,
     ],
   );
@@ -532,6 +549,7 @@ function FolderTreeNodeRow({
               dataFoldersByConnection={dataFoldersByConnection}
               onRequestPull={onRequestPull}
               onShowFolderInfo={onShowFolderInfo}
+              onViewInService={onViewInService}
               validationByFolder={validationByFolder}
               reviewByFolder={reviewByFolder}
             />
@@ -616,6 +634,15 @@ export function FolderTree({
     [workspaceId],
   );
 
+  const handleViewInService = useCallback(
+    (folder: DataFolder) => {
+      if (!folder.remoteWebUrl) return;
+      void trackOpenTableInService(workspaceId, folder.id, folder.connectorService);
+      void window.scratchAuth.openExternal(folder.remoteWebUrl);
+    },
+    [workspaceId],
+  );
+
   const handlePullRequest = useCallback(
     (request: PullRequest) => {
       // Single-folder pull = the "Pull This Table" context-menu action.
@@ -678,6 +705,7 @@ export function FolderTree({
           dataFoldersByConnection={dataFoldersByConnection}
           onRequestPull={handlePullRequest}
           onShowFolderInfo={handleShowFolderInfo}
+          onViewInService={handleViewInService}
           validationByFolder={validationByFolder}
           reviewByFolder={reviewByFolder}
         />

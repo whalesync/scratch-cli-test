@@ -6,6 +6,7 @@ import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { ScratchpadNotifications } from '@/app/components/ScratchpadNotifications';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
 import { useActiveWorkbook } from '@/hooks/use-active-workbook';
+import { getServiceName, useConnectorsMetadata } from '@/hooks/use-connectors-metadata';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useFolderFileListPaginated } from '@/hooks/use-folder-file-list-paginated';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
@@ -34,6 +35,7 @@ import {
   CloudDownloadIcon,
   DownloadIcon,
   Edit2Icon,
+  ExternalLinkIcon,
   EyeIcon,
   EyeOffIcon,
   FileJsonIcon,
@@ -612,6 +614,7 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
   const showHiddenConnections = useWorkbookUIStore((state) => state.showHiddenConnections);
   const { pullFolders, pullAssets } = useActiveWorkbook();
   const { isDevToolsEnabled } = useDevTools();
+  const { metadata: connectorsMetadata } = useConnectorsMetadata();
 
   const nodeId = `table-${folder.id}`;
   const isExpanded = expandedNodes.has(nodeId);
@@ -910,6 +913,17 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
               },
             },
             { label: 'Get Info', icon: InfoIcon, onClick: openInfoModal },
+            // Deep link to this table in the external service's own web UI. Only
+            // shown for services that provide a constructible link (remoteWebUrl).
+            ...(folder.remoteWebUrl
+              ? [
+                  {
+                    label: `View in ${getServiceName(connectorsMetadata, folder.connectorService)}`,
+                    icon: ExternalLinkIcon,
+                    onClick: () => window.open(folder.remoteWebUrl ?? undefined, '_blank', 'noopener,noreferrer'),
+                  },
+                ]
+              : []),
             { label: 'View Schema', icon: FileJsonIcon, onClick: openSchemaModal },
             { label: 'Refresh Schema', icon: RefreshCwIcon, onClick: openRefreshSchemaModal },
             { label: 'Advanced Settings', icon: SettingsIcon, onClick: openSettings },

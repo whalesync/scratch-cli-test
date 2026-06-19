@@ -72,6 +72,9 @@ export function buildAirtableJsonTableSpec(
     titleColumnRemoteId,
     mainContentColumnRemoteId,
     basePath: [base.name],
+    // Deep link to the table in Airtable's web UI, e.g.
+    // https://airtable.com/appXXXX/tblYYYY/
+    remoteWebUrl: `https://airtable.com/${baseId}/${tableId}`,
     generatedAt: new Date().toISOString(),
     defaultView: buildAirtableDefaultView(table, fieldProperties),
   };

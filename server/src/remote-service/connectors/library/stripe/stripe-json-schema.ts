@@ -18,6 +18,20 @@ const ENTITY_DISPLAY_NAMES: Record<StripeEntityType, string> = {
 };
 
 /**
+ * Path under the Stripe dashboard for each entity type's list view. Most match
+ * the entity name, but payment intents and charges both live under /payments.
+ */
+const STRIPE_DASHBOARD_PATHS: Record<StripeEntityType, string> = {
+  customers: 'customers',
+  products: 'products',
+  prices: 'prices',
+  subscriptions: 'subscriptions',
+  invoices: 'invoices',
+  payment_intents: 'payments',
+  charges: 'payments',
+};
+
+/**
  * Get the title column remote ID for an entity type.
  */
 function getTitleColumnRemoteId(entityType: StripeEntityType): string[] {
@@ -587,6 +601,9 @@ export function buildStripeJsonTableSpec(id: EntityId, entityType: StripeEntityT
     titleColumnRemoteId: getTitleColumnRemoteId(entityType),
     slugFieldPath: getSlugFieldPath(entityType),
     basePath: [],
+    // Deep link to this entity's list view in the Stripe dashboard, e.g.
+    // https://dashboard.stripe.com/customers (live mode).
+    remoteWebUrl: `https://dashboard.stripe.com/${STRIPE_DASHBOARD_PATHS[entityType]}`,
     generatedAt: new Date().toISOString(),
     defaultView: buildStripeDefaultView(schema, entityType),
   };

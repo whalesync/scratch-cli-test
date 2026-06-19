@@ -168,6 +168,10 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
     idColumnRemoteId: idPath('id'),
     titleColumnRemoteId,
     basePath: [],
+    // Deep link to the database in Notion's web UI. notion.so addresses a
+    // database by its id with dashes stripped (the 32-char hex form), e.g.
+    // https://www.notion.so/208a94267a718094b634e83686fb1755
+    remoteWebUrl: `https://www.notion.so/${databaseId.replace(/-/g, '')}`,
     generatedAt: new Date().toISOString(),
     defaultView: buildNotionDefaultView(schema),
   };

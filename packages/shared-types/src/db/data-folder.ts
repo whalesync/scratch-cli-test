@@ -17,6 +17,10 @@ export interface DataFolder {
   connectorDisplayName: string | null;
   connectorService: Service | null;
   path: string | null;
+  // Deep link to this table in the external service's own web UI (a URL on THEIR
+  // site, e.g. https://airtable.com/{baseId}/{tableId}). Null when the service has
+  // no constructible deep link. Lets the client offer an "open in {service}" link.
+  remoteWebUrl: string | null;
   // TODO - instead of returning the raw lock this should be a status object that denotes "downloading" or "syncing"
   lock: string | null;
   version: number;

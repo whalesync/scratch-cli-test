@@ -27,6 +27,7 @@ export class DataFolderEntity implements DataFolder {
   connectorService: Service | null;
   connectorDisplayName: string | null;
   path: string | null;
+  remoteWebUrl: string | null;
   lock: string | null;
   version: number;
   tableId: string[];
@@ -51,6 +52,7 @@ export class DataFolderEntity implements DataFolder {
     this.connectorService = dataFolder.connectorService ? dataFolder.connectorService : null;
     this.connectorDisplayName = dataFolder.connectorAccount ? dataFolder.connectorAccount.displayName : null;
     this.path = dataFolder.path;
+    this.remoteWebUrl = dataFolder.remoteWebUrl;
     this.lock = dataFolder.lock;
     this.version = dataFolder.version;
     this.tableId = dataFolder.tableId;
