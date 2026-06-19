@@ -77,6 +77,23 @@ export interface MaterializeResponse {
 
 // ── POST /sync-drafts/:draftId/apply (Phase 2) ────────────────────────────────
 
+/**
+ * Apply request body (optional — an absent/empty body applies with defaults). When
+ * `createRoutine` is set, apply additionally writes a `routines/run-<syncId>.yaml`
+ * routine file describing how to run the just-created sync (pull source → pull
+ * destination → run sync → publish to destination) and records its path on the
+ * workbook under `settings.sync_routine`. Routine generation is best-effort: it never
+ * fails the apply (the sync is the primary deliverable).
+ */
+export const applySyncDraftSchema = z
+  .object({
+    createRoutine: z.boolean().optional(),
+  })
+  // Apply historically took no body; `.default({})` keeps an empty/absent POST valid (→ `{}`)
+  // rather than failing the object parse on `undefined`.
+  .default({});
+export type ApplySyncDraftDto = z.infer<typeof applySyncDraftSchema>;
+
 /** 422 body when apply is called with unresolved placeholders. */
 export interface ApplyUnresolvedPlaceholdersError {
   error: 'SYNC_DRAFT_UNRESOLVED_PLACEHOLDERS';

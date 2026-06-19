@@ -1,6 +1,7 @@
 import type { Sync } from '../../db/sync';
 import type { SyncDraft } from '../../db/sync-draft';
 import type {
+  ApplySyncDraftDto,
   ApplySyncDraftResponse,
   CreateSyncDraftDto,
   MaterializeResponse,
@@ -55,9 +56,12 @@ export function createSyncDraftsApi(http: Http) {
       return res.data;
     },
 
-    /** Phase 2: reconcile the placeholder-free draft into a live Sync. 422 if any placeholders remain. */
-    apply: async (draftId: string): Promise<ApplySyncDraftResponse> => {
-      const res = await http.post<Sync>(`/sync-drafts/${draftId}/apply`, undefined, {
+    /**
+     * Phase 2: reconcile the placeholder-free draft into a live Sync. 422 if any placeholders remain.
+     * Pass `{ createRoutine: true }` to also generate a routine for the new sync (best-effort).
+     */
+    apply: async (draftId: string, body?: ApplySyncDraftDto): Promise<ApplySyncDraftResponse> => {
+      const res = await http.post<Sync>(`/sync-drafts/${draftId}/apply`, body, {
         fallbackMessage: 'Failed to apply sync draft',
       });
       return res.data;

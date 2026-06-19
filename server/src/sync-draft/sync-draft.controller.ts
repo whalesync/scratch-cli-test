@@ -23,7 +23,7 @@ import { ScratchAuthGuard } from 'src/auth/scratch-auth.guard';
 import type { RequestWithUser } from 'src/auth/types';
 import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { userToActor } from 'src/users/types';
-import { CreateSyncDraftDtoClass, PatchSyncDraftDtoClass } from './dto/sync-draft.dto';
+import { ApplySyncDraftDtoClass, CreateSyncDraftDtoClass, PatchSyncDraftDtoClass } from './dto/sync-draft.dto';
 import { SyncDraftService } from './sync-draft.service';
 
 /**
@@ -78,9 +78,13 @@ export class SyncDraftController {
 
   @Post('sync-drafts/:draftId/apply')
   @HttpCode(200)
-  async apply(@Param('draftId') draftId: SyncDraftId, @Req() req: RequestWithUser): Promise<ApplySyncDraftResponse> {
+  async apply(
+    @Param('draftId') draftId: SyncDraftId,
+    @Body() dto: ApplySyncDraftDtoClass,
+    @Req() req: RequestWithUser,
+  ): Promise<ApplySyncDraftResponse> {
     const actor = userToActor(req.user);
-    return this.syncDraftService.apply(draftId, actor);
+    return this.syncDraftService.apply(draftId, actor, { createRoutine: dto.createRoutine ?? false });
   }
 
   @Delete('sync-drafts/:draftId')

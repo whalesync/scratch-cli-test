@@ -208,9 +208,27 @@ describe('SyncDraftController (controller-level e2e)', () => {
   });
 
   describe('POST /sync-drafts/:draftId/apply', () => {
-    it('returns 200 with the created Sync', async () => {
+    it('returns 200 with the created Sync and defaults createRoutine to false on an empty body', async () => {
       const res = await request(app.getHttpServer()).post(`/sync-drafts/${DRAFT_ID}/apply`).expect(200);
       expect(res.body.id).toBe('syn_new');
+      expect(syncDraftService.apply).toHaveBeenCalledWith(DRAFT_ID, expect.anything(), { createRoutine: false });
+    });
+
+    it('forwards createRoutine: true from the body', async () => {
+      await request(app.getHttpServer())
+        .post(`/sync-drafts/${DRAFT_ID}/apply`)
+        .send({ createRoutine: true })
+        .expect(200);
+      expect(syncDraftService.apply).toHaveBeenCalledWith(DRAFT_ID, expect.anything(), { createRoutine: true });
+    });
+
+    it('rejects a non-boolean createRoutine with 400 (zod)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/sync-drafts/${DRAFT_ID}/apply`)
+        .send({ createRoutine: 'yes' })
+        .expect(400);
+      expect(res.body.issues).toBeDefined();
+      expect(syncDraftService.apply).not.toHaveBeenCalled();
     });
 
     it('passes the unresolved-placeholders error through as 422 with offender refs', async () => {

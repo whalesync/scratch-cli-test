@@ -13,6 +13,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { createSyncId, createWorkbookId, type SyncId, type WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
+import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import { SyncDraftService } from 'src/sync-draft/sync-draft.service';
 import { SyncService } from 'src/sync/sync.service';
@@ -47,6 +48,7 @@ describe('SyncDraftService (real DB)', () => {
       syncService as unknown as SyncService,
       {} as unknown as SchemaBuilderService,
       {} as unknown as DataFolderService,
+      {} as unknown as RoutineService,
     );
 
     const org = await prisma.organization.create({

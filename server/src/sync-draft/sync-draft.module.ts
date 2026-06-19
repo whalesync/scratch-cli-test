@@ -3,6 +3,7 @@ import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
+import { RoutineModule } from 'src/routine/routine.module';
 import { SchemaBuilderModule } from 'src/schema-builder/schema-builder.module';
 import { SyncModule } from 'src/sync/sync.module';
 import { WorkbookModule } from 'src/workbook/workbook.module';
@@ -18,6 +19,7 @@ import { SyncDraftService } from './sync-draft.service';
     SchemaBuilderModule,
     ScratchConfigModule,
     MetricsModule,
+    RoutineModule,
   ],
   controllers: [SyncDraftController],
   providers: [SyncDraftService],

@@ -24,7 +24,11 @@ import {
   transformV1ToV2,
   type WorkbookId,
 } from '@spinner/shared-types';
+import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { WSLogger } from 'src/logger';
+import { buildSyncRoutineFile } from 'src/routine/routine-generator';
+import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import { SyncService } from 'src/sync/sync.service';
 import { Actor } from 'src/users/types';
@@ -42,6 +46,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Resolves the non-null connector account ids for a set of folder ids (scratch folders → null → dropped). */
+function collectConnectorAccountIds(
+  folderIds: string[],
+  connectorAccountIdByFolderId: Map<string, string | null>,
+): string[] {
+  return folderIds
+    .map((folderId) => connectorAccountIdByFolderId.get(folderId) ?? null)
+    .filter((connectorAccountId): connectorAccountId is string => connectorAccountId !== null);
+}
+
 @Injectable()
 export class SyncDraftService {
   constructor(
@@ -50,6 +64,7 @@ export class SyncDraftService {
     private readonly syncService: SyncService,
     private readonly schemaBuilderService: SchemaBuilderService,
     private readonly dataFolderService: DataFolderService,
+    private readonly routineService: RoutineService,
   ) {}
 
   /**
@@ -203,10 +218,10 @@ export class SyncDraftService {
    * mapping, and create-or-updates the sync (diffing against `sourceSyncId`).
    * Archives the draft afterward (kept for debugging).
    */
-  async apply(draftId: SyncDraftId, actor: Actor): Promise<Sync> {
+  async apply(draftId: SyncDraftId, actor: Actor, options: { createRoutine?: boolean } = {}): Promise<Sync> {
     const row = await this.loadDraftOrThrow(draftId);
     const workbookId = row.workbookId as WorkbookId;
-    await this.workbookService.assertWritableWorkbook(actor, workbookId);
+    const workbook = await this.workbookService.assertWritableWorkbook(actor, workbookId);
     if (row.archivedAt) {
       throw new ConflictException({
         error: 'SYNC_DRAFT_ARCHIVED',
@@ -318,7 +333,64 @@ export class SyncDraftService {
       },
     });
 
+    if (options.createRoutine) {
+      await this.tryCreateSyncRoutine(workbook, syncId, draft.displayName, v2TableMappings, actor);
+    }
+
     return this.buildSharedSync(syncId);
+  }
+
+  /**
+   * Best-effort: writes a `routines/run-<syncId>.yaml` file describing how to run the just-created
+   * sync, then records its path on the workbook (`settings.sync_routine`). Resolves the source/
+   * destination connections from the v2 mapping's folder ids (a Sync doesn't store connections;
+   * `DataFolder.connectorAccountId` does — null for scratch folders, which contribute no pull/publish
+   * steps). NEVER throws: apply has already created the sync and archived the draft (one-shot — a
+   * re-apply throws SYNC_DRAFT_ARCHIVED), so a routine failure is logged and swallowed rather than
+   * failing the whole apply. The settings write runs only after the routine file commits, so a failed
+   * routine never records a dangling path.
+   */
+  private async tryCreateSyncRoutine(
+    workbook: WorkbookCluster.Workbook,
+    syncId: SyncId,
+    syncDisplayName: string,
+    v2TableMappings: TableMappingV2[],
+    actor: Actor,
+  ): Promise<void> {
+    const workbookId = workbook.id as WorkbookId;
+    try {
+      const sourceDataFolderIds = [...new Set(v2TableMappings.map((tableMapping) => tableMapping.sourceDataFolderId))];
+      const destinationDataFolderIds = [
+        ...new Set(v2TableMappings.map((tableMapping) => tableMapping.destinationDataFolderId)),
+      ];
+
+      const folders = await this.db.client.dataFolder.findMany({
+        where: { id: { in: [...sourceDataFolderIds, ...destinationDataFolderIds] } },
+        select: { id: true, connectorAccountId: true },
+      });
+      const connectorAccountIdByFolderId = new Map(folders.map((folder) => [folder.id, folder.connectorAccountId]));
+
+      const file = buildSyncRoutineFile({
+        syncDisplayName,
+        syncId,
+        sourceConnectorAccountIds: collectConnectorAccountIds(sourceDataFolderIds, connectorAccountIdByFolderId),
+        destinationConnectorAccountIds: collectConnectorAccountIds(
+          destinationDataFolderIds,
+          connectorAccountIdByFolderId,
+        ),
+      });
+
+      await this.routineService.createRoutineFile(workbookId, file, actor);
+      // Record the routine path on the workbook so other surfaces can find this sync's routine.
+      await this.workbookService.updateWorkbookSettings(workbook, { updates: { sync_routine: file.path } });
+    } catch (error) {
+      WSLogger.warn({
+        source: 'SyncDraftService.apply',
+        message: `Sync ${syncId} created, but routine generation failed: ${errorMessage(error)}`,
+        workbookId,
+        syncId,
+      });
+    }
   }
 
   // ── materialize internals ────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type { SyncDraftId, SyncId, WorkbookId } from '@spinner/shared-types';
+import { load as loadYaml } from 'js-yaml';
 import { WorkbookCluster } from 'src/db/cluster-types';
 import { DbService } from 'src/db/db.service';
+import { RoutineService } from 'src/routine/routine.service';
 import { SchemaBuilderService } from 'src/schema-builder/schema-builder.service';
 import { SyncService } from 'src/sync/sync.service';
 import type { Actor } from 'src/users/types';
@@ -42,6 +44,7 @@ describe('SyncDraftService', () => {
   let syncService: jest.Mocked<SyncService>;
   let schemaBuilderService: jest.Mocked<SchemaBuilderService>;
   let dataFolderService: jest.Mocked<DataFolderService>;
+  let routineService: jest.Mocked<RoutineService>;
 
   beforeEach(() => {
     dbService = {
@@ -54,7 +57,7 @@ describe('SyncDraftService', () => {
           delete: jest.fn(),
         },
         schedule: { findFirst: jest.fn() },
-        dataFolder: { findFirst: jest.fn() },
+        dataFolder: { findFirst: jest.fn(), findMany: jest.fn() },
         // getOrCreate runs its find-or-create inside a transaction guarded by an
         // advisory lock; the mock runs the callback against the same client.
         $transaction: jest.fn().mockImplementation((cb: (tx: unknown) => unknown) => cb(dbService.client)),
@@ -65,6 +68,7 @@ describe('SyncDraftService', () => {
     workbookService = {
       assertReadableWorkbook: jest.fn().mockResolvedValue(MOCK_WORKBOOK),
       assertWritableWorkbook: jest.fn().mockResolvedValue(MOCK_WORKBOOK),
+      updateWorkbookSettings: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<WorkbookService>;
 
     syncService = {
@@ -84,7 +88,18 @@ describe('SyncDraftService', () => {
       fetchSchemaSpec: jest.fn(),
     } as unknown as jest.Mocked<DataFolderService>;
 
-    service = new SyncDraftService(dbService, workbookService, syncService, schemaBuilderService, dataFolderService);
+    routineService = {
+      createRoutineFile: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<RoutineService>;
+
+    service = new SyncDraftService(
+      dbService,
+      workbookService,
+      syncService,
+      schemaBuilderService,
+      dataFolderService,
+      routineService,
+    );
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -520,6 +535,127 @@ describe('SyncDraftService', () => {
       expect(dataFolderService.createFolder).not.toHaveBeenCalled();
       expect(dataFolderService.fetchSchemaSpec).not.toHaveBeenCalled();
       expect(sync.id).toBe(SYNC_ID);
+    });
+
+    // ── createRoutine flag ─────────────────────────────────────────────────────
+
+    /** A new-sync draft (no sourceSyncId) with one existing source→destination mapping. */
+    function existingMappingsRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return makeDraftRow({
+        displayName: 'Contacts Sync',
+        tableMappings: [
+          {
+            ref: 'tm1',
+            source: { dataFolderId: 'dfd_src' },
+            destination: { kind: 'existing', dataFolderId: 'dfd_dst' },
+            columnMappings: [
+              { source: { columnId: 'title' }, destination: { kind: 'existing', columnId: 'fields.Name' } },
+            ],
+          },
+        ],
+        ...overrides,
+      });
+    }
+
+    /** The (workbookId, routineFile) arguments of the first createRoutineFile call. */
+    function firstCreateRoutineCall(): [string, { path: string; content: string }] {
+      const calls = (routineService.createRoutineFile as jest.Mock).mock.calls as Array<
+        [string, { path: string; content: string }]
+      >;
+      return calls[0];
+    }
+
+    it('createRoutine: true writes a routine for the new sync and records its path on the workbook', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(existingMappingsRow());
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: 'coa_src' },
+        { id: 'dfd_dst', connectorAccountId: 'coa_dst' },
+      ]);
+
+      const sync = await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
+
+      expect(sync.id).toBe('syn_new');
+      expect(routineService.createRoutineFile).toHaveBeenCalledTimes(1);
+      const [calledWorkbookId, file] = firstCreateRoutineCall();
+      expect(calledWorkbookId).toBe(WORKBOOK_ID);
+      expect(file.path).toBe('routines/run-syn_new.yaml');
+      const routine = loadYaml(file.content) as { name: string; steps: Array<Record<string, string>> };
+      expect(routine.name).toBe('Run Sync Contacts Sync');
+      expect(routine.steps).toEqual([
+        { action: 'pull', name: 'Pull Source', connection: 'coa_src' },
+        { action: 'pull', name: 'Pull Destination', connection: 'coa_dst' },
+        { action: 'sync', name: 'Run Sync', sync: 'syn_new' },
+        { action: 'publish', name: 'Publish to Destination', connection: 'coa_dst' },
+      ]);
+
+      expect(workbookService.updateWorkbookSettings).toHaveBeenCalledWith(MOCK_WORKBOOK, {
+        updates: { sync_routine: 'routines/run-syn_new.yaml' },
+      });
+    });
+
+    it('does not create a routine when createRoutine is not set', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(existingMappingsRow());
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+
+      await service.apply(DRAFT_ID, ACTOR);
+
+      expect(routineService.createRoutineFile).not.toHaveBeenCalled();
+      expect(workbookService.updateWorkbookSettings).not.toHaveBeenCalled();
+      expect(dbService.client.dataFolder.findMany).not.toHaveBeenCalled();
+    });
+
+    it('omits the pull step for a scratch (unlinked) source folder', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(existingMappingsRow());
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: null },
+        { id: 'dfd_dst', connectorAccountId: 'coa_dst' },
+      ]);
+
+      await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
+
+      const routine = loadYaml(firstCreateRoutineCall()[1].content) as { steps: Array<Record<string, string>> };
+      expect(routine.steps.map((step) => step.name)).toEqual([
+        'Pull Destination',
+        'Run Sync',
+        'Publish to Destination',
+      ]);
+    });
+
+    it('still returns the created sync (and skips the settings write) when routine creation fails', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(existingMappingsRow());
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: 'coa_src' },
+        { id: 'dfd_dst', connectorAccountId: 'coa_dst' },
+      ]);
+      (routineService.createRoutineFile as jest.Mock).mockRejectedValue(new Error('scratch-git unavailable'));
+
+      const sync = await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
+
+      expect(sync.id).toBe('syn_new');
+      expect(workbookService.updateWorkbookSettings).not.toHaveBeenCalled();
+    });
+
+    it('still returns the created sync when recording the routine path fails', async () => {
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(existingMappingsRow());
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+      (dbService.client.dataFolder.findMany as jest.Mock).mockResolvedValue([
+        { id: 'dfd_src', connectorAccountId: 'coa_src' },
+        { id: 'dfd_dst', connectorAccountId: 'coa_dst' },
+      ]);
+      (workbookService.updateWorkbookSettings as jest.Mock).mockRejectedValue(new Error('db down'));
+
+      const sync = await service.apply(DRAFT_ID, ACTOR, { createRoutine: true });
+
+      expect(sync.id).toBe('syn_new');
+      expect(routineService.createRoutineFile).toHaveBeenCalledTimes(1);
     });
   });
 });
