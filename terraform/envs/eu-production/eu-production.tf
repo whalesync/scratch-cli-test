@@ -23,6 +23,9 @@ module "eu_production" {
   enable_client_cdn           = true
   api_domain                  = "api.scratch.md"
 
+  # Whalesync (Dusky) origins allowed to call the Scratch API directly from the browser as a shadow user.
+  whalesync_app_origins = ["https://app.whalesync.com"]
+
   # Monitoring
   enable_alerts                  = true
   enable_email_notifications     = true

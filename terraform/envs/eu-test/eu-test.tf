@@ -23,6 +23,9 @@ module "eu_test" {
   enable_client_cdn           = true
   api_domain                  = "test-api.scratch.md"
 
+  # Whalesync (Dusky) origins allowed to call the Scratch API directly from the browser as a shadow user.
+  whalesync_app_origins = ["https://test.whalesync.com", "https://staging.whalesync.com"]
+
   # Database
   db_disk_size         = 10
   db_high_availability = false
@@ -39,10 +42,10 @@ module "eu_test" {
   scratch_git_disk_size_gb            = 50
 
   # Services
-  force_reload_services          = var.force_reload_services
-  maintenance_mode_enabled       = var.maintenance_mode_enabled
-  api_service_min_instance_count = 2
-  api_service_max_instance_count = 2
+  force_reload_services             = var.force_reload_services
+  maintenance_mode_enabled          = var.maintenance_mode_enabled
+  api_service_min_instance_count    = 2
+  api_service_max_instance_count    = 2
   worker_service_min_instance_count = 2
   worker_service_max_instance_count = 2
   worker_concurrency                = 10

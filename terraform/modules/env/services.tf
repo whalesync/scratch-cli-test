@@ -203,6 +203,10 @@ resource "google_cloud_run_v2_service" "api_service" {
           var.enable_scratch_git ? {
             "SCRATCH_GIT_API_URL" : "http://${module.scratch_git_gce[0].lb_ip}:3100",
             "SCRATCH_GIT_BACKEND_URL" : "http://${module.scratch_git_gce[0].lb_ip}:3101"
+          } : {},
+          # Only the api service serves browser HTTP requests, so CORS origins are needed here only.
+          length(var.whalesync_app_origins) > 0 ? {
+            "WHALESYNC_APP_ORIGINS" : join(",", var.whalesync_app_origins)
           } : {}
 
 
