@@ -23,6 +23,7 @@ import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext, RunContext } from 'src/worker/jobs/base-types';
 import { PublishPublicProgress } from 'src/worker/jobs/job-definitions/publish.job';
+import { SyncDataFoldersPublicProgress } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
 import { RoutineRunEntity } from './entities/routine-run.entity';
 import { assertValidRoutineFilePath } from './routine-file-path';
 import { RoutineParserService } from './routine-parser.service';
@@ -499,6 +500,19 @@ export class RoutineExecutorService {
       return { kind: 'completed', pipelineId, warning };
     }
 
+    if (action === RoutineAction.SYNC) {
+      // A sync job ends `DbJob=completed` even when a table failed — the per-table failure lives only
+      // in `publicProgress.tables[].status` (the job never throws). Unlike a publish's per-record
+      // rejection (complete-with-warning), a failed table is a hard failure: the destination is now
+      // stale and a downstream publish would ship wrong state, so we fail the step and stop the run.
+      const publicProgress = this.readSyncProgress(dbJob.progress);
+      const failedTables = (publicProgress?.tables ?? []).filter((table) => table.status === 'failed');
+      if (failedTables.length > 0) {
+        return { kind: 'failed', error: this.summarizeSyncFailure(failedTables) };
+      }
+      return { kind: 'completed', pipelineId: null, warning: null };
+    }
+
     return { kind: 'completed', pipelineId: null, warning: null };
   }
 
@@ -508,6 +522,24 @@ export class RoutineExecutorService {
       return (progress as { publicProgress?: PublishPublicProgress }).publicProgress;
     }
     return undefined;
+  }
+
+  /** Safely reads `progress.publicProgress` (a JSON column) as a SyncDataFoldersPublicProgress, without `as any`. */
+  private readSyncProgress(progress: unknown): SyncDataFoldersPublicProgress | undefined {
+    if (progress && typeof progress === 'object' && 'publicProgress' in progress) {
+      return (progress as { publicProgress?: SyncDataFoldersPublicProgress }).publicProgress;
+    }
+    return undefined;
+  }
+
+  /** A concise, bounded summary naming the failed table(s) and their first error for the run page. */
+  private summarizeSyncFailure(failedTables: SyncDataFoldersPublicProgress['tables']): string {
+    const MAX_NAMED_TABLES = 3;
+    const namedFailures = failedTables
+      .slice(0, MAX_NAMED_TABLES)
+      .map((table) => `${table.name}: ${table.errors[0]?.error ?? 'unknown error'}`);
+    const overflow = failedTables.length > MAX_NAMED_TABLES ? ` (+${failedTables.length - MAX_NAMED_TABLES} more)` : '';
+    return `Sync failed for ${failedTables.length} table(s) — ${namedFailures.join('; ')}${overflow}`;
   }
 
   /** The step's timeout in ms: the snapshotted value (or the per-action default), capped at the per-action max. */

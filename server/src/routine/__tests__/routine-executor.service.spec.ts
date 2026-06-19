@@ -439,6 +439,99 @@ describe('RoutineExecutorService.execute', () => {
     expect(run.status).toBe('completed');
   });
 
+  it('fails the run and skips publish when a sync job completes but a table failed', async () => {
+    // The sync job ends DbJob=completed (it never throws); the table failure lives only in
+    // publicProgress.tables[].status. The executor must read that and fail the step, not advance.
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.SYNC), makeStep(1, RoutineAction.PUBLISH, { folder: '/blog/posts' })];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueueSyncDataFoldersJob: jest.fn().mockResolvedValue({ id: 'sync-job' }),
+      enqueueSelfPlanningPublishJob: jest.fn().mockResolvedValue({ id: 'publish-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn(async (bullJobId: string) =>
+        bullJobId === 'sync-job'
+          ? dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: {
+                publicProgress: {
+                  totalFilesSynced: 0,
+                  tables: [
+                    {
+                      id: 'dfd_zTgOoJiknY',
+                      name: 'Video Games',
+                      status: 'failed',
+                      errors: [{ sourceRemoteId: '', error: 'scratch-git 404: /api/repo/read/...' }],
+                    },
+                  ],
+                },
+              },
+            })
+          : dbJobResult({ status: 'completed', error: null, progress: null }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('failed');
+    expect(steps[0].error).toMatch(/Video Games/);
+    expect(steps[0].error).toMatch(/scratch-git 404/);
+    expect(steps[1].status).toBe('skipped');
+    expect(run.status).toBe('failed');
+    expect(bullEnqueuer.enqueueSelfPlanningPublishJob).not.toHaveBeenCalled();
+  });
+
+  it('completes a sync step and proceeds when every table succeeded', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.SYNC), makeStep(1, RoutineAction.PUBLISH, { folder: '/blog/posts' })];
+    const db = makeFakeDb(run, steps);
+
+    const enqueuePublish = jest.fn().mockResolvedValue({ id: 'publish-job' });
+    const bullEnqueuer = {
+      enqueueSyncDataFoldersJob: jest.fn().mockResolvedValue({ id: 'sync-job' }),
+      enqueueSelfPlanningPublishJob: enqueuePublish,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn(async (bullJobId: string) =>
+        bullJobId === 'sync-job'
+          ? dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: {
+                publicProgress: {
+                  totalFilesSynced: 2,
+                  tables: [{ id: 'dfd_1', name: 'Video Games', status: 'completed', errors: [] }],
+                },
+              },
+            })
+          : dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: { publicProgress: { pipelineId: 'pln_1', failedCount: 0 } },
+            }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(steps[0].status).toBe('completed');
+    expect(steps[0].error).toBeNull();
+    expect(steps[1].status).toBe('completed');
+    expect(run.status).toBe('completed');
+    expect(enqueuePublish).toHaveBeenCalled();
+  });
+
   it('does nothing when the run cannot be claimed (already owned/terminal)', async () => {
     const run = baseRun({ status: 'completed' });
     const steps = [makeStep(0, RoutineAction.PULL)];
