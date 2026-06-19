@@ -25,9 +25,11 @@ Routine files live in `routines/` at the root of the workbook config repo — th
 name: Daily Content Sync
 steps:
   - action: pull
-    folder: /blog/posts
+    folders:
+      - /blog/posts
+      - /blog/authors
   - action: sync
-    folder: /blog/posts
+    sync: syn_0123456789
   - action: publish-plan
     folder: /blog/posts
   - action: publish
@@ -57,7 +59,8 @@ steps:
 | ------------ | -------- | ---------------------------------------------------------------------------------------------------- |
 | `action`     | Yes      | One of: `pull`, `sync`, `publish-plan`, `publish`                                                    |
 | `name`       | No       | Optional. Human-readable label for the step                                                          |
-| `folder`     | No       | Target folder path (e.g. `/blog/posts`) OR DataFolderId (dfd_*). If omitted, applies to all folders. |
+| `folders`    | No       | **Pull steps only.** A list of target folder paths (e.g. `/blog/posts`) and/or DataFolderIds (dfd_*). If omitted, applies to all linked folders. Not valid on other actions. |
+| `folder`     | No       | **Publish / publish-plan steps only.** A single target folder path (e.g. `/blog/posts`) OR DataFolderId (dfd_*). If omitted, applies to all folders. Not valid on pull steps (use `folders`). |
 | `connection` | No       | Target connection name or ID (coa_*). If omitted, applies to all connections in the folder.          |
 | `options`    | No       | Action-specific settings as a nested map (see [Step Options](#step-options)).                        |
 | `comment`    | No       | Optional note or comment you can add to the step, to provide context                                 |
@@ -97,7 +100,8 @@ steps:
 - `name` must be a non-empty string
 - `steps` must contain at least one step
 - `action` must be one of the allowed action types
-- `folder`, if provided, must be a valid POSIX path starting with `/` OR if it starts with `dfd`_. In either case the folder must resolve to a DataFolder in the workbook
+- `folders` (pull steps) is a list of one or more entries; each entry must be a valid POSIX path starting with `/` OR start with `dfd_`, and must resolve to a DataFolder in the workbook. All entries must resolve to folders in the **same connection** (a single pull job cannot span connections) — add a `connection:` or split into separate pull steps to satisfy this. `folder` is **not** valid on a pull step.
+- `folder` (publish / publish-plan steps) must be a valid POSIX path starting with `/` OR start with `dfd_`; in either case it must resolve to a DataFolder in the workbook. `folders` is **not** valid on a publish step.
 - Step `name`, if provided, must be unique inside the list of steps
 - `options`, if provided, must contain only recognized keys, and each key must be valid for the step's action (e.g. `fullPull` is only valid on `pull` steps). Routine pulls are incremental by default; `options.fullPull: true` forces a full re-pull.
 - File must have a `.yaml` or `.yml` extension
@@ -224,8 +228,11 @@ model RoutineRunStep {
   /// The action type: "pull", "sync", "publish-plan", "publish"
   action String
 
-  /// Target folder path (if specified)
+  /// Target folder path for a single-folder action (publish / publish-plan). Null on pull steps.
   folder String?
+
+  /// Target folder paths for a `pull` step (snapshot of the step's `folders:` list). Empty otherwise.
+  folders String[]
 
   /// Target connection (if specified)
   connection String?

@@ -106,6 +106,14 @@ const routineStepYamlSchema = z.strictObject({
       message: "folder must be a POSIX path starting with '/' or a DataFolderId ('dfd_...')",
     })
     .optional(),
+  folders: z
+    .array(
+      z.string().min(1).refine(isValidStepFolder, {
+        message: "each folders entry must be a POSIX path starting with '/' or a DataFolderId ('dfd_...')",
+      }),
+    )
+    .min(1, 'folders must list at least one folder')
+    .optional(),
   connection: z.string().min(1).optional(),
   sync: z.string().min(1).refine(isValidStepSync, { message: "sync must be a SyncId ('syn_...')" }).optional(),
   comment: z.string().optional(),
@@ -166,6 +174,13 @@ export const routineYamlSchema = z
             path: ['steps', index, 'folder'],
           });
         }
+        if (step.folders !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            message: "sync steps must not set 'folders' — target the sync via 'sync'",
+            path: ['steps', index, 'folders'],
+          });
+        }
         if (step.connection !== undefined) {
           ctx.addIssue({
             code: 'custom',
@@ -178,6 +193,26 @@ export const routineYamlSchema = z
           code: 'custom',
           message: `'sync' is only valid on sync steps (got a "${step.action}" step)`,
           path: ['steps', index, 'sync'],
+        });
+      }
+
+      // Pull steps target a LIST of folders via `folders`; every other folder-addressed action
+      // (publish / publish-plan) targets a SINGLE folder via `folder`. Keep the two fields from
+      // crossing over so a user can't list many folders on a one-folder-one-job publish, or fall
+      // back to the deprecated singular `folder` on a pull step.
+      if (step.action === RoutineAction.PULL) {
+        if (step.folder !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            message: "pull steps target folders via 'folders' (a list), not 'folder'",
+            path: ['steps', index, 'folder'],
+          });
+        }
+      } else if (step.action !== RoutineAction.SYNC && step.folders !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `'folders' is only valid on pull steps (got a "${step.action}" step) — use 'folder' for a single target`,
+          path: ['steps', index, 'folders'],
         });
       }
 
@@ -204,6 +239,7 @@ export function toParsedRoutine(data: z.infer<typeof routineYamlSchema>): Parsed
       action: step.action,
       name: step.name ?? null,
       folder: step.folder ?? null,
+      folders: step.folders ?? null,
       connection: step.connection ?? null,
       sync: step.sync ?? null,
       comment: step.comment ?? null,

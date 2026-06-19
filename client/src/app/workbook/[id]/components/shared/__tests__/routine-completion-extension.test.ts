@@ -207,16 +207,44 @@ describe('routineCompletionSource', () => {
       expect(labelsOf(completeAtEndOf('steps:\n  - \n    '))).toContain('sync');
     });
 
-    it('hides `folder` and `connection` on a sync step (invalid there), keeping `sync`/`name`', () => {
+    it('hides `folder`, `folders` and `connection` on a sync step (invalid there), keeping `sync`/`name`', () => {
       const labels = labelsOf(completeAtEndOf('steps:\n  - action: sync\n    '));
       expect(labels).not.toContain('folder');
+      expect(labels).not.toContain('folders');
       expect(labels).not.toContain('connection');
       expect(labels).toEqual(expect.arrayContaining(['sync', 'name', 'comment', 'timeout']));
     });
 
-    it('keeps `folder` and `connection` on a pull step', () => {
+    it('offers `folders` (not singular `folder`) plus `connection` on a pull step', () => {
       const labels = labelsOf(completeAtEndOf('steps:\n  - action: pull\n    '));
-      expect(labels).toEqual(expect.arrayContaining(['folder', 'connection']));
+      expect(labels).toEqual(expect.arrayContaining(['folders', 'connection']));
+      expect(labels).not.toContain('folder');
+    });
+
+    it('offers singular `folder` (not `folders`) on a publish step', () => {
+      const labels = labelsOf(completeAtEndOf('steps:\n  - action: publish\n    '));
+      expect(labels).toContain('folder');
+      expect(labels).not.toContain('folders');
+    });
+
+    it('offers folder values for a list item under a `folders:` key', () => {
+      const labels = labelsOf(completeAtEndOf('steps:\n  - action: pull\n    folders:\n      - '));
+      expect(labels).toContain('/blog/posts');
+      expect(labels).toContain('dfd_orphan');
+    });
+
+    it('anchors the replacement at the start of a partially typed folders list item', () => {
+      const doc = 'steps:\n  - action: pull\n    folders:\n      - /bl';
+      const result = completeAtEndOf(doc);
+      expect(result?.from).toBe(doc.length - '/bl'.length);
+      expect(labelsOf(result)).toContain('/blog/posts');
+    });
+
+    it('does not treat a step-level `- ` (not under folders) as a folders list item', () => {
+      // A bare dash at step level starts a new step — it should offer step-field keys, not folder paths.
+      const labels = labelsOf(completeAtEndOf('steps:\n  - '));
+      expect(labels).toContain('action');
+      expect(labels).not.toContain('/blog/posts');
     });
 
     it('suggests sync ids with the display name as detail, anchored at the value', () => {

@@ -25,7 +25,10 @@ export interface RoutineRunStep {
   stepIndex: number;
   /** The action type: "pull" | "sync" | "publish-plan" | "publish". */
   action: string;
+  /** Single-folder target snapshot (publish / publish-plan). Null on pull steps. */
   folder: string | null;
+  /** Multi-folder target snapshot for a `pull` step (each a POSIX path or `dfd_…`). Empty for other actions. */
+  folders: string[];
   connection: string | null;
   /** For `sync` steps: the SyncId that ran. Null for non-sync actions. */
   sync: string | null;

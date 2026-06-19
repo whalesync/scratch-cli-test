@@ -35,6 +35,7 @@ interface FakeStep {
   stepIndex: number;
   action: string;
   folder: string | null;
+  folders: string[];
   connection: string | null;
   sync: string | null;
   timeoutSeconds: number | null;
@@ -65,6 +66,7 @@ function makeStep(index: number, action: RoutineAction, overrides: Partial<FakeS
     stepIndex: index,
     action,
     folder: null,
+    folders: [],
     connection: null,
     sync: action === RoutineAction.SYNC ? 'syn_1' : null,
     timeoutSeconds: null,
@@ -293,6 +295,52 @@ describe('RoutineExecutorService.execute', () => {
     expect(run.status).toBe('completed');
   });
 
+  it('pulls the de-duplicated union of a folders list in a single job', async () => {
+    const run = baseRun();
+    // A folders list naming two folders plus a duplicate of the first — the executor must resolve the
+    // union and de-duplicate so the same DataFolderId is not pulled twice.
+    const steps = [makeStep(0, RoutineAction.PULL, { folders: ['/blog/posts', '/blog/authors', 'dfd_1'] })];
+    const db = makeFakeDb(run, steps);
+
+    const twoFolderContext: RoutineValidationContext = {
+      foldersByPath: new Map([
+        ['blog/posts', [{ id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' }]],
+        ['blog/authors', [{ id: 'dfd_2', path: 'blog/authors', connectorAccountId: 'coa_1' }]],
+      ]),
+      foldersById: new Map([
+        ['dfd_1', { id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' }],
+        ['dfd_2', { id: 'dfd_2', path: 'blog/authors', connectorAccountId: 'coa_1' }],
+      ]),
+      connectionsByName: new Map([['airtable', { id: 'coa_1', displayName: 'Airtable' }]]),
+      connectionsById: new Map([['coa_1', { id: 'coa_1', displayName: 'Airtable' }]]),
+      syncsById: new Map(),
+    };
+
+    const enqueuePull = jest.fn().mockResolvedValue({ id: 'pull-job' });
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: enqueuePull,
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(dbJobResult({ status: 'completed', error: null, progress: null })),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService, context: twoFolderContext });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('completed');
+    expect(enqueuePull).toHaveBeenCalledWith(
+      WORKBOOK_ID,
+      expect.anything(),
+      ['dfd_1', 'dfd_2'],
+      undefined,
+      expect.anything(),
+      'incremental',
+    );
+  });
+
   it('fails the run and skips the rest when a step fails', async () => {
     const run = baseRun();
     const steps = [
@@ -449,6 +497,7 @@ describe('RoutineExecutorService.triggerRun', () => {
         action: RoutineAction.PULL,
         name: null,
         folder: null,
+        folders: null,
         connection: null,
         sync: null,
         comment: null,

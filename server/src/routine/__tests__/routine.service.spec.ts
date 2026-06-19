@@ -177,13 +177,13 @@ describe('RoutineService', () => {
       listRepoFiles.mockResolvedValue([fileRef('routines/a.yaml')]);
       // Parses fine, but `/gone` resolves to nothing in the (empty) validation context.
       getRepoFile.mockResolvedValue({
-        content: 'name: A\nsteps:\n  - action: pull\n    folder: /gone\n',
+        content: 'name: A\nsteps:\n  - action: pull\n    folders:\n      - /gone\n',
       });
 
       const routines = await service.reloadRoutines(WORKBOOK_ID, ACTOR);
 
       expect(routines[0].parseError).toBeNull();
-      expect(routines[0].referenceWarnings).toContain('steps.0.folder: folder "/gone" not found in this workbook');
+      expect(routines[0].referenceWarnings).toContain('steps.0.folders.0: folder "/gone" not found in this workbook');
       // Reload never writes schedules — the cron is owned by the Schedule table now.
       expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
     });
@@ -308,12 +308,15 @@ describe('RoutineService', () => {
 
     it('throws BadRequest and does not commit when a referenced folder does not exist', async () => {
       getRepoFile.mockResolvedValue(null);
-      validateRoutine.mockResolvedValue(['steps.0.folder: folder "/path/to/folder" not found in this workbook']);
+      validateRoutine.mockResolvedValue(['steps.0.folders.0: folder "/path/to/folder" not found in this workbook']);
 
       await expect(
         service.createRoutineFile(
           WORKBOOK_ID,
-          { path: 'routines/new.yaml', content: 'name: R\nsteps:\n  - action: pull\n    folder: /path/to/folder\n' },
+          {
+            path: 'routines/new.yaml',
+            content: 'name: R\nsteps:\n  - action: pull\n    folders:\n      - /path/to/folder\n',
+          },
           ACTOR,
         ),
       ).rejects.toThrow(BadRequestException);

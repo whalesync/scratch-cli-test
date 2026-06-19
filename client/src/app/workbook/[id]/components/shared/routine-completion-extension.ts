@@ -88,10 +88,16 @@ const STEP_FIELD_KEY_SPECS: ReadonlyArray<RoutineKeySpec> = [
   { label: 'action', detail: 'What this step does (required)', insert: 'action: ', thenComplete: true, boost: 1 },
   {
     label: 'folder',
-    detail: 'Target folder — path or dfd_…',
+    detail: 'Target folder — path or data folder id (publish steps)',
     insert: 'folder: ',
     thenComplete: true,
-    hiddenForActions: ['sync'],
+    onlyForActions: ['publish', 'publish-plan'],
+  },
+  {
+    label: 'folders',
+    detail: 'Target folders — a list of paths or data folder ids (pull steps)',
+    customApply: applyFoldersScaffold,
+    onlyForActions: ['pull'],
   },
   {
     label: 'connection',
@@ -156,6 +162,8 @@ const BOOLEAN_VALUE_OPTIONS: Completion[] = [
 // on the action matcher lets it fire both inline (`- action: pu`) and on a field line (`action: pu`).
 const ACTION_VALUE_LINE = /^[ \t]*-?[ \t]*action:[ \t]*(\S*)$/;
 const FOLDER_VALUE_LINE = /^[ \t]*folder:[ \t]*(\S*)$/;
+// A YAML list item (`- <value>`) — used to offer folder values when the item sits under a `folders:` key.
+const FOLDERS_ITEM_VALUE_LINE = /^[ \t]*-[ \t]*(\S*)$/;
 const CONNECTION_VALUE_LINE = /^[ \t]*connection:[ \t]*(\S*)$/;
 const SYNC_VALUE_LINE = /^[ \t]*-?[ \t]*sync:[ \t]*(\S*)$/;
 // An indented `<key>: <value>` line — used to offer boolean values for known option keys (e.g. `fullPull`).
@@ -293,6 +301,38 @@ function findEnclosingOptionsContext(doc: Text, currentLine: Line): { action: st
   return null;
 }
 
+/**
+ * When `currentLine` is a YAML list item nested directly under a `folders:` mapping, returns true.
+ * "Nested under folders" means the nearest preceding line with shallower indentation is a `folders:`
+ * key carrying no inline value — mirrors {@link findEnclosingOptionsContext}.
+ */
+function isLineNestedUnderFoldersKey(doc: Text, currentLine: Line): boolean {
+  const currentIndent = leadingWhitespaceWidth(currentLine.text);
+  for (let lineNumber = currentLine.number - 1; lineNumber >= 1; lineNumber--) {
+    const ancestor = doc.line(lineNumber);
+    if (ancestor.text.trim() === '') continue;
+    // Sibling list items sit at the same indent — keep scanning past them to the parent key.
+    if (leadingWhitespaceWidth(ancestor.text) >= currentIndent) continue;
+    // First strictly-shallower line is our YAML parent.
+    return /^[ \t]*folders:[ \t]*$/.test(ancestor.text);
+  }
+  return false;
+}
+
+/** The `folders:` step-key scaffold: inserts `folders:` + the first nested `- ` item and opens the folder list. */
+function applyFoldersScaffold(view: EditorView, completion: Completion, from: number, to: number): void {
+  // Nest list items two columns past where `folders` begins, regardless of the step's own indentation.
+  const line = view.state.doc.lineAt(from);
+  const nestedIndent = ' '.repeat(from - line.from + 2);
+  const insert = `folders:\n${nestedIndent}- `;
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: from + insert.length },
+    annotations: pickedCompletion.of(completion),
+  });
+  startCompletion(view);
+}
+
 /** The `options:` step-key scaffold: inserts `options:` + a nested indent and opens the option-key list. */
 function applyOptionsScaffold(view: EditorView, completion: Completion, from: number, to: number): void {
   // Nest option keys two columns past where `options` begins, regardless of the step's own indentation.
@@ -400,6 +440,18 @@ export function routineCompletionSource(getData: () => RoutineCompletionData): C
     const nestedValueMatch = NESTED_KEY_VALUE_LINE.exec(textBeforeCursor);
     if (nestedValueMatch && BOOLEAN_OPTION_LABELS.has(nestedValueMatch[1])) {
       return buildValueResult(context, nestedValueMatch[2], BOOLEAN_VALUE_OPTIONS);
+    }
+
+    // A list item (`- /blog`) nested under a `folders:` key offers the same folder values as `folder:`.
+    // Checked before the step-field-key handling so a bare `- ` under `folders:` doesn't fall through to
+    // the step-key list. A `- ` that is NOT under `folders:` (a step list item) is left to that handler.
+    const foldersItemMatch = FOLDERS_ITEM_VALUE_LINE.exec(textBeforeCursor);
+    if (foldersItemMatch && isLineNestedUnderFoldersKey(context.state.doc, line)) {
+      const options = buildFolderValueOptions(data);
+      if (options.length === 0 && !context.explicit) {
+        return null;
+      }
+      return buildValueResult(context, foldersItemMatch[1], options);
     }
 
     const stepFieldKeyMatch = STEP_FIELD_KEY_LINE.exec(textBeforeCursor);

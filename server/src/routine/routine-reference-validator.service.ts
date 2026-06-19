@@ -127,9 +127,52 @@ export function validateRoutineReferences(routine: ParsedRoutine, context: Routi
     }
 
     if (step.folder !== null) {
-      const folderError = validateStepFolder(step.folder, step.connection, resolvedConnection, context, stepPrefix);
+      const folderError = validateStepFolder(
+        step.folder,
+        step.connection,
+        resolvedConnection,
+        context,
+        `${stepPrefix}.folder`,
+      );
       if (folderError) {
         errors.push(folderError);
+      }
+    }
+
+    // A pull step's `folders` list — validate each entry the same way a singular `folder` is, keyed
+    // by its list index so the editor can point at the exact bad entry.
+    if (step.folders !== null) {
+      const errorCountBeforeFolders = errors.length;
+      step.folders.forEach((folderEntry, folderIndex) => {
+        const folderError = validateStepFolder(
+          folderEntry,
+          step.connection,
+          resolvedConnection,
+          context,
+          `${stepPrefix}.folders.${folderIndex}`,
+        );
+        if (folderError) {
+          errors.push(folderError);
+        }
+      });
+
+      // Cross-entry rule: every folder in a pull step must belong to the SAME connection. A pull job
+      // pulls one connection's linked folders in a single pass, so a mixed-connection list throws in
+      // PullLinkedFolderFilesJobHandler ("All folders in a pull job must belong to the same
+      // connection") — catch it here so the user sees it at save/trigger time. Only check once every
+      // entry has resolved cleanly; otherwise the per-entry errors above already say what to fix.
+      if (errors.length === errorCountBeforeFolders) {
+        const connectorAccountIdsAcrossFolders = new Set(
+          step.folders
+            .flatMap((folderEntry) => resolveFoldersInContext(folderEntry, resolvedConnection, context))
+            .map((folder) => folder.connectorAccountId)
+            .filter((connectorAccountId): connectorAccountId is string => connectorAccountId !== null),
+        );
+        if (connectorAccountIdsAcrossFolders.size > 1) {
+          errors.push(
+            `${stepPrefix}.folders: all folders in a pull step must belong to the same connection (found ${connectorAccountIdsAcrossFolders.size}); add a "connection:" or split into separate pull steps`,
+          );
+        }
       }
     }
   });
@@ -187,24 +230,25 @@ export function resolveFoldersInContext(
 }
 
 /**
- * Validates a step's `folder` (a "dfd_..." id or a POSIX path) against the context, using the
- * already-resolved connection to disambiguate a path that exists in multiple connections and to
- * flag a folder/connection mismatch. Returns an error message, or null when the folder resolves.
+ * Validates a single folder reference (a "dfd_..." id or a POSIX path) against the context, using
+ * the already-resolved connection to disambiguate a path that exists in multiple connections and to
+ * flag a folder/connection mismatch. `fieldPath` is the full message key for the field being checked
+ * (e.g. "steps.0.folder" or "steps.0.folders.2"). Returns an error message, or null when it resolves.
  */
 function validateStepFolder(
   folder: string,
   connectionRaw: string | null,
   resolvedConnection: ValidationConnection | null,
   context: RoutineValidationContext,
-  stepPrefix: string,
+  fieldPath: string,
 ): string | null {
   if (folder.startsWith('dfd_')) {
     const folderById = context.foldersById.get(folder);
     if (!folderById) {
-      return `${stepPrefix}.folder: folder "${folder}" not found in this workbook`;
+      return `${fieldPath}: folder "${folder}" not found in this workbook`;
     }
     if (resolvedConnection && folderById.connectorAccountId !== resolvedConnection.id) {
-      return `${stepPrefix}.folder: folder "${folder}" does not belong to connection "${connectionRaw}"`;
+      return `${fieldPath}: folder "${folder}" does not belong to connection "${connectionRaw}"`;
     }
     return null;
   }
@@ -213,13 +257,13 @@ function validateStepFolder(
   const foldersAtPath = context.foldersByPath.get(normalizedPath) ?? [];
 
   if (foldersAtPath.length === 0) {
-    return `${stepPrefix}.folder: folder "${folder}" not found in this workbook`;
+    return `${fieldPath}: folder "${folder}" not found in this workbook`;
   }
 
   if (foldersAtPath.length === 1) {
     const onlyFolder = foldersAtPath[0];
     if (resolvedConnection && onlyFolder.connectorAccountId !== resolvedConnection.id) {
-      return `${stepPrefix}.folder: folder "${folder}" does not belong to connection "${connectionRaw}"`;
+      return `${fieldPath}: folder "${folder}" does not belong to connection "${connectionRaw}"`;
     }
     return null;
   }
@@ -232,14 +276,14 @@ function validateStepFolder(
     if (connectionRaw !== null) {
       return null;
     }
-    return `${stepPrefix}.folder: folder "${folder}" is ambiguous — it exists in multiple connections; add a "connection:" to disambiguate`;
+    return `${fieldPath}: folder "${folder}" is ambiguous — it exists in multiple connections; add a "connection:" to disambiguate`;
   }
 
   const foldersScopedToConnection = foldersAtPath.filter(
     (candidate) => candidate.connectorAccountId === resolvedConnection.id,
   );
   if (foldersScopedToConnection.length === 0) {
-    return `${stepPrefix}.folder: folder "${folder}" not found in connection "${connectionRaw}"`;
+    return `${fieldPath}: folder "${folder}" not found in connection "${connectionRaw}"`;
   }
   return null;
 }

@@ -43,6 +43,7 @@ export const RoutineRunEntity = {
       stepIndex: step.stepIndex,
       action: step.action,
       folder: step.folder,
+      folders: step.folders,
       connection: step.connection,
       sync: step.sync,
       timeoutSeconds: step.timeoutSeconds,

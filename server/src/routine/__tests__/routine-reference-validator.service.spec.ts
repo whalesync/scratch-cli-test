@@ -51,6 +51,7 @@ function routineWithSteps(steps: Partial<RoutineStep>[]): ParsedRoutine {
       action: step.action ?? RoutineAction.PULL,
       name: step.name ?? null,
       folder: step.folder ?? null,
+      folders: step.folders ?? null,
       connection: step.connection ?? null,
       sync: step.sync ?? null,
       comment: step.comment ?? null,
@@ -240,6 +241,90 @@ describe('validateRoutineReferences', () => {
       'steps.0.folder: folder "/missing-a" not found in this workbook',
       'steps.1.connection: connection "nope" not found in this workbook',
       'steps.2.folder: folder "dfd_x" not found in this workbook',
+    ]);
+  });
+
+  it('returns no errors when every folders entry resolves', () => {
+    const context = buildContext(
+      [
+        { id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' },
+        { id: 'dfd_2', path: 'blog/authors', connectorAccountId: 'coa_1' },
+      ],
+      [],
+    );
+    const routine = routineWithSteps([{ action: RoutineAction.PULL, folders: ['/blog/posts', 'dfd_2'] }]);
+
+    expect(validateRoutineReferences(routine, context)).toEqual([]);
+  });
+
+  it('flags each bad folders entry keyed by its list index', () => {
+    const context = buildContext(
+      [
+        { id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' },
+        { id: 'dfd_2', path: 'contacts', connectorAccountId: 'coa_1' },
+        { id: 'dfd_3', path: 'contacts', connectorAccountId: 'coa_2' },
+      ],
+      [],
+    );
+    // Entry 0 resolves; entry 1 is missing; entry 2 is ambiguous across connections.
+    const routine = routineWithSteps([
+      { action: RoutineAction.PULL, folders: ['/blog/posts', '/missing', '/contacts'] },
+    ]);
+
+    expect(validateRoutineReferences(routine, context)).toEqual([
+      'steps.0.folders.1: folder "/missing" not found in this workbook',
+      'steps.0.folders.2: folder "/contacts" is ambiguous — it exists in multiple connections; add a "connection:" to disambiguate',
+    ]);
+  });
+
+  it('flags a folders list whose entries span multiple connections', () => {
+    const context = buildContext(
+      [
+        { id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' },
+        { id: 'dfd_2', path: 'docs/articles', connectorAccountId: 'coa_2' },
+      ],
+      [],
+    );
+    // Both paths are unique (so each entry resolves), but they belong to different connections — a
+    // single pull job can't span connections, so the list is rejected as a whole.
+    const routine = routineWithSteps([{ action: RoutineAction.PULL, folders: ['/blog/posts', '/docs/articles'] }]);
+
+    expect(validateRoutineReferences(routine, context)).toEqual([
+      'steps.0.folders: all folders in a pull step must belong to the same connection (found 2); add a "connection:" or split into separate pull steps',
+    ]);
+  });
+
+  it('allows a folders list spanning connections to resolve once a connection scopes it', () => {
+    const context = buildContext(
+      [
+        { id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' },
+        { id: 'dfd_2', path: 'blog/posts', connectorAccountId: 'coa_2' },
+        { id: 'dfd_3', path: 'blog/authors', connectorAccountId: 'coa_1' },
+      ],
+      [{ id: 'coa_1', displayName: 'Airtable' }],
+    );
+    // `/blog/posts` is ambiguous on its own, but the connection scopes every entry to coa_1.
+    const routine = routineWithSteps([
+      { action: RoutineAction.PULL, folders: ['/blog/posts', '/blog/authors'], connection: 'coa_1' },
+    ]);
+
+    expect(validateRoutineReferences(routine, context)).toEqual([]);
+  });
+
+  it('reports the per-entry connection mismatch (not the cross-connection error) when a scoped entry is elsewhere', () => {
+    const context = buildContext(
+      [
+        { id: 'dfd_1', path: 'blog/posts', connectorAccountId: 'coa_1' },
+        { id: 'dfd_2', path: 'docs/articles', connectorAccountId: 'coa_2' },
+      ],
+      [{ id: 'coa_1', displayName: 'Airtable' }],
+    );
+    const routine = routineWithSteps([
+      { action: RoutineAction.PULL, folders: ['/blog/posts', '/docs/articles'], connection: 'coa_1' },
+    ]);
+
+    expect(validateRoutineReferences(routine, context)).toEqual([
+      'steps.0.folders.1: folder "/docs/articles" does not belong to connection "coa_1"',
     ]);
   });
 

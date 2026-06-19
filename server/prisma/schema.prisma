@@ -951,8 +951,14 @@ model RoutineRunStep {
   /// The action type: "pull" | "sync" | "publish-plan" | "publish".
   action String
 
-  /// Target folder path (if specified on the step).
+  /// Target folder path for a single-folder action (publish / publish-plan). Null on pull steps,
+  /// which list their targets in `folders` instead.
   folder String?
+
+  /// Target folder paths for a `pull` step (snapshot of the step's `folders:` list — each a POSIX
+  /// path or a DataFolderId). Empty for non-pull steps and for a pull step that omits `folders`
+  /// (which then pulls all linked folders, optionally scoped by `connection`).
+  folders String[]
 
   /// Target connection name or id (if specified on the step).
   connection String?

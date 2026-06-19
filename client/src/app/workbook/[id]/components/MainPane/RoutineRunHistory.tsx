@@ -178,7 +178,9 @@ function RoutineRunSteps({ run }: { run: RoutineRun | undefined }) {
 }
 
 function RoutineStepRow({ step }: { step: RoutineRunStep }) {
-  const target = step.sync ?? step.folder ?? step.connection ?? 'all';
+  // Pull steps target a list of folders; everything else targets a single folder, a sync, or a connection.
+  const folderTarget = step.folders.length > 0 ? step.folders.join(', ') : step.folder;
+  const target = step.sync ?? folderTarget ?? step.connection ?? 'all';
   // A completed step with a non-null `error` is a "completed with warnings" (e.g. publish rejections).
   const isWarning = step.status === 'completed' && !!step.error;
 

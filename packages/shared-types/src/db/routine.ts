@@ -30,8 +30,17 @@ export interface RoutineStep {
   action: RoutineAction;
   /** Optional human-readable label; unique within the routine when present. */
   name: string | null;
-  /** Target folder: a POSIX path starting "/" or a DataFolderId ("dfd_..."). Null = all folders. */
+  /**
+   * Single-folder target for publish / publish-plan steps: a POSIX path starting "/" or a
+   * DataFolderId ("dfd_..."). Null on pull steps (which list targets in `folders`) and when omitted.
+   */
   folder: string | null;
+  /**
+   * Multi-folder target for `pull` steps: each entry is a POSIX path starting "/" or a DataFolderId
+   * ("dfd_..."). Null when the field is absent (a pull step that omits `folders` pulls all linked
+   * folders, optionally scoped by `connection`). Only valid on pull steps.
+   */
+  folders: string[] | null;
   /** Target connection name or id ("coa_..."). Null = all connections in the folder. */
   connection: string | null;
   /** For `sync` steps: the SyncId ("sync_...") identifying which sync to run. Required on sync steps, null otherwise. */

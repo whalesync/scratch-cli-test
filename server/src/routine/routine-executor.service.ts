@@ -124,6 +124,9 @@ export class RoutineExecutorService {
               stepIndex: index,
               action: step.action,
               folder: step.folder,
+              // Scalar-list column: an absent `folders:` snapshots as an empty array (the executor
+              // treats empty as "all linked folders", matching an omitted target).
+              folders: step.folders ?? [],
               connection: step.connection,
               sync: step.sync,
               timeoutSeconds: step.timeout,
@@ -366,9 +369,9 @@ export class RoutineExecutorService {
         const dataFolderIds = this.resolvePullFolderIds(step, context);
         if (dataFolderIds.length === 0) {
           throw new Error(
-            `pull step has no linked folders to pull (folder=${step.folder ?? 'all'}, connection=${
-              step.connection ?? 'all'
-            })`,
+            `pull step has no linked folders to pull (folders=${
+              step.folders.length > 0 ? step.folders.join(', ') : 'all'
+            }, connection=${step.connection ?? 'all'})`,
           );
         }
         // Routine pulls default to INCREMENTAL (cheaper; the pull job auto-demotes to full on the
@@ -409,21 +412,31 @@ export class RoutineExecutorService {
     }
   }
 
-  /** Resolves a pull step to the linked DataFolderIds to pull (folder/connection omitted = all linked folders). */
+  /**
+   * Resolves a pull step to the linked DataFolderIds to pull. A non-empty `folders` list resolves
+   * each entry and unions the results (two entries — or a path matching several folders — can
+   * overlap, so the ids are de-duplicated). An empty `folders` means "all linked folders", optionally
+   * scoped by `connection`.
+   */
   private resolvePullFolderIds(step: PrismaRoutineRunStep, context: RoutineValidationContext): DataFolderId[] {
     const resolvedConnection = step.connection ? resolveConnectionInContext(step.connection, context) : null;
     if (step.connection && !resolvedConnection) {
       return [];
     }
 
-    const folders = step.folder
-      ? resolveFoldersInContext(step.folder, resolvedConnection, context)
-      : [...context.foldersById.values()].filter(
-          (folder) => !resolvedConnection || folder.connectorAccountId === resolvedConnection.id,
-        );
+    const folders =
+      step.folders.length > 0
+        ? step.folders.flatMap((folderEntry) => resolveFoldersInContext(folderEntry, resolvedConnection, context))
+        : [...context.foldersById.values()].filter(
+            (folder) => !resolvedConnection || folder.connectorAccountId === resolvedConnection.id,
+          );
 
     // Only folders linked to a connection are pullable; unlinked (scratch) folders are skipped.
-    return folders.filter((folder) => folder.connectorAccountId !== null).map((folder) => folder.id as DataFolderId);
+    // De-duplicate because overlapping `folders` entries can resolve to the same DataFolder.
+    const linkedFolderIds = folders
+      .filter((folder) => folder.connectorAccountId !== null)
+      .map((folder) => folder.id as DataFolderId);
+    return [...new Set(linkedFolderIds)];
   }
 
   /**

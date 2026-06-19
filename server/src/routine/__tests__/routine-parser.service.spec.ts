@@ -27,7 +27,9 @@ comment: Runs every weekday morning
 steps:
   - action: pull
     name: Pull posts
-    folder: /blog/posts
+    folders:
+      - /blog/posts
+      - /blog/authors
     connection: coa_123
     comment: pull the posts
     timeout: 600
@@ -44,7 +46,8 @@ steps:
     expect(routine.steps[0]).toEqual({
       action: RoutineAction.PULL,
       name: 'Pull posts',
-      folder: '/blog/posts',
+      folder: null,
+      folders: ['/blog/posts', '/blog/authors'],
       connection: 'coa_123',
       sync: null,
       comment: 'pull the posts',
@@ -56,6 +59,7 @@ steps:
       action: RoutineAction.PUBLISH,
       name: null,
       folder: 'dfd_0123456789',
+      folders: null,
       connection: null,
       sync: null,
       comment: null,
@@ -74,6 +78,7 @@ steps:
         action: RoutineAction.PULL,
         name: null,
         folder: null,
+        folders: null,
         connection: null,
         sync: null,
         comment: null,
@@ -89,12 +94,44 @@ steps:
       action: RoutineAction.SYNC,
       name: null,
       folder: null,
+      folders: null,
       connection: null,
       sync: 'syn_0123456789',
       comment: null,
       timeout: null,
       options: null,
     });
+  });
+
+  it('parses a pull step with a folders list', () => {
+    const yaml = 'name: Multi\nsteps:\n  - action: pull\n    folders:\n      - /blog/posts\n      - dfd_0123456789\n';
+    const routine = expectRoutine(parser.parse(yaml));
+    expect(routine.steps[0].folder).toBeNull();
+    expect(routine.steps[0].folders).toEqual(['/blog/posts', 'dfd_0123456789']);
+  });
+
+  it("rejects a singular 'folder' on a pull step (pull uses 'folders')", () => {
+    const error = expectError(parser.parse('name: Bad\nsteps:\n  - action: pull\n    folder: /blog/posts\n'));
+    expect(error).toMatch(/pull steps target folders via 'folders'/i);
+  });
+
+  it("rejects a 'folders' list on a publish step (publish uses 'folder')", () => {
+    const yaml = 'name: Bad\nsteps:\n  - action: publish\n    folders:\n      - /blog/posts\n';
+    expect(expectError(parser.parse(yaml))).toMatch(/'folders' is only valid on pull steps/i);
+  });
+
+  it("rejects a 'folders' list on a sync step", () => {
+    const yaml = 'name: Bad\nsteps:\n  - action: sync\n    sync: syn_0123456789\n    folders:\n      - /blog\n';
+    expect(expectError(parser.parse(yaml))).toMatch(/sync steps must not set 'folders'/i);
+  });
+
+  it('rejects an empty folders list on a pull step', () => {
+    expect(expectError(parser.parse('name: Bad\nsteps:\n  - action: pull\n    folders: []\n'))).toMatch(/folders/i);
+  });
+
+  it('rejects a folders entry that is neither a POSIX path nor a DataFolderId', () => {
+    const yaml = 'name: Bad\nsteps:\n  - action: pull\n    folders:\n      - blog/posts\n';
+    expect(expectError(parser.parse(yaml))).toMatch(/folders/i);
   });
 
   it('parses a pull step with options.fullPull', () => {
@@ -161,7 +198,7 @@ steps:
   });
 
   it('rejects a folder that is neither a POSIX path nor a DataFolderId', () => {
-    const error = expectError(parser.parse('name: Bad folder\nsteps:\n  - action: pull\n    folder: blog/posts\n'));
+    const error = expectError(parser.parse('name: Bad folder\nsteps:\n  - action: publish\n    folder: blog/posts\n'));
     expect(error).toMatch(/folder/);
   });
 
