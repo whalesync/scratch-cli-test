@@ -264,6 +264,7 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
   },
   "idColumnRemoteId": "id",
   "name": "scratch_integration_test",
+  "remoteWebUrl": "https://www.notion.so/36b81e58179480d889a4d65d5dd08119",
   "schema": {
     "$id": "notion/36b81e58-1794-80d8-89a4-d65d5dd08119",
     "properties": {
