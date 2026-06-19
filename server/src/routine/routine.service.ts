@@ -41,36 +41,19 @@ export class RoutineService {
   ) {}
 
   /**
-   * Reads `routines/*.yaml` from the workbook config repo and syncs the DB's ROUTINE
-   * Schedule rows: upsert for routines with a `schedule:`, delete for routines without
-   * one, and orphan-delete schedules whose file no longer exists. Returns the discovered
-   * routines (malformed files carry a `parseError`). This is the feature's "data
-   * management" entry point — it does NOT execute anything.
+   * Reads `routines/*.yaml` from the workbook config repo and returns the discovered routines
+   * (malformed files carry a `parseError`), each joined with its ROUTINE Schedule row + latest run.
+   * The routine YAML no longer owns the schedule (DEV-10478), so reload performs no schedule writes
+   * other than orphan-cleaning ROUTINE schedules whose file no longer exists. It does NOT execute
+   * anything.
    */
   async reloadRoutines(workbookId: WorkbookId, actor: Actor): Promise<Routine[]> {
     const parseResultsByFilePath = await this.readAndParseRoutineFiles(workbookId);
 
-    for (const [filePath, parseResult] of parseResultsByFilePath) {
-      if ('error' in parseResult) {
-        // Leave any existing schedule untouched on a parse failure — the file still exists,
-        // so deleting its schedule on a transient typo would silently stop a working routine.
-        // The error is surfaced to the user via the returned Routine.parseError.
-        continue;
-      }
-      const { routine } = parseResult;
-      if (routine.schedule) {
-        await this.scheduleService.upsertRoutineSchedule(
-          workbookId,
-          { filePath, name: routine.name, cronExpression: routine.schedule },
-          actor,
-        );
-      } else {
-        await this.scheduleService.deleteRoutineScheduleByFilePath(workbookId, filePath);
-      }
-    }
-
-    // Remove schedules whose routine file is gone. Files that exist but failed to parse are
-    // still "present" and so are NOT orphaned (their schedule is preserved as noted above).
+    // The routine YAML no longer owns the cron (DEV-10478) — schedules are created/edited via the
+    // Schedule CRUD API. Reload therefore writes no schedules; it only orphan-cleans: a ROUTINE
+    // schedule whose routine file is gone is referential garbage and is removed. Files that exist
+    // but fail to parse are still "present" and so are NOT orphaned (their schedule is preserved).
     await this.scheduleService.deleteOrphanedRoutineSchedules(workbookId, [...parseResultsByFilePath.keys()]);
 
     WSLogger.info({
@@ -136,7 +119,7 @@ export class RoutineService {
   /**
    * Creates a new routine YAML file. Fails fast: rejects an invalid path (400), a path that
    * already exists (409), or content that doesn't parse/validate (400) — nothing is committed
-   * unless the YAML is a valid routine. On success, reconciles the file's ROUTINE schedule.
+   * unless the YAML is a valid routine. The schedule is managed separately via the Schedule API.
    */
   async createRoutineFile(workbookId: WorkbookId, dto: CreateRoutineFileDto, actor: Actor): Promise<Routine> {
     assertValidRoutineFilePath(dto.path);
@@ -159,7 +142,6 @@ export class RoutineService {
       [{ path: dto.path, content: dto.content }],
       `Create routine ${dto.path} (${actor.userId})`,
     );
-    await this.reconcileScheduleForRoutineFile(workbookId, dto.path, parseResult.routine, actor);
 
     await this.auditLogService.logEvent({
       actor,
@@ -174,8 +156,8 @@ export class RoutineService {
 
   /**
    * Replaces the content of an existing routine file. Fails fast: rejects an invalid path (400),
-   * a missing file (404), or content that doesn't parse/validate (400). On success, reconciles
-   * the file's ROUTINE schedule (e.g. removing it when a `schedule:` field is deleted).
+   * a missing file (404), or content that doesn't parse/validate (400). The schedule is managed
+   * separately via the Schedule API and is unaffected by editing the routine file.
    */
   async updateRoutineFile(workbookId: WorkbookId, dto: UpdateRoutineFileDto, actor: Actor): Promise<Routine> {
     assertValidRoutineFilePath(dto.path);
@@ -198,7 +180,6 @@ export class RoutineService {
       [{ path: dto.path, content: dto.content }],
       `Update routine ${dto.path} (${actor.userId})`,
     );
-    await this.reconcileScheduleForRoutineFile(workbookId, dto.path, parseResult.routine, actor);
 
     await this.auditLogService.logEvent({
       actor,
@@ -431,27 +412,6 @@ export class RoutineService {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
     return getWorkbookRepoPath(workbook.organizationId, workbookId);
-  }
-
-  /**
-   * Keeps the file's ROUTINE schedule row in sync with its `schedule:` field: upsert when present,
-   * delete when absent. Same logic `reloadRoutines` applies, scoped to one file after a write.
-   */
-  private async reconcileScheduleForRoutineFile(
-    workbookId: WorkbookId,
-    filePath: string,
-    parsedRoutine: ParsedRoutine,
-    actor: Actor,
-  ): Promise<void> {
-    if (parsedRoutine.schedule) {
-      await this.scheduleService.upsertRoutineSchedule(
-        workbookId,
-        { filePath, name: parsedRoutine.name, cronExpression: parsedRoutine.schedule },
-        actor,
-      );
-    } else {
-      await this.scheduleService.deleteRoutineScheduleByFilePath(workbookId, filePath);
-    }
   }
 
   /** Assembles the joined {@link Routine} for one file (schedule + latest run), mirroring `assembleRoutines`. */

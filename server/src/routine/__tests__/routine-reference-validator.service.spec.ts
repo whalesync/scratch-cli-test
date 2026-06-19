@@ -45,8 +45,8 @@ function buildContext(
 function routineWithSteps(steps: Partial<RoutineStep>[]): ParsedRoutine {
   return {
     name: 'Test Routine',
-    schedule: null,
     comment: null,
+    deprecatedScheduleFieldPresent: false,
     steps: steps.map((step) => ({
       action: step.action ?? RoutineAction.PULL,
       name: step.name ?? null,

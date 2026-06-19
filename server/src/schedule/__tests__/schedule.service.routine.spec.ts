@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Schedule as PrismaSchedule } from '@prisma/client';
-import { WorkbookId } from '@spinner/shared-types';
+import { ScheduleAction, WorkbookId } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
 import { Actor } from 'src/users/types';
 import { ScheduleService } from '../schedule.service';
@@ -30,91 +30,82 @@ function buildScheduleRow(overrides: Partial<PrismaSchedule> = {}): PrismaSchedu
 }
 
 describe('ScheduleService — routine schedules', () => {
-  let scheduleUpsert: jest.Mock;
+  let scheduleCreate: jest.Mock;
   let scheduleDeleteMany: jest.Mock;
   let scheduleFindMany: jest.Mock;
   let workbookFindFirst: jest.Mock;
   let service: ScheduleService;
 
   beforeEach(() => {
-    scheduleUpsert = jest.fn().mockResolvedValue(buildScheduleRow());
+    scheduleCreate = jest.fn().mockResolvedValue(buildScheduleRow());
     scheduleDeleteMany = jest.fn().mockResolvedValue({ count: 0 });
     scheduleFindMany = jest.fn().mockResolvedValue([]);
     workbookFindFirst = jest.fn().mockResolvedValue({ id: WORKBOOK_ID, organizationId: 'org_test1234' });
 
     const db = {
       client: {
-        schedule: { upsert: scheduleUpsert, deleteMany: scheduleDeleteMany, findMany: scheduleFindMany },
+        schedule: { create: scheduleCreate, deleteMany: scheduleDeleteMany, findMany: scheduleFindMany },
         workbook: { findFirst: workbookFindFirst },
       },
     } as unknown as DbService;
     service = new ScheduleService(db);
   });
 
-  describe('upsertRoutineSchedule', () => {
-    it('upserts on the (workbook, ROUTINE, filePath) key with org from the workbook', async () => {
-      await service.upsertRoutineSchedule(
-        WORKBOOK_ID,
-        { filePath: 'routines/daily.yaml', name: 'Daily', cronExpression: '0 9 * * *' },
-        ACTOR,
-      );
+  // Routine schedules are now created/edited through the public schedule CRUD (DEV-10478) — the cron
+  // lives only in the DB, never in the routine YAML. These cover the ROUTINE-specific guards on create.
+  describe('create (ROUTINE)', () => {
+    const ROUTINE_DTO = {
+      name: 'Daily',
+      action: ScheduleAction.ROUTINE,
+      entityId: 'routines/daily.yaml',
+      cronExpression: '0 9 * * *',
+    };
 
-      expect(scheduleUpsert).toHaveBeenCalledWith(
+    it('creates a ROUTINE schedule keyed by the routine file path', async () => {
+      const created = await service.create(WORKBOOK_ID, ROUTINE_DTO, ACTOR);
+
+      expect(scheduleCreate).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            workbookId_action_entityId: { workbookId: WORKBOOK_ID, action: 'ROUTINE', entityId: 'routines/daily.yaml' },
-          },
-          create: expect.objectContaining({
+          data: expect.objectContaining({
             workbookId: WORKBOOK_ID,
             organizationId: 'org_test1234',
-            userId: 'usr_test1234',
             action: 'ROUTINE',
             entityId: 'routines/daily.yaml',
             name: 'Daily',
             cronExpression: '0 9 * * *',
-            enabled: true,
             nextRunAt: expect.any(Date),
           }),
         }),
       );
-    });
-
-    it('does NOT touch `enabled` on update (never silently re-enables a disabled routine)', async () => {
-      await service.upsertRoutineSchedule(
-        WORKBOOK_ID,
-        { filePath: 'routines/daily.yaml', name: 'Renamed', cronExpression: '0 10 * * *' },
-        ACTOR,
-      );
-
-      // The `update` value is asserted exactly (not objectContaining), so an `enabled` key would fail it.
-      expect(scheduleUpsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: { name: 'Renamed', cronExpression: '0 10 * * *', nextRunAt: expect.any(Date) },
-        }),
-      );
+      expect(created.action).toBe('ROUTINE');
     });
 
     it('throws if the workbook does not exist', async () => {
       workbookFindFirst.mockResolvedValue(null);
+      await expect(service.create(WORKBOOK_ID, ROUTINE_DTO, ACTOR)).rejects.toBeInstanceOf(NotFoundException);
+      expect(scheduleCreate).not.toHaveBeenCalled();
+    });
+
+    it('rejects an entityId that is not a valid routines/ file path', async () => {
       await expect(
-        service.upsertRoutineSchedule(
-          WORKBOOK_ID,
-          { filePath: 'routines/daily.yaml', name: 'Daily', cronExpression: '0 9 * * *' },
-          ACTOR,
-        ),
-      ).rejects.toBeInstanceOf(NotFoundException);
-      expect(scheduleUpsert).not.toHaveBeenCalled();
+        service.create(WORKBOOK_ID, { ...ROUTINE_DTO, entityId: 'syncs/evil.yaml' }, ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(scheduleCreate).not.toHaveBeenCalled();
+    });
+
+    it('enforces the stricter 5-minute minimum interval for ROUTINE schedules', async () => {
+      // Every-minute is allowed for a generic schedule (1-min floor) but not for a routine.
+      await expect(
+        service.create(WORKBOOK_ID, { ...ROUTINE_DTO, cronExpression: '*/1 * * * *' }, ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(scheduleCreate).not.toHaveBeenCalled();
     });
 
     it('rejects an invalid cron expression', async () => {
       await expect(
-        service.upsertRoutineSchedule(
-          WORKBOOK_ID,
-          { filePath: 'routines/daily.yaml', name: 'Daily', cronExpression: 'not-a-cron' },
-          ACTOR,
-        ),
+        service.create(WORKBOOK_ID, { ...ROUTINE_DTO, cronExpression: 'not-a-cron' }, ACTOR),
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(scheduleUpsert).not.toHaveBeenCalled();
+      expect(scheduleCreate).not.toHaveBeenCalled();
     });
   });
 

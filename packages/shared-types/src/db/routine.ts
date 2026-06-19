@@ -72,7 +72,11 @@ export interface Routine {
   /** The routine file path within the config repo, e.g. "routines/daily-sync.yaml". */
   filePath: string;
   name: string | null;
-  /** 5-field cron expression, or null for a manual-only routine (or a parse failure). */
+  /**
+   * The cron expression from this routine's ROUTINE Schedule row, or null when the routine has no
+   * schedule (manual-only). Sourced from the Schedule DB table, not the YAML — the routine file no
+   * longer carries a `schedule:` field (DEV-10478).
+   */
   schedule: string | null;
   comment: string | null;
   steps: RoutineStep[];

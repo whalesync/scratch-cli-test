@@ -1,13 +1,5 @@
 import { isDataFolderId, isSyncId, RoutineAction, RoutineStep } from '@spinner/shared-types';
-import { CronExpressionParser } from 'cron-parser';
 import { z } from 'zod';
-
-/**
- * Minimum interval between routine schedule ticks. Routines run heavier multi-step
- * pipelines than standalone schedules, so they use a stricter floor (5 min) than the
- * generic `SCHEDULE_MIN_INTERVAL_MINUTES` (1 min) in the schedule module.
- */
-export const ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES = 5;
 
 /**
  * Maximum per-step timeout (seconds), keyed by action. Validated here, and enforced by
@@ -25,9 +17,14 @@ export const ROUTINE_STEP_TIMEOUT_MAX_SECONDS: Record<RoutineAction, number> = {
 /** The definition fields the parser extracts from a routine YAML file (no DB/run state). */
 export interface ParsedRoutine {
   name: string;
-  schedule: string | null;
   comment: string | null;
   steps: RoutineStep[];
+  /**
+   * True when the YAML still carried a (now-removed) `schedule:` key. Schedules are owned by the
+   * Schedule DB table (action ROUTINE), not the YAML — the key is tolerated so existing files keep
+   * parsing, but it is ignored here and surfaced as a non-blocking deprecation warning. See DEV-10478.
+   */
+  deprecatedScheduleFieldPresent: boolean;
 }
 
 /** Result of parsing a single routine file: either the parsed definition or a message. */
@@ -77,36 +74,6 @@ export interface RoutineValidationContext {
   syncsById: Map<string, ValidationSync>;
 }
 
-/**
- * Validate a routine `schedule:` value. Returns an error message, or null when valid.
- * Routines require a 5-field cron with a ≥5-minute interval (see
- * {@link ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES}). Mirrors the two-tick interval check
- * in `ScheduleService.validateCronExpression`.
- */
-export function validateRoutineCronExpression(schedule: string): string | null {
-  const fields = schedule.trim().split(/\s+/);
-  if (fields.length !== 5) {
-    return 'schedule must be a 5-field cron expression (minute hour day-of-month month day-of-week)';
-  }
-
-  let parsed;
-  try {
-    parsed = CronExpressionParser.parse(schedule);
-  } catch {
-    return `invalid cron expression: ${schedule}`;
-  }
-
-  const first = parsed.next().toDate();
-  const second = parsed.next().toDate();
-  const intervalMinutes = (second.getTime() - first.getTime()) / 60_000;
-  if (intervalMinutes < ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES) {
-    return `schedule interval must be at least ${ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES} minutes (got ~${Math.round(
-      intervalMinutes,
-    )} minutes)`;
-  }
-  return null;
-}
-
 /** A step's `folder` must be a POSIX path ("/blog/posts") or a DataFolderId ("dfd_..."). */
 function isValidStepFolder(folder: string): boolean {
   return folder.startsWith('/') || isDataFolderId(folder);
@@ -149,7 +116,10 @@ const routineStepYamlSchema = z.strictObject({
 export const routineYamlSchema = z
   .strictObject({
     name: z.string().min(1, 'name must be a non-empty string'),
-    schedule: z.string().min(1).optional(),
+    // DEPRECATED and ignored: schedules are owned by the Schedule DB table (action ROUTINE), not the
+    // YAML. The key is still accepted (rather than rejected by strictObject) so existing routine files
+    // keep parsing and running; `toParsedRoutine` drops it and surfaces a deprecation warning. DEV-10478.
+    schedule: z.string().optional(),
     comment: z.string().optional(),
     steps: z.array(routineStepYamlSchema).min(1, 'steps must contain at least one step'),
   })
@@ -222,21 +192,14 @@ export const routineYamlSchema = z
         });
       }
     });
-
-    if (routine.schedule !== undefined) {
-      const scheduleError = validateRoutineCronExpression(routine.schedule);
-      if (scheduleError) {
-        ctx.addIssue({ code: 'custom', message: scheduleError, path: ['schedule'] });
-      }
-    }
   });
 
 /** Convert a validated YAML object into the wire-shaped {@link ParsedRoutine} (undefined → null). */
 export function toParsedRoutine(data: z.infer<typeof routineYamlSchema>): ParsedRoutine {
   return {
     name: data.name,
-    schedule: data.schedule ?? null,
     comment: data.comment ?? null,
+    deprecatedScheduleFieldPresent: data.schedule !== undefined,
     steps: data.steps.map((step) => ({
       action: step.action,
       name: step.name ?? null,

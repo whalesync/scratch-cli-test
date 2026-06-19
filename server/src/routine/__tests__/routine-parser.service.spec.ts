@@ -36,7 +36,9 @@ steps:
 `;
     const routine = expectRoutine(parser.parse(yaml));
     expect(routine.name).toBe('Daily Content Sync');
-    expect(routine.schedule).toBe('0 9 * * MON-FRI');
+    // The `schedule:` key in the YAML is tolerated but ignored (schedules live in the DB); its
+    // presence is flagged so it can surface as a deprecation warning.
+    expect(routine.deprecatedScheduleFieldPresent).toBe(true);
     expect(routine.comment).toBe('Runs every weekday morning');
     expect(routine.steps).toHaveLength(2);
     expect(routine.steps[0]).toEqual({
@@ -65,7 +67,7 @@ steps:
   it('parses a minimal routine (name + one step), nulling optional fields', () => {
     const routine = expectRoutine(parser.parse('name: Minimal\nsteps:\n  - action: pull\n'));
     expect(routine.name).toBe('Minimal');
-    expect(routine.schedule).toBeNull();
+    expect(routine.deprecatedScheduleFieldPresent).toBe(false);
     expect(routine.comment).toBeNull();
     expect(routine.steps).toEqual([
       {
@@ -175,20 +177,23 @@ steps:
     expect(expectError(parser.parse(yaml))).toMatch(/duplicate step name/i);
   });
 
-  it('rejects a non-5-field cron schedule', () => {
-    expect(expectError(parser.parse('name: Bad cron\nschedule: "* * *"\nsteps:\n  - action: pull\n'))).toMatch(
-      /5-field/,
-    );
+  it('tolerates and ignores a deprecated `schedule:` key, flagging it for a deprecation warning', () => {
+    const routine = expectRoutine(parser.parse('name: Sched\nschedule: "0 9 * * MON-FRI"\nsteps:\n  - action: pull\n'));
+    expect(routine.deprecatedScheduleFieldPresent).toBe(true);
+    // The cron is no longer extracted into the parsed routine — schedules live in the Schedule DB table.
+    expect('schedule' in routine).toBe(false);
   });
 
-  it('rejects a schedule under the 5-minute minimum interval', () => {
-    const error = expectError(parser.parse('name: Too frequent\nschedule: "* * * * *"\nsteps:\n  - action: pull\n'));
-    expect(error).toMatch(/at least 5 minutes/);
-  });
-
-  it('accepts a valid weekday-morning schedule', () => {
-    const routine = expectRoutine(parser.parse('name: OK\nschedule: "0 9 * * MON-FRI"\nsteps:\n  - action: pull\n'));
-    expect(routine.schedule).toBe('0 9 * * MON-FRI');
+  it('tolerates a `schedule:` value that used to be rejected (the key is ignored, not validated)', () => {
+    // "* * *" (non-5-field) and "* * * * *" (sub-5-min) once failed parsing; now the key is ignored.
+    expect(
+      expectRoutine(parser.parse('name: A\nschedule: "* * *"\nsteps:\n  - action: pull\n'))
+        .deprecatedScheduleFieldPresent,
+    ).toBe(true);
+    expect(
+      expectRoutine(parser.parse('name: B\nschedule: "* * * * *"\nsteps:\n  - action: pull\n'))
+        .deprecatedScheduleFieldPresent,
+    ).toBe(true);
   });
 
   it('rejects a per-step timeout above the action maximum', () => {

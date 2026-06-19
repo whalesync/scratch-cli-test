@@ -23,7 +23,6 @@ Routine files live in `routines/` at the root of the workbook config repo — th
 ```yaml
 # routines/daily-content-sync.yaml
 name: Daily Content Sync
-schedule: "0 9 * * MON-FRI" # optional, 5-field cron expression
 steps:
   - action: pull
     folder: /blog/posts
@@ -38,12 +37,17 @@ steps:
 ### Fields
 
 
-| Field      | Required | Description                                                    |
-| ---------- | -------- | -------------------------------------------------------------- |
-| `name`     | Yes      | Human-readable label for the routine                           |
-| `schedule` | No       | Cron expression (5-field). If omitted, routine is manual-only. |
-| `steps`    | Yes      | Ordered list of steps to execute                               |
-| `comment`  | No       | Optional note or comment to provide context or reminders       |
+| Field     | Required | Description                                              |
+| --------- | -------- | ------------------------------------------------------- |
+| `name`    | Yes      | Human-readable label for the routine                    |
+| `steps`   | Yes      | Ordered list of steps to execute                        |
+| `comment` | No       | Optional note or comment to provide context or reminders |
+
+> **Scheduling is not part of the routine file.** Following the GitLab pipeline model, the routine
+> file defines _what_ runs; _when_ it runs is a separate schedule stored in the database (a `Schedule`
+> row with action `ROUTINE`, keyed by the routine file path) and managed from the Schedules UI / API —
+> not the YAML. A leftover `schedule:` key in an existing file is tolerated for backward compatibility
+> but **ignored** (it surfaces a non-blocking deprecation warning). See DEV-10478.
 
 
 ### Step Fields
@@ -94,7 +98,6 @@ steps:
 - `steps` must contain at least one step
 - `action` must be one of the allowed action types
 - `folder`, if provided, must be a valid POSIX path starting with `/` OR if it starts with `dfd`_. In either case the folder must resolve to a DataFolder in the workbook
-- `schedule`, if provided, must be valid 5-field cron syntax with a minimum interval of 5 minutes
 - Step `name`, if provided, must be unique inside the list of steps
 - `options`, if provided, must contain only recognized keys, and each key must be valid for the step's action (e.g. `fullPull` is only valid on `pull` steps). Routine pulls are incremental by default; `options.fullPull: true` forces a full re-pull.
 - File must have a `.yaml` or `.yml` extension
@@ -105,19 +108,19 @@ steps:
 
 The YAML file is the routine definition. The database never stores the definition — it only stores:
 
-1. **Schedule records** — for routines that have a `schedule:` field, a `Schedule` row with action type `ROUTINE` tells the existing schedule evaluator when to fire.
+1. **Schedule records** — a `Schedule` row with action type `ROUTINE` (keyed by the routine file path) tells the existing schedule evaluator when to fire. Schedules are created and edited directly through the Schedule API / UI, independently of the routine file (the file no longer carries a `schedule:` field).
 2. **Execution history** — `RoutineRun` and `RoutineRunStep` records track what happened when a routine ran.
 
-This means there is no drift between "what the file says" and "what the database thinks." The file is always authoritative.
+The routine file stays authoritative for _what_ the routine does; the `Schedule` row is authoritative for _when_ it runs. The two are decoupled, so editing one never has to reconcile the other.
 
 ### Discovery: Reload Routines
 
 The **Reload Routines** action reads all `routines/*.yaml` files from the workbook config repo and:
 
 1. Parses and validates each YAML file
-2. For routines with a `schedule:` field — upserts a `Schedule` record (action = `ROUTINE`, entityId = file path)
-3. For routines whose `schedule:` field was removed — deletes the corresponding `Schedule` record
-4. For routine files that were deleted — deletes the corresponding `Schedule` record
+2. Returns the discovered routines, each joined with its `Schedule` row (if any) and latest-run summary
+
+Reload no longer writes schedules from the YAML (schedules are managed through the Schedule API). It performs one referential cleanup: a `ROUTINE` `Schedule` whose routine file no longer exists is deleted as an orphan.
 
 Future enhancement: automatically reload routines after git operations (pull, publish, commit).
 
@@ -131,9 +134,9 @@ Future enhancement: automatically reload routines after git operations (pull, pu
 │  weekly-full-publish.yaml ─► Routine definition     │
 └─────────────────────────────────────────────────────┘
         │
-        │  "Reload Routines" reads YAML files
+        │  "Reload Routines" reads YAML files (discovery only)
         │
-        ├─► Schedule table (existing) ── only for routines with schedule: field
+        ├─► Schedule table (existing) ── created/edited via the Schedule API/UI
         │     action: ROUTINE
         │     entityId: file path
         │
@@ -312,38 +315,22 @@ The resulting `publish` job id is stored on `RoutineRunStep.jobId` and polled fo
 
 ### Schedule Integration
 
-When `reload` finds a routine with a `schedule:` field, it upserts a `Schedule` record:
+A routine's schedule is a `Schedule` row (action `ROUTINE`, `entityId` = the routine file path), created and edited through the **generic Schedule CRUD** — `POST/PATCH/DELETE /workbooks/:id/schedules` — exactly like a pull/publish/sync schedule. The web client exposes this through a cron-picker in the routine panel (`RoutineScheduleModal`). The routine file is never involved:
 
 ```typescript
-// Pseudo-code in routine.service.ts
-async reloadRoutines(workbookId: string) {
-  const yamlFiles = await this.scratchGitService.listFiles(repoId, 'routines/');
-
-  for (const file of yamlFiles) {
-    const content = await this.scratchGitService.readFile(repoId, file.path);
-    const routine = this.routineParser.parse(content);
-
-    if (routine.schedule) {
-      await this.scheduleService.upsert({
-        workbookId,
-        action: 'ROUTINE',
-        entityId: file.path,       // file path is the identifier
-        name: routine.name,
-        cronExpression: routine.schedule,
-        enabled: true,
-      });
-    } else {
-      // Remove schedule if it existed before
-      await this.scheduleService.deleteByEntity(workbookId, 'ROUTINE', file.path);
-    }
-  }
-
-  // Clean up schedules for deleted routine files
-  await this.scheduleService.deleteOrphanedRoutineSchedules(workbookId, yamlFiles.map(f => f.path));
-}
+// Set a routine to run every weekday at 9am (client → generic schedule API)
+await scheduleApi.create(workbookId, {
+  name: routine.name,
+  action: 'ROUTINE',
+  entityId: 'routines/daily-content-sync.yaml', // the routine file path
+  cronExpression: '0 9 * * 1-5',
+});
+// "Manual only" deletes the row; editing the frequency updates it.
 ```
 
-The existing `SchedulerService` already handles the cron evaluation loop, atomic claims, and multi-instance safety. For `ROUTINE` action, instead of enqueuing a single job, it calls `RoutineService.triggerRun()`.
+`ScheduleService` applies two ROUTINE-specific guards on write: the `entityId` must be a well-formed `routines/*.yaml` path, and the interval must be ≥ 5 minutes (a stricter floor than the 1-minute generic floor, since a routine runs a heavier multi-step pipeline).
+
+The existing `SchedulerService` already handles the cron evaluation loop, atomic claims, and multi-instance safety. For the `ROUTINE` action, instead of enqueuing a single job, it calls `RoutineService.triggerRun()`.
 
 ### Waiting for Job Completion
 
@@ -366,7 +353,8 @@ POST   /workbooks/:workbookId/routine-runs/:runId/cancel        Cancel a running
 
 ### Notes
 
-- `reload` reads the git repo and syncs `Schedule` records for routines with schedules. Returns the list of discovered routines.
+- `reload` reads the git repo and returns the list of discovered routines (joined with schedule + latest-run state). It does not write schedules from the YAML; it only orphan-cleans `Schedule` rows whose routine file is gone.
+- A routine's **schedule** is created/edited/removed through the generic schedule endpoints (`POST/PATCH/DELETE /workbooks/:id/schedules`) with `action: ROUTINE` and `entityId` = the routine file path — not through any routine endpoint.
 - `GET /routines` reads YAML files from git on every request (they're small). Returns parsed routine definitions with schedule status and latest run info joined from the DB.
 - `trigger` accepts `{ filePath: string }` in the body. Reads and parses the YAML, creates a `RoutineRun`, and begins execution. Returns 409 if the routine is already running.
 - `cancel` sets the run status to `cancelled` and stops execution after the current step finishes.
@@ -437,7 +425,7 @@ The existing `Schedule` table and `SchedulerService` (in `server/src/schedule/`)
 1. Add `ROUTINE` to `ScheduleAction` enum, run migration
 2. Add `RoutineRun` and `RoutineRunStep` to Prisma schema, run migration
 3. Create `routine-parser.service.ts` — YAML parsing, validation, type conversion
-4. Create `routine.service.ts` — reload logic (read YAML from git, upsert/delete Schedule records)
+4. Create `routine.service.ts` — reload logic (read YAML from git; orphan-clean Schedule records)
 5. Add `js-yaml` dependency (`yarn add js-yaml @types/js-yaml`)
 
 ### Phase 2: Execution Engine
@@ -450,7 +438,7 @@ The existing `Schedule` table and `SchedulerService` (in `server/src/schedule/`)
 ### Phase 3: Schedule Integration
 
 1. Extend `SchedulerService` to handle `ROUTINE` action — call `RoutineService.triggerRun()` instead of enqueuing a single job
-2. Test end-to-end: YAML with `schedule:` → reload → schedule fires → routine executes
+2. Test end-to-end: create a `ROUTINE` schedule via the schedule API → schedule fires → routine executes
 
 ### Phase 4: Client UI
 

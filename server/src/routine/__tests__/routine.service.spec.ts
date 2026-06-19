@@ -37,7 +37,6 @@ describe('RoutineService', () => {
   let commitFilesToBranch: jest.Mock;
   let deleteFilesFromBranch: jest.Mock;
   let getBranchHead: jest.Mock;
-  let upsertRoutineSchedule: jest.Mock;
   let deleteRoutineScheduleByFilePath: jest.Mock;
   let deleteOrphanedRoutineSchedules: jest.Mock;
   let findRoutineSchedules: jest.Mock;
@@ -54,7 +53,6 @@ describe('RoutineService', () => {
     commitFilesToBranch = jest.fn().mockResolvedValue({ created: [], updated: [], unchanged: [] });
     deleteFilesFromBranch = jest.fn().mockResolvedValue(undefined);
     getBranchHead = jest.fn().mockResolvedValue(null);
-    upsertRoutineSchedule = jest.fn().mockResolvedValue(undefined);
     deleteRoutineScheduleByFilePath = jest.fn().mockResolvedValue(undefined);
     deleteOrphanedRoutineSchedules = jest.fn().mockResolvedValue(undefined);
     findRoutineSchedules = jest.fn().mockResolvedValue([]);
@@ -77,7 +75,6 @@ describe('RoutineService', () => {
       getBranchHead,
     } as unknown as ScratchGitService;
     const scheduleService = {
-      upsertRoutineSchedule,
       deleteRoutineScheduleByFilePath,
       deleteOrphanedRoutineSchedules,
       findRoutineSchedules,
@@ -99,20 +96,16 @@ describe('RoutineService', () => {
   });
 
   describe('reloadRoutines', () => {
-    it('upserts a ROUTINE schedule for a routine with a schedule and returns it joined', async () => {
+    it('returns a routine joined with its ROUTINE schedule row (cron sourced from the DB, not the YAML)', async () => {
       listRepoFiles.mockResolvedValue([fileRef('routines/scheduled.yaml')]);
-      getRepoFile.mockResolvedValue({ content: 'name: Scheduled\nschedule: "0 9 * * *"\nsteps:\n  - action: pull\n' });
+      getRepoFile.mockResolvedValue({ content: 'name: Scheduled\nsteps:\n  - action: pull\n' });
       findRoutineSchedules.mockResolvedValue([
-        { entityId: 'routines/scheduled.yaml', id: 'sch_routine01', enabled: true },
+        { entityId: 'routines/scheduled.yaml', id: 'sch_routine01', enabled: true, cronExpression: '0 9 * * *' },
       ]);
 
       const routines = await service.reloadRoutines(WORKBOOK_ID, ACTOR);
 
-      expect(upsertRoutineSchedule).toHaveBeenCalledWith(
-        WORKBOOK_ID,
-        { filePath: 'routines/scheduled.yaml', name: 'Scheduled', cronExpression: '0 9 * * *' },
-        ACTOR,
-      );
+      // Reload writes no schedules — the cron lives in the Schedule table, edited via the schedule API.
       expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(deleteOrphanedRoutineSchedules).toHaveBeenCalledWith(WORKBOOK_ID, ['routines/scheduled.yaml']);
       expect(logEvent).toHaveBeenCalledTimes(1);
@@ -128,14 +121,15 @@ describe('RoutineService', () => {
       });
     });
 
-    it('deletes the schedule for a routine without a schedule field', async () => {
+    it('writes no per-file schedules on reload (only orphan-cleans)', async () => {
       listRepoFiles.mockResolvedValue([fileRef('routines/manual.yaml')]);
       getRepoFile.mockResolvedValue({ content: 'name: Manual\nsteps:\n  - action: pull\n' });
 
-      await service.reloadRoutines(WORKBOOK_ID, ACTOR);
+      const routines = await service.reloadRoutines(WORKBOOK_ID, ACTOR);
 
-      expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/manual.yaml');
-      expect(upsertRoutineSchedule).not.toHaveBeenCalled();
+      expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
+      expect(deleteOrphanedRoutineSchedules).toHaveBeenCalledWith(WORKBOOK_ID, ['routines/manual.yaml']);
+      expect(routines[0]).toMatchObject({ filePath: 'routines/manual.yaml', schedule: null, scheduleId: null });
     });
 
     it('orphan-cleans schedules for files no longer present, passing all present paths', async () => {
@@ -149,7 +143,7 @@ describe('RoutineService', () => {
       expect(deleteOrphanedRoutineSchedules).toHaveBeenCalledWith(WORKBOOK_ID, ['routines/a.yaml', 'routines/b.yml']);
     });
 
-    it('surfaces a parse error without touching that file’s schedule, and keeps reloading', async () => {
+    it('surfaces a parse error and keeps reloading the rest', async () => {
       listRepoFiles.mockResolvedValue([fileRef('routines/broken.yaml'), fileRef('routines/ok.yaml')]);
       getRepoFile
         .mockResolvedValueOnce({ content: 'name: Broken\nsteps: []\n' }) // empty steps → invalid
@@ -157,11 +151,8 @@ describe('RoutineService', () => {
 
       const routines = await service.reloadRoutines(WORKBOOK_ID, ACTOR);
 
-      // The broken file does not trigger an upsert or a per-file delete...
-      expect(upsertRoutineSchedule).not.toHaveBeenCalled();
-      expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledTimes(1);
-      expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/ok.yaml');
-      // ...but it is still a "present" file for orphan cleanup.
+      // Reload no longer writes per-file schedules — broken or not, only orphan cleanup runs.
+      expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(deleteOrphanedRoutineSchedules).toHaveBeenCalledWith(WORKBOOK_ID, [
         'routines/broken.yaml',
         'routines/ok.yaml',
@@ -182,23 +173,19 @@ describe('RoutineService', () => {
       expect(deleteOrphanedRoutineSchedules).toHaveBeenCalledWith(WORKBOOK_ID, []);
     });
 
-    it('surfaces referenceWarnings for a parsed routine with a broken reference, without dropping its schedule', async () => {
+    it('surfaces referenceWarnings for a parsed routine with a broken reference, and writes no schedules', async () => {
       listRepoFiles.mockResolvedValue([fileRef('routines/a.yaml')]);
       // Parses fine, but `/gone` resolves to nothing in the (empty) validation context.
       getRepoFile.mockResolvedValue({
-        content: 'name: A\nschedule: "0 9 * * *"\nsteps:\n  - action: pull\n    folder: /gone\n',
+        content: 'name: A\nsteps:\n  - action: pull\n    folder: /gone\n',
       });
 
       const routines = await service.reloadRoutines(WORKBOOK_ID, ACTOR);
 
       expect(routines[0].parseError).toBeNull();
-      expect(routines[0].referenceWarnings).toEqual(['steps.0.folder: folder "/gone" not found in this workbook']);
-      // The routine still parses, so its schedule is upserted (not deleted) despite the broken reference.
-      expect(upsertRoutineSchedule).toHaveBeenCalledWith(
-        WORKBOOK_ID,
-        { filePath: 'routines/a.yaml', name: 'A', cronExpression: '0 9 * * *' },
-        ACTOR,
-      );
+      expect(routines[0].referenceWarnings).toContain('steps.0.folder: folder "/gone" not found in this workbook');
+      // Reload never writes schedules — the cron is owned by the Schedule table now.
+      expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
     });
   });
 
@@ -206,7 +193,9 @@ describe('RoutineService', () => {
     it('joins schedule + latest run without writing any schedules', async () => {
       listRepoFiles.mockResolvedValue([fileRef('routines/a.yaml')]);
       getRepoFile.mockResolvedValue({ content: 'name: A\nsteps:\n  - action: pull\n' });
-      findRoutineSchedules.mockResolvedValue([{ entityId: 'routines/a.yaml', id: 'sch_a0000001', enabled: false }]);
+      findRoutineSchedules.mockResolvedValue([
+        { entityId: 'routines/a.yaml', id: 'sch_a0000001', enabled: false, cronExpression: '0 9 * * *' },
+      ]);
       routineRunFindMany.mockResolvedValue([
         {
           id: 'rrn_run00001',
@@ -221,11 +210,11 @@ describe('RoutineService', () => {
 
       const routines = await service.listRoutines(WORKBOOK_ID);
 
-      expect(upsertRoutineSchedule).not.toHaveBeenCalled();
       expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(deleteOrphanedRoutineSchedules).not.toHaveBeenCalled();
       expect(routines[0]).toMatchObject({
         filePath: 'routines/a.yaml',
+        schedule: '0 9 * * *',
         scheduleId: 'sch_a0000001',
         scheduleEnabled: false,
         latestRun: { id: 'rrn_run00001', status: 'completed', trigger: 'manual' },
@@ -270,28 +259,25 @@ describe('RoutineService', () => {
   });
 
   describe('createRoutineFile', () => {
-    const SCHEDULED_YAML = 'name: Sched\nschedule: "0 9 * * *"\nsteps:\n  - action: pull\n';
+    const VALID_YAML = 'name: Sched\nsteps:\n  - action: pull\n';
 
-    it('commits the file, upserts its schedule, audit-logs, and returns the joined routine', async () => {
+    it('commits the file, audit-logs, and returns the joined routine without writing a schedule', async () => {
       getRepoFile.mockResolvedValue(null); // does not already exist
 
       const routine = await service.createRoutineFile(
         WORKBOOK_ID,
-        { path: 'routines/new.yaml', content: SCHEDULED_YAML },
+        { path: 'routines/new.yaml', content: VALID_YAML },
         ACTOR,
       );
 
       expect(commitFilesToBranch).toHaveBeenCalledWith(
         expect.any(String),
         'main',
-        [{ path: 'routines/new.yaml', content: SCHEDULED_YAML }],
+        [{ path: 'routines/new.yaml', content: VALID_YAML }],
         expect.stringContaining('Create routine routines/new.yaml'),
       );
-      expect(upsertRoutineSchedule).toHaveBeenCalledWith(
-        WORKBOOK_ID,
-        { filePath: 'routines/new.yaml', name: 'Sched', cronExpression: '0 9 * * *' },
-        ACTOR,
-      );
+      // The schedule is managed via the Schedule API now — create touches no schedule rows.
+      expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'create' }));
       expect(routine).toMatchObject({ filePath: 'routines/new.yaml', name: 'Sched', parseError: null });
     });
@@ -300,7 +286,7 @@ describe('RoutineService', () => {
       getRepoFile.mockResolvedValue({ content: 'name: Existing\nsteps:\n  - action: pull\n' });
 
       await expect(
-        service.createRoutineFile(WORKBOOK_ID, { path: 'routines/dup.yaml', content: SCHEDULED_YAML }, ACTOR),
+        service.createRoutineFile(WORKBOOK_ID, { path: 'routines/dup.yaml', content: VALID_YAML }, ACTOR),
       ).rejects.toThrow(ConflictException);
       expect(commitFilesToBranch).not.toHaveBeenCalled();
     });
@@ -337,7 +323,7 @@ describe('RoutineService', () => {
 
     it('rejects a path outside routines/ before any git access', async () => {
       await expect(
-        service.createRoutineFile(WORKBOOK_ID, { path: 'syncs/evil.yaml', content: SCHEDULED_YAML }, ACTOR),
+        service.createRoutineFile(WORKBOOK_ID, { path: 'syncs/evil.yaml', content: VALID_YAML }, ACTOR),
       ).rejects.toThrow(BadRequestException);
       expect(getRepoFile).not.toHaveBeenCalled();
       expect(commitFilesToBranch).not.toHaveBeenCalled();
@@ -345,7 +331,7 @@ describe('RoutineService', () => {
   });
 
   describe('updateRoutineFile', () => {
-    it('commits and removes the schedule when the schedule field is gone', async () => {
+    it('commits the new content and does not touch the schedule', async () => {
       getRepoFile.mockResolvedValue({ content: 'name: Old\nsteps:\n  - action: pull\n' });
 
       await service.updateRoutineFile(
@@ -360,8 +346,8 @@ describe('RoutineService', () => {
         [{ path: 'routines/a.yaml', content: 'name: Manual\nsteps:\n  - action: pull\n' }],
         expect.stringContaining('Update routine routines/a.yaml'),
       );
-      expect(deleteRoutineScheduleByFilePath).toHaveBeenCalledWith(WORKBOOK_ID, 'routines/a.yaml');
-      expect(upsertRoutineSchedule).not.toHaveBeenCalled();
+      // Editing the routine file never touches the schedule — it is owned by the Schedule table.
+      expect(deleteRoutineScheduleByFilePath).not.toHaveBeenCalled();
       expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'update' }));
     });
 

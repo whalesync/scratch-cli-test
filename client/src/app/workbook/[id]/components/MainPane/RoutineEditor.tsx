@@ -5,6 +5,7 @@ import { ConfirmDialog, useConfirmDialog } from '@/app/components/modals/Confirm
 import { useConnectorAccounts } from '@/hooks/use-connector-account';
 import { useDataFolders } from '@/hooks/use-data-folders';
 import { useRoutineRuns } from '@/hooks/use-routine-runs';
+import { useSchedules } from '@/hooks/use-schedules';
 import { SWR_KEYS } from '@/lib/api/keys';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackRoutineCreated, trackRoutineDeleted, trackRoutineTriggered, trackRoutineUpdated } from '@/lib/posthog';
@@ -14,12 +15,13 @@ import { yaml } from '@codemirror/lang-yaml';
 import { EditorView } from '@codemirror/view';
 import { Alert, Badge, Box, Button, Group, Stack, Tooltip, useMantineColorScheme } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { RoutineAction, type RoutineFileContent, type WorkbookId } from '@spinner/shared-types';
+import { RoutineAction, ScheduleAction, type RoutineFileContent, type WorkbookId } from '@spinner/shared-types';
 import CodeMirror from '@uiw/react-codemirror';
-import { AlertCircleIcon, PlayIcon, SaveIcon, Trash2Icon } from 'lucide-react';
+import { AlertCircleIcon, ClockIcon, PlayIcon, SaveIcon, Trash2Icon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
+import { RoutineScheduleModal, getRoutineScheduleLabel } from '../shared/RoutineScheduleModal';
 import { routineCompletionExtension, type RoutineCompletionData } from '../shared/routine-completion-extension';
 import { RoutineRunHistory } from './RoutineRunHistory';
 
@@ -33,7 +35,6 @@ const ROUTINES_DIRECTORY = 'routines/';
 
 /** Starting content for a brand-new routine. */
 const NEW_ROUTINE_TEMPLATE = `name: My Routine
-# schedule: "0 9 * * MON-FRI"   # optional 5-field cron; omit for a manual-only routine
 steps:
   - action: pull
     folder: /path/to/folder
@@ -134,6 +135,13 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
   // take half the height (a 50/50 split with the editor). Shares SWR cache with the panel's own call.
   const { runs: routineRuns } = useRoutineRuns(isCreate ? null : workbookId, filePath);
   const hasRunHistory = routineRuns.length > 0;
+
+  // The routine's schedule lives in the Schedule table (action ROUTINE, entityId = file path), not the
+  // YAML (DEV-10478). Surface it so the toolbar shows the current frequency and can open the editor.
+  const { schedules, refresh: refreshSchedules } = useSchedules(isCreate ? null : workbookId);
+  const routineSchedule =
+    schedules.find((schedule) => schedule.action === ScheduleAction.ROUTINE && schedule.entityId === filePath) ?? null;
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
 
   const [content, setContent] = useState('');
   const [savedContent, setSavedContent] = useState('');
@@ -284,6 +292,12 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
     }
   }, [workbookId, filePath, mutate]);
 
+  // After editing the schedule, refresh both the schedule list (drives the toolbar label) and the
+  // routines list (drives the sidebar clock indicator).
+  const handleScheduleSaved = useCallback(async () => {
+    await Promise.all([refreshSchedules(), mutate(SWR_KEYS.routines.list(workbookId))]);
+  }, [refreshSchedules, mutate, workbookId]);
+
   // Cmd+S / Ctrl+S to save.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -338,6 +352,20 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
         </Group>
 
         <Group gap="xs">
+          {/* Edit the routine's schedule (stored in the Schedule table, action ROUTINE). The label
+              shows the current frequency. Only for a saved routine — the schedule keys off its file path. */}
+          {!isCreate && (
+            <Tooltip label="Set when this routine runs automatically" position="bottom">
+              <Button
+                size="compact-xs"
+                variant="default"
+                leftSection={<ClockIcon size={12} />}
+                onClick={() => setIsScheduleModalOpen(true)}
+              >
+                {getRoutineScheduleLabel(routineSchedule?.cronExpression ?? '')}
+              </Button>
+            </Tooltip>
+          )}
           {/* Trigger a manual run. Only meaningful for a saved routine (a run reads the committed
               YAML), and disabled while there are unsaved edits so the user runs what they see. */}
           {!isCreate && (
@@ -457,6 +485,18 @@ export function RoutineEditor({ workbookId, fileName }: RoutineEditorProps) {
         >
           <RoutineRunHistory workbookId={workbookId} routineFilePath={filePath} />
         </Box>
+      )}
+
+      {!isCreate && (
+        <RoutineScheduleModal
+          opened={isScheduleModalOpen}
+          onClose={() => setIsScheduleModalOpen(false)}
+          workbookId={workbookId}
+          routineFilePath={filePath}
+          routineName={parseTopLevelRoutineName(content) || fileName}
+          existingSchedule={routineSchedule}
+          onSaved={handleScheduleSaved}
+        />
       )}
 
       <ConfirmDialog {...dialogProps} />

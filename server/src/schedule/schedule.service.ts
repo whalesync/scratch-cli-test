@@ -10,9 +10,15 @@ import {
 import { CronExpressionParser } from 'cron-parser';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
+import { assertValidRoutineFilePath } from 'src/routine/routine-file-path';
 import { Actor } from 'src/users/types';
 import { ScheduleEntity } from './entities/schedule.entity';
-import { isConnectionPullAction, isPullAction, SCHEDULE_MIN_INTERVAL_MINUTES } from './schedule.types';
+import {
+  isConnectionPullAction,
+  isPullAction,
+  ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES,
+  SCHEDULE_MIN_INTERVAL_MINUTES,
+} from './schedule.types';
 
 @Injectable()
 export class ScheduleService {
@@ -26,7 +32,7 @@ export class ScheduleService {
       throw new NotFoundException(`Workbook ${workbookId} not found`);
     }
 
-    this.validateCronExpression(dto.cronExpression);
+    this.validateCronExpression(dto.cronExpression, dto.action);
     await this.validateEntityId(workbookId, dto.action, dto.entityId);
 
     const nextRunAt = this.computeNextRunAt(dto.cronExpression);
@@ -99,7 +105,7 @@ export class ScheduleService {
     const existing = await this.findOne(workbookId, scheduleId);
 
     if (dto.cronExpression) {
-      this.validateCronExpression(dto.cronExpression);
+      this.validateCronExpression(dto.cronExpression, existing.action);
     }
 
     const nextRunAt =
@@ -132,11 +138,11 @@ export class ScheduleService {
   }
 
   // ── Routine schedules ────────────────────────────────────────────────────────
-  // Routine schedules use action ROUTINE with `entityId` = the routine YAML file path.
-  // They are managed exclusively by RoutineService.reloadRoutines (not the public
-  // schedule CRUD endpoints), so the create/upsert/delete helpers below are the only
-  // writers. Cron values are already validated (5-field, ≥5 min) by the routine parser;
-  // these methods re-check generic cron validity as a DB-write guard.
+  // Routine schedules use action ROUTINE with `entityId` = the routine YAML file path. They are
+  // created and edited through the public schedule CRUD (create/update/delete) like any other
+  // schedule — the cron lives only in the DB, never in the routine YAML (DEV-10478). The helpers
+  // below are read + referential-cleanup utilities used by RoutineService to join schedule state
+  // onto routines and to drop a routine's schedule when its file is deleted.
 
   /** Returns the ROUTINE schedule rows for a workbook (one per scheduled routine file). */
   async findRoutineSchedules(workbookId: WorkbookId): Promise<ScheduleEntity[]> {
@@ -144,53 +150,6 @@ export class ScheduleService {
       where: { workbookId, action: PrismaScheduleAction.ROUTINE },
     });
     return schedules.map((s) => new ScheduleEntity(s));
-  }
-
-  /**
-   * Upserts the ROUTINE schedule for a routine file (keyed by workbook + file path).
-   * On update, deliberately leaves `enabled` untouched so reload never silently
-   * re-enables a routine schedule a user (or a migration) disabled.
-   */
-  async upsertRoutineSchedule(
-    workbookId: WorkbookId,
-    routine: { filePath: string; name: string; cronExpression: string },
-    actor: Actor,
-  ): Promise<ScheduleEntity> {
-    const workbook = await this.db.client.workbook.findFirst({ where: { id: workbookId } });
-    if (!workbook) {
-      throw new NotFoundException(`Workbook ${workbookId} not found`);
-    }
-
-    this.validateCronExpression(routine.cronExpression);
-    const nextRunAt = this.computeNextRunAt(routine.cronExpression);
-
-    const schedule = await this.db.client.schedule.upsert({
-      where: {
-        workbookId_action_entityId: {
-          workbookId,
-          action: PrismaScheduleAction.ROUTINE,
-          entityId: routine.filePath,
-        },
-      },
-      create: {
-        id: createScheduleId(),
-        workbookId,
-        organizationId: workbook.organizationId,
-        userId: actor.userId,
-        name: routine.name,
-        action: PrismaScheduleAction.ROUTINE,
-        entityId: routine.filePath,
-        cronExpression: routine.cronExpression,
-        enabled: true,
-        nextRunAt,
-      },
-      update: {
-        name: routine.name,
-        cronExpression: routine.cronExpression,
-        nextRunAt,
-      },
-    });
-    return new ScheduleEntity(schedule);
   }
 
   /** Deletes the ROUTINE schedule for a routine file, if any. Idempotent no-op otherwise. */
@@ -211,8 +170,12 @@ export class ScheduleService {
     });
   }
 
-  /** Validates a cron expression is syntactically valid and meets the minimum interval requirement. */
-  private validateCronExpression(cronExpression: string): void {
+  /**
+   * Validates a cron expression is syntactically valid and meets the minimum interval requirement.
+   * ROUTINE schedules use a stricter floor ({@link ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES}) than other
+   * actions ({@link SCHEDULE_MIN_INTERVAL_MINUTES}), since a routine runs a heavier multi-step pipeline.
+   */
+  private validateCronExpression(cronExpression: string, action: ScheduleAction): void {
     let parsed;
     try {
       parsed = CronExpressionParser.parse(cronExpression);
@@ -225,9 +188,11 @@ export class ScheduleService {
     const second = parsed.next().toDate();
     const intervalMinutes = (second.getTime() - first.getTime()) / 60_000;
 
-    if (intervalMinutes < SCHEDULE_MIN_INTERVAL_MINUTES) {
+    const minIntervalMinutes =
+      action === ScheduleAction.ROUTINE ? ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES : SCHEDULE_MIN_INTERVAL_MINUTES;
+    if (intervalMinutes < minIntervalMinutes) {
       throw new BadRequestException(
-        `Schedule interval must be at least ${SCHEDULE_MIN_INTERVAL_MINUTES} minutes. Got ~${Math.round(intervalMinutes)} minutes.`,
+        `Schedule interval must be at least ${minIntervalMinutes} minutes. Got ~${Math.round(intervalMinutes)} minutes.`,
       );
     }
   }
@@ -413,6 +378,11 @@ export class ScheduleService {
       if (!sync) {
         throw new BadRequestException(`Sync ${entityId} not found in workbook ${workbookId}`);
       }
+    } else if (action === PrismaScheduleAction.ROUTINE) {
+      // ROUTINE entityId is the routine YAML file path (not a DB id). ScheduleService can't read git,
+      // so we validate only that the path is well-formed and inside routines/; the file's existence is
+      // enforced at trigger time (the scheduler logs a 404 and skips a deleted routine).
+      assertValidRoutineFilePath(entityId);
     }
   }
 

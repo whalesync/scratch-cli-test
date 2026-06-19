@@ -91,7 +91,7 @@ export function RoutinesList({ workbookId }: RoutinesListProps) {
         </UnstyledButton>
 
         {/* Reload routines from git */}
-        <Tooltip label="Re-read routine files from the workbook repo and sync their schedules" position="right">
+        <Tooltip label="Re-read routine files from the workbook repo" position="right">
           <UnstyledButton
             onClick={handleReload}
             disabled={isReloading}

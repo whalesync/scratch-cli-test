@@ -31,6 +31,8 @@ const getActionLabel = (action: ScheduleAction): string => {
       return 'Publish';
     case 'SYNC':
       return 'Sync';
+    case 'ROUTINE':
+      return 'Routine';
     default:
       return action;
   }
@@ -49,6 +51,8 @@ const getActionColor = (action: ScheduleAction): string => {
       return 'var(--mantine-color-green-5)';
     case 'SYNC':
       return 'var(--mantine-color-yellow-5)';
+    case 'ROUTINE':
+      return 'var(--mantine-color-violet-5)';
     default:
       return 'var(--mantine-color-gray-5)';
   }
@@ -190,9 +194,9 @@ function ScheduleRow({
   };
   if (schedule.action === 'SYNC') {
     recentRunsParams.syncId = schedule.entityId;
-  } else if (!isConnectionPullAction(schedule.action)) {
-    // Connection pull schedules target a connector account, not a single folder,
-    // so there is no dataFolderId to filter the recent-runs view by.
+  } else if (schedule.action !== 'ROUTINE' && !isConnectionPullAction(schedule.action)) {
+    // Connection pull schedules target a connector account, and ROUTINE schedules a routine file
+    // path — neither is a single folder, so there is no dataFolderId to filter the recent-runs view by.
     recentRunsParams.dataFolderId = schedule.entityId;
   }
 
@@ -289,6 +293,14 @@ function resolveEntity(
   folders: { id: string; name: string; path: string | null }[],
   connectorAccounts: { id: string; displayName: string }[],
 ): { name: string; href: string | null } {
+  if (schedule.action === 'ROUTINE') {
+    // ROUTINE entityId is the routine file path; link to its editor.
+    const fileName = schedule.entityId.includes('/')
+      ? schedule.entityId.slice(schedule.entityId.lastIndexOf('/') + 1)
+      : schedule.entityId;
+    return { name: fileName, href: `/workbook/${workbookId}/routines/${fileName}` };
+  }
+
   if (schedule.action === 'SYNC') {
     const sync = syncs.find((s) => s.id === schedule.entityId);
     return {
