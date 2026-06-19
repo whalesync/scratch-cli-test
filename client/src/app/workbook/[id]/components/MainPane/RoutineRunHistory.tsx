@@ -210,7 +210,7 @@ function RoutineStepRow({ step }: { step: RoutineRunStep }) {
           {isWarning ? 'completed*' : step.status}
         </Badge>
         <Text12Medium c="var(--fg-primary)" style={{ flexShrink: 0 }}>
-          {step.action}
+          {step.displayName ?? step.action}
         </Text12Medium>
         <Text12Regular c="dimmed" truncate style={{ flex: 1 }}>
           {target}

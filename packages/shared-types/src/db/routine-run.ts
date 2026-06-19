@@ -26,6 +26,8 @@ export interface RoutineRunStep {
   stepIndex: number;
   /** The action type: "pull" | "sync" | "publish-plan" | "publish". */
   action: string;
+  /** The step's human-readable name from the routine YAML (snapshot of the step's `name:`). Null when the step has no name. */
+  displayName: string | null;
   /** Single-folder target snapshot (publish / publish-plan). Null on pull steps. */
   folder: string | null;
   /** Multi-folder target snapshot for a `pull` step (each a POSIX path or `dfd_…`). Empty for other actions. */

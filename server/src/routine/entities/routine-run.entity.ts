@@ -53,6 +53,7 @@ export const RoutineRunEntity = {
       runId: step.runId as RoutineRunId,
       stepIndex: step.stepIndex,
       action: step.action,
+      displayName: step.name,
       folder: step.folder,
       folders: step.folders,
       connection: step.connection,

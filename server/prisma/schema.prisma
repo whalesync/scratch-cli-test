@@ -936,6 +936,10 @@ model RoutineRunStep {
   /// The action type: "pull" | "sync" | "publish-plan" | "publish".
   action String
 
+  /// The step's human-readable name (snapshot of the routine YAML step's `name:`). Unique within the
+  /// routine when set. Null when the step has no name. Surfaced over the wire as `displayName`.
+  name String?
+
   /// Target folder path for a single-folder action (publish / publish-plan). Null on pull steps,
   /// which list their targets in `folders` instead.
   folder String?

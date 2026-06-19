@@ -61,6 +61,7 @@ function prismaStepRow(overrides: Record<string, unknown> = {}) {
     runId: 'rr_1',
     stepIndex: 0,
     action: 'pull',
+    name: null,
     folder: null,
     folders: [],
     connection: null,
@@ -657,6 +658,19 @@ describe('RoutineService', () => {
       expect(run.steps).toHaveLength(1);
       expect(run.steps?.[0]).not.toHaveProperty('job');
       expect(getJobsProgress).not.toHaveBeenCalled();
+    });
+
+    it("maps a step's name column to displayName on the wire (null when the step is unnamed)", async () => {
+      routineRunFindFirst.mockResolvedValue(
+        prismaRunRow({
+          steps: [prismaStepRow({ name: 'Pull Source' }), prismaStepRow({ id: 'rrs_2', stepIndex: 1, name: null })],
+        }),
+      );
+
+      const run = await service.getRun(WORKBOOK_ID, 'rr_1');
+
+      expect(run.steps?.[0].displayName).toBe('Pull Source');
+      expect(run.steps?.[1].displayName).toBeNull();
     });
 
     it('populates each step job from the batched fetch when includeJobs is true', async () => {

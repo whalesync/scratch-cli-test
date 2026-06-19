@@ -34,6 +34,7 @@ interface FakeStep {
   runId: string;
   stepIndex: number;
   action: string;
+  name: string | null;
   folder: string | null;
   folders: string[];
   connection: string | null;
@@ -65,6 +66,7 @@ function makeStep(index: number, action: RoutineAction, overrides: Partial<FakeS
     runId: RUN_ID,
     stepIndex: index,
     action,
+    name: null,
     folder: null,
     folders: [],
     connection: null,

@@ -124,6 +124,7 @@ export class RoutineExecutorService {
               id: createRoutineRunStepId(),
               stepIndex: index,
               action: step.action,
+              name: step.name,
               folder: step.folder,
               // Scalar-list column: an absent `folders:` snapshots as an empty array (the executor
               // treats empty as "all linked folders", matching an omitted target).
