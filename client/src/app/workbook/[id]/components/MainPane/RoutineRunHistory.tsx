@@ -1,7 +1,9 @@
 'use client';
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
-import { Text12Medium, Text12Regular } from '@/app/components/base/text';
+import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
+import { JobProgressDetail } from '@/app/components/jobs/JobProgressDetail';
+import { useDevTools } from '@/hooks/use-dev-tools';
 import { useRoutineRun, useRoutineRuns } from '@/hooks/use-routine-runs';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
 import { trackRoutineRunCancelled } from '@/lib/posthog';
@@ -90,7 +92,7 @@ function RoutineRunRow({ workbookId, run: listRun }: { workbookId: WorkbookId; r
   // the status badge AND the per-step rows. The list (`useRoutineRuns`) and the detail are polled
   // independently, so without this the badge could flip to "completed" a poll cycle before the steps
   // below catch up. `detailRun` wins once loaded; the list row is the fallback while collapsed/loading.
-  const { run: detailRun } = useRoutineRun(workbookId, expanded ? listRun.id : null);
+  const { run: detailRun } = useRoutineRun(workbookId, expanded ? listRun.id : null, true);
   const run = detailRun ?? listRun;
 
   const isActive = ACTIVE_RUN_STATUSES.has(run.status);
@@ -178,6 +180,7 @@ function RoutineRunSteps({ run }: { run: RoutineRun | undefined }) {
 }
 
 function RoutineStepRow({ step }: { step: RoutineRunStep }) {
+  const [expanded, setExpanded] = useState(false);
   // Pull steps target a list of folders; everything else targets a single folder, a sync, or a connection.
   const folderTarget = step.folders.length > 0 ? step.folders.join(', ') : step.folder;
   const target = step.sync ?? folderTarget ?? step.connection ?? 'all';
@@ -185,25 +188,89 @@ function RoutineStepRow({ step }: { step: RoutineRunStep }) {
   const isWarning = step.status === 'completed' && !!step.error;
 
   return (
-    <Group gap={8} wrap="nowrap" px="lg" py={4}>
-      <Text12Regular c="dimmed" style={{ width: 16, flexShrink: 0 }}>
-        {step.stepIndex + 1}
-      </Text12Regular>
-      <Badge
-        size="xs"
-        variant="light"
-        color={isWarning ? 'yellow' : STEP_STATUS_COLOR[step.status]}
-        style={{ flexShrink: 0 }}
+    <Box>
+      <Group
+        gap={8}
+        wrap="nowrap"
+        px="lg"
+        py={4}
+        style={{ cursor: 'pointer' }}
+        onClick={() => setExpanded((value) => !value)}
       >
-        {isWarning ? 'completed*' : step.status}
-      </Badge>
-      <Text12Medium c="var(--fg-primary)" style={{ flexShrink: 0 }}>
-        {step.action}
-      </Text12Medium>
-      <Text12Regular c="dimmed" truncate style={{ flex: 1 }}>
-        {target}
-        {step.error ? ` — ${step.error}` : ''}
-      </Text12Regular>
-    </Group>
+        <StyledLucideIcon Icon={expanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-muted)" />
+        <Text12Regular c="dimmed" style={{ width: 16, flexShrink: 0 }}>
+          {step.stepIndex + 1}
+        </Text12Regular>
+        <Badge
+          size="xs"
+          variant="light"
+          color={isWarning ? 'yellow' : STEP_STATUS_COLOR[step.status]}
+          style={{ flexShrink: 0 }}
+        >
+          {isWarning ? 'completed*' : step.status}
+        </Badge>
+        <Text12Medium c="var(--fg-primary)" style={{ flexShrink: 0 }}>
+          {step.action}
+        </Text12Medium>
+        <Text12Regular c="dimmed" truncate style={{ flex: 1 }}>
+          {target}
+          {step.error ? ` — ${step.error}` : ''}
+        </Text12Regular>
+      </Group>
+
+      <Collapse in={expanded}>
+        <RoutineStepDetail step={step} />
+      </Collapse>
+    </Box>
+  );
+}
+
+/** Expanded detail for one step: snapshot metadata not shown in the row, plus its job's progress. */
+function RoutineStepDetail({ step }: { step: RoutineRunStep }) {
+  const { isDevToolsEnabled } = useDevTools();
+
+  const duration = formatDuration(step.startedAt, step.finishedAt);
+  // Only metadata not already visible in the step row; each row is rendered only when it has a value.
+  const metadataRows: Array<{ label: string; value: string; mono?: boolean }> = [];
+  if (step.startedAt) metadataRows.push({ label: 'Started', value: new Date(step.startedAt).toLocaleString() });
+  // if (step.finishedAt) metadataRows.push({ label: 'Finished', value: new Date(step.finishedAt).toLocaleString() });
+  if (duration) metadataRows.push({ label: 'Duration', value: duration });
+  if (isDevToolsEnabled) {
+    if (step.timeoutSeconds != null) metadataRows.push({ label: 'Timeout', value: `${step.timeoutSeconds}s` });
+    if (step.options?.fullPull) metadataRows.push({ label: 'Full pull', value: 'yes' });
+    if (step.pipelineId) metadataRows.push({ label: 'Publish plan', value: step.pipelineId, mono: true });
+    if (step.jobId) metadataRows.push({ label: 'Job ID', value: step.jobId, mono: true });
+  }
+
+  return (
+    <Box style={{ backgroundColor: 'var(--bg-base)' }}>
+      {metadataRows.length > 0 && (
+        <Stack gap={2} px="lg" py={6}>
+          {metadataRows.map((row) => (
+            <Group key={row.label} gap={8} wrap="nowrap" align="flex-start">
+              <Text12Medium c="var(--fg-secondary)" style={{ width: 96, flexShrink: 0 }}>
+                {row.label}
+              </Text12Medium>
+              {row.mono ? (
+                <TextMono12Regular c="var(--fg-secondary)" style={{ wordBreak: 'break-all' }}>
+                  {row.value}
+                </TextMono12Regular>
+              ) : (
+                <Text12Regular c="var(--fg-secondary)" style={{ wordBreak: 'break-all' }}>
+                  {row.value}
+                </Text12Regular>
+              )}
+            </Group>
+          ))}
+        </Stack>
+      )}
+      {step.job ? (
+        <JobProgressDetail job={step.job} />
+      ) : (
+        <Text12Regular c="dimmed" px="lg" pb={6}>
+          No job recorded for this step.
+        </Text12Regular>
+      )}
+    </Box>
   );
 }

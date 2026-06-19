@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { RoutineRun as PrismaRoutineRun } from '@prisma/client';
 import {
   CreateRoutineFileDto,
+  Job,
   PushRoutineFilesBlockedStaleDto,
   PushRoutineFilesDto,
   PushRoutineFilesResponse,
@@ -14,6 +15,8 @@ import {
 } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
+import { jobEntityToJob } from 'src/job/entities/job.entity';
+import { JobService } from 'src/job/job.service';
 import { WSLogger } from 'src/logger';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -38,6 +41,7 @@ export class RoutineService {
     private readonly parser: RoutineParserService,
     private readonly referenceValidator: RoutineReferenceValidatorService,
     private readonly auditLogService: AuditLogService,
+    private readonly jobService: JobService,
   ) {}
 
   /**
@@ -78,21 +82,41 @@ export class RoutineService {
     return this.assembleRoutines(workbookId, parseResultsByFilePath);
   }
 
-  /** Lists run history for a workbook, newest first, optionally filtered to one routine file. */
+  /**
+   * Lists run history for a workbook, newest first, optionally filtered to one routine file. When
+   * `includeJobs` is set, each run is loaded with its steps and every step carries its job (the
+   * pull/sync/publish job in the `/jobs` wire shape); all step jobs are fetched in a single batch.
+   */
   async listRuns(workbookId: WorkbookId, query: RoutineRunListQueryDto): Promise<RoutineRun[]> {
+    const where = {
+      workbookId,
+      ...(query.routineFilePath ? { routineFilePath: query.routineFilePath } : {}),
+    };
+
+    if (!query.includeJobs) {
+      const runs = await this.db.client.routineRun.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: ROUTINE_RUNS_LIST_LIMIT,
+      });
+      return runs.map((run) => RoutineRunEntity.from(run));
+    }
+
     const runs = await this.db.client.routineRun.findMany({
-      where: {
-        workbookId,
-        ...(query.routineFilePath ? { routineFilePath: query.routineFilePath } : {}),
-      },
+      where,
       orderBy: { createdAt: 'desc' },
       take: ROUTINE_RUNS_LIST_LIMIT,
+      include: { steps: { orderBy: { stepIndex: 'asc' } } },
     });
-    return runs.map((run) => RoutineRunEntity.from(run));
+    const jobsByBullJobId = await this.fetchJobsByBullJobId(runs.flatMap((run) => run.steps));
+    return runs.map((run) => RoutineRunEntity.from(run, jobsByBullJobId));
   }
 
-  /** Fetches a single run with its per-step detail. 404 if missing or in another workbook. */
-  async getRun(workbookId: WorkbookId, runId: string): Promise<RoutineRun> {
+  /**
+   * Fetches a single run with its per-step detail. 404 if missing or in another workbook. When
+   * `includeJobs` is set, each step also carries its job (the `/jobs` wire shape).
+   */
+  async getRun(workbookId: WorkbookId, runId: string, includeJobs?: boolean): Promise<RoutineRun> {
     const run = await this.db.client.routineRun.findFirst({
       where: { id: runId, workbookId },
       include: { steps: { orderBy: { stepIndex: 'asc' } } },
@@ -100,7 +124,30 @@ export class RoutineService {
     if (!run) {
       throw new NotFoundException(`Routine run ${runId} not found`);
     }
-    return RoutineRunEntity.from(run);
+    if (!includeJobs) {
+      return RoutineRunEntity.from(run);
+    }
+    const jobsByBullJobId = await this.fetchJobsByBullJobId(run.steps);
+    return RoutineRunEntity.from(run, jobsByBullJobId);
+  }
+
+  /**
+   * Batch-loads the jobs for a set of routine steps, keyed by BullMQ job id, in the shared `Job` wire
+   * shape. `RoutineRunStep.jobId` holds the BullMQ job id, so this is one `getJobsProgress` query for
+   * every step (across all runs when listing). Steps with no job — or whose job has aged out of
+   * retention — are simply absent from the map; the entity resolves those to `null`.
+   */
+  private async fetchJobsByBullJobId(steps: { jobId: string | null }[]): Promise<Map<string, Job>> {
+    const bullJobIds = steps.map((step) => step.jobId).filter((jobId): jobId is string => jobId != null);
+    if (bullJobIds.length === 0) {
+      return new Map();
+    }
+    const jobEntities = await this.jobService.getJobsProgress(bullJobIds);
+    return new Map(
+      jobEntities
+        .filter((entity) => entity.bullJobId != null)
+        .map((entity) => [entity.bullJobId as string, jobEntityToJob(entity)]),
+    );
   }
 
   // ── file editing (create / read / update / delete the raw YAML) ───────────────

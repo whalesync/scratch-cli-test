@@ -20,6 +20,7 @@ import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { userToActor } from 'src/users/types';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { CreateRoutineFileDto } from './dto/create-routine-file.dto';
+import { RoutineRunGetQueryDto } from './dto/routine-run-get-query.dto';
 import { RoutineRunListQueryDto } from './dto/routine-run-list-query.dto';
 import { TriggerRoutineDto } from './dto/trigger-routine.dto';
 import { UpdateRoutineFileDto } from './dto/update-routine-file.dto';
@@ -127,11 +128,12 @@ export class RoutineController {
   async getRun(
     @Param('workbookId') workbookId: WorkbookId,
     @Param('runId') runId: string,
+    @Query() query: RoutineRunGetQueryDto,
     @Req() req: RequestWithUser,
   ): Promise<RoutineRun> {
     const actor = userToActor(req.user);
     await this.workbookService.assertReadableWorkbook(actor, workbookId);
-    return this.routineService.getRun(workbookId, runId);
+    return this.routineService.getRun(workbookId, runId, query.includeJobs);
   }
 
   /** Cancel a running routine run (stops its in-flight step's job). A write — asserts writable. */

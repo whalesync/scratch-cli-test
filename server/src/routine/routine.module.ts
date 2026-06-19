@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditLogModule } from 'src/audit/audit-log.module';
 import { ScratchConfigModule } from 'src/config/scratch-config.module';
 import { DbModule } from 'src/db/db.module';
+import { JobModule } from 'src/job/job.module';
 import { MetricsModule } from 'src/metrics/metrics.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { ScheduleModule } from 'src/schedule/schedule.module';
@@ -27,6 +28,7 @@ import { RoutineService } from './routine.service';
     AuditLogModule,
     RateLimiterModule,
     RoutineExecutionModule,
+    JobModule,
   ],
   controllers: [RoutineController],
   providers: [RoutineService],

@@ -55,16 +55,21 @@ export interface UseRoutineRunReturn {
 
 /**
  * Loads a single routine run WITH its per-step detail (the list endpoint omits steps). Polls while
- * the run is pending/running so step transitions surface live. Pass a null `runId` to disable.
+ * the run is pending/running so step transitions surface live. Pass a null `runId` to disable. Pass
+ * `includeJobs` to also load each step's job (progress + state), e.g. for the run-history detail view.
  */
-export const useRoutineRun = (workbookId: WorkbookId | null, runId: string | null): UseRoutineRunReturn => {
+export const useRoutineRun = (
+  workbookId: WorkbookId | null,
+  runId: string | null,
+  includeJobs = false,
+): UseRoutineRunReturn => {
   const { data, error, isLoading, mutate } = useSWR<RoutineRun, Error>(
-    workbookId && runId ? SWR_KEYS.routines.run(workbookId, runId) : null,
+    workbookId && runId ? SWR_KEYS.routines.run(workbookId, runId, includeJobs) : null,
     () => {
       if (!workbookId || !runId) {
         throw new Error('workbookId and runId are required');
       }
-      return scratchApiClient.routine.getRun(workbookId, runId);
+      return scratchApiClient.routine.getRun(workbookId, runId, includeJobs);
     },
     {
       revalidateOnFocus: false,

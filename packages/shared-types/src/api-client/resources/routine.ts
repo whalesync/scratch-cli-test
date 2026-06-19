@@ -71,18 +71,28 @@ export function createRoutineApi(http: Http) {
       return res.data;
     },
 
-    /** GET /workbooks/:id/routine-runs[?routineFilePath=…] — list run history, newest first. */
-    listRuns: async (workbookId: string, routineFilePath?: string): Promise<RoutineRun[]> => {
+    /**
+     * GET /workbooks/:id/routine-runs[?routineFilePath=…][&includeJobs=true] — list run history,
+     * newest first. With `includeJobs`, each run includes its `steps` and every step its `job`.
+     */
+    listRuns: async (workbookId: string, routineFilePath?: string, includeJobs?: boolean): Promise<RoutineRun[]> => {
       const res = await http.get<RoutineRun[]>(`/workbooks/${workbookId}/routine-runs`, {
-        params: routineFilePath ? { routineFilePath } : undefined,
+        params: {
+          ...(routineFilePath ? { routineFilePath } : {}),
+          ...(includeJobs ? { includeJobs: true } : {}),
+        },
         fallbackMessage: 'Failed to list routine runs',
       });
       return res.data;
     },
 
-    /** GET /workbooks/:id/routine-runs/:runId — fetch a single run with its per-step detail. */
-    getRun: async (workbookId: string, runId: string): Promise<RoutineRun> => {
+    /**
+     * GET /workbooks/:id/routine-runs/:runId[?includeJobs=true] — fetch a single run with its
+     * per-step detail. With `includeJobs`, each step also carries its `job`.
+     */
+    getRun: async (workbookId: string, runId: string, includeJobs?: boolean): Promise<RoutineRun> => {
       const res = await http.get<RoutineRun>(`/workbooks/${workbookId}/routine-runs/${runId}`, {
+        params: includeJobs ? { includeJobs: true } : undefined,
         fallbackMessage: 'Failed to read routine run',
       });
       return res.data;

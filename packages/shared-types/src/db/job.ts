@@ -16,10 +16,12 @@ export interface Job<TPublicProgress = object> {
   dataFolderId?: string | null;
   state:
     | 'waiting'
+    | 'waiting-children'
     | 'active'
     | 'completed'
     | 'failed'
     | 'delayed'
+    | 'prioritized'
     | 'paused'
     | 'unknown'
     | 'canceled'

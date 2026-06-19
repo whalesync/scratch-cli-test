@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { WorkbookId } from '@spinner/shared-types';
 import { AuditLogService } from 'src/audit/audit-log.service';
 import { DbService } from 'src/db/db.service';
+import { JobService } from 'src/job/job.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { RepoFileRef, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { Actor } from 'src/users/types';
@@ -29,8 +30,76 @@ function emptyValidationContext(): RoutineValidationContext {
   };
 }
 
+const FIXTURE_DATE = new Date('2026-06-19T00:00:00.000Z');
+
+/** A Prisma RoutineRun row (Date timestamps, as Prisma returns) for the run read tests. */
+function prismaRunRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'rr_1',
+    createdAt: FIXTURE_DATE,
+    updatedAt: FIXTURE_DATE,
+    workbookId: WORKBOOK_ID,
+    routineFilePath: 'routines/daily.yaml',
+    routineName: 'Daily',
+    status: 'completed',
+    trigger: 'manual',
+    triggeredByUserId: 'usr_test1234',
+    startedAt: FIXTURE_DATE,
+    finishedAt: FIXTURE_DATE,
+    error: null,
+    currentStepIndex: 1,
+    ...overrides,
+  };
+}
+
+/** A Prisma RoutineRunStep row. `jobId` holds the BullMQ job id (or null for a step with no job). */
+function prismaStepRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'rrs_1',
+    createdAt: FIXTURE_DATE,
+    updatedAt: FIXTURE_DATE,
+    runId: 'rr_1',
+    stepIndex: 0,
+    action: 'pull',
+    folder: null,
+    folders: [],
+    connection: null,
+    sync: null,
+    timeoutSeconds: null,
+    options: null,
+    status: 'completed',
+    startedAt: FIXTURE_DATE,
+    finishedAt: FIXTURE_DATE,
+    error: null,
+    jobId: 'bull_1',
+    pipelineId: null,
+    ...overrides,
+  };
+}
+
+/** A JobEntity as `JobService.getJobsProgress` returns it (Date timestamps). */
+function jobEntityFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    dbJobId: 'job_1',
+    bullJobId: 'bull_1',
+    runId: 'run_1',
+    workbookId: WORKBOOK_ID,
+    dataFolderId: null,
+    type: 'pull-linked-folder-files',
+    state: 'completed',
+    progressTimestamp: 123,
+    publicProgress: { totalFiles: 5 },
+    processedOn: new Date('2026-06-19T00:00:01.000Z'),
+    finishedOn: new Date('2026-06-19T00:00:02.000Z'),
+    failedReason: null,
+    runContext: null,
+    ...overrides,
+  };
+}
+
 describe('RoutineService', () => {
   let routineRunFindMany: jest.Mock;
+  let routineRunFindFirst: jest.Mock;
   let workbookFindFirst: jest.Mock;
   let listRepoFiles: jest.Mock;
   let getRepoFile: jest.Mock;
@@ -43,10 +112,12 @@ describe('RoutineService', () => {
   let logEvent: jest.Mock;
   let validateRoutine: jest.Mock;
   let loadContext: jest.Mock;
+  let getJobsProgress: jest.Mock;
   let service: RoutineService;
 
   beforeEach(() => {
     routineRunFindMany = jest.fn().mockResolvedValue([]);
+    routineRunFindFirst = jest.fn();
     workbookFindFirst = jest.fn().mockResolvedValue({ organizationId: 'org_test1234' });
     listRepoFiles = jest.fn().mockResolvedValue([]);
     getRepoFile = jest.fn();
@@ -59,10 +130,11 @@ describe('RoutineService', () => {
     logEvent = jest.fn().mockResolvedValue(undefined);
     validateRoutine = jest.fn().mockResolvedValue([]);
     loadContext = jest.fn().mockResolvedValue(emptyValidationContext());
+    getJobsProgress = jest.fn().mockResolvedValue([]);
 
     const db = {
       client: {
-        routineRun: { findMany: routineRunFindMany },
+        routineRun: { findMany: routineRunFindMany, findFirst: routineRunFindFirst },
         workbook: { findFirst: workbookFindFirst },
       },
     } as unknown as DbService;
@@ -84,6 +156,7 @@ describe('RoutineService', () => {
       validateRoutine,
       loadContext,
     } as unknown as RoutineReferenceValidatorService;
+    const jobService = { getJobsProgress } as unknown as JobService;
 
     service = new RoutineService(
       db,
@@ -92,6 +165,7 @@ describe('RoutineService', () => {
       new RoutineParserService(),
       referenceValidator,
       auditLogService,
+      jobService,
     );
   });
 
@@ -528,6 +602,76 @@ describe('RoutineService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(commitFilesToBranch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listRuns', () => {
+    it('returns runs without steps and does not load jobs when includeJobs is not set', async () => {
+      routineRunFindMany.mockResolvedValue([prismaRunRow()]);
+
+      const runs = await service.listRuns(WORKBOOK_ID, {});
+
+      expect(runs).toHaveLength(1);
+      expect(runs[0].steps).toBeUndefined();
+      expect(getJobsProgress).not.toHaveBeenCalled();
+    });
+
+    it('includes steps with each step job, batched in a single fetch, when includeJobs is true', async () => {
+      routineRunFindMany.mockResolvedValue([
+        prismaRunRow({
+          steps: [prismaStepRow({ jobId: 'bull_1' }), prismaStepRow({ id: 'rrs_2', stepIndex: 1, jobId: null })],
+        }),
+      ]);
+      getJobsProgress.mockResolvedValue([jobEntityFixture({ bullJobId: 'bull_1' })]);
+
+      const runs = await service.listRuns(WORKBOOK_ID, { includeJobs: true });
+
+      // One batched fetch for every step's job across the run list.
+      expect(getJobsProgress).toHaveBeenCalledTimes(1);
+      expect(getJobsProgress).toHaveBeenCalledWith(['bull_1']);
+      const steps = runs[0].steps ?? [];
+      expect(steps[0].job).toMatchObject({
+        bullJobId: 'bull_1',
+        state: 'completed',
+        publicProgress: { totalFiles: 5 },
+      });
+      // Date timestamps are serialized to ISO strings on the wire type.
+      expect(steps[0].job?.processedOn).toBe('2026-06-19T00:00:01.000Z');
+      // A step with no jobId resolves to null.
+      expect(steps[1].job).toBeNull();
+    });
+  });
+
+  describe('getRun', () => {
+    it('throws NotFoundException when the run is missing', async () => {
+      routineRunFindFirst.mockResolvedValue(null);
+
+      await expect(service.getRun(WORKBOOK_ID, 'rr_missing')).rejects.toThrow(NotFoundException);
+    });
+
+    it('returns steps without a job field and does not load jobs when includeJobs is not set', async () => {
+      routineRunFindFirst.mockResolvedValue(prismaRunRow({ steps: [prismaStepRow()] }));
+
+      const run = await service.getRun(WORKBOOK_ID, 'rr_1');
+
+      expect(run.steps).toHaveLength(1);
+      expect(run.steps?.[0]).not.toHaveProperty('job');
+      expect(getJobsProgress).not.toHaveBeenCalled();
+    });
+
+    it('populates each step job from the batched fetch when includeJobs is true', async () => {
+      routineRunFindFirst.mockResolvedValue(
+        prismaRunRow({
+          steps: [prismaStepRow({ jobId: 'bull_1' }), prismaStepRow({ id: 'rrs_2', stepIndex: 1, jobId: null })],
+        }),
+      );
+      getJobsProgress.mockResolvedValue([jobEntityFixture({ bullJobId: 'bull_1' })]);
+
+      const run = await service.getRun(WORKBOOK_ID, 'rr_1', true);
+
+      expect(getJobsProgress).toHaveBeenCalledWith(['bull_1']);
+      expect(run.steps?.[0].job).toMatchObject({ bullJobId: 'bull_1' });
+      expect(run.steps?.[1].job).toBeNull();
     });
   });
 });

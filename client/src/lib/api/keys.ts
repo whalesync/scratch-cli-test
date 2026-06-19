@@ -87,7 +87,8 @@ export const SWR_KEYS = {
     file: (workbookId: WorkbookId, path: string) => ['routines', 'file', workbookId, path] as const,
     runs: (workbookId: WorkbookId, routineFilePath?: string) =>
       ['routines', 'runs', workbookId, routineFilePath ?? null] as const,
-    run: (workbookId: WorkbookId, runId: string) => ['routines', 'run', workbookId, runId] as const,
+    run: (workbookId: WorkbookId, runId: string, includeJobs = false) =>
+      ['routines', 'run', workbookId, runId, includeJobs] as const,
   },
   dataFolders: {
     list: (workbookId: WorkbookId) => ['data-folders', 'list', workbookId] as const,

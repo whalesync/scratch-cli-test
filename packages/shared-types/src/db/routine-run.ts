@@ -1,4 +1,5 @@
 import { RoutineRunId, RoutineRunStepId, WorkbookId } from '../ids';
+import type { Job } from './job';
 import type { RoutineStepOptions } from './routine';
 
 ///
@@ -44,6 +45,13 @@ export interface RoutineRunStep {
   jobId: string | null;
   /** For publish-plan / publish steps: the PublishPlan pipeline created for this step. */
   pipelineId: string | null;
+  /**
+   * The step's job (pull / sync / publish) in the same `Job` wire shape the `/jobs` endpoints return
+   * (`publicProgress`, `state`, timestamps). Server-derived, NOT a DB column — present only when the
+   * request set `includeJobs=true`; `null` when the step has no job yet or the job has aged out of
+   * retention. Resolved from {@link RoutineRunStep.jobId} (the BullMQ job id).
+   */
+  job?: Job | null;
 }
 
 /** Execution history for a single run of a routine. */
