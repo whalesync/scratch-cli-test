@@ -1,8 +1,9 @@
 /**
  * Shared enums between client and server.
- * These enums mirror the Prisma schema enums in server/prisma/schema.prisma
- *
- * IMPORTANT: When adding/modifying enums in the Prisma schema, update this file accordingly.
+ * Most of these mirror the Prisma schema enums in server/prisma/schema.prisma —
+ * when adding/modifying one of those enums in the Prisma schema, update this file
+ * accordingly. The exceptions are string-backed sets that are intentionally NOT
+ * Prisma enums (the DB column is a plain `String`): `Service` and `ScheduleAction`.
  */
 
 /**
@@ -58,20 +59,29 @@ export enum SyncState {
   ON = 'ON',
 }
 
-export enum ScheduleAction {
-  /** @deprecated Equivalent to FULL_PULL. Retained for runtime tolerance until the enum value is dropped. */
-  PULL = 'PULL',
-  FULL_PULL = 'FULL_PULL',
-  INCREMENTAL_PULL = 'INCREMENTAL_PULL',
+/**
+ * Schedule actions. Backed by a plain `String` column in the DB (no Prisma enum) —
+ * the canonical set lives here as a const object so adding a new action needs no
+ * migration. Mirrors the Service string-conversion pattern (DEV-10483). The
+ * same-named derived union type below lets call sites use both `ScheduleAction.SYNC`
+ * (value) and `action: ScheduleAction` (type).
+ */
+export const ScheduleAction = {
+  /** @deprecated Equivalent to FULL_PULL. Retained for runtime tolerance. */
+  PULL: 'PULL',
+  FULL_PULL: 'FULL_PULL',
+  INCREMENTAL_PULL: 'INCREMENTAL_PULL',
   /** Connection-wide full pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection. */
-  CONNECTION_FULL_PULL = 'CONNECTION_FULL_PULL',
+  CONNECTION_FULL_PULL: 'CONNECTION_FULL_PULL',
   /** Connection-wide incremental pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection. */
-  CONNECTION_INCREMENTAL_PULL = 'CONNECTION_INCREMENTAL_PULL',
-  PUBLISH = 'PUBLISH',
-  SYNC = 'SYNC',
+  CONNECTION_INCREMENTAL_PULL: 'CONNECTION_INCREMENTAL_PULL',
+  PUBLISH: 'PUBLISH',
+  SYNC: 'SYNC',
   /** Triggers a routine run. entityId is the routine file path. Execution lands in a later phase. */
-  ROUTINE = 'ROUTINE',
-}
+  ROUTINE: 'ROUTINE',
+} as const;
+
+export type ScheduleAction = (typeof ScheduleAction)[keyof typeof ScheduleAction];
 
 /** The action a single routine step performs. The wire values match the YAML `action:` field. */
 export enum RoutineAction {

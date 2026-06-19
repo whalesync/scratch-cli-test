@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ScheduleAction as PrismaScheduleAction, Schedule } from '@prisma/client';
+import { Schedule } from '@prisma/client';
 import {
   createScheduleId,
   ScheduleAction,
@@ -147,7 +147,7 @@ export class ScheduleService {
   /** Returns the ROUTINE schedule rows for a workbook (one per scheduled routine file). */
   async findRoutineSchedules(workbookId: WorkbookId): Promise<ScheduleEntity[]> {
     const schedules = await this.db.client.schedule.findMany({
-      where: { workbookId, action: PrismaScheduleAction.ROUTINE },
+      where: { workbookId, action: ScheduleAction.ROUTINE },
     });
     return schedules.map((s) => new ScheduleEntity(s));
   }
@@ -155,7 +155,7 @@ export class ScheduleService {
   /** Deletes the ROUTINE schedule for a routine file, if any. Idempotent no-op otherwise. */
   async deleteRoutineScheduleByFilePath(workbookId: WorkbookId, filePath: string): Promise<void> {
     await this.db.client.schedule.deleteMany({
-      where: { workbookId, action: PrismaScheduleAction.ROUTINE, entityId: filePath },
+      where: { workbookId, action: ScheduleAction.ROUTINE, entityId: filePath },
     });
   }
 
@@ -166,7 +166,7 @@ export class ScheduleService {
    */
   async deleteOrphanedRoutineSchedules(workbookId: WorkbookId, validFilePaths: string[]): Promise<void> {
     await this.db.client.schedule.deleteMany({
-      where: { workbookId, action: PrismaScheduleAction.ROUTINE, entityId: { notIn: validFilePaths } },
+      where: { workbookId, action: ScheduleAction.ROUTINE, entityId: { notIn: validFilePaths } },
     });
   }
 
@@ -218,7 +218,7 @@ export class ScheduleService {
         select: { id: true },
       });
       return sync !== null;
-    } else if (action === PrismaScheduleAction.ROUTINE) {
+    } else if (action === ScheduleAction.ROUTINE) {
       // For ROUTINE schedules `entityId` is a routine file path, not a DB id. Its existence
       // is validated by reload (which reads git); ScheduleService can't read git, so treat
       // it as existing. The scheduler also skips ROUTINE schedules until the executor lands,
@@ -318,7 +318,7 @@ export class ScheduleService {
         OR: [
           {
             action: {
-              in: [PrismaScheduleAction.CONNECTION_FULL_PULL, PrismaScheduleAction.CONNECTION_INCREMENTAL_PULL],
+              in: [ScheduleAction.CONNECTION_FULL_PULL, ScheduleAction.CONNECTION_INCREMENTAL_PULL],
             },
             entityId: connectorAccountId,
           },
@@ -327,17 +327,17 @@ export class ScheduleService {
                 {
                   action: {
                     in: [
-                      PrismaScheduleAction.PULL,
-                      PrismaScheduleAction.FULL_PULL,
-                      PrismaScheduleAction.INCREMENTAL_PULL,
-                      PrismaScheduleAction.PUBLISH,
+                      ScheduleAction.PULL,
+                      ScheduleAction.FULL_PULL,
+                      ScheduleAction.INCREMENTAL_PULL,
+                      ScheduleAction.PUBLISH,
                     ],
                   },
                   entityId: { in: folderIds },
                 },
               ]
             : []),
-          ...(syncIds.length > 0 ? [{ action: PrismaScheduleAction.SYNC, entityId: { in: syncIds } }] : []),
+          ...(syncIds.length > 0 ? [{ action: ScheduleAction.SYNC, entityId: { in: syncIds } }] : []),
         ],
       },
       select: { id: true },
@@ -378,7 +378,7 @@ export class ScheduleService {
       if (!sync) {
         throw new BadRequestException(`Sync ${entityId} not found in workbook ${workbookId}`);
       }
-    } else if (action === PrismaScheduleAction.ROUTINE) {
+    } else if (action === ScheduleAction.ROUTINE) {
       // ROUTINE entityId is the routine YAML file path (not a DB id). ScheduleService can't read git,
       // so we validate only that the path is well-formed and inside routines/; the file's existence is
       // enforced at trigger time (the scheduler logs a 404 and skips a deleted routine).

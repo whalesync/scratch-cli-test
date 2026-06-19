@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { AuthType, ScheduleAction, SyncState } from '@prisma/client';
-import type { DecryptedCredentials } from '@spinner/shared-types';
+import type { AuthType, SyncState } from '@prisma/client';
+import type { DecryptedCredentials, ScheduleAction } from '@spinner/shared-types';
 import {
   createConnectorAccountId,
   createDataFolderId,

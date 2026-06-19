@@ -46,7 +46,7 @@
  */
 
 import { ConflictException } from '@nestjs/common';
-import { Prisma, PrismaClient, ScheduleAction } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import {
   ConnectorAccountId,
   createConnectorAccountId,
@@ -59,6 +59,7 @@ import {
   createWorkbookId,
   JobType,
   PublishPlanStatus,
+  ScheduleAction,
   SyncId,
   WorkbookId,
 } from '@spinner/shared-types';

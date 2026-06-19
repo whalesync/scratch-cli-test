@@ -3,7 +3,7 @@ import { ScheduleAction } from '../../enums';
 
 export const createScheduleSchema = z.object({
   name: z.string(),
-  action: z.nativeEnum(ScheduleAction),
+  action: z.enum(ScheduleAction),
   entityId: z.string(),
   cronExpression: z.string(),
   enabled: z.boolean().optional(),

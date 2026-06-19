@@ -49,22 +49,6 @@ enum SyncState {
   ON
 }
 
-enum ScheduleAction {
-  /// @deprecated Equivalent to FULL_PULL. Retained for runtime tolerance until a follow-up cleanup migration drops the value.
-  PULL
-  FULL_PULL
-  INCREMENTAL_PULL
-  /// Connection-wide full pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection.
-  CONNECTION_FULL_PULL
-  /// Connection-wide incremental pull: entityId is a ConnectorAccountId; fans out to every linked table in the connection.
-  CONNECTION_INCREMENTAL_PULL
-  PUBLISH
-  SYNC
-  /// Triggers a routine run. entityId is the routine file path (e.g. "routines/daily-sync.yaml").
-  /// Execution is added in a later phase; until then the scheduler evaluator skips ROUTINE schedules.
-  ROUTINE
-}
-
 /// The external app that owns and manages a workbook, if any. A null
 /// `Workbook.managedBy` means a standalone Scratch workbook (not managed by any
 /// app); `ws_crm` means it is managed by Whalesync's CRM Bridge (via dusky),
@@ -849,7 +833,8 @@ model Schedule {
   name String
 
   /// The operation to perform: PULL, PUBLISH, SYNC, or a connection-wide pull.
-  action ScheduleAction
+  /// Plain String (no DB enum); the allowed values are the `ScheduleAction` const in @spinner/shared-types.
+  action String
 
   /// Polymorphic reference to the target entity: DataFolderId for PULL/FULL_PULL/INCREMENTAL_PULL/PUBLISH,
   /// SyncId for SYNC, ConnectorAccountId for CONNECTION_FULL_PULL/CONNECTION_INCREMENTAL_PULL.

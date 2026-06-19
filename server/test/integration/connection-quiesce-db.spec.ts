@@ -11,12 +11,13 @@
  */
 
 import { ConflictException } from '@nestjs/common';
-import { PrismaClient, ScheduleAction } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import {
   createConnectorAccountId,
   createOrganizationId,
   createScheduleId,
   createWorkbookId,
+  ScheduleAction,
   WorkbookId,
 } from '@spinner/shared-types';
 import { DbService } from 'src/db/db.service';
