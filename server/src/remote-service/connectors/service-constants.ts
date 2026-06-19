@@ -34,4 +34,5 @@ export const Service = {
   GENERIC_API: 'GENERIC_API',
   GOHIGHLEVEL: 'GOHIGHLEVEL',
   CLICKUP: 'CLICKUP',
+  FRAMER: 'FRAMER',
 } as const;

@@ -8,6 +8,7 @@ import './audienceful/audienceful-connector';
 import './brevo/brevo-connector';
 import './clickup/clickup-connector';
 import './copper/copper-connector';
+import './framer/framer-connector';
 import './generic-api/generic-api-connector';
 import './gohighlevel/gohighlevel-connector';
 import './hubspot/hubspot-connector';

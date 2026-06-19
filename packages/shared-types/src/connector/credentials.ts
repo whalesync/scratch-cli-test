@@ -32,6 +32,11 @@ export interface DecryptedCredentials {
   // Optional custom OAuth app credentials (plaintext in memory only, encrypted at rest)
   customOAuthClientId?: string;
   customOAuthClientSecret?: string;
+
+  // Framer specific: the project URL (https://framer.com/projects/<Name>--<hash>)
+  // the Server API key is scoped to. The `framer-api` SDK's connect() needs both
+  // the project URL and the key, so both are captured at connect time.
+  projectUrl?: string;
 }
 
 export interface SupabaseProjectCredentials {
