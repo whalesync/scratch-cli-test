@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import { WorkbookId } from '@spinner/shared-types';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { ScheduleService } from '../schedule.service';
 
@@ -28,7 +29,8 @@ describe('ScheduleService — connection migration quiesce/restore', () => {
       update: jest.fn().mockResolvedValue(undefined),
     };
     const db = { client: { dataFolder, syncTablePair, schedule } } as unknown as DbService;
-    service = new ScheduleService(db);
+    const configService = { isProductionEnvironment: () => true } as unknown as ScratchConfigService;
+    service = new ScheduleService(db, configService);
   });
 
   describe('disableSchedulesForConnectionMigration', () => {

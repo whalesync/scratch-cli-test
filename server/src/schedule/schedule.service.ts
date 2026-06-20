@@ -8,6 +8,7 @@ import {
   WorkbookId,
 } from '@spinner/shared-types';
 import { CronExpressionParser } from 'cron-parser';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { assertValidRoutineFilePath } from 'src/routine/routine-file-path';
@@ -16,13 +17,16 @@ import { ScheduleEntity } from './entities/schedule.entity';
 import {
   isConnectionPullAction,
   isPullAction,
-  ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES,
+  routineScheduleMinIntervalMinutes,
   SCHEDULE_MIN_INTERVAL_MINUTES,
 } from './schedule.types';
 
 @Injectable()
 export class ScheduleService {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly configService: ScratchConfigService,
+  ) {}
 
   async create(workbookId: WorkbookId, dto: ValidatedCreateScheduleDto, actor: Actor): Promise<ScheduleEntity> {
     const workbook = await this.db.client.workbook.findFirst({
@@ -172,8 +176,10 @@ export class ScheduleService {
 
   /**
    * Validates a cron expression is syntactically valid and meets the minimum interval requirement.
-   * ROUTINE schedules use a stricter floor ({@link ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES}) than other
-   * actions ({@link SCHEDULE_MIN_INTERVAL_MINUTES}), since a routine runs a heavier multi-step pipeline.
+   * In production, ROUTINE schedules use a stricter floor ({@link ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES})
+   * than other actions ({@link SCHEDULE_MIN_INTERVAL_MINUTES}), since a routine runs a heavier multi-step
+   * pipeline. Outside production that floor is relaxed to {@link SCHEDULE_MIN_INTERVAL_MINUTES} so routines
+   * can be tested on a tight cadence (see {@link routineScheduleMinIntervalMinutes}).
    */
   private validateCronExpression(cronExpression: string, action: ScheduleAction): void {
     let parsed;
@@ -189,7 +195,9 @@ export class ScheduleService {
     const intervalMinutes = (second.getTime() - first.getTime()) / 60_000;
 
     const minIntervalMinutes =
-      action === ScheduleAction.ROUTINE ? ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES : SCHEDULE_MIN_INTERVAL_MINUTES;
+      action === ScheduleAction.ROUTINE
+        ? routineScheduleMinIntervalMinutes(this.configService.isProductionEnvironment())
+        : SCHEDULE_MIN_INTERVAL_MINUTES;
     if (intervalMinutes < minIntervalMinutes) {
       throw new BadRequestException(
         `Schedule interval must be at least ${minIntervalMinutes} minutes. Got ~${Math.round(intervalMinutes)} minutes.`,

@@ -1,11 +1,26 @@
-/** Minimum allowed interval between schedule ticks: 5 minutes. */
+/** Minimum allowed interval between schedule ticks: 1 minute. */
 export const SCHEDULE_MIN_INTERVAL_MINUTES = 1;
 
 /**
- * Minimum interval for ROUTINE schedules: 5 minutes. Routines run heavier multi-step pipelines than
- * standalone schedules, so they use a stricter floor than the generic {@link SCHEDULE_MIN_INTERVAL_MINUTES}.
+ * Minimum interval for ROUTINE schedules in production: 5 minutes. Routines run heavier multi-step
+ * pipelines than standalone schedules, so they use a stricter floor than the generic
+ * {@link SCHEDULE_MIN_INTERVAL_MINUTES}.
+ *
+ * Outside production this floor is relaxed to {@link SCHEDULE_MIN_INTERVAL_MINUTES} so routine
+ * schedules can be exercised on a tight cadence during local development and testing — see
+ * {@link routineScheduleMinIntervalMinutes}.
  */
 export const ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES = 5;
+
+/**
+ * Resolves the minimum interval (in minutes) allowed for a ROUTINE schedule. Production enforces the
+ * full {@link ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES} floor; non-production environments
+ * (development/test/staging) fall back to {@link SCHEDULE_MIN_INTERVAL_MINUTES} so routines can be
+ * scheduled as tightly as ordinary actions while testing.
+ */
+export function routineScheduleMinIntervalMinutes(isProductionEnvironment: boolean): number {
+  return isProductionEnvironment ? ROUTINE_SCHEDULE_MIN_INTERVAL_MINUTES : SCHEDULE_MIN_INTERVAL_MINUTES;
+}
 
 /** Default debounce window in milliseconds. If a job for the same entity was created within this window, skip. */
 export const SCHEDULE_DEBOUNCE_WINDOW_MS = 30_000;

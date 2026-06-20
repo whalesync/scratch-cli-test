@@ -20,6 +20,7 @@ import {
   ScheduleAction,
   WorkbookId,
 } from '@spinner/shared-types';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { MigrationLockService } from 'src/migration-lock/migration-lock.service';
 import { ScheduleService } from 'src/schedule/schedule.service';
@@ -39,7 +40,10 @@ describe('connection quiesce (DB-backed)', () => {
     prisma = new PrismaClient();
     const db = { client: prisma } as unknown as DbService;
     migrationLock = new MigrationLockService(db);
-    scheduleService = new ScheduleService(db);
+    // This test never exercises interval validation, so the config service is unused at runtime.
+    scheduleService = new ScheduleService(db, {
+      isProductionEnvironment: () => true,
+    } as unknown as ScratchConfigService);
 
     await prisma.organization.create({
       data: { id: organizationId, name: 'Quiesce Org', clerkId: `clerk_q_${organizationId}` },

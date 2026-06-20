@@ -122,7 +122,10 @@ describe('Webflow folder migration — live-pipeline quiesce/release (DB-backed)
     dbService = { client: prisma } as unknown as DbService;
 
     migrationLockService = new MigrationLockService(dbService);
-    scheduleService = new ScheduleService(dbService);
+    // This test never exercises interval validation, so the config service is unused at runtime.
+    scheduleService = new ScheduleService(dbService, {
+      isProductionEnvironment: () => true,
+    } as unknown as ScratchConfigService);
     // JobService only reaches Redis via `getActiveBullJobDatas` (stubbed per test)
     // and `systemCancelJob` for jobs WITH a bullJobId (we seed none) — so the
     // config service is never consulted at runtime here.

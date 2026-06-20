@@ -2,6 +2,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Schedule as PrismaSchedule } from '@prisma/client';
 import { ScheduleAction, WorkbookId } from '@spinner/shared-types';
+import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { DbService } from 'src/db/db.service';
 import { Actor } from 'src/users/types';
 import { ScheduleService } from '../schedule.service';
@@ -34,6 +35,7 @@ describe('ScheduleService — routine schedules', () => {
   let scheduleDeleteMany: jest.Mock;
   let scheduleFindMany: jest.Mock;
   let workbookFindFirst: jest.Mock;
+  let isProductionEnvironment: jest.Mock;
   let service: ScheduleService;
 
   beforeEach(() => {
@@ -41,6 +43,8 @@ describe('ScheduleService — routine schedules', () => {
     scheduleDeleteMany = jest.fn().mockResolvedValue({ count: 0 });
     scheduleFindMany = jest.fn().mockResolvedValue([]);
     workbookFindFirst = jest.fn().mockResolvedValue({ id: WORKBOOK_ID, organizationId: 'org_test1234' });
+    // Default to production so the strict ROUTINE interval floor applies; individual tests override.
+    isProductionEnvironment = jest.fn().mockReturnValue(true);
 
     const db = {
       client: {
@@ -48,7 +52,8 @@ describe('ScheduleService — routine schedules', () => {
         workbook: { findFirst: workbookFindFirst },
       },
     } as unknown as DbService;
-    service = new ScheduleService(db);
+    const configService = { isProductionEnvironment } as unknown as ScratchConfigService;
+    service = new ScheduleService(db, configService);
   });
 
   // Routine schedules are now created/edited through the public schedule CRUD (DEV-10478) — the cron
@@ -93,12 +98,20 @@ describe('ScheduleService — routine schedules', () => {
       expect(scheduleCreate).not.toHaveBeenCalled();
     });
 
-    it('enforces the stricter 5-minute minimum interval for ROUTINE schedules', async () => {
-      // Every-minute is allowed for a generic schedule (1-min floor) but not for a routine.
+    it('enforces the stricter 5-minute minimum interval for ROUTINE schedules in production', async () => {
+      // Every-minute is allowed for a generic schedule (1-min floor) but not for a routine in production.
       await expect(
         service.create(WORKBOOK_ID, { ...ROUTINE_DTO, cronExpression: '*/1 * * * *' }, ACTOR),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(scheduleCreate).not.toHaveBeenCalled();
+    });
+
+    it('relaxes the ROUTINE interval floor to 1 minute outside production', async () => {
+      // Outside production an every-minute routine schedule is allowed so it can be exercised in testing.
+      isProductionEnvironment.mockReturnValue(false);
+      const created = await service.create(WORKBOOK_ID, { ...ROUTINE_DTO, cronExpression: '*/1 * * * *' }, ACTOR);
+      expect(created.action).toBe('ROUTINE');
+      expect(scheduleCreate).toHaveBeenCalled();
     });
 
     it('rejects an invalid cron expression', async () => {
