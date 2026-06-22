@@ -1,4 +1,4 @@
-import { createScratchApiClient, type RequestLog } from '@spinner/shared-types/api-client';
+import { createScratchApiClient, type RequestLog, type ScratchApiClient } from '@spinner/shared-types/api-client';
 
 /**
  * The shared Scratch REST client for the desktop renderer, plus the small bit of app-local session
@@ -56,7 +56,7 @@ function emitRequestLog(log: RequestLog): void {
   });
 }
 
-export const scratchApiClient = createScratchApiClient({
+export const scratchApiClient: ScratchApiClient = createScratchApiClient({
   baseUrl,
   auth: {
     scheme: 'API-Token',

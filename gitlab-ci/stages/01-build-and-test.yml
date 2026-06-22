@@ -20,6 +20,7 @@ include:
     - !reference [.use_nvm, script]
     - yarn prettier:check
     - yarn lint-strict
+    - yarn typecheck
     - yarn build
 
 build and test shared-types:
@@ -43,6 +44,7 @@ build and test shared-types:
     - !reference [.use_nvm, script]
     - yarn prettier:check
     - yarn lint-strict
+    - yarn typecheck
     - yarn test
     - export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY_DEVELOPMENT
     - yarn build
@@ -389,6 +391,7 @@ build scratch-git docker image:
     - !reference [.use_nvm, script]
     - yarn prettier:check
     - yarn lint-strict
+    - yarn typecheck
     - yarn test
     - yarn build
 

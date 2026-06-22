@@ -42,6 +42,7 @@ import {
   getWorkbookSettings,
   setCurrentWorkspaceId,
   setWorkbookSetting,
+  type WorkbookSettings,
 } from './preferences-store';
 import { reviewStatsNotifier } from './review-stats-notifier';
 import {
@@ -625,8 +626,9 @@ ipcMain.handle('auth:open-external', (_, url: string) => shell.openExternal(url)
 ipcMain.handle('preferences:get-current-workspace-id', () => getCurrentWorkspaceId());
 ipcMain.handle('preferences:set-current-workspace-id', (_, id: string | null) => setCurrentWorkspaceId(id));
 ipcMain.handle('preferences:get-workbook-settings', (_, workbookId: string) => getWorkbookSettings(workbookId));
-ipcMain.handle('preferences:set-workbook-setting', (_, workbookId: string, key: string, value: unknown) =>
-  setWorkbookSetting(workbookId, key, value),
+ipcMain.handle(
+  'preferences:set-workbook-setting',
+  (_, workbookId: string, key: keyof WorkbookSettings, value: unknown) => setWorkbookSetting(workbookId, key, value),
 );
 
 ipcMain.handle('scratch:get-workspaces-registry', async () => {

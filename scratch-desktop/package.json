@@ -15,6 +15,7 @@
     "preview": "electron-vite preview",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint-strict": "eslint \"src/**/*.{ts,tsx}\" --max-warnings=0",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "prettier:check": "prettier --check \"src/**/*.ts\" \"src/**/*.tsx\"",
     "test": "vitest run",
     "test:watch": "vitest",

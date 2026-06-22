@@ -1,3 +1,4 @@
+import type { WebContents } from 'electron';
 import { mkdir, mkdtemp, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -63,9 +64,9 @@ describe('WorkspaceFileWatchService', () => {
     await mkdir(folderA, { recursive: true });
 
     const service = new WorkspaceFileWatchService();
-    const mockWebContents = { send: vi.fn(), isDestroyed: () => false } as never;
+    const mockWebContents = { send: vi.fn(), isDestroyed: () => false };
 
-    await service.watchWorkspaceFiles(mockWebContents, workspaceRoot, [folderA]);
+    await service.watchWorkspaceFiles(mockWebContents as unknown as WebContents, workspaceRoot, [folderA]);
 
     await writeFile(join(folderA, 'test.json'), '{}');
 

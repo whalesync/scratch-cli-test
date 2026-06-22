@@ -1,4 +1,5 @@
 import { formatRecordJson } from '@spinner/shared-types/format';
+import type { Dirent } from 'fs';
 import { mkdir, readFile, readdir, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 import type { ValidatorConfig, ValidatorConfigEntry } from '../shared/validation-types';
@@ -43,7 +44,7 @@ async function walkForValidation(
 ): Promise<void> {
   const dirPath = subPath ? join(connectionsRoot, connection, subPath) : join(connectionsRoot, connection);
 
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent[];
   try {
     entries = await readdir(dirPath, { withFileTypes: true });
   } catch {

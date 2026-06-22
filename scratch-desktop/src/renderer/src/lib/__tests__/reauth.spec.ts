@@ -11,7 +11,7 @@
  *   4. terminal fallthrough (null / throw / second-401 → reject + `onUnauthorized`)
  */
 
-import { AxiosError, type InternalAxiosRequestConfig } from 'axios';
+import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Responder = (config: InternalAxiosRequestConfig) => Promise<unknown>;
@@ -22,10 +22,10 @@ vi.mock('axios', async (importActual) => {
   const create = (cfg?: object) =>
     actual.default.create({
       ...cfg,
-      adapter: (config: InternalAxiosRequestConfig) => {
+      adapter: ((config: InternalAxiosRequestConfig) => {
         if (!adapterState.responder) throw new Error('reauth.spec: no responder configured');
         return adapterState.responder(config);
-      },
+      }) as AxiosAdapter,
     });
   return { ...actual, default: { ...actual.default, create }, create };
 });

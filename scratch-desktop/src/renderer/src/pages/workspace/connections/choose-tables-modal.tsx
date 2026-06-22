@@ -34,6 +34,7 @@ import type {
   TablePreview,
   TableSchemaPreview,
   TableSearchResult,
+  WorkbookId,
 } from '@spinner/shared-types';
 import { settingAppliesToTable, TableDiscoveryMode, X_SCRATCH_CONNECTOR_DATA_TYPE } from '@spinner/shared-types';
 import { AlertTriangleIcon, SearchIcon } from 'lucide-react';
@@ -508,7 +509,7 @@ export function ChooseTablesModal({
 
           const createDto = {
             tableId: table.id.remoteId,
-            workbookId,
+            workbookId: workbookId as WorkbookId,
             name: table.displayName,
             connectorAccountId: connectorAccount.id,
             filter,

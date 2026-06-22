@@ -35,6 +35,7 @@
     "build": "tsc",
     "dev": "tsc --watch --preserveWatchOutput",
     "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
     "lint-fix": "eslint \"src/**/*.ts\" --fix",
     "lint-strict": "eslint \"src/**/*.ts\" --max-warnings=0",

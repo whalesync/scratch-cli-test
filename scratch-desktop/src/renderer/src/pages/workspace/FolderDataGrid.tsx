@@ -87,6 +87,7 @@ type RowStatus =
   | 'invalidJson';
 
 interface DiffRow {
+  [key: string]: unknown;
   __rowStatus: RowStatus;
   __changedFields: string[];
   __fromFields: Record<string, unknown>;

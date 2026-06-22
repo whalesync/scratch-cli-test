@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "lint-strict": "eslint \"src/**/*.{js,jsx,ts,tsx}\" --max-warnings=0",
+    "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\" \"src/**/*.tsx\"",
     "prettier:check": "prettier --check \"src/**/*.ts\" \"src/**/*.tsx\"",
     "test": "jest",

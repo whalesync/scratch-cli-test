@@ -10,9 +10,8 @@
     "rootDir": ".",
     "strict": true,
     "skipLibCheck": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/renderer/src/*"]
+      "@/*": ["./src/renderer/src/*"]
     }
   },
   "include": ["src/renderer/src/**/*", "src/shared/**/*", "src/preload/*.d.ts"]

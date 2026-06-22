@@ -61,6 +61,14 @@ interface WorkbookSettings {
   validateEnabled?: boolean;
 }
 
+type CloudSyncProvider = 'icloud' | 'dropbox' | 'onedrive' | 'googledrive' | 'box' | 'cloudstorage-other';
+
+interface CloudSyncWarning {
+  provider: CloudSyncProvider;
+  providerLabel: string;
+  evidencePath: string;
+}
+
 interface ScratchPreferencesAPI {
   getCurrentWorkspaceId: () => Promise<string | null>;
   setCurrentWorkspaceId: (id: string | null) => Promise<void>;
@@ -69,7 +77,9 @@ interface ScratchPreferencesAPI {
 }
 
 interface ScratchDesktopAPI {
-  getWorkspacesRegistry: () => Promise<Array<{ id: string; path: string; fileCount: number }>>;
+  getWorkspacesRegistry: () => Promise<
+    Array<{ id: string; path: string; fileCount: number; cloudSyncWarning: CloudSyncWarning | null }>
+  >;
   createWorkspace: (name: string) => Promise<{ id: string; name: string }>;
   pickParentFolder: () => Promise<string | null>;
   initWorkspace: (
@@ -390,6 +400,7 @@ interface ScratchFilesAPI {
         __masterFields: Record<string, unknown>;
         __filename: string;
         __parseError?: string;
+        __raw: Record<string, unknown>;
       }
     >;
     columns: ColumnDefinition[];
@@ -437,6 +448,7 @@ interface ScratchFilesAPI {
       __masterFields: Record<string, unknown>;
       __filename: string;
       __parseError?: string;
+      __raw: Record<string, unknown>;
     };
     columns: ColumnDefinition[];
     workingData: Record<string, unknown> | null;
