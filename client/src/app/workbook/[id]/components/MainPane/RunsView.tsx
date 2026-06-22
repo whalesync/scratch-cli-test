@@ -579,7 +579,6 @@ function JobRow({
 }
 
 function ExpandedJobDetails({ job, isDevToolsEnabled }: { job: Job; isDevToolsEnabled: boolean }) {
-  const jobType = getJobType(job.type);
   const [rawData, setRawData] = useState<object | null>(null);
   const [rawLoading, setRawLoading] = useState(false);
   const [rawExpanded, setRawExpanded] = useState(false);
@@ -635,7 +634,7 @@ function ExpandedJobDetails({ job, isDevToolsEnabled }: { job: Job; isDevToolsEn
         )}
 
         {/* Progress details */}
-        {progress && <ProgressDetails jobType={jobType} progress={progress} />}
+        {progress && <ProgressDetails type={job.type} progress={progress} />}
 
         {/* Dev tools: Job ID */}
         {isDevToolsEnabled && job.bullJobId && (

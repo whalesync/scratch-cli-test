@@ -985,6 +985,11 @@ model RoutineRunStep {
   /// Lets a staged (plan-only) publish be located from run history. Null for other actions.
   pipelineId String?
 
+  /// Normalized headline result computed from the step's job `publicProgress` when it completes — a
+  /// concise `summary` plus flat `stats` counters (shape: RoutineRunStepResult in @spinner/shared-types).
+  /// Persisted so it survives the job aging out of retention. Null until the step finishes.
+  result Json?
+
   @@unique([runId, stepIndex])
   @@index([runId])
 }

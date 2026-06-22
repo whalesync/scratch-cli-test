@@ -1,5 +1,6 @@
 import { RoutineRunId, RoutineRunStepId, WorkbookId } from '../ids';
 import type { Job } from './job';
+import type { RoutineRunStepResult } from './job-result';
 import type { RoutineStepOptions } from './routine';
 
 ///
@@ -47,6 +48,14 @@ export interface RoutineRunStep {
   jobId: string | null;
   /** For publish-plan / publish steps: the PublishPlan pipeline created for this step. */
   pipelineId: string | null;
+  /**
+   * The step's normalized headline result — a concise `summary` ("Pulled 3 records across 2 folders")
+   * plus flat `stats` counters ("3 created, 0 updated"), computed server-side from the job's
+   * `publicProgress` when the step completes. Persisted so it survives the job aging out of retention;
+   * the richer per-folder/file breakdown is derived on demand from {@link RoutineRunStep.job}. Null
+   * until the step finishes, or for a step whose job produced no recognizable progress.
+   */
+  result: RoutineRunStepResult | null;
   /**
    * The step's job (pull / sync / publish) in the same `Job` wire shape the `/jobs` endpoints return
    * (`publicProgress`, `state`, timestamps). Server-derived, NOT a DB column — present only when the

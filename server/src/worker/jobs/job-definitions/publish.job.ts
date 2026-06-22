@@ -1,4 +1,4 @@
-import { type JobTrigger, JobType, type PublishFailedOperation, type WorkbookId } from '@spinner/shared-types';
+import { type JobTrigger, JobType, type PublishPublicProgress, type WorkbookId } from '@spinner/shared-types';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishDirtyDriftError, type PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
@@ -10,57 +10,10 @@ import type { JobDefinitionBuilder, JobHandlerBuilder, Progress } from '../base-
 
 // ── Public Progress (UI-facing) ──────────────────────────────────────
 
-export type PublishPublicProgress = {
-  status: 'planning' | 'running' | 'completed' | 'failed';
-  step?: string;
-  currentPhase?: string;
-  assetUploadsExecuted: number;
-  assetUploadsPlanned: number;
-  editsExecuted: number;
-  createsExecuted: number;
-  deletesExecuted: number;
-  backfillsExecuted: number;
-  renameFilesExecuted: number;
-  editsPlanned: number;
-  createsPlanned: number;
-  deletesPlanned: number;
-  backfillsPlanned: number;
-  renameFilesPlanned: number;
-  lastSyncError?: string;
-  errorCount: number;
-  /**
-   * DEV-10243: count of operations the destination connector rejected (rows
-   * marked `failed-batch` during the run). Set on the terminal `completed`
-   * checkpoint so the CLI/desktop can detect a per-row failure even though the
-   * BullMQ job itself still ends `completed`. Both consumers read it as
-   * `failedCount ?? 0`, so it stays optional and the other checkpoint literals
-   * don't need to set it.
-   */
-  failedCount?: number;
-  /**
-   * Bounded sample of the run's per-record connector rejections (rows left
-   * `failed-batch`), each carrying the connector's own user-facing message.
-   * Set on the terminal `completed` checkpoint alongside `failedCount` so the
-   * desktop/CLI can show *why* a record didn't publish (e.g. Pipedrive's
-   * "'person_id' is a read-only field…"), not just a count. Extends DEV-10243.
-   */
-  failedOperations?: PublishFailedOperation[];
-  /**
-   * DEV-10316 publish-time TOCTOU abort. Set (with `status: 'failed'`) when the
-   * connection's dirty HEAD drifted past the client's `expectedBaseDirtyHead`
-   * since upload, so the plan was aborted before building. The desktop modal
-   * reads this off the plan job's progress to route into its count-only `dirty`
-   * redirect (with the "server changed while you were reviewing" lead) instead
-   * of showing a generic failure.
-   */
-  blockedDirtyDrift?: { connectorAccountId: string; dirtyCount: number };
-  /**
-   * DEV-10436 (routines, self-planning publish): the resolved PublishPlan id, set on
-   * terminal (completed/failed) checkpoints so a routine step can record it on
-   * RoutineRunStep.pipelineId. Intermediate planning/running checkpoints omit it.
-   */
-  pipelineId?: string;
-};
+// `PublishPublicProgress` now lives in `@spinner/shared-types` so the web client, desktop app, and
+// CLI render it without a shadow copy. Re-exported here so existing `from '...publish.job'` importers
+// are unchanged.
+export type { PublishPublicProgress };
 
 // ── Job Definition ───────────────────────────────────────────────────
 

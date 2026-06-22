@@ -2,6 +2,8 @@ export * from './audit-log-event';
 export * from './connector-account';
 export * from './data-folder';
 export * from './job';
+export * from './job-progress';
+export * from './job-result';
 export * from './organization';
 export * from './routine';
 export * from './routine-run';

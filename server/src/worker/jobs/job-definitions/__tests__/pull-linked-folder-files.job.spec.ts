@@ -110,6 +110,7 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         createdCount: 0,
         updatedCount: 0,
         deletedCount: 0,
+        folders: [],
       },
       jobProgress: {},
       connectorProgress: {},

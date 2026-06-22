@@ -2,11 +2,14 @@
 
 import { SpinningIcon } from '@/app/components/Icons/SpinningIcon';
 import { Text12Regular } from '@/app/components/base/text';
-import { SyncDataFoldersPublicProgress } from '@/app/components/jobs/SyncStatus/SyncJobProgress';
-import { PullLinkedFolderFilesProgress } from '@/app/components/jobs/pull/PullJobProgress';
 import { useWorkbookActiveJobs } from '@/hooks/use-workbook-active-jobs';
 import { Box, Group, HoverCard, Stack } from '@mantine/core';
-import { DataFolder, JobType } from '@spinner/shared-types';
+import {
+  DataFolder,
+  JobType,
+  type PullLinkedFolderFilesPublicProgress,
+  type SyncDataFoldersPublicProgress,
+} from '@spinner/shared-types';
 import { RefreshCwIcon } from 'lucide-react';
 
 interface ActiveDataFolderJobIndicatorProps {
@@ -30,7 +33,7 @@ export function ActiveDataFolderJobIndicator({ folder }: ActiveDataFolderJobIndi
   );
 
   if (job.type === JobType.PullLinkedFolderFiles) {
-    const progress = job.publicProgress as PullLinkedFolderFilesProgress;
+    const progress = job.publicProgress as PullLinkedFolderFilesPublicProgress;
     // extract out the
     cardContent = (
       <Stack gap={8}>

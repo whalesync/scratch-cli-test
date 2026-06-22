@@ -4,9 +4,12 @@ import {
   createRoutineRunId,
   createRoutineRunStepId,
   DataFolderId,
+  deriveJobResult,
+  JobType,
   RoutineAction,
   RoutineRun,
   RoutineRunId,
+  RoutineRunStepResult,
   RoutineRunTrigger,
   RoutineStepOptions,
   SyncId,
@@ -48,7 +51,14 @@ const FALLBACK_STEP_TIMEOUT_SECONDS = 30 * 60;
 /** The outcome of running one step, used by the loop to decide whether to advance, fail, or stop. */
 type RoutineStepOutcome =
   // `summary` is the concise, user-facing result of this step, persisted to RoutineRun.resultSummary.
-  | { kind: 'completed'; pipelineId: string | null; warning: string | null; summary: string }
+  // `result` is the normalized headline (summary + stat counters) persisted to RoutineRunStep.result.
+  | {
+      kind: 'completed';
+      pipelineId: string | null;
+      warning: string | null;
+      summary: string;
+      result: RoutineRunStepResult;
+    }
   | { kind: 'failed'; error: string }
   | { kind: 'canceled' }
   // Another driver already owns this step (it won the per-step claim) but hasn't recorded a job id
@@ -273,7 +283,7 @@ export class RoutineExecutorService {
         return;
       }
 
-      await this.completeStep(step.id, outcome.pipelineId, outcome.warning);
+      await this.completeStep(step.id, outcome.pipelineId, outcome.warning, outcome.result);
       // Advance the cursor AND bump updatedAt — this is the driver's liveness signal for the reaper.
       // Overwrite resultSummary with this step's summary so a finished run reflects the LAST step run.
       await this.db.client.routineRun.updateMany({
@@ -502,7 +512,8 @@ export class RoutineExecutorService {
       // the run — the connector accepted the rest, the run continues, and the warning + pipelineId
       // let the user inspect what was rejected.
       const warning = failedCount > 0 ? `Completed with ${failedCount} record(s) rejected by the connector` : null;
-      return { kind: 'completed', pipelineId, warning, summary: this.summarizePublishSuccess(action, publicProgress) };
+      const result = this.deriveStepResult(action, publicProgress);
+      return { kind: 'completed', pipelineId, warning, summary: result.summary, result };
     }
 
     if (action === RoutineAction.SYNC) {
@@ -515,15 +526,53 @@ export class RoutineExecutorService {
       if (failedTables.length > 0) {
         return { kind: 'failed', error: this.summarizeSyncFailure(failedTables) };
       }
-      return { kind: 'completed', pipelineId: null, warning: null, summary: this.summarizeSyncSuccess(publicProgress) };
+      const result = this.deriveStepResult(action, publicProgress);
+      return { kind: 'completed', pipelineId: null, warning: null, summary: result.summary, result };
     }
 
     if (action === RoutineAction.PULL) {
       const publicProgress = this.readPullProgress(dbJob.progress);
-      return { kind: 'completed', pipelineId: null, warning: null, summary: this.summarizePullSuccess(publicProgress) };
+      const result = this.deriveStepResult(action, publicProgress);
+      return { kind: 'completed', pipelineId: null, warning: null, summary: result.summary, result };
     }
 
-    return { kind: 'completed', pipelineId: null, warning: null, summary: 'Step completed' };
+    return {
+      kind: 'completed',
+      pipelineId: null,
+      warning: null,
+      summary: 'Step completed',
+      result: { summary: 'Step completed', stats: [] },
+    };
+  }
+
+  /** Maps a routine action to the job-type string the shared {@link deriveJobResult} categorizes on. */
+  private jobTypeForAction(action: RoutineAction): string {
+    switch (action) {
+      case RoutineAction.PULL:
+        return JobType.PullLinkedFolderFiles;
+      case RoutineAction.SYNC:
+        return JobType.SyncDataFolders;
+      case RoutineAction.PUBLISH:
+      case RoutineAction.PUBLISH_PLAN:
+        return JobType.Publish;
+      default:
+        return action;
+    }
+  }
+
+  /**
+   * Builds the normalized, persisted headline ({@link RoutineRunStepResult}) for a completed step from
+   * its job's `publicProgress`, via the shared {@link deriveJobResult}. The same helper drives the
+   * frontends' rendering, so the persisted `summary` matches what the live job detail shows. A
+   * publish-plan reports planned counts; a publish reports executed counts (see `publishMode`).
+   */
+  private deriveStepResult(action: RoutineAction, publicProgress: unknown): RoutineRunStepResult {
+    const jobResult = deriveJobResult({
+      type: this.jobTypeForAction(action),
+      publicProgress,
+      publishMode: action === RoutineAction.PUBLISH_PLAN ? 'plan' : 'run',
+    });
+    return { summary: jobResult.summary, stats: jobResult.stats };
   }
 
   /** Safely reads `progress.publicProgress` (a JSON column) as a PublishPublicProgress, without `as any`. */
@@ -548,71 +597,6 @@ export class RoutineExecutorService {
       return (progress as { publicProgress?: PullLinkedFolderFilesPublicProgress }).publicProgress;
     }
     return undefined;
-  }
-
-  /**
-   * A concise, user-facing summary of a successful pull step (records changed across all folders).
-   * Counts are coalesced because `progress` is a JSON column that may be partial on an old/odd record.
-   */
-  private summarizePullSuccess(progress: PullLinkedFolderFilesPublicProgress | undefined): string {
-    if (!progress) {
-      return 'Pull completed';
-    }
-    const folderCount = progress.folderCount ?? 0;
-    const changedRecordCount =
-      (progress.createdCount ?? 0) + (progress.updatedCount ?? 0) + (progress.deletedCount ?? 0);
-    if (changedRecordCount === 0) {
-      return `Pulled ${this.pluralize(folderCount, 'folder')} — no changes`;
-    }
-    return `Pulled ${this.pluralize(changedRecordCount, 'record')} across ${this.pluralize(folderCount, 'folder')}`;
-  }
-
-  /** A concise, user-facing summary of a successful sync step (records written across all tables). */
-  private summarizeSyncSuccess(progress: SyncDataFoldersPublicProgress | undefined): string {
-    if (!progress) {
-      return 'Sync completed';
-    }
-    const tableCount = (progress.tables ?? []).length;
-    const totalRecordsSynced = progress.totalFilesSynced ?? 0;
-    if (totalRecordsSynced === 0) {
-      return `Synced ${this.pluralize(tableCount, 'table')} — no changes`;
-    }
-    return `Synced ${this.pluralize(totalRecordsSynced, 'record')} across ${this.pluralize(tableCount, 'table')}`;
-  }
-
-  /**
-   * A concise, user-facing summary of a successful publish / publish-plan step. A publish-plan stages
-   * a plan without shipping (executed counts are 0), so it reports the PLANNED change count; a publish
-   * reports the EXECUTED change count, noting any per-record rejections. Counts are coalesced because
-   * `progress` is a JSON column that may be partial on an old/odd record.
-   */
-  private summarizePublishSuccess(action: RoutineAction, progress: PublishPublicProgress | undefined): string {
-    if (action === RoutineAction.PUBLISH_PLAN) {
-      if (!progress) {
-        return 'Publish plan staged';
-      }
-      const plannedChangeCount =
-        (progress.createsPlanned ?? 0) + (progress.editsPlanned ?? 0) + (progress.deletesPlanned ?? 0);
-      return plannedChangeCount === 0
-        ? 'Staged a publish plan — no changes'
-        : `Staged a publish plan (${this.pluralize(plannedChangeCount, 'change')})`;
-    }
-
-    if (!progress) {
-      return 'Publish completed';
-    }
-    const executedChangeCount =
-      (progress.createsExecuted ?? 0) + (progress.editsExecuted ?? 0) + (progress.deletesExecuted ?? 0);
-    const rejectedSuffix = (progress.failedCount ?? 0) > 0 ? ` (${progress.failedCount} rejected)` : '';
-    if (executedChangeCount === 0 && rejectedSuffix === '') {
-      return 'Published — no changes';
-    }
-    return `Published ${this.pluralize(executedChangeCount, 'change')}${rejectedSuffix}`;
-  }
-
-  /** Formats a count with its singular/plural noun, e.g. `1 folder`, `3 folders`. */
-  private pluralize(count: number, noun: string): string {
-    return `${count} ${noun}${count === 1 ? '' : 's'}`;
   }
 
   /** A concise, bounded summary naming the failed table(s) and their first error for the run page. */
@@ -660,11 +644,24 @@ export class RoutineExecutorService {
     });
   }
 
-  private async completeStep(stepId: string, pipelineId: string | null, warning: string | null): Promise<void> {
+  private async completeStep(
+    stepId: string,
+    pipelineId: string | null,
+    warning: string | null,
+    result: RoutineRunStepResult,
+  ): Promise<void> {
     await this.db.client.routineRunStep.update({
       where: { id: stepId },
       // A completed step with a non-null `error` is the "completed with warnings" signal for the UI.
-      data: { status: 'completed', pipelineId, error: warning, finishedAt: new Date() },
+      data: {
+        status: 'completed',
+        pipelineId,
+        error: warning,
+        // RoutineRunStepResult is a plain JSON-safe object but lacks an index signature, so TS won't
+        // narrow it directly to Prisma's InputJsonValue — round-trip through `unknown`.
+        result: result as unknown as Prisma.InputJsonValue,
+        finishedAt: new Date(),
+      },
     });
   }
 

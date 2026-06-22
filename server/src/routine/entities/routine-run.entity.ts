@@ -6,6 +6,7 @@ import {
   RoutineRunStatus,
   RoutineRunStep,
   RoutineRunStepId,
+  RoutineRunStepResult,
   RoutineRunStepStatus,
   RoutineRunSummary,
   RoutineRunTrigger,
@@ -67,6 +68,7 @@ export const RoutineRunEntity = {
       error: step.error,
       jobId: step.jobId,
       pipelineId: step.pipelineId,
+      result: (step.result as RoutineRunStepResult | null) ?? null,
       ...(jobsByBullJobId ? { job: step.jobId ? (jobsByBullJobId.get(step.jobId) ?? null) : null } : {}),
     };
   },

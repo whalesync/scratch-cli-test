@@ -1,5 +1,12 @@
 import type { PrismaClient } from '@prisma/client';
-import type { DataFolderId, RoutineRunId, SyncId, WorkbookId } from '@spinner/shared-types';
+import type {
+  DataFolderId,
+  RoutineRunId,
+  SyncDataFoldersPublicProgress,
+  SyncId,
+  SyncTableProgress,
+  WorkbookId,
+} from '@spinner/shared-types';
 import { type JobTrigger, JobType, RunId, TransformerTypes, transformV1ToV2 } from '@spinner/shared-types';
 import { createHash } from 'crypto';
 import { AuditLogService } from 'src/audit/audit-log.service';
@@ -28,26 +35,10 @@ const MAX_PROGRESS_ERRORS = 100;
 /** Maximum number of warnings to track per category in progress */
 const MAX_PROGRESS_WARNINGS = 100;
 
-export type SyncDataFoldersPublicProgress = {
-  totalFilesSynced: number;
-  tables: {
-    id: string;
-    name: string;
-    connector: string;
-    creates: number;
-    updates: number;
-    deletes: number;
-    skipped: number;
-    createdPaths: string[];
-    updatedPaths: string[];
-    deletedPaths: string[];
-    errorCount: number;
-    errors: Array<{ sourceRemoteId: string; error: string }>;
-    warningCount: number;
-    warnings: Array<{ sourceRemoteId: string; warning: string }>;
-    status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  }[];
-};
+// `SyncDataFoldersPublicProgress` (and its per-table `SyncTableProgress`) now live in
+// `@spinner/shared-types` so the web client, desktop app, and CLI render it without a shadow copy.
+// Re-exported here so the existing `from '...sync-data-folders.job'` importers are unchanged.
+export type { SyncDataFoldersPublicProgress, SyncTableProgress };
 
 export type SyncDataFoldersJobDefinition = JobDefinitionBuilder<
   typeof JobType.SyncDataFolders,

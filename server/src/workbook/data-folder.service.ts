@@ -425,6 +425,7 @@ export class DataFolderService {
             createdCount: 0,
             updatedCount: 0,
             deletedCount: 0,
+            folders: [],
           },
           runContext,
         );

@@ -2,7 +2,7 @@
 
 import { StyledLucideIcon } from '@/app/components/Icons/StyledLucideIcon';
 import { Text12Medium, Text12Regular, TextMono12Regular } from '@/app/components/base/text';
-import { JobProgressDetail } from '@/app/components/jobs/JobProgressDetail';
+import { JobProgressDetail, JobStatLine } from '@/app/components/jobs/JobProgressDetail';
 import { useDevTools } from '@/hooks/use-dev-tools';
 import { useRoutineRun, useRoutineRuns } from '@/hooks/use-routine-runs';
 import { scratchApiClient } from '@/lib/api/scratch-api-client';
@@ -203,6 +203,9 @@ function RoutineStepRow({ step }: { step: RoutineRunStep }) {
   const target = step.sync ?? folderTarget ?? step.connection ?? 'all';
   // A completed step with a non-null `error` is a "completed with warnings" (e.g. publish rejections).
   const isWarning = step.status === 'completed' && !!step.error;
+  // The step's own headline result ("Pulled 3 records across 2 folders"), computed server-side. Falls
+  // back to the target (folder/sync/connection) when the step hasn't produced a result yet.
+  const stepSummary = step.result?.summary || target;
 
   return (
     <Box>
@@ -230,7 +233,7 @@ function RoutineStepRow({ step }: { step: RoutineRunStep }) {
           {step.displayName ?? step.action}
         </Text12Medium>
         <Text12Regular c="dimmed" truncate style={{ flex: 1 }}>
-          {target}
+          {stepSummary}
           {step.error ? ` — ${step.error}` : ''}
         </Text12Regular>
       </Group>
@@ -280,6 +283,13 @@ function RoutineStepDetail({ step }: { step: RoutineRunStep }) {
             </Group>
           ))}
         </Stack>
+      )}
+      {/* Persisted headline counters ("3 Created · 0 Updated …"). Survive the job aging out of
+          retention, so they show even when the live job detail below is gone. */}
+      {step.result && step.result.stats.length > 0 && (
+        <Box px="lg" py={6}>
+          <JobStatLine stats={step.result.stats} />
+        </Box>
       )}
       {step.job ? (
         <JobProgressDetail job={step.job} />

@@ -2,10 +2,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   DataFolderId,
   type DataFolderOptions,
-  type FolderError,
   isGenericApiConnectorExtras,
   type JobTrigger,
   JobType,
+  type PullFolderProgress,
+  type PullLinkedFolderFilesPublicProgress,
   type WorkbookId,
 } from '@spinner/shared-types';
 import type { ExperimentsService } from '../../../experiments/experiments.service';
@@ -37,34 +38,10 @@ import { WSLogger } from '../../../logger';
 import { WorkbookEventService } from '../../../workbook/workbook-event.service';
 import { buildGitFilesFromConnectorFiles, type BuiltFile } from './connector-file-utils';
 
-export type PullLinkedFolderFilesPublicProgress = {
-  totalFiles: number;
-  folderCount: number;
-  connectionName: string;
-  folderId: string;
-  folderName: string;
-  connector: string;
-  filter: string | null;
-  status: 'pending' | 'active' | 'completed' | 'failed';
-  /**
-   * Effective pull mode for the current folder. Set when a folder's resolution
-   * finishes in Phase 1 and updated per-folder as Phase 2 advances. Incremental
-   * requests can demote to full per-folder (capability check, bootstrap), so
-   * this can differ from the job's requested mode.
-   */
-  mode?: 'full' | 'incremental';
-  /** All folder IDs being pulled (multi-folder jobs). */
-  dataFolderIds?: string[];
-  createdPaths: string[];
-  updatedPaths: string[];
-  deletedPaths: string[];
-  /** Actual counts (not capped like path arrays) for accurate analytics. */
-  createdCount: number;
-  updatedCount: number;
-  deletedCount: number;
-  /** Per-folder errors keyed by folderId. Populated when a folder fails in Phase 1 or Phase 2. */
-  folderErrors?: Record<string, FolderError>;
-};
+// `PullLinkedFolderFilesPublicProgress` (and its per-folder `PullFolderProgress`) now live in
+// `@spinner/shared-types` so the web client, desktop app, and CLI render it without a shadow copy.
+// Re-exported here so the many existing `from '...pull-linked-folder-files.job'` importers are unchanged.
+export type { PullFolderProgress, PullLinkedFolderFilesPublicProgress };
 
 export type PullLinkedFolderFilesJobDefinition = JobDefinitionBuilder<
   typeof JobType.PullLinkedFolderFiles,
@@ -328,7 +305,32 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       createdCount: 0,
       updatedCount: 0,
       deletedCount: 0,
+      folders: [],
     };
+
+    // Per-folder breakdown — one entry per target folder, parallel to the sync job's `tables`. Seeded
+    // for EVERY folder (including any that failed to load) so the UI shows a row per folder; each
+    // entry's counts/status are filled in as the folder is fetched (Phase 1) and processed (Phase 2).
+    publicProgress.folders = data.dataFolderIds.map((dataFolderId): PullFolderProgress => {
+      const folderRow = folders.find((folder) => folder.id === dataFolderId);
+      return {
+        id: dataFolderId,
+        name: folderRow?.name ?? dataFolderId,
+        connector: folderRow?.connectorService ?? connectorService,
+        creates: 0,
+        updates: 0,
+        deletes: 0,
+        totalFiles: 0,
+        createdPaths: [],
+        updatedPaths: [],
+        deletedPaths: [],
+        status: 'pending',
+      };
+    });
+    for (const failedFolderId of failedFolderIds) {
+      const entry = publicProgress.folders.find((folder) => folder.id === failedFolderId);
+      if (entry) entry.status = 'failed';
+    }
 
     const pullStats = { created: 0, updated: 0, deleted: 0, failed: pullFailed };
 
@@ -731,6 +733,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           details: phase1ErrorDetails.description,
         };
 
+        const failedFolderEntry = findFolderProgress(publicProgress, folderId);
+        if (failedFolderEntry) {
+          failedFolderEntry.status = 'failed';
+          failedFolderEntry.error = publicProgress.folderErrors[folderId];
+        }
+
         // Clear the lock so the folder can be re-pulled
         await this.prisma.dataFolder.update({
           where: { id: folderId },
@@ -825,6 +833,22 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
         }
 
         publicProgress.status = 'completed';
+
+        // Record this folder's own counts/paths in its per-folder breakdown entry (parallel to the
+        // run-wide aggregate updated just above), so the UI can break results down by folder.
+        const folderEntry = findFolderProgress(publicProgress, folderCtx.dataFolder.id);
+        if (folderEntry) {
+          folderEntry.creates = result.created;
+          folderEntry.updates = result.updated;
+          folderEntry.deletes = result.deleted;
+          folderEntry.totalFiles = fetchResult.fileCount;
+          folderEntry.createdPaths = result.createdPaths.slice(0, MAX_PROGRESS_PATHS);
+          folderEntry.updatedPaths = result.updatedPaths.slice(0, MAX_PROGRESS_PATHS);
+          folderEntry.deletedPaths = result.deletedPaths.slice(0, MAX_PROGRESS_PATHS);
+          folderEntry.mode = folderCtx.effectiveMode;
+          folderEntry.status = 'completed';
+        }
+
         jobProgress.completedFolderIds = jobProgress.completedFolderIds ?? [];
         jobProgress.completedFolderIds.push(folderCtx.dataFolder.id);
         await checkpoint({ publicProgress, jobProgress, connectorProgress: {} });
@@ -850,6 +874,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           message: phase2ErrorDetails.userFriendlyMessage,
           details: phase2ErrorDetails.description,
         };
+
+        const failedFolderEntry = findFolderProgress(publicProgress, folderCtx.dataFolder.id);
+        if (failedFolderEntry) {
+          failedFolderEntry.status = 'failed';
+          failedFolderEntry.error = publicProgress.folderErrors[folderCtx.dataFolder.id];
+        }
 
         await this.prisma.dataFolder.update({
           where: { id: folderCtx.dataFolder.id },
@@ -1360,6 +1390,14 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Finds the seeded per-folder progress entry for a folder id (always present — seeded in `run()`). */
+function findFolderProgress(
+  publicProgress: PullLinkedFolderFilesPublicProgress,
+  folderId: string,
+): PullFolderProgress | undefined {
+  return publicProgress.folders.find((folder) => folder.id === folderId);
+}
 
 /**
  * Derive max parallel folder fetches from the connector's rate limiter spec.
