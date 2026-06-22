@@ -140,6 +140,14 @@ fn invalid_length_params() -> Option<ValidationResult> {
 /// a changed value emits a Warning. This is the create-only counterpart to
 /// read-only. Both are advisory — the push code drops the rejected values.
 ///
+/// Both the readonly and write-once checks recurse into nested object `properties`
+/// (e.g. `location.lat`), matching the desktop grid which locks nested cells
+/// (DEV-10437). Scope: only DIRECT object `properties` are walked. Fast-follows
+/// tracked separately: `anyOf`/`oneOf` nullable-object members (DEV-10494), array
+/// `items`/`$ref` (no static name to annotate), literal-dot key disambiguation
+/// (DEV-10495), and severity precedence vs JSONSchema errors at the same dot-path
+/// (DEV-10493). All are latent until a connector annotates a nested subfield.
+///
 /// Returns one `RecordValidationResult` per violated field. Clean records return an
 /// empty Vec — no rows are written to the DB.
 pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResult> {
@@ -276,50 +284,71 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
         }
     }
 
+    // ── Collect every annotated-or-not property at every depth ────────────────
+    // The readonly and write-once checks below enforce their `x-scratch-*`
+    // annotations on nested object subfields (e.g. `location.lat`), not only on
+    // top-level fields — matching the desktop grid, which locks nested
+    // write-once/readonly cells. We walk `properties` once into a flat list of
+    // (path segments, property node) and reuse it for both checks. Path *segments*
+    // are carried (not a pre-joined string) so value navigation uses the exact
+    // keys; we join with '.' only for the display/`field_path`. See the
+    // `enforce_schema` doc comment for the deferred-scope tickets (DEV-10493/4/5).
+    let collected_properties: Vec<(Vec<String>, &serde_json::Value)> = {
+        let mut out = Vec::new();
+        if let Some(properties) = schema_obj.get("properties").and_then(|v| v.as_object()) {
+            collect_schema_properties(
+                properties,
+                &[],
+                MAX_SCHEMA_PROPERTY_RECURSION_DEPTH,
+                &mut out,
+            );
+        }
+        out
+    };
+
     // ── Readonly check ────────────────────────────────────────────────────────
-    if let Some(properties) = schema_obj.get("properties").and_then(|v| v.as_object()) {
-        for (field_name, props) in properties {
-            if props.get("x-scratch-readonly").and_then(|v| v.as_bool()) != Some(true) {
-                continue;
-            }
-            let working = ctx.record.get(field_name.as_str());
-            match &ctx.master_record {
-                Some(master) => {
-                    // Existing record: warn if the value differs from master.
-                    let master_val = master.get(field_name.as_str());
-                    if working != master_val {
-                        results.push(RecordValidationResult {
-                            field_path: field_name.clone(),
-                            level: ValidationLevel::Warning,
-                            message: Some("Updated read-only field".to_string()),
-                            description: Some(format!(
-                                "Field {} changed from {} to {}. The new value may cause an error when publishing.",
-                                field_name,
-                                format_validation_value(master_val),
-                                format_validation_value(working)
-                            )),
-                            fixable: false,
-                        });
-                    }
+    for (path, props) in &collected_properties {
+        if props.get("x-scratch-readonly").and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        let field_path = path.join(".");
+        let working = get_by_segments(&ctx.record, path);
+        match &ctx.master_record {
+            Some(master) => {
+                // Existing record: warn if the value differs from master.
+                let master_val = get_by_segments(master, path);
+                if working != master_val {
+                    results.push(RecordValidationResult {
+                        field_path: field_path.clone(),
+                        level: ValidationLevel::Warning,
+                        message: Some("Updated read-only field".to_string()),
+                        description: Some(format!(
+                            "Field {} changed from {} to {}. The new value may cause an error when publishing.",
+                            field_path,
+                            format_validation_value(master_val),
+                            format_validation_value(working)
+                        )),
+                        fixable: false,
+                    });
                 }
-                None => {
-                    // New record: warn if a readonly field has been set (remote assigns it).
-                    let is_set = match working {
-                        None | Some(serde_json::Value::Null) => false,
-                        _ => true,
-                    };
-                    if is_set {
-                        results.push(RecordValidationResult {
-                            field_path: field_name.clone(),
-                            level: ValidationLevel::Warning,
-                            message: Some("Updated read-only field".to_string()),
-                            description: Some(format!(
-                                "Field {} is read-only and will be ignored during publishing.",
-                                field_name,
-                            )),
-                            fixable: false,
-                        });
-                    }
+            }
+            None => {
+                // New record: warn if a readonly field has been set (remote assigns it).
+                let is_set = match working {
+                    None | Some(serde_json::Value::Null) => false,
+                    _ => true,
+                };
+                if is_set {
+                    results.push(RecordValidationResult {
+                        field_path: field_path.clone(),
+                        level: ValidationLevel::Warning,
+                        message: Some("Updated read-only field".to_string()),
+                        description: Some(format!(
+                            "Field {} is read-only and will be ignored during publishing.",
+                            field_path,
+                        )),
+                        fixable: false,
+                    });
                 }
             }
         }
@@ -331,32 +360,31 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
     // change once the record exists remotely. So, unlike read-only, setting it on
     // a new record is expected and clean; we only warn when an EXISTING record's
     // value differs from master. See X_SCRATCH_WRITE_ONCE in @spinner/shared-types.
-    if let Some(properties) = schema_obj.get("properties").and_then(|v| v.as_object()) {
-        for (field_name, props) in properties {
-            if props.get("x-scratch-write-once").and_then(|v| v.as_bool()) != Some(true) {
-                continue;
-            }
-            // On a new record (no master) write-once fields are editable — skip.
-            let master = match &ctx.master_record {
-                Some(master) => master,
-                None => continue,
-            };
-            let working = ctx.record.get(field_name.as_str());
-            let master_val = master.get(field_name.as_str());
-            if working != master_val {
-                results.push(RecordValidationResult {
-                    field_path: field_name.clone(),
-                    level: ValidationLevel::Warning,
-                    message: Some("Updated write-once field".to_string()),
-                    description: Some(format!(
-                        "Field {} is write-once (set on create only). The change from {} to {} will be ignored during publishing.",
-                        field_name,
-                        format_validation_value(master_val),
-                        format_validation_value(working)
-                    )),
-                    fixable: false,
-                });
-            }
+    for (path, props) in &collected_properties {
+        if props.get("x-scratch-write-once").and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        // On a new record (no master) write-once fields are editable — skip.
+        let master = match &ctx.master_record {
+            Some(master) => master,
+            None => continue,
+        };
+        let field_path = path.join(".");
+        let working = get_by_segments(&ctx.record, path);
+        let master_val = get_by_segments(master, path);
+        if working != master_val {
+            results.push(RecordValidationResult {
+                field_path: field_path.clone(),
+                level: ValidationLevel::Warning,
+                message: Some("Updated write-once field".to_string()),
+                description: Some(format!(
+                    "Field {} is write-once (set on create only). The change from {} to {} will be ignored during publishing.",
+                    field_path,
+                    format_validation_value(master_val),
+                    format_validation_value(working)
+                )),
+                fixable: false,
+            });
         }
     }
 
@@ -406,6 +434,54 @@ fn schema_property_permits_null(node: &serde_json::Value) -> bool {
         }
     }
     false
+}
+
+/// Maximum depth `collect_schema_properties` descends through nested object
+/// `properties`. Connector-generated schemas are shallow, acyclic trees (no
+/// `$ref`), so this never fires in practice — it only bounds a pathological or
+/// hand-authored schema so the recursion always terminates.
+const MAX_SCHEMA_PROPERTY_RECURSION_DEPTH: usize = 32;
+
+/// Walks a JSON-Schema `properties` map and collects every property node at every
+/// depth, paired with its path segments from the schema root. Descends into a
+/// node's DIRECT object `properties` only — `anyOf`/`oneOf` nullable-object members
+/// are not yet walked (DEV-10494), and array `items` / `$ref` have no static
+/// property name to annotate. Yields the parent object node too, preserving the
+/// pre-existing behaviour where a top-level object can itself be annotated.
+///
+/// Path *segments* are carried (a `Vec<String>`), not a pre-joined dotted string,
+/// so callers navigate values by the exact keys and only join for display.
+fn collect_schema_properties<'a>(
+    properties: &'a serde_json::Map<String, serde_json::Value>,
+    prefix: &[String],
+    depth_budget: usize,
+    out: &mut Vec<(Vec<String>, &'a serde_json::Value)>,
+) {
+    for (field_name, node) in properties {
+        let mut path = prefix.to_vec();
+        path.push(field_name.clone());
+        out.push((path.clone(), node));
+        if depth_budget > 0 {
+            if let Some(child) = node.get("properties").and_then(|v| v.as_object()) {
+                collect_schema_properties(child, &path, depth_budget - 1, out);
+            }
+        }
+    }
+}
+
+/// Follows `path` segment-by-segment through nested JSON objects. Returns `None`
+/// if any intermediate segment is absent or not an object — mirroring a
+/// `record.get(name)` miss for a top-level field. An empty path returns the value
+/// itself (unused in practice; collected paths always have at least one segment).
+fn get_by_segments<'a>(
+    value: &'a serde_json::Value,
+    path: &[String],
+) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(segment.as_str())?;
+    }
+    Some(current)
 }
 
 #[cfg(test)]
@@ -953,6 +1029,204 @@ mod tests {
         let ctx = record_ctx(json!({"parent_object": "companies"}), None, schema);
         let results = enforce_schema(&ctx);
         assert!(results.is_empty());
+    }
+
+    // ── nested write-once / readonly recursion (DEV-10437) ────────────────────
+
+    /// Top-level `location` object whose `lat` subfield is write-once.
+    fn schema_nested_write_once_lat() -> serde_json::Value {
+        json!({ "schema": { "properties": {
+            "location": { "type": "object", "properties": {
+                "address": { "type": "string" },
+                "lat": { "type": "number", "x-scratch-write-once": true }
+            }}
+        }}})
+    }
+
+    /// Top-level `location` object whose `lat` subfield is read-only.
+    fn schema_nested_readonly_lat() -> serde_json::Value {
+        json!({ "schema": { "properties": {
+            "location": { "type": "object", "properties": {
+                "lat": { "type": "number", "x-scratch-readonly": true }
+            }}
+        }}})
+    }
+
+    #[test]
+    fn nested_write_once_changed_on_existing_is_warning() {
+        // Changing a nested write-once subfield on an existing record warns, with
+        // the full dot-path. This is the core DEV-10437 fix.
+        let ctx = record_ctx(
+            json!({ "location": { "lat": 2 } }),
+            Some(json!({ "location": { "lat": 1 } })),
+            schema_nested_write_once_lat(),
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "location.lat");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("Updated write-once field")
+        );
+    }
+
+    #[test]
+    fn nested_write_once_unchanged_on_existing_is_clean() {
+        let ctx = record_ctx(
+            json!({ "location": { "lat": 1 } }),
+            Some(json!({ "location": { "lat": 1 } })),
+            schema_nested_write_once_lat(),
+        );
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn nested_write_once_set_on_new_record_is_clean() {
+        // New record (no master): setting a nested write-once value is how it's
+        // meant to be used — no warning.
+        let ctx = record_ctx(
+            json!({ "location": { "lat": 1 } }),
+            None,
+            schema_nested_write_once_lat(),
+        );
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn nested_readonly_changed_on_existing_is_warning() {
+        let ctx = record_ctx(
+            json!({ "location": { "lat": 2 } }),
+            Some(json!({ "location": { "lat": 1 } })),
+            schema_nested_readonly_lat(),
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "location.lat");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+        assert_eq!(
+            results[0].message.as_deref(),
+            Some("Updated read-only field")
+        );
+    }
+
+    #[test]
+    fn nested_readonly_set_on_new_record_is_warning() {
+        let ctx = record_ctx(
+            json!({ "location": { "lat": 5 } }),
+            None,
+            schema_nested_readonly_lat(),
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "location.lat");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+    }
+
+    #[test]
+    fn deeply_nested_write_once_changed_is_warning() {
+        // Two levels deep (`a.b.c`) proves true recursion, not one-level special-casing.
+        let schema = json!({ "schema": { "properties": {
+            "a": { "type": "object", "properties": {
+                "b": { "type": "object", "properties": {
+                    "c": { "type": "string", "x-scratch-write-once": true }
+                }}
+            }}
+        }}});
+        let ctx = record_ctx(
+            json!({ "a": { "b": { "c": "new" } } }),
+            Some(json!({ "a": { "b": { "c": "old" } } })),
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "a.b.c");
+        assert_eq!(results[0].level, ValidationLevel::Warning);
+    }
+
+    #[test]
+    fn nested_change_does_not_flag_unannotated_sibling_or_parent() {
+        // Only the annotated leaf warns; the unannotated `address` sibling and the
+        // unannotated `location` parent (both also changed) stay clean.
+        let ctx = record_ctx(
+            json!({ "location": { "address": "B St", "lat": 2 } }),
+            Some(json!({ "location": { "address": "A St", "lat": 1 } })),
+            schema_nested_write_once_lat(),
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "location.lat");
+    }
+
+    #[test]
+    fn write_once_inside_array_items_is_not_enforced() {
+        // Scope boundary: array `items` are NOT walked (no element-index path), so
+        // a write-once annotation on an array element subfield produces no warning.
+        // Locks the boundary so adding array support later is a deliberate change.
+        let schema = json!({ "schema": { "properties": {
+            "tags": { "type": "array", "items": { "type": "object", "properties": {
+                "id": { "type": "string", "x-scratch-write-once": true }
+            }}}
+        }}});
+        let ctx = record_ctx(
+            json!({ "tags": [{ "id": "new" }] }),
+            Some(json!({ "tags": [{ "id": "old" }] })),
+            schema,
+        );
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn write_once_inside_nullable_anyof_object_is_not_enforced_yet() {
+        // Scope boundary (DEV-10494): subfields inside an `anyOf`/`oneOf`
+        // nullable-object union are not yet walked, even though the desktop grid
+        // DOES lock them. Locks the current boundary so closing it later is a
+        // deliberate, tested change.
+        let schema = json!({ "schema": { "properties": {
+            "seo": { "anyOf": [
+                { "type": "object", "properties": {
+                    "title": { "type": "string", "x-scratch-write-once": true }
+                }},
+                { "type": "null" }
+            ]}
+        }}});
+        let ctx = record_ctx(
+            json!({ "seo": { "title": "new" } }),
+            Some(json!({ "seo": { "title": "old" } })),
+            schema,
+        );
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn collect_schema_properties_yields_parent_and_nested_paths() {
+        let props = json!({
+            "top": { "type": "string" },
+            "location": { "type": "object", "properties": {
+                "lat": { "type": "number" }
+            }}
+        });
+        let map = props.as_object().unwrap();
+        let mut out = Vec::new();
+        collect_schema_properties(map, &[], MAX_SCHEMA_PROPERTY_RECURSION_DEPTH, &mut out);
+        let paths: std::collections::HashSet<String> =
+            out.iter().map(|(segs, _)| segs.join(".")).collect();
+        assert!(paths.contains("top"), "expected top-level leaf");
+        assert!(paths.contains("location"), "expected parent object node");
+        assert!(paths.contains("location.lat"), "expected nested leaf");
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn get_by_segments_navigates_and_misses() {
+        let v = json!({ "a": { "b": 7 }, "scalar": 1 });
+        assert_eq!(
+            get_by_segments(&v, &["a".into(), "b".into()]),
+            Some(&json!(7))
+        );
+        // Missing intermediate key, and descending through a scalar, both miss.
+        assert_eq!(get_by_segments(&v, &["a".into(), "missing".into()]), None);
+        assert_eq!(get_by_segments(&v, &["scalar".into(), "b".into()]), None);
     }
 
     #[test]
