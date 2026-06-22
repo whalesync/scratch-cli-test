@@ -25,6 +25,7 @@ interface FakeRun {
   startedAt: Date | null;
   finishedAt: Date | null;
   error: string | null;
+  resultSummary: string | null;
   routineFilePath: string;
   routineName: string;
 }
@@ -206,6 +207,7 @@ describe('RoutineExecutorService.execute', () => {
       startedAt: null,
       finishedAt: null,
       error: null,
+      resultSummary: null,
       routineFilePath: 'routines/daily.yaml',
       routineName: 'Daily',
       ...overrides,
@@ -231,7 +233,15 @@ describe('RoutineExecutorService.execute', () => {
           ? dbJobResult({
               status: 'completed',
               error: null,
-              progress: { publicProgress: { pipelineId: 'pln_1', failedCount: 0 } },
+              progress: {
+                publicProgress: {
+                  pipelineId: 'pln_1',
+                  failedCount: 0,
+                  createsExecuted: 0,
+                  editsExecuted: 5,
+                  deletesExecuted: 0,
+                },
+              },
             })
           : dbJobResult({ status: 'completed', error: null, progress: null }),
       ),
@@ -246,6 +256,8 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[0].status).toBe('completed');
     expect(steps[1].status).toBe('completed');
     expect(steps[1].pipelineId).toBe('pln_1');
+    // resultSummary reflects the LAST step that ran (publish overwrote the pull's summary).
+    expect(run.resultSummary).toBe('Published 5 changes');
     // Every step job is tagged with trigger 'routine' + the RoutineRunId; routine pulls default to
     // incremental (this step has no fullPull flag).
     expect(enqueuePull).toHaveBeenCalledWith(
@@ -376,6 +388,9 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[1].error).toBe('sync blew up');
     expect(steps[2].status).toBe('skipped');
     expect(run.status).toBe('failed');
+    // The deprecated `error` keeps the prefixed message; `resultSummary` holds the clean step error.
+    expect(run.error).toBe('Step 1 (sync) failed: sync blew up');
+    expect(run.resultSummary).toBe('sync blew up');
     expect(bullEnqueuer.enqueueSelfPlanningPublishJob).not.toHaveBeenCalled();
   });
 
@@ -404,6 +419,8 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[0].status).toBe('failed');
     expect(steps[0].error).toMatch(/timed out/i);
     expect(run.status).toBe('failed');
+    // A timeout flows through the same failure path, so resultSummary gets the clean timeout message.
+    expect(run.resultSummary).toMatch(/timed out/i);
   });
 
   it('completes a publish step WITH a warning (not a failure) when records were rejected', async () => {
@@ -423,9 +440,21 @@ describe('RoutineExecutorService.execute', () => {
           ? dbJobResult({
               status: 'completed',
               error: null,
-              progress: { publicProgress: { pipelineId: 'pln_9', failedCount: 3 } },
+              progress: {
+                publicProgress: {
+                  pipelineId: 'pln_9',
+                  failedCount: 3,
+                  createsExecuted: 0,
+                  editsExecuted: 7,
+                  deletesExecuted: 0,
+                },
+              },
             })
-          : dbJobResult({ status: 'completed', error: null, progress: null }),
+          : dbJobResult({
+              status: 'completed',
+              error: null,
+              progress: { publicProgress: { folderCount: 1, createdCount: 0, updatedCount: 0, deletedCount: 0 } },
+            }),
       ),
       cancelJob: jest.fn(),
     };
@@ -436,9 +465,113 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[0].status).toBe('completed');
     expect(steps[0].pipelineId).toBe('pln_9');
     expect(steps[0].error).toMatch(/3 record\(s\) rejected/);
-    // The run keeps going and completes.
+    // The run keeps going and completes; the pull step (last to run) sets the final resultSummary.
     expect(steps[1].status).toBe('completed');
     expect(run.status).toBe('completed');
+    expect(run.resultSummary).toBe('Pulled 1 folder — no changes');
+  });
+
+  it('records a publish resultSummary that notes records rejected by the connector', async () => {
+    // A single publish step so the publish summary is the run's final resultSummary.
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PUBLISH, { folder: '/blog/posts' })];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueueSelfPlanningPublishJob: jest.fn().mockResolvedValue({ id: 'publish-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress: {
+            publicProgress: {
+              pipelineId: 'pln_9',
+              failedCount: 3,
+              createsExecuted: 4,
+              editsExecuted: 0,
+              deletesExecuted: 0,
+            },
+          },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('completed');
+    expect(run.resultSummary).toBe('Published 4 changes (3 rejected)');
+  });
+
+  it('records a publish-plan resultSummary noting the planned change count', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PUBLISH_PLAN, { folder: '/blog/posts' })];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueueSelfPlanningPublishJob: jest.fn().mockResolvedValue({ id: 'plan-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress: {
+            publicProgress: {
+              pipelineId: 'pln_2',
+              createsPlanned: 3,
+              editsPlanned: 2,
+              deletesPlanned: 0,
+              failedCount: 0,
+            },
+          },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('completed');
+    expect(run.resultSummary).toBe('Staged a publish plan (5 changes)');
+  });
+
+  it('records a pull resultSummary with the changed-record count across folders', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PULL)];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueuePullLinkedFolderFilesJob: jest.fn().mockResolvedValue({ id: 'pull-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress: {
+            publicProgress: { folderCount: 2, totalFiles: 10, createdCount: 2, updatedCount: 1, deletedCount: 0 },
+          },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('completed');
+    expect(run.resultSummary).toBe('Pulled 3 records across 2 folders');
   });
 
   it('fails the run and skips publish when a sync job completes but a table failed', async () => {
@@ -487,7 +620,45 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[0].error).toMatch(/scratch-git 404/);
     expect(steps[1].status).toBe('skipped');
     expect(run.status).toBe('failed');
+    // resultSummary holds the clean failure (no "Step N (action) failed:" prefix — that's on `error`).
+    expect(run.resultSummary).toMatch(/Video Games/);
+    expect(run.resultSummary).toMatch(/scratch-git 404/);
+    expect(run.resultSummary).not.toMatch(/^Step /);
+    expect(run.error).toMatch(/^Step 0 \(sync\) failed:/);
     expect(bullEnqueuer.enqueueSelfPlanningPublishJob).not.toHaveBeenCalled();
+  });
+
+  it('records a sync resultSummary with the synced-record count across tables', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.SYNC)];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueueSyncDataFoldersJob: jest.fn().mockResolvedValue({ id: 'sync-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress: {
+            publicProgress: {
+              totalFilesSynced: 2,
+              tables: [{ id: 'dfd_1', name: 'Video Games', status: 'completed', errors: [] }],
+            },
+          },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('completed');
+    expect(run.resultSummary).toBe('Synced 2 records across 1 table');
   });
 
   it('completes a sync step and proceeds when every table succeeded', async () => {

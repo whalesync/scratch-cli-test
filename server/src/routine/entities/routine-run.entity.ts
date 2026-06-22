@@ -34,6 +34,7 @@ export const RoutineRunEntity = {
       startedAt: run.startedAt ? run.startedAt.toISOString() : null,
       finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,
       error: run.error,
+      resultSummary: run.resultSummary,
       currentStepIndex: run.currentStepIndex,
       ...(run.steps ? { steps: run.steps.map((step) => RoutineRunEntity.stepFrom(step, jobsByBullJobId)) } : {}),
     };

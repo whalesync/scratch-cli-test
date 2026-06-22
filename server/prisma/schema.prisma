@@ -901,8 +901,13 @@ model RoutineRun {
   startedAt  DateTime?
   finishedAt DateTime?
 
-  /// Error message if the run failed.
+  /// @deprecated Prefer `resultSummary`. Kept for backward-compat: still written (with the prefixed
+  /// "Step N (action) failed: …" message) when a run fails. New UI should read `resultSummary`.
   error String?
+
+  /// User-facing summary of the LAST step that ran — overwritten as each step finishes (a concise
+  /// success summary, or the failed step's clean error). Null until the first step finishes.
+  resultSummary String?
 
   /// Index of the step currently executing (0-based).
   currentStepIndex Int @default(0)

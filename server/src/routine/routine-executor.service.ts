@@ -23,6 +23,7 @@ import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext, RunContext } from 'src/worker/jobs/base-types';
 import { PublishPublicProgress } from 'src/worker/jobs/job-definitions/publish.job';
+import { PullLinkedFolderFilesPublicProgress } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
 import { SyncDataFoldersPublicProgress } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
 import { RoutineRunEntity } from './entities/routine-run.entity';
 import { assertValidRoutineFilePath } from './routine-file-path';
@@ -46,7 +47,8 @@ const FALLBACK_STEP_TIMEOUT_SECONDS = 30 * 60;
 
 /** The outcome of running one step, used by the loop to decide whether to advance, fail, or stop. */
 type RoutineStepOutcome =
-  | { kind: 'completed'; pipelineId: string | null; warning: string | null }
+  // `summary` is the concise, user-facing result of this step, persisted to RoutineRun.resultSummary.
+  | { kind: 'completed'; pipelineId: string | null; warning: string | null; summary: string }
   | { kind: 'failed'; error: string }
   | { kind: 'canceled' }
   // Another driver already owns this step (it won the per-step claim) but hasn't recorded a job id
@@ -260,7 +262,8 @@ export class RoutineExecutorService {
       }
       if (outcome.kind === 'failed') {
         await this.failStep(step.id, outcome.error);
-        await this.failRun(runId, `Step ${index} (${step.action}) failed: ${outcome.error}`);
+        // `error` keeps the prefixed message (deprecated); `resultSummary` gets the clean step error.
+        await this.failRun(runId, `Step ${index} (${step.action}) failed: ${outcome.error}`, outcome.error);
         await this.skipStepsFrom(runId, index + 1);
         return;
       }
@@ -272,9 +275,10 @@ export class RoutineExecutorService {
 
       await this.completeStep(step.id, outcome.pipelineId, outcome.warning);
       // Advance the cursor AND bump updatedAt — this is the driver's liveness signal for the reaper.
+      // Overwrite resultSummary with this step's summary so a finished run reflects the LAST step run.
       await this.db.client.routineRun.updateMany({
         where: { id: runId, status: 'running' },
-        data: { currentStepIndex: index + 1, updatedAt: new Date() },
+        data: { currentStepIndex: index + 1, resultSummary: outcome.summary, updatedAt: new Date() },
       });
     }
 
@@ -498,7 +502,7 @@ export class RoutineExecutorService {
       // the run — the connector accepted the rest, the run continues, and the warning + pipelineId
       // let the user inspect what was rejected.
       const warning = failedCount > 0 ? `Completed with ${failedCount} record(s) rejected by the connector` : null;
-      return { kind: 'completed', pipelineId, warning };
+      return { kind: 'completed', pipelineId, warning, summary: this.summarizePublishSuccess(action, publicProgress) };
     }
 
     if (action === RoutineAction.SYNC) {
@@ -511,10 +515,15 @@ export class RoutineExecutorService {
       if (failedTables.length > 0) {
         return { kind: 'failed', error: this.summarizeSyncFailure(failedTables) };
       }
-      return { kind: 'completed', pipelineId: null, warning: null };
+      return { kind: 'completed', pipelineId: null, warning: null, summary: this.summarizeSyncSuccess(publicProgress) };
     }
 
-    return { kind: 'completed', pipelineId: null, warning: null };
+    if (action === RoutineAction.PULL) {
+      const publicProgress = this.readPullProgress(dbJob.progress);
+      return { kind: 'completed', pipelineId: null, warning: null, summary: this.summarizePullSuccess(publicProgress) };
+    }
+
+    return { kind: 'completed', pipelineId: null, warning: null, summary: 'Step completed' };
   }
 
   /** Safely reads `progress.publicProgress` (a JSON column) as a PublishPublicProgress, without `as any`. */
@@ -531,6 +540,79 @@ export class RoutineExecutorService {
       return (progress as { publicProgress?: SyncDataFoldersPublicProgress }).publicProgress;
     }
     return undefined;
+  }
+
+  /** Safely reads `progress.publicProgress` (a JSON column) as a PullLinkedFolderFilesPublicProgress, without `as any`. */
+  private readPullProgress(progress: unknown): PullLinkedFolderFilesPublicProgress | undefined {
+    if (progress && typeof progress === 'object' && 'publicProgress' in progress) {
+      return (progress as { publicProgress?: PullLinkedFolderFilesPublicProgress }).publicProgress;
+    }
+    return undefined;
+  }
+
+  /**
+   * A concise, user-facing summary of a successful pull step (records changed across all folders).
+   * Counts are coalesced because `progress` is a JSON column that may be partial on an old/odd record.
+   */
+  private summarizePullSuccess(progress: PullLinkedFolderFilesPublicProgress | undefined): string {
+    if (!progress) {
+      return 'Pull completed';
+    }
+    const folderCount = progress.folderCount ?? 0;
+    const changedRecordCount =
+      (progress.createdCount ?? 0) + (progress.updatedCount ?? 0) + (progress.deletedCount ?? 0);
+    if (changedRecordCount === 0) {
+      return `Pulled ${this.pluralize(folderCount, 'folder')} — no changes`;
+    }
+    return `Pulled ${this.pluralize(changedRecordCount, 'record')} across ${this.pluralize(folderCount, 'folder')}`;
+  }
+
+  /** A concise, user-facing summary of a successful sync step (records written across all tables). */
+  private summarizeSyncSuccess(progress: SyncDataFoldersPublicProgress | undefined): string {
+    if (!progress) {
+      return 'Sync completed';
+    }
+    const tableCount = (progress.tables ?? []).length;
+    const totalRecordsSynced = progress.totalFilesSynced ?? 0;
+    if (totalRecordsSynced === 0) {
+      return `Synced ${this.pluralize(tableCount, 'table')} — no changes`;
+    }
+    return `Synced ${this.pluralize(totalRecordsSynced, 'record')} across ${this.pluralize(tableCount, 'table')}`;
+  }
+
+  /**
+   * A concise, user-facing summary of a successful publish / publish-plan step. A publish-plan stages
+   * a plan without shipping (executed counts are 0), so it reports the PLANNED change count; a publish
+   * reports the EXECUTED change count, noting any per-record rejections. Counts are coalesced because
+   * `progress` is a JSON column that may be partial on an old/odd record.
+   */
+  private summarizePublishSuccess(action: RoutineAction, progress: PublishPublicProgress | undefined): string {
+    if (action === RoutineAction.PUBLISH_PLAN) {
+      if (!progress) {
+        return 'Publish plan staged';
+      }
+      const plannedChangeCount =
+        (progress.createsPlanned ?? 0) + (progress.editsPlanned ?? 0) + (progress.deletesPlanned ?? 0);
+      return plannedChangeCount === 0
+        ? 'Staged a publish plan — no changes'
+        : `Staged a publish plan (${this.pluralize(plannedChangeCount, 'change')})`;
+    }
+
+    if (!progress) {
+      return 'Publish completed';
+    }
+    const executedChangeCount =
+      (progress.createsExecuted ?? 0) + (progress.editsExecuted ?? 0) + (progress.deletesExecuted ?? 0);
+    const rejectedSuffix = (progress.failedCount ?? 0) > 0 ? ` (${progress.failedCount} rejected)` : '';
+    if (executedChangeCount === 0 && rejectedSuffix === '') {
+      return 'Published — no changes';
+    }
+    return `Published ${this.pluralize(executedChangeCount, 'change')}${rejectedSuffix}`;
+  }
+
+  /** Formats a count with its singular/plural noun, e.g. `1 folder`, `3 folders`. */
+  private pluralize(count: number, noun: string): string {
+    return `${count} ${noun}${count === 1 ? '' : 's'}`;
   }
 
   /** A concise, bounded summary naming the failed table(s) and their first error for the run page. */
@@ -594,10 +676,10 @@ export class RoutineExecutorService {
     });
   }
 
-  private async failRun(runId: string, error: string): Promise<void> {
+  private async failRun(runId: string, error: string, resultSummary: string): Promise<void> {
     await this.db.client.routineRun.updateMany({
       where: { id: runId, status: 'running' },
-      data: { status: 'failed', error, finishedAt: new Date(), updatedAt: new Date() },
+      data: { status: 'failed', error, resultSummary, finishedAt: new Date(), updatedAt: new Date() },
     });
   }
 

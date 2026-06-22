@@ -71,7 +71,16 @@ export interface RoutineRun {
   triggeredByUserId: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /**
+   * @deprecated Prefer {@link RoutineRun.resultSummary}. Kept for backward-compat — still set to the
+   * prefixed "Step N (action) failed: …" message when a run fails.
+   */
   error: string | null;
+  /**
+   * User-facing summary of the LAST step that ran (a concise success summary, or — when a step failed
+   * — that step's clean error). Overwritten as each step finishes. Null until the first step finishes.
+   */
+  resultSummary: string | null;
   /** Index of the step currently executing (0-based). */
   currentStepIndex: number;
   /** Per-step records. Present on the run-detail endpoint; omitted from list responses. */

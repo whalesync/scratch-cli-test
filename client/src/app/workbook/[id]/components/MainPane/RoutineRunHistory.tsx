@@ -97,6 +97,8 @@ function RoutineRunRow({ workbookId, run: listRun }: { workbookId: WorkbookId; r
 
   const isActive = ACTIVE_RUN_STATUSES.has(run.status);
   const duration = formatDuration(run.startedAt, run.finishedAt);
+  // The end-result message: the new resultSummary, falling back to the deprecated error column.
+  const resultMessage = run.resultSummary ?? run.error;
 
   const handleCancel = async (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -130,7 +132,18 @@ function RoutineRunRow({ workbookId, run: listRun }: { workbookId: WorkbookId; r
         <Text12Regular c="var(--fg-secondary)" style={{ flexShrink: 0 }}>
           {run.trigger}
         </Text12Regular>
-        <Text12Regular c="dimmed" truncate style={{ flex: 1 }}>
+        {resultMessage ? (
+          <Text12Regular
+            c={run.status === 'failed' ? 'var(--mantine-color-red-6)' : 'dimmed'}
+            truncate
+            style={{ flex: 1 }}
+          >
+            {resultMessage}
+          </Text12Regular>
+        ) : (
+          <Box style={{ flex: 1 }} />
+        )}
+        <Text12Regular c="dimmed" style={{ flexShrink: 0 }}>
           {new Date(run.createdAt).toLocaleString()}
           {duration ? ` · ${duration}` : ''}
         </Text12Regular>
@@ -160,11 +173,15 @@ function RoutineRunSteps({ run }: { run: RoutineRun | undefined }) {
   }
 
   const steps = run.steps ?? [];
+  // The end-result message: the new resultSummary, falling back to the deprecated error column.
+  const resultMessage = run.resultSummary ?? run.error;
   return (
     <Stack gap={0} pb={4} style={{ backgroundColor: 'var(--bg-base)' }}>
-      {run.error && (
+      {resultMessage && (
         <Box px="lg" py={4}>
-          <Text12Regular c="var(--mantine-color-red-6)">{run.error}</Text12Regular>
+          <Text12Regular c={run.status === 'failed' ? 'var(--mantine-color-red-6)' : 'var(--fg-secondary)'}>
+            {resultMessage}
+          </Text12Regular>
         </Box>
       )}
       {steps.map((step) => (
