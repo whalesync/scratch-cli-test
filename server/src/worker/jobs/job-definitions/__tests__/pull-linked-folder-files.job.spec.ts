@@ -995,11 +995,40 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         expect(updateData!.incrementalCursor).toBeDefined();
       });
 
-      // (b) Happy path: existing watermark → connector called with pullMode/since.
+      // (a2) Regression: a folder can carry a watermark with no completed full
+      // pull (e.g. migrated/backfilled state). Running incremental there would
+      // miss every record older than the watermark, so demote to full even
+      // though `lastIncrementalPullAt` is set, and seed both watermarks.
+      it('demotes to full when lastFullPullAt is null even though a watermark exists', async () => {
+        const { dataFolder, mockConnector, params } = setupStandardMocks();
+        Object.assign(dataFolder, {
+          lastFullPullAt: null,
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
+        mockConnector.supportsIncrementalPull.mockReturnValue(true);
+        mockConnector.pullRecordFiles.mockResolvedValue({});
+        stubEmptyPhase2();
+
+        await handler.run({ ...params, data: { ...params.data, pullMode: 'incremental' } });
+
+        // Connector saw 'full' — no completed full pull to use as a baseline yet.
+        expect(lastConnectorCallOptions(mockConnector).pullMode).toBe('full');
+        // Deletion check ran (full pull) and both watermarks are seeded.
+        expect(mockScratchGitService.listRepoFiles).toHaveBeenCalled();
+        const updateData = findUpdateMatching((d) => d.lastFullPullAt instanceof Date);
+        expect(updateData).not.toBeNull();
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        expect(updateData!.lastFullPullAt).toBeInstanceOf(Date);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        expect(updateData!.lastIncrementalPullAt).toBeInstanceOf(Date);
+      });
+
+      // (b) Happy path: completed full pull + existing watermark → connector called with pullMode/since.
       it('passes pullMode + since to the connector when incremental is supported', async () => {
         const { dataFolder, mockConnector, params } = setupStandardMocks();
+        const previousFullPull = new Date('2026-04-15T00:00:00.000Z');
         const previousWatermark = new Date('2026-05-01T00:00:00.000Z');
-        Object.assign(dataFolder, { lastIncrementalPullAt: previousWatermark });
+        Object.assign(dataFolder, { lastFullPullAt: previousFullPull, lastIncrementalPullAt: previousWatermark });
         mockConnector.supportsIncrementalPull.mockReturnValue(true);
         mockConnector.pullRecordFiles.mockResolvedValue({ newWatermark: new Date('2026-05-14T12:00:00.000Z') });
         stubEmptyPhase2();
@@ -1011,10 +1040,14 @@ describe('PullLinkedFolderFilesJobHandler', () => {
         expect(callOptions.since).toEqual(previousWatermark);
       });
 
-      // (c) Connector reports no support → forced to full.
+      // (c) Connector reports no support → forced to full. Baseline is present
+      // so the demotion is attributable to the capability check alone.
       it('demotes to full when the connector does not support incremental for this folder', async () => {
         const { dataFolder, mockConnector, params } = setupStandardMocks();
-        Object.assign(dataFolder, { lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z') });
+        Object.assign(dataFolder, {
+          lastFullPullAt: new Date('2026-04-15T00:00:00.000Z'),
+          lastIncrementalPullAt: new Date('2026-05-01T00:00:00.000Z'),
+        });
         mockConnector.supportsIncrementalPull.mockReturnValue(false);
         mockConnector.pullRecordFiles.mockResolvedValue({});
         stubEmptyPhase2();
@@ -1029,9 +1062,10 @@ describe('PullLinkedFolderFilesJobHandler', () => {
       // (d) Successful incremental run advances lastIncrementalPullAt and does NOT run stale-file deletion.
       it('updates lastIncrementalPullAt and skips deleteStaleFiles on incremental success', async () => {
         const { dataFolder, mockConnector, params } = setupStandardMocks();
+        const previousFullPull = new Date('2026-04-15T00:00:00.000Z');
         const previousWatermark = new Date('2026-05-01T00:00:00.000Z');
         const reportedWatermark = new Date('2026-05-14T12:00:00.000Z');
-        Object.assign(dataFolder, { lastIncrementalPullAt: previousWatermark });
+        Object.assign(dataFolder, { lastFullPullAt: previousFullPull, lastIncrementalPullAt: previousWatermark });
         mockConnector.supportsIncrementalPull.mockReturnValue(true);
         mockConnector.pullRecordFiles.mockResolvedValue({ newWatermark: reportedWatermark });
         stubEmptyPhase2();

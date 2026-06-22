@@ -107,7 +107,8 @@ type FolderContext = {
   pullOptions: DataFolderOptions;
   /**
    * Pull mode after per-folder resolution: starts from `data.pullMode`, then
-   * demoted to `'full'` if the connector reports no incremental support, or
+   * demoted to `'full'` if the connector reports no incremental support, or the
+   * folder has no completed full-pull baseline yet — i.e. `lastFullPullAt` or
    * `lastIncrementalPullAt` is null (bootstrap).
    */
   effectiveMode: 'full' | 'incremental';
@@ -604,9 +605,12 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     // is the post-gate mode. Per-folder demotions stack on top:
     //   1. Connector capability check (passed both options + tableSpec so it
     //      can consult per-folder config and schema annotations).
-    //   2. Bootstrap: no prior watermark ⇒ run full once so future runs have
-    //      a non-null `lastIncrementalPullAt` to filter from.
+    //   2. Bootstrap: an incremental pull is only valid once a full pull has
+    //      established a complete baseline (`lastFullPullAt`) AND left a
+    //      watermark to filter from (`lastIncrementalPullAt`). If either is
+    //      null we run full once so future runs can actually go incremental.
     let effectiveMode: 'full' | 'incremental' = requestedMode;
+    const lastFullPullAt = dataFolder.lastFullPullAt ?? null;
     const lastIncrementalPullAt = dataFolder.lastIncrementalPullAt ?? null;
     const incrementalCursor = (dataFolder.incrementalCursor as JsonSafeObject | null | undefined) ?? null;
 
@@ -620,10 +624,16 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       });
       effectiveMode = 'full';
     }
-    if (effectiveMode === 'incremental' && lastIncrementalPullAt === null) {
+    // A folder can carry an incremental watermark without ever having completed
+    // a full pull (e.g. migrated/backfilled state, or a future path that
+    // advances the watermark independently). Running incremental there would
+    // silently miss every record older than the watermark, so demote to full
+    // whenever there is no completed full-pull baseline — or no watermark to
+    // filter from, which keeps `since` (below) non-null when we do go incremental.
+    if (effectiveMode === 'incremental' && (lastFullPullAt === null || lastIncrementalPullAt === null)) {
       WSLogger.info({
         source: LOG_SOURCE,
-        message: 'Demoting incremental pull to full: bootstrap (no prior watermark)',
+        message: 'Demoting incremental pull to full: no completed full pull to use as a baseline',
         workbookId: dataFolder.workbookId,
         dataFolderId: dataFolder.id,
       });

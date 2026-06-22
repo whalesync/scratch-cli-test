@@ -14,6 +14,7 @@ Black-box integration tests for the `scratchmd` Rust CLI binary (`scratch-git-2/
 | **Publish**        | End-to-end accept → upload → publish → download cycle: verifies `accepted-patches.json` generation, `/upload-patch` round-trip, `/publish-v2/{plan,run}-job` completion, Postgres-side application, and post-publish reconciliation |
 | **Driver Publish** | Driver-based end-to-end publish flows over related `authors`/`posts` tables: edit, create, delete, publish, and post-publish reconciliation |
 | **Workspace Sync** | Detect added/removed connections on download, test `--on-delete=remove` and `keep` modes |
+| **Empty Folders**  | A sync from a never-populated (0-row) source folder completes instead of 404-ing — regression cover for the scratch-git `files-paginated` empty-folder fix (DEV-10496) |
 
 Each suite tests the full CLI stack: argument parsing, flag handling, credential loading, `--json` serialization, and exit codes.
 
@@ -98,6 +99,7 @@ npx jest --runInBand --forceExit routines
 npx jest --runInBand --forceExit driver-publish
 npx jest --runInBand --forceExit publish
 npx jest --runInBand --forceExit workspace-sync
+npx jest --runInBand --forceExit sync-empty-folder
 ```
 
 The first run builds the `scratchmd` release binary from `scratch-git-2/` (takes ~15s). Subsequent runs reuse the cached binary unless Rust source files change.

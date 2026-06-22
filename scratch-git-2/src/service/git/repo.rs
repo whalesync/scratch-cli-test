@@ -604,6 +604,26 @@ impl GitRepo {
         Ok(entries)
     }
 
+    /// Like [`Self::read_tree_at_path`], but yields an empty entry list when the folder does
+    /// not exist in the tree, instead of a not-found error.
+    ///
+    /// Git does not track empty directories, so a data folder that exists but has never had a
+    /// file written to it has no tree object and is indistinguishable from an absent folder —
+    /// both navigate to a missing path. Read endpoints that list a folder's files should report
+    /// "no files" for such a folder rather than a 404. All other errors (corrupt tree, IO
+    /// failure) are propagated unchanged.
+    pub fn read_tree_at_path_or_empty(
+        &self,
+        commit_oid: ObjectId,
+        folder_path: &str,
+    ) -> Result<Vec<(String, ObjectId, bool)>, AppError> {
+        match self.read_tree_at_path(commit_oid, folder_path) {
+            Ok(entries) => Ok(entries),
+            Err(AppError::NotFound(_)) => Ok(Vec::new()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Recursively collect every blob under `folder_path` in the given commit's tree.
     ///
     /// Each returned entry is `(blob_path_relative_to_folder, blob_oid)`. Used by the
@@ -967,6 +987,51 @@ mod tests {
 
         let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
         let entries = repo.read_tree_at_path(commit_oid, "docs").unwrap();
+        let names: Vec<&str> = entries.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"a.txt"));
+        assert!(names.contains(&"b.txt"));
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn read_tree_at_path_or_empty_returns_empty_for_nonexistent_folder() {
+        let (_tmp, repo) = setup_repo();
+
+        let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        // Unlike read_tree_at_path (which errors), the _or_empty variant treats an
+        // absent/empty folder as "no files".
+        let entries = repo
+            .read_tree_at_path_or_empty(commit_oid, "nonexistent/folder")
+            .unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn read_tree_at_path_or_empty_lists_files_for_existing_folder() {
+        let (_tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                FileChange {
+                    path: "docs/a.txt".to_string(),
+                    content: Some("aaa".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "docs/b.txt".to_string(),
+                    content: Some("bbb".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "add docs",
+        )
+        .unwrap();
+
+        let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let entries = repo.read_tree_at_path_or_empty(commit_oid, "docs").unwrap();
         let names: Vec<&str> = entries.iter().map(|(n, _, _)| n.as_str()).collect();
         assert!(names.contains(&"a.txt"));
         assert!(names.contains(&"b.txt"));

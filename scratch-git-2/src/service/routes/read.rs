@@ -38,7 +38,10 @@ pub async fn list(
                 Err(_) => return Ok(json!([])),
             };
 
-            let entries = git_repo.read_tree_at_path(commit_oid, folder)?;
+            // An empty folder has no git tree object (git doesn't track empty dirs), so
+            // treat an absent folder as "no files" rather than a 404 — matching the
+            // missing-branch case above.
+            let entries = git_repo.read_tree_at_path_or_empty(commit_oid, folder)?;
 
             let files: Vec<_> = entries
                 .into_iter()
@@ -192,8 +195,10 @@ pub async fn files_from_folder(
                 }
             };
 
-            // Single tree walk to build oid map for the folder
-            let entries = git_repo.read_tree_at_path(commit_oid, folder)?;
+            // Single tree walk to build oid map for the folder. An empty folder has no git
+            // tree object, so treat an absent folder as "no files" (every requested filename
+            // resolves to content: null) rather than a 404 — matching the missing-branch case.
+            let entries = git_repo.read_tree_at_path_or_empty(commit_oid, folder)?;
             let oid_map: std::collections::HashMap<String, gix::ObjectId> = entries
                 .into_iter()
                 .filter(|(_, _, is_tree)| !is_tree)
@@ -359,8 +364,10 @@ pub async fn files_paginated(
                 }
             };
 
-            // List all files in folder (direct children, skip dotfiles)
-            let entries = git_repo.read_tree_at_path(commit_oid, folder)?;
+            // List all files in folder (direct children, skip dotfiles). An empty folder has
+            // no git tree object, so treat an absent folder as an empty page rather than a 404
+            // — matching the missing-branch case above.
+            let entries = git_repo.read_tree_at_path_or_empty(commit_oid, folder)?;
             let mut file_entries: Vec<_> = entries
                 .into_iter()
                 .filter(|(name, _, is_tree)| !is_tree && !name.starts_with('.'))
