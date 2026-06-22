@@ -88,7 +88,7 @@ Entities that can't be a standalone Scratch table, for either reason: **(i) scop
 | text | ⬜ | ⬜ | ⬜ | |
 | number | ⬜ | ⬜ | ⬜ | |
 | boolean | ⬜ | ⬜ | ⬜ | |
-| date / datetime | ⬜ | ⬜ | ⬜ | tz handling? |
+| date / datetime | ⬜ | ⬜ | ⬜ | tz handling? `createdTime`/`lastModifiedTime`/`dateTime` emit `format:date` vs `date-time` from `options.result.type` (date-only fields return `YYYY-MM-DD`). |
 | single-select | ⬜ | ⬜ | ⬜ | id vs label? |
 | multi-select | ⬜ | ⬜ | ⬜ | |
 | relation / FK | ⬜ | ⬜ | ⬜ | linkedTableId? |
@@ -144,7 +144,11 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered
-- (none yet — see SKILL.md → Stage E for what to hunt for)
+- **Date-only created/modified fields** — an Airtable `createdTime` / `lastModifiedTime`
+  (or `dateTime`) field configured without a time component returns date-only
+  `"YYYY-MM-DD"`. The schema must emit `format: 'date'` (not `'date-time'`) for these,
+  decided from `options.result.type` (`date` vs `dateTime`); otherwise every value fails
+  the `date-time` conformance check. (`airtableFieldHasTime` in `airtable-json-schema.ts`.)
 
 ## Gotchas
 - (connector-specific operational notes)

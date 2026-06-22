@@ -140,7 +140,7 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
     case AirtableDataType.DATE_TIME:
     case AirtableDataType.CREATED_TIME:
     case AirtableDataType.LAST_MODIFIED_TIME:
-      schema = Type.String({ description, format: 'date-time' });
+      schema = Type.String({ description, format: airtableFieldHasTime(field) ? 'date-time' : 'date' });
       break;
 
     case AirtableDataType.SINGLE_SELECT:
@@ -232,6 +232,22 @@ export function airtableFieldToJsonSchema(field: AirtableFieldsV2): TSchema {
     schema[X_SCRATCH_LAST_MODIFIED_FIELD] = true;
   }
   return schema;
+}
+
+/**
+ * Whether an Airtable date-bearing field carries a time component. CREATED_TIME /
+ * LAST_MODIFIED_TIME (and DATE_TIME) can be configured date-only, in which case
+ * Airtable returns "YYYY-MM-DD" — which fails a `date-time` format check. For the
+ * computed created/modified fields the discriminator is the result field's type
+ * under `options.result` ('dateTime' = has time, 'date' = date-only). Falls back to
+ * `true` (date-time) when the signal is absent, preserving prior behavior and never
+ * introducing a new error for data that already validated.
+ */
+function airtableFieldHasTime(field: AirtableFieldsV2): boolean {
+  const resultType = field.options?.result?.type as AirtableDataType | undefined;
+  if (resultType === AirtableDataType.DATE) return false;
+  if (resultType === AirtableDataType.DATE_TIME) return true;
+  return true;
 }
 
 function multipleAttachmentsSchema(description: string): TSchema {

@@ -76,3 +76,71 @@ describe('airtableFieldToJsonSchema last-modified annotation', () => {
     expect((schema as unknown as Record<string, unknown>)[X_SCRATCH_LAST_MODIFIED_FIELD]).toBeUndefined();
   });
 });
+
+// A createdTime / lastModifiedTime field configured without a time component
+// returns date-only "YYYY-MM-DD" from Airtable, which fails a `date-time` format
+// check. The emitted format must follow the field's configured result type.
+describe('airtableFieldToJsonSchema date vs date-time format', () => {
+  function formatOf(schema: ReturnType<typeof airtableFieldToJsonSchema>): unknown {
+    return (schema as unknown as Record<string, unknown>).format;
+  }
+
+  it('createdTime configured date-only emits format "date"', () => {
+    const schema = airtableFieldToJsonSchema({
+      id: 'fldC',
+      name: 'Created',
+      type: AirtableDataType.CREATED_TIME,
+      options: { isReversed: false, result: { id: 'r', name: 'r', type: AirtableDataType.DATE } },
+    });
+    expect(formatOf(schema)).toBe('date');
+  });
+
+  it('createdTime configured with time emits format "date-time"', () => {
+    const schema = airtableFieldToJsonSchema({
+      id: 'fldC',
+      name: 'Created',
+      type: AirtableDataType.CREATED_TIME,
+      options: { isReversed: false, result: { id: 'r', name: 'r', type: AirtableDataType.DATE_TIME } },
+    });
+    expect(formatOf(schema)).toBe('date-time');
+  });
+
+  it('createdTime with no result option falls back to "date-time"', () => {
+    const schema = airtableFieldToJsonSchema({
+      id: 'fldC',
+      name: 'Created',
+      type: AirtableDataType.CREATED_TIME,
+    });
+    expect(formatOf(schema)).toBe('date-time');
+  });
+
+  it('lastModifiedTime configured date-only emits format "date"', () => {
+    const schema = airtableFieldToJsonSchema({
+      id: 'fldL',
+      name: 'Modified',
+      type: AirtableDataType.LAST_MODIFIED_TIME,
+      options: { isReversed: false, result: { id: 'r', name: 'r', type: AirtableDataType.DATE } },
+    });
+    expect(formatOf(schema)).toBe('date');
+  });
+
+  it('lastModifiedTime configured with time emits format "date-time"', () => {
+    const schema = airtableFieldToJsonSchema({
+      id: 'fldL',
+      name: 'Modified',
+      type: AirtableDataType.LAST_MODIFIED_TIME,
+      options: { isReversed: false, result: { id: 'r', name: 'r', type: AirtableDataType.DATE_TIME } },
+    });
+    expect(formatOf(schema)).toBe('date-time');
+  });
+
+  it('plain dateTime field emits format "date-time"', () => {
+    const schema = airtableFieldToJsonSchema({ id: 'fldD', name: 'When', type: AirtableDataType.DATE_TIME });
+    expect(formatOf(schema)).toBe('date-time');
+  });
+
+  it('date field emits format "date"', () => {
+    const schema = airtableFieldToJsonSchema({ id: 'fldD', name: 'Day', type: AirtableDataType.DATE });
+    expect(formatOf(schema)).toBe('date');
+  });
+});

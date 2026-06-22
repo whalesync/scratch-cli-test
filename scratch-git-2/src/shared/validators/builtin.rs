@@ -82,6 +82,11 @@ pub fn length(ctx: &FieldValidationContext) -> Option<ValidationResult> {
 /// already list in `required` (e.g. optional fields that your workflow
 /// still needs to have filled in before publishing).
 ///
+/// Unlike `enforce_schema`'s required check, this field-scoped rule is
+/// schema-agnostic — it has no access to the property schema, so it always
+/// treats null and `""` as missing. That is the intended contract for an
+/// explicitly opted-in `required` rule.
+///
 /// ```json
 /// { "validator": "required", "field": "fields.Name" }
 /// ```
@@ -118,9 +123,14 @@ fn invalid_length_params() -> Option<ValidationResult> {
 /// Enforces `required`, `x-scratch-readonly`, and `x-scratch-write-once`
 /// constraints from `schema.json`.
 ///
-/// Required check: a field is violated when it is absent from the record, null,
-/// or an empty string. Empty string is treated as "not provided" because the DB
-/// stores empty text for blank inputs and the connector would never publish "".
+/// Required check: a field is violated when it is absent from the record, or —
+/// for a field whose schema does NOT permit null — when its value is null or an
+/// empty string. A field whose schema allows null (`type:"null"`, a `type` array
+/// containing "null", or an `anyOf`/`oneOf` branch permitting null) legitimately
+/// holds a verbatim null/blank (e.g. Intercom's nullable-but-required
+/// `team_assignee_id`), so those are not flagged. Empty string is treated like
+/// null because the DB stores empty text for blank inputs and the connector would
+/// never publish "".
 ///
 /// Readonly check: a read-only field changed against master (existing record) OR
 /// set at all on a new record emits a Warning — it is never user-writable.
@@ -188,6 +198,15 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                 if error.instance().as_str() == Some("") {
                     continue;
                 }
+                // A present `null` is the service's verbatim "no value" — like the
+                // empty-string blank above, not malformed data. Connector schemas
+                // routinely type an optional field as non-nullable (e.g. Webflow
+                // returns `null` for unset fields), and flagging every such null
+                // buries the real warnings. A null on a *required* non-nullable
+                // field is still caught by the hand-rolled required check below.
+                if error.instance().is_null() {
+                    continue;
+                }
                 let pointer = error.instance_path().to_string();
                 let field_path = if pointer.is_empty() {
                     "(record)".to_string()
@@ -227,10 +246,19 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
             }
 
             let value = ctx.record.get(field_name);
+            // Only treat null/empty as "missing" when the field's schema does NOT
+            // permit null. A nullable-but-required field (e.g. Intercom's
+            // `team_assignee_id: anyOf[string, null]`) legitimately holds a verbatim
+            // null/blank — that is a value, not a missing one.
+            let field_permits_null = schema_obj
+                .get("properties")
+                .and_then(|properties| properties.get(field_name))
+                .map(schema_property_permits_null)
+                .unwrap_or(false);
             let is_missing = match value {
                 None => true,
-                Some(serde_json::Value::Null) => true,
-                Some(serde_json::Value::String(s)) if s.is_empty() => true,
+                Some(serde_json::Value::Null) => !field_permits_null,
+                Some(serde_json::Value::String(s)) if s.is_empty() => !field_permits_null,
                 _ => false,
             };
             if is_missing {
@@ -351,6 +379,33 @@ fn format_validation_value(value: Option<&serde_json::Value>) -> String {
         Some(value) => value.to_string(),
         None => "<missing>".to_string(),
     }
+}
+
+/// Returns `true` if a JSON Schema property node permits an explicit `null`:
+/// `"type": "null"`, the array form `"type": ["string", "null"]`, or any branch
+/// of an `anyOf` / `oneOf` that itself permits null. Conservative — an absent or
+/// non-object node (or one with no recognizable `type`/`anyOf`/`oneOf`) returns
+/// `false` and is treated as non-nullable. Used by the required check so a
+/// present-but-null value on a schema-nullable field is not flagged as missing.
+fn schema_property_permits_null(node: &serde_json::Value) -> bool {
+    if let Some(type_value) = node.get("type") {
+        if let Some(type_name) = type_value.as_str() {
+            return type_name == "null";
+        }
+        if let Some(type_names) = type_value.as_array() {
+            return type_names
+                .iter()
+                .any(|entry| entry.as_str() == Some("null"));
+        }
+    }
+    for union_key in ["anyOf", "oneOf"] {
+        if let Some(branches) = node.get(union_key).and_then(|value| value.as_array()) {
+            if branches.iter().any(schema_property_permits_null) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -497,6 +552,167 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].field_path, "email");
         assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    // ── nullable-aware required check (Fix 1) ─────────────────────────────────
+
+    /// `field` is required AND nullable (anyOf wrapper) — the Intercom shape.
+    fn schema_required_nullable(field: &str) -> serde_json::Value {
+        json!({ "schema": {
+            "required": [field],
+            "properties": { field: { "anyOf": [{ "type": "string" }, { "type": "null" }] } }
+        }})
+    }
+
+    /// `field` is required and NON-nullable.
+    fn schema_required_non_nullable(field: &str) -> serde_json::Value {
+        json!({ "schema": {
+            "required": [field],
+            "properties": { field: { "type": "string" } }
+        }})
+    }
+
+    #[test]
+    fn required_null_on_nullable_field_is_clean() {
+        // Intercom's `team_assignee_id: anyOf[string, null]` is required, but the
+        // verbatim value is null — a legitimate value, not missing.
+        let ctx = record_ctx(json!({ "x": null }), None, schema_required_nullable("x"));
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn required_empty_string_on_nullable_field_is_clean() {
+        // Intercom's `title` is anyOf[string, null]; the verbatim value is "".
+        let ctx = record_ctx(json!({ "x": "" }), None, schema_required_nullable("x"));
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn required_null_on_non_nullable_field_still_errors() {
+        let ctx = record_ctx(
+            json!({ "x": null }),
+            None,
+            schema_required_non_nullable("x"),
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "x");
+        assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    #[test]
+    fn required_empty_string_on_non_nullable_field_still_errors() {
+        let ctx = record_ctx(json!({ "x": "" }), None, schema_required_non_nullable("x"));
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "x");
+    }
+
+    #[test]
+    fn required_absent_key_on_nullable_field_still_errors() {
+        // Nullable permits a present null, but an absent key still violates required.
+        let ctx = record_ctx(json!({}), None, schema_required_nullable("x"));
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "x");
+        assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    #[test]
+    fn required_nullable_via_type_array_is_clean() {
+        let schema = json!({ "schema": {
+            "required": ["x"],
+            "properties": { "x": { "type": ["string", "null"] } }
+        }});
+        let ctx = record_ctx(json!({ "x": null }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn required_nullable_via_oneof_is_clean() {
+        let schema = json!({ "schema": {
+            "required": ["x"],
+            "properties": { "x": { "oneOf": [{ "type": "number" }, { "type": "null" }] } }
+        }});
+        let ctx = record_ctx(json!({ "x": null }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn intercom_shaped_nullable_required_record_is_clean() {
+        // Mirrors a real Conversations record: nullable-but-required fields are
+        // present-but-null/blank. None should be flagged (the 88,662-error fix).
+        let schema = json!({ "schema": {
+            "required": ["title", "team_assignee_id", "conversation_rating"],
+            "properties": {
+                "title": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "team_assignee_id": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "conversation_rating": { "anyOf": [{ "type": "object" }, { "type": "null" }] }
+            }
+        }});
+        let ctx = record_ctx(
+            json!({ "title": "", "team_assignee_id": null, "conversation_rating": null }),
+            None,
+            schema,
+        );
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn schema_property_permits_null_detects_nullable_forms() {
+        assert!(schema_property_permits_null(&json!({ "type": "null" })));
+        assert!(schema_property_permits_null(
+            &json!({ "type": ["string", "null"] })
+        ));
+        assert!(schema_property_permits_null(
+            &json!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
+        ));
+        assert!(schema_property_permits_null(
+            &json!({ "oneOf": [{ "type": "number" }, { "type": "null" }] })
+        ));
+        assert!(!schema_property_permits_null(&json!({ "type": "string" })));
+        assert!(!schema_property_permits_null(
+            &json!({ "anyOf": [{ "type": "string" }, { "type": "number" }] })
+        ));
+        assert!(!schema_property_permits_null(&json!({})));
+        assert!(!schema_property_permits_null(&json!("x")));
+    }
+
+    // ── null conformance skip (Fix 3) ─────────────────────────────────────────
+
+    #[test]
+    fn null_conformance_error_on_non_required_field_is_skipped() {
+        // Webflow returns null for an unset optional field the schema types as a
+        // non-nullable string. It is not required, so it must be clean.
+        let schema = json!({ "schema": { "properties": {
+            "summary": { "type": "string" }
+        }}});
+        let ctx = record_ctx(json!({ "summary": null }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn null_conformance_error_for_array_field_is_skipped() {
+        let schema = json!({ "schema": { "properties": {
+            "categories": { "type": "array", "items": { "type": "string" } }
+        }}});
+        let ctx = record_ctx(json!({ "categories": null }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn null_on_non_nullable_required_field_still_errors_once() {
+        // The conformance error is skipped, but the required check still flags the
+        // null (non-nullable + required): exactly one error, from the required check.
+        let schema = json!({ "schema": {
+            "required": ["name"],
+            "properties": { "name": { "type": "string" } }
+        }});
+        let ctx = record_ctx(json!({ "name": null }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "name");
+        assert!(results[0].message.as_deref().unwrap().contains("required"));
     }
 
     #[test]

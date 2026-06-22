@@ -646,10 +646,13 @@ affected — only the config and schema live in `.scratch/`.
 ### `enforce_schema`
 
 **Record-scoped** (no `field` needed). Reads the table's `schema.json` and runs
-two checks:
+the following checks:
 
-1. **Required fields** — every field listed in `schema.required` must be present,
-   non-null, and non-empty-string. Emits an **error** for each violation.
+1. **Required fields** — every field listed in `schema.required` must be present.
+   A `null` or empty-string value is also flagged **unless its property schema
+   permits null** (`type: "null"`, a `type` array containing `"null"`, or an
+   `anyOf`/`oneOf` branch permitting null) — a nullable field legitimately holds a
+   verbatim null/blank. Emits an **error** for each violation.
    - Exception: the remote-ID column (`idColumnRemoteId`) is skipped for new
      records that have not yet been published (the remote service assigns the ID
      on first publish).
@@ -668,6 +671,11 @@ two checks:
    - For existing records: warns if the working-copy value differs from the
      master-branch value (the change will be ignored on publish).
 
+A verbatim "no value" is tolerated elsewhere: a `null` or empty-string value never
+produces a JSON-Schema conformance error (type / format / `anyOf`), the same way a
+service's unset field is not malformed data. A genuinely-required, non-nullable field
+that is null or blank is still caught by check 1.
+
 ```json
 { "validator": "enforce_schema" }
 ```
@@ -678,7 +686,7 @@ No `params`. Good default to add to every table.
 
 | Situation | Level | Message |
 |-----------|-------|---------|
-| Required field absent, null, or empty | `error` | `field 'slug' is required but missing or null` |
+| Required non-nullable field absent, null, or empty | `error` | `field 'slug' is required but missing or null` |
 | Read-only field changed on existing record | `warning` | `Updated read-only field` (description includes old → new values) |
 | Read-only field set on new record | `warning` | `Updated read-only field` (description: value will be ignored) |
 | Write-once field changed on existing record | `warning` | `Updated write-once field` (description includes old → new values) |
@@ -688,8 +696,10 @@ No `params`. Good default to add to every table.
 ### `required`
 
 **Field-scoped.** Emits an **error** when a field is absent from the record,
-`null`, or an empty string `""`. Use this to enforce values on fields that the
-schema marks as optional but your workflow needs filled in before publishing.
+`null`, or an empty string `""`. Unlike `enforce_schema`, this rule is
+schema-agnostic and always treats null/`""` as missing. Use this to enforce values
+on fields that the schema marks as optional but your workflow needs filled in
+before publishing.
 
 ```json
 { "validator": "required", "field": "fields.Name" }
