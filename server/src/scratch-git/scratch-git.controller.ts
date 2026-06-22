@@ -248,49 +248,6 @@ export class ScratchGitController {
     return this.scratchGitService.runGitGc(repoId, aggressive);
   }
 
-  @Post(':id/checkpoint')
-  async createCheckpoint(
-    @Param('id') workbookId: WorkbookId,
-    @Body('name') name: string,
-    @Req() req: RequestWithUser,
-  ): Promise<void> {
-    const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
-    return this.scratchGitService.createCheckpoint(workbookId, name);
-  }
-
-  @Get(':id/checkpoints')
-  async listCheckpoints(
-    @Param('id') workbookId: WorkbookId,
-    @Req() req: RequestWithUser,
-  ): Promise<{ name: string; timestamp: number; message: string }[]> {
-    const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
-    return this.scratchGitService.listCheckpoints(workbookId);
-  }
-
-  @Post(':id/checkpoint/revert')
-  async revertToCheckpoint(
-    @Param('id') workbookId: WorkbookId,
-    @Body('name') name: string,
-    @Req() req: RequestWithUser,
-  ): Promise<void> {
-    const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
-    return this.scratchGitService.revertToCheckpoint(workbookId, name);
-  }
-
-  @Delete(':id/checkpoint/:name')
-  async deleteCheckpoint(
-    @Param('id') workbookId: WorkbookId,
-    @Param('name') name: string,
-    @Req() req: RequestWithUser,
-  ): Promise<void> {
-    const actor = userToActor(req.user);
-    checkWorkspacePermissions(actor, workbookId);
-    return this.scratchGitService.deleteCheckpoint(workbookId, name);
-  }
-
   @Delete(':id/data-folder/files')
   async deleteAllFilesInDataFolder(
     @Param('id') workbookId: WorkbookId,

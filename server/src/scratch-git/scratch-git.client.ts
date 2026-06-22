@@ -419,24 +419,6 @@ export class ScratchGitClient {
     return this.callGitApi(`/api/repo/debug/${this.encodeRepoId(repoId)}/graph`, 'GET');
   }
 
-  async createCheckpoint(repoId: string, name: string): Promise<void> {
-    await this.callGitApi(`/api/repo/checkpoint/${this.encodeRepoId(repoId)}`, 'POST', { name });
-  }
-
-  async listCheckpoints(repoId: string): Promise<{ name: string; timestamp: number; message: string }[]> {
-    return this.callGitApi(`/api/repo/checkpoint/${this.encodeRepoId(repoId)}`, 'GET') as Promise<
-      { name: string; timestamp: number; message: string }[]
-    >;
-  }
-
-  async revertToCheckpoint(repoId: string, name: string): Promise<void> {
-    await this.callGitApi(`/api/repo/checkpoint/${this.encodeRepoId(repoId)}/revert`, 'POST', { name });
-  }
-
-  async deleteCheckpoint(repoId: string, name: string): Promise<void> {
-    await this.callGitApi(`/api/repo/checkpoint/${this.encodeRepoId(repoId)}/${encodeURIComponent(name)}`, 'DELETE');
-  }
-
   async writeTag(repoId: string, name: string, ref: string): Promise<void> {
     await this.callGitApi(`/api/repo/tag/${this.encodeRepoId(repoId)}`, 'POST', { name, ref });
   }

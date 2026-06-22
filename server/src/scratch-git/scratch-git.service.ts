@@ -358,22 +358,6 @@ export class ScratchGitService {
     return this.scratchGitClient.getGraph(repoId);
   }
 
-  async createCheckpoint(workbookId: WorkbookId, name: string): Promise<void> {
-    await this.scratchGitClient.createCheckpoint(workbookId, name);
-  }
-
-  async listCheckpoints(workbookId: WorkbookId): Promise<{ name: string; timestamp: number; message: string }[]> {
-    return this.scratchGitClient.listCheckpoints(workbookId);
-  }
-
-  async revertToCheckpoint(workbookId: WorkbookId, name: string): Promise<void> {
-    await this.scratchGitClient.revertToCheckpoint(workbookId, name);
-  }
-
-  async deleteCheckpoint(workbookId: WorkbookId, name: string): Promise<void> {
-    await this.scratchGitClient.deleteCheckpoint(workbookId, name);
-  }
-
   /**
    * Tag the commit that `ref` resolves to (branch, tag, or oid) with `name`.
    * Overwrites any existing tag with the same name.

@@ -14,7 +14,6 @@ The service consists of two HTTP servers running within a single Rust binary:
   - **File Read**: List directories, read files, compute diffs, and export ZIP archives — all directly from bare repos.
   - **Atomic Writes**: Commit, delete, rename, and publish files atomically with write-lock protection per repo+branch.
   - **Branching**: Dual-branch workflow (`main` for published state, `dirty` for working changes) with rebase and merge support.
-  - **Checkpoints**: Create, list, and revert named snapshots of repository state.
 - **Technology**: Rust, Axum, `gix` (pure-Rust Git library).
 
 ### 2. Git HTTP Backend Server (Port 3101)

@@ -170,20 +170,6 @@ impl GitRepo {
         }
     }
 
-    pub fn delete_tag(&self, tag_name: &str) -> Result<(), AppError> {
-        let full_ref = format!("refs/tags/{}", tag_name);
-        match self.repo.find_reference(&full_ref) {
-            Ok(r) => {
-                r.delete()
-                    .map_err(|e| AppError::internal(format!("Failed to delete tag: {}", e)))?;
-            }
-            Err(_) => {
-                // Tag doesn't exist, ignore
-            }
-        }
-        Ok(())
-    }
-
     // ── Object operations ──
 
     pub fn write_blob(&self, content: &[u8]) -> Result<ObjectId, AppError> {
@@ -850,7 +836,7 @@ impl GitRepo {
         }
     }
 
-    /// Read commit info (for graph/checkpoint listing).
+    /// Read commit info (for graph listing).
     pub fn read_commit_info(&self, oid: ObjectId) -> Result<CommitInfo, AppError> {
         let commit = self
             .repo

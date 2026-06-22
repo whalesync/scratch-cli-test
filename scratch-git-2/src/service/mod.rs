@@ -138,19 +138,6 @@ pub async fn run() {
             "/api/repo/diff/{id}/folder-diff",
             get(routes::diff::folder_diff),
         )
-        // Checkpoint
-        .route(
-            "/api/repo/checkpoint/{id}",
-            post(routes::checkpoint::create_checkpoint).get(routes::checkpoint::list_checkpoints),
-        )
-        .route(
-            "/api/repo/checkpoint/{id}/revert",
-            post(routes::checkpoint::revert_checkpoint),
-        )
-        .route(
-            "/api/repo/checkpoint/{id}/{name}",
-            delete(routes::checkpoint::delete_checkpoint),
-        )
         // Tag
         .route("/api/repo/tag/{id}", post(routes::tag::write_tag))
         // Index

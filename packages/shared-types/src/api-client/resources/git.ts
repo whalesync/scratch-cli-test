@@ -12,7 +12,7 @@ import type { Http } from '../http';
 
 /**
  * Git-layer operations for a workspace: the `scratch-git` microservice surface (repo reads,
- * status, graph, gc, index, checkpoints, migration) plus the workbook working-tree mutations
+ * status, graph, gc, index, migration) plus the workbook working-tree mutations
  * (`discard-changes`, `reset`). Reached as `client.git.*`.
  */
 export function createGitApi(http: Http) {
@@ -180,40 +180,6 @@ export function createGitApi(http: Http) {
         fallbackMessage: 'Failed to get git status',
       });
       return res.data;
-    },
-
-    createCheckpoint: async (workbookId: string, name: string): Promise<void> => {
-      await http.post(
-        `/scratch-git/${workbookId}/checkpoint`,
-        { name },
-        {
-          fallbackMessage: 'Failed to create checkpoint',
-        },
-      );
-    },
-
-    listCheckpoints: async (workbookId: string): Promise<{ name: string; timestamp: number; message: string }[]> => {
-      const res = await http.get<{ name: string; timestamp: number; message: string }[]>(
-        `/scratch-git/${workbookId}/checkpoints`,
-        { fallbackMessage: 'Failed to list checkpoints' },
-      );
-      return res.data;
-    },
-
-    revertToCheckpoint: async (workbookId: string, name: string): Promise<void> => {
-      await http.post(
-        `/scratch-git/${workbookId}/checkpoint/revert`,
-        { name },
-        {
-          fallbackMessage: 'Failed to revert to checkpoint',
-        },
-      );
-    },
-
-    deleteCheckpoint: async (workbookId: string, name: string): Promise<void> => {
-      await http.delete(`/scratch-git/${workbookId}/checkpoint/${name}`, {
-        fallbackMessage: 'Failed to delete checkpoint',
-      });
     },
 
     discardChanges: async (workbookId: string, path?: string): Promise<void> => {

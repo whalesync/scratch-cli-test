@@ -1,4 +1,3 @@
-pub mod checkpoint;
 pub mod debug;
 pub mod diff;
 pub mod index;

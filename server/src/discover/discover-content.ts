@@ -12,7 +12,7 @@ Scratch is a content management platform that syncs data between external servic
 - **Create new content** — draft blog posts, product listings, or pages based on your existing content themes
 - **Pull in the latest data** — sync fresh content from Airtable, Webflow, Notion, or Shopify and review what changed
 - **Download your content** — save all your files to your local computer for backup, offline use, or bulk editing
-- **Manage versions** — create save points before making changes so you can always undo
+- **Review your changes** — see what's changed since your last publish, and discard any edits you haven't published yet
 
 ## Authentication
 
@@ -213,7 +213,7 @@ curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
 
 ### Change Tracking
 
-Scratch tracks all changes to your content. You can check what's changed, view differences, and create save points to undo changes.
+Scratch tracks all changes to your content. You can check what's changed, view differences, and discard edits you haven't published yet.
 
 #### Check for unsaved changes
 \`\`\`bash
@@ -225,22 +225,6 @@ curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
 \`\`\`bash
 curl -s -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
   "${base}/scratch-git/{workbookId}/git-diff?path=/folder/file.md" | jq .
-\`\`\`
-
-#### Create a save point (before making changes)
-\`\`\`bash
-curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name": "before-bulk-edit"}' \\
-  ${base}/scratch-git/{workbookId}/checkpoint
-\`\`\`
-
-#### Undo changes (revert to a save point)
-\`\`\`bash
-curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.txt)" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name": "before-bulk-edit"}' \\
-  ${base}/scratch-git/{workbookId}/checkpoint/revert
 \`\`\`
 
 ### Pulling Data
@@ -260,11 +244,10 @@ curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.t
 ## Common Workflows
 
 ### Bulk edit content (most common)
-1. Create a save point first: \`POST /scratch-git/{workbookId}/checkpoint\` with \`{"name": "before-edits"}\`
-2. List your folders: \`GET /workbook/{workbookId}/data-folders/list\`
-3. List files in the target folder: \`GET /workbooks/{workbookId}/files/list/by-folder?folderId={id}\`
-4. Read each file, make your changes, and update via \`PATCH /workbooks/{workbookId}/files/by-path\`
-5. Review your changes in the Scratch web app, then publish
+1. List your folders: \`GET /workbook/{workbookId}/data-folders/list\`
+2. List files in the target folder: \`GET /workbooks/{workbookId}/files/list/by-folder?folderId={id}\`
+3. Read each file, make your changes, and update via \`PATCH /workbooks/{workbookId}/files/by-path\`
+4. Review your changes in the Scratch web app, then publish
 
 ### Pull in the latest content from your connected services
 1. Pull: \`POST /workbook/{workbookId}/pull-files\`
@@ -277,13 +260,12 @@ curl -s -X POST -H "Authorization: API-Token $(cat ~/Downloads/scratch-api-key.t
 2. Create files with the right structure: \`POST /workbooks/{workbookId}/files\`
 3. Publish to push your new content to the connected service
 
-### Undo changes
-1. List your save points: \`GET /scratch-git/{workbookId}/checkpoints\`
-2. Revert: \`POST /scratch-git/{workbookId}/checkpoint/revert\` with \`{"name": "before-edits"}\`
+### Discard unpublished edits
+1. Discard everything you've changed since your last publish: \`POST /workbook/{workbookId}/discard-changes\`
 
 ## Tips
 
-- **Always create a save point before bulk edits** so you can undo if needed.
+- **Your edits stay local until you publish** — review them in the Scratch web app first, and discard any you don't want before publishing.
 - Use \`jq\` to parse JSON responses for easier reading.
 - The \`path\` parameter for file operations uses POSIX format starting with \`/\`.
 - After editing files, you need to publish to push changes back to the connected service.
@@ -329,7 +311,7 @@ Once you've explored the user's workbooks, suggest concrete actions like:
 - "I can create new content for you — for example, draft 10 new blog post outlines based on your existing content themes."
 - "Want me to pull the latest data from your connected services, review what changed, and summarize the differences?"
 - "I can download all your content to your computer as local files — great for backups, working offline, or bulk AI editing."
-- "I can set up a save point before making any changes, so you can always undo if you don't like the results."
+- "I can show you everything that's changed since your last publish, and discard any edits you haven't published yet."
 
 The key insight: Scratch gives you read/write access to the user's content. You can read files, edit them, create new ones, and publish changes back to the user's connected services. Think of yourself as a content editor with superpowers.
 
@@ -343,10 +325,9 @@ If the user specifically asks you to publish, confirm with them before doing so.
 
 The user is likely NOT a developer. When talking to them, avoid technical jargon like "git", "CRUD", "API", "endpoint", "repository", "commit", etc. Instead, use plain language:
 - Say "your content" or "your files", not "the repository"
-- Say "save point" not "checkpoint" or "commit"
 - Say "pull in the latest" not "trigger a sync"
 - Say "publish your changes" not "run a publish job"
-- Say "undo" not "revert to checkpoint"
+- Say "discard your unpublished edits" not "revert" or "reset"
 - Say "folder" not "data folder" or "directory"
 - Keep your language friendly, approachable, and focused on what the user's content looks like — not how the system works internally.
 `;
