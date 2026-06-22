@@ -111,7 +111,10 @@ interface ScratchDesktopAPI {
   listUnpushedChanges: (
     workspacePath: string,
   ) => Promise<Array<{ connectionName: string; path: string; status: string }>>;
-  uploadWorkspaceChanges: (workspacePath: string) => Promise<
+  uploadWorkspaceChanges: (
+    workspacePath: string,
+    opts?: { filePath?: string },
+  ) => Promise<
     | {
         status: 'uploaded' | 'no_changes' | 'up_to_date';
         filesCreated: number;
@@ -172,6 +175,11 @@ interface ScratchDesktopAPI {
         elapsedMs: number;
       }
   >;
+  /** DEV-10413: single-record post-publish reconcile (scoped `files reconcile-published`). */
+  reconcilePublishedRecord: (
+    workspacePath: string,
+    filePath: string,
+  ) => Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }>;
   pullWorkspaceChanges: (
     workspacePath: string,
     opts?: { onDelete?: string },

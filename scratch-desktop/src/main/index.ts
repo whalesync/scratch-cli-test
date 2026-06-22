@@ -55,6 +55,7 @@ import {
   getValidationStats,
   listUnpushedChanges,
   listUnreviewedChanges,
+  reconcilePublishedRecord,
   refreshFolderIndex,
   reindexFiles,
   rejectFieldChanges,
@@ -816,10 +817,17 @@ ipcMain.handle('scratch:list-unreviewed-changes', async (_, workspacePath: strin
   listUnreviewedChanges(workspacePath),
 );
 ipcMain.handle('scratch:list-unpushed-changes', async (_, workspacePath: string) => listUnpushedChanges(workspacePath));
-ipcMain.handle('scratch:upload-workspace-changes', async (_, workspacePath: string) =>
+ipcMain.handle('scratch:upload-workspace-changes', async (_, workspacePath: string, opts?: { filePath?: string }) =>
   // `files upload` reindexes the affected folders itself (per-path,
   // scoped to the actually-changed records). No follow-up CLI call.
-  withWorkspaceInternalMutation(workspacePath, () => uploadWorkspaceChanges(workspacePath)),
+  // `opts.filePath` (DEV-10413) scopes the upload to a single record.
+  withWorkspaceInternalMutation(workspacePath, () => uploadWorkspaceChanges(workspacePath, opts)),
+);
+// Single-record post-publish reconcile (DEV-10413). The scoped analogue of the
+// `files download` pull above — runs after a single-record publish lands so the
+// other unreviewed edits in the workspace don't block the refresh.
+ipcMain.handle('scratch:reconcile-published-record', async (_, workspacePath: string, filePath: string) =>
+  withWorkspaceInternalMutation(workspacePath, () => reconcilePublishedRecord(workspacePath, filePath)),
 );
 ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string, opts?: { onDelete?: string }) => {
   const args = ['files', 'download'];

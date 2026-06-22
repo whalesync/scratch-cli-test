@@ -758,8 +758,19 @@ export async function listUnpublishedChanges(workspacePath: string): Promise<Unr
  * union — both branches survive the IPC boundary as plain JSON, so the
  * renderer's `PublishChangesModal` can pattern-match on `result.status`.
  */
-export async function uploadWorkspaceChanges(workspacePath: string): Promise<UploadWorkspaceResult> {
-  const result = await runScratchmdCapture(['--json', 'files', 'upload'], workspacePath);
+export async function uploadWorkspaceChanges(
+  workspacePath: string,
+  opts?: { filePath?: string },
+): Promise<UploadWorkspaceResult> {
+  // `--file-path` (DEV-10413) scopes the upload to a single record (workspace-
+  // relative path). The CLI then skips the dirty-gate probe and relaxes
+  // `refuse_if_dirty`, mirroring Scratch Web's single-file publish. Without it,
+  // the full workspace upload (two-pass dirty gate) runs.
+  const args = ['--json', 'files', 'upload'];
+  if (opts?.filePath) {
+    args.push('--file-path', opts.filePath);
+  }
+  const result = await runScratchmdCapture(args, workspacePath);
   if (result.exitCode !== 0) {
     // The CLI exits non-zero for every structured refusal (`blocked_stale` D8,
     // `blocked_dirty` / `check_failed` DEV-10316), printing the payload to
@@ -827,6 +838,34 @@ export async function rejectFieldChanges(
 
 export async function restoreDeletedRecord(workspacePath: string, recordPath: string): Promise<void> {
   await runScratchmd(['files', 'restore-deleted-record', recordPath], workspacePath);
+}
+
+/** Outcome of a single-record post-publish reconcile (DEV-10413). */
+export interface ReconcilePublishedResult {
+  status: string;
+  path: string;
+  /** True when the record's accepted patch was dropped (publish landed); false
+   *  when it survived (nothing landed for this record). Drives the renderer's
+   *  `plan-no-diff` disambiguation. */
+  patchDropped: boolean;
+  conflicts: number;
+}
+
+/**
+ * Reconcile local state for a SINGLE record after it was published (DEV-10413).
+ * The scoped analogue of `pullWorkspaceChanges` (`files download`), which
+ * refuses while any unreviewed edits exist elsewhere in the workspace. Re-anchors
+ * only this record's accepted patch against the new `main` and surgically
+ * rewrites only this record's working file. `filePath` is workspace-relative.
+ */
+export async function reconcilePublishedRecord(
+  workspacePath: string,
+  filePath: string,
+): Promise<ReconcilePublishedResult> {
+  return runScratchmdJson<ReconcilePublishedResult>(
+    ['--json', 'files', 'reconcile-published', '--file-path', filePath],
+    workspacePath,
+  );
 }
 
 export type { ReviewStat } from '../shared/review-types';

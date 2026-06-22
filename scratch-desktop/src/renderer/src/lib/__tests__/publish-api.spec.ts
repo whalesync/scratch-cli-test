@@ -80,7 +80,9 @@ describe('publish.viaCliRoute.planJob', () => {
     const { scratchApiClient } = await import('../scratch-api-client');
     responseQueue.push({ jobId: 'job_1', pipelineId: 'pipe_1' });
 
-    await scratchApiClient.publish.viaCliRoute.planJob('wkb_123', 'ca_456', 'dirtyhead_sha');
+    await scratchApiClient.publish.viaCliRoute.planJob('wkb_123', 'ca_456', {
+      expectedBaseDirtyHead: 'dirtyhead_sha',
+    });
 
     expect(calls[0].body).toEqual({
       connectorAccountId: 'ca_456',
@@ -93,10 +95,37 @@ describe('publish.viaCliRoute.planJob', () => {
     const { scratchApiClient } = await import('../scratch-api-client');
     responseQueue.push({ jobId: 'job_1', pipelineId: 'pipe_1' });
 
-    await scratchApiClient.publish.viaCliRoute.planJob('wkb_123', 'ca_456', null);
+    await scratchApiClient.publish.viaCliRoute.planJob('wkb_123', 'ca_456', {
+      expectedBaseDirtyHead: null,
+    });
 
     const body = calls[0].body as Record<string, unknown>;
     expect('expectedBaseDirtyHead' in body).toBe(false);
+  });
+
+  it('includes filePath in the body when provided (DEV-10413 single-record scope)', async () => {
+    const { scratchApiClient } = await import('../scratch-api-client');
+    responseQueue.push({ jobId: 'job_1', pipelineId: 'pipe_1' });
+
+    await scratchApiClient.publish.viaCliRoute.planJob('wkb_123', 'ca_456', {
+      filePath: 'posts/rec_1.json',
+    });
+
+    expect(calls[0].body).toEqual({
+      connectorAccountId: 'ca_456',
+      runAfterPlan: false,
+      filePath: 'posts/rec_1.json',
+    });
+  });
+
+  it('omits filePath when not provided (workspace-wide publish)', async () => {
+    const { scratchApiClient } = await import('../scratch-api-client');
+    responseQueue.push({ jobId: 'job_1', pipelineId: 'pipe_1' });
+
+    await scratchApiClient.publish.viaCliRoute.planJob('wkb_123', 'ca_456');
+
+    const body = calls[0].body as Record<string, unknown>;
+    expect('filePath' in body).toBe(false);
   });
 });
 

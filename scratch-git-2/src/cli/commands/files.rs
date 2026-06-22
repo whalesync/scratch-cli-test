@@ -169,6 +169,15 @@ pub enum FilesCommands {
         /// grid stays current without a follow-up `index rebuild-folder` sweep.
         #[arg(long = "skip-folder-index")]
         skip_folder_index: bool,
+        /// Single-record mode: workspace-relative path
+        /// (e.g. `<connection-name>/Folder/rec.json`). Ships ONLY this record's
+        /// accepted patch to the connection's dirty branch, mirroring Scratch
+        /// Web's single-file publish: no dirty-gate probe and `refuse_if_dirty`
+        /// is relaxed (the publish plan's `--file-path` scope is the
+        /// over-publish guard). The staleness gate is still enforced. Without
+        /// this flag the full workspace upload (two-pass dirty gate) runs.
+        #[arg(long = "file-path")]
+        file_path: Option<String>,
     },
     /// Publish accepted changes to external connectors (plan-job + run-job).
     ///
@@ -209,6 +218,24 @@ pub enum FilesCommands {
         /// Filename-substring filter, case-insensitive.
         #[arg(long = "filename")]
         filename: Option<String>,
+    },
+    /// Reconcile local state for a SINGLE record after it was published.
+    ///
+    /// The single-record analogue of the post-publish reconcile that `files
+    /// download` performs workspace-wide. `files download` refuses while any
+    /// unreviewed edits exist anywhere in the workspace, so it can't run after
+    /// a single-record publish when other records still have unreviewed edits.
+    /// This command fetches origin, re-anchors ONLY this record's accepted
+    /// patch against the new `main` (dropping it if the publish landed, keeping
+    /// it re-anchored if the connector batch failed), and surgically rewrites
+    /// ONLY this record's working file — never touching the other pending
+    /// patches or the other records on disk.
+    #[command(name = "reconcile-published")]
+    ReconcilePublished {
+        /// Workspace-relative path of the published record
+        /// (e.g. `<connection-name>/Folder/rec.json`).
+        #[arg(long = "file-path")]
+        file_path: String,
     },
 }
 
@@ -513,9 +540,10 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::GetReviewStats => run_get_review_stats(&cwd, server_url, json),
         FilesCommands::Unpublished => run_unpublished(&cwd, server_url, json),
         FilesCommands::Unpushed => run_unpushed(&cwd, server_url, json),
-        FilesCommands::Upload { skip_folder_index } => {
-            run_upload(&cwd, server_url, json, skip_folder_index).await
-        }
+        FilesCommands::Upload {
+            skip_folder_index,
+            file_path,
+        } => run_upload(&cwd, server_url, json, skip_folder_index, file_path).await,
         FilesCommands::Publish => run_publish(&cwd, server_url, json).await,
         FilesCommands::RevertPlan {
             plan_id,
@@ -535,6 +563,9 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
                 json,
             )
             .await
+        }
+        FilesCommands::ReconcilePublished { file_path } => {
+            run_reconcile_published(&cwd, server_url, &file_path, json)
         }
     }
 }
@@ -872,6 +903,7 @@ async fn run_upload(
     server_url: &str,
     json: bool,
     skip_folder_index: bool,
+    file_path: Option<String>,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, contexts, workspace_server_url) =
@@ -892,6 +924,26 @@ async fn run_upload(
     let workbook_id = workspace_marker.workbook.id.as_str();
 
     let verbose = !json;
+
+    // Single-record publish (DEV-10413): ship only the one record's accepted
+    // patch, mirroring Scratch Web's single-file publish. Skips the two-pass
+    // dirty gate and relaxes `refuse_if_dirty` — the downstream publish plan's
+    // `--file-path` scope is the over-publish guard. Branches out here so the
+    // workspace-wide "Publish all" path below is untouched.
+    if let Some(file_path) = file_path.as_deref() {
+        return upload_single_record_scoped(
+            &workspace_dir,
+            &contexts,
+            &client,
+            workbook_id,
+            file_path,
+            skip_folder_index,
+            verbose,
+            json,
+            started,
+        )
+        .await;
+    }
 
     // DEV-10316 two-pass upload. Pass 1 probes the dirty gate for EVERY
     // connection that has something to publish (checkOnly + refuseIfDirty),
@@ -943,7 +995,7 @@ async fn run_upload(
             println!("Uploading {}...", ctx.conn_dir_name);
         }
         let upload_result =
-            upload_single_repo_via_patches(ctx, &client, workbook_id, verbose).await?;
+            upload_single_repo_via_patches(ctx, &client, workbook_id, verbose, None, true).await?;
         if let Some(ref dirty) = upload_result.blocked_dirty {
             dirty_blocked.push(BlockedDirtyConnection {
                 connection_name: ctx.conn_dir_name.clone(),
@@ -1004,6 +1056,101 @@ async fn run_upload(
         );
     }
 
+    let aggregate = aggregate_upload(&results);
+    print_upload_result(&aggregate, &results, started.elapsed().as_millis(), json)
+}
+
+/// Resolve a single workspace-relative path (`<connection-name>/Folder/rec.json`)
+/// to its owning connection context and the connection-relative remainder. The
+/// first path segment must match a connection's `conn_dir_name`. Mirrors the
+/// per-path split [`group_input_paths_by_connection`] does, but for the single
+/// path the scoped upload / `reconcile-published` commands operate on. A leading
+/// or trailing slash on the input is tolerated.
+fn resolve_connection_and_relpath<'a>(
+    contexts: &'a [ConnectionContext],
+    workspace_relative_path: &str,
+) -> anyhow::Result<(&'a ConnectionContext, String)> {
+    let normalized = workspace_relative_path.trim_start_matches('/');
+    contexts
+        .iter()
+        .find_map(|ctx| {
+            let prefix = format!("{}/", ctx.conn_dir_name);
+            normalized
+                .strip_prefix(&prefix)
+                .map(|rest| (ctx, rest.trim_end_matches('/').to_string()))
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Path '{}' does not match any connection. Expected format: <connection-name>/<relative-path>",
+                workspace_relative_path
+            )
+        })
+}
+
+/// Single-record publish upload (DEV-10413). Ships ONLY the clicked record's
+/// accepted patch to its connection's dirty branch. Unlike the workspace-wide
+/// upload, there is no two-pass dirty-gate probe and `refuse_if_dirty` is
+/// relaxed — the publish plan's `--file-path` scope is the over-publish guard,
+/// matching how Scratch Web publishes a single file from a busy `dirty`. The
+/// staleness gate (`refuse_if_stale`) is orthogonal and kept.
+#[allow(clippy::too_many_arguments)]
+async fn upload_single_record_scoped(
+    workspace_dir: &Path,
+    contexts: &[ConnectionContext],
+    client: &crate::api::ApiClient,
+    workbook_id: &str,
+    file_path: &str,
+    skip_folder_index: bool,
+    verbose: bool,
+    json: bool,
+    started: std::time::Instant,
+) -> anyhow::Result<()> {
+    let (ctx, relpath) = resolve_connection_and_relpath(contexts, file_path)?;
+
+    let upload_result =
+        upload_single_repo_via_patches(ctx, client, workbook_id, verbose, Some(&relpath), false)
+            .await?;
+
+    // The staleness gate still fires (refuse_if_stale kept); surface it the
+    // same way the workspace-wide path does so the desktop sees `blocked_stale`.
+    if let Some(stale) = &upload_result.blocked_stale {
+        let blocked = vec![BlockedStaleConnection {
+            connection_name: ctx.conn_dir_name.clone(),
+            stale: stale.clone(),
+        }];
+        print_blocked_stale_result(&blocked, started.elapsed().as_millis(), json)?;
+        anyhow::bail!("1 connection refused — run `scratchmd files download`, then retry.");
+    }
+    // `refuse_if_dirty: false` means the server won't return `blocked_dirty`,
+    // but handle it defensively so a future server change can't silently
+    // over-publish.
+    if let Some(dirty) = &upload_result.blocked_dirty {
+        let blocked = vec![BlockedDirtyConnection {
+            connection_name: ctx.conn_dir_name.clone(),
+            dirty: dirty.clone(),
+        }];
+        print_blocked_dirty_result(&blocked, &[], started.elapsed().as_millis(), json)?;
+        anyhow::bail!("1 connection refused — resolve unpublished changes on the web, then retry.");
+    }
+    if let Some(failed) = &upload_result.check_failed {
+        let check_failed = vec![CheckFailedConnection {
+            connection_name: ctx.conn_dir_name.clone(),
+            failed: failed.clone(),
+        }];
+        print_blocked_dirty_result(&[], &check_failed, started.elapsed().as_millis(), json)?;
+        anyhow::bail!("1 connection refused — resolve unpublished changes on the web, then retry.");
+    }
+
+    if !skip_folder_index {
+        let all_changed_workspace_paths: Vec<String> = upload_result
+            .changed_paths
+            .iter()
+            .map(|path| format!("{}/{}", ctx.conn_dir_name, path))
+            .collect();
+        reindex_folder_index_for_changes(workspace_dir, &all_changed_workspace_paths)?;
+    }
+
+    let results = vec![upload_result];
     let aggregate = aggregate_upload(&results);
     print_upload_result(&aggregate, &results, started.elapsed().as_millis(), json)
 }
@@ -4343,54 +4490,20 @@ fn reconcile_accepted_after_publish(
     workspace_dir: &Path,
     token: &str,
 ) -> anyhow::Result<()> {
-    let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
-    crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
-    let new_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?;
-
-    let file_path_to_contents_map_in_main_branch_before_publish = match old_main_hash.as_deref() {
-        Some(h) => read_git_tree(&ctx.bare_repo, h)?,
-        None => FileMap::new(),
-    };
-    let file_path_to_contents_map_in_main_branch_after_publish = match new_main_hash.as_deref() {
-        Some(h) => read_git_tree(&ctx.bare_repo, h)?,
-        None => FileMap::new(),
-    };
-
     let connection_dir = accepted_patches_dir(ctx);
     let accepted = crate::shared::accepted_patches::load(&connection_dir)?;
 
-    let re_anchored = crate::shared::re_anchor::re_anchor_patches(
+    let ReAnchorAgainstPublishedMain {
+        re_anchored,
+        new_main_map: file_path_to_contents_map_in_main_branch_after_publish,
+        new_main_hash,
+        ..
+    } = re_anchor_accepted_patches_against_published_main(
+        ctx,
+        workspace_dir,
+        token,
         &accepted.patches,
-        |path| {
-            parse_json_value_at(
-                &file_path_to_contents_map_in_main_branch_before_publish,
-                path,
-                "refs/heads/main (pre-publish)",
-            )
-        },
-        |path| {
-            parse_json_value_at(
-                &file_path_to_contents_map_in_main_branch_after_publish,
-                path,
-                "refs/remotes/origin/main (post-publish)",
-            )
-        },
     )?;
-
-    for conflict in &re_anchored.conflicts {
-        let entry = crate::config::conflicts_log::ConflictEntry {
-            ts: crate::config::conflicts_log::now_rfc3339(),
-            connector_account_id: ctx.connection_id.clone(),
-            path: conflict.path.clone(),
-            conflicting_keys: conflict.conflicting_keys.clone(),
-        };
-        if let Err(err) = crate::config::conflicts_log::append(workspace_dir, &entry) {
-            eprintln!(
-                "Warning: failed to append conflict for {} to conflicts.log: {err}",
-                conflict.path
-            );
-        }
-    }
 
     let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
         patches: re_anchored.patches,
@@ -4432,6 +4545,262 @@ fn reconcile_accepted_after_publish(
         }
     }
 
+    Ok(())
+}
+
+/// The shared re-anchor core for the post-publish reconcile. Fetches origin,
+/// reads the pre- and post-publish `main` trees, re-anchors `patches` across
+/// them, and appends any conflicts to `conflicts.log`. Returns the re-anchored
+/// output plus the post-publish `main` tree map + hash for the caller to
+/// materialize from.
+///
+/// The materialize step is deliberately NOT shared (DEV-10413, A4/D6): the
+/// workspace-wide reconcile rewrites the whole worktree via
+/// `materialize_local_repo` (delete-by-absence), whereas the single-record
+/// reconcile does a surgical single-file write. Sharing the materialize would
+/// let a one-path target map mass-delete every sibling record on disk.
+struct ReAnchorAgainstPublishedMain {
+    re_anchored: crate::shared::re_anchor::ReAnchorOutput,
+    #[allow(dead_code)]
+    old_main_map: FileMap,
+    new_main_map: FileMap,
+    new_main_hash: Option<String>,
+}
+
+fn re_anchor_accepted_patches_against_published_main(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    token: &str,
+    patches: &[crate::shared::re_anchor::AnchoredPatch],
+) -> anyhow::Result<ReAnchorAgainstPublishedMain> {
+    let old_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
+    crate::git_ops::fetch_origin(&ctx.bare_repo, token)?;
+    let new_main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/remotes/origin/main")?;
+
+    let old_main_map = match old_main_hash.as_deref() {
+        Some(h) => read_git_tree(&ctx.bare_repo, h)?,
+        None => FileMap::new(),
+    };
+    let new_main_map = match new_main_hash.as_deref() {
+        Some(h) => read_git_tree(&ctx.bare_repo, h)?,
+        None => FileMap::new(),
+    };
+
+    let re_anchored = crate::shared::re_anchor::re_anchor_patches(
+        patches,
+        |path| parse_json_value_at(&old_main_map, path, "refs/heads/main (pre-publish)"),
+        |path| {
+            parse_json_value_at(
+                &new_main_map,
+                path,
+                "refs/remotes/origin/main (post-publish)",
+            )
+        },
+    )?;
+
+    for conflict in &re_anchored.conflicts {
+        let entry = crate::config::conflicts_log::ConflictEntry {
+            ts: crate::config::conflicts_log::now_rfc3339(),
+            connector_account_id: ctx.connection_id.clone(),
+            path: conflict.path.clone(),
+            conflicting_keys: conflict.conflicting_keys.clone(),
+        };
+        if let Err(err) = crate::config::conflicts_log::append(workspace_dir, &entry) {
+            eprintln!(
+                "Warning: failed to append conflict for {} to conflicts.log: {err}",
+                conflict.path
+            );
+        }
+    }
+
+    Ok(ReAnchorAgainstPublishedMain {
+        re_anchored,
+        old_main_map,
+        new_main_map,
+        new_main_hash,
+    })
+}
+
+/// Outcome of [`reconcile_published_record`]: whether the record's accepted
+/// patch was dropped (the publish landed on `main` and local state is now
+/// clean) versus kept (the connector batch didn't land it — still pending),
+/// plus the conflict count. Drives the desktop's `plan-no-diff` disambiguation
+/// (DEV-10413 D3): a dropped patch means "already published — cleaned up", a
+/// surviving patch means "nothing to publish for this record".
+struct ReconcilePublishedOutcome {
+    patch_dropped: bool,
+    conflicts: usize,
+}
+
+/// Single-record post-publish reconcile (DEV-10413). The scoped analogue of
+/// [`reconcile_accepted_after_publish`]: re-anchors ONLY this record's accepted
+/// patch against the new `main`, drops it if the publish landed (keeps it
+/// re-anchored if the connector batch failed), and surgically rewrites ONLY
+/// this record's working file — never `materialize_local_repo`, so the other
+/// pending patches and the other records on disk (incl. any unreviewed edits)
+/// are left untouched.
+///
+/// Correct precisely because a scoped publish advances `main` for exactly this
+/// path (the load-bearing invariant): every sibling blob is byte-identical in
+/// old-vs-new `main`, so leaving their worktree files alone is identical to
+/// what a full materialize would have produced.
+fn reconcile_published_record(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    token: &str,
+    relpath: &str,
+) -> anyhow::Result<ReconcilePublishedOutcome> {
+    let connection_dir = accepted_patches_dir(ctx);
+    let mut accepted = crate::shared::accepted_patches::load(&connection_dir)?;
+    let existing_entry = crate::shared::accepted_patches::get_entry(&accepted, relpath).cloned();
+
+    // Re-anchor ONLY this record's patch (a one-element slice). When the record
+    // has no pending patch (a prior run already reconciled it), pass an empty
+    // slice — we still advance `main` + reindex to converge idempotently.
+    let patches_to_reanchor: Vec<crate::shared::re_anchor::AnchoredPatch> =
+        existing_entry.iter().cloned().collect();
+    let ReAnchorAgainstPublishedMain {
+        re_anchored,
+        old_main_map,
+        new_main_map,
+        new_main_hash,
+    } = re_anchor_accepted_patches_against_published_main(
+        ctx,
+        workspace_dir,
+        token,
+        &patches_to_reanchor,
+    )?;
+
+    // At most one re-anchored entry (this record), and only if the publish
+    // failed and the patch is still meaningful against the new `main`.
+    let surviving_patch = re_anchored.patches.first().cloned();
+    let patch_dropped = !matches!((&existing_entry, &surviving_patch), (Some(_), Some(_)));
+
+    // Surgical single-file write — only this record, NEVER materialize_local_repo
+    // (its delete-by-absence would wipe every sibling record on disk).
+    if ctx.worktree_dir.join(".git").exists() {
+        // The value the worktree should currently hold == what we last
+        // approved+materialized (the button guaranteed worktree == approved at
+        // click time). If it still matches, the user didn't edit the record
+        // during the publish window and it's safe to canonicalize. If it
+        // diverged, preserve their in-flight edit (D4) — it re-surfaces as a
+        // fresh unreviewed change against the new published `main`.
+        // Reuse the audited per-path approved-bytes helper with single-entry
+        // synthetic files: pre-publish uses the original accepted entry against
+        // old `main`; post-publish uses the surviving re-anchored entry (if any)
+        // against new `main`.
+        let pre_publish_file = crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: existing_entry.iter().cloned().collect(),
+        };
+        let post_publish_file = crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: surviving_patch.iter().cloned().collect(),
+        };
+        let pre_publish_approved_bytes =
+            approved_bytes_for_path(&old_main_map, &pre_publish_file, relpath)?;
+        let worktree_bytes = read_worktree_record_bytes(ctx, relpath)?;
+        if worktree_bytes == pre_publish_approved_bytes {
+            let post_publish_approved_bytes =
+                approved_bytes_for_path(&new_main_map, &post_publish_file, relpath)?;
+            write_or_remove_working_file(ctx, relpath, post_publish_approved_bytes.as_deref())?;
+        }
+    }
+
+    // Persist the updated accepted-patches: drop/replace ONLY this record's
+    // entry, leaving every other pending patch untouched.
+    accepted.patches.retain(|p| p.path != relpath);
+    if let Some(patch) = surviving_patch {
+        accepted.patches.push(patch);
+    }
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted)?;
+
+    if let Some(hash) = new_main_hash.as_deref() {
+        git_update_ref(&ctx.bare_repo, "refs/heads/main", hash)?;
+        // Re-baseline the gix index so unreviewed detection compares against the
+        // new `main`. A mixed reset only moves the index, not the working tree,
+        // so the other records' (and unreviewed edits') on-disk files are safe.
+        if ctx.worktree_dir.join(".git").exists() {
+            crate::git_ops::worktree_reset_mixed(&ctx.worktree_dir, hash)?;
+        }
+    }
+
+    // Note: the per-folder index reindex is the caller's responsibility
+    // ([`run_reconcile_published`]), mirroring how `download_single_repo`
+    // leaves reindexing to `run_download`. Keeping it out of the core keeps
+    // this function unit-testable against a bare/worktree fixture without the
+    // workspace-layout DB plumbing reindex needs.
+
+    Ok(ReconcilePublishedOutcome {
+        patch_dropped,
+        conflicts: re_anchored.conflicts.len(),
+    })
+}
+
+/// Read one record's working-tree file. `None` when it's absent on disk
+/// (approved-deleted, or never materialized).
+fn read_worktree_record_bytes(
+    ctx: &ConnectionContext,
+    relpath: &str,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let path = ctx.worktree_dir.join(relpath);
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(anyhow::anyhow!(
+            "failed to read working file {}: {err}",
+            path.display()
+        )),
+    }
+}
+
+/// `scratchmd files reconcile-published --file-path <workspace-relative-path>`.
+///
+/// Resolves the owning connection from the path's first segment, then runs the
+/// single-record post-publish reconcile (DEV-10413). Emits the
+/// dropped-vs-pending outcome so the desktop can disambiguate a `plan-no-diff`.
+fn run_reconcile_published(
+    cwd: &Path,
+    server_url: &str,
+    file_path: &str,
+    json: bool,
+) -> anyhow::Result<()> {
+    let (_marker, workspace_dir, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url, json)?;
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+    let token = get_token(&workspace_server_url)?;
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    let (ctx, relpath) = resolve_connection_and_relpath(&contexts, file_path)?;
+    let outcome = reconcile_published_record(ctx, &workspace_dir, &token, &relpath)?;
+
+    // Reindex only this record's folder so the grid reflects the published
+    // state. reindex_folder_index_for_changes wants workspace-relative paths,
+    // so re-prefix the connection dir name.
+    reindex_folder_index_for_changes(
+        &workspace_dir,
+        &[format!("{}/{}", ctx.conn_dir_name, relpath)],
+    )?;
+
+    if json {
+        let payload = serde_json::json!({
+            "status": "reconciled",
+            "path": file_path,
+            "patchDropped": outcome.patch_dropped,
+            "conflicts": outcome.conflicts,
+        });
+        println!("{}", serde_json::to_string(&payload)?);
+    } else {
+        println!(
+            "Reconciled {} ({}).",
+            file_path,
+            if outcome.patch_dropped {
+                "published — local state cleaned up"
+            } else {
+                "still pending — nothing landed on the server"
+            }
+        );
+    }
     Ok(())
 }
 
@@ -4587,26 +4956,119 @@ fn download_single_repo(
     Ok(result)
 }
 
+/// The data-shaping result of preparing an upload: the wire payload entries
+/// plus the summary counts/path lists. Pure (no network). Lets the scoped
+/// (single-record) and full (workspace-wide) upload paths share one filter so
+/// the payload and the reported counts can never drift apart.
+struct UploadPatchPlan {
+    payload_patches: Vec<crate::api::UploadPatchEntry>,
+    files_created: i32,
+    files_updated: i32,
+    files_deleted: i32,
+    /// Workspace-relative (`<conn>/<path>`) — for the human/JSON summary.
+    created_paths: Vec<String>,
+    updated_paths: Vec<String>,
+    deleted_paths: Vec<String>,
+    /// Connection-relative — the caller prefixes `conn_dir_name` for reindex.
+    changed_paths: Vec<String>,
+}
+
+/// Shape the accepted-patches file into the upload payload + summary counts.
+/// `scope_relpath = None` ships every accepted patch (workspace-wide "Publish
+/// all"); `Some(path)` ships only that record's patch (single-record publish,
+/// DEV-10413) and errors if the record has no accepted patch. Every field is
+/// derived from the SAME selected set so a scoped upload can never silently
+/// ship more (or report different counts) than what it filtered to.
+fn build_upload_patch_plan(
+    accepted_file: &crate::shared::accepted_patches::AcceptedPatchesFile,
+    conn_dir_name: &str,
+    scope_relpath: Option<&str>,
+) -> anyhow::Result<UploadPatchPlan> {
+    use crate::shared::re_anchor::PatchKind as AnchoredKind;
+    let selected: Vec<&crate::shared::re_anchor::AnchoredPatch> = match scope_relpath {
+        None => accepted_file.patches.iter().collect(),
+        Some(path) => {
+            let entry = crate::shared::accepted_patches::get_entry(accepted_file, path)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "No accepted (approved) change found for '{}'. Approve the record before publishing it.",
+                        path
+                    )
+                })?;
+            vec![entry]
+        }
+    };
+    let count_of_kind =
+        |kind: AnchoredKind| selected.iter().filter(|p| p.kind == kind).count() as i32;
+    let workspace_paths_of_kind = |kind: AnchoredKind| {
+        selected
+            .iter()
+            .filter(|p| p.kind == kind)
+            .map(|p| format!("{}/{}", conn_dir_name, p.path))
+            .collect::<Vec<String>>()
+    };
+    Ok(UploadPatchPlan {
+        payload_patches: selected
+            .iter()
+            .map(|p| crate::api::UploadPatchEntry {
+                path: p.path.clone(),
+                kind: p.kind,
+                patch: p.patch.clone(),
+                revert: p.revert,
+            })
+            .collect(),
+        files_created: count_of_kind(AnchoredKind::Create),
+        files_updated: count_of_kind(AnchoredKind::Update),
+        files_deleted: count_of_kind(AnchoredKind::Delete),
+        created_paths: workspace_paths_of_kind(AnchoredKind::Create),
+        updated_paths: workspace_paths_of_kind(AnchoredKind::Update),
+        deleted_paths: workspace_paths_of_kind(AnchoredKind::Delete),
+        changed_paths: selected.iter().map(|p| p.path.clone()).collect(),
+    })
+}
+
 /// Upload the connection's accepted edits to the server. Reads
 /// `accepted-patches.json` (which IS the wire format), PUTs it to a presigned
 /// GCS URL, then POSTs `/upload-patch/commit` so the server applies the
 /// patches to its dirty branch as a single commit. No publish is triggered —
 /// the caller runs `scratchmd files publish` separately.
 ///
-/// Skips entirely (no network, no tree walks) when there's nothing to upload.
-/// `baseHead` is the local `refs/heads/main` SHA: the snapshot the accepted
-/// patches were anchored against. The server uses it for the staleness
-/// signal (returned in `stalenessWarning`).
+/// `scope_relpath = Some(path)` ships only that record (single-record publish,
+/// DEV-10413); `None` ships the whole accepted-patches file. `refuse_if_dirty`
+/// is `true` for the workspace-wide path and `false` for single-record (mirror
+/// web). Skips entirely (no network, no tree walks) when there's nothing to
+/// upload. `baseHead` is the local `refs/heads/main` SHA: the snapshot the
+/// accepted patches were anchored against. The server uses it for the
+/// staleness signal (returned in `stalenessWarning`).
 async fn upload_single_repo_via_patches(
     ctx: &ConnectionContext,
     client: &crate::api::ApiClient,
     workbook_id: &str,
     verbose: bool,
+    scope_relpath: Option<&str>,
+    refuse_if_dirty: bool,
 ) -> anyhow::Result<UploadResult> {
     // Cheap read first — skip the rest if nothing to upload.
     let connection_dir = accepted_patches_dir(ctx);
     let accepted_file = crate::shared::accepted_patches::load(&connection_dir)?;
-    if accepted_file.patches.is_empty() {
+    // Shape the payload + summary counts from the (optionally scoped) accepted
+    // patches. A `Some(path)` scope ships only that record (single-record
+    // publish); `None` ships everything (workspace-wide "Publish all"). All of
+    // payload/counts/path-lists come from the same filtered set, so the scoped
+    // and full paths can never disagree about what's being shipped.
+    let UploadPatchPlan {
+        payload_patches,
+        files_created,
+        files_updated,
+        files_deleted,
+        created_paths,
+        updated_paths,
+        deleted_paths,
+        changed_paths,
+    } = build_upload_patch_plan(&accepted_file, &ctx.conn_dir_name, scope_relpath)?;
+    if payload_patches.is_empty() {
+        // Only reachable for the unscoped path with an empty file — a scoped
+        // path with no matching entry errors inside build_upload_patch_plan.
         return Ok(UploadResult {
             connection_name: ctx.conn_dir_name.clone(),
             status: "no_changes".to_string(),
@@ -4621,46 +5083,6 @@ async fn upload_single_repo_via_patches(
     // check could never fire. Dropped.
     let main_hash = git_rev_parse_optional(&ctx.bare_repo, "refs/heads/main")?;
 
-    use crate::shared::re_anchor::PatchKind as AnchoredKind;
-    let files_created = accepted_file
-        .patches
-        .iter()
-        .filter(|p| p.kind == AnchoredKind::Create)
-        .count() as i32;
-    let files_updated = accepted_file
-        .patches
-        .iter()
-        .filter(|p| p.kind == AnchoredKind::Update)
-        .count() as i32;
-    let files_deleted = accepted_file
-        .patches
-        .iter()
-        .filter(|p| p.kind == AnchoredKind::Delete)
-        .count() as i32;
-    let created_paths: Vec<String> = accepted_file
-        .patches
-        .iter()
-        .filter(|p| p.kind == AnchoredKind::Create)
-        .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
-        .collect();
-    let updated_paths: Vec<String> = accepted_file
-        .patches
-        .iter()
-        .filter(|p| p.kind == AnchoredKind::Update)
-        .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
-        .collect();
-    let deleted_paths: Vec<String> = accepted_file
-        .patches
-        .iter()
-        .filter(|p| p.kind == AnchoredKind::Delete)
-        .map(|p| format!("{}/{}", ctx.conn_dir_name, p.path))
-        .collect();
-    let changed_paths: Vec<String> = accepted_file
-        .patches
-        .iter()
-        .map(|p| p.path.clone())
-        .collect();
-
     // `accepted-patches.json` IS the wire format. Ship it verbatim, carrying the
     // explicit `kind` (so the server's delete signal is `kind == delete`, not a
     // magic null), the format `version` (so the server can track dialect
@@ -4669,16 +5091,7 @@ async fn upload_single_repo_via_patches(
     // FK fields through the BACKFILL phase for revert-creates.
     let payload = crate::api::UploadPatchPayload {
         version: crate::shared::accepted_patches::FORMAT_VERSION,
-        patches: accepted_file
-            .patches
-            .iter()
-            .map(|p| crate::api::UploadPatchEntry {
-                path: p.path.clone(),
-                kind: p.kind,
-                patch: p.patch.clone(),
-                revert: p.revert,
-            })
-            .collect(),
+        patches: payload_patches,
     };
 
     if verbose {
@@ -4694,21 +5107,23 @@ async fn upload_single_repo_via_patches(
         .map_err(|e| anyhow::anyhow!("upload-patch PUT failed: {e}"))?;
     // Apply pass. `refuse_if_stale: true` (D8): the server compares `baseHead`
     // against its current `refs/heads/main` and aborts with HTTP 409 +
-    // structured `blocked_stale` body if they diverge. `refuse_if_dirty: true`
-    // (DEV-10316) is retained on the apply pass too — pass 1 already probed
-    // every connection's dirty gate, but a sub-second sync write between the
-    // probe and this apply can re-create a non-clean staging area, so we
-    // re-check here rather than apply onto it. The CLI surfaces each refusal
-    // as a typed UploadResult that `run_upload` bails on.
+    // structured `blocked_stale` body if they diverge. `refuse_if_dirty`
+    // (DEV-10316) is `true` for the workspace-wide upload — pass 1 already
+    // probed every connection's dirty gate, but a sub-second sync write between
+    // the probe and this apply can re-create a non-clean staging area, so we
+    // re-check here rather than apply onto it. The single-record path
+    // (DEV-10413) passes `false` to mirror Scratch Web (the publish plan's
+    // `--file-path` scope is the over-publish guard). The CLI surfaces each
+    // refusal as a typed UploadResult that the caller bails on.
     let commit = client
         .upload_patch_commit(
             workbook_id,
             &ctx.connection_id,
             &init.upload_id,
             main_hash.as_deref(),
-            true,  // refuse_if_stale
-            true,  // refuse_if_dirty
-            false, // check_only (this is the real apply)
+            true,            // refuse_if_stale
+            refuse_if_dirty, // DEV-10316 (workspace-wide) / relaxed for single-record (DEV-10413)
+            false,           // check_only (this is the real apply)
         )
         .await
         .map_err(|e| anyhow::anyhow!("upload-patch commit failed: {e}"))?;
@@ -4756,15 +5171,20 @@ async fn upload_single_repo_via_patches(
     // Surface a warning if the user has on-disk edits that haven't been
     // accepted yet — those don't ride along with this upload. Uses the
     // gix::status-backed fast path (~210ms warm) so the courtesy check
-    // doesn't dominate the upload time.
+    // doesn't dominate the upload time. Skipped in single-record mode
+    // (DEV-10413): publishing one record while others stay unreviewed is the
+    // whole intent there, so the connection-wide "run `accept-all` first" advice
+    // would be actively wrong (it would accept every other record).
     let mut messages = Vec::new();
-    let local_unreviewed =
-        list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?;
-    if !local_unreviewed.is_empty() {
-        messages.push(format!(
-            "{} record(s) have unreviewed local changes and were not uploaded. Run `scratchmd files accept-all` first.",
-            local_unreviewed.len()
-        ));
+    if scope_relpath.is_none() {
+        let local_unreviewed =
+            list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?;
+        if !local_unreviewed.is_empty() {
+            messages.push(format!(
+                "{} record(s) have unreviewed local changes and were not uploaded. Run `scratchmd files accept-all` first.",
+                local_unreviewed.len()
+            ));
+        }
     }
     // `applied.staleness_warning` only arrives when `refuse_if_stale: false`,
     // so on the strict-mode path (D8) it stays None and we leave the message

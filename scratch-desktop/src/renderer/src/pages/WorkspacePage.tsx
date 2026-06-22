@@ -13,7 +13,13 @@ import { useReviewStats } from '../hooks/use-review-stats';
 import { useValidation } from '../hooks/use-validation';
 import { CloudSyncWarning, listLocalWorkspaces } from '../lib/local-workspaces';
 import { parentDirectoryPath } from '../lib/parent-path';
-import { trackDeepLinkProcessed, trackPublishAll, trackPullAll, trackRedownloadWorkspace } from '../lib/posthog';
+import {
+  trackDeepLinkProcessed,
+  trackPublishAll,
+  trackPublishSingleRecord,
+  trackPullAll,
+  trackRedownloadWorkspace,
+} from '../lib/posthog';
 import { setScratchApiActiveWorkspacePath } from '../lib/scratch-api-client';
 import { useWorkspaceUiStore } from '../stores/workspace-ui-store';
 import { CloudSyncWarningBanner } from './workspace/CloudSyncWarningBanner';
@@ -21,6 +27,10 @@ import { PublishChangesModal } from './workspace/PublishChangesModal';
 import { PullAllModal } from './workspace/PullAllModal';
 import { PullInProgressModal } from './workspace/PullInProgressModal';
 import { ReinitWorkspaceModal } from './workspace/ReinitWorkspaceModal';
+import {
+  resolveSingleRecordPublishTarget,
+  type SingleRecordPublishTarget,
+} from './workspace/single-record-publish-target';
 import { WorkspaceContent } from './workspace/WorkspaceContent';
 import { WorkspaceHeader } from './workspace/WorkspaceHeader';
 
@@ -89,6 +99,9 @@ export function WorkspacePage() {
   const previousLocalPathRef = useRef<string | null>(null);
 
   const [publishModalOpen, setPublishModalOpen] = useState(false);
+  // DEV-10413: when set, the publish modal opens in single-record mode for this
+  // record. Null = the workspace-wide "Publish all" flow.
+  const [singleRecordPublish, setSingleRecordPublish] = useState<SingleRecordPublishTarget | null>(null);
   // The "Pull all" mode also serves as the modal's open state (null = closed).
   const [pullAllMode, setPullAllMode] = useState<'full' | 'incremental' | null>(null);
   const [pullInProgressModalOpen, setPullInProgressModalOpen] = useState(false);
@@ -305,6 +318,31 @@ export function WorkspacePage() {
       .ensureSchemaValidatorSeeded(path)
       .catch((err) => console.debug('[validation] auto-seed enforce_schema failed:', err));
   }, []);
+
+  // DEV-10413: resolve a clicked record's workspace-relative CLI path into the
+  // single-record publish target, then open the publish modal scoped to it.
+  // The path normalization lives in a pure helper (unit-tested).
+  const handlePublishSingleRecord = useCallback(
+    async (cliPath: string) => {
+      if (!localPath) return;
+      const showResolveError = (message: string) =>
+        notifications.show({ color: 'red', title: 'Could not publish record', message });
+      try {
+        const cfg = await window.scratchFiles.workspaceConfig(localPath);
+        const resolved = resolveSingleRecordPublishTarget(localPath, cliPath, cfg.connections);
+        if (!resolved.ok) {
+          showResolveError(resolved.error);
+          return;
+        }
+        void trackPublishSingleRecord(workspace.id, resolved.target.connectionId);
+        setSingleRecordPublish(resolved.target);
+        setPublishModalOpen(true);
+      } catch (err) {
+        showResolveError(err instanceof Error ? err.message : 'Failed to resolve the record’s connection.');
+      }
+    },
+    [localPath, workspace.id],
+  );
 
   const handlePullAndRefresh = useCallback(async () => {
     if (!localPath) return;
@@ -638,14 +676,17 @@ export function WorkspacePage() {
         opened={publishModalOpen}
         onClose={() => {
           setPublishModalOpen(false);
+          setSingleRecordPublish(null);
         }}
         workspaceName={workspace.name}
         workspaceId={workspace.id}
         localPath={localPath}
         invalidateWorkspaceLevelData={handleDataRefresh}
         currentFolderPath={selectedFolderPath}
+        singleRecord={singleRecordPublish ?? undefined}
         onViewProblems={(folderPath) => {
           setPublishModalOpen(false);
+          setSingleRecordPublish(null);
           setSelectedFolderPath(folderPath);
           gridFilterTriggerRef.current += 1;
           setGridFilterActivation({ kind: 'has-problems', trigger: gridFilterTriggerRef.current });
@@ -700,6 +741,8 @@ export function WorkspacePage() {
         onReDownload={() => void handleReDownload()}
         onPublishAll={() => {
           void trackPublishAll(workspace.id);
+          // R3: "Publish all" is always workspace-wide — clear any single-record target.
+          setSingleRecordPublish(null);
           setPublishModalOpen(true);
         }}
         onPullAll={(mode) => {
@@ -736,11 +779,9 @@ export function WorkspacePage() {
         workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
         invalidateWorkspaceLevelData={handleDataRefresh}
         onConnectionsChanged={() => void handlePullAndRefresh()}
-        onPublishFile={() => {
-          // Single-file publish was removed with the upload-patch rewrite —
-          // the new flow always uploads everything the user has accepted.
-          // Per-file entry points open the same workspace-wide modal.
-          setPublishModalOpen(true);
+        onPublishFile={(cliPath) => {
+          // DEV-10413: open the publish modal scoped to just this record.
+          void handlePublishSingleRecord(cliPath);
         }}
         activateGlobalFilter={gridFilterActivation}
         onActivateGlobalFilterConsumed={() => setGridFilterActivation(null)}

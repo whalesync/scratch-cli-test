@@ -26,6 +26,7 @@ import {
   trackPublishUploadCompleted,
   trackPublishUploadStarted,
 } from '../../lib/posthog';
+import type { SingleRecordPublishTarget } from './single-record-publish-target';
 
 interface UnreviewedChangeEntry {
   connectionName: string;
@@ -98,6 +99,13 @@ interface PublishChangesModalProps {
   currentFolderPath?: string | null;
   /** Called when the user wants to view problems in the grid. */
   onViewProblems?: (folderPath: string) => void;
+  /**
+   * DEV-10413: when set, the modal publishes ONLY this one record (scoped
+   * upload + scoped plan + scoped reconcile) instead of the whole workspace.
+   * The workspace-wide unreviewed guard is skipped (the record is already
+   * reviewed); validation is scoped to this record.
+   */
+  singleRecord?: SingleRecordPublishTarget;
 }
 
 function isTerminalState(state: Job['state']): boolean {
@@ -506,6 +514,7 @@ export function PublishChangesModal({
   invalidateWorkspaceLevelData,
   currentFolderPath,
   onViewProblems,
+  singleRecord,
 }: PublishChangesModalProps) {
   const pollingIntervalRef = useRef<number | null>(null);
   const loggedCompleteJobIdsRef = useRef<Set<string>>(new Set());
@@ -539,6 +548,9 @@ export function PublishChangesModal({
     records: number;
   } | null>(null);
   const [validationStats, setValidationStats] = useState<ValidationStat[]>([]);
+  // DEV-10413: a soft notice shown in `complete` mode for the single-record
+  // flow (e.g. "already published — cleaned up" vs "nothing new to publish").
+  const [singleRecordNotice, setSingleRecordNotice] = useState<string | null>(null);
 
   const stalenessWarning = uploadResult?.stalenessWarning ?? null;
 
@@ -561,7 +573,12 @@ export function PublishChangesModal({
       ]);
       await trackPublishUploadStarted(workspaceId);
 
-      const result = await window.scratchDesktop.uploadWorkspaceChanges(localPath);
+      // DEV-10413: scope the upload to the single record when in single-record
+      // mode (skips the dirty gate, ships only this record's patch to dirty).
+      const result = await window.scratchDesktop.uploadWorkspaceChanges(
+        localPath,
+        singleRecord ? { filePath: singleRecord.filePath } : undefined,
+      );
 
       // D8: server `refs/heads/main` advanced past local — `files upload`
       // bailed before applying anything. Switch to the stale modal mode so
@@ -648,7 +665,37 @@ export function PublishChangesModal({
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to upload workspace changes');
     }
-  }, [localPath, workspaceId]);
+  }, [localPath, workspaceId, singleRecord]);
+
+  const loadSingleRecordInitialState = useCallback(async () => {
+    // DEV-10413: scoped pre-flight. The record is already reviewed+approved (the
+    // per-record Publish button only shows then), so skip the workspace-wide
+    // unreviewed scan entirely. Validation is scoped to just this record.
+    if (!localPath || !singleRecord) return;
+    setProgressSteps([{ id: 'validation', label: 'Checking this record for validation issues…', status: 'active' }]);
+    const results = await window.scratchFiles.getValidationResults(
+      localPath,
+      singleRecord.folderPath,
+      singleRecord.filename,
+    );
+    const errorCount = results.filter((r) => r.level === 'error').length;
+    if (errorCount > 0) {
+      setValidationCounts({ errors: errorCount, warnings: results.length - errorCount, records: 1 });
+      setProgressSteps((prev) =>
+        prev.map((step) =>
+          step.id === 'validation' ? { ...step, status: 'error', label: 'This record has validation errors' } : step,
+        ),
+      );
+      setMode('approval');
+      return;
+    }
+    setProgressSteps((prev) =>
+      prev.map((step) =>
+        step.id === 'validation' ? { ...step, status: 'done', label: 'No validation issues' } : step,
+      ),
+    );
+    await startUpload();
+  }, [localPath, singleRecord, startUpload]);
 
   const loadInitialState = useCallback(async () => {
     if (!opened || !localPath) {
@@ -669,6 +716,25 @@ export function PublishChangesModal({
     setPublishErrorDetails([]);
     setValidationCounts(null);
     setValidationStats([]);
+    setSingleRecordNotice(null);
+
+    // DEV-10413: single-record mode runs a scoped pre-flight (validation only,
+    // no workspace-wide unreviewed scan) and returns early.
+    if (singleRecord) {
+      try {
+        await loadSingleRecordInitialState();
+      } catch (err) {
+        setProgressSteps((prev) =>
+          prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)),
+        );
+        setMode('error');
+        setError(err instanceof Error ? err.message : 'Failed to load publish state');
+      } finally {
+        setInitializing(false);
+      }
+      return;
+    }
+
     // Run the two pre-flight checks sequentially (instead of Promise.all) so
     // the user sees one finish before the next starts. Total slowdown vs. the
     // prior parallel path is ~100ms (validation count is SQLite-fast); the
@@ -744,7 +810,15 @@ export function PublishChangesModal({
     } finally {
       setInitializing(false);
     }
-  }, [assumeUnreviewedApproved, autoStartUploadOnOpen, localPath, opened, startUpload]);
+  }, [
+    assumeUnreviewedApproved,
+    autoStartUploadOnOpen,
+    localPath,
+    opened,
+    startUpload,
+    singleRecord,
+    loadSingleRecordInitialState,
+  ]);
 
   const continueAfterApproval = useCallback(() => {
     void startUpload();
@@ -914,7 +988,7 @@ export function PublishChangesModal({
     async (
       wbId: string,
       conn: ConnectionPublishState,
-      expectedBaseDirtyHead?: string | null,
+      options?: { expectedBaseDirtyHead?: string | null; filePath?: string },
     ): Promise<DirtyGateConnection | null> => {
       const updateConn = (next: Partial<ConnectionPublishState>) => {
         setPublishConnections((prev) =>
@@ -926,7 +1000,11 @@ export function PublishChangesModal({
         updateConn({ status: 'planning' });
         // DEV-10316: pass the post-upload dirty HEAD so the server aborts the
         // plan build if the staging area drifted while the user reviewed.
-        const plan = await scratchApiClient.publish.viaCliRoute.planJob(wbId, conn.connectionId, expectedBaseDirtyHead);
+        // DEV-10413: `filePath` scopes the plan to a single record.
+        const plan = await scratchApiClient.publish.viaCliRoute.planJob(wbId, conn.connectionId, {
+          expectedBaseDirtyHead: options?.expectedBaseDirtyHead,
+          filePath: options?.filePath,
+        });
         if (!plan.jobId || !plan.pipelineId) {
           updateConn({ status: 'plan-no-diff' });
           return null;
@@ -980,8 +1058,47 @@ export function PublishChangesModal({
     [pollJobToTerminal],
   );
 
+  // DEV-10413: single-record publish. The scoped upload already shipped exactly
+  // one connection's one record to dirty, so build the single connection state
+  // directly (no workspaceConfig name→id mapping) and skip the workspace-wide
+  // unreviewed recheck — the OTHER records' unreviewed edits must not block this
+  // one. expectedBaseDirtyHead = null mirrors the web (the plan's filePath scope
+  // is the over-publish guard); dirty/checkFailed/blockedDirtyDrift are
+  // unreachable on this path. The all-terminal effect runs the scoped reconcile.
+  const triggerSingleRecordPublish = useCallback(async () => {
+    if (!localPath || !workspaceId || !singleRecord) {
+      return;
+    }
+    try {
+      setError(null);
+      setPublishErrorDetails([]);
+      setProgressSteps([]);
+      setMode('publishing');
+      const conn: ConnectionPublishState = {
+        connectionId: singleRecord.connectionId,
+        connectionName: singleRecord.connectionName,
+        status: 'pending',
+      };
+      setPublishConnections([conn]);
+      await trackPublishStarted(workspaceId, 1);
+      await runConnectionPublish(workspaceId, conn, {
+        filePath: singleRecord.relPath,
+        expectedBaseDirtyHead: null,
+      });
+    } catch (err) {
+      setMode('error');
+      setError(err instanceof Error ? err.message : 'Failed to start publish');
+    }
+  }, [localPath, workspaceId, singleRecord, runConnectionPublish]);
+
   const triggerPublish = useCallback(async () => {
     if (!localPath || !workspaceId || !uploadResult) {
+      return;
+    }
+
+    // DEV-10413: single-record mode has its own, simpler trigger.
+    if (singleRecord) {
+      await triggerSingleRecordPublish();
       return;
     }
 
@@ -1047,7 +1164,9 @@ export function PublishChangesModal({
       const settled = await Promise.allSettled(
         initial.map(async (conn): Promise<DirtyGateConnection | null> => {
           if (conn.status === 'failed') return null;
-          return runConnectionPublish(workspaceId, conn, dirtyHeadByName.get(conn.connectionName));
+          return runConnectionPublish(workspaceId, conn, {
+            expectedBaseDirtyHead: dirtyHeadByName.get(conn.connectionName),
+          });
         }),
       );
 
@@ -1067,7 +1186,7 @@ export function PublishChangesModal({
       setMode('error');
       setError(err instanceof Error ? err.message : 'Failed to start publish');
     }
-  }, [localPath, uploadResult, workspaceId, runConnectionPublish]);
+  }, [localPath, uploadResult, workspaceId, runConnectionPublish, singleRecord, triggerSingleRecordPublish]);
 
   useEffect(() => {
     if (!opened) {
@@ -1163,6 +1282,47 @@ export function PublishChangesModal({
     };
   }, [mode, localPath]);
 
+  // DEV-10413: single-record terminal handling. Runs the scoped reconcile
+  // (`reconcile-published`) instead of the workspace-wide `files download` pull
+  // — the pull refuses while other records have unreviewed edits. Disambiguates
+  // the two `plan-no-diff` meanings (D3): patch dropped → already published;
+  // patch survived → nothing new to publish.
+  const finishSingleRecordPublish = useCallback(async () => {
+    if (!localPath || !singleRecord) return;
+    const conn = publishConnections[0];
+    if (conn?.status === 'failed') {
+      setPublishErrorDetails([`${conn.connectionName}: ${conn.failureMessage ?? 'failed'}`]);
+      setError(`${conn.connectionName} failed`);
+      setMode('error');
+      return;
+    }
+    // `completed` or `plan-no-diff` → converge local state via the scoped reconcile.
+    try {
+      const reconcile = await window.scratchDesktop.reconcilePublishedRecord(localPath, singleRecord.filePath);
+      invalidateWorkspaceLevelData();
+      if (conn?.status === 'plan-no-diff') {
+        setSingleRecordNotice(
+          reconcile.patchDropped
+            ? 'This record was already published — local state is now up to date.'
+            : 'There was nothing new to publish for this record.',
+        );
+      }
+    } catch (err) {
+      // The publish landed server-side; a reconcile failure is non-fatal (mirrors
+      // the workspace-wide fire-and-forget refresh). Surface it as a soft note.
+      console.debug('Post-publish single-record reconcile failed:', err);
+      invalidateWorkspaceLevelData();
+    }
+    if (workspaceId) {
+      void trackPublishCompleted(workspaceId, {
+        successCount: conn?.status === 'completed' ? 1 : 0,
+        failedCount: 0,
+        noDiffCount: conn?.status === 'plan-no-diff' ? 1 : 0,
+      });
+    }
+    setMode('complete');
+  }, [localPath, singleRecord, publishConnections, invalidateWorkspaceLevelData, workspaceId]);
+
   // When all per-connection publishes reach a terminal state, transition
   // mode → complete | error and refresh local data.
   useEffect(() => {
@@ -1173,6 +1333,12 @@ export function PublishChangesModal({
       (c) => c.status === 'completed' || c.status === 'failed' || c.status === 'plan-no-diff',
     );
     if (!allTerminal) return;
+
+    // DEV-10413: single-record mode has its own terminal handler (scoped reconcile).
+    if (singleRecord) {
+      void finishSingleRecordPublish();
+      return;
+    }
 
     const failedConnections = publishConnections.filter((c) => c.status === 'failed');
     const completedCount = publishConnections.filter((c) => c.status === 'completed').length;
@@ -1206,7 +1372,15 @@ export function PublishChangesModal({
     setPublishErrorDetails(failedConnections.map((c) => `${c.connectionName}: ${c.failureMessage ?? 'failed'}`));
     setMode('error');
     setError(failedConnections.map((c) => `${c.connectionName} failed`).join('; '));
-  }, [mode, publishConnections, workspaceId, localPath, invalidateWorkspaceLevelData]);
+  }, [
+    mode,
+    publishConnections,
+    workspaceId,
+    localPath,
+    invalidateWorkspaceLevelData,
+    singleRecord,
+    finishSingleRecordPublish,
+  ]);
 
   const aggregateTotals = useMemo(() => {
     if (!uploadResult) {
@@ -1240,8 +1414,9 @@ export function PublishChangesModal({
               <>
                 {validationCounts && validationCounts.records > 0 && (
                   <Text size="sm" c={validationCounts.errors > 0 ? 'red' : 'orange'}>
-                    {validationCounts.records} record{validationCounts.records === 1 ? '' : 's'} contain validation
-                    problems that may prevent them from publishing.
+                    {singleRecord
+                      ? 'This record has validation errors. Fix them before publishing it.'
+                      : `${validationCounts.records} record${validationCounts.records === 1 ? '' : 's'} contain validation problems that may prevent them from publishing.`}
                   </Text>
                 )}
                 {unreviewedEntries.length > 0 && (
@@ -1278,7 +1453,7 @@ export function PublishChangesModal({
                         Accept and publish
                       </Button>
                     </>
-                  ) : (
+                  ) : singleRecord ? null : (
                     <Button onClick={() => continueAfterApproval()} disabled={closing}>
                       {validationCounts && validationCounts.records > 0 ? 'Ignore and Continue' : 'Continue'}
                     </Button>
@@ -1292,8 +1467,9 @@ export function PublishChangesModal({
             {mode === 'uploaded' && uploadResult && (
               <>
                 <Text size="sm" c="dimmed">
-                  Your changes were uploaded to the server. Click Publish to dispatch them through the connectors, or
-                  review them on the web first.
+                  {singleRecord
+                    ? 'This record was staged on the server. Click Publish to dispatch it through the connector, or review it on the web first.'
+                    : 'Your changes were uploaded to the server. Click Publish to dispatch them through the connectors, or review them on the web first.'}
                 </Text>
 
                 <Text size="sm" c="dimmed">
@@ -1479,8 +1655,12 @@ export function PublishChangesModal({
 
             {mode === 'complete' && (
               <>
-                <Alert color="green" title="All data published">
-                  {workspaceName ? `${workspaceName} is now in sync.` : 'Your changes were published.'}
+                <Alert color="green" title={singleRecord ? 'Record published' : 'All data published'}>
+                  {singleRecord
+                    ? (singleRecordNotice ?? 'This record was published.')
+                    : workspaceName
+                      ? `${workspaceName} is now in sync.`
+                      : 'Your changes were published.'}
                 </Alert>
                 <Group justify="flex-end">
                   <Button onClick={() => handleClose()} loading={closing}>

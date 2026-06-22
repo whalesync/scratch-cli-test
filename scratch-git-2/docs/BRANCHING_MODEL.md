@@ -27,6 +27,25 @@ A file is **unpublished** when it has an entry in `accepted-patches.json`.
 | `scratchmd files publish`   | Trigger the server-side publish plan + run jobs. On success, advance local `refs/heads/main`; re-anchor `accepted-patches.json` against the new main (`reconcile_accepted_after_publish`). |
 | `scratchmd files download`  | Refuse if any field is unreviewed. Otherwise fetch origin, re-anchor accepted patches against the new main, and replay on top of new blobs. |
 
+## Single-record publish (DEV-10413)
+
+`files upload --file-path <workspace-relative-path>` and `files reconcile-published --file-path <…>` publish exactly **one** record without disturbing the rest of the workspace. The desktop's per-record **Publish** button drives them; they mirror Scratch Web's single-file publish.
+
+| Action                                         | What changes                                                                                                                                                                                                 |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `files upload --file-path <p>`                 | Ship **only** that record's patch from `accepted-patches.json` to `dirty` (accumulating onto whatever is there). **Skips the dirty-gate probe** and relaxes `refuse_if_dirty`; keeps `refuse_if_stale`. The other approved records are never uploaded. |
+| `files publish` (plan scoped via `filePath`)   | The server's plan build filters the `dirty`↔`main` diff to that one path, so only it publishes. `rebase_dirty` fast-forwards `dirty` clean afterward.                                                          |
+| `files reconcile-published --file-path <p>`    | The single-record analogue of the post-publish `files download`. Re-anchors **only** that record's patch against the new `main` (drops it if the publish landed, keeps it re-anchored if the connector batch failed), and **surgically rewrites only that record's working file** — never `materialize_local_repo`. Leaves every other pending patch and on-disk record (including unreviewed edits) untouched. |
+
+**Why a separate reconcile.** `files download` refuses while *any* field anywhere in the workspace is unreviewed, so it can't run after a single-record publish when other records still have unreviewed edits. `reconcile-published` is scoped to the one record and runs regardless.
+
+**Two distinct over-publish guards** (don't conflate them):
+
+1. **Scoped upload** keeps the desktop's *other* approved records off `dirty` entirely — they can't appear in any plan.
+2. **`filePath` plan scope** guards against changes already on `dirty` from another source (web sync, a prior interrupted "Publish all") — there `dirty` is genuinely busy and the filter is load-bearing.
+
+**Load-bearing invariant.** A scoped publish advances `main` for exactly one path, so every sibling blob is byte-identical in old-vs-new `main`. That's what lets `reconcile-published` leave the other records' working files alone (re-materializing them would produce identical bytes). FK backfill can break this; the per-record Publish button is update-only to avoid it (untested v1 limitation).
+
 ## Pre-Phase-5 model (historical)
 
 Before slice F (2026-05-20), the CLI carried a local `refs/heads/dirty` branch as the "approved" snapshot, with the user's working tree on a sparse worktree of `dirty`. Accept committed working-tree edits onto `dirty`. That branch was retired in favor of `accepted-patches.json` — see the [architecture-change plan](../../docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md). The server-side `dirty` branch (the publish staging area) is unchanged.

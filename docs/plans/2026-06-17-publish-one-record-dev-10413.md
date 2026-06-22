@@ -2,7 +2,7 @@
 
 **Linear:** [DEV-10413 — Publish one record is blocked](https://linear.app/whalesync/issue/DEV-10413/publish-one-record-is-blocked)
 **Author:** Curtis Fonger
-**Status:** In Review (implementation not started)
+**Status:** Implemented (all lanes A–C + docs done; CLI `cargo test` + desktop build/lint/tests green; pending root build verification + manual QA + ship)
 **Surface:** Scratch Desktop (`/scratch-desktop`) + `scratchmd` CLI (`/scratch-git-2`). **No server changes.**
 
 > Reviewed via `/plan-eng-review` (2026-06-18): 4 architecture + 3 code-quality findings, test coverage diagram + 3 mandatory regression tests, 0 performance findings, independent outside-voice pass (2 cross-model tensions resolved). See `## GSTACK REVIEW REPORT` at the end.
@@ -334,32 +334,27 @@ Launch Lane A and Lane B in parallel worktrees. Merge both, then do Lane C. No t
 ## Implementation Tasks
 Synthesized from this review. Each derives from a specific finding. P1 blocks ship; P2 lands same branch; P3 is follow-up.
 
-- [ ] **T1 (P1, human: ~3h / CC: ~25min)** — CLI — `resolve_connection_and_relpath` helper + `files upload --file-path` (scoped, `refuse_if_dirty:false`, in-memory filtered payload)
+- [x] **T1 (P1)** — CLI — `resolve_connection_and_relpath` helper + `files upload --file-path` (scoped, `refuse_if_dirty:false`, in-memory filtered payload via pure `build_upload_patch_plan`)
   - Surfaced by: scope, D7, D2 (path), A1
-  - Files: `scratch-git-2/src/cli/commands/files.rs`
-  - Verify: `cargo test` scoped-upload cases + **R1** full-upload-unchanged
-- [ ] **T2 (P1, human: ~4h / CC: ~35min)** — CLI — `files reconcile-published` as a **surgical single-file write** (never `materialize_local_repo`); D4 mid-flight-edit guard; D6 shared re-anchor core (materialize NOT shared)
+  - Files: `scratch-git-2/src/cli/commands/files.rs` (+ tests `tests/files.rs`)
+  - Verify: ✅ `cargo test` — 3 resolve + 3 plan cases incl. **R1** (`build_upload_patch_plan_no_scope_ships_everything_unchanged`). 468 tests pass; fmt clean.
+- [x] **T2 (P1)** — CLI — `files reconcile-published` as a **surgical single-file write** (never `materialize_local_repo`); D4 mid-flight-edit guard; D6 shared re-anchor core `re_anchor_accepted_patches_against_published_main` (materialize NOT shared). Reindex moved to the `run_reconcile_published` command handler (mirrors `download_single_repo`/`run_download`).
   - Surfaced by: tension 1, D4, D6, A2, A4
-  - Files: `scratch-git-2/src/cli/commands/files.rs`
-  - Verify: `cargo test` reconcile cases (fixture WITH siblings + unreviewed files) + **R2** full-reconcile-unchanged
-- [ ] **T3 (P2, human: ~30min / CC: ~5min)** — Client API — `planJob` filePath via options object (not positional)
-  - Surfaced by: outside-voice #6, C
+  - Files: `scratch-git-2/src/cli/commands/files.rs` (+ tests `tests/files.rs`)
+  - Verify: ✅ `cargo test` — siblings+unreviewed-untouched, mid-flight-edit-preserve, conflict→log, idempotent-retry; **R2** = existing 3 `reconcile_accepted_after_publish` tests still pass after the helper extraction.
+- [x] **T3 (P2)** — Client API — `planJob` filePath via options object (not positional)
   - Files: `packages/shared-types/src/api-client/resources/publish-via-cli-route.ts`
-  - Verify: vitest body-includes-filePath
-- [ ] **T4 (P1, human: ~2h / CC: ~20min)** — Desktop main/preload — scoped upload `filePath` arg + `reconcilePublishedRecord` IPC + wrappers
-  - Surfaced by: B
+  - Verify: ✅ vitest `publish-api.spec.ts` — filePath-included + filePath-omitted + the converted `expectedBaseDirtyHead` callers.
+- [x] **T4 (P1)** — Desktop main/preload — scoped upload `filePath` arg + `reconcilePublishedRecord` IPC + wrappers
   - Files: `scratch-desktop/src/main/scratchmd.ts`, `src/main/index.ts`, `src/preload/index.ts`, `index.d.ts`
-  - Verify: IPC smoke + build
-- [ ] **T5 (P1, human: ~5h / CC: ~45min)** — Renderer — `singleRecord` mode (named helpers): scoped validation, scoped upload, `expectedBaseDirtyHead:null`, D3 idempotent `plan-no-diff` convergence, D2 surfaced warning, scoped reconcile post-publish, state machine
-  - Surfaced by: D2, D3, D5, D8, comment 2
+  - Verify: ✅ `yarn build` (desktop) typechecks all processes; `yarn lint` clean.
+- [x] **T5 (P1)** — Renderer — `singleRecord` mode (named helpers): scoped validation (`loadSingleRecordInitialState`), scoped upload, `expectedBaseDirtyHead:null`, D3 idempotent `plan-no-diff` convergence + D2 surfaced warning (`finishSingleRecordPublish`), scoped reconcile post-publish, hard-block on validation errors. `runConnectionPublish` now takes an options object `{ expectedBaseDirtyHead?, filePath? }`.
   - Files: `scratch-desktop/.../PublishChangesModal.tsx`
-  - Verify: vitest singleRecord cases
-- [ ] **T6 (P1, human: ~2h / CC: ~20min)** — Renderer — wire `onPublishFile(cliPath)` → resolve+normalize → open modal in singleRecord mode; analytics
-  - Surfaced by: D2 (path), E, F, outside-voice #5
-  - Files: `scratch-desktop/.../WorkspacePage.tsx`, `WorkspaceContent`/`FolderDataGrid` prop, `posthog.ts`
-  - Verify: vitest resolve + **R3** onPublishAll-unchanged
-- [ ] **T7 (P3, human: ~30min / CC: ~10min)** — Docs — `BRANCHING_MODEL.md` / `REVIEW_MODEL.md`: scoped upload + `reconcile-published` + the two over-publish guards
-  - Surfaced by: outside-voice #2, scope
+  - Verify: ✅ desktop build + lint + 256 tests pass. (State-machine itself = no render-test infra in repo → manual QA; pure logic extracted to the resolver below.)
+- [x] **T6 (P1)** — Renderer — wire `onPublishFile(cliPath)` → resolve+normalize → open modal in singleRecord mode; analytics. Path resolution extracted to a pure `resolveSingleRecordPublishTarget` helper. The `onPublishFile` prop was already `(cliPath) => void` through `WorkspaceContent`/`FolderDataGrid` (drift from plan — retype was a no-op).
+  - Files: `scratch-desktop/.../WorkspacePage.tsx`, `single-record-publish-target.ts` (new), `posthog.ts`
+  - Verify: ✅ vitest `single-record-publish-target.spec.ts` (D2 path round-trip + resolution + no-match). **R3**: `onPublishAll` clears `singleRecordPublish` → workspace-wide (covered by construction; render-test infra absent).
+- [x] **T7 (P3)** — Docs — `BRANCHING_MODEL.md` (new "Single-record publish" section) + `REVIEW_MODEL.md` (scoped upload + `reconcile-published` rows) covering the two over-publish guards + the load-bearing invariant.
   - Files: `scratch-git-2/docs/BRANCHING_MODEL.md`, `REVIEW_MODEL.md`
 
 ---
@@ -397,3 +392,7 @@ Synthesized from this review. Each derives from a specific finding. P1 blocks sh
 - **FINDINGS FOLDED IN (no separate decision):** root-cause framing corrected (`onPublishFile` takes no arg today), `planJob` filePath via options object (not positional), over-publish-guard prose corrected (two distinct guards).
 - **UNRESOLVED:** 0 — every AskUserQuestion answered.
 - **VERDICT:** ENG CLEARED — ready to implement. CEO/Design review not required for this change. Run `/ship` when implementation is done.
+
+### Post-implementation adversarial review (2026-06-18)
+
+A 9-agent adversarial code review (3 dimensions × find→verify) ran against the implemented diff: Rust reconcile/scoped-upload, renderer state machine, and the cross-layer contract. **1 confirmed bug (low)** — surfaced and fixed: the scoped `files upload --file-path` path inherited the workspace-wide "N records have unreviewed local changes — run `accept-all` first" courtesy warning, which is actively wrong in single-record mode (the user is deliberately publishing one record while others stay unreviewed). Fixed by gating that warning on `scope_relpath.is_none()` (`upload_single_repo_via_patches`). The reviewer-verified non-issues: the mid-flight-edit byte guard, `patch_dropped` 4-case logic, the mixed-reset not touching sibling/unreviewed working files, R1/R2 byte-identity, the effect double-fire, and the filePath (workspace-relative) vs relPath (connection-relative) layer contract — all confirmed correct.

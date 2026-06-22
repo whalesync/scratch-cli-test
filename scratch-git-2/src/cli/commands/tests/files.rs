@@ -3984,3 +3984,412 @@ fn structure_drift_reports_only_changed_connections() {
     assert_eq!(drift.len(), 1);
     assert_eq!(drift[0].connection_dir_name, "Webflow");
 }
+
+// ===========================================================================
+// DEV-10413 — single-record publish (scoped upload + reconcile-published).
+// ===========================================================================
+
+/// A `ConnectionContext` with only `conn_dir_name`/`connection_id` set — enough
+/// to exercise the path-resolution helper.
+fn conn_ctx_named(name: &str) -> ConnectionContext {
+    ConnectionContext {
+        connection_id: format!("conn_{name}"),
+        conn_dir_name: name.to_string(),
+        worktree_dir: PathBuf::new(),
+        scratch_dir: PathBuf::new(),
+        workspace_dir: PathBuf::new(),
+        bare_repo: PathBuf::new(),
+        db_path: PathBuf::new(),
+    }
+}
+
+fn anchored_patch(
+    path: &str,
+    kind: crate::shared::re_anchor::PatchKind,
+    patch: serde_json::Value,
+) -> crate::shared::re_anchor::AnchoredPatch {
+    crate::shared::re_anchor::AnchoredPatch {
+        path: path.to_string(),
+        kind,
+        patch,
+        revert: false,
+    }
+}
+
+// --- A0: resolve_connection_and_relpath ------------------------------------
+
+#[test]
+fn resolve_connection_and_relpath_splits_first_segment() {
+    let contexts = vec![conn_ctx_named("Airtable"), conn_ctx_named("Webflow")];
+    let (ctx, rel) = resolve_connection_and_relpath(&contexts, "Webflow/Posts/rec_1.json").unwrap();
+    assert_eq!(ctx.conn_dir_name, "Webflow");
+    assert_eq!(rel, "Posts/rec_1.json");
+}
+
+#[test]
+fn resolve_connection_and_relpath_tolerates_leading_and_trailing_slash() {
+    let contexts = vec![conn_ctx_named("Airtable")];
+    let (ctx, rel) = resolve_connection_and_relpath(&contexts, "/Airtable/Posts/").unwrap();
+    assert_eq!(ctx.conn_dir_name, "Airtable");
+    assert_eq!(rel, "Posts");
+}
+
+#[test]
+fn resolve_connection_and_relpath_errors_on_no_match() {
+    let contexts = vec![conn_ctx_named("Airtable")];
+    let err = resolve_connection_and_relpath(&contexts, "Nope/rec.json")
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("does not match any connection"),
+        "got: {err}"
+    );
+}
+
+// --- A1: build_upload_patch_plan (pure payload/count scoping) ---------------
+
+#[test]
+fn build_upload_patch_plan_no_scope_ships_everything_unchanged() {
+    // [REGRESSION R1] The unscoped path must ship the FULL accepted set with
+    // unchanged counts/path-lists — this is the data-shaping half of "full
+    // upload unchanged" (the network half is untouched by construction).
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![
+            anchored_patch(
+                "posts/new.json",
+                PatchKind::Create,
+                serde_json::json!({"a": 1}),
+            ),
+            anchored_patch(
+                "posts/edit.json",
+                PatchKind::Update,
+                serde_json::json!({"b": 2}),
+            ),
+            anchored_patch(
+                "posts/gone.json",
+                PatchKind::Delete,
+                serde_json::Value::Null,
+            ),
+        ],
+    };
+    let plan = build_upload_patch_plan(&accepted, "Conn", None).unwrap();
+    assert_eq!(plan.payload_patches.len(), 3);
+    assert_eq!(plan.files_created, 1);
+    assert_eq!(plan.files_updated, 1);
+    assert_eq!(plan.files_deleted, 1);
+    assert_eq!(plan.created_paths, vec!["Conn/posts/new.json"]);
+    assert_eq!(plan.updated_paths, vec!["Conn/posts/edit.json"]);
+    assert_eq!(plan.deleted_paths, vec!["Conn/posts/gone.json"]);
+    assert_eq!(
+        plan.changed_paths,
+        vec!["posts/new.json", "posts/edit.json", "posts/gone.json"]
+    );
+}
+
+#[test]
+fn build_upload_patch_plan_scoped_ships_only_one_record() {
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![
+            anchored_patch(
+                "posts/keep.json",
+                PatchKind::Update,
+                serde_json::json!({"a": 1}),
+            ),
+            anchored_patch(
+                "posts/target.json",
+                PatchKind::Update,
+                serde_json::json!({"b": 2}),
+            ),
+        ],
+    };
+    let plan = build_upload_patch_plan(&accepted, "Conn", Some("posts/target.json")).unwrap();
+    assert_eq!(plan.payload_patches.len(), 1);
+    assert_eq!(plan.payload_patches[0].path, "posts/target.json");
+    assert_eq!(plan.files_updated, 1);
+    assert_eq!(plan.files_created, 0);
+    assert_eq!(plan.files_deleted, 0);
+    assert_eq!(plan.updated_paths, vec!["Conn/posts/target.json"]);
+    assert_eq!(plan.changed_paths, vec!["posts/target.json"]);
+}
+
+#[test]
+fn build_upload_patch_plan_scoped_errors_when_record_has_no_accepted_patch() {
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![anchored_patch(
+            "posts/keep.json",
+            PatchKind::Update,
+            serde_json::json!({"a": 1}),
+        )],
+    };
+    let err = build_upload_patch_plan(&accepted, "Conn", Some("posts/missing.json"))
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("No accepted"),
+        "expected a clear no-approved-change error, got: {err}"
+    );
+}
+
+// --- A2: reconcile_published_record (scoped post-publish reconcile) ---------
+
+/// Set up a real `.git` worktree (detached at `hash`, no checkout) so the
+/// surgical-write + mixed-reset branch of the scoped reconcile fires.
+fn setup_detached_worktree(ctx: &ConnectionContext, hash: &str) {
+    crate::git_ops::setup_sparse_worktree(&ctx.bare_repo, &ctx.worktree_dir, hash).unwrap();
+}
+
+#[test]
+fn reconcile_published_record_drops_patch_and_leaves_siblings_and_unreviewed_untouched() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // main: target record (X) + a sibling record, both published.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    let main_hash = seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_sibling.json",
+        "{\n  \"v\": 1\n}\n",
+    );
+
+    // Both records have an accepted (approved-but-unpublished) edit. Only X is
+    // about to be published; the sibling's patch must survive.
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![
+            anchored_patch(
+                "posts/rec_x.json",
+                PatchKind::Update,
+                serde_json::json!({"industry": "SaaS"}),
+            ),
+            anchored_patch(
+                "posts/rec_sibling.json",
+                PatchKind::Update,
+                serde_json::json!({"v": 2}),
+            ),
+        ],
+    };
+    let connection_dir = accepted_patches_dir(&ctx);
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // Materialize a real worktree and write the approved values + an UNREVIEWED
+    // local file (not in accepted-patches) so the fixture catches any
+    // delete-by-absence behaviour.
+    setup_detached_worktree(&ctx, &main_hash);
+    let old_map = read_git_tree(&ctx.bare_repo, &main_hash).unwrap();
+    let approved_x = approved_bytes_for_path(&old_map, &accepted, "posts/rec_x.json")
+        .unwrap()
+        .unwrap();
+    let approved_sibling = approved_bytes_for_path(&old_map, &accepted, "posts/rec_sibling.json")
+        .unwrap()
+        .unwrap();
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_x.json"),
+        std::str::from_utf8(&approved_x).unwrap(),
+    );
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_sibling.json"),
+        std::str::from_utf8(&approved_sibling).unwrap(),
+    );
+    let unreviewed_bytes = "{\n  \"draft\": true\n}\n";
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_unreviewed.json"),
+        unreviewed_bytes,
+    );
+
+    // Publish lands X's edit on the server (sibling stays unpublished).
+    advance_remote_main(
+        &fixture,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        "publish lands X",
+    );
+
+    let outcome =
+        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+
+    assert!(outcome.patch_dropped, "X published → its patch must drop");
+    assert_eq!(outcome.conflicts, 0);
+
+    // Only X's patch dropped; the sibling's survives untouched.
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(reloaded.patches.len(), 1);
+    assert_eq!(reloaded.patches[0].path, "posts/rec_sibling.json");
+
+    // X's working file is canonicalized to the published value.
+    let working_x: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec_x.json")).unwrap())
+            .unwrap();
+    assert_eq!(working_x["industry"], "SaaS");
+
+    // The sibling and the unreviewed file on disk are byte-for-byte untouched
+    // (guards the materialize_local_repo delete-by-absence / clobber trap).
+    assert_eq!(
+        std::fs::read(ctx.worktree_dir.join("posts/rec_sibling.json")).unwrap(),
+        approved_sibling
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec_unreviewed.json")).unwrap(),
+        unreviewed_bytes
+    );
+
+    // Local main advanced to origin.
+    let local_main = git_rev_parse(&ctx.bare_repo, "refs/heads/main").unwrap();
+    let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
+    assert_eq!(local_main, origin_main);
+}
+
+#[test]
+fn reconcile_published_record_preserves_a_mid_flight_edit() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    let main_hash = seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![anchored_patch(
+            "posts/rec_x.json",
+            PatchKind::Update,
+            serde_json::json!({"industry": "SaaS"}),
+        )],
+    };
+    let connection_dir = accepted_patches_dir(&ctx);
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    setup_detached_worktree(&ctx, &main_hash);
+    // The user edited X DURING the publish window — the worktree no longer
+    // equals the approved value (industry=Finance, not the approved SaaS).
+    let mid_flight_edit = "{\n  \"name\": \"Acme\",\n  \"industry\": \"Finance\"\n}\n";
+    write_file(&ctx.worktree_dir.join("posts/rec_x.json"), mid_flight_edit);
+
+    advance_remote_main(
+        &fixture,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+        "publish lands X",
+    );
+
+    reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+
+    // The mid-flight edit is preserved on disk (NOT clobbered with the
+    // published value) — it re-surfaces as a fresh unreviewed change.
+    assert_eq!(
+        std::fs::read_to_string(ctx.worktree_dir.join("posts/rec_x.json")).unwrap(),
+        mid_flight_edit
+    );
+}
+
+#[test]
+fn reconcile_published_record_keeps_patch_and_logs_conflict_on_same_field_collision() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+
+    use crate::shared::re_anchor::PatchKind;
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![anchored_patch(
+            "posts/rec_x.json",
+            PatchKind::Update,
+            serde_json::json!({"industry": "SaaS"}),
+        )],
+    };
+    let connection_dir = accepted_patches_dir(&ctx);
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // Server changed the SAME field to a different value (collision).
+    advance_remote_main(
+        &fixture,
+        "posts/rec_x.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Marketing\"\n}\n",
+        "server changes industry",
+    );
+
+    let outcome =
+        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+
+    // User-wins: the patch survives (not dropped) and the collision is logged.
+    assert!(!outcome.patch_dropped, "collision → patch must survive");
+    assert_eq!(outcome.conflicts, 1);
+    let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert_eq!(reloaded.patches.len(), 1);
+    assert_eq!(reloaded.patches[0].path, "posts/rec_x.json");
+
+    let log_path = workspace_dir.join(".scratch/conflicts.log");
+    assert!(log_path.exists(), "conflict must be logged");
+    let entry: crate::config::conflicts_log::ConflictEntry =
+        serde_json::from_str(std::fs::read_to_string(&log_path).unwrap().trim_end()).unwrap();
+    assert_eq!(entry.path, "posts/rec_x.json");
+    assert_eq!(entry.conflicting_keys, vec!["industry"]);
+}
+
+#[test]
+fn reconcile_published_record_is_idempotent_when_record_already_reconciled() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // X is on main and there is NO pending accepted patch (a prior reconcile
+    // already cleaned it up, or the publish landed before the crash). The
+    // retry must converge without error and report the record as dropped.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_x.json",
+        "{\n  \"industry\": \"SaaS\"\n}\n",
+    );
+
+    let outcome =
+        reconcile_published_record(&ctx, &workspace_dir, "test-token", "posts/rec_x.json").unwrap();
+    assert!(
+        outcome.patch_dropped,
+        "no pending patch → reported as already published/cleaned up"
+    );
+    assert_eq!(outcome.conflicts, 0);
+}

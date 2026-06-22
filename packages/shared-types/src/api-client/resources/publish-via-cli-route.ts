@@ -22,21 +22,28 @@ export function createPublishViaCliRouteApi(http: Http) {
      * (desktop). Returns `{ jobId, pipelineId }`; both come back null when the dirty branch has no
      * diff against main (caller should skip the connection).
      *
-     * `expectedBaseDirtyHead` (DEV-10316) is the dirty-branch HEAD the desktop captured right after
-     * its upload landed. When provided, the server aborts the plan build if the connection's dirty
-     * HEAD has since drifted, surfacing a `blockedDirtyDrift` discriminator on the plan job.
+     * `options.expectedBaseDirtyHead` (DEV-10316) is the dirty-branch HEAD the desktop captured right
+     * after its upload landed. When provided, the server aborts the plan build if the connection's
+     * dirty HEAD has since drifted, surfacing a `blockedDirtyDrift` discriminator on the plan job.
+     *
+     * `options.filePath` (DEV-10413) scopes the plan to a single record (connection-relative path).
+     * When set, the server diffs dirty↔main and filters the plan to that one path — the single-record
+     * publish flow's over-publish guard. Passed via an options object (not a positional after the
+     * nullable `expectedBaseDirtyHead`) to avoid a classic mis-wire site.
      */
     planJob: async (
       workbookId: string,
       connectorAccountId: string,
-      expectedBaseDirtyHead?: string | null,
+      options: { expectedBaseDirtyHead?: string | null; filePath?: string } = {},
     ): Promise<PlanJobResponse> => {
+      const { expectedBaseDirtyHead, filePath } = options;
       const res = await http.post<PlanJobResponse>(
         `/cli/v1/workbooks/${workbookId}/publish-v2/plan-job`,
         {
           connectorAccountId,
           runAfterPlan: false,
           ...(expectedBaseDirtyHead ? { expectedBaseDirtyHead } : {}),
+          ...(filePath ? { filePath } : {}),
         },
         { fallbackMessage: 'Failed to start plan job' },
       );

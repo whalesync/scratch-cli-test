@@ -113,10 +113,12 @@ Inspect state without changing it.
 
 ### Lifecycle commands
 
-| Command                   | What it does                                                                                                          |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `scratchmd files upload`  | Ship `accepted-patches.json` to the server's `dirty` branch. Does not publish.                                        |
-| `scratchmd files publish` | Run the publish plan + execute it on connectors. Advances local `main` and clears `accepted-patches.json` on success. |
+| Command                                       | What it does                                                                                                          |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `scratchmd files upload`                      | Ship `accepted-patches.json` to the server's `dirty` branch. Does not publish.                                        |
+| `scratchmd files upload --file-path <p>`      | Single-record (DEV-10413): ship only that record's patch; skips the dirty-gate probe (`refuse_if_dirty` relaxed, `refuse_if_stale` kept). |
+| `scratchmd files publish`                     | Run the publish plan + execute it on connectors. Advances local `main` and clears `accepted-patches.json` on success. |
+| `scratchmd files reconcile-published --file-path <p>` | Single-record post-publish reconcile: re-anchor only that record's patch against the new `main` and surgically rewrite only its working file. Runs even while other records have unreviewed edits (unlike `files download`). See [BRANCHING_MODEL.md](BRANCHING_MODEL.md#single-record-publish-dev-10413). |
 
 ## Where the data lives
 

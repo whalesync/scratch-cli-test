@@ -12,6 +12,7 @@ export enum PostHogEvents {
   PULL_ALL = 'pull_all',
   PULL_TABLE = 'pull_table',
   PUBLISH_ALL = 'publish_all',
+  PUBLISH_SINGLE_RECORD = 'publish_single_record',
   PUBLISH_UPLOAD_STARTED = 'publish_upload_started',
   PUBLISH_UPLOAD_COMPLETED = 'publish_upload_completed',
   PUBLISH_STARTED = 'publish_started',
@@ -157,6 +158,10 @@ export async function trackPullTable(
 
 export async function trackPublishAll(workspaceId: string): Promise<void> {
   await captureEvent(PostHogEvents.PUBLISH_ALL, { workspaceId });
+}
+
+export async function trackPublishSingleRecord(workspaceId: string, connectionId: string): Promise<void> {
+  await captureEvent(PostHogEvents.PUBLISH_SINGLE_RECORD, { workspaceId, connectionId });
 }
 
 export async function trackPublishUploadStarted(workspaceId: string): Promise<void> {
