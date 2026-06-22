@@ -75,7 +75,7 @@ Scriptable vs. not (confirmed against the CLI):
 
 For live demos the make-or-break is restoring a known baseline. **Reset operates at the service-API level** (delete demo-owned records + re-seed the flawed baseline), independent of Scratch state — exactly the pattern the old v3 `reset/wordpress.sh` used (curl + service REST API). This is more robust than trying to "un-publish" through Scratch and doesn't depend on the workbook being in any particular state.
 
-Seed and reset are the same per-service module: `reset = teardown + seed`.
+`seed` is an idempotent **upsert** that restores existing posts to the link-free baseline (PATCH in place) and creates missing ones — that upsert *is* the reset in the `ready` flow. A separate `reset.ts` deletes everything, for explicit teardown only. (Update-in-place rather than delete+recreate because deleting a published item leaves its slug reserved — see "Bootstrap & reset mechanics".)
 
 ### #3 — "Seed the service" and "connect Scratch to it" are two different systems
 
@@ -164,9 +164,11 @@ The first demo is fully designed. See the design doc linked in the header for th
 
 Server URL via `--scratch-url` / `SCRATCH_URL` / `scratchmd.config.yaml`. For local testing we use a fresh dev build (`scratch-git-2/target/debug/scratchmd`, defaults to `localhost:3010`) via `SCRATCHMD_BIN`; for prod the Homebrew binary defaults to prod.
 
-**Reset-to-baseline sequence (the full `ready`) — RUN-TESTED, reconciles to 40 records:**
-1. Raw Webflow API: `reset.ts` + `seed.ts` (service → link-free baseline; deletes+recreates items, new IDs).
-2. `linked --workspace <wb> pull <folderId> --mode full` — re-pull. A **full pull reconciles deletions** (verified: 40 in, not 80), so the churned item IDs are handled cleanly.
+**Reset-to-baseline sequence (the full `ready`) — RUN-TESTED:**
+1. Raw Webflow API: `seed.ts` as an **UPSERT** — PATCH every existing post's body back to link-free (that wipes any AI-added links) and create any missing; **never delete**. Then publish the site (with 429-retry) so items go live.
+2. `linked --workspace <wb> pull <folderId> --mode full` — re-pull so the workbook tracks the link-free service.
+
+**Why upsert, not delete+recreate (learned the hard way):** deleting a *published* Webflow item removes it from staging but its slug stays reserved by the still-live copy until a publish — so recreating with the same slug 400s (`Unique value is already in database`). Updating in place keeps the slug and avoids it entirely (also: no item-ID churn). `reset.ts` (delete-all) remains for explicit teardown only; it publishes after deleting so the live site clears.
 
 **No `files discard-all` needed.** Earlier analysis assumed edits live in the CLI checkout, but the demo edits happen in **Scratch Desktop** (its own checkout); the CLI checkout is never edited, so a pull never refuses. Published Desktop edits are reverted by the service reset + re-pull (which Desktop syncs). Unpublished Desktop edits would be discarded in Desktop — out of scope for the CLI reset. (`cliCanPublish` is irrelevant — we never publish via CLI.)
 

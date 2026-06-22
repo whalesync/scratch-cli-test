@@ -17,7 +17,7 @@ blog at once — reviewed, then published back into the live Webflow CMS.
    node demos/webflow-cms-seo/ready.ts
    ```
    This resets the Webflow service to the link-free baseline **and** resets the Scratch
-   workbook (discard leftover edits + re-pull). Expect: `40 link-free posts`, workbook re-pulled.
+   workbook (re-pull). Expect: `created=0 updated=40` (or `created=40` first time), workbook re-pulled.
    *(If the stack isn't up and you only want to reset the service: `DEMO_SKIP_WORKBOOK_RESET=1 node demos/webflow-cms-seo/ready.ts`.)*
 2. **Open Scratch Desktop** → workbook **"Webflow CMS-SEO Demo"** → open the **Blog Posts** folder.
    Confirm ~40 posts, bodies with **no** links yet.

@@ -1,28 +1,23 @@
 // One-command "get the demo ready" orchestrator for the Webflow CMS/SEO demo (DEV-10438).
 //
-// Runs reset -> seed so the integration-test Webflow site is in the known, link-free
-// baseline. Run this a few minutes before a demo call.
-//
-// NOTE: the Scratch side (create workbook + Webflow connection + pull into Scratch
-// Desktop) is bootstrap.ts and is not wired yet — see plan T1.4. Until then, connect the
-// "Blog Posts (Demo)" collection in Scratch manually after running this.
+// Upserts the Webflow site to the known, link-free baseline (restores every post body,
+// creates any missing), publishes it live, and re-pulls the Scratch workbook. Run a few
+// minutes before a demo call.
 //
 // Run:  node demos/webflow-cms-seo/ready.ts
 
 import { fileURLToPath } from 'node:url';
 import { publish_site, resolve_demo_site_id } from '../shared/webflow.ts';
 import { reset_demo_workbook_to_baseline } from './bootstrap.ts';
-import { reset_demo_blog_collection } from './reset.ts';
 import { seed_demo_blog_posts } from './seed.ts';
 
 async function ready_webflow_cms_seo_demo(): Promise<void> {
   console.log('== Webflow CMS/SEO demo: get ready ==\n');
 
-  // 1. Reset the Webflow SERVICE to the link-free baseline (raw API; works without the stack).
-  //    Suppress the per-step publishes here and do ONE site publish at the end (avoids racing
-  //    two async publishes on the shared site).
-  await reset_demo_blog_collection({ publish: false });
-  console.log('');
+  // 1. Restore the Webflow SERVICE to the link-free baseline (raw API; works without the stack).
+  //    seed is an UPSERT — it resets every existing post's body to link-free and creates any
+  //    missing one, WITHOUT deleting (deleting published items then recreating hits a slug
+  //    conflict). Suppress its publish; do ONE site publish at the end.
   await seed_demo_blog_posts({ publish: false });
 
   if (process.env.DEMO_SKIP_PUBLISH !== '1') {

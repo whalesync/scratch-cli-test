@@ -15,9 +15,9 @@ Node's native `fetch`.
 
 ```bash
 # from the repo root
-node demos/webflow-cms-seo/ready.ts      # reset -> seed (one command, demo-ready baseline)
-node demos/webflow-cms-seo/seed.ts       # seed only (idempotent)
-node demos/webflow-cms-seo/reset.ts      # teardown only (delete demo items)
+node demos/webflow-cms-seo/ready.ts      # upsert to link-free baseline + publish + workbook re-pull
+node demos/webflow-cms-seo/seed.ts       # upsert posts to link-free baseline + publish (idempotent)
+node demos/webflow-cms-seo/reset.ts      # teardown: delete ALL demo items + publish (not used by ready)
 
 DEMO_SEED_LIMIT=2 node demos/webflow-cms-seo/seed.ts   # smoke a couple of items first
 ```
@@ -39,8 +39,8 @@ demos/
     constants.ts  # demo collection identity (shared by seed + reset)
     fixtures.ts   # authored, link-free blog posts in topical clusters (the baseline flaw)
     seed.ts       # ensure "Blog Posts (Demo)" collection + create posts (idempotent)
-    reset.ts      # delete demo items — scoped to the demo collection only
-    ready.ts      # reset -> seed orchestrator
+    reset.ts      # delete ALL demo items (explicit teardown only; ready does NOT use this)
+    ready.ts      # orchestrator: upsert baseline (via seed) + publish + workbook re-pull
     # bootstrap.ts (Scratch workbook + connection + pull) — TODO, plan T1.4
     # run-of-show.md (presenter script) — TODO, plan T1.6
 ```

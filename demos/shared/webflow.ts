@@ -142,6 +142,24 @@ export async function create_collection_item(
   return created;
 }
 
+export async function update_collection_item(
+  collection_id: string,
+  item_id: string,
+  field_data: Record<string, unknown>,
+): Promise<WebflowItem> {
+  // PATCH an existing item's fields in place (keeps its id + slug). Used to restore the
+  // link-free baseline without deleting — avoids the slug-already-in-database conflict you
+  // hit if you delete a *published* item (its slug stays reserved until a publish) and then
+  // try to recreate it.
+  const updated = (await webflow_api_request('PATCH', `/collections/${collection_id}/items/${item_id}`, {
+    isArchived: false,
+    isDraft: false,
+    fieldData: field_data,
+  })) as WebflowItem;
+  await sleep(DELAY_BETWEEN_WRITES_MILLISECONDS);
+  return updated;
+}
+
 export async function list_all_collection_items(collection_id: string): Promise<WebflowItem[]> {
   const all_items: WebflowItem[] = [];
   let offset = 0;
@@ -173,5 +191,19 @@ export async function delete_collection_item(collection_id: string, item_id: str
 // page template, so individual post URLs still won't render until someone adds that template in
 // the Webflow Designer once. The API cannot create page templates.
 export async function publish_site(site_id: string): Promise<void> {
-  await webflow_api_request('POST', `/sites/${site_id}/publish`, { publishToWebflowSubdomain: true });
+  // Webflow rate-limits site publishes (~1/min). Retry on 429 so back-to-back runs don't fail.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await webflow_api_request('POST', `/sites/${site_id}/publish`, { publishToWebflowSubdomain: true });
+      return;
+    } catch (error) {
+      const is_rate_limited = String(error).includes('429') || String(error).toLowerCase().includes('too many requests');
+      if (is_rate_limited && attempt < 4) {
+        console.log(`   site publish rate-limited (429); waiting 25s before retry ${attempt + 1}/4...`);
+        await sleep(25_000);
+        continue;
+      }
+      throw error;
+    }
+  }
 }

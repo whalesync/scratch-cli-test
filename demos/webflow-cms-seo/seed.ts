@@ -21,6 +21,7 @@ import {
   list_collections,
   publish_site,
   resolve_demo_site_id,
+  update_collection_item,
   type WebflowCollection,
 } from '../shared/webflow.ts';
 import {
@@ -99,31 +100,40 @@ async function seed_demo_blog_posts(options: { publish?: boolean } = {}): Promis
     await ensure_demo_blog_collection_exists(site_id);
   console.log(`Collection ready: ${collection_id} (body="${post_body_field_slug}", topic="${topic_field_slug}")`);
 
+  // UPSERT, not create-or-skip: if a post already exists (matched by slug) we PATCH its body +
+  // topic back to the link-free fixture — this is the reset (it wipes any AI-added links). Only
+  // missing posts are created. We never delete, so we never hit the "slug already in database"
+  // conflict that deleting a *published* item then recreating it causes.
   const existing_items = await list_all_collection_items(collection_id);
-  const existing_slugs = new Set(
-    existing_items.map((item) => String(item.fieldData?.slug ?? '')).filter(Boolean),
+  const existing_item_by_slug = new Map(
+    existing_items.map((item) => [String(item.fieldData?.slug ?? ''), item] as const).filter(([slug]) => slug),
   );
 
   let created_count = 0;
-  let skipped_count = 0;
+  let updated_count = 0;
   for (const fixture of fixtures_to_seed) {
-    if (existing_slugs.has(fixture.slug)) {
-      skipped_count += 1;
-      console.log(`  skip (exists): ${fixture.slug}`);
-      continue;
-    }
-    await create_collection_item(collection_id, {
-      name: fixture.title,
-      slug: fixture.slug,
+    const baseline_field_data = {
       [post_body_field_slug]: fixture.body_html,
       [topic_field_slug]: fixture.topic,
-    });
-    created_count += 1;
-    console.log(`  created: ${fixture.slug}`);
+    };
+    const existing_item = existing_item_by_slug.get(fixture.slug);
+    if (existing_item) {
+      await update_collection_item(collection_id, existing_item.id, baseline_field_data);
+      updated_count += 1;
+      console.log(`  reset (update): ${fixture.slug}`);
+    } else {
+      await create_collection_item(collection_id, {
+        name: fixture.title,
+        slug: fixture.slug,
+        ...baseline_field_data,
+      });
+      created_count += 1;
+      console.log(`  created: ${fixture.slug}`);
+    }
   }
 
   console.log(
-    `\nSeed complete. created=${created_count} skipped=${skipped_count} total_in_collection=${existing_items.length + created_count}`,
+    `\nSeed complete. created=${created_count} updated=${updated_count} total_in_collection=${existing_items.length + created_count}`,
   );
 
   if (should_publish_site) {
