@@ -2,7 +2,7 @@
 
 **Linear:** [DEV-10413 — Publish one record is blocked](https://linear.app/whalesync/issue/DEV-10413/publish-one-record-is-blocked)
 **Author:** Curtis Fonger
-**Status:** Implemented (all lanes A–C + docs done; CLI `cargo test` + desktop build/lint/tests green; pending root build verification + manual QA + ship)
+**Status:** Resolved — shipped to master (MR !2807) + manual QA passed 2026-06-22. A load-time crash fix followed (`WorkspacePage` null-guard); master's equivalent fix superseded the branch commit. Follow-up: DEV-10492 (add a desktop `tsc` typecheck gate, since the crash slipped past esbuild build + lint).
 **Surface:** Scratch Desktop (`/scratch-desktop`) + `scratchmd` CLI (`/scratch-git-2`). **No server changes.**
 
 > Reviewed via `/plan-eng-review` (2026-06-18): 4 architecture + 3 code-quality findings, test coverage diagram + 3 mandatory regression tests, 0 performance findings, independent outside-voice pass (2 cross-model tensions resolved). See `## GSTACK REVIEW REPORT` at the end.
