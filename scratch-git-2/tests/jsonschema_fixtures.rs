@@ -154,7 +154,10 @@ fn assert_custom_code_catches(case: &str, filename: &str) {
 
 #[test]
 fn gap_required_null() {
-    // { "title": null } — JSON Schema passes (key present), hand-rolled check catches (null = missing).
+    // { "title": null } on a required NON-nullable field — JSON Schema passes (key
+    // present; null conformance errors are skipped), hand-rolled check catches
+    // (null = missing). A required *nullable* field's null is intentionally clean;
+    // see the `required_nullable_*` unit tests in builtin.rs.
     assert_custom_code_catches("gap_required_null", "tricky.json");
 }
 
