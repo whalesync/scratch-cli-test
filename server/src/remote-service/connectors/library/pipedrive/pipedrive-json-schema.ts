@@ -9,7 +9,13 @@ import {
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { PipedriveApiClient } from './pipedrive-api-client';
 import { STATIC_SYSTEM_SCHEMAS } from './pipedrive-static-schemas';
-import { ENTITY_CONFIG, ENTITY_DISPLAY_NAMES, PipedriveEntityType, PipedriveField } from './pipedrive-types';
+import {
+  ENTITY_CONFIG,
+  ENTITY_DISPLAY_NAMES,
+  PipedriveApiVersion,
+  PipedriveEntityType,
+  PipedriveField,
+} from './pipedrive-types';
 
 /** Read-only system fields present on (essentially) every Pipedrive entity. */
 const COMMON_READONLY_SYSTEM_FIELDS: readonly string[] = ['id', 'add_time', 'update_time'];
@@ -156,11 +162,29 @@ function isFieldSchemaReadonly(fieldSchema: TSchema): boolean {
 /**
  * Convert a Pipedrive field type to a TypeBox schema.
  */
-export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | null {
+export function pipedriveFieldToJsonSchema(
+  field: PipedriveField,
+  { apiVersion }: { apiVersion?: PipedriveApiVersion } = {},
+): TSchema | null {
   // Stable system field codes whose verbatim v2 shape the metadata field_type misdescribes
   // win over the type-based switch below (e.g. `emails`/`participants` are arrays, not strings).
   const fieldCodeOverrideSchema = pipedriveFieldCodeOverrideSchema(field);
   if (fieldCodeOverrideSchema) return fieldCodeOverrideSchema;
+
+  // Leads use the v1 API, which returns the composite custom-field types in a different verbatim
+  // shape than v2: `monetary` is a bare number (not a `{value, currency}` object) and `set` is a
+  // comma-joined id string (not an array). Map those shapes so leads records validate; every other
+  // field type shares the v2 mapping below. (DEV-10453 follow-up)
+  if (apiVersion === 'v1' && field.is_custom_field) {
+    switch (field.field_type) {
+      case 'monetary':
+        return Type.Union([Type.Number(), Type.Null()]);
+      case 'set':
+        return Type.Union([Type.String(), Type.Null()]);
+      default:
+        break;
+    }
+  }
 
   const fieldType = field.field_type;
 
@@ -190,6 +214,20 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
     }
 
     case 'time':
+      // In Pipedrive v2 a CUSTOM time field is a `{value, timezone_id, timezone_name}` object,
+      // while the SYSTEM time field (`due_time`) is a plain "HH:MM" string. Typing a custom field
+      // as a string floods verbatim records (the object) with anyOf errors. Both shapes are
+      // nullable — Pipedrive returns `null` for an empty time field. Mirrors `case 'monetary'`.
+      if (field.is_custom_field) {
+        return nullableCompositeFieldSchema(
+          Type.Object({
+            value: Type.Union([Type.String(), Type.Null()]),
+            timezone_id: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+            timezone_name: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+          }),
+          { [X_SCRATCH_CONNECTOR_DATA_TYPE]: 'time' },
+        );
+      }
       return Type.Union([Type.String(), Type.Null()]);
 
     case 'daterange':
@@ -255,25 +293,33 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
       );
 
     case 'enum': {
-      if (field.options && field.options.length > 0) {
-        const literals = field.options
-          .filter((opt): opt is { id: number; label?: string } => opt.id !== undefined)
-          .map((opt) => Type.Literal(opt.id, { title: opt.label ?? String(opt.id) }));
-        if (literals.length > 0) {
-          return Type.Union([...literals, Type.Null()]);
-        }
+      const definedOptions = (field.options ?? []).filter(
+        (opt): opt is { id: number | string; label?: string } => opt.id !== undefined,
+      );
+      if (definedOptions.length > 0) {
+        const literals = definedOptions.map((opt) => Type.Literal(opt.id, { title: opt.label ?? String(opt.id) }));
+        // Open the enum: keep the discovered options as UI suggestions (their `title`) but admit
+        // any verbatim value of the same base type, so a value outside the current option set still
+        // validates — Pipedrive default/deleted/disabled options and options added after schema
+        // generation (e.g. activity `type` key_strings). Preserves external data fidelity. Option
+        // ids are numeric for custom selects but key_strings for the activity `type` field.
+        const baseScalar = typeof definedOptions[0].id === 'string' ? Type.String() : Type.Number();
+        return Type.Union([...literals, baseScalar, Type.Null()]);
       }
       return Type.Union([Type.Number(), Type.Null()]);
     }
 
     case 'set': {
-      if (field.options && field.options.length > 0) {
-        const literals = field.options
-          .filter((opt): opt is { id: number; label?: string } => opt.id !== undefined)
-          .map((opt) => Type.Literal(opt.id, { title: opt.label ?? String(opt.id) }));
-        if (literals.length > 0) {
-          return Type.Array(Type.Union(literals));
-        }
+      const definedOptions = (field.options ?? []).filter(
+        (opt): opt is { id: number | string; label?: string } => opt.id !== undefined,
+      );
+      if (definedOptions.length > 0) {
+        const literals = definedOptions.map((opt) => Type.Literal(opt.id, { title: opt.label ?? String(opt.id) }));
+        // Open the item union (see `case 'enum'`): admit verbatim option ids outside the current
+        // set so deleted/added options still validate. The array itself stays as-is — an empty set
+        // is `null`, which the validator skips as a verbatim blank.
+        const baseScalar = typeof definedOptions[0].id === 'string' ? Type.String() : Type.Number();
+        return Type.Array(Type.Union([...literals, baseScalar]));
       }
       return Type.Array(Type.Number());
     }
@@ -311,8 +357,11 @@ export function pipedriveFieldToJsonSchema(field: PipedriveField): TSchema | nul
       return Type.Union([Type.String(), Type.Null()]);
 
     case 'picture':
+      // Pipedrive v2 returns `picture_id` as a bare numeric id; the legacy/object shape (`{url}`)
+      // may also appear. Admit both (plus null) so verbatim records validate either way.
       return Type.Union(
         [
+          Type.Number(),
           Type.Object({
             url: Type.Optional(Type.Union([Type.String(), Type.Null()])),
           }),
@@ -374,7 +423,7 @@ export async function buildPipedriveJsonTableSpec(
   if (config.fieldsCollectionPath) {
     const fields = await client.getFields(entityType);
     for (const field of fields) {
-      const schema = pipedriveFieldToJsonSchema(field);
+      const schema = pipedriveFieldToJsonSchema(field, { apiVersion: config.apiVersion });
       if (!schema) continue;
 
       // Build annotations object

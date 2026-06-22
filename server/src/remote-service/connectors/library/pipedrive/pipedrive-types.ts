@@ -272,7 +272,9 @@ export interface PipedriveField {
   field_code: string;
   field_type: string;
   is_custom_field: boolean;
-  options?: { id?: number; label?: string }[] | null;
+  // Option ids are numeric for custom single/multi-select fields, but the activity `type` field
+  // returns string key_strings (e.g. "deal___all_activities") — both are valid option ids.
+  options?: { id?: number | string; label?: string }[] | null;
   subfields?: { field_code?: string; field_name?: string; field_type?: string }[] | null;
 }
 

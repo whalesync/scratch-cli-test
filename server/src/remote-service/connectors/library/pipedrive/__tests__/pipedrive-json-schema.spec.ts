@@ -177,7 +177,7 @@ describe('pipedriveFieldToJsonSchema', () => {
     expect(schema!.anyOf.map((s: { type?: string }) => s.type).sort()).toEqual(['null', 'number']);
   });
 
-  it('maps enum with options to Union of Literals', () => {
+  it('maps a numeric enum to an OPEN union (literals + number + null) so out-of-set values validate', () => {
     const schema = pipedriveFieldToJsonSchema(
       makeField({
         field_type: 'enum',
@@ -188,12 +188,38 @@ describe('pipedriveFieldToJsonSchema', () => {
       }),
     );
     expect(schema).toBeDefined();
-    // Union of [Literal(1), Literal(2), Null]
+    // Open enum: [Literal(1), Literal(2), Number, Null]. The base scalar admits verbatim values
+    // outside the current option set (deleted/disabled/new options) per external data fidelity.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    expect(schema!.anyOf).toHaveLength(3);
+    expect(schema!.anyOf).toHaveLength(4);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.some((s: { type?: string }) => s.type === 'number')).toBe(true);
+    // A value outside the option set still validates.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(Value.Check(schema!, 999)).toBe(true);
   });
 
-  it('maps set with options to Array of Union of Literals', () => {
+  it('maps a key_string enum (activity `type`) to an OPEN string union so default/deleted types validate', () => {
+    const schema = pipedriveFieldToJsonSchema(
+      makeField({
+        field_code: 'type',
+        field_type: 'enum',
+        options: [
+          { id: 'call', label: 'Call' },
+          { id: 'meeting', label: 'Meeting' },
+        ],
+      }),
+    );
+    expect(schema).toBeDefined();
+    // The base scalar matches the option-id type: string key_strings for the activity `type` field.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.some((s: { type?: string }) => s.type === 'string')).toBe(true);
+    // A verbatim type outside the discovered options (e.g. a Pipedrive default or deleted type).
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(Value.Check(schema!, 'email')).toBe(true);
+  });
+
+  it('maps set to an array whose items are an OPEN union (literals + number) so out-of-set ids validate', () => {
     const schema = pipedriveFieldToJsonSchema(
       makeField({
         field_type: 'set',
@@ -206,6 +232,75 @@ describe('pipedriveFieldToJsonSchema', () => {
     expect(schema).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     expect(schema!.type).toBe('array');
+    // An array containing an id outside the option set still validates (deleted/added option).
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(Value.Check(schema!, [10, 999])).toBe(true);
+  });
+
+  it('maps a CUSTOM time field to a nullable {value, timezone_id, timezone_name} object with the time annotation', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'time', is_custom_field: true }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('time');
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf).toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const objectBranch = schema!.anyOf.find((s: { type?: string }) => s.type === 'object');
+    expect(objectBranch?.properties).toHaveProperty('value');
+    expect(objectBranch?.properties).toHaveProperty('timezone_id');
+    expect(objectBranch?.properties).toHaveProperty('timezone_name');
+    // The verbatim Pipedrive object shape validates.
+    expect(
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      Value.Check(schema!, {
+        value: '12:00:00',
+        timezone_id: 272,
+        timezone_name: 'Asia/Singapore',
+      }),
+    ).toBe(true);
+  });
+
+  it('maps a SYSTEM time field (due_time) to String | Null (plain clock string, not an object)', () => {
+    const schema = pipedriveFieldToJsonSchema(
+      makeField({ field_type: 'time', field_code: 'due_time', is_custom_field: false }),
+    );
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.map((s: { type?: string }) => s.type).sort()).toEqual(['null', 'string']);
+  });
+
+  it('maps picture to a Number | {url} | Null readonly union (v2 returns a bare numeric id)', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'picture' }));
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_READONLY]).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.some((s: { type?: string }) => s.type === 'number')).toBe(true);
+    // A bare numeric picture_id (the v2 verbatim shape) validates.
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(Value.Check(schema!, 183)).toBe(true);
+  });
+
+  it('maps a v1 leads CUSTOM monetary field to Number | Null (v1 returns a bare number, not an object)', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'monetary', is_custom_field: true }), {
+      apiVersion: 'v1',
+    });
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema![X_SCRATCH_CONNECTOR_DATA_TYPE]).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.map((s: { type?: string }) => s.type).sort()).toEqual(['null', 'number']);
+  });
+
+  it('maps a v1 leads CUSTOM set field to String | Null (v1 returns a comma-joined id string)', () => {
+    const schema = pipedriveFieldToJsonSchema(makeField({ field_type: 'set', is_custom_field: true }), {
+      apiVersion: 'v1',
+    });
+    expect(schema).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(schema!.anyOf.map((s: { type?: string }) => s.type).sort()).toEqual(['null', 'string']);
   });
 
   it('maps org to Number | Null with FOREIGN_KEY_OPTIONS', () => {
@@ -633,5 +728,72 @@ describe('schema regression lock — verbatim v2 records validate against the ge
       makeField({ field_code: 'address', field_type: 'address' }),
     ]);
     expectValid(spec.schema, { name: '[Sample] iTable', address: null });
+  });
+
+  it('validates an activity whose `type` is outside the discovered options (Pipedrive default/deleted type)', async () => {
+    const spec = await buildSpec('activities', [
+      makeField({ field_code: 'subject', field_type: 'varchar' }),
+      makeField({
+        field_code: 'type',
+        field_type: 'enum',
+        options: [
+          { id: 'call', label: 'Call' },
+          { id: 'meeting', label: 'Meeting' },
+        ],
+      }),
+    ]);
+    // `email`/`task`/`lunch` are Pipedrive defaults absent from this account's option list, yet
+    // verbatim activities still reference them. The open enum must accept the out-of-set value.
+    expectValid(spec.schema, { subject: 'x', type: 'email' });
+  });
+
+  it('validates a deal with a custom time field stored as a {value, timezone_id, timezone_name} object', async () => {
+    const spec = await buildSpec('deals', [
+      makeField({ field_code: 'title', field_type: 'varchar' }),
+      makeField({
+        field_code: 'abc123timehash',
+        field_name: 'NBI due time',
+        field_type: 'time',
+        is_custom_field: true,
+      }),
+    ]);
+    expectValid(spec.schema, {
+      title: '[Sample] Deal',
+      custom_fields: { abc123timehash: { value: '12:00:00', timezone_id: 272, timezone_name: 'Asia/Singapore' } },
+    });
+  });
+
+  it('validates a person whose picture_id is a bare numeric id (v2 shape)', async () => {
+    const spec = await buildSpec('persons', [
+      makeField({ field_code: 'name', field_type: 'varchar' }),
+      makeField({ field_code: 'picture_id', field_type: 'picture', is_custom_field: false }),
+    ]);
+    expectValid(spec.schema, { name: '[Sample] Otto', picture_id: 183 });
+  });
+
+  it('validates a v1 lead with a custom monetary (bare number) and custom set (comma-joined string)', async () => {
+    // Leads use the v1 API: custom monetary is a bare number and custom set is a CSV id string,
+    // and custom fields are placed flat (top level), not under a `custom_fields` object.
+    mockClient.getFields.mockResolvedValue([
+      makeField({
+        field_code: 'moneyhash',
+        field_name: 'Enterprise Value',
+        field_type: 'monetary',
+        is_custom_field: true,
+      }),
+      makeField({
+        field_code: 'sethash',
+        field_name: 'Tags',
+        field_type: 'set',
+        is_custom_field: true,
+        options: [{ id: 1162 }, { id: 1206 }],
+      }),
+    ]);
+    const spec = await buildPipedriveJsonTableSpec(
+      { wsId: 'leads', remoteId: ['leads'] },
+      'leads',
+      mockClient as unknown as PipedriveApiClient,
+    );
+    expectValid(spec.schema, { title: '[Sample] Lead', moneyhash: 110000000, sethash: '1162,1206' });
   });
 });
