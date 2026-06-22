@@ -15,7 +15,7 @@ variables:
   RELEASE_CLI_ONLY:
     value: "false"
     options: ["false", "true"]
-    description: "Skip everything except the CLI release jobs"
+    description: "Skip everything except the 'release CLI app' stage jobs"
 
 include:
   # Release files — each is skipped when the *other* release is requested.

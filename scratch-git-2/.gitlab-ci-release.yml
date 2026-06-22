@@ -4,7 +4,7 @@
 # host artifacts in target/release — use cargo_cross (see gitlab-ci/common.yml),
 # not the native cargo cache.
 .release_rust_cli_zigbuild:
-  stage: deploy
+  stage: release CLI app
   image: unawareguitar/hasty-dolphin:latest
   variables:
     GIT_DEPTH: 0

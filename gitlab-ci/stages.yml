@@ -8,5 +8,6 @@ stages:
   - deploy
   - post-deploy environment tests
   - deployment notifications
+  - release CLI app
   - release desktop app
   - cleanup
