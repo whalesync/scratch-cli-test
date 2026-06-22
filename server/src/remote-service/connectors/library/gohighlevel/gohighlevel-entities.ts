@@ -332,7 +332,7 @@ export const GOHIGHLEVEL_ENTITY_FIELDS: Record<string, ReadonlyArray<{ key: stri
     { key: 'phone', type: 'string' },
     { key: 'extension', type: 'string' },
     { key: 'permissions', type: 'object' },
-    { key: 'scopes', type: 'string' },
+    { key: 'scopes', type: 'array' },
     { key: 'roles', type: 'object' },
     { key: 'deleted', type: 'boolean' },
     { key: 'lcPhone', type: 'object' },

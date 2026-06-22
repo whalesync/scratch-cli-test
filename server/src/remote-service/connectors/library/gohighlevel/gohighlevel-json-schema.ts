@@ -18,13 +18,25 @@ import {
 
 // --- Shared field helpers -------------------------------------------------
 
-/** Optional string field. */
+/**
+ * Optional, nullable string field. HighLevel returns absent optional fields as an
+ * explicit `null` (not omitted), so the value schema must permit `null` — a plain
+ * `Type.String()` makes a fresh pull fail with `null is not of type "string"`.
+ */
 const optionalString = (description?: string): TSchema =>
-  Type.Optional(Type.String(description ? { description } : {}));
+  Type.Optional(Type.Union([Type.String(), Type.Null()], description ? { description } : {}));
 
-/** Optional string field that HighLevel computes and we must not write back. */
+/** Optional, nullable string field that HighLevel computes and we must not write back. */
 const readonlyOptionalString = (description?: string): TSchema =>
-  Type.Optional(Type.String({ [X_SCRATCH_READONLY]: true, ...(description ? { description } : {}) }));
+  Type.Optional(
+    Type.Union([Type.String(), Type.Null()], { [X_SCRATCH_READONLY]: true, ...(description ? { description } : {}) }),
+  );
+
+/** Optional, nullable number field that HighLevel computes and we must not write back. */
+const readonlyOptionalNumber = (description?: string): TSchema =>
+  Type.Optional(
+    Type.Union([Type.Number(), Type.Null()], { [X_SCRATCH_READONLY]: true, ...(description ? { description } : {}) }),
+  );
 
 /**
  * Build a one-paragraph, agent-readable description of a model's custom fields.
@@ -250,7 +262,8 @@ export function buildOpportunitiesJsonTableSpec(
     lastStatusChangeAt: readonlyOptionalString(),
     lastStageChangeAt: readonlyOptionalString(),
     lastActionDate: readonlyOptionalString(),
-    indexVersion: readonlyOptionalString(),
+    // HighLevel returns indexVersion as an integer (e.g. 1, 2), not a string.
+    indexVersion: readonlyOptionalNumber(),
     // Hydrated read-only snapshots / sub-resources (only present when requested).
     contact: Type.Optional(
       Type.Object(
@@ -385,7 +398,11 @@ function schemaForObjectFieldDataType(field: { dataType?: string; name?: string;
     case 'MULTIPLE_OPTIONS':
       return Type.Union([Type.Array(Type.Unknown()), Type.Null()], annotations);
     default:
-      return Type.Union([Type.String(), Type.Null()], annotations);
+      // Custom-field values are stored verbatim and HighLevel's typing is loose for
+      // the long tail of field types (e.g. a TIME field returns minutes as a number,
+      // 1410). Accept any scalar so a fresh pull never errors on its own data; the
+      // column's display type still comes from the view's per-field dataType hint.
+      return Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()], annotations);
   }
 }
 
@@ -523,22 +540,27 @@ export function buildCustomObjectJsonTableSpec(
 
 // --- Generic location-scoped list entities --------------------------------
 
-/** Map a generic entity field's OpenAPI primitive class to a permissive, read-only schema. */
+/**
+ * Map a generic entity field's OpenAPI primitive class to a permissive, read-only
+ * schema. Every field is **Optional** (and nullable): these are read-only tables
+ * stored verbatim, and HighLevel omits or nulls most fields per record — a required
+ * field would make a fresh pull fail with "required but missing or null".
+ */
 function genericFieldTypeToSchema(type: GenericFieldType, key: string): TSchema {
   const annotations = { [X_SCRATCH_READONLY]: true, description: key };
   switch (type) {
     case 'string':
-      return Type.Union([Type.String(), Type.Null()], annotations);
+      return Type.Optional(Type.Union([Type.String(), Type.Null()], annotations));
     case 'number':
-      return Type.Union([Type.Number(), Type.Null()], annotations);
+      return Type.Optional(Type.Union([Type.Number(), Type.Null()], annotations));
     case 'boolean':
-      return Type.Union([Type.Boolean(), Type.Null()], annotations);
+      return Type.Optional(Type.Union([Type.Boolean(), Type.Null()], annotations));
     case 'array':
-      return Type.Union([Type.Array(Type.Unknown()), Type.Null()], annotations);
+      return Type.Optional(Type.Union([Type.Array(Type.Unknown()), Type.Null()], annotations));
     case 'object':
-      return Type.Union([Type.Object({}, { additionalProperties: true }), Type.Null()], annotations);
+      return Type.Optional(Type.Union([Type.Object({}, { additionalProperties: true }), Type.Null()], annotations));
     default:
-      return Type.Union([Type.Unknown(), Type.Null()], annotations);
+      return Type.Optional(Type.Union([Type.Unknown(), Type.Null()], annotations));
   }
 }
 
