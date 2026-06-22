@@ -324,7 +324,8 @@ export function WorkspacePage() {
   // The path normalization lives in a pure helper (unit-tested).
   const handlePublishSingleRecord = useCallback(
     async (cliPath: string) => {
-      if (!localPath) return;
+      const workspaceId = workspace?.id;
+      if (!localPath || !workspaceId) return;
       const showResolveError = (message: string) =>
         notifications.show({ color: 'red', title: 'Could not publish record', message });
       try {
@@ -334,14 +335,14 @@ export function WorkspacePage() {
           showResolveError(resolved.error);
           return;
         }
-        void trackPublishSingleRecord(workspace.id, resolved.target.connectionId);
+        void trackPublishSingleRecord(workspaceId, resolved.target.connectionId);
         setSingleRecordPublish(resolved.target);
         setPublishModalOpen(true);
       } catch (err) {
         showResolveError(err instanceof Error ? err.message : 'Failed to resolve the record’s connection.');
       }
     },
-    [localPath, workspace.id],
+    [localPath, workspace?.id],
   );
 
   const handlePullAndRefresh = useCallback(async () => {
