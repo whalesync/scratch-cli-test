@@ -434,6 +434,65 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
           },
           {
+            "properties": {
+              "icon": {
+                "properties": {
+                  "color": {
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "name",
+                ],
+                "type": "object",
+              },
+              "type": {
+                "const": "icon",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "icon",
+            ],
+            "type": "object",
+          },
+          {
+            "properties": {
+              "custom_emoji": {
+                "properties": {
+                  "id": {
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                  "url": {
+                    "format": "uri",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "id",
+                  "url",
+                ],
+                "type": "object",
+              },
+              "type": {
+                "const": "custom_emoji",
+                "type": "string",
+              },
+            },
+            "required": [
+              "type",
+              "custom_emoji",
+            ],
+            "type": "object",
+          },
+          {
             "type": "null",
           },
         ],
@@ -731,8 +790,16 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
                       "end": {
                         "anyOf": [
                           {
-                            "format": "date-time",
-                            "type": "string",
+                            "anyOf": [
+                              {
+                                "format": "date",
+                                "type": "string",
+                              },
+                              {
+                                "format": "date-time",
+                                "type": "string",
+                              },
+                            ],
                           },
                           {
                             "type": "null",
@@ -740,8 +807,16 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
                         ],
                       },
                       "start": {
-                        "format": "date-time",
-                        "type": "string",
+                        "anyOf": [
+                          {
+                            "format": "date",
+                            "type": "string",
+                          },
+                          {
+                            "format": "date-time",
+                            "type": "string",
+                          },
+                        ],
                       },
                       "time_zone": {
                         "anyOf": [
