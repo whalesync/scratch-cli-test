@@ -1,0 +1,57 @@
+include:
+  - "/gitlab-ci/stages.yml"
+  - "/gitlab-ci/common.yml"
+
+# =============================================================================
+# CLEANUP STALE RELEASES
+#
+# Deletes stale draft/prerelease *-test GitHub releases for the CLI and Desktop
+# apps via tools/github/cleanup_stale_releases.py (pure-stdlib Python 3, no deps).
+# The script reads the GitHub PAT from the GITHUB_TOKEN CI/CD variable and only
+# touches test-variant tags (vX.Y.Z-test) older than --days. Runs only in the
+# scheduled pipeline named "Cleanup Releases" (PIPELINE_NAME). Create that
+# schedule in GitLab > CI/CD > Schedules with variable
+# PIPELINE_NAME="Cleanup Releases" targeting the master branch.
+# =============================================================================
+
+.cleanup-stale-releases:
+  stage: cleanup
+  image: python:3.12-slim
+  interruptible: true
+  script:
+    # GITHUB_TOKEN CI/CD variable is read from the env by the script.
+    - python3 tools/github/cleanup_stale_releases.py
+      --app "$CLEANUP_RELEASES_APP" --variant test --days 1 --apply
+
+cleanup stale cli test releases:
+  extends: .cleanup-stale-releases
+  variables:
+    CLEANUP_RELEASES_APP: cli
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Cleanup Releases"'
+
+cleanup stale desktop test releases:
+  extends: .cleanup-stale-releases
+  variables:
+    CLEANUP_RELEASES_APP: desktop
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Cleanup Releases"'
+
+# Companion failure alert — mirrors "notify slack on cli integration test failure".
+notify slack on cleanup releases failure:
+  stage: cleanup
+  dependencies: []
+  needs:
+    - job: cleanup stale cli test releases
+      optional: true
+    - job: cleanup stale desktop test releases
+      optional: true
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+      --data "{\"text\":\"❌ Cleanup Releases pipeline failed\n<${CI_PIPELINE_URL}|View Pipeline>\"}" \
+      ${SLACK_SCRATCH_TEST_FEED_WEBHOOK_URL}
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Cleanup Releases"'
+      when: on_failure
+  allow_failure: true
