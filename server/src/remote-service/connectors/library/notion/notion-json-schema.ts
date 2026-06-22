@@ -117,6 +117,22 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
               type: Type.Literal('file'),
               file: Type.Object({ url: Type.String({ format: 'uri' }), expiry_time: Type.String() }),
             }),
+            // Built-in Notion named icon, e.g. { type: 'icon', icon: { name: 'light-bulb', color: 'orange' } }.
+            // Carries no URL, so it is not an extractable asset (extractUrl skips it).
+            Type.Object({
+              type: Type.Literal('icon'),
+              icon: Type.Object({ name: Type.String(), color: Type.Optional(Type.String()) }),
+            }),
+            // Custom uploaded emoji, e.g. { type: 'custom_emoji', custom_emoji: { id, name, url } }.
+            // `url` is a real Notion-hosted asset URL, extracted like file/external icons.
+            Type.Object({
+              type: Type.Literal('custom_emoji'),
+              custom_emoji: Type.Object({
+                id: Type.String(),
+                name: Type.Optional(Type.String()),
+                url: Type.String({ format: 'uri' }),
+              }),
+            }),
             Type.Null(),
           ],
           { [X_SCRATCH_ASSET_FIELD]: { idPath: null, urlExpires: true } satisfies AssetFieldOptions },
@@ -297,16 +313,23 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
       innerValueSchema = Type.Array(Type.Object({ id: Type.String(), name: Type.String(), color: Type.String() }));
       break;
 
-    case 'date':
+    case 'date': {
+      // Notion date values are EITHER date-only ("2025-02-20") OR full RFC3339
+      // ("2025-02-20T13:00:00.000-05:00"), depending on whether the user picked a
+      // time. Accept both. A bare format:'date' is NOT a superset of date-time —
+      // the CLI's jsonschema validator (should_validate_formats(true)) requires a
+      // length-10 string for 'date' — so model the two precisions as a union.
+      const notionDateString = Type.Union([Type.String({ format: 'date' }), Type.String({ format: 'date-time' })]);
       innerValueSchema = Type.Union([
         Type.Object({
-          start: Type.String({ format: 'date-time' }),
-          end: Type.Optional(Type.Union([Type.String({ format: 'date-time' }), Type.Null()])),
+          start: notionDateString,
+          end: Type.Optional(Type.Union([notionDateString, Type.Null()])),
           time_zone: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         }),
         Type.Null(),
       ]);
       break;
+    }
 
     case 'people':
       innerValueSchema = Type.Array(

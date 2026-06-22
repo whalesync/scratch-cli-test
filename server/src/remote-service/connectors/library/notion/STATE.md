@@ -145,10 +145,11 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered
-- (none yet — see SKILL.md → Stage E for what to hunt for)
+- **Date properties emit date-only AND full date-time.** Notion serializes an all-day date as `"2025-02-20"` (no time component) and a timed date as full RFC3339 (`"2025-02-20T13:00:00.000-05:00"`). The generated `date` property schema models `start`/`end` as a `format:'date'` | `format:'date-time'` string union so both validate. A single `format:'date-time'` was rejecting every all-day date in the CLI's `enforce_schema` validator (which runs with `should_validate_formats(true)`) — the highest-volume false error on a fresh pull. See `notion-json-schema.ts` `case 'date'`.
+- **Page icons have non-emoji/file shapes.** Besides `emoji`/`external`/`file`/`null`, Notion returns a built-in named icon `{type:'icon', icon:{name, color}}` and a `{type:'custom_emoji', custom_emoji:{id, name, url}}`. The top-level `icon` union models all of them. The named-`icon` branch carries no URL (not a rehostable asset, so `extractUrl` skips it); `custom_emoji.url` is extracted like file/external icons. See `notion-json-schema.ts` `icon`.
 
 ## Gotchas
-- (connector-specific operational notes)
+- **url/email property formats are asserted by `enforce_schema` even though Notion doesn't validate them.** The `url`/`email` property types carry `format:'uri'`/`'email'`, and the CLI validator asserts formats — so free-text a user typed (e.g. `"google.com"` with no scheme) can surface as an error. Currently dormant (live data has well-formed/empty values; the validator exempts `""`). Deferred rather than fixed because `notion-default-view.ts` maps `format:'uri'` → the `'url'` column type, so dropping the format would require moving url display-typing onto the `x-scratch-connector-data-type === 'url'` signal (touches `notion-default-view.ts` + its spec). Revisit if a re-pull surfaces real url/email format errors.
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).

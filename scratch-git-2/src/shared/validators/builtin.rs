@@ -500,6 +500,65 @@ mod tests {
     }
 
     #[test]
+    fn date_only_and_date_time_both_validate_against_notion_date_union() {
+        // The Notion connector models a date property's inner `start`/`end` as a
+        // `date | date-time` string union, because Notion emits all-day dates as
+        // date-only ("2025-02-20") and timed dates as full RFC3339. Both precisions
+        // must validate under should_validate_formats(true). Regression lock for the
+        // Notion date-only schema fix (a date-time-only schema flagged every all-day date).
+        let date_string = json!({ "anyOf": [
+            { "type": "string", "format": "date" },
+            { "type": "string", "format": "date-time" }
+        ]});
+        let schema = json!({ "schema": { "properties": {
+            "when": { "type": "object", "properties": {
+                "start": date_string.clone(),
+                "end": { "anyOf": [ date_string, { "type": "null" } ] }
+            }}
+        }}});
+
+        let date_only = record_ctx(
+            json!({ "when": { "start": "2025-02-20", "end": null } }),
+            None,
+            schema.clone(),
+        );
+        let date_only_results = enforce_schema(&date_only);
+        assert!(
+            date_only_results.is_empty(),
+            "date-only start should validate, got {} error(s)",
+            date_only_results.len()
+        );
+
+        let date_time = record_ctx(
+            json!({ "when": { "start": "2025-02-20T13:00:00.000Z", "end": null } }),
+            None,
+            schema,
+        );
+        assert!(enforce_schema(&date_time).is_empty());
+    }
+
+    #[test]
+    fn non_date_string_still_errors_against_notion_date_union() {
+        // The union still asserts formats — a non-empty, non-date string is flagged,
+        // proving the date-only fix did not silently disable date validation.
+        let schema = json!({ "schema": { "properties": {
+            "when": { "type": "object", "properties": { "start": { "anyOf": [
+                { "type": "string", "format": "date" },
+                { "type": "string", "format": "date-time" }
+            ]}}}
+        }}});
+        let ctx = record_ctx(json!({ "when": { "start": "not-a-date" } }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(
+            results.len(),
+            1,
+            "non-date should produce exactly one error, got {}",
+            results.len()
+        );
+        assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    #[test]
     fn id_column_required_skipped_for_new_record() {
         // New record (master=None): id not yet assigned by remote — no required error.
         let ctx = record_ctx(json!({"name": "Alice"}), None, schema_with_id_column());

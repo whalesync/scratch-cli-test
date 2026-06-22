@@ -9,7 +9,7 @@ import benTossellRecord from './testdata/notion-investor-crm-ben-tossell.json';
 // JSON and stored), so the codebase registers no format validators. This regression
 // lock is a *structural* check, so we register permissive validators (any string) —
 // otherwise TypeBox treats the unknown formats as validation failures.
-for (const format of ['date-time', 'uri', 'email']) {
+for (const format of ['date', 'date-time', 'uri', 'email']) {
   if (!FormatRegistry.Has(format)) {
     FormatRegistry.Set(format, (value) => typeof value === 'string');
   }
@@ -73,6 +73,7 @@ describe('Notion schema regression lock — record validates against generated s
       Stage: { id: 'p_status', type: 'status' },
       Tags: { id: 'p_ms', type: 'multi_select' },
       Due: { id: 'p_date', type: 'date' },
+      DueDateOnly: { id: 'p_date2', type: 'date' },
       Owners: { id: 'p_ppl', type: 'people' },
       Attachments: { id: 'p_files', type: 'files' },
       Done: { id: 'p_cb', type: 'checkbox' },
@@ -118,6 +119,8 @@ describe('Notion schema regression lock — record validates against generated s
         Stage: { id: 'p_status', type: 'status', status: { id: 's1', name: 'In Progress', color: 'blue' } },
         Tags: { id: 'p_ms', type: 'multi_select', multi_select: [{ id: 't1', name: 'A', color: 'red' }] },
         Due: { id: 'p_date', type: 'date', date: { start: '2026-03-01T00:00:00.000Z', end: null, time_zone: null } },
+        // Date-only value (no time component) — Notion emits these for all-day dates.
+        DueDateOnly: { id: 'p_date2', type: 'date', date: { start: '2025-02-20', end: null, time_zone: null } },
         Owners: { id: 'p_ppl', type: 'people', people: [{ object: 'user', id: 'u1', name: 'Ada' }] },
         Attachments: {
           id: 'p_files',
@@ -150,5 +153,39 @@ describe('Notion schema regression lock — record validates against generated s
     };
 
     expectValid(spec.schema, record);
+  });
+
+  it('validates the built-in named-icon and custom_emoji page icon shapes', () => {
+    const spec = buildNotionJsonTableSpec(TABLE_ID, buildDataSource({ Title: { id: 'title', type: 'title' } }));
+    const user = { object: 'user', id: 'user_1' };
+    const basePage = {
+      object: 'page',
+      id: 'page_1',
+      created_time: '2026-01-01T00:00:00.000Z',
+      last_edited_time: '2026-01-02T00:00:00.000Z',
+      created_by: user,
+      last_edited_by: user,
+      cover: null,
+      parent: { type: 'data_source_id', data_source_id: 'ds_123', database_id: 'db_123' },
+      archived: false,
+      in_trash: false,
+      properties: {
+        Title: {
+          id: 'title',
+          type: 'title',
+          title: [{ type: 'text', text: { content: 'Hi', link: null }, plain_text: 'Hi', href: null }],
+        },
+      },
+      url: 'https://www.notion.so/page_1',
+      public_url: null,
+    };
+
+    // Built-in named icon, e.g. picked from Notion's icon library.
+    expectValid(spec.schema, { ...basePage, icon: { type: 'icon', icon: { name: 'light-bulb', color: 'orange' } } });
+    // Custom uploaded emoji.
+    expectValid(spec.schema, {
+      ...basePage,
+      icon: { type: 'custom_emoji', custom_emoji: { id: 'ce_1', name: 'party', url: 'https://x/ce.png' } },
+    });
   });
 });

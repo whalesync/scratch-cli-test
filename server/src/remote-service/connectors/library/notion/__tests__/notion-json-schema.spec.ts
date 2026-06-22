@@ -33,6 +33,14 @@ function literalConst(node: SchemaNode): unknown {
   return node.const;
 }
 
+/** Recursively collect every string `format` reachable through anyOf/allOf wrappers. */
+function collectStringFormats(node: SchemaNode | undefined): string[] {
+  if (!node) return [];
+  if (typeof node.format === 'string') return [node.format];
+  const variants = (node.anyOf as SchemaNode[]) ?? (node.allOf as SchemaNode[]) ?? [];
+  return variants.flatMap((variant) => collectStringFormats(variant));
+}
+
 describe('notionPropertyToJsonSchema — raw envelope shape', () => {
   describe('every property is an object envelope { id, type, <typeKey> }', () => {
     it('wraps a scalar property (email) in the envelope', () => {
@@ -149,6 +157,22 @@ describe('notionPropertyToJsonSchema — raw envelope shape', () => {
     });
   });
 
+  describe('date — accepts both date-only and date-time', () => {
+    // Notion emits all-day dates as date-only ("2025-02-20") and timed dates as
+    // full RFC3339, so start/end must validate under either precision.
+    it('models start and end as a date|date-time string union', () => {
+      const s = prop('date');
+      const dateVariants = props(s).date.anyOf as SchemaNode[];
+      const inner = dateVariants.find((v) => v.type !== 'null');
+      expect(inner).toBeDefined();
+      const innerProps = (inner?.properties ?? {}) as Record<string, SchemaNode>;
+
+      expect(collectStringFormats(innerProps.start).sort()).toEqual(['date', 'date-time']);
+      // `end` is Optional(Union([dateString, Null])) — same two formats, deeper.
+      expect(collectStringFormats(innerProps.end).sort()).toEqual(['date', 'date-time']);
+    });
+  });
+
   describe('unknown / future property type', () => {
     it('keeps the envelope shape with an opaque inner value', () => {
       const s = prop('wacky_future_type');
@@ -199,5 +223,16 @@ describe('buildNotionJsonTableSpec top-level field annotations', () => {
     expect(topLevelProps().cover[X_SCRATCH_READONLY]).toBeUndefined();
     expect(topLevelProps().icon[X_SCRATCH_READONLY]).toBeUndefined();
     expect(topLevelProps().in_trash[X_SCRATCH_READONLY]).toBeUndefined();
+  });
+
+  it('icon union accepts emoji, external, file, built-in named icon, custom_emoji, and null', () => {
+    const icon = topLevelProps().icon;
+    const branches = (icon.anyOf ?? []) as Array<Record<string, unknown>>;
+    const typeConsts = branches
+      .map((branch) => (branch.properties as Record<string, { const?: unknown }> | undefined)?.type?.const)
+      .filter((value): value is string => typeof value === 'string');
+    expect(typeConsts).toEqual(expect.arrayContaining(['emoji', 'external', 'file', 'icon', 'custom_emoji']));
+    // The null branch keeps the field nullable (a page with no icon).
+    expect(branches.some((branch) => branch.type === 'null')).toBe(true);
   });
 });
