@@ -124,13 +124,16 @@ The mac Package + Upload jobs always generate on prod/master pipelines and are d
 
 [Walkthrough Video](https://www.loom.com/share/74b4024c7ab54c18802e8b2c2c3a76ec)
 
-1. Go to **CI/CD → Pipelines → Run pipeline** in GitLab.
-2. Pick the branch:
-   - `prod` → builds the **prod** variant (`api.scratch.md`, `desktop` update channel) and updates the Homebrew cask on finalize.
-   - `master` → builds the **test** variant (`test-api.scratch.md`, `desktop-test` update channel).
-3. Set **`RELEASE_DESKTOP_ONLY = true`**. This skips the normal build/test/deploy stages and includes only the desktop release jobs (and not the CLI release pipeline). Leave `RELEASE_CLI_ONLY` at `false`.
-4. Optionally set `RELEASE_TYPE` (`patch` / `minor` / `major`) on the bootstrap job — defaults to `patch`.
-5. Run the pipeline, then click ▶︎ on **Bootstrap prod desktop release** (or test) to start the release. Downstream jobs (`Build CLI for…`, `Package… macOS/Linux/Windows`, `Upload… assets`, `Finalize…`) run automatically once bootstrap completes.
+**Prod releases are automatic.** Every pipeline on the `prod` branch — including the scheduled `master → prod` auto-push — runs the `release desktop app` stage on its own and cuts a **patch** prod release (`api.scratch.md`, `desktop` update channel, Homebrew cask updated on finalize). No manual ▶︎ click is needed: `Bootstrap prod desktop release` and everything downstream (`Build CLI for…`, `Package… macOS/Linux/Windows`, `Upload… assets`, `Finalize…`) run automatically.
+
+To cut a **minor** or **major** prod release instead, run a pipeline manually:
+
+1. Go to **CI/CD → Pipelines → Run pipeline** and pick the `prod` branch.
+2. Add a `RELEASE_TYPE` variable set to `minor` or `major` (defaults to `patch`).
+3. Optionally set **`RELEASE_DESKTOP_ONLY = true`** to skip the normal build/test/deploy stages and run only the desktop release jobs (leave `RELEASE_CLI_ONLY` at `false`).
+4. Run the pipeline.
+
+For a **test** release, run a pipeline on the `master` branch (builds the **test** variant: `test-api.scratch.md`, `desktop-test` update channel); the test bootstrap runs automatically. Test releases can also be triggered from an MR — see [Triggering a test release from an MR](#triggering-a-test-release-from-an-mr) below.
 
 `Finalize` blocks on the mac upload — if no team-tagged mac runner is online when the pipeline reaches the mac stage, Finalize fails and the release is not published, rather than silently shipping without mac artifacts.
 

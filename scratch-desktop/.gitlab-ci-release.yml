@@ -81,30 +81,22 @@ include:
     expire_in: 1 day
   resource_group: github-releases
 
-# Anyone on prod/master can cut a desktop release. The mac Package + Upload
-# jobs always generate and are dispatched to whichever team-tagged mac shell
-# runner (tag: team-macos-release) is online at that moment — see
-# docs/ops/local-gitlab-runner.md § macOS Shell Runner. If no mac runner is
-# online when the pipeline reaches the mac stage, the job sits pending until
-# one comes up or hits its timeout; Finalize blocks on the mac upload, so a
-# release never publishes without mac artifacts.
+# The prod desktop release runs automatically on every prod-branch pipeline
+# (including the scheduled master → prod auto-push) and cuts a patch release by
+# default; run a pipeline manually with RELEASE_TYPE=minor/major for a larger
+# bump. The mac Package + Upload jobs always generate and are dispatched to
+# whichever team-tagged mac shell runner (tag: team-macos-release) is online at
+# that moment — see docs/ops/local-gitlab-runner.md § macOS Shell Runner. If no
+# mac runner is online when the pipeline reaches the mac stage, the job sits
+# pending until one comes up or hits its timeout; Finalize blocks on the mac
+# upload, so a release never publishes without mac artifacts.
 
 Bootstrap prod desktop release:
   extends: .bootstrap_release
   variables:
     VARIANT: 'prod'
-  inputs:
-    RELEASE_TYPE:
-      description: 'Release version type'
-      default: 'patch'
-      options:
-        - 'patch'
-        - 'minor'
-        - 'major'
   rules:
     - if: '$CI_COMMIT_BRANCH == "prod"'
-      when: manual
-      allow_failure: false
 
 Bootstrap test desktop release:
   extends: .bootstrap_release
