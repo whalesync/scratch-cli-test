@@ -90,6 +90,14 @@ export interface RoutineRun {
    * — that step's clean error). Overwritten as each step finishes. Null until the first step finishes.
    */
   resultSummary: string | null;
+  /**
+   * Set when the run COMPLETED but a step finished "completed with a warning" (e.g. a publish whose
+   * connector rejected some records) — holds the first such step's message. Unlike {@link error}
+   * (which means the run failed), this lets a consumer distinguish "completed clean" (null) from
+   * "completed with warnings" (non-null) — e.g. to show a warning icon instead of a green check on an
+   * otherwise-`completed` run. Null on a clean run.
+   */
+  resultWarning: string | null;
   /** Index of the step currently executing (0-based). */
   currentStepIndex: number;
   /** Per-step records. Present on the run-detail endpoint; omitted from list responses. */

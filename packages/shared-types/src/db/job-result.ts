@@ -49,6 +49,8 @@ export interface JobResultFolder {
   deletedPaths: string[];
   /** Free-form status string from the source job ('completed' | 'failed' | 'active' | …), or null. */
   status: string | null;
+  /** Effective pull mode for this folder. Pull only — an incremental request can demote to full per-folder. */
+  mode?: 'full' | 'incremental';
 }
 
 /**
@@ -68,6 +70,12 @@ export interface JobResult {
   errors: string[];
   /** User-facing warning messages. */
   warnings: string[];
+  /**
+   * Effective pull mode for the run. Pull only (undefined for sync/publish). 'incremental' when the
+   * run fetched only records changed since the last watermark for any folder — in that case the
+   * fetched count is not the folder's full record total, so the 'Unchanged' stat is omitted.
+   */
+  mode?: 'full' | 'incremental';
 }
 
 /**
@@ -123,17 +131,32 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
   const updatedCount = progress.updatedCount ?? 0;
   const deletedCount = progress.deletedCount ?? 0;
   const changedRecordCount = createdCount + updatedCount + deletedCount;
+
+  // An incremental pull only fetches records changed since the last watermark, so `totalFiles` is the
+  // changed subset — not the folder's full record count. Treat the run as incremental if the run-wide
+  // mode says so or any folder ran incrementally (an incremental request can demote to full per-folder).
+  const isIncrementalPull =
+    progress.mode === 'incremental' || (progress.folders ?? []).some((folder) => folder.mode === 'incremental');
+  const modeSuffix = isIncrementalPull ? ' (incremental)' : '';
   const summary =
     changedRecordCount === 0
-      ? `Pulled ${pluralize(folderCount, 'folder')} — no changes`
-      : `Pulled ${pluralize(changedRecordCount, 'record')} across ${pluralize(folderCount, 'folder')}`;
+      ? `Pulled ${pluralize(folderCount, 'folder')} — no changes${modeSuffix}`
+      : `Pulled ${pluralize(changedRecordCount, 'record')} across ${pluralize(folderCount, 'folder')}${modeSuffix}`;
 
   const stats: JobResultStat[] = [
-    { label: 'Created', value: createdCount },
+    { label: 'New', value: createdCount },
     { label: 'Updated', value: updatedCount },
     { label: 'Deleted', value: deletedCount },
-    { label: 'Fetched', value: progress.totalFiles ?? 0 },
   ];
+  // `totalFiles` is the set fetched from the service, which is exactly what ends up created, updated, or
+  // left untouched on disk (deletes are records that were NOT fetched, so they are not part of this
+  // total). So New + Updated + Unchanged = fetched record count. We only surface 'Unchanged' for full
+  // pulls — under incremental the fetched count is just the changed subset, so it would read ~0 and
+  // misleadingly imply the rest of the folder doesn't exist.
+  if (!isIncrementalPull) {
+    const unchangedCount = Math.max(0, (progress.totalFiles ?? 0) - createdCount - updatedCount);
+    stats.push({ label: 'Unchanged', value: unchangedCount });
+  }
 
   // Prefer the per-folder breakdown (enriched server-side). Fall back to a single synthetic row built
   // from the run-wide aggregate so older progress records (no `folders`) still render one folder.
@@ -153,6 +176,7 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
             updatedPaths: progress.updatedPaths ?? [],
             deletedPaths: progress.deletedPaths ?? [],
             status: progress.status,
+            mode: progress.mode,
           },
         ];
 
@@ -170,12 +194,13 @@ function derivePullResult(progress: PullLinkedFolderFilesPublicProgress | undefi
     updatedPaths: folder.updatedPaths ?? [],
     deletedPaths: folder.deletedPaths ?? [],
     status: folder.status,
+    mode: folder.mode,
   }));
 
   const files = folders.flatMap(filesFromFolder);
   const errors = Object.values(progress.folderErrors ?? {}).map((error) => `${error.folderName}: ${error.message}`);
 
-  return { summary, stats, folders, files, errors, warnings: [] };
+  return { summary, stats, folders, files, errors, warnings: [], mode: isIncrementalPull ? 'incremental' : 'full' };
 }
 
 // ── Sync ─────────────────────────────────────────────────────────────────────
@@ -255,9 +280,7 @@ function derivePublishResult(progress: PublishPublicProgress | undefined, mode: 
     const deletesPlanned = progress.deletesPlanned ?? 0;
     const plannedChangeCount = createsPlanned + editsPlanned + deletesPlanned;
     const summary =
-      plannedChangeCount === 0
-        ? 'Staged a publish plan — no changes'
-        : `Staged a publish plan (${pluralize(plannedChangeCount, 'change')})`;
+      plannedChangeCount === 0 ? 'No changes' : `Staged a publish plan (${pluralize(plannedChangeCount, 'change')})`;
     const stats: JobResultStat[] = [
       { label: 'Creates planned', value: createsPlanned },
       { label: 'Updates planned', value: editsPlanned },
@@ -271,11 +294,18 @@ function derivePublishResult(progress: PublishPublicProgress | undefined, mode: 
   const deletesExecuted = progress.deletesExecuted ?? 0;
   const failedCount = progress.failedCount ?? 0;
   const executedChangeCount = createsExecuted + editsExecuted + deletesExecuted;
-  const rejectedSuffix = failedCount > 0 ? ` (${failedCount} rejected)` : '';
-  const summary =
-    executedChangeCount === 0 && rejectedSuffix === ''
-      ? 'Published — no changes'
-      : `Published ${pluralize(executedChangeCount, 'change')}${rejectedSuffix}`;
+  // Any connector rejection leads with a failure headline. When the publish only partially failed we
+  // still report how many changes the connector accepted ("… • N successful").
+  let summary: string;
+  if (failedCount > 0) {
+    const summaryParts = ['Publishing failed', `${pluralize(failedCount, 'update')} rejected`];
+    if (executedChangeCount > 0) {
+      summaryParts.push(`${executedChangeCount} successful`);
+    }
+    summary = summaryParts.join(' • ');
+  } else {
+    summary = executedChangeCount === 0 ? 'No changes' : `Published ${pluralize(executedChangeCount, 'change')}`;
+  }
 
   const stats: JobResultStat[] = [
     { label: 'Created', value: createsExecuted },

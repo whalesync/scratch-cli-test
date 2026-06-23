@@ -909,6 +909,13 @@ model RoutineRun {
   /// success summary, or the failed step's clean error). Null until the first step finishes.
   resultSummary String?
 
+  /// Set when a run COMPLETES (not fails) but at least one step finished "completed with a warning"
+  /// (a completed step with a non-null `error`, e.g. a publish whose connector rejected some records).
+  /// Holds the first such step's message. Distinct from `error` (which means the run failed) so a
+  /// consumer can tell "succeeded clean" (null) from "succeeded with warnings" (non-null) without
+  /// walking the steps. Null on a clean run.
+  resultWarning String?
+
   /// Index of the step currently executing (0-based).
   currentStepIndex Int @default(0)
 

@@ -26,6 +26,7 @@ interface FakeRun {
   finishedAt: Date | null;
   error: string | null;
   resultSummary: string | null;
+  resultWarning: string | null;
   routineFilePath: string;
   routineName: string;
 }
@@ -118,6 +119,24 @@ function makeFakeDb(run: FakeRun, steps: FakeStep[]) {
         const step = steps.find((candidate) => candidate.id === where.id);
         return step ? { ...step } : null;
       }),
+      findFirst: jest.fn(
+        async ({
+          where,
+        }: {
+          where: { runId?: string; status?: string; error?: { not: null } };
+          orderBy?: { stepIndex: 'asc' | 'desc' };
+        }) => {
+          const match = [...steps]
+            .sort((a, b) => a.stepIndex - b.stepIndex)
+            .find((step) => {
+              if (where.runId && step.runId !== where.runId) return false;
+              if (where.status && step.status !== where.status) return false;
+              if (where.error?.not === null && step.error == null) return false;
+              return true;
+            });
+          return match ? { ...match } : null;
+        },
+      ),
       update: jest.fn(async ({ where, data }: { where: { id: string }; data: Partial<FakeStep> }) => {
         const step = steps.find((candidate) => candidate.id === where.id);
         if (step) Object.assign(step, data);
@@ -208,6 +227,7 @@ describe('RoutineExecutorService.execute', () => {
       finishedAt: null,
       error: null,
       resultSummary: null,
+      resultWarning: null,
       routineFilePath: 'routines/daily.yaml',
       routineName: 'Daily',
       ...overrides,
@@ -258,6 +278,8 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[1].pipelineId).toBe('pln_1');
     // resultSummary reflects the LAST step that ran (publish overwrote the pull's summary).
     expect(run.resultSummary).toBe('Published 5 changes');
+    // A clean run (no step completed with a warning) leaves resultWarning null.
+    expect(run.resultWarning).toBeNull();
     // Every step job is tagged with trigger 'routine' + the RoutineRunId; routine pulls default to
     // incremental (this step has no fullPull flag).
     expect(enqueuePull).toHaveBeenCalledWith(
@@ -469,6 +491,9 @@ describe('RoutineExecutorService.execute', () => {
     expect(steps[1].status).toBe('completed');
     expect(run.status).toBe('completed');
     expect(run.resultSummary).toBe('Pulled 1 folder — no changes');
+    // resultSummary (last step) hides the publish warning, so the run-level resultWarning carries it —
+    // the signal a consumer uses to show "completed with warnings" instead of a clean green check.
+    expect(run.resultWarning).toMatch(/3 record\(s\) rejected/);
   });
 
   it('records a publish resultSummary that notes records rejected by the connector', async () => {
@@ -505,7 +530,44 @@ describe('RoutineExecutorService.execute', () => {
     await service.execute(RUN_ID);
 
     expect(run.status).toBe('completed');
-    expect(run.resultSummary).toBe('Published 4 changes (3 rejected)');
+    expect(run.resultSummary).toBe('Publishing failed • 3 updates rejected • 4 successful');
+  });
+
+  it('records a publish resultSummary with no "successful" clause when every change was rejected', async () => {
+    // A single publish step so the publish summary is the run's final resultSummary.
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PUBLISH, { folder: '/blog/posts' })];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueueSelfPlanningPublishJob: jest.fn().mockResolvedValue({ id: 'publish-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress: {
+            publicProgress: {
+              pipelineId: 'pln_10',
+              failedCount: 1,
+              createsExecuted: 0,
+              editsExecuted: 0,
+              deletesExecuted: 0,
+            },
+          },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('completed');
+    expect(run.resultSummary).toBe('Publishing failed • 1 update rejected');
   });
 
   it('records a publish-plan resultSummary noting the planned change count', async () => {

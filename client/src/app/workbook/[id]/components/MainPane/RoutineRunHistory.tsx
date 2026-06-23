@@ -97,6 +97,10 @@ function RoutineRunRow({ workbookId, run: listRun }: { workbookId: WorkbookId; r
 
   const isActive = ACTIVE_RUN_STATUSES.has(run.status);
   const duration = formatDuration(run.startedAt, run.finishedAt);
+  // A run that COMPLETED but carries a `resultWarning` finished "completed with warnings" (e.g. a step
+  // whose publish had connector-rejected records). Mirror the per-step treatment: a yellow "completed*"
+  // badge instead of the plain green check, so the whole run doesn't read as a clean success.
+  const isWarning = run.status === 'completed' && !!run.resultWarning;
   // The end-result message: the new resultSummary, falling back to the deprecated error column.
   const resultMessage = run.resultSummary ?? run.error;
 
@@ -126,8 +130,13 @@ function RoutineRunRow({ workbookId, run: listRun }: { workbookId: WorkbookId; r
         onClick={() => setExpanded((value) => !value)}
       >
         <StyledLucideIcon Icon={expanded ? ChevronDownIcon : ChevronRightIcon} size="sm" c="var(--fg-muted)" />
-        <Badge size="xs" variant="light" color={RUN_STATUS_COLOR[run.status]} style={{ flexShrink: 0 }}>
-          {run.status}
+        <Badge
+          size="xs"
+          variant="light"
+          color={isWarning ? 'yellow' : RUN_STATUS_COLOR[run.status]}
+          style={{ flexShrink: 0 }}
+        >
+          {isWarning ? 'completed*' : run.status}
         </Badge>
         <Text12Regular c="var(--fg-secondary)" style={{ flexShrink: 0 }}>
           {run.trigger}

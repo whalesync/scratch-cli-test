@@ -688,9 +688,24 @@ export class RoutineExecutorService {
   }
 
   private async markRunCompleted(runId: string): Promise<void> {
+    // Surface the first step that finished "completed with a warning" (a completed step whose `error`
+    // holds a warning, e.g. a publish with connector-rejected records) at the run level, so a consumer
+    // can tell a clean completion from one with warnings without walking the steps. We read the
+    // persisted steps rather than accumulating in-memory so this stays correct when the run resumed
+    // across drivers (the loop only sees steps from `currentStepIndex` onward). `error` is left alone —
+    // it stays reserved for an actual run failure.
+    const firstStepCompletedWithWarning = await this.db.client.routineRunStep.findFirst({
+      where: { runId, status: 'completed', error: { not: null } },
+      orderBy: { stepIndex: 'asc' },
+    });
     await this.db.client.routineRun.updateMany({
       where: { id: runId, status: 'running' },
-      data: { status: 'completed', finishedAt: new Date(), updatedAt: new Date() },
+      data: {
+        status: 'completed',
+        resultWarning: firstStepCompletedWithWarning?.error ?? null,
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      },
     });
   }
 

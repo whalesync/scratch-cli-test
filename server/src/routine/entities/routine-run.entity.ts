@@ -36,6 +36,7 @@ export const RoutineRunEntity = {
       finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,
       error: run.error,
       resultSummary: run.resultSummary,
+      resultWarning: run.resultWarning,
       currentStepIndex: run.currentStepIndex,
       ...(run.steps ? { steps: run.steps.map((step) => RoutineRunEntity.stepFrom(step, jobsByBullJobId)) } : {}),
     };
@@ -82,6 +83,7 @@ export const RoutineRunEntity = {
       startedAt: run.startedAt ? run.startedAt.toISOString() : null,
       finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,
       createdAt: run.createdAt.toISOString(),
+      completedWithWarning: run.status === 'completed' && run.resultWarning != null,
     };
   },
 };

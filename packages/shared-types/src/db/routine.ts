@@ -61,6 +61,12 @@ export interface RoutineRunSummary {
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;
+  /**
+   * True when the run is `completed` but a step finished with a warning (see {@link RoutineRun.resultWarning}).
+   * Lets a compact indicator (e.g. the sidebar status dot) show "completed with warnings" instead of a
+   * clean green without carrying the full message. Always false for non-completed runs.
+   */
+  completedWithWarning: boolean;
 }
 
 /**

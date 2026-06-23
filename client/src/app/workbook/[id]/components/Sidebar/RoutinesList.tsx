@@ -220,15 +220,21 @@ function RoutineItem({ routine, workbookId, isActive }: RoutineItemProps) {
             </Tooltip>
           )}
 
-          {/* Last-run status dot. `latestRun` is null until the routine runner lands (separate branch). */}
+          {/* Last-run status dot. `latestRun` is null until the routine runner lands (separate branch). A
+              run that completed WITH a warning (e.g. publish rejections) shows yellow, not green. */}
           {routine.latestRun && (
-            <Tooltip label={`Last run: ${routine.latestRun.status}`} position="right">
+            <Tooltip
+              label={`Last run: ${routine.latestRun.completedWithWarning ? 'completed with warnings' : routine.latestRun.status}`}
+              position="right"
+            >
               <Box
                 style={{
                   width: 8,
                   height: 8,
                   borderRadius: '50%',
-                  backgroundColor: RUN_STATUS_COLOR[routine.latestRun.status],
+                  backgroundColor: routine.latestRun.completedWithWarning
+                    ? 'var(--mantine-color-yellow-6)'
+                    : RUN_STATUS_COLOR[routine.latestRun.status],
                   flexShrink: 0,
                 }}
               />

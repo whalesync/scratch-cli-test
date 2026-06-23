@@ -91,7 +91,7 @@ export function JobResultView({ result }: { result: JobResult }) {
   );
 }
 
-/** The headline counters, e.g. "3 Created · 0 Updated · 0 Deleted · 13 Fetched". */
+/** The headline counters, e.g. "10 New · 0 Updated · 0 Deleted · 3 Unchanged". */
 export function JobStatLine({ stats }: { stats: JobResult['stats'] }) {
   if (stats.length === 0) return null;
   return (
