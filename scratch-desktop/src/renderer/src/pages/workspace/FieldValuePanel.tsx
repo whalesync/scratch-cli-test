@@ -92,8 +92,8 @@ export const FieldValuePanel = memo(function FieldValuePanel({
                 style={{
                   padding: '6px 12px 2px',
                   fontFamily: 'monospace',
-                  fontSize: truncate ? 12 : 13,
-                  lineHeight: truncate ? 1.45 : 1.5,
+                  fontSize: 13,
+                  lineHeight: 1.5,
                   ...(truncate ? { overflow: 'hidden' } : {}),
                 }}
               >
