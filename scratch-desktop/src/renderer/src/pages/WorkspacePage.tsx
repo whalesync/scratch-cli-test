@@ -780,6 +780,13 @@ export function WorkspacePage() {
         workspaceLevelDataInvalidationCounter={workspaceLevelDataInvalidationCounter}
         invalidateWorkspaceLevelData={handleDataRefresh}
         onConnectionsChanged={() => void handlePullAndRefresh()}
+        onPullJobsStarted={() => {
+          // DEV-10421: a connection-flow save kicked off pull jobs. Surface the
+          // pull-in-progress modal so the user sees download progress instead of
+          // it running silently. The modal downloads files locally on completion,
+          // which needs a local workspace; without one there is nothing to show.
+          if (localPath) setPullInProgressModalOpen(true);
+        }}
         onPublishFile={(cliPath) => {
           // DEV-10413: open the publish modal scoped to just this record.
           void handlePublishSingleRecord(cliPath);

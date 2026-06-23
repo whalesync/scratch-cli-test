@@ -71,6 +71,8 @@ interface ConnectionsListProps {
   invalidateWorkspaceLevelData?: () => void;
   newConnectionId?: string | null;
   onNewConnectionConsumed?: () => void;
+  /** Surface pull/download progress after a connection-flow save starts pull jobs (DEV-10421). */
+  onPullJobsStarted?: () => void;
 }
 
 export function ConnectionsList({
@@ -81,6 +83,7 @@ export function ConnectionsList({
   invalidateWorkspaceLevelData,
   newConnectionId,
   onNewConnectionConsumed,
+  onPullJobsStarted,
 }: ConnectionsListProps) {
   const { connectorAccounts, isLoading: isLoadingConnections } = useConnectorAccounts(workbookId);
   const { dataFolderGroups, isLoading: isLoadingFolders } = useDataFolders(workbookId);
@@ -143,6 +146,8 @@ export function ConnectionsList({
           }}
           workbookId={workbookId}
           connectorAccount={newlyCreatedAccount}
+          invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+          onPullJobsStarted={onPullJobsStarted}
         />
       )}
 
@@ -185,6 +190,7 @@ export function ConnectionsList({
                 workbookId={workbookId}
                 connectorAccount={connectorAccount}
                 invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+                onPullJobsStarted={onPullJobsStarted}
               />
             );
           })}
@@ -200,6 +206,7 @@ export function ConnectionsList({
               connectorAccount={ca}
               workbookId={workbookId}
               invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+              onPullJobsStarted={onPullJobsStarted}
             />
           ))}
     </div>
@@ -218,9 +225,16 @@ interface ServiceBlockProps {
   workbookId: string;
   connectorAccount?: ConnectorAccount;
   invalidateWorkspaceLevelData?: () => void;
+  onPullJobsStarted?: () => void;
 }
 
-function ServiceBlock({ group, workbookId, connectorAccount, invalidateWorkspaceLevelData }: ServiceBlockProps) {
+function ServiceBlock({
+  group,
+  workbookId,
+  connectorAccount,
+  invalidateWorkspaceLevelData,
+  onPullJobsStarted,
+}: ServiceBlockProps) {
   const [chooseTablesOpen, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
   const [updateConnectionOpen, { open: openUpdateConnection, close: closeUpdateConnection }] = useDisclosure(false);
   const [removeConnectionOpen, { open: openRemoveConnection, close: closeRemoveConnection }] = useDisclosure(false);
@@ -296,6 +310,7 @@ function ServiceBlock({ group, workbookId, connectorAccount, invalidateWorkspace
             workbookId={workbookId}
             connectorAccount={connectorAccount}
             invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+            onPullJobsStarted={onPullJobsStarted}
           />
           <UpdateConnectionModal
             opened={updateConnectionOpen}
@@ -324,9 +339,15 @@ interface EmptyServiceBlockProps {
   connectorAccount: ConnectorAccount;
   workbookId: string;
   invalidateWorkspaceLevelData?: () => void;
+  onPullJobsStarted?: () => void;
 }
 
-function EmptyServiceBlock({ connectorAccount, workbookId, invalidateWorkspaceLevelData }: EmptyServiceBlockProps) {
+function EmptyServiceBlock({
+  connectorAccount,
+  workbookId,
+  invalidateWorkspaceLevelData,
+  onPullJobsStarted,
+}: EmptyServiceBlockProps) {
   const { data: metadata } = useConnectorsMetadata();
   const displayName = connectorAccount.displayName || getServiceName(metadata, connectorAccount.service);
   const [chooseTablesOpen, { open: openChooseTables, close: closeChooseTables }] = useDisclosure(false);
@@ -385,6 +406,7 @@ function EmptyServiceBlock({ connectorAccount, workbookId, invalidateWorkspaceLe
         workbookId={workbookId}
         connectorAccount={connectorAccount}
         invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
+        onPullJobsStarted={onPullJobsStarted}
       />
       <UpdateConnectionModal
         opened={updateConnectionOpen}

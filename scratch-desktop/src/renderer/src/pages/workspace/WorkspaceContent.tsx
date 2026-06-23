@@ -33,6 +33,8 @@ interface WorkspaceContentProps {
   workspaceLevelDataInvalidationCounter: number;
   invalidateWorkspaceLevelData: () => void;
   onConnectionsChanged?: () => void;
+  /** Show pull/download progress after a connection-flow save starts pull jobs (DEV-10421). */
+  onPullJobsStarted?: () => void;
   onPublishFile?: (relativePath: string) => void;
   activateGlobalFilter?: { kind: 'unreviewed' | 'unpublished' | 'has-problems'; trigger: number } | null;
   onActivateGlobalFilterConsumed?: () => void;
@@ -60,6 +62,7 @@ export function WorkspaceContent({
   workspaceLevelDataInvalidationCounter,
   invalidateWorkspaceLevelData,
   onConnectionsChanged,
+  onPullJobsStarted,
   onPublishFile,
   activateGlobalFilter,
   onActivateGlobalFilterConsumed,
@@ -285,6 +288,7 @@ export function WorkspaceContent({
         invalidateWorkspaceLevelData={onConnectionsChanged ?? invalidateWorkspaceLevelData}
         newConnectionId={newConnectionId}
         onNewConnectionConsumed={() => setNewConnectionId(null)}
+        onPullJobsStarted={onPullJobsStarted}
       />
     ) : showSettingsPanel ? (
       <SettingsPanel workbookId={workspace.id} />

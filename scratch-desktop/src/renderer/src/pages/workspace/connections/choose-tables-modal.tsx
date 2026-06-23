@@ -143,6 +143,13 @@ interface ChooseTablesModalProps {
   workbookId: string;
   connectorAccount: ConnectorAccount;
   invalidateWorkspaceLevelData?: () => void;
+  /**
+   * Called after a successful save that enqueued one or more pull jobs — i.e. the
+   * "Pull files" switch was on and at least one new table was created. Lets the
+   * parent surface pull/download progress (the desktop pull-in-progress modal)
+   * instead of leaving the pull to run silently in the background (DEV-10421).
+   */
+  onPullJobsStarted?: () => void;
 }
 
 export function ChooseTablesModal({
@@ -151,6 +158,7 @@ export function ChooseTablesModal({
   workbookId,
   connectorAccount,
   invalidateWorkspaceLevelData,
+  onPullJobsStarted,
 }: ChooseTablesModalProps) {
   const { data, isLoading, isValidating } = useSWR<TableList>(
     opened ? ['connector-tables', workbookId, connectorAccount.id] : null,
@@ -561,12 +569,22 @@ export function ChooseTablesModal({
       }
 
       await refreshFolders();
-      invalidateWorkspaceLevelData?.();
 
       if (errors.length > 0) {
         setSaveErrors(errors);
         setSuccessCount(succeeded);
+        invalidateWorkspaceLevelData?.();
+      } else if (triggerPull && succeeded > 0) {
+        // A clean save with the "Pull files" switch on enqueues a pull job per
+        // newly created folder. Hand off to the parent's pull-in-progress modal,
+        // which owns the pull → download → refresh lifecycle. We deliberately do
+        // NOT call invalidateWorkspaceLevelData here: that would kick off a
+        // second, premature local pull that races the modal before the jobs
+        // (and the new connection's server-side repo) are ready.
+        onPullJobsStarted?.();
+        onClose();
       } else {
+        invalidateWorkspaceLevelData?.();
         onClose();
       }
     } catch (error) {

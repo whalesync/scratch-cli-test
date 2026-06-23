@@ -11,6 +11,8 @@ interface ConnectionsPanelProps {
   invalidateWorkspaceLevelData?: () => void;
   newConnectionId?: string | null;
   onNewConnectionConsumed?: () => void;
+  /** Surface pull/download progress after a connection-flow save starts pull jobs (DEV-10421). */
+  onPullJobsStarted?: () => void;
 }
 
 export function ConnectionsPanel({
@@ -18,6 +20,7 @@ export function ConnectionsPanel({
   invalidateWorkspaceLevelData,
   newConnectionId,
   onNewConnectionConsumed,
+  onPullJobsStarted,
 }: ConnectionsPanelProps) {
   const [createModalOpened, { open: openCreateModal, close: closeCreateModal }] = useDisclosure(false);
 
@@ -67,6 +70,7 @@ export function ConnectionsPanel({
           invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
           newConnectionId={newConnectionId}
           onNewConnectionConsumed={onNewConnectionConsumed}
+          onPullJobsStarted={onPullJobsStarted}
         />
       </Box>
     </Stack>
