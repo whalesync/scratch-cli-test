@@ -2,7 +2,15 @@
 
 **Linear:** [DEV-10523 — Don't block pulling newer server changes when local unreviewed edits exist — stash & re-apply](https://linear.app/whalesync/issue/DEV-10523/dont-block-pulling-newer-server-changes-when-local-unreviewed-edits)
 **Author:** Curtis Fonger
-**Status:** Planned
+**Status:** In Progress
+
+> **Implementation status (2026-06-23):** Implemented on branch `dev-10523-pull-unreviewed-edits`; not yet merged/QA'd.
+>
+> - **Rust core** (`scratch-git-2`): new `src/shared/unreviewed_changes.rs` stash module; `download_single_repo` now stashes & re-applies unreviewed edits user-wins via `reapply_unreviewed_edits_after_pull` (reusing `re_anchor_one` / `compute_entry` / `apply_patch_entry_to_blob`); `run_download` drops the all-or-nothing pre-flight, adds `--file-path`, and decides `blocked_conflict` vs `downloaded_with_stashed_conflicts` via the pure `decide_hard_conflict_outcome`; new `print_blocked_conflict_result`; `DownloadResult` gained `unreviewed_conflicts_auto_resolved` / `hard_conflict_paths` / `stash_files`. Tests: 7 new `download_single_repo` cases, 2 `decide_hard_conflict_outcome` cases, 7 stash-module cases — all green; existing 116 `files` tests still pass.
+> - **Desktop** (`scratch-desktop`): new `pullWorkspaceChanges` + `parseDownloadRefusalPayload` + download result types in `main/scratchmd.ts`; pull IPC switched to `--json` and delegates to it; preload + `index.d.ts` typed; `WorkspacePage` (Pull all / Re-download) + `PublishChangesModal` ("Download and publish", now passes `--file-path`) handle the structured result; `PullInProgressModal` keeps reading stderr (passed through) for the DEV-10421 connection-setup marker. New vitest `scratchmd-download-blocked-conflict.spec.ts`. typecheck + lint clean.
+> - **Docs**: `REVIEW_MODEL.md` (download rows + `unreviewed-changes.json` section) and `PULL_AFTER_PUBLISH.md` (flow + "Refuse vs. stash" history) updated.
+>
+> Deviation from the plan: the desktop "conflict modal" is surfaced via **notifications** (Pull all / Re-download) and the modal's existing **error state** ("Download and publish"), not a bespoke dialog component — lower-risk, same recoverable guidance ("saved to `unreviewed-changes.json`; point your AI agent at it").
 **Surface:** `scratchmd` CLI / scratch-git (`/scratch-git-2`) is the root-cause fix. Scratch Desktop (`/scratch-desktop`): mostly passthrough (the new message flows through the existing error display), plus a small single-record "Download and publish" change (folded in — see "Single-record publish" below). **No server changes.**
 **Related:** root-cause fix behind [DEV-10413](https://linear.app/whalesync/issue/DEV-10413/publish-one-record-is-blocked) (Done); relaxes the pull-side behavior of the [DEV-10316](https://linear.app/whalesync/issue/DEV-10316/publish-from-desktop-app-also-pushed-dirty-changes-from-web-app) dirty-gate work.
 

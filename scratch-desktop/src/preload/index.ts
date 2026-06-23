@@ -169,10 +169,8 @@ const scratchDesktop = {
     filePath: string,
   ): Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }> =>
     invoke('scratch:reconcile-published-record', workspacePath, filePath),
-  pullWorkspaceChanges: (
-    workspacePath: string,
-    opts?: { onDelete?: string },
-  ): Promise<{ stdout: string; stderr: string }> => invoke('scratch:pull-workspace-changes', workspacePath, opts),
+  pullWorkspaceChanges: (workspacePath: string, opts?: { onDelete?: string; filePath?: string }) =>
+    invoke('scratch:pull-workspace-changes', workspacePath, opts),
   listLocalSyncs: (workspacePath: string): Promise<string[]> => invoke('scratch:list-local-syncs', workspacePath),
   validateLocalSync: (
     workspacePath: string,

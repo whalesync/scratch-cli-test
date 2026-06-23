@@ -190,10 +190,48 @@ interface ScratchDesktopAPI {
     workspacePath: string,
     filePath: string,
   ) => Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }>;
+  /**
+   * DEV-10523: pull re-applies unreviewed working-tree edits user-wins instead
+   * of blocking. `opts.filePath` (single-record "Download and publish") scopes
+   * only the failure decision to that record. Returns a structured result; the
+   * `blocked_conflict` branch is a non-throwing refusal the renderer
+   * pattern-matches on.
+   */
   pullWorkspaceChanges: (
     workspacePath: string,
-    opts?: { onDelete?: string },
-  ) => Promise<{ stdout: string; stderr: string }>;
+    opts?: { onDelete?: string; filePath?: string },
+  ) => Promise<
+    | {
+        status: 'downloaded' | 'up_to_date' | 'downloaded_with_stashed_conflicts';
+        filesCreated: number;
+        filesUpdated: number;
+        filesDeleted: number;
+        filesMerged: number;
+        conflictsAutoResolved: number;
+        unreviewedConflictsAutoResolved: number;
+        messages: string[];
+        elapsedMs: number;
+        /** Present only on `downloaded_with_stashed_conflicts`. */
+        stashedConflictPaths?: string[];
+        stashFiles?: string[];
+        connectionsAdded?: string[];
+        connectionsRemoved?: string[];
+        connectionsDetached?: string[];
+        /** Raw CLI stderr — warn-and-skip notices (e.g. DEV-10421) print here even under `--json`. */
+        stderr?: string;
+      }
+    | {
+        // DEV-10523: an unreviewed edit couldn't be re-applied (server deleted the
+        // edited record, or the patch failed to reconstruct); saved to
+        // unreviewed-changes.json. For a single-record pull, the TARGET conflicts.
+        status: 'blocked_conflict';
+        conflictCount: number;
+        paths: string[];
+        stashFiles: string[];
+        elapsedMs: number;
+        stderr?: string;
+      }
+  >;
   listLocalSyncs: (workspacePath: string) => Promise<string[]>;
   validateLocalSync: (
     workspacePath: string,

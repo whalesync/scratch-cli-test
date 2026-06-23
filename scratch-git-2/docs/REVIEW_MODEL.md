@@ -115,10 +115,12 @@ Inspect state without changing it.
 
 | Command                                       | What it does                                                                                                          |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `scratchmd files download`                    | Pull the server's `main`, re-anchor `accepted-patches.json`, and re-apply any **unreviewed** working-tree edits user-wins (DEV-10523). It no longer refuses when unreviewed edits exist; an edit that can't be re-applied is stashed (see below) and reported as a `blocked_conflict`. |
+| `scratchmd files download --file-path <p>`    | Single-record pull (the "Download and publish" flow). The whole workspace still pulls; this only **scopes the failure decision** to that record — non-zero `blocked_conflict` iff the target itself hard-conflicts, else `downloaded_with_stashed_conflicts` so the target stays publishable. |
 | `scratchmd files upload`                      | Ship `accepted-patches.json` to the server's `dirty` branch. Does not publish.                                        |
 | `scratchmd files upload --file-path <p>`      | Single-record (DEV-10413): ship only that record's patch; skips the dirty-gate probe (`refuse_if_dirty` relaxed, `refuse_if_stale` kept). |
 | `scratchmd files publish`                     | Run the publish plan + execute it on connectors. Advances local `main` and clears `accepted-patches.json` on success. |
-| `scratchmd files reconcile-published --file-path <p>` | Single-record post-publish reconcile: re-anchor only that record's patch against the new `main` and surgically rewrite only its working file. Runs even while other records have unreviewed edits (unlike `files download`). See [BRANCHING_MODEL.md](BRANCHING_MODEL.md#single-record-publish-dev-10413). |
+| `scratchmd files reconcile-published --file-path <p>` | Single-record post-publish reconcile: re-anchor only that record's patch against the new `main` and surgically rewrite only its working file — it touches just the one record, where `files download` brings the whole connection up to date. See [BRANCHING_MODEL.md](BRANCHING_MODEL.md#single-record-publish-dev-10413). |
 
 ## Where the data lives
 
@@ -153,6 +155,12 @@ Per connection, at `<workspace>/.scratch/connections/<conn>/accepted-patches.jso
 The file IS the wire format. `files upload` ships it verbatim to `/upload-patch` — no diff computation at upload time. All the per-field diff logic happens at accept time, in `re_anchor::compute_entry`.
 
 It's safe to `cat` and inspect; it's a normal JSON file. Mutating callers acquire the workspace lock at `<workspace>/.scratch/lock` first, and writes are atomic (`<file>.tmp.<pid>` → fsync → rename).
+
+### `unreviewed-changes.json` (the pull conflict stash, DEV-10523)
+
+Sibling to `accepted-patches.json`, at `<workspace>/.scratch/connections/<conn>/unreviewed-changes.json`, with the same `{ version, patches }` envelope. `files download` re-applies unreviewed working-tree edits user-wins across a server advance instead of refusing the pull. The narrow set it **can't** re-apply — the server deleted the very record the user was editing, or the patch genuinely fails to reconstruct — would be lost when the worktree is overwritten with the new approved state. Before that overwrite, each such record is written here as a self-contained `create`-shaped entry carrying the user's full intended content (the base it was diffed against no longer exists), so the work is recoverable.
+
+It is a **recovery artifact**, not resumable state: nothing auto-replays it on a later pull. Point an AI agent (or a human) at it to fold the entries back into the worktree / `accepted-patches.json`. A clean pull writes no such file.
 
 ## See also
 

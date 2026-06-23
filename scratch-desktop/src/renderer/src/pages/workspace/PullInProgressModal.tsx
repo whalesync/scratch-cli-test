@@ -261,8 +261,10 @@ export function PullInProgressModal({
         // `files download` exits 0 even when it couldn't set up a newly added
         // connection (it only logs a warning), which would otherwise leave the
         // new folders silently missing. Treat that warning as a retriable
-        // failure rather than reporting success.
-        const output = `${result?.stderr ?? ''}\n${result?.stdout ?? ''}`;
+        // failure rather than reporting success. The warning prints to stderr
+        // even under `--json` (the structured result is on stdout), so scan it
+        // there (DEV-10421).
+        const output = result?.stderr ?? '';
         if (output.includes(CONNECTION_SETUP_FAILURE_MARKER)) {
           console.debug('[PullInProgressModal] download reported a connection setup failure:', output);
           onDownloadIncomplete("A new connection's files couldn't be set up on this computer yet.");

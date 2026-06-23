@@ -2215,6 +2215,14 @@ fn advance_remote_main(fixture: &BareFixture, rel_path: &str, content: &str, msg
     run_git(&fixture.source_dir, &["push", "origin", "main:main"]);
 }
 
+/// Advance origin `main` by deleting a record server-side (DEV-10523 tests).
+fn delete_remote_record(fixture: &BareFixture, rel_path: &str, msg: &str) {
+    run_git(&fixture.source_dir, &["checkout", "main"]);
+    std::fs::remove_file(fixture.source_dir.join(rel_path)).unwrap();
+    commit_all(&fixture.source_dir, msg);
+    run_git(&fixture.source_dir, &["push", "origin", "main:main"]);
+}
+
 #[test]
 fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
     if !git_available() {
@@ -2387,6 +2395,441 @@ fn download_returns_up_to_date_when_server_main_unchanged() {
     assert_eq!(result.files_created, 0);
     assert_eq!(result.files_updated, 0);
     assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+// ---------------------------------------------------------------------------
+// DEV-10523 — pull no longer blocks on unreviewed working-tree edits. Each is
+// stashed & re-applied user-wins over the new approved state (reusing the same
+// re-anchor machinery the accepted patches go through). The narrow set that
+// can't be re-applied is saved to `unreviewed-changes.json` and reported as a
+// hard conflict. These exercise `download_single_repo`; the no-edit cases above
+// (whose worktree already equals approved) cover the "nothing to re-apply" path.
+// ---------------------------------------------------------------------------
+
+/// Path to a connection's stash file, for assertions.
+fn unreviewed_stash_path(ctx: &ConnectionContext) -> PathBuf {
+    crate::shared::unreviewed_changes::path(&accepted_patches_dir(ctx))
+}
+
+#[test]
+fn download_preserves_unreviewed_edit_on_disjoint_field() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    // main has Acme; NO accepted patch — the edit below is purely unreviewed.
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    // Worktree mirrors approved (= main), then the user makes an UNREVIEWED edit
+    // to `industry` (no accept-all / accept).
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_acme.json"),
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"SaaS\"\n}\n",
+    );
+    // Server independently renames the record (touches `name`, disjoint).
+    advance_remote_main(
+        &fixture,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme Inc\",\n  \"industry\": \"Tech\"\n}\n",
+        "server renames Acme",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert_eq!(result.unreviewed_conflicts_auto_resolved, 0);
+    assert!(result.hard_conflict_paths.is_empty());
+    assert!(result.stash_files.is_empty());
+
+    // Worktree: the server's rename surfaces AND the user's unreviewed industry
+    // edit replays on top (user-wins, disjoint).
+    let working: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_acme.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(working["name"], "Acme Inc");
+    assert_eq!(working["industry"], "SaaS");
+
+    assert!(!unreviewed_stash_path(&ctx).exists());
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+#[test]
+fn download_drops_unreviewed_edit_when_server_independently_matched_it() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec.json",
+        "{\n  \"industry\": \"Tech\"\n}\n",
+    );
+    // Unreviewed edit: industry → SaaS.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec.json"),
+        "{\n  \"industry\": \"SaaS\"\n}\n",
+    );
+    // Server published the very same value.
+    advance_remote_main(
+        &fixture,
+        "posts/rec.json",
+        "{\n  \"industry\": \"SaaS\"\n}\n",
+        "server matches user",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert_eq!(result.unreviewed_conflicts_auto_resolved, 0);
+    assert!(result.hard_conflict_paths.is_empty());
+
+    // Worktree ends at SaaS — and is no longer unreviewed (worktree == approved
+    // == main), so there's nothing to log or stash.
+    let working: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec.json")).unwrap())
+            .unwrap();
+    assert_eq!(working["industry"], "SaaS");
+    assert!(!unreviewed_stash_path(&ctx).exists());
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+#[test]
+fn download_unreviewed_same_field_collision_is_user_wins_and_logged() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec.json",
+        "{\n  \"industry\": \"Tech\"\n}\n",
+    );
+    // Unreviewed edit: industry → SaaS.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec.json"),
+        "{\n  \"industry\": \"SaaS\"\n}\n",
+    );
+    // Server sets the SAME field to a DIFFERENT value.
+    advance_remote_main(
+        &fixture,
+        "posts/rec.json",
+        "{\n  \"industry\": \"Marketing\"\n}\n",
+        "server changes industry",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    // Soft conflict — counted, logged, but NOT a failure.
+    assert_eq!(result.unreviewed_conflicts_auto_resolved, 1);
+    assert!(result.hard_conflict_paths.is_empty());
+    assert!(result.stash_files.is_empty());
+
+    // User wins on disk.
+    let working: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec.json")).unwrap())
+            .unwrap();
+    assert_eq!(working["industry"], "SaaS");
+
+    // The collision is logged to conflicts.log, naming the field (identical
+    // shape to an approved-patch collision).
+    let log_path = workspace_dir.join(".scratch/conflicts.log");
+    assert!(log_path.exists());
+    let log_content = std::fs::read_to_string(&log_path).unwrap();
+    let entry: crate::config::conflicts_log::ConflictEntry =
+        serde_json::from_str(log_content.trim_end()).unwrap();
+    assert_eq!(entry.path, "posts/rec.json");
+    assert_eq!(entry.conflicting_keys, vec!["industry"]);
+
+    // No hard-conflict stash on a soft collision.
+    assert!(!unreviewed_stash_path(&ctx).exists());
+}
+
+#[test]
+fn download_preserves_unreviewed_local_create() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec_a.json", "{\n  \"v\": 1\n}\n");
+    // Worktree mirrors approved, plus a brand-new local record the server lacks.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_a.json"),
+        "{\n  \"v\": 1\n}\n",
+    );
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_new.json"),
+        "{\n  \"n\": 1\n}\n",
+    );
+    // Server advances rec_a so the pull actually runs.
+    advance_remote_main(
+        &fixture,
+        "posts/rec_a.json",
+        "{\n  \"v\": 2\n}\n",
+        "server bumps rec_a",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert!(result.hard_conflict_paths.is_empty());
+
+    // The local create survives the pull untouched.
+    let created: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ctx.worktree_dir.join("posts/rec_new.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(created["n"], 1);
+    // The server's bump to rec_a materialized.
+    let bumped: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec_a.json")).unwrap())
+            .unwrap();
+    assert_eq!(bumped["v"], 2);
+    assert!(!unreviewed_stash_path(&ctx).exists());
+}
+
+#[test]
+fn download_hard_conflict_when_server_deleted_an_edited_record() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec_keep.json", "{\n  \"v\": 1\n}\n");
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_edit.json",
+        "{\n  \"industry\": \"Tech\"\n}\n",
+    );
+    // Worktree mirrors approved; the user edits rec_edit (unreviewed).
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_keep.json"),
+        "{\n  \"v\": 1\n}\n",
+    );
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_edit.json"),
+        "{\n  \"industry\": \"SaaS\"\n}\n",
+    );
+    // Server DELETES the record the user was editing.
+    delete_remote_record(&fixture, "posts/rec_edit.json", "server deletes rec_edit");
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    // Hard conflict: the edited record is reported (workspace-relative) and
+    // saved to the stash.
+    assert_eq!(result.hard_conflict_paths, vec!["Conn/posts/rec_edit.json"]);
+    assert_eq!(result.stash_files.len(), 1);
+    assert!(result.stash_files[0].ends_with("unreviewed-changes.json"));
+
+    // The worktree shows the record deleted (server-wins on existence)...
+    assert!(!ctx.worktree_dir.join("posts/rec_edit.json").exists());
+    // ...but the user's full intended content is preserved in the stash as a
+    // self-contained Create entry.
+    let stash = crate::shared::unreviewed_changes::load(&accepted_patches_dir(&ctx)).unwrap();
+    assert_eq!(stash.patches.len(), 1);
+    assert_eq!(stash.patches[0].path, "posts/rec_edit.json");
+    assert_eq!(
+        stash.patches[0].kind,
+        crate::shared::re_anchor::PatchKind::Create
+    );
+    assert_eq!(
+        stash.patches[0].patch,
+        serde_json::json!({"industry": "SaaS"})
+    );
+
+    // The disjoint record still pulled cleanly.
+    assert!(ctx.worktree_dir.join("posts/rec_keep.json").exists());
+}
+
+#[test]
+fn download_clean_when_no_unreviewed_edits_writes_no_stash() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec.json", "{\n  \"v\": 1\n}\n");
+    // Worktree faithfully mirrors approved — nothing unreviewed.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec.json"),
+        "{\n  \"v\": 1\n}\n",
+    );
+    advance_remote_main(
+        &fixture,
+        "posts/rec.json",
+        "{\n  \"v\": 2\n}\n",
+        "server bump",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert!(result.hard_conflict_paths.is_empty());
+    assert_eq!(result.unreviewed_conflicts_auto_resolved, 0);
+    assert!(!unreviewed_stash_path(&ctx).exists());
+    let working: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec.json")).unwrap())
+            .unwrap();
+    assert_eq!(working["v"], 2);
+}
+
+#[test]
+fn download_unreviewed_delete_that_server_also_deleted_is_noop() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(&fixture, &ctx, "posts/rec_keep.json", "{\n  \"v\": 1\n}\n");
+    seed_main_with_record(&fixture, &ctx, "posts/rec_del.json", "{\n  \"v\": 1\n}\n");
+    // Worktree mirrors rec_keep but the user locally deleted rec_del
+    // (unreviewed) — represented by its absence from the worktree.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec_keep.json"),
+        "{\n  \"v\": 1\n}\n",
+    );
+    // Server independently deleted the same record.
+    delete_remote_record(&fixture, "posts/rec_del.json", "server deletes rec_del");
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    // Both sides agree the record is gone — no conflict, no stash, no log.
+    assert_eq!(result.status, "downloaded");
+    assert!(result.hard_conflict_paths.is_empty());
+    assert!(!unreviewed_stash_path(&ctx).exists());
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+    assert!(!ctx.worktree_dir.join("posts/rec_del.json").exists());
+    assert!(ctx.worktree_dir.join("posts/rec_keep.json").exists());
+}
+
+#[test]
+fn download_ignores_whitespace_or_key_order_only_local_reformat() {
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec.json",
+        "{\n  \"x\": 1,\n  \"y\": 2\n}\n",
+    );
+    // The worktree differs from approved BYTE-wise (keys reordered) but is
+    // semantically identical — the byte pre-filter flags it, then `compute_entry`
+    // resolves it to no change, so it must NOT be treated as an unreviewed edit.
+    write_file(
+        &ctx.worktree_dir.join("posts/rec.json"),
+        "{\n  \"y\": 2,\n  \"x\": 1\n}\n",
+    );
+    // Server changes a real field so the pull proceeds.
+    advance_remote_main(
+        &fixture,
+        "posts/rec.json",
+        "{\n  \"x\": 1,\n  \"y\": 3\n}\n",
+        "server bumps y",
+    );
+
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    assert_eq!(result.status, "downloaded");
+    assert_eq!(result.unreviewed_conflicts_auto_resolved, 0);
+    assert!(result.hard_conflict_paths.is_empty());
+    assert!(!unreviewed_stash_path(&ctx).exists());
+    assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+    // The server's change materializes; the semantically-empty reformat is dropped.
+    let working: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(ctx.worktree_dir.join("posts/rec.json")).unwrap())
+            .unwrap();
+    assert_eq!(working["x"], 1);
+    assert_eq!(working["y"], 3);
+}
+
+#[test]
+fn hard_conflict_decision_workspace_wide_blocks_on_any() {
+    assert_eq!(
+        decide_hard_conflict_outcome(&[], None),
+        HardConflictDecision::None
+    );
+    assert_eq!(
+        decide_hard_conflict_outcome(&["Conn/a.json".to_string()], None),
+        HardConflictDecision::Block
+    );
+}
+
+#[test]
+fn hard_conflict_decision_single_record_blocks_only_on_target() {
+    let target = "Conn/target.json";
+    // No conflicts at all → proceed.
+    assert_eq!(
+        decide_hard_conflict_outcome(&[], Some(target)),
+        HardConflictDecision::None
+    );
+    // Only OTHER records conflict → non-blocking (the target can still publish).
+    assert_eq!(
+        decide_hard_conflict_outcome(&["Conn/other.json".to_string()], Some(target)),
+        HardConflictDecision::NonBlockingNotice
+    );
+    // The target itself conflicts → block.
+    assert_eq!(
+        decide_hard_conflict_outcome(
+            &["Conn/other.json".to_string(), target.to_string()],
+            Some(target)
+        ),
+        HardConflictDecision::Block
+    );
 }
 
 // ---------------------------------------------------------------------------

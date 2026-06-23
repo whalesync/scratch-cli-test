@@ -56,6 +56,7 @@ import {
   getValidationStats,
   listUnpushedChanges,
   listUnreviewedChanges,
+  pullWorkspaceChanges,
   reconcilePublishedRecord,
   refreshFolderIndex,
   reindexFiles,
@@ -831,29 +832,30 @@ ipcMain.handle('scratch:upload-workspace-changes', async (_, workspacePath: stri
 ipcMain.handle('scratch:reconcile-published-record', async (_, workspacePath: string, filePath: string) =>
   withWorkspaceInternalMutation(workspacePath, () => reconcilePublishedRecord(workspacePath, filePath)),
 );
-ipcMain.handle('scratch:pull-workspace-changes', async (_, workspacePath: string, opts?: { onDelete?: string }) => {
-  const args = ['files', 'download'];
-  if (opts?.onDelete) {
-    args.push('--on-delete', opts.onDelete);
-  }
-  // `files download` reindexes the affected folders itself (per-path,
-  // scoped to the actually-changed records, plus a master diff for
-  // connections whose published state advanced). No follow-up CLI call.
-  return withWorkspaceInternalMutation(workspacePath, async () => {
-    const downloadResult = await runScratchmd(args, workspacePath);
-    // Re-seed schema validators after every pull. A pull can materialize folders for a
-    // connection that was not on disk when the workspace was first seeded on load — e.g. a
-    // newly-connected service, or a connection still being pulled when the mount-time seed ran.
-    // Seeding here, the single choke point every pull path flows through (connection-change pull,
-    // focus-sync pull, re-download), guarantees schema validation is present for those
-    // late-arriving folders instead of relying on each renderer pull handler to re-trigger it.
-    // It also populates the problems table for the just-seeded folders so their validation counts
-    // surface in the panel/sidebar without waiting for the grid to be opened. The writes land
-    // inside this internal-mutation window, so they do not provoke a spurious file-watch refresh.
-    await seedSchemaValidatorsAndPopulateProblems(workspacePath);
-    return downloadResult;
-  });
-});
+ipcMain.handle(
+  'scratch:pull-workspace-changes',
+  async (_, workspacePath: string, opts?: { onDelete?: string; filePath?: string }) => {
+    // `files download` reindexes the affected folders itself (per-path, scoped
+    // to the actually-changed records, plus a master diff for connections whose
+    // published state advanced). No follow-up CLI call. `opts.filePath`
+    // (DEV-10413/DEV-10523) scopes only the single-record "Download and publish"
+    // failure decision to that record — the whole workspace still pulls.
+    return withWorkspaceInternalMutation(workspacePath, async () => {
+      const downloadResult = await pullWorkspaceChanges(workspacePath, opts);
+      // Re-seed schema validators after every pull. A pull can materialize folders for a
+      // connection that was not on disk when the workspace was first seeded on load — e.g. a
+      // newly-connected service, or a connection still being pulled when the mount-time seed ran.
+      // Seeding here, the single choke point every pull path flows through (connection-change pull,
+      // focus-sync pull, re-download), guarantees schema validation is present for those
+      // late-arriving folders instead of relying on each renderer pull handler to re-trigger it.
+      // It also populates the problems table for the just-seeded folders so their validation counts
+      // surface in the panel/sidebar without waiting for the grid to be opened. The writes land
+      // inside this internal-mutation window, so they do not provoke a spurious file-watch refresh.
+      await seedSchemaValidatorsAndPopulateProblems(workspacePath);
+      return downloadResult;
+    });
+  },
+);
 ipcMain.handle('scratch:list-local-syncs', async (_, workspacePath: string) => listLocalSyncFiles(workspacePath));
 ipcMain.handle('scratch:validate-local-sync', async (_, workspacePath: string, syncName: string) =>
   runScratchmdCapture(['syncs', 'validate-local', '--sync', syncName], workspacePath),

@@ -157,6 +157,64 @@ export type UploadWorkspaceResult =
   | UploadWorkspaceCheckFailed;
 
 /**
+ * Success (or non-blocking) branch returned by `pullWorkspaceChanges`. `status`
+ * is `downloaded` / `up_to_date` in the common case, or
+ * `downloaded_with_stashed_conflicts` (DEV-10523) when a single-record pull
+ * brought the target up to date but couldn't re-apply an edit to some OTHER
+ * record — that record's content was stashed to `unreviewed-changes.json` and
+ * the target is still publishable.
+ */
+export interface DownloadWorkspaceSuccess {
+  status: 'downloaded' | 'up_to_date' | 'downloaded_with_stashed_conflicts';
+  filesCreated: number;
+  filesUpdated: number;
+  filesDeleted: number;
+  filesMerged: number;
+  conflictsAutoResolved: number;
+  /** DEV-10523: unreviewed edits kept user-wins on a same-field collision. */
+  unreviewedConflictsAutoResolved: number;
+  messages: string[];
+  elapsedMs: number;
+  /** Present only on `downloaded_with_stashed_conflicts`. */
+  stashedConflictPaths?: string[];
+  stashFiles?: string[];
+  connectionsAdded?: string[];
+  connectionsRemoved?: string[];
+  connectionsDetached?: string[];
+  /**
+   * Raw CLI stderr. The download JSON goes to stdout; warn-and-skip notices
+   * (e.g. DEV-10421's "failed to set up connection" for a not-yet-clonable new
+   * connection) still print to stderr even under `--json`, and
+   * `PullInProgressModal` scans this to detect them.
+   */
+  stderr?: string;
+}
+
+/**
+ * DEV-10523 `blocked_conflict` refusal from `files download`: an unreviewed edit
+ * couldn't be re-applied after the pull (the server deleted the edited record,
+ * or the patch failed to reconstruct) and — for a single-record pull — it was
+ * the TARGET record. The user's content was saved to `unreviewed-changes.json`.
+ * Modeled as a non-throwing return so the renderer can pattern-match on `status`.
+ */
+export interface DownloadWorkspaceBlockedConflict {
+  status: 'blocked_conflict';
+  conflictCount: number;
+  paths: string[];
+  stashFiles: string[];
+  elapsedMs: number;
+  /** Raw CLI stderr (see `DownloadWorkspaceSuccess.stderr`). */
+  stderr?: string;
+}
+
+/**
+ * Discriminated union returned by `pullWorkspaceChanges`. Like
+ * `UploadWorkspaceResult`, the refusal branch survives the IPC boundary as plain
+ * JSON (a thrown Error wouldn't), so the renderer pattern-matches on `status`.
+ */
+export type DownloadWorkspaceResult = DownloadWorkspaceSuccess | DownloadWorkspaceBlockedConflict;
+
+/**
  * Shape of the CLI's `workspace_needs_reinit` JSON payload (slice F.1, see
  * `scratch-git-2/src/cli/commands/files.rs::print_workspace_needs_reinit_result`).
  * Detected centrally in `runScratchmdCapture` and broadcast over IPC; per-call
@@ -808,6 +866,68 @@ export function parseUploadRefusalPayload(
     if (status === 'blocked_stale') return parsed as UploadWorkspaceBlockedStale;
     if (status === 'blocked_dirty') return parsed as UploadWorkspaceBlockedDirty;
     if (status === 'check_failed') return parsed as UploadWorkspaceCheckFailed;
+  } catch {
+    // stdout wasn't JSON — fall through to the generic error path.
+  }
+  return null;
+}
+
+/**
+ * Pull the latest server `main` into the workspace, re-anchoring accepted
+ * patches and re-applying unreviewed working-tree edits user-wins (DEV-10523).
+ * Mirrors `uploadWorkspaceChanges`: `--json`, a structured result, and a
+ * non-throwing `blocked_conflict` branch.
+ *
+ * `opts.onDelete` ('remove' | 'keep') controls removed-connection handling.
+ * `opts.filePath` (single-record "Download and publish") scopes only the
+ * FAILURE decision to that record — the whole workspace still pulls. With it,
+ * the pull returns `blocked_conflict` iff the TARGET hard-conflicts; if only
+ * other records conflict it returns `downloaded_with_stashed_conflicts`.
+ */
+export async function pullWorkspaceChanges(
+  workspacePath: string,
+  opts?: { onDelete?: string; filePath?: string },
+): Promise<DownloadWorkspaceResult> {
+  const args = ['--json', 'files', 'download'];
+  if (opts?.onDelete) {
+    args.push('--on-delete', opts.onDelete);
+  }
+  if (opts?.filePath) {
+    args.push('--file-path', opts.filePath);
+  }
+  const result = await runScratchmdCapture(args, workspacePath);
+  if (result.exitCode !== 0) {
+    // The CLI exits non-zero for a `blocked_conflict` refusal (DEV-10523),
+    // printing the payload to stdout. Return it typed (non-throwing) so the
+    // renderer can pattern-match on `status`; anything else is a real error.
+    const refusal = parseDownloadRefusalPayload(result.stdout);
+    if (refusal) return { ...refusal, stderr: result.stderr };
+    const message = result.stderr.trim() || result.stdout.trim() || `scratchmd exited with code ${result.exitCode}`;
+    throw new Error(message);
+  }
+  try {
+    // Carry stderr alongside the parsed JSON so warn-and-skip notices that print
+    // to stderr (e.g. DEV-10421 connection-setup failures) remain inspectable.
+    return { ...(JSON.parse(result.stdout) as DownloadWorkspaceSuccess), stderr: result.stderr };
+  } catch (error) {
+    throw new Error(`Failed to parse scratchmd JSON output: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Recognize a structured `files download` refusal payload on stdout
+ * (`blocked_conflict`, DEV-10523), or `null` if stdout isn't one (caller falls
+ * through to the generic error path).
+ *
+ * @internal — exported for vitest.
+ */
+export function parseDownloadRefusalPayload(stdout: string): DownloadWorkspaceBlockedConflict | null {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const status = (parsed as { status?: unknown }).status;
+    const hasPaths = Array.isArray((parsed as { paths?: unknown }).paths);
+    if (status === 'blocked_conflict' && hasPaths) return parsed as DownloadWorkspaceBlockedConflict;
   } catch {
     // stdout wasn't JSON — fall through to the generic error path.
   }

@@ -28,7 +28,7 @@ pub enum OnDeleteAction {
 
 #[derive(Subcommand)]
 pub enum FilesCommands {
-    /// Download remote changes — re-anchors accepted patches against the new server `main` and replays them onto the worktree. Refuses with a structured error if any unreviewed working-tree edits exist.
+    /// Download remote changes — re-anchors accepted patches against the new server `main` and replays them onto the worktree. Unreviewed working-tree edits are stashed and re-applied user-wins (DEV-10523); edits that can't be re-applied are saved to `unreviewed-changes.json` and reported as a structured conflict.
     Download {
         /// What to do when a connection was removed from the server
         #[arg(long, value_enum, default_value = "prompt")]
@@ -38,6 +38,16 @@ pub enum FilesCommands {
         /// grid stays current without a follow-up `index rebuild-folder` sweep.
         #[arg(long = "skip-folder-index")]
         skip_folder_index: bool,
+        /// Single-record mode: workspace-relative path
+        /// (e.g. `<connection-name>/Folder/rec.json`), the "Download and publish"
+        /// flow (DEV-10413/DEV-10523). The whole workspace still pulls and every
+        /// connection's unreviewed edits are stashed & re-applied; this only
+        /// SCOPES the failure decision to the target — the pull exits non-zero
+        /// (`blocked_conflict`) iff the TARGET record hard-conflicts. If only
+        /// other records conflict, it exits zero with
+        /// `downloaded_with_stashed_conflicts` so the target can be published.
+        #[arg(long = "file-path")]
+        file_path: Option<String>,
     },
     /// Accept all current working-tree record changes (writes to accepted-patches.json)
     #[command(name = "accept-all")]
@@ -384,6 +394,23 @@ struct DownloadResult {
     /// during this download. Used by the caller to drive a targeted
     /// folder_index reindex instead of a workspace-wide one.
     changed_paths: Vec<String>,
+    /// DEV-10523: count of unreviewed working-tree edits that collided with a
+    /// server change on the same field and were resolved user-wins (the user's
+    /// value is kept on disk, still flagged unreviewed; the collision is logged
+    /// to `conflicts.log`). Parallel to `conflicts_auto_resolved` for the
+    /// approved patches. Soft — not a failure.
+    unreviewed_conflicts_auto_resolved: i32,
+    /// DEV-10523: workspace-relative (`<conn>/<path>`) data paths whose
+    /// unreviewed edit could NOT be re-applied after the pull — the server
+    /// deleted the record being edited, or the patch failed to reconstruct.
+    /// The user's full intended content is preserved in `unreviewed-changes.json`
+    /// (see `stash_file`). Empty on the common path.
+    hard_conflict_paths: Vec<String>,
+    /// DEV-10523: workspace-relative path(s) to the `unreviewed-changes.json`
+    /// stash file(s) holding hard-conflict content. At most one per connection;
+    /// the aggregate across a multi-connection pull may carry several. Empty on
+    /// the common path.
+    stash_files: Vec<String>,
 }
 
 #[derive(Default)]
@@ -505,7 +532,18 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::Download {
             on_delete,
             skip_folder_index,
-        } => run_download(&cwd, server_url, json, on_delete, skip_folder_index).await,
+            file_path,
+        } => {
+            run_download(
+                &cwd,
+                server_url,
+                json,
+                on_delete,
+                skip_folder_index,
+                file_path,
+            )
+            .await
+        }
         FilesCommands::AcceptAll {
             folder,
             skip_folder_index,
@@ -585,16 +623,17 @@ async fn run_download(
     json: bool,
     on_delete: OnDeleteAction,
     skip_folder_index: bool,
+    file_path: Option<String>,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let (workspace_marker, workspace_dir, _initial_contexts, workspace_server_url) =
         resolve_workspace_and_connections(cwd, server_url, json)?;
     let token = get_token(&workspace_server_url)?;
 
-    // Workspace-wide advisory lock for the whole pull: sync, pre-flight,
-    // fetch, re-anchor, materialize, ref bump. Matches run_upload's
-    // discipline; replaces the implicit serialization the three-worktree
-    // model used to give us.
+    // Workspace-wide advisory lock for the whole pull: sync, fetch, re-anchor,
+    // materialize (incl. the DEV-10523 unreviewed-edit stash & re-apply), ref
+    // bump. Matches run_upload's discipline; replaces the implicit
+    // serialization the three-worktree model used to give us.
     let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
 
     // Workspace sync phase: detect structural drift and reconcile
@@ -636,8 +675,8 @@ async fn run_download(
     // clone's accepted-patches.json is never mangled by the folder move; the
     // user re-clones (which salvages any un-uploaded edits first). Scoped to the
     // selected `contexts` so working in a healthy connection isn't blocked by an
-    // unrelated stale one. Checked ahead of the unreviewed-edits pre-flight
-    // because a re-clone supersedes accepting/discarding edits.
+    // unrelated stale one. Checked ahead of the per-connection re-anchor because
+    // a re-clone supersedes preserving local edits.
     let downloaded_connection_ids: HashSet<&str> =
         contexts.iter().map(|c| c.connection_id.as_str()).collect();
     let structure_drift: Vec<StructureVersionDrift> =
@@ -652,30 +691,32 @@ async fn run_download(
         );
     }
 
-    // Pre-flight: refuse the pull if any connection has unreviewed
-    // working-tree edits. All-or-nothing — partial pulls leave the workspace
-    // in a confusing mixed state. No fetch happens; the user must
-    // `accept-all` or `discard-all` before retrying. See [Slice D in
-    // docs/plans/resolved/2026-05-17-simplify-local-workspace-architecture.md].
+    // DEV-10523: unreviewed working-tree edits no longer block the pull. Each
+    // connection's `download_single_repo` stashes & re-applies them user-wins
+    // (see that function and `reapply_unreviewed_edits_after_pull`); only an
+    // edit that genuinely can't be re-applied (a "hard conflict") is surfaced,
+    // and even then the clean connections still pull. The old all-or-nothing
+    // pre-flight (which forced `accept-all` / `discard-all`) is gone.
     //
-    // Uses the gix::status-backed fast path (~210ms warm per connection vs.
-    // multi-second tree walks; mr31's helper) so the courtesy check doesn't
-    // dominate the pull time when nothing is actually unreviewed — which is
-    // the common case, especially when the desktop's "Download and publish"
-    // flow chained us straight out of an already-cleared publish modal.
-    let mut blocked: Vec<RecordChangeEntry> = Vec::new();
-    for ctx in &contexts {
-        blocked.extend(
-            list_unreviewed_entries_using_gix_status_then_disambiguate_against_main(ctx, false)?,
-        );
-    }
-    if !blocked.is_empty() {
-        print_blocked_unreviewed_result(&blocked, started.elapsed().as_millis(), json)?;
-        anyhow::bail!(
-            "{} unreviewed record(s) — run `scratchmd files accept-all` or `discard-all`, then retry.",
-            blocked.len()
-        );
-    }
+    // NOTE: the publish-side unreviewed block (`run_publish`) and the DEV-10316
+    // server dirty-gate stay as-is — relaxing the *pull* gate doesn't let an
+    // unreviewed or web-dirty change reach the external service. See the plan
+    // doc (docs/plans/2026-06-23-dev-10523-pull-with-unreviewed-edits.md) and
+    // `refresh_workbook_for_contexts`, whose focus-sync warn-and-skip is left
+    // unchanged on purpose.
+
+    // Single-record mode (`--file-path`, the "Download and publish" flow):
+    // validate the path resolves to a connection up front (fail fast at the
+    // boundary) and normalize it for the scoped hard-conflict decision below.
+    // The pull itself is NOT scoped — every connection still pulls so siblings
+    // are brought up to date; only the exit-code decision targets this record.
+    let scoped_target_path: Option<String> = match file_path.as_deref() {
+        Some(raw) => {
+            let (ctx, relpath) = resolve_connection_and_relpath(&contexts, raw)?;
+            Some(format!("{}/{}", ctx.conn_dir_name, relpath))
+        }
+        None => None,
+    };
 
     let mut results = Vec::new();
     let mut all_changed_workspace_paths: Vec<String> = Vec::new();
@@ -732,13 +773,90 @@ async fn run_download(
         reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
     }
 
-    let result = if results.len() == 1 {
+    // Collect the DEV-10523 hard conflicts across every connection before
+    // folding into the display result, so the exit-code decision and the
+    // structured payload see all of them (the single-result fast path keeps its
+    // own; the aggregate merges them too).
+    let all_hard_conflict_paths: Vec<String> = results
+        .iter()
+        .flat_map(|r| r.hard_conflict_paths.iter().cloned())
+        .collect();
+    let all_stash_files: Vec<String> = results
+        .iter()
+        .flat_map(|r| r.stash_files.iter().cloned())
+        .collect();
+
+    let mut result = if results.len() == 1 {
         results.into_iter().next().unwrap_or_default()
     } else {
         aggregate_download(&results)
     };
 
+    // DEV-10523: a hard conflict means an unreviewed edit couldn't be re-applied
+    // after the pull (the server deleted the edited record, or the patch failed
+    // to reconstruct). The user's content was stashed to `unreviewed-changes.json`.
+    // Clean connections already pulled fully (and were reindexed above); we only
+    // decide the exit code here.
+    match decide_hard_conflict_outcome(&all_hard_conflict_paths, scoped_target_path.as_deref()) {
+        HardConflictDecision::None => {}
+        HardConflictDecision::Block => {
+            print_blocked_conflict_result(
+                &all_hard_conflict_paths,
+                &all_stash_files,
+                started.elapsed().as_millis(),
+                json,
+            )?;
+            anyhow::bail!(
+                "{} record(s) conflict with newer changes from the server — saved to unreviewed-changes.json; resolve and re-apply.",
+                all_hard_conflict_paths.len()
+            );
+        }
+        // Single-record pull where only OTHER records conflict: the target is
+        // ready to publish. Surface the stashed conflicts as a non-blocking
+        // notice and exit zero.
+        HardConflictDecision::NonBlockingNotice => {
+            result.status = "downloaded_with_stashed_conflicts".to_string();
+        }
+    }
+
     print_download_result(&sync_result, &result, started.elapsed().as_millis(), json)
+}
+
+/// How `run_download` should treat the DEV-10523 hard conflicts collected
+/// across all connections (DEV-10523). Pure decision, factored out so it can be
+/// unit-tested without the workspace/HTTP harness.
+#[derive(Debug, PartialEq, Eq)]
+enum HardConflictDecision {
+    /// No hard conflicts — proceed normally.
+    None,
+    /// Block with a non-zero `blocked_conflict` exit: a workspace-wide pull with
+    /// any hard conflict, or a single-record pull whose TARGET itself conflicts.
+    Block,
+    /// Single-record pull where only OTHER records conflict — exit zero with a
+    /// non-blocking `downloaded_with_stashed_conflicts` notice so the target can
+    /// still be published.
+    NonBlockingNotice,
+}
+
+fn decide_hard_conflict_outcome(
+    hard_conflict_paths: &[String],
+    scoped_target_path: Option<&str>,
+) -> HardConflictDecision {
+    if hard_conflict_paths.is_empty() {
+        return HardConflictDecision::None;
+    }
+    match scoped_target_path {
+        // Workspace-wide pull: any hard conflict blocks.
+        None => HardConflictDecision::Block,
+        // Single-record pull: block only if the target itself hard-conflicts.
+        Some(target) => {
+            if hard_conflict_paths.iter().any(|path| path == target) {
+                HardConflictDecision::Block
+            } else {
+                HardConflictDecision::NonBlockingNotice
+            }
+        }
+    }
 }
 
 async fn sync_workspace_structure(
@@ -3990,6 +4108,56 @@ fn print_blocked_unreviewed_result(
     Ok(())
 }
 
+/// Print the structured `blocked_conflict` result for `files download`
+/// (DEV-10523): some unreviewed edits couldn't be re-applied after the pull
+/// (the server deleted the edited record, or the patch failed to reconstruct).
+/// The user's content was saved to `unreviewed-changes.json`. JSON mode emits a
+/// machine-readable payload the desktop pattern-matches on; human mode prints
+/// the recoverable guidance from the ticket plus the conflicting paths. Caller
+/// bails with a non-zero exit immediately after.
+fn print_blocked_conflict_result(
+    conflict_paths: &[String],
+    stash_files: &[String],
+    elapsed_ms: u128,
+    json: bool,
+) -> anyhow::Result<()> {
+    if json {
+        let output = serde_json::json!({
+            "status": "blocked_conflict",
+            "conflictCount": conflict_paths.len(),
+            "paths": conflict_paths,
+            "stashFiles": stash_files,
+            "elapsedMs": elapsed_ms,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    let elapsed = format_elapsed(elapsed_ms);
+    println!(
+        "Some local edits conflict with newer changes from the server ({}).",
+        elapsed
+    );
+    println!(
+        "Local edits have been saved to {} if you wish to reapply them.",
+        if stash_files.len() == 1 {
+            stash_files[0].clone()
+        } else {
+            "unreviewed-changes.json".to_string()
+        }
+    );
+    println!("Please point your AI agent at the file to resolve conflicts and re-apply changes.");
+    println!();
+    println!("Conflicting record(s):");
+    let preview_limit = conflict_paths.len().min(10);
+    for path in &conflict_paths[..preview_limit] {
+        println!("  {path}");
+    }
+    if conflict_paths.len() > preview_limit {
+        println!("  ... and {} more", conflict_paths.len() - preview_limit);
+    }
+    Ok(())
+}
+
 /// Print the structured `blocked_stale` result for `files upload` (D8).
 /// JSON mode emits a machine-readable payload the desktop pattern-matches
 /// on; human mode prints a per-connection summary and a suggestion to run
@@ -4890,18 +5058,7 @@ fn download_single_repo(
     // captures what we silently overrode. Append failures are non-fatal —
     // we'd rather complete the pull than refuse on log I/O.
     for conflict in &re_anchored.conflicts {
-        let entry = crate::config::conflicts_log::ConflictEntry {
-            ts: crate::config::conflicts_log::now_rfc3339(),
-            connector_account_id: ctx.connection_id.clone(),
-            path: conflict.path.clone(),
-            conflicting_keys: conflict.conflicting_keys.clone(),
-        };
-        if let Err(err) = crate::config::conflicts_log::append(workspace_dir, &entry) {
-            eprintln!(
-                "Warning: failed to append conflict for {} to conflicts.log: {err}",
-                conflict.path
-            );
-        }
+        append_pull_conflict_to_log(ctx, workspace_dir, conflict);
     }
 
     let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
@@ -4912,12 +5069,55 @@ fn download_single_repo(
         &new_accepted,
     )?;
 
+    // DEV-10523: the worktree may hold *unreviewed* edits (`local != approved`)
+    // that the old all-or-nothing pre-flight used to refuse the whole pull for.
+    // Preserve them across the server advance instead, reusing the exact same
+    // user-wins re-anchor machinery the approved patches above just went
+    // through. The pre-pull approved view is the state those edits were sitting
+    // on top of; we diff the worktree against it per data path to recover each
+    // edit and re-apply it onto the new approved state.
+    let file_path_to_contents_map_for_approved_state_before_publish = compute_accepted_state(
+        &file_path_to_contents_map_in_main_branch_before_publish,
+        &accepted_file,
+    )?;
+    let unreviewed_reapply = reapply_unreviewed_edits_after_pull(
+        ctx,
+        workspace_dir,
+        &file_path_to_contents_map_for_approved_state_before_publish,
+        &file_path_to_contents_map_for_approved_state_after_publish,
+        &file_path_to_contents_map_in_worktree,
+    )?;
+    // The final worktree state = the new approved state with every re-appliable
+    // unreviewed edit layered back on user-wins. Hard-conflict records are left
+    // at their new approved value (absent, when the server deleted them); their
+    // full content lives in `unreviewed-changes.json` instead.
+    let final_worktree_map = unreviewed_reapply.final_worktree_map;
+
+    // Crash-safety: persist the hard-conflict content BEFORE the materialize
+    // overwrites (and, for server-deletes, removes) those records from the
+    // worktree, so a crash after this point still leaves the user's work
+    // recoverable on disk. A clean pull writes no stash file.
+    let stash_file = if unreviewed_reapply.hard_conflicts.is_empty() {
+        None
+    } else {
+        crate::shared::unreviewed_changes::save_atomic(
+            &connection_dir,
+            &crate::shared::unreviewed_changes::UnreviewedChangesFile {
+                patches: unreviewed_reapply.hard_conflicts,
+            },
+        )?;
+        Some(workspace_relative_display_path(
+            workspace_dir,
+            &crate::shared::unreviewed_changes::path(&connection_dir),
+        ))
+    };
+
     // file_path_to_contents_map_in_worktree is the snapshot we read above; pass it so materialize can
     // skip rewriting files whose content didn't move (preserves mtimes so
     // find_stale_files doesn't see every file as stale next page load).
     materialize_local_repo(
         ctx,
-        &file_path_to_contents_map_for_approved_state_after_publish,
+        &final_worktree_map,
         &file_path_to_contents_map_in_worktree,
     )?;
     reconcile_data_folder_dirs(&ctx.worktree_dir, data_folders)?;
@@ -4929,22 +5129,27 @@ fn download_single_repo(
     crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
     git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
 
-    // Summary counts come from the actual file_path_to_contents_map_in_worktree → file_path_to_contents_map_for_approved_state_after_publish
+    // Summary counts come from the actual file_path_to_contents_map_in_worktree → final_worktree_map
     // delta, so they match exactly what changed on disk for the user.
-    let changed_paths = file_map_changed_data_paths(
-        &file_path_to_contents_map_in_worktree,
-        &file_path_to_contents_map_for_approved_state_after_publish,
-    );
+    let changed_paths =
+        file_map_changed_data_paths(&file_path_to_contents_map_in_worktree, &final_worktree_map);
+    let hard_conflict_paths: Vec<String> = unreviewed_reapply
+        .hard_conflict_paths
+        .iter()
+        .map(|relpath| format!("{}/{}", ctx.conn_dir_name, relpath))
+        .collect();
     let mut result = DownloadResult {
         status: "downloaded".to_string(),
         conflicts_auto_resolved: re_anchored.conflicts.len() as i32,
+        unreviewed_conflicts_auto_resolved: unreviewed_reapply.soft_conflict_count,
+        hard_conflict_paths,
+        stash_files: stash_file.into_iter().collect(),
         changed_paths,
         ..Default::default()
     };
     for path in &result.changed_paths {
         let was_present = file_path_to_contents_map_in_worktree.contains_key(path.as_str());
-        let now_present =
-            file_path_to_contents_map_for_approved_state_after_publish.contains_key(path.as_str());
+        let now_present = final_worktree_map.contains_key(path.as_str());
         match (was_present, now_present) {
             (false, true) => result.files_created += 1,
             (true, true) => result.files_updated += 1,
@@ -4954,6 +5159,209 @@ fn download_single_repo(
     }
 
     Ok(result)
+}
+
+/// Outcome of re-applying the worktree's unreviewed edits on top of the freshly
+/// pulled approved state (DEV-10523).
+struct UnreviewedReapplyOutcome {
+    /// The final worktree map to materialize: the new approved state with every
+    /// re-appliable unreviewed edit layered back on user-wins. Hard-conflict
+    /// records are left at their approved-new value.
+    final_worktree_map: FileMap,
+    /// Self-contained `Create`-shaped entries (each carrying the user's full
+    /// intended content) for the records whose unreviewed edit could NOT be
+    /// re-applied — written to `unreviewed-changes.json`.
+    hard_conflicts: Vec<crate::shared::re_anchor::AnchoredPatch>,
+    /// Connection-relative paths of the hard conflicts (parallel to
+    /// `hard_conflicts`), for the caller's result/aggregation.
+    hard_conflict_paths: Vec<String>,
+    /// Count of soft (same-field, user-wins, logged-to-`conflicts.log`)
+    /// collisions — not failures.
+    soft_conflict_count: i32,
+}
+
+/// Re-apply the worktree's unreviewed edits (`approved_old → worktree`) onto the
+/// new approved state (`approved_new`), user-wins, reusing the same
+/// `re_anchor_one` the approved patches go through.
+///
+/// Soft same-field collisions are logged to `conflicts.log` (audit only — the
+/// user's value is kept on disk, still flagged unreviewed). The narrow
+/// hard-conflict set is collected for the stash file and left at the
+/// approved-new value on disk:
+///   1. the server deleted the very record the user was editing (we don't
+///      silently re-create a record the server intentionally removed), or
+///   2. the patch genuinely fails to reconstruct against the new state.
+fn reapply_unreviewed_edits_after_pull(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    file_path_to_contents_map_for_approved_state_before_publish: &FileMap,
+    file_path_to_contents_map_for_approved_state_after_publish: &FileMap,
+    file_path_to_contents_map_in_worktree: &FileMap,
+) -> anyhow::Result<UnreviewedReapplyOutcome> {
+    use crate::shared::re_anchor::{compute_entry, re_anchor_one, AnchoredPatch, PatchKind};
+
+    let approved_old = file_path_to_contents_map_for_approved_state_before_publish;
+    let approved_new = file_path_to_contents_map_for_approved_state_after_publish;
+    let worktree = file_path_to_contents_map_in_worktree;
+
+    let mut final_worktree_map = approved_new.clone();
+    let mut hard_conflicts: Vec<AnchoredPatch> = Vec::new();
+    let mut hard_conflict_paths: Vec<String> = Vec::new();
+    let mut soft_conflict_count = 0i32;
+
+    // Build a self-contained `Create` stash entry carrying the user's full
+    // intended content (the base it was diffed against no longer exists, so the
+    // delta alone wouldn't be replayable).
+    let stash_entry_for = |path: &str, worktree_value: &Option<JsonValue>| AnchoredPatch {
+        path: path.to_string(),
+        kind: PatchKind::Create,
+        patch: worktree_value.clone().unwrap_or(JsonValue::Null),
+        revert: false,
+    };
+
+    // Union of data paths across the pre-pull approved view and the worktree —
+    // the set of paths an unreviewed edit could exist at. `.scratch/` metadata
+    // and non-`.json` files are excluded (they're never user-reviewed records).
+    let mut data_paths: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for path in approved_old.keys() {
+        if is_data_path_in_folder(path, "") {
+            data_paths.insert(path.as_str());
+        }
+    }
+    for path in worktree.keys() {
+        if is_data_path_in_folder(path, "") {
+            data_paths.insert(path.as_str());
+        }
+    }
+
+    for path in data_paths {
+        // Byte pre-filter: parsing every record on every advancing pull would add
+        // a multi-second sweep on large connections (DEV-10327: ~3.2s parse vs.
+        // ~50ms at 20k records), even though nothing is unreviewed in the common
+        // case. The worktree is already in memory (materialize needs it), so a
+        // cheap byte compare against the approved view skips the JSON parse for
+        // every untouched record — `approved_old == worktree` (bytewise, both
+        // sides materialized from the same `to_vec_pretty` serialization for an
+        // unedited record) means no edit. Only byte-different paths are parsed;
+        // a whitespace/key-order-only diff falls through to `compute_entry` ==
+        // `None` below and is skipped there.
+        if approved_old.get(path) == worktree.get(path) {
+            continue;
+        }
+
+        let approved_old_value =
+            parse_json_value_at(approved_old, path, "approved state (pre-pull)")?;
+        let worktree_value = parse_json_value_at(worktree, path, "working tree")?;
+        // The unreviewed edit at this path: `approved_old → worktree`. `None`
+        // means the byte diff was whitespace / key order only (no semantic
+        // change, matching `list_unreviewed`) — nothing to re-apply.
+        let Some(unreviewed_delta) =
+            compute_entry(path, approved_old_value.as_ref(), worktree_value.as_ref())
+        else {
+            continue;
+        };
+        let approved_new_value =
+            parse_json_value_at(approved_new, path, "approved state (post-pull)")?;
+
+        // Hard conflict #1: the server deleted the very record the user was
+        // editing (and the user wasn't themselves deleting it).
+        let server_deleted_the_edited_record = approved_old_value.is_some()
+            && approved_new_value.is_none()
+            && unreviewed_delta.kind != PatchKind::Delete;
+        if server_deleted_the_edited_record {
+            hard_conflict_paths.push(path.to_string());
+            hard_conflicts.push(stash_entry_for(path, &worktree_value));
+            // Leave the path at its approved-new value (absent) — record deleted.
+            continue;
+        }
+
+        match re_anchor_one(
+            path,
+            unreviewed_delta.kind,
+            &unreviewed_delta.patch,
+            unreviewed_delta.revert,
+            approved_old_value.as_ref(),
+            approved_new_value.as_ref(),
+        ) {
+            Ok(re_anchored) => {
+                // Apply the re-anchored delta onto the new approved value to get
+                // the final worktree content for this path (user-wins).
+                match re_anchored.anchored {
+                    Some(entry) => {
+                        let approved_new_blob =
+                            approved_new.get(path).map(|bytes| bytes.as_slice());
+                        match review_ops::apply_patch_entry_to_blob(approved_new_blob, &entry)? {
+                            Some(bytes) => {
+                                final_worktree_map.insert(path.to_string(), bytes);
+                            }
+                            // User-wins delete.
+                            None => {
+                                final_worktree_map.remove(path);
+                            }
+                        }
+                    }
+                    // No-op: the server already reflects the user's intent, so
+                    // the path keeps its approved-new value and is no longer
+                    // unreviewed.
+                    None => {}
+                }
+                if let Some(conflict) = re_anchored.conflict {
+                    append_pull_conflict_to_log(ctx, workspace_dir, &conflict);
+                    soft_conflict_count += 1;
+                }
+            }
+            // Hard conflict #2: the patch genuinely can't be reconstructed
+            // against the new state. Treat defensively as a hard conflict rather
+            // than failing the whole pull.
+            Err(_) => {
+                hard_conflict_paths.push(path.to_string());
+                hard_conflicts.push(stash_entry_for(path, &worktree_value));
+                // Leave the path at its approved-new value.
+            }
+        }
+    }
+
+    Ok(UnreviewedReapplyOutcome {
+        final_worktree_map,
+        hard_conflicts,
+        hard_conflict_paths,
+        soft_conflict_count,
+    })
+}
+
+/// Append a re-anchor conflict to `.scratch/conflicts.log` (audit only — the
+/// user's value is always preserved user-wins). Append failures are non-fatal:
+/// we'd rather complete the pull than refuse on log I/O. Shared by the approved
+/// patch re-anchor and the DEV-10523 unreviewed-edit re-apply so both log
+/// identically.
+fn append_pull_conflict_to_log(
+    ctx: &ConnectionContext,
+    workspace_dir: &Path,
+    conflict: &crate::shared::re_anchor::PatchConflict,
+) {
+    let entry = crate::config::conflicts_log::ConflictEntry {
+        ts: crate::config::conflicts_log::now_rfc3339(),
+        connector_account_id: ctx.connection_id.clone(),
+        path: conflict.path.clone(),
+        conflicting_keys: conflict.conflicting_keys.clone(),
+    };
+    if let Err(err) = crate::config::conflicts_log::append(workspace_dir, &entry) {
+        eprintln!(
+            "Warning: failed to append conflict for {} to conflicts.log: {err}",
+            conflict.path
+        );
+    }
+}
+
+/// Render an absolute path under the workspace as a forward-slashed
+/// workspace-relative display string (for CLI/JSON output). Falls back to the
+/// absolute path if it isn't under `workspace_dir`.
+fn workspace_relative_display_path(workspace_dir: &Path, absolute: &Path) -> String {
+    absolute
+        .strip_prefix(workspace_dir)
+        .unwrap_or(absolute)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// The data-shaping result of preparing an upload: the wire payload entries
@@ -5893,6 +6301,10 @@ fn aggregate_download(results: &[DownloadResult]) -> DownloadResult {
         agg.files_deleted += result.files_deleted;
         agg.files_merged += result.files_merged;
         agg.conflicts_auto_resolved += result.conflicts_auto_resolved;
+        agg.unreviewed_conflicts_auto_resolved += result.unreviewed_conflicts_auto_resolved;
+        agg.hard_conflict_paths
+            .extend(result.hard_conflict_paths.iter().cloned());
+        agg.stash_files.extend(result.stash_files.iter().cloned());
         agg.messages.extend(result.messages.iter().cloned());
     }
     agg
@@ -5965,6 +6377,9 @@ fn print_download_result(
             "filesDeleted": result.files_deleted,
             "filesMerged": result.files_merged,
             "conflictsAutoResolved": result.conflicts_auto_resolved,
+            // DEV-10523: unreviewed edits resolved user-wins on a same-field
+            // collision (logged to conflicts.log; not failures).
+            "unreviewedConflictsAutoResolved": result.unreviewed_conflicts_auto_resolved,
             "messages": result.messages,
             "elapsedMs": elapsed_ms,
         });
@@ -5973,6 +6388,13 @@ fn print_download_result(
             output["connectionsRemoved"] = serde_json::json!(sync.connections_removed);
             output["connectionsDetached"] = serde_json::json!(sync.connections_detached);
         }
+        // DEV-10523: non-blocking stashed conflicts (single-record pull where an
+        // edit to some OTHER record couldn't be re-applied). Present only when
+        // `status == "downloaded_with_stashed_conflicts"`.
+        if !result.hard_conflict_paths.is_empty() {
+            output["stashedConflictPaths"] = serde_json::json!(result.hard_conflict_paths);
+            output["stashFiles"] = serde_json::json!(result.stash_files);
+        }
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
@@ -5980,6 +6402,17 @@ fn print_download_result(
     let total =
         result.files_created + result.files_updated + result.files_merged + result.files_deleted;
     let elapsed = format_elapsed(elapsed_ms);
+
+    // DEV-10523: single-record pull that brought the target up to date but
+    // couldn't re-apply an edit to some OTHER record (stashed, non-blocking).
+    if !result.hard_conflict_paths.is_empty() {
+        println!(
+            "Note: {} other record(s) had local edits that conflict with newer server changes; saved to unreviewed-changes.json:",
+            result.hard_conflict_paths.len()
+        );
+        print_file_list(&result.hard_conflict_paths);
+    }
+
     if total == 0 && !has_sync_changes {
         println!(
             "{} ({})",

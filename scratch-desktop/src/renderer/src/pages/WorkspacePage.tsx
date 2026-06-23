@@ -348,7 +348,19 @@ export function WorkspacePage() {
   const handlePullAndRefresh = useCallback(async () => {
     if (!localPath) return;
     try {
-      await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'remove' });
+      const result = await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'remove' });
+      // DEV-10523: unreviewed edits no longer block the pull — they're re-applied
+      // user-wins. The narrow set that couldn't be re-applied is stashed; surface
+      // it so the user knows their work is recoverable.
+      if (result.status === 'blocked_conflict' || result.status === 'downloaded_with_stashed_conflicts') {
+        notifications.show({
+          title: 'Some local edits need attention',
+          message:
+            'Some local edits conflict with newer changes from the server and were saved to unreviewed-changes.json. Point your AI agent at the file to re-apply them.',
+          color: 'yellow',
+          autoClose: false,
+        });
+      }
     } catch (err) {
       console.debug('[workspace] connection-change pull failed:', err);
     }
@@ -378,13 +390,27 @@ export function WorkspacePage() {
     try {
       setReDownloading(true);
       if (id) void trackRedownloadWorkspace(id);
-      await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'keep' });
+      const result = await window.scratchDesktop.pullWorkspaceChanges(localPath, { onDelete: 'keep' });
       handleDataRefresh();
-      notifications.show({
-        title: 'Workspace updated',
-        message: 'Re-downloaded the latest file updates from Scratch.',
-        color: 'green',
-      });
+      // DEV-10523: clean connections still pulled; surface any edits that
+      // couldn't be re-applied (saved to unreviewed-changes.json) instead of the
+      // old all-or-nothing "N unreviewed records" block.
+      if (result.status === 'blocked_conflict' || result.status === 'downloaded_with_stashed_conflicts') {
+        const conflictCount =
+          result.status === 'blocked_conflict' ? result.conflictCount : (result.stashedConflictPaths?.length ?? 0);
+        notifications.show({
+          title: 'Updated, with conflicts to resolve',
+          message: `${conflictCount} local edit(s) conflict with newer server changes and were saved to unreviewed-changes.json. Point your AI agent at the file to re-apply them.`,
+          color: 'yellow',
+          autoClose: false,
+        });
+      } else {
+        notifications.show({
+          title: 'Workspace updated',
+          message: 'Re-downloaded the latest file updates from Scratch.',
+          color: 'green',
+        });
+      }
     } catch (err) {
       notifications.show({
         title: 'Re-download failed',

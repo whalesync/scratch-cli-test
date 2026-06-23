@@ -33,29 +33,35 @@ The desktop's publish modal (`scratch-desktop/src/renderer/src/pages/workspace/P
 
 ```
 acquire .scratch/lock
-detect_unreviewed_for_pull(ctx)
-  └─ if any field is unreviewed → exit with blocked_unreviewed (no fetch)
 read old_head = refs/heads/main
 load accepted-patches.json
 git fetch origin main
 if refs/remotes/origin/main == old_head → "up to date", no work
-re_anchor_patches(patches, old_head, new_head)
+re_anchor_patches(patches, old_head, new_head)         # approved patches, user-wins
   └─ conflicts append to .scratch/conflicts.log (best-effort)
-materialize_local_repo(approved_map_new, local_map)
-  └─ for each server-changed path:
-       - no patch entry → write new main blob (or delete if main removed it)
-       - patch entry    → write apply(new_main_blob, re_anchored_patch)
+approved_new = compute_accepted_state(new_head, re_anchored)
+# DEV-10523 — preserve UNREVIEWED working-tree edits across the advance:
+reapply_unreviewed_edits_after_pull(approved_old, approved_new, worktree)
+  └─ for each data path with local ≠ approved_old:
+       - re-anchor the unreviewed delta onto approved_new (user-wins, same machinery)
+       - same-field collision → keep user's value, log to conflicts.log (soft)
+       - server deleted the edited record, or patch won't reconstruct → HARD conflict
+  └─ if any hard conflicts → write unreviewed-changes.json (full content) BEFORE materialize
+materialize_local_repo(final_worktree_map, local_map)   # approved_new + re-applied edits
 save accepted-patches.json atomically
 git update-ref refs/heads/main refs/remotes/origin/main
+# run_download aggregates hard conflicts → exit non-zero blocked_conflict
+#   (single-record --file-path: only if the TARGET hard-conflicts; else exit 0
+#    downloaded_with_stashed_conflicts)
 ```
 
-The atomic save happens **before** the ref bump so that a crash between the two leaves a consistent state on next run (the patches reflect the new head; the next pull will see `up-to-date`).
+The atomic save happens **before** the ref bump so that a crash between the two leaves a consistent state on next run (the patches reflect the new head; the next pull will see `up-to-date`). The hard-conflict stash is written **before** `materialize_local_repo` for the same reason — a crash mid-materialize can't drop the user's content.
 
-## Refuse vs. stash
+## Refuse vs. stash (history)
 
-Earlier designs (see decision log entries under "Pull stash mechanism" in the workspace-simplification plan) tried to stash the user's unreviewed working-tree edits into a `working-patches.json` file, replay them after the fetch, and offer a `--clear-stash` recovery flag. The shipped design is simpler: refuse the pull when any field is unreviewed, return a structured `blocked_unreviewed` payload listing the offending paths, and require the user to `files accept-all` or `files discard-all` first.
+The original slice-D design **refused** the pull whenever any field was unreviewed: it returned a structured `blocked_unreviewed` payload listing the offending paths and required the user to `files accept-all` or `files discard-all` first, symmetric with git's "commit or stash before pull" UX. That all-or-nothing block turned out to be a dead end in real flows — most sharply, it blocked single-record "Download and publish" on *all* of a user's other unreviewed edits ([DEV-10413](https://linear.app/whalesync/issue/DEV-10413), [DEV-10523](https://linear.app/whalesync/issue/DEV-10523)).
 
-This is symmetric with git's "commit or stash before pull" UX. The desktop pattern-matches on `blocked_unreviewed` and surfaces a three-button modal: Accept all & refresh / Discard all & refresh / Cancel.
+**DEV-10523 reverses that decision.** The pull now re-applies unreviewed edits user-wins across the server advance (reusing the same `re_anchor` machinery the approved patches go through) and only surfaces the narrow set it can't re-apply, stashing their full content to `unreviewed-changes.json` (see [REVIEW_MODEL.md](REVIEW_MODEL.md#unreviewed-changesjson-the-pull-conflict-stash-dev-10523)) and reporting a `blocked_conflict`. The desktop no longer offers Accept-all / Discard-all on pull; it surfaces the recoverable conflict (and, for single-record publish, scopes the failure to the target via `--file-path`). The publish-side unreviewed block (`run_publish`) and the DEV-10316 server dirty-gate are unchanged — relaxing the *pull* gate doesn't let an unreviewed or web-dirty change reach the external service.
 
 ## Failure handling & retry policy
 

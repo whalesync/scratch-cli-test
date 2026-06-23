@@ -926,18 +926,34 @@ export function PublishChangesModal({
       setError(null);
       setInitializing(true);
       setProgressSteps([{ id: 'download', label: 'Downloading latest from server…', status: 'active' }]);
-      const result = await window.scratchDesktop.pullWorkspaceChanges(localPath);
-      // `files download` exits non-zero through the IPC's throw path, so a
-      // resolved result here means it succeeded. Trust it.
-      const stderrHint = result.stderr.trim();
+      // DEV-10523: scope the failure decision to this record. The whole
+      // workspace still pulls (other records' unreviewed edits are re-applied
+      // user-wins), but the pull only refuses if THIS record hard-conflicts.
+      const result = await window.scratchDesktop.pullWorkspaceChanges(
+        localPath,
+        singleRecord ? { filePath: singleRecord.filePath } : undefined,
+      );
+      if (result.status === 'blocked_conflict') {
+        // The target record itself conflicts with newer server changes — it
+        // can't be published until the user resolves it. The local edits were
+        // preserved in unreviewed-changes.json.
+        setProgressSteps((prev) =>
+          prev.map((step) => (step.status === 'active' ? { ...step, status: 'error' } : step)),
+        );
+        setMode('error');
+        setError(
+          'This record conflicts with newer changes from the server. Your local edits were saved to unreviewed-changes.json — resolve the conflict, then try again.',
+        );
+        return;
+      }
+      // `downloaded` / `up_to_date` / `downloaded_with_stashed_conflicts` all
+      // mean the target is up to date and publishable; a stashed conflict on
+      // OTHER records is non-blocking and surfaces on the next full pull.
+      const lastMessage = result.messages[result.messages.length - 1];
       setProgressSteps((prev) =>
         prev.map((step) =>
           step.id === 'download'
-            ? {
-                ...step,
-                status: 'done',
-                label: stderrHint.split('\n').pop() || 'Downloaded latest from server',
-              }
+            ? { ...step, status: 'done', label: lastMessage || 'Downloaded latest from server' }
             : step,
         ),
       );
@@ -950,7 +966,7 @@ export function PublishChangesModal({
     } finally {
       setInitializing(false);
     }
-  }, [localPath, startUpload]);
+  }, [localPath, singleRecord, startUpload]);
 
   const handleViewProblems = useCallback(() => {
     if (!localPath || !onViewProblems) return;
