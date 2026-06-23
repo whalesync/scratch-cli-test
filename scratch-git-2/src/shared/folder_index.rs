@@ -900,8 +900,19 @@ fn read_main_blobs_for_folder_inner(
 /// nullable fields land as SQL NULL (which sorts predictably) rather than the
 /// literal string "null".
 fn extract_json_field(val: &serde_json::Value, json_path: &str) -> Option<String> {
-    // Convert "fields.title" → "/fields/title" for JSON Pointer.
-    let pointer = format!("/{}", json_path.replace('.', "/"));
+    // Split on '.' (the dot-path nesting separator), RFC 6901-escape each
+    // segment so a literal '/' or '~' in a field name addresses the right key
+    // (e.g. "fields.Date/heure" → "/fields/Date~1heure"), then join. For the
+    // common chars this is byte-identical to the old `replace('.', "/")`.
+    let pointer: String = json_path
+        .split('.')
+        .map(|segment| {
+            format!(
+                "/{}",
+                crate::shared::json_patch::encode_pointer_token(segment)
+            )
+        })
+        .collect();
     val.pointer(&pointer).and_then(|v| match v {
         serde_json::Value::Null => None,
         serde_json::Value::String(s) => Some(s.clone()),
@@ -1184,17 +1195,23 @@ fn refresh_index(
 // On-demand field columns
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Validate that a json path used as a column name contains only safe characters.
-/// Allowed: alphanumeric, `_`, `.`, `[`, `]`, `-`.
+/// Validate a JSON path used both as a JSON Pointer source and as a SQLite
+/// column identifier. The path is only ever interpolated into SQL via
+/// `quote_ident` (double-quoted, `"`→`""`) or as a bound parameter, so a
+/// double-quoted identifier safely holds spaces, `/`, `~`, `'`, `;`, and
+/// Unicode. We reject only what is genuinely unsafe for that path: the empty
+/// string, control characters (incl. NUL, which would truncate the C/SQL
+/// string), and the double-quote that `quote_ident` escapes — the last as
+/// defense-in-depth against a future callsite that forgets `quote_ident`.
 pub fn validate_json_path(column: &str) -> anyhow::Result<()> {
     if column.is_empty() {
         anyhow::bail!("field column name cannot be empty");
     }
     for ch in column.chars() {
-        if !matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '.' | '[' | ']' | '-') {
+        if ch == '"' || ch.is_control() {
             anyhow::bail!(
-                "invalid character '{ch}' in field name '{column}'; \
-                 only alphanumeric, _, ., [, ], - are allowed"
+                "invalid character {ch:?} in field name '{column}'; \
+                 control characters, NUL, and double-quotes are not allowed"
             );
         }
     }
@@ -3631,11 +3648,109 @@ mod tests {
 
     #[test]
     fn test_validate_json_path_rejects_dangerous_chars() {
+        // Long-standing allowed shapes.
         assert!(validate_json_path("fields.title").is_ok());
         assert!(validate_json_path("fields[0].name").is_ok());
         assert!(validate_json_path("a-b").is_ok());
-        assert!(validate_json_path("fields\"; DROP TABLE records;--").is_err());
+
+        // DEV-10127: field names with '/', '~', spaces, apostrophes, ';' and
+        // non-ASCII are now accepted — they reach SQL only via quote_ident.
+        assert!(validate_json_path("Date/heure de création").is_ok());
+        assert!(validate_json_path("fields.Date/heure de création").is_ok());
+        assert!(validate_json_path("Date d'expiration").is_ok()); // French apostrophe
+        assert!(validate_json_path("a~b").is_ok());
+        assert!(validate_json_path("Größe").is_ok()); // umlaut
+        assert!(validate_json_path("名前").is_ok()); // non-ASCII script
+        assert!(validate_json_path("a; b").is_ok());
+
+        // Still rejected: empty, embedded double-quote, and control chars / NUL.
         assert!(validate_json_path("").is_err());
+        assert!(validate_json_path("fields\"; DROP TABLE records;--").is_err());
+        assert!(validate_json_path("a\"b").is_err());
+        assert!(validate_json_path("a\0b").is_err());
+        assert!(validate_json_path("a\nb").is_err());
+    }
+
+    /// DEV-10127: `extract_json_field` RFC 6901-escapes each segment, so a field
+    /// whose name literally contains `/`, `~`, a space, or non-ASCII resolves to
+    /// the right key instead of walking the wrong sub-tree.
+    #[test]
+    fn test_extract_json_field_escapes_special_chars() {
+        let val = serde_json::json!({
+            "fields": {
+                "Date/heure de création": "2026-01-02",
+                "a~b": "tilde",
+                "with space": "spaced",
+                "Größe": "groß",
+            },
+            "Date/heure de création": "top-level",
+        });
+
+        assert_eq!(
+            extract_json_field(&val, "fields.Date/heure de création").as_deref(),
+            Some("2026-01-02"),
+        );
+        assert_eq!(
+            extract_json_field(&val, "fields.a~b").as_deref(),
+            Some("tilde")
+        );
+        assert_eq!(
+            extract_json_field(&val, "fields.with space").as_deref(),
+            Some("spaced"),
+        );
+        assert_eq!(
+            extract_json_field(&val, "fields.Größe").as_deref(),
+            Some("groß")
+        );
+        assert_eq!(
+            extract_json_field(&val, "Date/heure de création").as_deref(),
+            Some("top-level"),
+        );
+
+        // Regression: ordinary dot/bracket paths resolve exactly as before.
+        let plain = serde_json::json!({"fields": {"title": "hello"}});
+        assert_eq!(
+            extract_json_field(&plain, "fields.title").as_deref(),
+            Some("hello")
+        );
+        assert_eq!(extract_json_field(&plain, "missing.path"), None);
+    }
+
+    /// DEV-10127 end-to-end: sort and filter on a field whose name contains a
+    /// `/`, a space, and non-ASCII. Exercises add_field_column_if_missing →
+    /// quote_ident → real SQLite, proving the identifier path round-trips.
+    #[test]
+    fn test_field_sort_and_filter_with_special_char_name() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+
+        write_json(
+            &working_dir,
+            "a.json",
+            r#"{"Date/heure de création":"banana"}"#,
+        );
+        write_json(
+            &working_dir,
+            "b.json",
+            r#"{"Date/heure de création":"apple"}"#,
+        );
+
+        // Sort on the special-char field.
+        let mut o = opts(&ws, "conn/posts");
+        o.sort_by = "Date/heure de création".to_string();
+        let sorted = run_query(&o).unwrap();
+        assert_eq!(sorted.filenames, vec!["b.json", "a.json"]); // apple < banana
+
+        // Filter on the same field.
+        let mut o = opts(&ws, "conn/posts");
+        o.filters = vec![FilterSpec::Field {
+            column: "Date/heure de création".to_string(),
+            op: FieldOp::Eq,
+            value: "apple".to_string(),
+        }];
+        let filtered = run_query(&o).unwrap();
+        assert_eq!(filtered.filenames, vec!["b.json"]);
     }
 
     #[test]
