@@ -125,6 +125,7 @@ export class GoHighLevelConnector extends Connector {
     record: 'record',
     records: 'records',
     logo: GOHIGHLEVEL_LOGO_DATA_URI,
+    oauth: { label: 'OAuth' },
     userProvidedParamsLabel: 'Private Integration',
     credentialFields: {
       user_provided_params: [
@@ -1017,21 +1018,37 @@ connectorRegistry.register({
   service: Service.GOHIGHLEVEL,
   metadata: GoHighLevelConnector.metadata,
   advancedSettings: GoHighLevelConnector.advancedSettings,
-  supportedAuthMethods: ['user_provided_params'],
+  supportedAuthMethods: ['oauth', 'user_provided_params'],
   // HighLevel burst limit is 100 requests / 10s per app per location.
   rateLimiterSpec: { points: 100, duration: 10 },
-  // eslint-disable-next-line @typescript-eslint/require-await
   async createConnector(ctx) {
     if (!ctx.connectorAccount) {
       throw new ConnectorInstantiationError('Connector account is required for HighLevel', Service.GOHIGHLEVEL);
     }
+    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
+
+    // OAuth: a Marketplace-app access token (auto-refreshed on read) scoped to a
+    // single Location. The Location ID came back on the token exchange and is
+    // persisted as oauthWorkspaceId — every HighLevel REST call is Location-scoped.
+    if (ctx.connectorAccount.authType === 'OAUTH') {
+      const locationId = ctx.decryptedCredentials?.oauthWorkspaceId;
+      if (!locationId) {
+        throw new ConnectorInstantiationError(
+          'Location ID is missing from the HighLevel OAuth connection',
+          Service.GOHIGHLEVEL,
+        );
+      }
+      const accessToken = await ctx.getOAuthAccessToken(ctx.connectorAccount.id);
+      return new GoHighLevelConnector(accessToken, locationId, { rateLimiter });
+    }
+
+    // Private Integration Token: a long-lived bearer token + manually-entered Location ID.
     if (!ctx.decryptedCredentials?.apiKey) {
       throw new ConnectorInstantiationError('Private Integration Token is required for HighLevel', Service.GOHIGHLEVEL);
     }
     if (!ctx.decryptedCredentials?.locationId) {
       throw new ConnectorInstantiationError('Location ID is required for HighLevel', Service.GOHIGHLEVEL);
     }
-    const rateLimiter = ctx.createRateLimiter(ctx.connectorAccount.id);
     return new GoHighLevelConnector(ctx.decryptedCredentials.apiKey, ctx.decryptedCredentials.locationId, {
       rateLimiter,
     });

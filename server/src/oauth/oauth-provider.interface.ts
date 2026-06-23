@@ -14,7 +14,13 @@ export interface OAuthProvider {
   ): string;
 
   /**
-   * Exchange authorization code for access token
+   * Exchange authorization code for access token.
+   *
+   * `redirectUri` overrides the provider's default redirect URI for this one
+   * exchange. Needed by the marketplace-initiated ("inbound") flow, whose code is
+   * bound to the install endpoint (`/oauth/install/:service`) rather than the
+   * app-initiated callback — the token request's `redirect_uri` must match the URL
+   * the code was issued to. Ignored by providers that don't send `redirect_uri`.
    */
   exchangeCodeForTokens(
     code: string,
@@ -24,6 +30,7 @@ export interface OAuthProvider {
       shopDomain?: string;
       codeVerifier?: string;
       dataCenter?: string;
+      redirectUri?: string;
     },
   ): Promise<OAuthTokenResponse>;
 

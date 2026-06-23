@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inbound (Marketplace-Initiated) OAuth Routing — Scratch × HighLevel</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --panel: #171a23;
+        --panel-2: #1d212c;
+        --ink: #e7e9ee;
+        --muted: #9aa3b4;
+        --line: #2a2f3a;
+        --market: #8b5cf6; /* GHL marketplace  */
+        --web: #3b82f6; /* Scratch web app  */
+        --api: #14b8a6; /* Scratch API      */
+        --db: #f59e0b; /* Database         */
+        --auth: #ec4899; /* Clerk auth       */
+        --good: #22c55e;
+        --radius: 14px;
+        --shadow: 0 1px 0 rgba(255, 255, 255, 0.03), 0 12px 30px rgba(0, 0, 0, 0.35);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: radial-gradient(1200px 600px at 70% -10%, #1b2030 0%, var(--bg) 55%);
+        color: var(--ink);
+        font:
+          15px/1.6 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 44px 24px 80px;
+      }
+      header.page {
+        margin-bottom: 30px;
+      }
+      .pill {
+        display: inline-block;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(34, 197, 94, 0.14);
+        color: #6ee7a8;
+        border: 1px solid rgba(34, 197, 94, 0.3);
+      }
+      h1 {
+        font-size: 30px;
+        margin: 14px 0 6px;
+        letter-spacing: -0.02em;
+      }
+      .sub {
+        color: var(--muted);
+        max-width: 760px;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 40px 0 14px;
+        letter-spacing: -0.01em;
+      }
+      h2 .n {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        margin-right: 8px;
+      }
+      a {
+        color: #8ab4ff;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+        font-size: 0.86em;
+        background: #0c0e14;
+        border: 1px solid var(--line);
+        padding: 1px 6px;
+        border-radius: 6px;
+        color: #d7def0;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        margin: 6px 0 4px;
+      }
+      .legend .item {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 3px;
+        display: inline-block;
+      }
+
+      /* ---- flow timeline ---- */
+      .flow {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        margin-top: 10px;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 54px 1fr;
+        gap: 16px;
+        position: relative;
+        padding: 0 0 18px;
+      }
+      .step:not(:last-child) .rail::after {
+        content: '';
+        position: absolute;
+        left: 26px;
+        top: 40px;
+        bottom: -2px;
+        width: 2px;
+        background: linear-gradient(var(--line), var(--line));
+      }
+      .rail {
+        position: relative;
+      }
+      .num {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        color: #06070a;
+        box-shadow: var(--shadow);
+      }
+      .card {
+        background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        box-shadow: var(--shadow);
+      }
+      .card .host {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11.5px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 3px 9px;
+        border-radius: 999px;
+        margin-bottom: 8px;
+      }
+      .card h3 {
+        margin: 2px 0 6px;
+        font-size: 15.5px;
+      }
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13.5px;
+      }
+      .card .route {
+        display: block;
+        margin: 8px 0 2px;
+      }
+
+      .tint-market {
+        background: var(--market);
+      }
+      .tint-web {
+        background: var(--web);
+      }
+      .tint-api {
+        background: var(--api);
+      }
+      .tint-db {
+        background: var(--db);
+      }
+      .tint-auth {
+        background: var(--auth);
+      }
+      .host-market {
+        background: rgba(139, 92, 246, 0.16);
+        color: #c4b5fd;
+      }
+      .host-web {
+        background: rgba(59, 130, 246, 0.16);
+        color: #93c5fd;
+      }
+      .host-api {
+        background: rgba(20, 184, 166, 0.16);
+        color: #5eead4;
+      }
+      .host-db {
+        background: rgba(245, 158, 11, 0.16);
+        color: #fcd34d;
+      }
+      .host-auth {
+        background: rgba(236, 72, 153, 0.16);
+        color: #f9a8d4;
+      }
+
+      /* ---- auth states ---- */
+      .states {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+      .state {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        box-shadow: var(--shadow);
+      }
+      .state .tag {
+        font-weight: 800;
+        font-size: 13px;
+        color: var(--auth);
+      }
+      .state h4 {
+        margin: 6px 0 6px;
+        font-size: 14.5px;
+      }
+      .state p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      /* ---- whalesync compare ---- */
+      .cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .box {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 16px 18px;
+        box-shadow: var(--shadow);
+      }
+      .box.same {
+        border-color: rgba(34, 197, 94, 0.35);
+      }
+      .box.diff {
+        border-color: rgba(245, 158, 11, 0.35);
+      }
+      .box h3 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+      .box.same h3 {
+        color: #6ee7a8;
+      }
+      .box.diff h3 {
+        color: #fcd34d;
+      }
+      ul.tick {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      ul.tick li {
+        position: relative;
+        padding-left: 24px;
+        margin: 9px 0;
+        color: var(--muted);
+        font-size: 13.5px;
+      }
+      ul.tick li b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      ul.tick.same li::before {
+        content: '✓';
+        position: absolute;
+        left: 0;
+        color: var(--good);
+        font-weight: 800;
+      }
+      ul.tick.diff li::before {
+        content: '→';
+        position: absolute;
+        left: 0;
+        color: var(--db);
+        font-weight: 800;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+        font-size: 13px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 11.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      td.w {
+        color: #f9a8d4;
+      }
+      td.s {
+        color: #93c5fd;
+      }
+
+      .note {
+        background: rgba(59, 130, 246, 0.08);
+        border: 1px solid rgba(59, 130, 246, 0.25);
+        border-radius: var(--radius);
+        padding: 12px 16px;
+        color: #bcd0f5;
+        font-size: 13.5px;
+        margin-top: 14px;
+      }
+      .secs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 8px;
+      }
+      .sec {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 7px 14px;
+        font-size: 13px;
+        color: var(--ink);
+      }
+      .sec b {
+        color: #f9a8d4;
+      }
+      footer {
+        margin-top: 46px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      @media (max-width: 760px) {
+        .states,
+        .cols {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="page">
+        <span class="pill">As-built · gohighlevel-oauth</span>
+        <h1>Inbound (Marketplace-Initiated) OAuth Routing</h1>
+        <p class="sub">
+          How a GoHighLevel <b>“Install”</b> click turns into a connected workbook in Scratch — even when the person
+          arriving has no session, no workbook, and maybe no account yet. Connector-agnostic; the shape is borrowed from
+          Whalesync’s Webflow flow. Companion to <a href="./inbound-oauth-routing.md">inbound-oauth-routing.md</a> and
+          <a href="./inbound-oauth-plan.md">inbound-oauth-plan.md</a>.
+        </p>
+      </header>
+
+      <h2><span class="n">01</span>The flow at a glance</h2>
+      <div class="legend">
+        <span class="item"><span class="dot tint-market"></span> GoHighLevel marketplace</span>
+        <span class="item"><span class="dot tint-web"></span> Scratch web app · <code>app.scratch.md</code></span>
+        <span class="item"><span class="dot tint-api"></span> Scratch API · <code>api.scratch.md</code></span>
+        <span class="item"><span class="dot tint-db"></span> Database</span>
+        <span class="item"><span class="dot tint-auth"></span> Clerk auth</span>
+      </div>
+
+      <div class="flow">
+        <!-- 1 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-market">1</div></div>
+          <div class="card">
+            <span class="host host-market"><span class="dot tint-market"></span> Marketplace</span>
+            <h3>User clicks Install → picks a Location → 302 to the web app</h3>
+            <p>
+              GHL’s <code>chooselocation</code> consent returns a one-time <code>code</code> and redirects the browser
+              to the <b>web host</b> (not the API).
+            </p>
+            <code class="route">https://app.scratch.md/oauth/install/<b>hl</b>?code=&lt;one-time&gt;</code>
+            <p style="margin-top: 6px">
+              Slug is <code>hl</code>, not a brand word — GHL rejects redirect URLs containing “ghl/highlevel”.
+            </p>
+          </div>
+        </div>
+        <!-- 2 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-web">2</div></div>
+          <div class="card">
+            <span class="host host-web"><span class="dot tint-web"></span> Web page (public)</span>
+            <h3>Landing page reads the code and relays it</h3>
+            <p>
+              A public Next.js page reads <code>?code=</code> and immediately POSTs it to the API. Strict-Mode-guarded
+              so the single-use code is only redeemed once.
+            </p>
+            <code class="route">client/src/app/oauth/install/[service]/page.tsx</code>
+          </div>
+        </div>
+        <!-- 3 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-api">3</div></div>
+          <div class="card">
+            <span class="host host-api"><span class="dot tint-api"></span> API (public)</span>
+            <h3>Redeem the code <em>now</em> &amp; stash encrypted tokens</h3>
+            <p>
+              The code expires in minutes, so it’s exchanged for tokens up front, encrypted (AES-256-GCM), and written
+              to a single-use, 1-hour <code>PendingOAuthInstall</code> row. Returns <code>{ installId }</code> as JSON
+              (no 302).
+            </p>
+            <code class="route">POST /oauth/install/:slug → OAuthInstallService.redeemAndStashInstall</code>
+          </div>
+        </div>
+        <!-- 4 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-db">4</div></div>
+          <div class="card">
+            <span class="host host-db"><span class="dot tint-db"></span> Database</span>
+            <h3>PendingOAuthInstall — the orphan-token parking spot</h3>
+            <p>
+              <code>id = pin_…</code> (unguessable bearer secret) · <code>encryptedCredentials</code> ·
+              <code>workspaceId</code> (GHL locationId) · <code>expiresAt = now + 1h</code>. Independent table, no FKs —
+              safe to deploy in any order.
+            </p>
+          </div>
+        </div>
+        <!-- 5 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-web">5</div></div>
+          <div class="card">
+            <span class="host host-web"><span class="dot tint-web"></span> Web → claim page</span>
+            <h3>Forward to the auth-gated claim page</h3>
+            <p>The page hands off <b>only</b> the <code>installId</code> — the GHL code is already spent.</p>
+            <code class="route">router.replace('/connect/hl?install=&lt;installId&gt;')</code>
+          </div>
+        </div>
+        <!-- 6 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-auth">6</div></div>
+          <div class="card">
+            <span class="host host-auth"><span class="dot tint-auth"></span> Clerk middleware</span>
+            <h3>Sign up / sign in if needed (states A · B · C)</h3>
+            <p>
+              The claim page is <b>not</b> public, so Clerk handles the three auth states for free; the
+              <code>installId</code> survives the detour in the URL via <code>returnBackUrl</code>. See §02.
+            </p>
+            <code class="route">client/src/app/connect/[service]/page.tsx</code>
+          </div>
+        </div>
+        <!-- 7 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-api">7</div></div>
+          <div class="card">
+            <span class="host host-api"><span class="dot tint-api"></span> API (auth)</span>
+            <h3>Claim: reserve → create workbook → real connection</h3>
+            <p>
+              Atomic single-use reserve (flips <code>claimedAt</code>), auto-creates a workbook, moves the tokens into a
+              real <code>ConnectorAccount</code> (<code>OAUTH_SYSTEM</code>), deletes the pending row. Rolls everything
+              back on failure.
+            </p>
+            <code class="route">POST /oauth/pending-install/:installId/claim → claimInstall</code>
+          </div>
+        </div>
+        <!-- 8 -->
+        <div class="step">
+          <div class="rail"><div class="num tint-web">8</div></div>
+          <div class="card">
+            <span class="host host-web"><span class="dot tint-web"></span> Web</span>
+            <h3>Land in the new workbook — HighLevel connected ✓</h3>
+            <p>User is dropped into the freshly-created workbook with the connection live.</p>
+          </div>
+        </div>
+      </div>
+
+      <h2><span class="n">02</span>The three auth states (resolved at step 6, no per-state code)</h2>
+      <div class="states">
+        <div class="state">
+          <div class="tag">A · No account</div>
+          <h4>Brand-new user</h4>
+          <p>
+            Clerk → sign-up → email verify → back to the claim page (case C). The 1-hour TTL bounds how long they have.
+          </p>
+        </div>
+        <div class="state">
+          <div class="tag">B · Logged out</div>
+          <h4>Has an account, no session</h4>
+          <p>Clerk → <code>/sign-in?redirect_url=/connect/hl?install=…</code> → back to the claim page (case C).</p>
+        </div>
+        <div class="state">
+          <div class="tag">C · Logged in</div>
+          <h4>Active session</h4>
+          <p>
+            Claim page renders, <code>GET /oauth/pending-install/:id</code> loads metadata (never tokens), user clicks
+            <b>Connect</b>.
+          </p>
+        </div>
+      </div>
+      <div class="note">
+        The <b>installId</b> is the only thing threaded through sign-up / sign-in. The fragile one-time GHL code was
+        already consumed at step 3, so no login detour can break it.
+      </div>
+
+      <h2><span class="n">03</span>Borrowed from Whalesync’s Webflow flow</h2>
+      <p class="sub">
+        Whalesync (sister repo at <code>../../whalesync</code>) solved the same marketplace-initiated problem for
+        Webflow. Scratch borrows the <b>skeleton</b> and hardens the <b>correlation</b>.
+      </p>
+      <div class="cols">
+        <div class="box same">
+          <h3>Same shape ✓</h3>
+          <ul class="tick same">
+            <li><b>Land on a public web page</b>, not the API host.</li>
+            <li><b>Redeem the code immediately</b>, server-side, on landing.</li>
+            <li><b>Stash tokens in a short-lived, encrypted “pending” record</b> — both 1-hour TTL.</li>
+            <li><b>Convert to a real connection only after auth</b> — both via Clerk.</li>
+          </ul>
+        </div>
+        <div class="box diff">
+          <h3>What Scratch changed →</h3>
+          <ul class="tick diff">
+            <li>Correlate by an <b>unguessable single-use installId</b>, not the installer’s email.</li>
+            <li>Claim is an <b>explicit “Connect” click</b>, not an auto-sweep of the email’s pending rows.</li>
+            <li>The whole detour rides <b>one URL carrying the token</b> through Clerk.</li>
+            <li>Claim <b>provisions a fresh workbook</b> for the new <code>ConnectorAccount</code>.</li>
+          </ul>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Aspect</th>
+            <th>Whalesync · Webflow</th>
+            <th>Scratch · HighLevel</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Landing target</td>
+            <td class="w">web page <code>/oauth-callback/connector-app-store/:type</code></td>
+            <td class="s">web page <code>/oauth/install/:slug</code></td>
+          </tr>
+          <tr>
+            <td>Code redemption</td>
+            <td class="w">immediate, server-side</td>
+            <td class="s">immediate, server-side</td>
+          </tr>
+          <tr>
+            <td>Pending record</td>
+            <td class="w"><code>TemporaryExternalConnection</code> · encrypted · 1h</td>
+            <td class="s"><code>PendingOAuthInstall</code> · encrypted · 1h</td>
+          </tr>
+          <tr>
+            <td>Correlation token</td>
+            <td class="w">installer’s <b>email</b> ↔ signed-in email</td>
+            <td class="s">unguessable single-use <b>installId</b> in the URL</td>
+          </tr>
+          <tr>
+            <td>Claim trigger</td>
+            <td class="w">auto, on reaching sync-flow</td>
+            <td class="s">explicit <b>Connect</b> click</td>
+          </tr>
+          <tr>
+            <td>Final entity</td>
+            <td class="w"><code>ExternalConnection</code> (per user)</td>
+            <td class="s"><code>ConnectorAccount</code> (in a new workbook)</td>
+          </tr>
+          <tr>
+            <td>Auth system</td>
+            <td class="w">Clerk</td>
+            <td class="s">Clerk</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2><span class="n">04</span>Why the installId is a bearer secret</h2>
+      <div class="secs">
+        <span class="sec"><b>High entropy</b> · pin_ + 32 random bytes</span>
+        <span class="sec"><b>Single-use</b> · deleted on claim</span>
+        <span class="sec"><b>Short TTL</b> · 1 hour</span>
+        <span class="sec"><b>Auth required</b> · claim needs a Scratch user</span>
+        <span class="sec"><b>Atomic reserve</b> · no double-claim</span>
+        <span class="sec"><b>Encrypted at rest</b> · AES-256-GCM</span>
+      </div>
+      <div class="note">
+        Inbound gets <b>separate</b> endpoints precisely so the app-initiated path keeps its
+        <code>state.userId === actor.userId</code> check intact — inbound can’t weaken it.
+      </div>
+
+      <footer>
+        Scratch code: <code>server/src/oauth-install/</code> ·
+        <code>server/src/oauth/providers/gohighlevel-oauth.provider.ts</code> ·
+        <code>client/src/app/oauth/install/[service]/page.tsx</code> ·
+        <code>client/src/app/connect/[service]/page.tsx</code><br />
+        Whalesync code: <code>dusky/pages/oauth-callback/connector-app-store/[connectorType].tsx</code> ·
+        <code>api/bottlenose/src/temporary-external-connections/</code>
+      </footer>
+    </div>
+  </body>
+</html>

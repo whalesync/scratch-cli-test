@@ -39,6 +39,7 @@ import { DecryptedCredentials } from '../remote-service/connector-account/types/
 import { EncryptedData } from '../utils/encryption';
 import { OAuthProvider, OAuthTokenResponse } from './oauth-provider.interface';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
+import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
 import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
@@ -70,6 +71,7 @@ export class OAuthService {
   constructor(
     private readonly db: DbService,
     private readonly airtableProvider: AirtableOAuthProvider,
+    private readonly gohighlevelProvider: GoHighLevelOAuthProvider,
     private readonly notionProvider: NotionOAuthProvider,
     private readonly shopifyProvider: ShopifyOAuthProvider,
     private readonly supabaseProvider: SupabaseOAuthProvider,
@@ -85,6 +87,7 @@ export class OAuthService {
   ) {
     // Register OAuth providers
     this.providers.set('AIRTABLE', this.airtableProvider);
+    this.providers.set('GOHIGHLEVEL', this.gohighlevelProvider);
     this.providers.set('NOTION', this.notionProvider);
     this.providers.set('SHOPIFY', this.shopifyProvider);
     this.providers.set('SUPABASE', this.supabaseProvider);
@@ -292,6 +295,60 @@ export class OAuthService {
 
       return { connectorAccountId: connectorAccount.id };
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Inbound (marketplace-initiated) OAuth — generic primitives
+  //
+  // Unlike the app-initiated flow above, here the connector's marketplace starts
+  // the OAuth: there is NO Scratch session, workbook, or `state` we minted. The
+  // self-contained orchestration (redeem → stash → claim) lives in
+  // OAuthInstallService; OAuthService only exposes the two connector-agnostic
+  // OAuth primitives it needs. Kept separate from `handleOAuthCallback` so that
+  // method's `state.userId === actor.userId` check (which inbound can't satisfy)
+  // stays intact for the app-initiated path.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Exchange a marketplace-initiated ("inbound") OAuth `code` for tokens, for any
+   * service with a registered provider. Surfaces provider failures (bad/expired
+   * code) as a 400 with the provider's message, mirroring `handleOAuthCallback`.
+   *
+   * `redirectUri` is the install endpoint the marketplace redirected the code to;
+   * it's forwarded to the provider so the token request's `redirect_uri` matches
+   * the URL the code was issued for (required by providers that validate it).
+   */
+  async exchangeInboundCodeForTokens(service: string, code: string, redirectUri?: string): Promise<OAuthTokenResponse> {
+    const provider = this.providers.get(service.toUpperCase());
+    if (!provider) {
+      throw new BadRequestException(`Unsupported OAuth service: ${service}`);
+    }
+    try {
+      return await provider.exchangeCodeForTokens(code, { redirectUri });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'token exchange failed';
+      WSLogger.warn({
+        source: 'OAuthService.exchangeInboundCodeForTokens',
+        message: `${service} inbound code exchange failed: ${message}`,
+      });
+      throw new BadRequestException(message);
+    }
+  }
+
+  /**
+   * Persist an already-exchanged {@link OAuthTokenResponse} into a new
+   * ConnectorAccount under `workbookId` — the public entry point over the shared
+   * account-creation tail, so the inbound install flow can finalize a claim once
+   * it has created (or chosen) the target workbook. Always a system-managed OAuth
+   * connection (inbound installs never carry custom client credentials).
+   */
+  async createConnectorAccountFromOAuthTokens(
+    service: string,
+    workbookId: WorkbookId,
+    actor: Actor,
+    tokenResponse: OAuthTokenResponse,
+  ): Promise<ConnectorAccount> {
+    return this.createOAuthAccount(service, workbookId, actor, tokenResponse, { connectionMethod: 'OAUTH_SYSTEM' });
   }
 
   /**

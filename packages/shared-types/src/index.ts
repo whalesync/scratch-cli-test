@@ -45,6 +45,7 @@ export * from './dto/dev-tools/user-detail.dto';
 export * from './dto/generic-api/generic-api-responses.dto';
 export * from './dto/internal/whalesync-internal.dto';
 export * from './dto/oauth/oauth-initiate-options.dto';
+export * from './dto/oauth/oauth-install.dto';
 export * from './dto/oauth/oauth-responses.dto';
 export * from './dto/oauth/oauth-state-payload';
 export * from './dto/payment/create-checkout-session.dto';

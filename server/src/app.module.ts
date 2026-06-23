@@ -27,6 +27,7 @@ import {
   UrlencodedBodyMiddleware,
   WorkspaceAliasMiddleware,
 } from './middleware';
+import { OAuthInstallModule } from './oauth-install/oauth-install.module';
 import { OAuthModule } from './oauth/oauth.module';
 import { PaymentModule } from './payment/payment.module';
 import { PosthogModule } from './posthog/posthog.module';
@@ -62,6 +63,7 @@ import { WorkerModule } from './worker/workers.module';
     AuthModule,
     CliModule,
     OAuthModule,
+    OAuthInstallModule,
     ConnectorAccountModule,
     ConnectorsModule,
     WorkbookModule,

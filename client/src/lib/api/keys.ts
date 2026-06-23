@@ -42,6 +42,10 @@ export const SWR_KEYS = {
   users: {
     activeUser: () => ['users', 'activeUser'],
   },
+  oauthInstall: {
+    // Metadata for a marketplace-initiated ("inbound") install awaiting claim.
+    pending: (installId: string) => ['oauth-install', 'pending', installId] as const,
+  },
   devTools: {
     waitlistPending: () => ['dev-tools', 'waitlist-pending'] as const,
   },

@@ -158,6 +158,27 @@ model ConnectorAccount {
 /// End "keep in sync" section
 ///
 
+/// Pending (orphan) OAuth tokens from a marketplace-initiated ("inbound") install,
+/// held until an authenticated Scratch user claims them. Connector-agnostic: keyed
+/// by `service`, so any OAuth connector (GoHighLevel, Webflow, …) reuses it.
+/// Server-only — not a shared wire type. The `id` IS the unguessable installId and
+/// is treated as a bearer secret: single-use (deleted on claim) and short-TTL (rows
+/// past `expiresAt` are rejected on claim; the `@@index([expiresAt])` supports a
+/// future periodic cleanup sweep of orphaned rows).
+model PendingOAuthInstall {
+  id                   String    @id // the unguessable installId — bearer secret
+  createdAt            DateTime  @default(now())
+  expiresAt            DateTime // now + TTL; rows past this are rejected on claim
+  service              String // connector service key, e.g. "GOHIGHLEVEL"
+  encryptedCredentials Json // same AES-256-GCM envelope as ConnectorAccount.encryptedCredentials
+  workspaceId          String? // tokenResponse.workspace_id (e.g. GHL locationId) — for the connector + claim UI
+  displayName          String? // human label for the claim page (best-effort)
+  claimedByUserId      String? // set atomically at claim time, just before the row is deleted
+  claimedAt            DateTime?
+
+  @@index([expiresAt])
+}
+
 ///
 /// NOTE: Keep this in sync with packages/shared-types/src/db/workbook.ts
 /// Begin "keep in sync" section
@@ -592,7 +613,7 @@ model PublishPlan {
   // the publish is changing. Mirrors the `main_pre_plan_{id}` git tag. The primary
   // diff on the publish history detail page is (preMainCommitSha → preDirtyCommitSha) —
   // i.e. what was about to be published when the plan ran.
-  preMainCommitSha String?
+  preMainCommitSha  String?
   // SHA of main HEAD captured after a successful run (including completed-with-errors).
   // What got shipped. Mirrors the `main_plan_{id}` git tag. Kept for reference /
   // rollback; not used in the primary diff.
@@ -785,9 +806,9 @@ model SyncDraft {
   /// version it edited; a mismatch is a 409.
   version Int @default(1)
 
-  displayName String
+  displayName  String
   /// Cron expression mirroring SaveSyncBody.schedule, or null for no schedule.
-  schedule    String?
+  schedule     String?
   /// Set when initialized from an existing sync (edit flow); apply diffs against it.
   sourceSyncId String?
 

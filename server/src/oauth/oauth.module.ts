@@ -8,6 +8,7 @@ import { DbModule } from '../db/db.module';
 import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
 import { AirtableOAuthProvider } from './providers/airtable-oauth.provider';
+import { GoHighLevelOAuthProvider } from './providers/gohighlevel-oauth.provider';
 import { LinearOAuthProvider } from './providers/linear-oauth.provider';
 import { NotionOAuthProvider } from './providers/notion-oauth.provider';
 import { QuickBooksOAuthProvider } from './providers/quickbooks-oauth.provider';
@@ -24,6 +25,7 @@ import { ZohoOAuthProvider } from './providers/zoho-oauth.provider';
   providers: [
     OAuthService,
     AirtableOAuthProvider,
+    GoHighLevelOAuthProvider,
     NotionOAuthProvider,
     ShopifyOAuthProvider,
     SupabaseOAuthProvider,

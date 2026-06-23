@@ -40,6 +40,8 @@ export class RouteUrls {
   // Authenticated Routes & Route Generators
   static homePageUrl = '/'; // Root page handles redirect to workbook
   static healthPageUrl = '/health';
+  // Auth-gated claim page for a marketplace-initiated ("inbound") OAuth install.
+  static connectClaimPageUrl = (service: string) => `/connect/${service}`;
   static workbookPickerPageUrl = '/workbook'; // Always renders the workspace picker
   static workbookPageUrl = (id: string) => `/workbook/${id}`;
   static workbookFilesPageUrl = (id: string) => `/workbook/${id}/files`;
@@ -144,6 +146,11 @@ export class RouteUrls {
     // uses an unanchored `new RegExp(pattern)`, where the bare string '/oauth/callback' would also
     // match the step-2 path as a substring.
     /^\/oauth\/callback$/,
+    // Marketplace-initiated ("inbound") OAuth lands here (e.g. /oauth/install/gohighlevel). The page
+    // only reads the `code` from the URL and posts it to the public redeem endpoint, then forwards to
+    // the auth-gated /connect/:service claim page — it must be reachable with no scratch.md login,
+    // because the installing user may not have an account yet.
+    /^\/oauth\/install\/[^/]+$/,
   ];
 
   /**
