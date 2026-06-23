@@ -153,6 +153,9 @@ echo "==> Building scratchmd ($RUST_TARGET) in scratch-git-2"
 )
 
 cd "$SCRATCH_DESKTOP"
+echo "==> Fetching bundled git (dugite-native) for darwin-arm64"
+node scripts/download-git.cjs darwin-arm64
+
 echo "==> mac build (signed + notarized), env from: $ENV_FILE"
 echo "  CSC_LINK: $CSC_LINK"
 # Fail fast with a clear error if the shell env is not what Node will read (should match).

@@ -41,6 +41,9 @@ cp "target/$RUST_TARGET/release/libscratchmd_native.dylib" "cli-binaries/$RUST_T
 echo "==> CLI binary: $SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd"
 echo "==> napi addon: $SCRATCH_GIT_2/cli-binaries/$RUST_TARGET/scratchmd-native.darwin-arm64.node"
 
-echo "==> Building Scratch.app (electron-vite + electron-builder --mac, ad-hoc / unsigned)"
+echo "==> Fetching bundled git (dugite-native) for darwin-arm64"
 cd "$SCRATCH_DESKTOP"
+node scripts/download-git.cjs darwin-arm64
+
+echo "==> Building Scratch.app (electron-vite + electron-builder --mac, ad-hoc / unsigned)"
 yarn build:mac:unsigned
