@@ -43,7 +43,10 @@ else
   TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-test$'
   IS_PRERELEASE=true
   FALLBACK_TAG="v0.0.0-test"
-  RELEASE_BODY="Test release pointing at test-api.scratch.md. Not for end users."
+  # Stamp the monorepo commit into the body so the next hourly run can tell
+  # whether anything changed since this release (see the no-op guard below).
+  RELEASE_BODY="Test release pointing at test-api.scratch.md. Not for end users.
+Source-Commit: ${CI_COMMIT_SHA:-unknown}"
 fi
 RELEASE_NAME_PREFIX="Scratch Desktop"
 
@@ -95,6 +98,37 @@ esac
 SEMVER="$MAJOR.$MINOR.$PATCH"
 NEW_VERSION="v${SEMVER}${TAG_SUFFIX}"
 echo "Target version: $NEW_VERSION"
+
+# 2b. Hourly-schedule no-op guard (test variant only). Bootstrap is the gate for
+#     the whole desktop chain, so skipping here skips every downstream job. We
+#     compare monorepo HEAD against the Source-Commit stamped on the last test
+#     release; if nothing under the desktop app, the CLI it bundles, or
+#     shared-types changed, write a RELEASE_SKIP sentinel into release.env and
+#     exit 0 — BEFORE creating any draft, so a no-op leaves nothing to clean up.
+#     Downstream jobs read RELEASE_SKIP from the dotenv and early-exit. Fails open
+#     (builds) if the marker is missing/unreachable. FORCE_RELEASE=1 bypasses.
+if [[ "$VARIANT" == "test" && "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORCE_RELEASE:-}" != "1" ]]; then
+  LAST_RELEASE_SHA=$(
+    {
+      for page in 1 2 3; do
+        curl_releases_page "$page"
+        printf '\n'
+      done
+    } | jq -s 'add | map(select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-test$")))
+               | sort_by(.created_at) | reverse | .[0].body // ""' -r \
+    | sed -n 's/^Source-Commit:[[:space:]]*//p' | tr -d '\r' | head -n1)
+  if [ -n "$LAST_RELEASE_SHA" ] && [ "$LAST_RELEASE_SHA" != "unknown" ] \
+     && git cat-file -e "${LAST_RELEASE_SHA}^{commit}" 2>/dev/null; then
+    if git diff --quiet "$LAST_RELEASE_SHA" HEAD -- scratch-desktop/ scratch-git-2/ packages/shared-types/; then
+      echo "No desktop-relevant changes since last test release ($LAST_RELEASE_SHA). Skipping."
+      echo "RELEASE_SKIP=true" > release.env
+      exit 0
+    fi
+    echo "Changes since $LAST_RELEASE_SHA — proceeding with test release."
+  else
+    echo "No usable prior Source-Commit marker — proceeding (cannot prove a no-op)."
+  fi
+fi
 
 # 3. Fail if ANY release (draft or published) with this tag already exists.
 #    GET /releases/tags only returns published releases, so we additionally
@@ -167,6 +201,7 @@ RELEASE_ID=$RELEASE_ID
 RELEASE_UPLOAD_URL=$RELEASE_UPLOAD_URL
 RELEASE_TAG_NAME=$NEW_VERSION
 IS_PRERELEASE=$IS_PRERELEASE
+RELEASE_SKIP=false
 ENV
 
 echo "Wrote release.env:"

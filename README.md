@@ -106,6 +106,14 @@ git checkout master
 
 Once done, make sure to leave the `prod` branch immediately to avoid accidently branching from it or pushing new changes. The `prod` branch **must** always be equal or behind the `master` branch.
 
+### Test releases of the CLI & Desktop apps (hourly)
+
+The `scratchmd` CLI and the Scratch Desktop app cut **test** releases (pointing at `test-api.scratch.md`) on a scheduled pipeline rather than on every merge to `master`, so normal merge pipelines stay fast and don't tie up the cross-compile / macOS shell runners.
+
+A scheduled pipeline named **`Hourly Test Releases`** (variable `PIPELINE_NAME="Hourly Test Releases"`, target branch `master`, hourly cron) runs the CLI test patch release and the Desktop test release. Each run **no-ops in seconds** when nothing under `scratch-git-2/`, `scratch-desktop/`, or `packages/shared-types/` changed since the last test release; set `FORCE_RELEASE=1` on a manual run of the schedule to force a build. Create/edit it in [Gitlab Pipeline Schedules](https://gitlab.com/whalesync/spinner/-/pipeline_schedules) (leave `RELEASE_DESKTOP_ONLY` / `RELEASE_CLI_ONLY` at their `false` defaults).
+
+To cut an **immediate** test release without waiting for the next hourly tick, open the latest `master` pipeline and play the manual `release-rust-cli-test-patch` job (CLI) and/or `Bootstrap test desktop release` job (Desktop) — they appear as manual ▶︎ buttons and never auto-run on merge. Prod releases are unchanged: they run automatically on the `prod` branch.
+
 ## Upgrading Node
 
 Upgrading to a new version of Node.js requires several steps.

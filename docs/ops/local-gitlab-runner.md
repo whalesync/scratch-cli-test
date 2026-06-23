@@ -179,6 +179,8 @@ These jobs build `.dmg` + `.zip` for macOS (no Linux targets) and create a GitHu
 
 > **Note:** This runner is only used for desktop release jobs. All other local jobs (client, server, scratch-cli, etc.) continue to use the Docker-executor runner.
 
+> **Scheduled test releases:** team-tagged (`team-macos-release`) **test** desktop releases now run on the hourly `Hourly Test Releases` schedule (not on every `master` merge), so a mac runner needs to be online during the scheduled window for the test release to publish. The hourly run no-ops in seconds when nothing changed, so the mac job is only dispatched when there's a real release to build.
+
 ### 5. Cap concurrency in `config.toml`
 
 The shell runner builds an Electron app on your laptop, which is heavy. Add `limit = 1` to the shell runner block in `~/.gitlab-runner/config.toml` so it only takes one job at a time even when multiple team-tagged release jobs are queued:

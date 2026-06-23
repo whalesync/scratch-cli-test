@@ -21,6 +21,27 @@ git config --global user.email "ci@whalesync.com"
 git config --global user.name "GitLab CI"
 git fetch --tags
 
+# Hourly-schedule no-op guard: when run by the "Hourly Test Releases" schedule,
+# skip the whole build if nothing under scratch-git-2/ changed since the commit
+# the last *-test release was built from. The vX.Y.Z-test tag we push to the
+# scratch-cli GitHub repo (see step 6) points at that monorepo commit, so it is
+# the marker. Runs BEFORE any build or GitHub mutation, so a skip has zero side
+# effects. Fails open (builds) if the marker is missing/unreachable. Non-schedule
+# runs (manual master, MR) always build; FORCE_RELEASE=1 forces a build.
+if [[ "${CI_PIPELINE_SOURCE:-}" == "schedule" && "${FORCE_RELEASE:-}" != "1" ]]; then
+  LAST_RELEASE_SHA=$(git ls-remote --tags --sort=-v:refname "$GITHUB_REPO_URL" 'refs/tags/v*-test' 2>/dev/null \
+    | grep -v '\^{}' | head -n1 | awk '{print $1}')
+  if [ -n "$LAST_RELEASE_SHA" ] && git cat-file -e "${LAST_RELEASE_SHA}^{commit}" 2>/dev/null; then
+    if git diff --quiet "$LAST_RELEASE_SHA" HEAD -- scratch-git-2/; then
+      echo "No scratch-git-2/ changes since last test release ($LAST_RELEASE_SHA). Skipping."
+      exit 0
+    fi
+    echo "Changes under scratch-git-2/ since $LAST_RELEASE_SHA — proceeding with test release."
+  else
+    echo "No usable prior *-test tag marker — proceeding (cannot prove a no-op)."
+  fi
+fi
+
 # 1. Find latest production cli-X.Y.Z tag to base off of
 LATEST_TAG=$(git tag -l "cli-*" --sort=-v:refname | head -n1)
 if [ -z "$LATEST_TAG" ]; then

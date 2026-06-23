@@ -36,9 +36,12 @@ include:
       - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
 
   # Everything else is skipped when either *_ONLY flag is set.
+  # Also kept out of the "Hourly Test Releases" schedule — GitLab's stock
+  # secret_detection job runs on scheduled pipelines, but that schedule is for
+  # CLI/desktop test releases only and shouldn't drag in secret detection.
   - template: Security/Secret-Detection.gitlab-ci.yml
     rules:
-      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'
+      - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true" && ($CI_PIPELINE_SOURCE != "schedule" || $PIPELINE_NAME != "Hourly Test Releases")'
   - local: "/gitlab-ci/stages/01-build-and-test.yml"
     rules:
       - if: '$RELEASE_DESKTOP_ONLY != "true" && $RELEASE_CLI_ONLY != "true"'

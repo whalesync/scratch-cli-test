@@ -51,7 +51,13 @@ release-rust-cli-major:
   variables:
     RELEASE_TYPE: "major"
 
-# TEST RELEASE JOBS (master branch, excludes scheduled pipelines)
+# TEST RELEASE JOBS
+#
+# The patch variant is cut automatically by the hourly "Hourly Test Releases"
+# schedule (see release-rust-cli-test-patch). On a normal master pipeline all
+# three variants appear as manual ▶︎ buttons so a dev can cut an immediate test
+# release without waiting for the next hourly tick — playing one consumes a
+# runner, but they never auto-run on merge. minor/major are manual only.
 .release_rust_test_job:
   extends: .release_rust_cli_zigbuild
   script:
@@ -62,16 +68,21 @@ release-rust-cli-major:
       when: manual
       allow_failure: true
 
-# Auto-deploy test patch release on every merge to master
+# Auto-cut a test patch release on the hourly schedule; manual fallback on
+# master. The release_test.sh no-op guard skips the build on the schedule when
+# scratch-git-2/ is unchanged since the last test release (FORCE_RELEASE=1
+# bypasses). No `changes:` on the schedule rule — rules:changes is always-true
+# on scheduled pipelines, so the "did anything change?" check lives in the script.
 release-rust-cli-test-patch:
   extends: .release_rust_test_job
   variables:
     RELEASE_TYPE: "patch"
   rules:
-    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
-      changes:
-        - scratch-git-2/**/*
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Hourly Test Releases"'
       when: on_success
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - scratch-git-2/.gitlab-ci-release.yml

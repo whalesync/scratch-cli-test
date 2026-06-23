@@ -44,17 +44,30 @@ include:
     - scratch-desktop/scripts/git-bundle-manifest.json
     - scratch-desktop/electron-builder.yml
 
-# Shared rule block for the test variant. On master pushes the test release
-# runs automatically and must succeed. On MRs it's manual + allow_failure so
-# the MR pipeline passes whether or not the test release is exercised.
+# Shared rule block for the test variant. The release is cut automatically by
+# the hourly "Hourly Test Releases" schedule. On a normal master pipeline the
+# Bootstrap job (start_of_pipeline) is a manual ▶︎ button — playing it cascades
+# the rest of the chain (rest_of_pipeline stays on_success, never manual, so
+# `needs:` does the cascade). On MRs it's manual + allow_failure so the MR
+# pipeline passes whether or not the test release is exercised.
+#
+# Rule order matters: schedule first (most specific), then MR, then the master
+# manual fallback. The bootstrap_release.sh no-op guard skips the build on the
+# schedule when nothing desktop-relevant changed since the last test release.
 .test_release_triggers:
   start_of_pipeline:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Hourly Test Releases"'
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes: !reference [.changes, release_pipeline]
       when: manual
       allow_failure: true
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
+      when: manual
+      allow_failure: true
   rest_of_pipeline:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Hourly Test Releases"'
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes: !reference [.changes, release_pipeline]
     - if: '$CI_COMMIT_BRANCH == "master" && $CI_PIPELINE_SOURCE != "schedule"'
@@ -142,6 +155,10 @@ Bootstrap test desktop release:
       - scratch-git-2/cli-binaries/
     expire_in: 1 day
   script:
+    # Honor the no-op sentinel from Bootstrap: when the hourly schedule found no
+    # desktop-relevant changes, skip the expensive cross-compile. RELEASE_SKIP
+    # only reaches the test variant (prod bootstrap never sets it).
+    - '[ "${RELEASE_SKIP:-}" = "true" ] && { echo "RELEASE_SKIP=true — skipping CLI build."; exit 0; }'
     - cd scratch-git-2
     # Thin LTO + many codegen units produces ~2.9k object files; lld opens them
     # all at link time and trips the default RLIMIT_NOFILE (1024).
@@ -192,8 +209,10 @@ Build CLI for test desktop release:
   variables:
     SCRATCH_DEFAULT_URL: 'https://test-api.scratch.md'
   needs:
+    # artifacts: true so the RELEASE_SKIP sentinel from the bootstrap dotenv
+    # reaches this job and it can early-exit on a no-op hourly run.
     - job: Bootstrap test desktop release
-      artifacts: false
+      artifacts: true
   rules: !reference [.test_release_triggers, rest_of_pipeline]
 
 # -----------------------------------------------------------------------------
@@ -500,6 +519,8 @@ Notify slack prod desktop release started:
   stage: release desktop app
   allow_failure: true
   script:
+    # Skip the "published" ping on a no-op hourly run (test variant only).
+    - '[ "${RELEASE_SKIP:-}" = "true" ] && { echo "RELEASE_SKIP=true — skipping notify."; exit 0; }'
     - |
       RELEASE_URL="https://github.com/whalesync/scratch-desktop/releases/tag/${NEW_VERSION}"
       curl -X POST -H 'Content-type: application/json' \
@@ -559,6 +580,8 @@ Cleanup test desktop release:
   dependencies:
     - Bootstrap test desktop release
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PIPELINE_NAME == "Hourly Test Releases"'
+      when: always
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes: !reference [.changes, release_pipeline]
       when: always

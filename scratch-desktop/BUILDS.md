@@ -118,7 +118,7 @@ The desktop release pipeline lives in [.gitlab-ci-release.yml](.gitlab-ci-releas
 
 Register a local macOS shell runner. Follow [docs/ops/local-gitlab-runner.md § macOS Shell Runner](../docs/ops/local-gitlab-runner.md#macos-shell-runner-for-native-dmg-builds). The runner must be tagged with both `local-macos-YOUR_GITLAB_USERNAME` (personal MR jobs) and `team-macos-release` (team-wide desktop release jobs), and have Node 22, Yarn, and Git on its `PATH`.
 
-The mac Package + Upload jobs always generate on prod/master pipelines and are dispatched to whichever team-tagged runner is online — no per-user opt-in is needed in `gitlab-ci/common.yml`. At least one teammate's mac runner must be online when the pipeline reaches the `release desktop app` stage, otherwise the mac job will sit pending until one comes up or the job hits its timeout.
+The mac Package + Upload jobs generate on prod pipelines and on the hourly **Hourly Test Releases** schedule (and as manual ▶︎ jobs on a normal `master` pipeline), and are dispatched to whichever team-tagged runner is online — no per-user opt-in is needed in `gitlab-ci/common.yml`. At least one teammate's mac runner must be online when a release pipeline reaches the `release desktop app` stage — including during the hourly scheduled window — otherwise the mac job will sit pending until one comes up or the job hits its timeout.
 
 ### Cutting a release
 
@@ -133,7 +133,7 @@ To cut a **minor** or **major** prod release instead, run a pipeline manually:
 3. Optionally set **`RELEASE_DESKTOP_ONLY = true`** to skip the normal build/test/deploy stages and run only the desktop release jobs (leave `RELEASE_CLI_ONLY` at `false`).
 4. Run the pipeline.
 
-For a **test** release, run a pipeline on the `master` branch (builds the **test** variant: `test-api.scratch.md`, `desktop-test` update channel); the test bootstrap runs automatically. Test releases can also be triggered from an MR — see [Triggering a test release from an MR](#triggering-a-test-release-from-an-mr) below.
+**Test releases run on a schedule, not on every merge.** The hourly **Hourly Test Releases** scheduled pipeline (`PIPELINE_NAME="Hourly Test Releases"`, branch `master`) cuts the **test** variant (`test-api.scratch.md`, `desktop-test` update channel) automatically, and **no-ops in seconds** when nothing under `scratch-desktop/`, `scratch-git-2/`, or `packages/shared-types/` changed since the last test release (set `FORCE_RELEASE=1` on a manual run of the schedule to force a build). To cut an **immediate** test release, open the latest `master` pipeline and click the manual ▶︎ `Bootstrap test desktop release` job — it appears on every master pipeline but no longer runs automatically. Test releases can also be triggered from an MR — see [Triggering a test release from an MR](#triggering-a-test-release-from-an-mr) below.
 
 `Finalize` blocks on the mac upload — if no team-tagged mac runner is online when the pipeline reaches the mac stage, Finalize fails and the release is not published, rather than silently shipping without mac artifacts.
 

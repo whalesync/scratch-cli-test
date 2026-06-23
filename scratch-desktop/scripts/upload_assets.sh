@@ -3,6 +3,14 @@ set -e
 # Ensure we are in the scratch-desktop directory regardless of where the script is called from
 cd "$(dirname "$0")/.."
 
+# No-op sentinel threaded from the hourly schedule's bootstrap: when nothing
+# desktop-relevant changed since the last test release, every downstream job
+# early-exits. RELEASE_SKIP is only ever set for the test variant.
+if [ "${RELEASE_SKIP:-}" = "true" ]; then
+  echo "RELEASE_SKIP=true — no changes since last test release. Skipping upload."
+  exit 0
+fi
+
 # Usage: ./scripts/upload_assets.sh
 #
 # For each file in dist-release/*.{dmg,zip,AppImage,deb,exe,yml,blockmap},
