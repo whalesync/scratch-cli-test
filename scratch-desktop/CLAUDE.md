@@ -25,6 +25,13 @@ yarn build:mac    # Build + package macOS .dmg/.zip
 yarn build:linux  # Build + package Linux AppImage/.deb
 ```
 
+`lint`, `lint-strict`, and `typecheck` auto-build `@spinner/shared-types` first (a
+`pre*` hook running `turbo build --filter=@spinner/shared-types`, ~150ms when cached).
+Without it, an unbuilt `packages/shared-types/dist` makes type-aware ESLint silently
+resolve every shared-types import as `any` — a wall of false `no-unsafe-*` errors
+(DEV-10348). `yarn build` and `yarn test` alias shared-types to source and need no
+build.
+
 ## App icons
 
 Packaged app icons (Dock, `.app`, installers, window/taskbar where supported) live under `build/icons/`. The canonical brand SVG in the repo is `client/public/logo-color.svg`.
