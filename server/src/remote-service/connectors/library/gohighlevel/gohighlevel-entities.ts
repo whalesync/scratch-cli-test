@@ -175,6 +175,19 @@ export const GOHIGHLEVEL_LOCATION_LIST_ENTITY_BY_WS_ID: ReadonlyMap<string, GoHi
 /** Primitive class for a generic entity field (typed from the OpenAPI response DTO). */
 export type GenericFieldType = 'string' | 'number' | 'boolean' | 'array' | 'object' | 'unknown';
 
+/** One enumerated field of a generic entity: key + JSON type, optionally a foreign key. */
+export interface GoHighLevelGenericEntityField {
+  key: string;
+  type: GenericFieldType;
+  /**
+   * When set, the column is annotated as a foreign key into this Scratch table
+   * (the target entity's `wsId`), so it's recognized as a reference to another
+   * table rather than a plain string. e.g. Calendars `formId` → `forms`,
+   * `groupId` → `calendar_groups`.
+   */
+  foreignKeyTableId?: string;
+}
+
 /**
  * Static field list per generic read-only entity, enumerated from HighLevel's
  * published OpenAPI response DTOs. These entities have NO field-metadata endpoint
@@ -182,12 +195,12 @@ export type GenericFieldType = 'string' | 'number' | 'boolean' | 'array' | 'obje
  * than discovered at runtime. Drives the table view (records show real fields, not
  * just the id); `additionalProperties` still passes through anything not listed.
  */
-export const GOHIGHLEVEL_ENTITY_FIELDS: Record<string, ReadonlyArray<{ key: string; type: GenericFieldType }>> = {
+export const GOHIGHLEVEL_ENTITY_FIELDS: Record<string, ReadonlyArray<GoHighLevelGenericEntityField>> = {
   calendars: [
     { key: 'isActive', type: 'boolean' },
     { key: 'notifications', type: 'array' },
     { key: 'locationId', type: 'string' },
-    { key: 'groupId', type: 'string' },
+    { key: 'groupId', type: 'string', foreignKeyTableId: 'calendar_groups' },
     { key: 'teamMembers', type: 'array' },
     { key: 'eventType', type: 'string' },
     { key: 'name', type: 'string' },
@@ -214,10 +227,14 @@ export const GOHIGHLEVEL_ENTITY_FIELDS: Record<string, ReadonlyArray<{ key: stri
     { key: 'allowBookingAfterUnit', type: 'string' },
     { key: 'allowBookingFor', type: 'number' },
     { key: 'allowBookingForUnit', type: 'string' },
-    { key: 'openHours', type: 'array' },
+    // HighLevel returns openHours as an ARRAY of open-hour blocks when the calendar
+    // has hours configured, but as an empty OBJECT `{}` when it doesn't — so neither
+    // a pure array nor object schema fits. `unknown` accepts the verbatim value either
+    // way (a fresh pull of an unconfigured calendar otherwise fails validation).
+    { key: 'openHours', type: 'unknown' },
     { key: 'enableRecurring', type: 'boolean' },
     { key: 'recurring', type: 'object' },
-    { key: 'formId', type: 'string' },
+    { key: 'formId', type: 'string', foreignKeyTableId: 'forms' },
     { key: 'stickyContact', type: 'boolean' },
     { key: 'isLivePaymentMode', type: 'boolean' },
     { key: 'autoConfirm', type: 'boolean' },

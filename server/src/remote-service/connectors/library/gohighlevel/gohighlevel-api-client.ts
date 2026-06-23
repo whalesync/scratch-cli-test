@@ -630,6 +630,46 @@ export class GoHighLevelApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Calendars (a location list entity that is also writable — create/update/delete)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create a calendar. HighLevel requires only `name` (everything else defaults);
+   * `locationId` is injected. Returns the created calendar (with its new `id`),
+   * unwrapped from the `{ calendar }` response envelope.
+   */
+  async createCalendar(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await this.post<{ calendar?: Record<string, unknown> }>('/calendars/', {
+      ...payload,
+      locationId: this.locationId,
+    });
+    return this.requireCreatedRecord(response.data.calendar, response, 'calendar');
+  }
+
+  /**
+   * Update a calendar. HighLevel merges per field, so a sparse payload (only the
+   * changed fields) is a valid partial write. Returns the updated calendar
+   * (unwrapped from `{ calendar }`), or null if the response didn't echo it.
+   */
+  async updateCalendar(calendarId: string, payload: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    const response = await this.put<{ calendar?: Record<string, unknown> }>(
+      `/calendars/${encodeURIComponent(calendarId)}`,
+      payload,
+    );
+    return response.data.calendar ?? null;
+  }
+
+  /** Delete a calendar. Ignores 404 (already gone). */
+  async deleteCalendar(calendarId: string): Promise<void> {
+    try {
+      await this.delete(`/calendars/${encodeURIComponent(calendarId)}`);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) return;
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Generic location-scoped list entities (see gohighlevel-entities.ts)
   // ---------------------------------------------------------------------------
 

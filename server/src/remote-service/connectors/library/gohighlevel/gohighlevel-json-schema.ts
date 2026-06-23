@@ -9,7 +9,7 @@ import {
   type TableViewCol,
 } from '@spinner/shared-types';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
-import { GenericFieldType } from './gohighlevel-entities';
+import { GenericFieldType, GoHighLevelGenericEntityField } from './gohighlevel-entities';
 import {
   GoHighLevelCustomFieldDefinition,
   GoHighLevelObjectDefinition,
@@ -541,13 +541,24 @@ export function buildCustomObjectJsonTableSpec(
 // --- Generic location-scoped list entities --------------------------------
 
 /**
- * Map a generic entity field's OpenAPI primitive class to a permissive, read-only
- * schema. Every field is **Optional** (and nullable): these are read-only tables
- * stored verbatim, and HighLevel omits or nulls most fields per record — a required
- * field would make a fresh pull fail with "required but missing or null".
+ * Map a generic entity field's OpenAPI primitive class to a permissive schema.
+ * Every field is **Optional** (and nullable): these tables are stored verbatim and
+ * HighLevel omits or nulls most fields per record — a required field would make a
+ * fresh pull fail with "required but missing or null". `readonly` adds the
+ * `x-scratch-readonly` flag: true for every field of a pull-only table, and true
+ * only for the non-writable fields (id, locationId) of a writable one.
+ * `foreignKeyTableId`, when set, annotates the column as a foreign key into that
+ * Scratch table (the target entity's wsId) — e.g. Calendars `formId` → `forms`.
  */
-function genericFieldTypeToSchema(type: GenericFieldType, key: string): TSchema {
-  const annotations = { [X_SCRATCH_READONLY]: true, description: key };
+function genericFieldTypeToSchema(
+  type: GenericFieldType,
+  key: string,
+  readonly: boolean,
+  foreignKeyTableId?: string,
+): TSchema {
+  const annotations: Record<string, unknown> = { description: key };
+  if (readonly) annotations[X_SCRATCH_READONLY] = true;
+  if (foreignKeyTableId) annotations[X_SCRATCH_FOREIGN_KEY_OPTIONS] = { linkedTableId: foreignKeyTableId };
   switch (type) {
     case 'string':
       return Type.Optional(Type.Union([Type.String(), Type.Null()], annotations));
@@ -571,21 +582,39 @@ function genericFieldTypeToSchema(type: GenericFieldType, key: string): TSchema 
  * HighLevel OpenAPI** (`GOHIGHLEVEL_ENTITY_FIELDS`, passed in as `fields`) — that
  * way the table view shows real fields, not just the id. The record is still
  * stored verbatim (`additionalProperties: true`) so anything the OpenAPI omitted
- * passes through. Every field is read-only (these tables are pull-only).
- * `idField` is `id` for most, `_id` for products/proposals/blogs.
+ * passes through. `idField` is `id` for most, `_id` for products/proposals/blogs.
+ *
+ * **Writability is controlled by the `readonlyFieldKeysWhenWritable` argument,
+ * which does double duty:**
+ * - **Omitted (`undefined`)** → the whole table is **read-only** (the default for
+ *   the pull-only reference entities — they all call this with no set).
+ * - **Provided (any set, even empty)** → the table is **writable**, and the set
+ *   lists the field keys that must STAY read-only anyway. So the act of passing a
+ *   set is the on/off switch; its contents are the read-only *exceptions*.
+ *
+ * The `id` field is always read-only regardless. Example: Calendars passes
+ * `{'locationId'}` (the connection scope the connector injects on create), so
+ * `locationId` and `id` stay read-only and every other field (name, slotDuration,
+ * …) is editable.
  */
 export function buildGenericEntityJsonTableSpec(
   id: EntityId,
   displayName: string,
   idField: string,
-  fields?: ReadonlyArray<{ key: string; type: GenericFieldType }>,
+  fields?: ReadonlyArray<GoHighLevelGenericEntityField>,
+  readonlyFieldKeysWhenWritable?: ReadonlySet<string>,
 ): BaseJsonTableSpec {
+  // When the read-only set is provided the entity is WRITABLE: a field is read-only
+  // only if it's the id field or its key is in the set. When omitted, every field is
+  // read-only (the default for pull-only reference tables).
+  const isWritable = readonlyFieldKeysWhenWritable !== undefined;
   const properties: Record<string, TSchema> = {
     [idField]: Type.String({ [X_SCRATCH_READONLY]: true, description: 'Record ID' }),
   };
   for (const field of fields ?? []) {
     if (field.key in properties) continue;
-    properties[field.key] = genericFieldTypeToSchema(field.type, field.key);
+    const fieldIsReadonly = !isWritable || readonlyFieldKeysWhenWritable.has(field.key);
+    properties[field.key] = genericFieldTypeToSchema(field.type, field.key, fieldIsReadonly, field.foreignKeyTableId);
   }
 
   const schema = Type.Object(properties, {

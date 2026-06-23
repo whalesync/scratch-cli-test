@@ -32,7 +32,7 @@
 | 2 | **Connected** (health OK) | ✅ | `coa_m4Gwt30pFK` in `wkb_v8Sy6Oy7I9` ("ghl-test") |
 | 3 | **First fetch** (≥1 record) | ✅ | pull works |
 | 4 | **All entities seeded & fetched** | ✅ | **18/18 tables pulled**; all **13 custom-field dataTypes seeded** via API (loc had 0) |
-| 5 | **Full write CRUD** (manual edit + CLI publish) | ✅ | **All 3 writable families CONFIRMED via CLI publish:** Contacts New/Edit/Delete ✅, Opportunities New/Edit/Delete ✅, Custom Object (Posts) New/Edit/Delete ✅. (Run in `cli-v4/ghl-test`.) |
+| 5 | **Full write CRUD** (manual edit + CLI publish) | ✅ | **4 writable families CONFIRMED via CLI publish:** Contacts New/Edit/Delete ✅, Opportunities New/Edit/Delete ✅, Custom Object (Posts) New/Edit/Delete ✅, **Calendars New/Edit/Delete ✅ (2026-06-22)**. (Run in `cli-v4/ghl-test`.) |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | **Opportunity `contactId` re-parent CONFIRMED via CLI publish** (Ivan→ScratchBrowser). pipelineId move works too (API). |
 | 7 | **Edge cases & quirks** | ✅ | Pass-2 via CLI publish: **emoji 🎯 + unicode survive ✅** (vs Zoho strips them), **2000-char long string ✅**, **null-clear ✅**. Quirks found: TIME lossy, contact GET omits companyName/city, limit-caps, EMAIL-not-a-type, opp hydrated-`contact`-object breaks contactId write (fix applied), Forms/Surveys list = metadata-only, `_id` vs `id` per entity. |
 | 8 | **View(s) built** | ✅ | **Custom Objects ✅** + **Contacts/Opportunities ✅** — custom fields grouped under a **"Custom Fields"** `defaultView` banner (standard object fields stay flat) (`buildCustomObjectDefaultView` / `buildStandardEntityDefaultView`), verified live (Posts: [slug, content]; Contacts: 13 fields). Standard-object custom fields solved by reshaping the `customFields` array → keyed `custom_fields` sub-properties (not the virtual-fields route — the keyed object gives real columns + per-field publish diffs). |
@@ -96,7 +96,8 @@ Custom **Objects** (user-defined record types) are entities → here. Custom **f
 | Custom Objects | record (dynamic) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **built** (code); untested |
 | Users | read-only reference (`GET /users/`) | ✅ | ➖ | ➖ | ➖ | — | **built** (pull, read-only) |
 | Pipelines | read-only reference (no get-by-id) | ✅ | ➖ | ➖ | ➖ | — | **built** (read-only) |
-| Calendars / Campaigns / Conversations / Forms / Trigger Links / Products / Proposals / Surveys / Workflows / Blog Authors / Blog Categories | read-only reference | ⬜ | ➖ | ➖ | ➖ | — | **built** (code, read-only); pull untested |
+| Calendars | **writable** (full CRUD via `/calendars/`) | ✅ | ✅ | ✅ | ✅ | — | **built + CLI-CRUD confirmed 2026-06-22** |
+| Campaigns / Conversations / Forms / Trigger Links / Products / Proposals / Surveys / Workflows / Blog Authors / Blog Categories | reference (several API-writable — see [matrix](#generic-entity-write-capability-which-could-be-made-writable)) | ✅ | ➖ | ➖ | ➖ | — | **built** (pull; write not yet implemented) |
 | Funnels / Payments / Email Templates | top-level reference (not yet built) | ⬜ | ➖ | ➖ | ➖ | — | planned (read-only) |
 
 ### 3. Scoped / non-top-level entities
@@ -113,7 +114,7 @@ GHL's per-contact (or per-calendar) sub-resources — **scoped to a parent**, re
 
 ## Entities × Operations
 
-Writable per the API: **Contacts** (CRUD+upsert), **Opportunities** (CRUD+status), **Custom Object records**. Everything else is reference/config → **pull-only**.
+Writable per the API: **Contacts** (CRUD+upsert), **Opportunities** (CRUD+status), **Custom Object records**, **Calendars** (CRUD). Everything else is reference/config → **pull-only** (but see the [write-capability matrix](#generic-entity-write-capability-which-could-be-made-writable) for which others *could* be made writable).
 
 | Entity | Pull | Create→Pull | Edit→Push | New→Push | Delete | FK | Service-UI create path |
 |--------|:----:|:-----------:|:---------:|:--------:|:------:|----|------------------------|
@@ -121,7 +122,7 @@ Writable per the API: **Contacts** (CRUD+upsert), **Opportunities** (CRUD+status
 | Opportunities | ✅ | ⬜ | ✅ | ✅ | ⬜ | ✅ **CLI move** | **FK re-parent (`contactId`) CONFIRMED via CLI publish** (= Edit→Push too). `pipelineId`→Pipelines, `contactId`→Contacts. Delete ⬜ |
 | Custom Objects | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | **Full CRUD via CLI CONFIRMED 2026-06-09:** created fresh object **Pet** (`custom_objects.scratchpet`) via API → connector auto-discovered → New/Edit/Delete records via CLI publish, all confirmed in service. Also **Posts** CRUD ✅ + **Companies** (`business`) 4 seeded via API. Create-object via `POST /objects/`; Settings → Objects → record |
 | Pipelines | ✅ | ➖ | ➖ | ➖ | ➖ | — | (reference; no get-by-id — re-fetches all) |
-| Calendars | ✅ | ➖ | ➖ | ➖ | ➖ | — | (read-only; pulled) |
+| Calendars | ✅ | ➖ | ✅ | ✅ | ✅ | — | **Full CRUD via CLI CONFIRMED 2026-06-22:** Edit→Push (`name`/`slotDuration`), New→Push (id flows back), Delete→Push (GET→gone) — all confirmed in the GHL API. Only `name` required on create; `id`/`locationId` read-only. Service-UI: Calendars → Create Calendar |
 | Calendar Groups | ✅ | ➖ | ➖ | ➖ | ➖ | — | (read-only; pulled, 6 cols) |
 | Campaigns | ✅ (0 rec) | ➖ | ➖ | ➖ | ➖ | — | (read-only; **UI-build-only, no API create → empty, seeding UNTESTED**) |
 | Conversations | ✅ | ➖ | ➖ | ➖ | ➖ | — | (read-only; cursor pagination ⚠️) |
@@ -137,6 +138,22 @@ Writable per the API: **Contacts** (CRUD+upsert), **Opportunities** (CRUD+status
 
 Not yet built — but **classified, not dropped** (see the Objects tables above, best-case future state): Tasks / Notes / Appointments / Calendar Events / Associations are **scoped** sub-entities (table 3, planned); Funnels / Payments / Email Templates are top-level reference entities (table 2, planned).
 
+### Generic-entity write capability (which could be made writable)
+
+The generic location-list entities are pull-only in the connector, but the GHL API exposes a write route for several. **Probed live 2026-06-22** with a stub `POST` (status decodes intent): `422`/`400` = write endpoint exists + scope present (just needs fields) → **API-writable**; `404`/`405` = no write route; `401` = scope-gated or route not exposed. Use this to pick the next "make writable" candidates.
+
+| Entity | Create probe | API-writable? | Notes |
+|--------|--------------|:-------------:|-------|
+| **Calendars** | `POST /calendars/` → 422 | ✅ **done** | Now writable (see above). Only `name` required. |
+| Calendar Groups | `POST /calendars/groups` → 422 | ✅ candidate | name/description/slug required. Natural companion to Calendars (`/calendars/` family). |
+| Products | `POST /products/` → 422 | ✅ candidate | name/productType required; full CRUD. |
+| Trigger Links | `POST /links/` → 422 | ✅ candidate | name/redirect required; full CRUD. |
+| Users | `POST /users/` → 422 | ✅ candidate | companyId required; reference data (lower value). |
+| Conversations | `POST /conversations/` → 400 | ⚠️ partial | endpoint exists (contactId required), but it's *messaging-thread* create — a different model, not "edit a conversation". |
+| Proposals | `POST /proposals/document` → 401 | ⚠️ scope-gated | write route exists but the PIT lacks the proposals scope. |
+| Campaigns / Workflows | `POST` → 404 (no route) | ❌ no | UI-builder automation; no API create. |
+| Forms / Surveys / Blog Authors / Blog Categories | `POST` → 401 "not yet supported by the IAM Service" | ❌ no | UI-builder only; v2 API exposes them read-only. |
+
 ## Custom fields / Custom Objects (the dynamic part)
 Distinction: a custom **field** is a **column on an entity** (Contacts/Opportunities) → field-types, not an entity. A custom **object** is a user-defined **record type** → it's a main entity (table 2 above).
 - Contacts/Opportunities custom fields discovered from `GET /locations/{locationId}/customFields` (filtered by `model`). Stored verbatim as `{ id, <valueKey> }` — **valueKey is `value` for Contacts, `fieldValue` for Opportunities**; write shape `{id, field_value}` for both.
@@ -150,6 +167,7 @@ Distinction: a custom **field** is a **column on an entity** (Contacts/Opportuni
 
 ## Foreign keys / associations
 - `Opportunities.pipelineId` → Pipelines · `Opportunities.contactId` → Contacts (annotated FKs). write ⬜ / read ⬜
+- `Calendars.formId` → Forms · `Calendars.groupId` → Calendar Groups (annotated FKs, 2026-06-22 — wires a meeting type to its booking form / calendar group). write ⬜ / read ⬜ — **declared, not yet round-trip-tested via a CLI move.**
 - No general association endpoint implemented (the `/associations/` API is out of scope).
 
 ## Edge cases discovered (⬜ = re-verify live)
@@ -160,6 +178,8 @@ Distinction: a custom **field** is a **column on an entity** (Contacts/Opportuni
 - **Pipelines** has no get-by-id; `pullRecordFilesByIds` re-fetches all and filters.
 - **2026-06-09 — Forms & Surveys list returns metadata only.** Both pull as `{id, locationId, name}` and nothing else — GHL's `/forms/` and `/surveys/` list endpoints don't include the form/survey *structure* (fields/questions). Not a bug; they're read-only reference entities, but their records carry no useful data beyond the name. A full structure would need a per-record get-by-id deep-fetch (deferred). The empty folders (Campaigns, Workflows, Companies, Proposals, Blog Authors/Categories) simply have 0 records in this location.
 - **`_id` vs `id` per entity.** Products / Proposals / Blog Authors / Blog Categories use **`_id`**; everything else uses `id`. The connector's `idField` config handles it — but it's the reason a record can look like it "only has `_id`".
+- **2026-06-22 — Calendars `openHours` is object-OR-array (verbatim type mismatch → was failing validation).** HighLevel returns `openHours` as an **array** of open-hour blocks when the calendar has hours configured, but as an **empty object `{}`** when it doesn't. It was typed `array` in `GOHIGHLEVEL_ENTITY_FIELDS`, so a fresh pull of an unconfigured calendar failed `enforce_schema` (`{} is not valid under … 'anyOf'`). Fixed by typing it `unknown` (accepts either). **Gotcha within the gotcha:** the *persisted* problems index (`get-folder-problems`) reported this folder clean while `validation dry-run` on the same record flagged it — the index was stale, so **trust `validation dry-run` over the index when verifying a schema fix.**
+- **2026-06-22 — Calendars create needs only `name`.** `POST /calendars/` with `{locationId, name}` succeeds (201); every other field defaults server-side. Update (`PUT /calendars/{id}`) merges per field, so a sparse one-field edit is a valid partial write. Both responses wrap the object in `{ calendar: … }`.
 
 ## Gotchas
 - The general Scratch/CLI ones apply — see `docs/connector-build.md`. Publish flow: `files accept → files upload → files publish`; confirm pushes in the GHL API, not the pull; `cliCanPublish` gate.
@@ -203,7 +223,8 @@ Base `https://services.leadconnectorhq.com` · header **`Version: 2021-07-28` on
 | Custom fields (contact/opp) | discover | `GET /locations/{loc}/customFields` | filter by `model`; **not** the v2 `/custom-fields/` API |
 | Custom Objects | defs · schema · create-object | `GET /objects/` · `GET /objects/{key}?fetchProperties=true` · `POST /objects/` | real object key in `remoteId[0]`; `business` (=Companies) surfaces here |
 | Custom Objects | records | `POST /objects/{key}/records/search` · `GET/POST/PUT/DELETE /objects/{key}/records[/{id}]` | `properties` bag, **short keys** (e.g. `name`, `pet_name`); `locationId` **query-param** on update; object-field add = `POST /custom-fields/` (needs `fieldKey`+`parentId` folder) |
-| Generic read-only lists (13) | list | per `gohighlevel-entities.ts`: `GET /calendars/`, `/calendars/groups`, `/campaigns/`, `/conversations/search`, `/forms/`, `/links/`, `/products/`, `/proposals/document`, `/surveys/`, `/users/`, `/workflows/`, `/blogs/authors`, `/blogs/categories` | pagination per-entity (none/skip/offset/conversations); **no create API** (UI-build-only) |
+| Calendars | list · CRUD | `GET /calendars/` · `POST /calendars/` · `PUT/DELETE /calendars/{id}` | **writable** (create needs only `name`; `locationId` injected; PUT merges per field); response wrapped in `{ calendar }`. Needs `calendars.write` scope (present on the test PIT) |
+| Generic read-only lists (12) | list | per `gohighlevel-entities.ts`: `GET /calendars/groups`, `/campaigns/`, `/conversations/search`, `/forms/`, `/links/`, `/products/`, `/proposals/document`, `/surveys/`, `/users/`, `/workflows/`, `/blogs/authors`, `/blogs/categories` | pagination per-entity (none/skip/offset/conversations); write capability varies (see [matrix](#generic-entity-write-capability-which-could-be-made-writable)) — not yet implemented |
 
 **`limit` caps** (422-on-exceed silently empties the folder): proposals **20**, surveys/blog authors/categories **50**, rest **100**. **Schema source:** system fields **static (hardcoded from OpenAPI** — see `GOHIGHLEVEL_ENTITY_FIELDS`), custom fields **discovered** per-Location (contacts/opps via Locations API, custom objects via `getObjectSchema`). **Custom-field dataTypes:** TEXT, LARGE_TEXT, NUMERICAL, FLOAT, PHONE, MONETORY, TIME, DATE, CHECKBOX, SINGLE_OPTIONS, MULTIPLE_OPTIONS, RADIO, FILE_UPLOAD (EMAIL invalid; TIME needs `dateTimeValidation`).
 

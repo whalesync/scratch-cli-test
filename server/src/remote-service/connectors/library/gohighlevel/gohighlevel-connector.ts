@@ -48,6 +48,25 @@ import {
 const CONTACTS_TABLE_WS_ID = 'contacts';
 const OPPORTUNITIES_TABLE_WS_ID = 'opportunities';
 const PIPELINES_TABLE_WS_ID = 'pipelines';
+const CALENDARS_TABLE_WS_ID = 'calendars';
+
+/**
+ * Calendar fields kept read-only even though Calendars is a writable table.
+ *
+ * **Verified against the GHL OpenAPI** (`apps/calendars.json` → `CalendarCreateDTO`
+ * + `CalendarUpdateDTO`): of the 56 fields we enumerate, **55 are accepted on
+ * create/update** and only `id` is genuinely API-read-only (and the id field is
+ * always read-only on its own). `locationId` is API-writable too, but we keep it
+ * read-only here **by connector policy** — it's the connection scope the client
+ * injects on create, not something a user re-points by editing the field. So the
+ * only read-only exception to declare is `locationId`.
+ *
+ * (Passing this set to buildGenericEntityJsonTableSpec is also what flags the table
+ * as writable — see that function. For a future writable entity whose response has
+ * MANY read-only fields, source the read-only set the same way: response fields
+ * minus the entity's Create/Update DTO properties.)
+ */
+const CALENDAR_READONLY_FIELD_KEYS: ReadonlySet<string> = new Set(['locationId']);
 
 /** Standard objects we expose through their dedicated tables, not as generic objects. */
 const STANDARD_OBJECT_KEYS_HANDLED_ELSEWHERE = new Set<string>(['contact', 'opportunity']);
@@ -280,6 +299,10 @@ export class GoHighLevelConnector extends Connector {
             listEntityConfig.displayName,
             listEntityConfig.idField,
             GOHIGHLEVEL_ENTITY_FIELDS[id.wsId],
+            // Calendars is writable (create/update/delete via the Calendars API); the
+            // read-only exception set both flags it writable and keeps locationId/id
+            // read-only. The other generic entities stay fully read-only (undefined).
+            id.wsId === CALENDARS_TABLE_WS_ID ? CALENDAR_READONLY_FIELD_KEYS : undefined,
           );
         }
         // Otherwise it's a discovered custom object.
@@ -417,6 +440,8 @@ export class GoHighLevelConnector extends Connector {
         )) as ConnectorFile;
         this.reshapeCustomFieldsArrayToObject(created, idToShortKey, 'fieldValue');
         results.push(created);
+      } else if (wsId === CALENDARS_TABLE_WS_ID) {
+        results.push((await this.client.createCalendar(this.buildCalendarPayload(file))) as ConnectorFile);
       } else if (this.isCustomObjectTable(wsId)) {
         const objectKey = this.objectKeyFromId(tableSpec.id);
         results.push(
@@ -471,6 +496,13 @@ export class GoHighLevelConnector extends Connector {
           await this.reconcileOpportunityFollowers(recordId, extractFollowerUserIds(changed.followers));
         }
         if (updated) this.reshapeCustomFieldsArrayToObject(updated, idToShortKey, 'fieldValue');
+      } else if (wsId === CALENDARS_TABLE_WS_ID) {
+        // HighLevel merges per field on PUT, so the sparse `changed` payload is a
+        // valid partial update — only the edited fields are sent.
+        const calendarPayload = this.buildCalendarPayload(changed);
+        if (Object.keys(calendarPayload).length > 0) {
+          updated = await this.client.updateCalendar(recordId, calendarPayload);
+        }
       } else if (this.isCustomObjectTable(wsId)) {
         const objectKey = this.objectKeyFromId(tableSpec.id);
         updated = await this.client.updateObjectRecord(objectKey, recordId, this.buildObjectRecordPayload(file));
@@ -495,6 +527,8 @@ export class GoHighLevelConnector extends Connector {
         await this.client.deleteContact(recordId);
       } else if (wsId === OPPORTUNITIES_TABLE_WS_ID) {
         await this.client.deleteOpportunity(recordId);
+      } else if (wsId === CALENDARS_TABLE_WS_ID) {
+        await this.client.deleteCalendar(recordId);
       } else if (this.isCustomObjectTable(wsId)) {
         await this.client.deleteObjectRecord(this.objectKeyFromId(tableSpec.id), recordId);
       } else {
@@ -916,6 +950,20 @@ export class GoHighLevelConnector extends Connector {
     // ("followers must be an object"). They aren't edited through the properties
     // bag, so we leave them to HighLevel rather than send a rejected shape.
     return { properties: source.properties ?? {} };
+  }
+
+  /**
+   * Calendar write payload: clone the source and drop the fields HighLevel computes
+   * or rejects on write — `id` (identity) and `locationId` (the connection scope,
+   * injected by the client on create). Every other calendar field is sent verbatim
+   * (the API ignores/rejects an invalid one). Used for both create (the full new
+   * record) and update (the sparse `changedFields` diff — HighLevel merges per field).
+   */
+  private buildCalendarPayload(source: Record<string, unknown>): Record<string, unknown> {
+    const payload: Record<string, unknown> = { ...source };
+    delete payload.id;
+    delete payload.locationId;
+    return payload;
   }
 
   /**
