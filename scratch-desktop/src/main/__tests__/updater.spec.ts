@@ -15,14 +15,14 @@ const autoUpdaterStub = {
   quitAndInstall: vi.fn(),
 };
 
-const electronAppStub = { isPackaged: true };
+const electronAppStub = { isPackaged: true, getVersion: () => '1.0.0' };
 
 vi.mock('electron-updater', () => ({
   autoUpdater: autoUpdaterStub,
 }));
 
 vi.mock('electron-log', () => ({
-  default: { transports: { file: { level: 'silly' } } },
+  default: { transports: { file: { level: 'silly' } }, info: vi.fn(), warn: vi.fn() },
 }));
 
 vi.mock('electron', () => ({
@@ -39,6 +39,7 @@ function setPlatform(value: NodeJS.Platform): void {
 beforeEach(() => {
   vi.useFakeTimers();
   electronAppStub.isPackaged = true;
+  electronAppStub.getVersion = () => '1.0.0';
   setPlatform('linux');
   delete process.env.SCRATCH_DESKTOP_DISABLE_AUTO_UPDATE;
   eventHandlers.clear();
@@ -267,6 +268,112 @@ describe('initAutoUpdater event forwarding', () => {
     expect(autoUpdaterStub.checkForUpdates).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(autoUpdaterStub.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    controller?.dispose();
+  });
+});
+
+describe('initAutoUpdater version-already-installed guard', () => {
+  function makeRecordingWindow(sink: UpdaterEvent[]) {
+    return {
+      isDestroyed: () => false,
+      webContents: {
+        send: vi.fn((_channel: string, payload: UpdaterEvent) => {
+          sink.push(payload);
+        }),
+      },
+    };
+  }
+
+  it('suppresses update-available when the offered version is already running', async () => {
+    electronAppStub.getVersion = () => '1.4.0';
+    const sentEvents: UpdaterEvent[] = [];
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => makeRecordingWindow(sentEvents) as never });
+
+    eventHandlers.get('update-available')?.({ version: '1.4.0', releaseDate: '2026-04-24' });
+
+    expect(sentEvents).toEqual([{ type: 'update-not-available', manual: false, version: '1.4.0' }]);
+
+    controller?.dispose();
+  });
+
+  it('suppresses a re-offered update-downloaded for the already-installed version (cache replay)', async () => {
+    electronAppStub.getVersion = () => '2.0.0';
+    const sentEvents: UpdaterEvent[] = [];
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => makeRecordingWindow(sentEvents) as never });
+
+    eventHandlers.get('update-downloaded')?.({ version: '2.0.0', releaseDate: '2026-04-24' });
+
+    expect(sentEvents).toEqual([{ type: 'update-not-available', manual: false, version: '2.0.0' }]);
+
+    controller?.dispose();
+  });
+
+  it('suppresses when the offered version differs only by build metadata or a leading v', async () => {
+    electronAppStub.getVersion = () => '1.4.0';
+    const sentEvents: UpdaterEvent[] = [];
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => makeRecordingWindow(sentEvents) as never });
+
+    eventHandlers.get('update-downloaded')?.({ version: ' v1.4.0+build.9 ' });
+
+    expect(sentEvents).toEqual([{ type: 'update-not-available', manual: false, version: ' v1.4.0+build.9 ' }]);
+
+    controller?.dispose();
+  });
+
+  it('forwards update-downloaded when the offered version is strictly newer', async () => {
+    electronAppStub.getVersion = () => '1.4.0';
+    const sentEvents: UpdaterEvent[] = [];
+
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => makeRecordingWindow(sentEvents) as never });
+
+    eventHandlers.get('update-downloaded')?.({ version: '1.5.0', releaseDate: '2026-04-24' });
+
+    expect(sentEvents).toEqual([
+      {
+        type: 'update-downloaded',
+        manual: false,
+        version: '1.5.0',
+        releaseDate: '2026-04-24',
+        releaseNotes: null,
+      },
+    ]);
+
+    controller?.dispose();
+  });
+});
+
+describe('initAutoUpdater concurrency guard', () => {
+  it('ignores a second check while one is already in flight', async () => {
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => null });
+    expect(controller).not.toBeNull();
+
+    void controller?.checkForUpdates();
+    void controller?.checkForUpdates();
+
+    expect(autoUpdaterStub.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    controller?.dispose();
+  });
+
+  it('allows the next check after the in-flight cycle ends with a terminal event', async () => {
+    const { initAutoUpdater } = await import('../updater');
+    const controller = initAutoUpdater({ getMainWindow: () => null });
+    expect(controller).not.toBeNull();
+
+    void controller?.checkForUpdates();
+    eventHandlers.get('update-not-available')?.({ version: '1.0.0' });
+    void controller?.checkForUpdates();
+
+    expect(autoUpdaterStub.checkForUpdates).toHaveBeenCalledTimes(2);
 
     controller?.dispose();
   });

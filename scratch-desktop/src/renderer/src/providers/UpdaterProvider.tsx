@@ -68,6 +68,12 @@ export function UpdaterProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         case 'update-not-available': {
+          // Always clear a lingering "Restart & install" prompt, even on a
+          // background check. The main process emits this when it suppresses a
+          // re-offer of the already-installed version (see updater.ts), and a
+          // genuine background "no update" should also dismiss a stale prompt.
+          notifications.hide(UPDATE_DOWNLOADED_NOTIFICATION_ID);
+          updateDownloadedRef.current = false;
           if (event.manual) {
             showManualToast({
               title: "You're up to date",
