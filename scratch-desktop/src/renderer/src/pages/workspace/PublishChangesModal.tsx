@@ -26,6 +26,7 @@ import {
   trackPublishUploadCompleted,
   trackPublishUploadStarted,
 } from '../../lib/posthog';
+import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { SingleRecordPublishTarget } from './single-record-publish-target';
 
 interface UnreviewedChangeEntry {
@@ -516,6 +517,9 @@ export function PublishChangesModal({
   onViewProblems,
   singleRecord,
 }: PublishChangesModalProps) {
+  // Per-workbook "Validation" toggle (renderer-only display setting). When it's
+  // off the publish pre-flight skips the validation gate entirely — see DEV-10522.
+  const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
   const pollingIntervalRef = useRef<number | null>(null);
   const loggedCompleteJobIdsRef = useRef<Set<string>>(new Set());
   /**
@@ -672,6 +676,12 @@ export function PublishChangesModal({
     // per-record Publish button only shows then), so skip the workspace-wide
     // unreviewed scan entirely. Validation is scoped to just this record.
     if (!localPath || !singleRecord) return;
+    // DEV-10522: when the workbook's Validation toggle is off, there is no gate —
+    // skip the validation check and upload straight away.
+    if (!validateEnabled) {
+      await startUpload();
+      return;
+    }
     setProgressSteps([{ id: 'validation', label: 'Checking this record for validation issues…', status: 'active' }]);
     const results = await window.scratchFiles.getValidationResults(
       localPath,
@@ -695,7 +705,7 @@ export function PublishChangesModal({
       ),
     );
     await startUpload();
-  }, [localPath, singleRecord, startUpload]);
+  }, [localPath, singleRecord, startUpload, validateEnabled]);
 
   const loadInitialState = useCallback(async () => {
     if (!opened || !localPath) {
@@ -739,10 +749,14 @@ export function PublishChangesModal({
     // the user sees one finish before the next starts. Total slowdown vs. the
     // prior parallel path is ~100ms (validation count is SQLite-fast); the
     // perception win is worth it.
-    setProgressSteps([
+    // DEV-10522: the validation step only exists when the Validation toggle is on.
+    const initialProgressSteps: ProgressStep[] = [
       { id: 'unreviewed', label: 'Checking for unreviewed local edits…', status: 'active' },
-      { id: 'validation', label: 'Loading validation status…', status: 'pending' },
-    ]);
+    ];
+    if (validateEnabled) {
+      initialProgressSteps.push({ id: 'validation', label: 'Loading validation status…', status: 'pending' });
+    }
+    setProgressSteps(initialProgressSteps);
 
     try {
       const nextUnreviewed = await window.scratchDesktop.listUnreviewedChanges(localPath);
@@ -767,37 +781,44 @@ export function PublishChangesModal({
         }),
       );
 
-      const counts = await loadValidationCounts(localPath);
-      setValidationCounts(
-        counts ? { errors: counts.errors, warnings: counts.warnings, records: counts.records } : null,
-      );
-      setValidationStats(counts?.stats ?? []);
-      setProgressSteps((prev) =>
-        prev.map((step) => {
-          if (step.id === 'validation') {
-            const records = counts?.records ?? 0;
-            return {
-              ...step,
-              status: 'done',
-              label:
-                records === 0
-                  ? 'No validation issues'
-                  : `Found ${records.toLocaleString()} record${records === 1 ? '' : 's'} with validation issues`,
-            };
-          }
-          return step;
-        }),
-      );
+      // DEV-10522: only run the validation pre-flight when the toggle is on;
+      // otherwise `counts` stays null and the error gate below never fires.
+      let counts: { errors: number; warnings: number; records: number; stats: ValidationStat[] } | null = null;
+      if (validateEnabled) {
+        counts = await loadValidationCounts(localPath);
+        setValidationCounts(
+          counts ? { errors: counts.errors, warnings: counts.warnings, records: counts.records } : null,
+        );
+        setValidationStats(counts?.stats ?? []);
+        setProgressSteps((prev) =>
+          prev.map((step) => {
+            if (step.id === 'validation') {
+              const errorRecordCount = counts?.errors ?? 0;
+              return {
+                ...step,
+                status: 'done',
+                label:
+                  errorRecordCount === 0
+                    ? 'No validation errors'
+                    : `Found ${errorRecordCount.toLocaleString()} record${errorRecordCount === 1 ? '' : 's'} with validation errors`,
+              };
+            }
+            return step;
+          }),
+        );
+      }
 
       if (autoStartUploadOnOpen) {
         await startUpload();
         return;
       }
 
-      const hasValidationProblems = counts !== null && counts.records > 0;
+      // DEV-10522: only validation ERRORS gate publish — a workspace whose only
+      // validation problems are warnings falls through and publishes without the modal.
+      const hasValidationErrors = counts !== null && counts.errors > 0;
       const hasUnreviewed = !assumeUnreviewedApproved && nextUnreviewed.length > 0;
 
-      if (hasUnreviewed || hasValidationProblems) {
+      if (hasUnreviewed || hasValidationErrors) {
         setMode('approval');
         return;
       }
@@ -818,6 +839,7 @@ export function PublishChangesModal({
     startUpload,
     singleRecord,
     loadSingleRecordInitialState,
+    validateEnabled,
   ]);
 
   const continueAfterApproval = useCallback(() => {
@@ -932,7 +954,16 @@ export function PublishChangesModal({
 
   const handleViewProblems = useCallback(() => {
     if (!localPath || !onViewProblems) return;
-    const statsWithProblems = validationStats.filter((s) => s.records > 0);
+    // DEV-10522: the single-record flow never populates `validationStats`, so
+    // navigate straight to the record's (absolute) folder path instead — the
+    // grid then activates its `has-problems` filter on that folder.
+    if (singleRecord) {
+      onViewProblems(singleRecord.folderPath);
+      return;
+    }
+    // Workspace flow: land on a folder that actually has an error (skip
+    // warning-only folders, which no longer gate publish — DEV-10522).
+    const statsWithProblems = validationStats.filter((s) => s.errors > 0);
     if (statsWithProblems.length === 0) return;
 
     let targetStat = statsWithProblems[0];
@@ -953,7 +984,7 @@ export function PublishChangesModal({
     }
 
     onViewProblems(`${localPath}/${targetStat.connection}/${targetStat.folder_path}`);
-  }, [currentFolderPath, localPath, onViewProblems, validationStats]);
+  }, [currentFolderPath, localPath, onViewProblems, validationStats, singleRecord]);
 
   const handleClose = useCallback(() => {
     if (closing) {
@@ -1412,11 +1443,11 @@ export function PublishChangesModal({
           <>
             {mode === 'approval' && (
               <>
-                {validationCounts && validationCounts.records > 0 && (
-                  <Text size="sm" c={validationCounts.errors > 0 ? 'red' : 'orange'}>
+                {validationCounts && validationCounts.errors > 0 && (
+                  <Text size="sm" c="red">
                     {singleRecord
-                      ? 'This record has validation errors. Fix them before publishing it.'
-                      : `${validationCounts.records} record${validationCounts.records === 1 ? '' : 's'} contain validation problems that may prevent them from publishing.`}
+                      ? 'This record has validation errors that may prevent it from publishing.'
+                      : `${validationCounts.errors} record${validationCounts.errors === 1 ? '' : 's'} contain validation errors that may prevent them from publishing.`}
                   </Text>
                 )}
                 {unreviewedEntries.length > 0 && (
@@ -1432,7 +1463,7 @@ export function PublishChangesModal({
                   </>
                 )}
                 <Group justify="flex-end">
-                  {onViewProblems && validationCounts && validationCounts.records > 0 && (
+                  {onViewProblems && validationCounts && validationCounts.errors > 0 && (
                     <Button variant="outline" color="red" onClick={handleViewProblems} disabled={closing}>
                       View Problems
                     </Button>
@@ -1453,9 +1484,9 @@ export function PublishChangesModal({
                         Accept and publish
                       </Button>
                     </>
-                  ) : singleRecord ? null : (
+                  ) : (
                     <Button onClick={() => continueAfterApproval()} disabled={closing}>
-                      {validationCounts && validationCounts.records > 0 ? 'Ignore and Continue' : 'Continue'}
+                      {validationCounts && validationCounts.errors > 0 ? 'Ignore and Continue' : 'Continue'}
                     </Button>
                   )}
                 </Group>
