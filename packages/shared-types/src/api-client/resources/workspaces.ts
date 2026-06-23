@@ -2,6 +2,7 @@ import type { Workspace } from '../../db';
 import type { CreateWorkbookDto } from '../../dto/workbook/create-workbook.dto';
 import type { DeleteWorkbookResponseDto } from '../../dto/workbook/delete-workbook.dto';
 import type { WorkbookListQuery } from '../../dto/workbook/list-workbooks-query.dto';
+import type { RecordCountResponseDto } from '../../dto/workbook/record-count.dto';
 import type { UpdateWorkbookSettingsDto } from '../../dto/workbook/update-workbook-settings.dto';
 import type { UpdateWorkbookDto } from '../../dto/workbook/update-workbook.dto';
 import type { WorkbookManager } from '../../enums/enums';
@@ -87,6 +88,22 @@ export function createWorkspacesApi(http: Http) {
         { dataFolderIds, rehost: options?.rehost },
         { fallbackMessage: 'Failed to start asset pull' },
       );
+      return res.data;
+    },
+
+    /** Total record count for a single workspace (sum of its folders' counts). */
+    recordCount: async (id: string): Promise<RecordCountResponseDto> => {
+      const res = await http.get<RecordCountResponseDto>(`/workbook/${id}/record-count`, {
+        fallbackMessage: 'Failed to fetch workspace record count',
+      });
+      return res.data;
+    },
+
+    /** Total record count across every workspace in the authenticated user's organization. */
+    organizationRecordCount: async (): Promise<RecordCountResponseDto> => {
+      const res = await http.get<RecordCountResponseDto>('/workbook/record-count/total', {
+        fallbackMessage: 'Failed to fetch organization record count',
+      });
       return res.data;
     },
   };
