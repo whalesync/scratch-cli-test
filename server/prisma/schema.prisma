@@ -393,6 +393,16 @@ model DataFolder {
   // service has no constructible deep link.
   remoteWebUrl String?
 
+  // Denormalized count of record files in this folder: direct-child, non-dotfile blobs on
+  // the `main` branch of the folder's git repo (matches what the folder viewer shows).
+  // Sourced from git (NOT FileIndex) and refreshed after a pull and by an hourly cron, so
+  // it may briefly lag UI edits/syncs/remote-deletes between refreshes. Workbook totals are
+  // summed from this column on read (no Workbook column).
+  recordCount Int @default(0)
+
+  // When recordCount was last recomputed; null until the first pull/cron computes it.
+  recordCountUpdatedAt DateTime?
+
   // Lock indicating an operation in progress: "pull", "publish", or null
   lock String?
 

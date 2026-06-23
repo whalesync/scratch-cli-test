@@ -17,6 +17,14 @@ export const WorkspaceEntity = {
     schedulesByEntityId?: Map<string, Schedule[]>,
     incrementalPullSupportByDataFolderId?: Map<string, IncrementalPullSupport>,
   ): Workspace {
+    const dataFolders = workbook.dataFolders?.map(
+      (df) =>
+        new DataFolderEntity(
+          df,
+          schedulesByEntityId?.get(df.id) ?? [],
+          incrementalPullSupportByDataFolderId?.get(df.id) ?? IncrementalPullSupport.NOT_SUPPORTED,
+        ),
+    );
     return {
       id: workbook.id as WorkbookId,
       name: workbook.name ?? null,
@@ -32,14 +40,10 @@ export const WorkspaceEntity = {
       settings: (workbook.settings as Record<string, string | number | boolean> | null) ?? {},
       userId: workbook.userId ?? null,
       organizationId: workbook.organizationId,
-      dataFolders: workbook.dataFolders?.map(
-        (df) =>
-          new DataFolderEntity(
-            df,
-            schedulesByEntityId?.get(df.id) ?? [],
-            incrementalPullSupportByDataFolderId?.get(df.id) ?? IncrementalPullSupport.NOT_SUPPORTED,
-          ),
-      ),
+      dataFolders,
+      // Workspace-level total, summed from the per-folder counts. Undefined when folders
+      // aren't loaded — we don't fabricate a total without them.
+      recordCount: dataFolders?.reduce((sum, folder) => sum + folder.recordCount, 0),
     };
   },
 };

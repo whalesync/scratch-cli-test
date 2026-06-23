@@ -624,6 +624,22 @@ impl GitRepo {
         }
     }
 
+    /// Count the DIRECT-child record files (blobs, dotfiles excluded) in a single folder of
+    /// the given commit's tree. Returns 0 for a missing or empty folder. Mirrors the
+    /// `files_paginated` filter exactly (`!is_tree && !name.starts_with('.')`), so it matches
+    /// the per-folder count the folder viewer shows.
+    pub fn count_files_in_folder(
+        &self,
+        commit_oid: ObjectId,
+        folder_path: &str,
+    ) -> Result<usize, AppError> {
+        let entries = self.read_tree_at_path_or_empty(commit_oid, folder_path)?;
+        Ok(entries
+            .iter()
+            .filter(|(name, _, is_tree)| !is_tree && !name.starts_with('.'))
+            .count())
+    }
+
     /// Recursively collect every blob under `folder_path` in the given commit's tree.
     ///
     /// Each returned entry is `(blob_path_relative_to_folder, blob_oid)`. Used by the
@@ -1036,5 +1052,47 @@ mod tests {
         assert!(names.contains(&"a.txt"));
         assert!(names.contains(&"b.txt"));
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn count_files_in_folder_counts_direct_files_excluding_subdirs_and_dotfiles() {
+        let (_tmp, repo) = setup_repo();
+
+        let add = |path: &str| FileChange {
+            path: path.to_string(),
+            content: Some("x".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        };
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                add("docs/a.json"),
+                add("docs/b.json"),
+                add("docs/.schema.json"),
+                add("docs/sub/c.json"),
+            ],
+            "add docs",
+        )
+        .unwrap();
+
+        let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        // Two direct record files; the dotfile and the nested file under docs/sub are excluded.
+        assert_eq!(repo.count_files_in_folder(commit_oid, "docs").unwrap(), 2);
+        assert_eq!(
+            repo.count_files_in_folder(commit_oid, "docs/sub").unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn count_files_in_folder_returns_zero_for_missing_folder() {
+        let (_tmp, repo) = setup_repo();
+        let commit_oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        assert_eq!(
+            repo.count_files_in_folder(commit_oid, "nonexistent")
+                .unwrap(),
+            0
+        );
     }
 }

@@ -8,6 +8,9 @@ export const SWR_KEYS = {
   transformerMetadata: {
     all: () => ['transformer-metadata', 'all'] as const,
   },
+  cron: {
+    jobs: () => ['cron', 'jobs'] as const,
+  },
   connectorAccounts: {
     list: (workbookId: string) => ['connector-accounts', 'list', workbookId],
     detail: (workbookId: string, id: string) => ['connector-accounts', 'detail', workbookId, id],

@@ -215,6 +215,7 @@ export function makeDataFolder(overrides?: Partial<DataFolder>): DataFolder {
     schedules: [],
     lastFullPullAt: null,
     lastIncrementalPullAt: null,
+    recordCount: 0,
     incrementalPullSupport: IncrementalPullSupport.NOT_SUPPORTED,
     ...overrides,
   };

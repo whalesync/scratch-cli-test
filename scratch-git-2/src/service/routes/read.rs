@@ -425,6 +425,85 @@ pub async fn files_paginated(
 }
 
 #[derive(Deserialize)]
+pub struct CountByFolderQuery {
+    pub branch: Option<String>,
+}
+
+/// Count record files per folder across an entire repo in a single tree walk. Returns
+/// `{ "counts": { "<folderPath>": <n>, ... } }` keyed by slash-free folder paths (the
+/// repository root is keyed as ""). Counts DIRECT-child non-dotfile blobs per folder — the
+/// same semantics as `files_paginated`, but for every folder at once. Defaults to `main`
+/// (the published/persisted record set, not the `dirty` working set); a missing branch
+/// yields an empty map, mirroring `files_paginated`'s missing-branch behavior.
+pub async fn count_files_by_folder(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<CountByFolderQuery>,
+) -> Response {
+    let result = tokio::task::spawn_blocking({
+        let repos_dir = state.repos_dir.clone();
+        let id = id.clone();
+        move || {
+            let branch = query.branch.as_deref().unwrap_or(MAIN_BRANCH);
+            let git_repo = GitRepo::open(&repos_dir, &id)?;
+            let commit_oid = match git_repo.resolve_ref(branch) {
+                Ok(oid) => oid,
+                Err(_) => {
+                    return Ok(json!({ "counts": {} }));
+                }
+            };
+            let counts = git_repo.count_files_by_folder(commit_oid)?;
+            Ok::<_, AppError>(json!({ "counts": counts }))
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, &id, inner),
+        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CountFolderQuery {
+    pub branch: Option<String>,
+    pub folder: Option<String>,
+}
+
+/// Count the direct-child record files (non-dotfile blobs) in a single folder. Returns
+/// `{ "count": <n> }`. Defaults to `main`; a missing branch or absent folder yields 0.
+pub async fn count_folder_files(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<CountFolderQuery>,
+) -> Response {
+    let result = tokio::task::spawn_blocking({
+        let repos_dir = state.repos_dir.clone();
+        let id = id.clone();
+        move || {
+            let branch = query.branch.as_deref().unwrap_or(MAIN_BRANCH);
+            let folder = query.folder.as_deref().unwrap_or("");
+            let folder = folder.strip_prefix('/').unwrap_or(folder);
+            let git_repo = GitRepo::open(&repos_dir, &id)?;
+            let commit_oid = match git_repo.resolve_ref(branch) {
+                Ok(oid) => oid,
+                Err(_) => {
+                    return Ok(json!({ "count": 0 }));
+                }
+            };
+            let count = git_repo.count_files_in_folder(commit_oid, folder)?;
+            Ok::<_, AppError>(json!({ "count": count }))
+        }
+    })
+    .await;
+
+    match result {
+        Ok(inner) => envelope_result(&state, &id, inner),
+        Err(e) => envelope_error(&state, Some(&id), AppError::internal(e.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
 pub struct BlobsByOidBody {
     pub oids: Vec<String>,
 }

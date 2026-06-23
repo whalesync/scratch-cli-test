@@ -20,6 +20,7 @@ import type {
   DeleteWorkbookResponseDto,
   PullAssetsResponseDto,
   PullFilesResponseDto,
+  RecordCountResponseDto,
   WorkbookId,
   Workspace,
   WorkspaceInviteId,
@@ -102,6 +103,31 @@ export class WorkbookController {
     return workbooks.map((s) =>
       WorkspaceEntity.from(s, allSchedules.get(s.id as WorkbookId), incrementalPullSupportByDataFolderId),
     );
+  }
+
+  /**
+   * Total record count across every workbook in the authenticated user's organization.
+   * Workbooks are owned by the organization (not the individual user), so this is the
+   * org-wide total for the caller. Declared before `:id` so the static `record-count/total`
+   * path is never captured as a workbook id.
+   */
+  @Get('record-count/total')
+  async getOrganizationRecordCount(@Req() req: RequestWithUser): Promise<RecordCountResponseDto> {
+    const { organizationId } = userToActor(req.user);
+    const recordCount = await this.dataFolderService.sumRecordCountForOrganization(organizationId);
+    return { recordCount };
+  }
+
+  /** Total record count for a single workbook (sum of its folders' counts). */
+  @Get(':id/record-count')
+  async getWorkbookRecordCount(
+    @Param('id') id: WorkbookId,
+    @Req() req: RequestWithUser,
+  ): Promise<RecordCountResponseDto> {
+    const actor = userToActor(req.user);
+    await this.service.assertReadableWorkbook(actor, id);
+    const recordCount = await this.dataFolderService.sumRecordCountForWorkbook(id);
+    return { recordCount };
   }
 
   @Get(':id')

@@ -361,6 +361,28 @@ export class ScratchGitClient {
     }>;
   }
 
+  /**
+   * Record-file count per folder for an entire repo, computed in a single tree walk.
+   * Keys are slash-free folder paths (root is ""); each value is the count of direct-child
+   * non-dotfile blobs. Counts the `main` branch by default. A missing branch returns {}.
+   */
+  async countFilesByFolder(repoId: string, branch = 'main'): Promise<Record<string, number>> {
+    const result = (await this.callGitApi(
+      `/api/repo/read/${this.encodeRepoId(repoId)}/count-by-folder?branch=${encodeURIComponent(branch)}`,
+      'GET',
+    )) as { counts: Record<string, number> };
+    return result.counts;
+  }
+
+  /** Record-file count for a single folder (direct-child non-dotfile blobs). 0 if absent. */
+  async countFolderFiles(repoId: string, branch: string, folder: string): Promise<number> {
+    const result = (await this.callGitApi(
+      `/api/repo/read/${this.encodeRepoId(repoId)}/count-folder?branch=${encodeURIComponent(branch)}&folder=${encodeURIComponent(folder)}`,
+      'GET',
+    )) as { count: number };
+    return result.count;
+  }
+
   async readBlobsByOid(repoId: string, oids: string[]): Promise<Array<{ oid: string; content: string | null }>> {
     return this.callGitApi(`/api/repo/read/${this.encodeRepoId(repoId)}/blobs-by-oid`, 'POST', { oids }) as Promise<
       Array<{ oid: string; content: string | null }>

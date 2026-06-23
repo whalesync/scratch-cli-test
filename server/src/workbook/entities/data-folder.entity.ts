@@ -36,6 +36,7 @@ export class DataFolderEntity implements DataFolder {
   schedules: Schedule[];
   lastFullPullAt: string | null;
   lastIncrementalPullAt: string | null;
+  recordCount: number;
   incrementalPullSupport: IncrementalPullSupport;
 
   constructor(
@@ -65,6 +66,7 @@ export class DataFolderEntity implements DataFolder {
     this.lastIncrementalPullAt = dataFolder.lastIncrementalPullAt
       ? dataFolder.lastIncrementalPullAt.toISOString()
       : null;
+    this.recordCount = dataFolder.recordCount;
     this.incrementalPullSupport = incrementalPullSupport;
   }
 }

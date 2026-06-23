@@ -69,6 +69,75 @@ impl GitRepo {
         Ok(())
     }
 
+    /// Walk a commit's tree once and return a map of folder path → count of DIRECT-child
+    /// record files (blobs) in that folder, EXCLUDING dotfiles (any path component starting
+    /// with '.'). The repository root is keyed as the empty string "". Folders that contain
+    /// only subfolders (no direct file children) do not appear in the map — callers treat an
+    /// absent key as 0.
+    ///
+    /// This mirrors the per-folder file count the folder viewer shows (see `files_paginated`:
+    /// direct children, non-tree, non-dotfile) but computes it for every folder in a single
+    /// pass. Each blob is attributed to its IMMEDIATE parent folder, so a parent folder never
+    /// inherits the records of a nested child folder.
+    pub fn count_files_by_folder(
+        &self,
+        commit_oid: ObjectId,
+    ) -> Result<HashMap<String, usize>, AppError> {
+        let repo = &self.repo;
+        let commit = repo
+            .find_commit(commit_oid)
+            .map_err(|e| AppError::internal(format!("Failed to find commit: {}", e)))?;
+        let tree = commit
+            .tree()
+            .map_err(|e| AppError::internal(format!("Failed to get tree: {}", e)))?;
+
+        let mut counts = HashMap::new();
+        self.count_files_by_folder_walk(&tree, String::new(), &mut counts)?;
+        Ok(counts)
+    }
+
+    fn count_files_by_folder_walk(
+        &self,
+        tree: &gix::Tree<'_>,
+        prefix: String,
+        counts: &mut HashMap<String, usize>,
+    ) -> Result<(), AppError> {
+        for entry_ref in tree.iter() {
+            let entry = entry_ref
+                .map_err(|e| AppError::internal(format!("Failed to read tree entry: {}", e)))?;
+            let name = std::str::from_utf8(entry.filename())
+                .map_err(|e| AppError::internal(format!("Invalid UTF-8 in filename: {}", e)))?
+                .to_string();
+
+            // Skip dotfiles and dot-directories: never count `.schema.json`, never descend
+            // `.scratch/`. Matches the folder viewer's `!name.starts_with('.')` filter.
+            if name.starts_with('.') {
+                continue;
+            }
+
+            let mode = entry.mode();
+
+            if mode.is_tree() {
+                let child_path = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
+                let obj = self
+                    .repo
+                    .find_object(entry.object_id())
+                    .map_err(|e| AppError::internal(format!("Failed to find tree: {}", e)))?;
+                let sub_tree = obj
+                    .try_into_tree()
+                    .map_err(|e| AppError::internal(format!("Not a tree: {}", e)))?;
+                self.count_files_by_folder_walk(&sub_tree, child_path, counts)?;
+            } else if mode.is_blob() {
+                *counts.entry(prefix.clone()).or_insert(0) += 1;
+            }
+        }
+        Ok(())
+    }
+
     /// Compare two commits and return the list of dirty files.
     pub fn compare_commits(
         &self,
@@ -530,6 +599,71 @@ mod tests {
         let files = repo.get_tree_files(oid).unwrap();
         assert_eq!(files.len(), 1);
         assert!(files.contains_key("readme.txt"));
+    }
+
+    // ── count_files_by_folder tests ──
+
+    #[test]
+    fn count_files_by_folder_counts_direct_children_per_folder() {
+        let (_tmp, repo) = setup_repo();
+
+        let add = |path: &str| FileChange {
+            path: path.to_string(),
+            content: Some("x".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        };
+        let oid = commit_files(
+            &repo,
+            &[
+                add("A/r1.json"),
+                add("A/r2.json"),
+                add("A/B/r3.json"),
+                add("root.json"),
+            ],
+            "add records",
+        );
+
+        let counts = repo.count_files_by_folder(oid).unwrap();
+        // A holds two DIRECT files; the nested record under A/B must NOT inflate A's count.
+        assert_eq!(counts.get("A"), Some(&2));
+        assert_eq!(counts.get("A/B"), Some(&1));
+        // The repository root is keyed as the empty string.
+        assert_eq!(counts.get(""), Some(&1));
+    }
+
+    #[test]
+    fn count_files_by_folder_skips_dotfiles_and_scratch_dir() {
+        let (_tmp, repo) = setup_repo();
+
+        let add = |path: &str| FileChange {
+            path: path.to_string(),
+            content: Some("x".to_string()),
+            oid: None,
+            change_type: ChangeType::Add,
+        };
+        let oid = commit_files(
+            &repo,
+            &[
+                add("A/r1.json"),
+                add("A/.schema.json"),
+                add(".scratch/A/schema.json"),
+            ],
+            "add records + metadata",
+        );
+
+        let counts = repo.count_files_by_folder(oid).unwrap();
+        assert_eq!(counts.get("A"), Some(&1));
+        // The dot-directory is never descended, so it contributes no folder entry.
+        assert_eq!(counts.get(".scratch/A"), None);
+    }
+
+    #[test]
+    fn count_files_by_folder_empty_repo() {
+        let (_tmp, repo) = setup_repo();
+        let oid = repo.resolve_ref(MAIN_BRANCH).unwrap();
+        let counts = repo.count_files_by_folder(oid).unwrap();
+        assert!(counts.is_empty());
     }
 
     // ── has_visible_tree_changes tests ──

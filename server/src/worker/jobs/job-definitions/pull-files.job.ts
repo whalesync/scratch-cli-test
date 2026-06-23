@@ -14,6 +14,7 @@ import { AssetIndexService } from 'src/asset/asset-index.service';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
+import { recomputeRecordCountsForWorkbook } from 'src/record-count/record-count.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { exceptionForConnectorError } from 'src/remote-service/connectors/error';
 import { MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -386,6 +387,25 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         where: { id: dataFolder.id },
         data: { lock: null },
       });
+
+      // Refresh this folder's denormalized record count from git (a single-record refresh
+      // can create/delete a file). Scoped to this connection (one tree walk); emitEvent is
+      // off because the folder-updated event emitted just below already prompts a refetch.
+      // Non-fatal — a failure here must not fail the pull.
+      try {
+        await recomputeRecordCountsForWorkbook(
+          { prisma: this.prisma, scratchGit: this.scratchGitService, events: this.workbookEventService },
+          dataFolder.workbookId as WorkbookId,
+          { connectorAccountId: dataFolder.connectorAccountId, emitEvent: false },
+        );
+      } catch (err) {
+        WSLogger.warn({
+          source: 'PullFilesJob',
+          message: 'Failed to refresh record counts after single-file pull',
+          workbookId: dataFolder.workbookId,
+          error: err,
+        });
+      }
 
       WSLogger.debug({
         source: 'PullFilesJob',

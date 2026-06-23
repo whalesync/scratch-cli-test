@@ -32,6 +32,7 @@ export * from './dto/code-migrations/code-migrations.dto';
 export * from './dto/connector-account/connection-responses.dto';
 export * from './dto/connector-account/create-connector-account.dto';
 export * from './dto/connector-account/update-connector-account.dto';
+export * from './dto/cron/cron.dto';
 export * from './dto/data-folder/create-data-folder.dto';
 export * from './dto/data-folder/data-folder-publish-status.dto';
 export * from './dto/data-folder/move-data-folder.dto';
@@ -59,6 +60,7 @@ export * from './dto/workbook/list-files.dto';
 export * from './dto/workbook/list-workbooks-query.dto';
 export * from './dto/workbook/pull-assets.dto';
 export * from './dto/workbook/pull-files.dto';
+export * from './dto/workbook/record-count.dto';
 export * from './dto/workbook/update-workbook-settings.dto';
 export * from './dto/workbook/update-workbook.dto';
 

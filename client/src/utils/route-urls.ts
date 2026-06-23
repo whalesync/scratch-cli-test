@@ -123,6 +123,7 @@ export class RouteUrls {
   static devToolsUsersPageUrl = '/settings/dev/users';
   static devToolsGalleryPageUrl = '/settings/dev/gallery';
   static devToolsJobsPageUrl = '/settings/dev/jobs';
+  static devToolsCronPageUrl = '/settings/dev/cron';
   static devToolsMigrationsPageUrl = '/settings/dev/migrations';
   static devToolsSyncDataFoldersPageUrl = '/settings/dev/sync-data-folders';
   static devToolsGridPageUrl = '/settings/dev/grid';

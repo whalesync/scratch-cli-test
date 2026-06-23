@@ -99,6 +99,14 @@ pub async fn run() {
             get(routes::read::files_paginated),
         )
         .route(
+            "/api/repo/read/{id}/count-by-folder",
+            get(routes::read::count_files_by_folder),
+        )
+        .route(
+            "/api/repo/read/{id}/count-folder",
+            get(routes::read::count_folder_files),
+        )
+        .route(
             "/api/repo/read/{id}/blobs-by-oid",
             post(routes::read::blobs_by_oid),
         )

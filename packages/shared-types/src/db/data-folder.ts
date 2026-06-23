@@ -30,6 +30,10 @@ export interface DataFolder {
   schedules: Schedule[];
   lastFullPullAt: string | null;
   lastIncrementalPullAt: string | null;
+  // Denormalized count of record files in this folder (direct-child, non-dotfile blobs on
+  // `main` — matches the folder viewer). Git-sourced; refreshed after a pull and by cron, so
+  // it can briefly lag local edits between refreshes.
+  recordCount: number;
 
   ///
   /// End "keep in sync" section

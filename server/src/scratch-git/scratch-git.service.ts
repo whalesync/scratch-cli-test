@@ -213,6 +213,22 @@ export class ScratchGitService {
     return this.scratchGitClient.listFilesPaginated(repoId, branch, folder, limit, cursor);
   }
 
+  /**
+   * Record-file count per folder for an entire repo (one tree walk). Keys are slash-free
+   * folder paths (root is ""); values count direct-child non-dotfile blobs — matching the
+   * folder viewer's per-folder file count. Defaults to `main` (the persisted record set).
+   * Backs the denormalized {@link DataFolder.recordCount}; an absent key means 0.
+   */
+  async countRecordFilesByFolder(repoId: string, branch: string = MAIN_BRANCH): Promise<Map<string, number>> {
+    const counts = await this.scratchGitClient.countFilesByFolder(repoId, branch);
+    return new Map(Object.entries(counts));
+  }
+
+  /** Record-file count for a single folder (direct-child non-dotfile blobs); 0 if absent. */
+  async countRecordFilesInFolder(repoId: string, folder: string, branch: string = MAIN_BRANCH): Promise<number> {
+    return this.scratchGitClient.countFolderFiles(repoId, branch, folder);
+  }
+
   async getRepoFilesPaginated(
     repoId: string,
     branch: string,

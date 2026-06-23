@@ -30,8 +30,15 @@ export interface Workspace {
   dataFolders?: DataFolder[];
   userId: string | null;
   organizationId: string;
-}
 
-///
-/// End "keep in sync" section
-///
+  ///
+  /// End "keep in sync" section
+  ///
+
+  /**
+   * Computed by the REST API (NOT a persisted Workbook column): the workspace's total
+   * record count, summed from `dataFolders[].recordCount`. Present only when `dataFolders`
+   * are loaded; `undefined` otherwise (we don't fabricate a total without the folders).
+   */
+  recordCount?: number;
+}

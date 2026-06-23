@@ -65,6 +65,33 @@ export class DataFolderService {
   ) {}
 
   /**
+   * Total record count for a single workbook: the sum of its folders' denormalized
+   * {@link DataFolder.recordCount}. A cheap DB aggregate over the maintained column, not a
+   * live git walk. Returns 0 for a workbook with no folders.
+   */
+  async sumRecordCountForWorkbook(workbookId: WorkbookId): Promise<number> {
+    const result = await this.db.client.dataFolder.aggregate({
+      _sum: { recordCount: true },
+      where: { workbookId },
+    });
+    return result._sum.recordCount ?? 0;
+  }
+
+  /**
+   * Total record count across every workbook owned by an organization
+   * (`Workbook.organizationId`), excluding workbooks pending deletion. Summed from the
+   * denormalized per-folder counts. Workbooks are organization-owned, so this is the
+   * count a member of that organization sees.
+   */
+  async sumRecordCountForOrganization(organizationId: string): Promise<number> {
+    const result = await this.db.client.dataFolder.aggregate({
+      _sum: { recordCount: true },
+      where: { workbook: { organizationId, isPendingDelete: false } },
+    });
+    return result._sum.recordCount ?? 0;
+  }
+
+  /**
    * Compute a folder's {@link IncrementalPullSupport} for the REST API, without
    * instantiating the connector or hitting any remote API. The connector
    * registry answers from the persisted `options` + `tableId` alone for most

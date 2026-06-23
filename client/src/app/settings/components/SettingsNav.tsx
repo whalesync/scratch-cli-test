@@ -8,6 +8,7 @@ import {
   BlocksIcon,
   BookOpenIcon,
   BriefcaseIcon,
+  ClockIcon,
   CreditCardIcon,
   DatabaseIcon,
   FolderSyncIcon,
@@ -73,6 +74,12 @@ const devNavItems: NavItem[] = [
     label: 'Job Manager',
     icon: BriefcaseIcon,
     href: '/settings/dev/jobs',
+  },
+  {
+    id: 'cron',
+    label: 'Cron Jobs',
+    icon: ClockIcon,
+    href: '/settings/dev/cron',
   },
   {
     id: 'migrations',

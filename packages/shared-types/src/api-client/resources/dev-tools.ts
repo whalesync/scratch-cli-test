@@ -1,5 +1,6 @@
 import type { DecryptedCredentials } from '../../connector/credentials';
 import type { User } from '../../db/user';
+import type { ListCronJobsResponseDto, TriggerCronJobResponseDto } from '../../dto/cron/cron.dto';
 import type { ChangeUserOrganizationDto } from '../../dto/dev-tools/change-user-organization.dto';
 import type { GetAllJobsResponseDto } from '../../dto/dev-tools/get-all-jobs.dto';
 import type { UserDetails } from '../../dto/dev-tools/user-detail.dto';
@@ -11,8 +12,8 @@ import type { Http } from '../http';
 
 /**
  * Developer-tools admin surface: user search/details, organization & subscription mutations,
- * connection credential inspection, waitlist management, test emails, and job listings.
- * Reached as `client.devTools.*`.
+ * connection credential inspection, waitlist management, test emails, job listings, and
+ * manual cron-job triggering. Reached as `client.devTools.*`.
  */
 export function createDevToolsApi(http: Http) {
   return {
@@ -20,6 +21,22 @@ export function createDevToolsApi(http: Http) {
       const res = await http.get<User[]>('/dev-tools/users/search', {
         params: { query },
         fallbackMessage: 'Failed to search users with query: ' + query,
+      });
+      return res.data;
+    },
+
+    /** List the cron jobs that can be manually triggered (admin only). */
+    listCronJobs: async (): Promise<ListCronJobsResponseDto> => {
+      const res = await http.get<ListCronJobsResponseDto>('/cron/jobs', {
+        fallbackMessage: 'Failed to fetch cron jobs',
+      });
+      return res.data;
+    },
+
+    /** Trigger a cron job to run now, by slug (admin only). */
+    triggerCronJob: async (slug: string): Promise<TriggerCronJobResponseDto> => {
+      const res = await http.post<TriggerCronJobResponseDto>(`/cron/jobs/${slug}/trigger`, undefined, {
+        fallbackMessage: `Failed to trigger cron job: ${slug}`,
       });
       return res.data;
     },

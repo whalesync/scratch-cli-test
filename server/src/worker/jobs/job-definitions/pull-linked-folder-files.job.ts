@@ -26,6 +26,7 @@ import { AssetIndexService } from 'src/asset/asset-index.service';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { FileIndexService } from 'src/publish-plan/file-index.service';
 import { FileReferenceService } from 'src/publish-plan/file-reference.service';
+import { recomputeRecordCountsForWorkbook } from 'src/record-count/record-count.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import type { Connector } from 'src/remote-service/connectors/connector';
 import { connectorRegistry } from 'src/remote-service/connectors/connector-registry';
@@ -494,6 +495,24 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       WSLogger.warn({
         source: LOG_SOURCE,
         message: 'Failed to rebuild index after pull',
+        workbookId: data.workbookId,
+        error: err,
+      });
+    }
+
+    // Refresh denormalized per-folder record counts from git now that `main` is up to date.
+    // Scoped to this pull's connector account, so it's a single tree walk. Non-fatal — a
+    // failure here must not fail the pull, same as the rebase/GC/index steps above.
+    try {
+      await recomputeRecordCountsForWorkbook(
+        { prisma: this.prisma, scratchGit: this.scratchGitService, events: this.workbookEventService },
+        data.workbookId,
+        { connectorAccountId, emitEvent: true, eventSource: 'job' },
+      );
+    } catch (err) {
+      WSLogger.warn({
+        source: LOG_SOURCE,
+        message: 'Failed to refresh record counts after pull',
         workbookId: data.workbookId,
         error: err,
       });
