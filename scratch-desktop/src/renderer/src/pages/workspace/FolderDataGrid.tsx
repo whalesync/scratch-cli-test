@@ -195,6 +195,12 @@ const STATUS_COL_WIDTH = 50;
 const STATUS_COL_ID = '__status';
 const INSPECT_BUTTON_SIZE = 18;
 const FLOATING_PANEL_GAP = 0;
+/**
+ * Upper bound the user can drag a column to. Glide's own default is 500px, which is too
+ * cramped for wide content like Webflow HTML fields; raise it so columns can be widened
+ * generously while still keeping a sane ceiling against accidental runaway drags.
+ */
+const MAX_RESIZABLE_COLUMN_WIDTH = 2000;
 
 /** Glide grid accent — uses the yellow highlight design tokens */
 const GRID_THEME = {
@@ -3076,6 +3082,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
                 isOutsideClick={isEditorOutsideClick}
                 cellActivationBehavior="double-click"
                 onColumnResize={onColumnResize}
+                maxColumnWidth={MAX_RESIZABLE_COLUMN_WIDTH}
                 drawCell={drawCell}
                 verticalBorder={(col) => col !== 0}
                 groupHeaderHeight={hasAnyGroups ? 28 : 0}
