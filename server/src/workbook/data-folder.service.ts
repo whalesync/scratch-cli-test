@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import { ConnectorAccount, Prisma } from '@prisma/client';
+import { ConnectorAccount, Prisma, WorkbookManager } from '@prisma/client';
 import {
   createDataFolderId,
   DataFolderGroup,
@@ -89,6 +89,44 @@ export class DataFolderService {
       where: { workbook: { organizationId, isPendingDelete: false } },
     });
     return result._sum.recordCount ?? 0;
+  }
+
+  /**
+   * The record count Whalesync attributes to an organization's plan: summed across every CRM-bridge
+   * workspace (`managedBy === ws_crm`) it owns, taking the LARGER of each workspace's two connection
+   * sides rather than the sum. A CRM bridge keeps the same records synced across both connections, so
+   * each record exists as a file on both sides; the user thinks of it as one record, so we count it
+   * once per workspace by taking the bigger side. Non-CRM-bridge workspaces are ignored entirely.
+   *
+   * Prisma can sum per (workbook, connector account) in one grouped query but can't express
+   * "max-per-workbook then sum", so we reduce the grouped rows in memory (mirrors the per-folder max
+   * in {@link largestConnectionSideRecordCount}). Org + `isPendingDelete` scoping matches
+   * {@link sumRecordCountForOrganization}.
+   */
+  async sumWhalesyncEligibleRecordCountForOrganization(organizationId: string): Promise<number> {
+    const recordCountByWorkbookAndConnectorAccount = await this.db.client.dataFolder.groupBy({
+      by: ['workbookId', 'connectorAccountId'],
+      where: {
+        connectorAccountId: { not: null },
+        workbook: { organizationId, isPendingDelete: false, managedBy: WorkbookManager.ws_crm },
+      },
+      _sum: { recordCount: true },
+    });
+
+    const largestConnectionSideRecordCountByWorkbookId = new Map<string, number>();
+    for (const row of recordCountByWorkbookAndConnectorAccount) {
+      const connectionSideRecordCount = row._sum.recordCount ?? 0;
+      const currentLargestForWorkbook = largestConnectionSideRecordCountByWorkbookId.get(row.workbookId) ?? 0;
+      if (connectionSideRecordCount > currentLargestForWorkbook) {
+        largestConnectionSideRecordCountByWorkbookId.set(row.workbookId, connectionSideRecordCount);
+      }
+    }
+
+    let totalWhalesyncEligibleRecordCount = 0;
+    for (const largestConnectionSide of largestConnectionSideRecordCountByWorkbookId.values()) {
+      totalWhalesyncEligibleRecordCount += largestConnectionSide;
+    }
+    return totalWhalesyncEligibleRecordCount;
   }
 
   /**

@@ -1,6 +1,7 @@
 import { Schedule } from '@prisma/client';
 import { IncrementalPullSupport, WorkbookId, WorkbookManager, Workspace } from '@spinner/shared-types';
 import { WorkbookCluster } from '../../db/cluster-types';
+import { largestConnectionSideRecordCount } from '../whalesync-eligible-record-count.util';
 import { DataFolderEntity } from './data-folder.entity';
 
 /**
@@ -44,6 +45,14 @@ export const WorkspaceEntity = {
       // Workspace-level total, summed from the per-folder counts. Undefined when folders
       // aren't loaded — we don't fabricate a total without them.
       recordCount: dataFolders?.reduce((sum, folder) => sum + folder.recordCount, 0),
+      // Whalesync-plan-eligible count: the larger of the two connection sides for a CRM-bridge
+      // workspace (counting each synced record once), 0 for a non-CRM-bridge workspace. Same
+      // load-dependent semantics as `recordCount` — undefined when folders aren't loaded.
+      whalesyncEligibleRecordCount: !workbook.dataFolders
+        ? undefined
+        : workbook.managedBy === WorkbookManager.WS_CRM
+          ? largestConnectionSideRecordCount(workbook.dataFolders)
+          : 0,
     };
   },
 };

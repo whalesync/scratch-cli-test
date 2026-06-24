@@ -41,4 +41,13 @@ export interface Workspace {
    * are loaded; `undefined` otherwise (we don't fabricate a total without the folders).
    */
   recordCount?: number;
+
+  /**
+   * Computed by the REST API (NOT a persisted Workbook column): the record count attributed to the
+   * Whalesync plan for this workspace. For a CRM-bridge workspace (`managedBy === ws_crm`) it is the
+   * LARGER of the two connection sides — a CRM bridge syncs the same records across both connections,
+   * so each record exists on both sides and is counted once (the bigger side). `0` for a non-CRM-bridge
+   * workspace. Present only when `dataFolders` are loaded; `undefined` otherwise (same as `recordCount`).
+   */
+  whalesyncEligibleRecordCount?: number;
 }

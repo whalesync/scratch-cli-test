@@ -128,12 +128,13 @@ export class WorkbookController {
   @Get('organization-usage-summary')
   async getOrganizationUsageSummary(@Req() req: RequestWithUser): Promise<OrganizationUsageSummaryResponseDto> {
     const { organizationId } = userToActor(req.user);
-    const [workbookCount, recordCount, connectorServices] = await Promise.all([
+    const [workbookCount, recordCount, whalesyncEligibleRecordCount, connectorServices] = await Promise.all([
       this.service.countForOrganization(organizationId),
       this.dataFolderService.sumRecordCountForOrganization(organizationId),
+      this.dataFolderService.sumWhalesyncEligibleRecordCountForOrganization(organizationId),
       this.dataFolderService.listConnectorServicesForOrganization(organizationId),
     ]);
-    return { workbookCount, recordCount, connectorServices };
+    return { workbookCount, recordCount, whalesyncEligibleRecordCount, connectorServices };
   }
 
   /** Total record count for a single workbook (sum of its folders' counts). */

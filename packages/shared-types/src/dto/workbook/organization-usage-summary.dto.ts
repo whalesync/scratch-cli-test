@@ -11,5 +11,14 @@ import type { Service } from '../../enums/enums';
 export interface OrganizationUsageSummaryResponseDto {
   workbookCount: number;
   recordCount: number;
+  /**
+   * The record count attributed to the organization's Whalesync plan: summed across only its
+   * CRM-bridge workspaces (`managedBy === ws_crm`), taking the LARGER of each workspace's two
+   * connection sides rather than the sum. A CRM bridge syncs the same records across both
+   * connections, so each record exists on both sides; the user thinks of it as one record, so it is
+   * counted once per workspace (the bigger side). Non-CRM-bridge workspaces are excluded. This is
+   * therefore <= `recordCount`.
+   */
+  whalesyncEligibleRecordCount: number;
   connectorServices: Service[];
 }
