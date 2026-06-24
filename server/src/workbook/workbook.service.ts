@@ -1,7 +1,5 @@
-import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  createWorkbookId,
-  createWorkspacePermissionId,
   DataFolderId,
   DataFolderOptions,
   JobType,
@@ -31,6 +29,7 @@ import { Schedule } from '@prisma/client';
 import { FileIndexService } from '../publish-plan/file-index.service';
 import { FileReferenceService } from '../publish-plan/file-reference.service';
 import { RecreatedIdMapService } from '../publish-plan/recreated-id-map.service';
+import { WorkbookProvisioningService } from './workbook-provisioning.service';
 import { WorkbookRepoService } from './workbook-repo.service';
 
 export type HardDeleteWorkbookPhase =
@@ -71,49 +70,21 @@ export class WorkbookService {
     private readonly fileReferenceService: FileReferenceService,
     private readonly recreatedIdMapService: RecreatedIdMapService,
     private readonly workbookRepoService: WorkbookRepoService,
+    private readonly workbookProvisioningService: WorkbookProvisioningService,
   ) {}
 
   async create(createWorkbookDto: ValidatedCreateWorkbookDto, actor: Actor): Promise<WorkbookCluster.Workbook> {
     const { name, managedBy } = createWorkbookDto;
 
-    const workbookId = createWorkbookId();
-
-    const newWorkbook = await this.db.client.workbook.create({
-      data: {
-        id: workbookId,
-        userId: actor.userId,
-        organizationId: actor.organizationId,
-        name: name ?? `New workbook`,
-        managedBy: managedBy ?? null,
-        version: 2,
-        workspacePermissions: {
-          create: {
-            id: createWorkspacePermissionId(),
-            userId: actor.userId,
-            role: 'editor',
-          },
-        },
-      },
-      include: WorkbookCluster._validator.include,
+    // Delegate the DB-row + config-repo creation to the shared provisioning service so the manual
+    // "create workspace" path and the signup default-workspace path can never diverge (see
+    // WorkbookProvisioningService for why both must go through one place).
+    const newWorkbook = await this.workbookProvisioningService.createWorkbookWithConfigRepo({
+      name: name ?? `New workbook`,
+      ownerUserId: actor.userId,
+      organizationId: actor.organizationId,
+      managedByApp: managedBy ?? null,
     });
-
-    try {
-      await this.workbookRepoService.initWorkbookRepo(newWorkbook.organizationId, newWorkbook.id as WorkbookId);
-    } catch (error) {
-      WSLogger.error({
-        source: 'WorkbookService.create',
-        message: 'Failed to initialize workbook config repo',
-        workbookId: newWorkbook.id,
-        organizationId: newWorkbook.organizationId,
-        error,
-      });
-
-      await this.db.client.workbook.delete({
-        where: { id: newWorkbook.id },
-      });
-
-      throw new InternalServerErrorException('Failed to initialize workbook config repo');
-    }
 
     WSLogger.info({
       source: 'WorkbookService.create',

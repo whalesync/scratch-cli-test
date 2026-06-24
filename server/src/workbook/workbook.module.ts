@@ -25,6 +25,7 @@ import { WorkbookService } from './workbook.service';
 
 import { DataFolderController } from './data-folder.controller';
 import { DataFolderService } from './data-folder.service';
+import { WorkbookProvisioningModule } from './workbook-provisioning.module';
 import { WorkbookRepoService } from './workbook-repo.service';
 import { WorkspacePermissionsService } from './workspace-permissions.service';
 
@@ -47,6 +48,7 @@ import { WorkspacePermissionsService } from './workspace-permissions.service';
     WorkbookEventModule,
     EmailModule,
     MigrationLockModule,
+    WorkbookProvisioningModule,
   ],
   controllers: [WorkbookController, FilesController, FilesPublicController, DataFolderController],
   providers: [

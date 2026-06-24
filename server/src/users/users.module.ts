@@ -11,6 +11,7 @@ import { PaymentModule } from 'src/payment/payment.module';
 import { PosthogModule } from 'src/posthog/posthog.module';
 import { RateLimiterModule } from 'src/rate-limiter/rate-limiter.module';
 import { SlackNotificationModule } from 'src/slack/slack-notification.module';
+import { WorkbookProvisioningModule } from 'src/workbook/workbook-provisioning.module';
 import { OrganizationsService } from './organizations.service';
 import { SubscriptionService } from './subscription.service';
 import { UsersController } from './users.controller';
@@ -29,6 +30,7 @@ import { UsersService } from './users.service';
     SlackNotificationModule,
     EmailModule,
     AuditLogModule,
+    WorkbookProvisioningModule,
   ],
   exports: [UsersService, SubscriptionService],
   controllers: [UsersController],

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { DbService } from 'src/db/db.service';
 import { PostHogService } from 'src/posthog/posthog.service';
+import { WorkbookProvisioningService } from 'src/workbook/workbook-provisioning.service';
 import { UserCluster } from '../db/cluster-types';
 import { UsersService } from './users.service';
 
@@ -16,6 +17,7 @@ describe('UsersService — Whalesync shadow users', () => {
   let dbService: jest.Mocked<DbService>;
   let postHogService: jest.Mocked<PostHogService>;
   let slackNotificationService: { sendMessage: jest.Mock };
+  let workbookProvisioningService: jest.Mocked<WorkbookProvisioningService>;
 
   // Typed extraction of a Prisma mock call's `{ data }` argument (avoids `any` member access).
   function firstCallData(mock: jest.Mock): Record<string, unknown> {
@@ -80,12 +82,17 @@ describe('UsersService — Whalesync shadow users', () => {
 
     slackNotificationService = { sendMessage: jest.fn().mockResolvedValue(undefined) };
 
+    workbookProvisioningService = {
+      createWorkbookWithConfigRepo: jest.fn().mockResolvedValue({ id: 'wkb_1' }),
+    } as unknown as jest.Mocked<WorkbookProvisioningService>;
+
     service = new UsersService(
       dbService,
       postHogService,
       {} as never, // configService — unused by these methods
       slackNotificationService as never, // slackNotificationService — used by the adopt path
       {} as never, // emailService — unused
+      workbookProvisioningService,
     );
   });
 
@@ -111,6 +118,29 @@ describe('UsersService — Whalesync shadow users', () => {
       expect(postHogService.identifyNewUser).toHaveBeenCalledWith(created);
       // Creating a brand-new shadow user is not a "link" — no Slack notification (that's adopt-only).
       expect(slackNotificationService.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('provisions the default workspace (row + config repo together) via the shared provisioning service', async () => {
+      // Regression for the signup default-workspace bug: this path used to call db.workbook.create
+      // directly and never initialized the config git repo, so the desktop's init-workspace clone
+      // 404'd ("Repository not found"). It must now route through WorkbookProvisioningService — the
+      // same primitive the manual "create workspace" flow uses — so the two can't diverge again.
+      (dbService.client.user.findFirst as jest.Mock).mockResolvedValue(null);
+      (dbService.client.user.findUnique as jest.Mock).mockResolvedValue(null);
+      (dbService.client.user.create as jest.Mock).mockResolvedValue(makeShadowUser());
+
+      await service.getOrCreateShadowUserFromWhalesync('wsu-123', 'ada@example.com', 'Ada Lovelace');
+
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledTimes(1);
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'My Scratch workspace',
+          ownerUserId: 'usr_shadow_1',
+          setAsOwnerDefaultWorkspace: true,
+        }),
+      );
+      // The buggy code wrote the workbook row directly; that must no longer happen here.
+      expect(dbService.client.workbook.create).not.toHaveBeenCalled();
     });
 
     it('adopts an existing native Scratch user that owns the email, linking it without creating a duplicate', async () => {

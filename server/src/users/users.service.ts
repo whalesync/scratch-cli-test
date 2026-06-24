@@ -4,7 +4,6 @@ import {
   createApiTokenId,
   createOrganizationId,
   createUserId,
-  createWorkbookId,
   createWorkspacePermissionId,
   TokenType,
   UpdateSettingsDto,
@@ -17,6 +16,7 @@ import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackFormatters } from 'src/slack/slack-formatters';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
+import { WorkbookProvisioningService } from 'src/workbook/workbook-provisioning.service';
 import { DbService } from '../db/db.service';
 import {
   generateApiToken,
@@ -38,6 +38,7 @@ export class UsersService {
     private readonly configService: ScratchConfigService,
     private readonly slackNotificationService: SlackNotificationService,
     private readonly emailService: EmailService,
+    private readonly workbookProvisioningService: WorkbookProvisioningService,
   ) {}
 
   public async findOne(id: string): Promise<UserCluster.User | null> {
@@ -180,25 +181,18 @@ export class UsersService {
       include: UserCluster._validator.include,
     });
 
-    // Create a default workspace for the new user, set as the new
+    // Create the default workspace for the new user via the shared provisioning service. This creates
+    // the workbook row AND its config git repo together. Previously this path hand-rolled the workbook
+    // row and forgot the repo, so the desktop's init-workspace 404'd ("Repository not found") when it
+    // tried to clone the config repo. Routing both creation paths through one service keeps them from
+    // diverging again. Failures are swallowed so a transient scratch-git outage can't block signup; the
+    // user can create a workspace later.
     try {
-      await this.db.client.workbook.create({
-        data: {
-          id: createWorkbookId(),
-          name: 'My Scratch workspace',
-          version: 2,
-          userId: newUser.id,
-          organizationId: newOrganizationId,
-          workspacePermissions: {
-            create: {
-              id: createWorkspacePermissionId(),
-              userId: newUser.id,
-              role: 'editor',
-            },
-          },
-          // Set it as default for the new user.
-          usersWithAsDefault: { connect: { id: newUser.id } },
-        },
+      await this.workbookProvisioningService.createWorkbookWithConfigRepo({
+        name: 'My Scratch workspace',
+        ownerUserId: newUser.id,
+        organizationId: newOrganizationId,
+        setAsOwnerDefaultWorkspace: true,
       });
     } catch (error) {
       WSLogger.error({ source: 'UsersService', message: 'Failed to create default workspace', error });

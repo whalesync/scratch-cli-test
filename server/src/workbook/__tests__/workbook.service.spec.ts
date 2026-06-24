@@ -13,6 +13,7 @@ import { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor } from 'src/users/types';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WorkbookEventService } from '../workbook-event.service';
+import { WorkbookProvisioningService } from '../workbook-provisioning.service';
 import { WorkbookRepoService } from '../workbook-repo.service';
 import { WorkbookService } from '../workbook.service';
 
@@ -47,6 +48,7 @@ describe('WorkbookService', () => {
   let auditLogService: jest.Mocked<AuditLogService>;
   let bullEnqueuerService: jest.Mocked<BullEnqueuerService>;
   let workbookRepoService: jest.Mocked<WorkbookRepoService>;
+  let workbookProvisioningService: jest.Mocked<WorkbookProvisioningService>;
   let recreatedIdMapService: jest.Mocked<RecreatedIdMapService>;
 
   beforeEach(() => {
@@ -119,6 +121,10 @@ describe('WorkbookService', () => {
       deleteWorkbookRepo: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<WorkbookRepoService>;
 
+    workbookProvisioningService = {
+      createWorkbookWithConfigRepo: jest.fn(),
+    } as unknown as jest.Mocked<WorkbookProvisioningService>;
+
     recreatedIdMapService = {
       deleteForWorkbook: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<RecreatedIdMapService>;
@@ -135,50 +141,58 @@ describe('WorkbookService', () => {
       fileReferenceService,
       recreatedIdMapService,
       workbookRepoService,
+      workbookProvisioningService,
     );
   });
 
   describe('create', () => {
-    it('initializes the workbook config repo after creating the workbook', async () => {
-      const createdWorkbook = createMockWorkbook(2);
-      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createdWorkbook);
+    // The DB-row + config-repo creation (and rollback) lives in WorkbookProvisioningService — see
+    // workbook-provisioning.service.spec.ts. These tests only verify WorkbookService delegates to it.
+    it('delegates creation to the provisioning service and returns the created workbook', async () => {
+      const createdWorkbook = createMockWorkbook(2) as unknown as WorkbookCluster.Workbook;
+      workbookProvisioningService.createWorkbookWithConfigRepo.mockResolvedValue(createdWorkbook);
 
       const result = await service.create({ name: 'Test Workbook' }, ACTOR);
 
       expect(result).toBe(createdWorkbook);
-      expect(workbookRepoService.initWorkbookRepo).toHaveBeenCalledWith('org_test', WORKBOOK_ID);
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledWith({
+        name: 'Test Workbook',
+        ownerUserId: ACTOR.userId,
+        organizationId: ACTOR.organizationId,
+        managedByApp: null,
+      });
     });
 
-    it('rolls back the workbook record when workbook repo init fails', async () => {
-      const createdWorkbook = createMockWorkbook(2);
-      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createdWorkbook);
-      workbookRepoService.initWorkbookRepo.mockRejectedValue(new Error('git down'));
+    it('propagates failures from the provisioning service (e.g. config repo init failed)', async () => {
+      workbookProvisioningService.createWorkbookWithConfigRepo.mockRejectedValue(
+        new InternalServerErrorException('Failed to initialize workbook config repo'),
+      );
 
       await expect(service.create({ name: 'Test Workbook' }, ACTOR)).rejects.toThrow(InternalServerErrorException);
-
-      expect(dbService.client.workbook.delete).toHaveBeenCalledWith({ where: { id: WORKBOOK_ID } });
     });
 
-    it('persists the managing app when one is supplied (e.g. ws_crm from Whalesync)', async () => {
-      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createMockWorkbook(2));
+    it('passes the managing app through to the provisioning service (e.g. ws_crm from Whalesync)', async () => {
+      workbookProvisioningService.createWorkbookWithConfigRepo.mockResolvedValue(
+        createMockWorkbook(2) as unknown as WorkbookCluster.Workbook,
+      );
 
       await service.create({ name: 'CRM Workbook', managedBy: WorkbookManager.WS_CRM }, ACTOR);
 
-      const [createArgs] = (dbService.client.workbook.create as jest.Mock).mock.calls[0] as [
-        { data: { managedBy: WorkbookManager | null } },
-      ];
-      expect(createArgs.data.managedBy).toBe(WorkbookManager.WS_CRM);
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledWith(
+        expect.objectContaining({ managedByApp: WorkbookManager.WS_CRM }),
+      );
     });
 
     it('defaults the managing app to null for a standalone Scratch workbook (none supplied)', async () => {
-      (dbService.client.workbook.create as jest.Mock).mockResolvedValue(createMockWorkbook(2));
+      workbookProvisioningService.createWorkbookWithConfigRepo.mockResolvedValue(
+        createMockWorkbook(2) as unknown as WorkbookCluster.Workbook,
+      );
 
       await service.create({ name: 'Test Workbook' }, ACTOR);
 
-      const [createArgs] = (dbService.client.workbook.create as jest.Mock).mock.calls[0] as [
-        { data: { managedBy: WorkbookManager | null } },
-      ];
-      expect(createArgs.data.managedBy).toBeNull();
+      expect(workbookProvisioningService.createWorkbookWithConfigRepo).toHaveBeenCalledWith(
+        expect.objectContaining({ managedByApp: null }),
+      );
     });
   });
 
