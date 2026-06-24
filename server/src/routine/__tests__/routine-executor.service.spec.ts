@@ -570,6 +570,43 @@ describe('RoutineExecutorService.execute', () => {
     expect(run.resultSummary).toBe('Publishing failed • 1 update rejected');
   });
 
+  it('attributes publish rejections to the destination service when its name is known', async () => {
+    const run = baseRun();
+    const steps = [makeStep(0, RoutineAction.PUBLISH, { folder: '/blog/posts' })];
+    const db = makeFakeDb(run, steps);
+
+    const bullEnqueuer = {
+      enqueueSelfPlanningPublishJob: jest.fn().mockResolvedValue({ id: 'publish-job' }),
+      getJob: jest.fn().mockResolvedValue(finishedJob()),
+      getQueueEvents: jest.fn().mockReturnValue({}),
+    };
+    const jobService = {
+      getJobByBullJobId: jest.fn().mockResolvedValue(
+        dbJobResult({
+          status: 'completed',
+          error: null,
+          progress: {
+            publicProgress: {
+              pipelineId: 'pln_11',
+              failedCount: 1,
+              createsExecuted: 0,
+              editsExecuted: 2,
+              deletesExecuted: 0,
+              destinationServiceName: 'PostgreSQL',
+            },
+          },
+        }),
+      ),
+      cancelJob: jest.fn(),
+    };
+
+    const service = makeService({ db, bullEnqueuer, jobService });
+    await service.execute(RUN_ID);
+
+    expect(run.status).toBe('completed');
+    expect(run.resultSummary).toBe('Publishing failed • 1 update rejected by PostgreSQL • 2 successful');
+  });
+
   it('records a publish-plan resultSummary noting the planned change count', async () => {
     const run = baseRun();
     const steps = [makeStep(0, RoutineAction.PUBLISH_PLAN, { folder: '/blog/posts' })];

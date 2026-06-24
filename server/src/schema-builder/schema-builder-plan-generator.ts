@@ -59,17 +59,27 @@ export interface PlanGeneratorSource {
   existingDestination?: ExistingDestinationTable;
 }
 
+/** An existing destination field the add-fields diff can reuse instead of recreating. */
+export interface ExistingDestinationField {
+  /**
+   * Name on the SAME basis the generator names fields (`displayLabel ??
+   * lastPathSegment`), so a source field's requested name matches it.
+   */
+  name: string;
+  /** Column path id in the destination schema — the mapping target when adopted. */
+  columnPath: string;
+  /** Inferred logical kind, so a field is adopted only when the source field's kind matches. */
+  kind: CreateFieldKind;
+}
+
 /** An existing, materialized destination folder a source is diffed against. */
 export interface ExistingDestinationTable {
   /** The destination folder's id (echoed back so the client can target it). */
   dataFolderId: string;
   /** The destination folder's remote table id (target of the /schema/fields POST). */
   remoteTableId: string[];
-  /**
-   * The destination table's current field names, derived on the SAME basis the
-   * generator names fields (`displayLabel ?? lastPathSegment`) so the diff matches.
-   */
-  fieldNames: string[];
+  /** The destination table's current fields (name + column path + inferred kind). */
+  existingFields: ExistingDestinationField[];
 }
 
 /** Maps a source `linkedTableId` to an already-existing destination table. */
@@ -224,9 +234,11 @@ export function generateCreatePlanFromSources(args: {
 /**
  * Build an add-fields plan for a source whose destination table exists: the
  * source's create-field specs minus any field the destination already has (by
- * name, case-insensitive), with each skipped field surfaced as an `exists` note.
- * The primary field is not re-designated and sibling-`{ ref }` foreign keys are
- * downgraded to `unsupported` (the /schema/fields endpoint can't express either).
+ * name, case-insensitive). A name match whose existing kind matches the source is
+ * surfaced as an `adopted` note (mapped to the existing column, not recreated); an
+ * incompatible match (different kind, or a foreign key) is skipped with an `exists`
+ * note. The primary field is not re-designated and sibling-`{ ref }` foreign keys
+ * are downgraded to `unsupported` (the /schema/fields endpoint can't express either).
  */
 function buildAddFieldsPlanForSource(
   source: PlanGeneratorSource,
@@ -236,10 +248,12 @@ function buildAddFieldsPlanForSource(
   mappingByLinkedId: Map<string, string[]>,
   notes: FieldMappingNote[],
 ): CreateSchemaFieldsPlan {
-  const existingDestinationFieldNames = new Set(existingDestination.fieldNames.map(normalizeNameForUniqueness));
+  const existingDestinationFieldsByName = new Map(
+    existingDestination.existingFields.map((field) => [normalizeNameForUniqueness(field.name), field] as const),
+  );
   const fields = collectCreateFieldSpecsForSource(
     source,
-    { allowSiblingRefForeignKeys: false, markPrimaryField: false, existingDestinationFieldNames },
+    { allowSiblingRefForeignKeys: false, markPrimaryField: false, existingDestinationFieldsByName },
     linkedIdToRef,
     mappingByLinkedId,
     notes,
@@ -258,8 +272,12 @@ interface CreateFieldSpecOptions {
   allowSiblingRefForeignKeys: boolean;
   /** Whether to mark the source's title column `isPrimary` (create-table only). */
   markPrimaryField: boolean;
-  /** When present, skip any field whose name is already in this (normalized) set. */
-  existingDestinationFieldNames?: Set<string>;
+  /**
+   * Existing destination fields keyed by normalized name (add-fields only). A
+   * source field whose name matches one is adopted (mapped to it) when the kinds
+   * match, or otherwise skipped — never recreated.
+   */
+  existingDestinationFieldsByName?: Map<string, ExistingDestinationField>;
 }
 
 /** Map every field of a source to a create-field spec, pushing a note per field. */
@@ -274,8 +292,8 @@ function collectCreateFieldSpecsForSource(
   // Field names already taken in this table's namespace: the destination's current
   // fields (add-fields case) plus every field we emit here. An emitted field whose
   // name collides gets a numeric suffix + a 'renamed' note. A COPY of the
-  // existing-destination set, so the frozen original still drives the 'exists' skip.
-  const takenFieldNames = new Set(options.existingDestinationFieldNames ?? []);
+  // existing-destination names, so the frozen original still drives the adopt/skip.
+  const takenFieldNames = new Set(options.existingDestinationFieldsByName?.keys() ?? []);
   for (const schemaField of source.schemaFields) {
     const spec = mapSchemaFieldToCreateFieldSpec(
       source,
@@ -314,16 +332,35 @@ function mapSchemaFieldToCreateFieldSpec(
 
   const requestedFieldName = schemaField.displayLabel ?? lastPathSegment(schemaField.path);
 
-  // Add-fields diff: a field the destination already has is skipped, not recreated.
-  // Checked against the FROZEN existing-destination set (not the growing taken set)
-  // so a second NEW field of the same name is renamed rather than mistaken for "exists".
-  if (options.existingDestinationFieldNames?.has(normalizeNameForUniqueness(requestedFieldName))) {
+  // Add-fields diff: a field the destination already has is never recreated.
+  // Checked against the FROZEN existing-destination map (not the growing taken set)
+  // so a second NEW field of the same name is renamed rather than mistaken for it.
+  // When it's a plain field whose kind matches the source, ADOPT it — map to the
+  // existing column — so re-adding a previously-unmapped field reuses it instead of
+  // failing to recreate it. Otherwise (a foreign key, or a different kind) skip it.
+  const existingField = options.existingDestinationFieldsByName?.get(normalizeNameForUniqueness(requestedFieldName));
+  if (existingField) {
+    if (!schemaField.foreignKey) {
+      const sourceKind = inferLogicalFieldType(schemaField, source.viewTypeByPath?.[schemaField.path]).fieldType.kind;
+      if (sourceKind === existingField.kind) {
+        notes.push({
+          sourceDataFolderId: source.dataFolderId,
+          sourceFieldPath: schemaField.path,
+          fieldName: requestedFieldName,
+          status: 'adopted',
+          mappedKind: existingField.kind,
+          existingDestinationColumnId: existingField.columnPath,
+          message: `a "${existingField.kind}" field named "${requestedFieldName}" already exists on the destination; mapping to it`,
+        });
+        return null;
+      }
+    }
     notes.push({
       sourceDataFolderId: source.dataFolderId,
       sourceFieldPath: schemaField.path,
       fieldName: requestedFieldName,
       status: 'exists',
-      message: `a field named "${requestedFieldName}" already exists on the destination table; skipped`,
+      message: `a field named "${requestedFieldName}" already exists on the destination table with an incompatible type; skipped`,
     });
     return null;
   }

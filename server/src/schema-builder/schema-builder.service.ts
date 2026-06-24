@@ -40,6 +40,7 @@ import {
   ExistingDestinationTable,
   PlanGeneratorSource,
   generateCreatePlanFromSources,
+  inferLogicalFieldType,
 } from './schema-builder-plan-generator';
 import {
   validateFieldsAgainstCapabilities,
@@ -424,10 +425,12 @@ export class SchemaBuilderService {
   /**
    * Resolve an existing, materialized destination folder for an add-fields plan:
    * assert it belongs to this workbook and the destination connector, then read
-   * its stored schema and derive its current field names — on the SAME basis the
-   * plan generator names fields (`displayLabel ?? lastPathSegment`) so the diff
-   * matches. Fails fast rather than silently treating a bad target as "no
-   * existing fields" (which would re-create every field and collide remotely).
+   * its stored schema and derive its current fields — name (on the SAME basis the
+   * plan generator names fields, `displayLabel ?? lastPathSegment`, so the diff
+   * matches), column path, and inferred kind (so a same-named, same-kind field can
+   * be adopted rather than recreated). Fails fast rather than silently treating a
+   * bad target as "no existing fields" (which would re-create every field and
+   * collide remotely).
    */
   private async resolveExistingDestinationTable(
     workbookId: WorkbookId,
@@ -455,10 +458,12 @@ export class SchemaBuilderService {
         `Existing destination data folder ${destinationDataFolderId} has no stored schema to diff against`,
       );
     }
-    const fieldNames = extractSchemaFields(stored.schema as TSchema).map(
-      (field) => field.displayLabel ?? lastPathSegment(field.path),
-    );
-    return { dataFolderId: destinationDataFolderId, remoteTableId: folder.tableId, fieldNames };
+    const existingFields = extractSchemaFields(stored.schema as TSchema).map((field) => ({
+      name: field.displayLabel ?? lastPathSegment(field.path),
+      columnPath: field.path,
+      kind: inferLogicalFieldType(field).fieldType.kind,
+    }));
+    return { dataFolderId: destinationDataFolderId, remoteTableId: folder.tableId, existingFields };
   }
 
   // ── execution core (BullMQ-wrappable) ──────────────────────────────────────

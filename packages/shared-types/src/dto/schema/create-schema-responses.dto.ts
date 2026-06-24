@@ -146,12 +146,22 @@ export interface FieldMappingNote {
   fieldName: string;
   /**
    * `mapped`/`downgraded`/`unsupported` describe how the source field maps to a
-   * create field; `exists` means the field was skipped because the existing
-   * destination table already has a field of that name (add-fields diff only).
+   * create field. The next two are add-fields-only, when the destination already
+   * has a field of that name: `adopted` means the existing field is a compatible
+   * kind, so it's reused (mapped to, not recreated) — see `existingDestinationColumnId`;
+   * `exists` means it can't be safely reused (a different kind, or a foreign key)
+   * and was skipped.
    */
-  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists';
+  status: 'mapped' | 'downgraded' | 'unsupported' | 'exists' | 'adopted';
   mappedKind?: CreateFieldKind;
   message?: string;
+  /**
+   * Set on an `adopted` note: the path id of the existing destination column the
+   * source field maps to (the destination already has a compatible field, so it is
+   * NOT recreated). The client builds a column mapping to this existing column
+   * (`DraftColumnMapping.destination = { kind: 'existing', columnId }`).
+   */
+  existingDestinationColumnId?: string;
   /**
    * Set when the field was renamed to keep field names unique within the table
    * (a numeric suffix was appended): the original, pre-suffix name. `fieldName`

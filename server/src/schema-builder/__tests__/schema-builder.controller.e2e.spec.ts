@@ -314,10 +314,10 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
         connectorAccountId: CONNECTOR_ACCOUNT_ID,
         remoteTableId: ['tblDstAuthors'],
       });
-      // id skipped, 'name' already on destination → only bio + age are added.
+      // id skipped, 'name' already on destination (same kind → adopted) → only bio + age are added.
       expect(res.body.fieldPlans[0].fields.map((f: { name: string }) => f.name)).toEqual(['bio', 'age']);
       expect(res.body.notes.find((note: { fieldName: string }) => note.fieldName === 'name')).toMatchObject({
-        status: 'exists',
+        status: 'adopted',
       });
       expect(res.body.destinationSupportsCreation).toBe(false);
     });

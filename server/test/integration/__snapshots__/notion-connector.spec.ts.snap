@@ -756,6 +756,29 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "rich_text",
             "x-scratch-remote-field-id": "~Uxu",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "rich_text": [
+                    {
+                      "text": {
+                        "content": "$value",
+                      },
+                      "type": "text",
+                    },
+                  ],
+                  "type": "rich_text",
+                },
+              },
+              "type": "wrap_object",
+            },
+            "x-scratch-suggested-transformer": {
+              "options": {
+                "arrayHandling": "concat",
+                "expression": "$.rich_text[*].plain_text",
+              },
+              "type": "jsonpath",
+            },
           },
           "Done": {
             "description": "Done",
@@ -779,6 +802,15 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "checkbox",
             "x-scratch-remote-field-id": "%5BK%7BH",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "checkbox": "$value",
+                  "type": "checkbox",
+                },
+              },
+              "type": "wrap_object",
+            },
           },
           "Due Date": {
             "description": "Due Date",
@@ -855,6 +887,17 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "date",
             "x-scratch-remote-field-id": "QHsk",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "date": {
+                    "start": "$value",
+                  },
+                  "type": "date",
+                },
+              },
+              "type": "wrap_object",
+            },
           },
           "Estimate": {
             "description": "Estimate",
@@ -885,6 +928,15 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "number",
             "x-scratch-remote-field-id": "D%3A%3EQ",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "number": "$value",
+                  "type": "number",
+                },
+              },
+              "type": "wrap_object",
+            },
           },
           "Link": {
             "description": "Link",
@@ -916,6 +968,15 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "url",
             "x-scratch-remote-field-id": "IlY%60",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "type": "url",
+                  "url": "$value",
+                },
+              },
+              "type": "wrap_object",
+            },
           },
           "Linked Count": {
             "description": "Linked Count",
@@ -1068,6 +1129,22 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "title",
             "x-scratch-remote-field-id": "title",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "title": [
+                    {
+                      "text": {
+                        "content": "$value",
+                      },
+                      "type": "text",
+                    },
+                  ],
+                  "type": "title",
+                },
+              },
+              "type": "wrap_object",
+            },
             "x-scratch-virtual-fields": [
               {
                 "displayLabel": "Name",
@@ -1112,6 +1189,15 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "email",
             "x-scratch-remote-field-id": "RD%5D%3E",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "email": "$value",
+                  "type": "email",
+                },
+              },
+              "type": "wrap_object",
+            },
           },
           "Priority": {
             "description": "Priority",
@@ -1158,6 +1244,17 @@ exports[`NotionConnector — live API fetchJsonTableSpec snapshot — captures t
             "type": "object",
             "x-scratch-connector-data-type": "select",
             "x-scratch-remote-field-id": "uHj%7B",
+            "x-scratch-suggested-in-transformer": {
+              "options": {
+                "template": {
+                  "select": {
+                    "name": "$value",
+                  },
+                  "type": "select",
+                },
+              },
+              "type": "wrap_object",
+            },
           },
           "Score": {
             "description": "Score",

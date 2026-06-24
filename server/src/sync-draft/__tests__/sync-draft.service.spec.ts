@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/unbound-method */
-import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import type { SyncDraftId, SyncId, WorkbookId } from '@spinner/shared-types';
 import { load as loadYaml } from 'js-yaml';
 import { WorkbookCluster } from 'src/db/cluster-types';
@@ -370,6 +375,33 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.update).toHaveBeenCalled();
       const dest = res.draft.tableMappings[0].destination;
       expect(dest.kind === 'placeholderTable' && dest.resolved?.remoteTableId).toEqual(['base1', 'tbl1']);
+    });
+
+    it('surfaces the create-schema issue message (not the generic one) on a failed table', async () => {
+      const row = makeDraftRow({ tableMappings: [placeholderTableDraft()] });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      // createTables rejects with the structured create-schema validation error.
+      schemaBuilderService.createTables.mockRejectedValue(
+        new BadRequestException({
+          message: 'create-schema validation failed',
+          issues: [
+            {
+              code: 'FIELD_NAME_ALREADY_EXISTS',
+              message: 'a field named "Country" already exists on the target table',
+              path: 'fields[0].name',
+            },
+          ],
+        }),
+      );
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      expect(res.results[0]).toMatchObject({
+        ref: 'ph_contacts',
+        kind: 'table',
+        status: 'failed',
+        error: 'a field named "Country" already exists on the target table',
+      });
     });
 
     it('picks the sync transform for a created column from its real schema and writes it to the draft', async () => {

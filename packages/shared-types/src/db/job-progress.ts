@@ -156,6 +156,13 @@ export type PublishPublicProgress = {
    */
   failedOperations?: PublishFailedOperation[];
   /**
+   * Human-friendly display name of the destination service (e.g. "PostgreSQL"), resolved server-side
+   * from the plan's connector account. Set on the terminal `completed` checkpoint so a per-record
+   * rejection can be attributed to the service that rejected it ("… rejected by PostgreSQL") rather
+   * than reading as though Scratch rejected it. Optional — undefined when the service can't be resolved.
+   */
+  destinationServiceName?: string;
+  /**
    * DEV-10316 publish-time TOCTOU abort. Set (with `status: 'failed'`) when the
    * connection's dirty HEAD drifted past the client's `expectedBaseDirtyHead`
    * since upload, so the plan was aborted before building. The desktop modal

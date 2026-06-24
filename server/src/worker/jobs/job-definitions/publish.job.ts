@@ -2,6 +2,7 @@ import { type JobTrigger, JobType, type PublishPublicProgress, type WorkbookId }
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishDirtyDriftError, type PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
+import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
 import type { WorkbookEventService } from 'src/workbook/workbook-event.service';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { WSLogger } from '../../../logger';
@@ -289,6 +290,16 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         onError,
       );
 
+      // Resolve the destination service's display name so the terminal checkpoint can attribute any
+      // per-record rejections to the service that rejected them ("… rejected by PostgreSQL").
+      const planConnectorAccount = await this.db.client.publishPlan.findUnique({
+        where: { id: pipelineId },
+        select: { connectorAccount: { select: { service: true } } },
+      });
+      const destinationServiceName = planConnectorAccount?.connectorAccount
+        ? getServiceDisplayName(planConnectorAccount.connectorAccount.service)
+        : undefined;
+
       await checkpoint({
         publicProgress: {
           status: 'completed',
@@ -314,6 +325,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
           // show why a record failed, not just that something did.
           failedCount: runResult.failedCount ?? 0,
           failedOperations: runResult.failedOperations ?? [],
+          destinationServiceName,
           pipelineId,
         },
         jobProgress: {},

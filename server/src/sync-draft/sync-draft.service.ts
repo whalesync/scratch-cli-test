@@ -1,4 +1,10 @@
-import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  ConflictException,
+  HttpException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { Prisma, SyncDraft as PrismaSyncDraft } from '@prisma/client';
 import {
   type CreateSchemaFieldsDto,
@@ -23,6 +29,7 @@ import {
   type SyncTablePairId,
   type TableMappingV2,
   transformV1ToV2,
+  type ValidateSchemaIssue,
   type WorkbookId,
 } from '@spinner/shared-types';
 import { WorkbookCluster } from 'src/db/cluster-types';
@@ -45,6 +52,27 @@ type PlaceholderTableDestination = Extract<DraftTableDestination, { kind: 'place
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A user-facing message for an error thrown by the schema-builder create
+ * endpoints. Those throw a `BadRequestException` carrying a structured `issues`
+ * array (the actual per-field reasons, e.g. `a field named "Country" already
+ * exists on the target table`); the generic `.message` ("create-schema validation
+ * failed") is useless on its own, so surface the issue messages when present.
+ */
+function schemaCreationErrorMessage(error: unknown): string {
+  if (error instanceof HttpException) {
+    const response = error.getResponse();
+    if (typeof response === 'object' && response !== null) {
+      const issues = (response as { issues?: unknown }).issues;
+      if (Array.isArray(issues) && issues.length > 0) {
+        const messages = (issues as ValidateSchemaIssue[]).map((issue) => issue.message).filter(Boolean);
+        if (messages.length > 0) return messages.join('; ');
+      }
+    }
+  }
+  return errorMessage(error);
 }
 
 /** Resolves the non-null connector account ids for a set of folder ids (scratch folders → null → dropped). */
@@ -476,7 +504,12 @@ export class SyncDraftService {
         await this.persistTableMappings(draftId, tableMappings);
       } catch (error) {
         for (const placeholder of group.placeholders) {
-          results.push({ ref: placeholder.ref, kind: 'table', status: 'failed', error: errorMessage(error) });
+          results.push({
+            ref: placeholder.ref,
+            kind: 'table',
+            status: 'failed',
+            error: schemaCreationErrorMessage(error),
+          });
         }
       }
     }
@@ -555,7 +588,12 @@ export class SyncDraftService {
         await this.persistTableMappings(draftId, tableMappings);
       } catch (error) {
         for (const addition of unresolved) {
-          results.push({ ref: addition.ref, kind: 'field', status: 'failed', error: errorMessage(error) });
+          results.push({
+            ref: addition.ref,
+            kind: 'field',
+            status: 'failed',
+            error: schemaCreationErrorMessage(error),
+          });
         }
       }
     }

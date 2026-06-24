@@ -255,7 +255,7 @@ describe('generateCreatePlanFromSources — injected source-record-id field', ()
       sources: [
         sourceWith({
           connectorService: 'POSTGRES',
-          existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], fieldNames: [] },
+          existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], existingFields: [] },
         }),
       ],
       destinationConnectorAccountId: 'destConn',
@@ -283,9 +283,24 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
     ],
   };
 
-  const authorsIntoExisting = (fieldNames: string[]): PlanGeneratorSource => ({
+  // Each existing destination field is given the kind of the same-named source
+  // field, so a name match is a kind match → adoption (the re-add case).
+  const authorsIntoExisting = (existingNames: string[]): PlanGeneratorSource => ({
     ...authorsSource,
-    existingDestination: { dataFolderId: 'destAuthors', remoteTableId: ['tblDestAuthors'], fieldNames },
+    existingDestination: {
+      dataFolderId: 'destAuthors',
+      remoteTableId: ['tblDestAuthors'],
+      existingFields: existingNames.map((name) => {
+        const sourceField = authorsSource.schemaFields.find(
+          (f) => (f.displayLabel ?? f.path.split('.').pop() ?? '').toLowerCase() === name.trim().toLowerCase(),
+        );
+        return {
+          name,
+          columnPath: name.trim().toLowerCase(),
+          kind: sourceField ? inferLogicalFieldType(sourceField).fieldType.kind : 'text',
+        };
+      }),
+    },
   });
 
   it('emits a fieldPlan (not a table) and drops fields the destination already has', () => {
@@ -302,9 +317,13 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
       connectorAccountId: 'destConn',
       remoteTableId: ['tblDestAuthors'],
     });
-    // id is skipped (destination owns it); 'name' already exists; bio + age remain.
+    // id is skipped (destination owns it); 'name' already exists (adopted); bio + age remain.
     expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['bio', 'age']);
-    expect(notes.find((note) => note.fieldName === 'name')).toMatchObject({ status: 'exists' });
+    expect(notes.find((note) => note.fieldName === 'name')).toMatchObject({
+      status: 'adopted',
+      mappedKind: 'text',
+      existingDestinationColumnId: 'name',
+    });
   });
 
   it('matches existing field names case-insensitively', () => {
@@ -331,8 +350,42 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
     });
     expect(fieldPlans).toHaveLength(1);
     expect(fieldPlans[0].fields).toHaveLength(0);
-    // Every source field surfaced as an 'exists' note — nothing dropped silently.
-    expect(notes.filter((note) => note.status === 'exists')).toHaveLength(3);
+    // Every source field has a same-kind match on the destination → all adopted,
+    // nothing dropped silently.
+    expect(notes.filter((note) => note.status === 'adopted')).toHaveLength(3);
+  });
+
+  it('adopts an existing destination field of the same name and kind (maps to it, does not recreate)', () => {
+    const { fieldPlans, notes } = generateCreatePlanFromSources({
+      sources: [authorsIntoExisting(['bio'])],
+      destinationConnectorAccountId: 'destConn',
+    });
+    // bio is adopted (text → text), so it's not in the create list; name + age are.
+    expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['name', 'age']);
+    expect(notes.find((note) => note.fieldName === 'bio')).toMatchObject({
+      status: 'adopted',
+      mappedKind: 'text',
+      existingDestinationColumnId: 'bio',
+    });
+  });
+
+  it('does not adopt an existing field of the same name but a different kind — skips it instead', () => {
+    // The destination "age" is text, but the source "age" is a number → can't adopt.
+    const source: PlanGeneratorSource = {
+      ...authorsSource,
+      existingDestination: {
+        dataFolderId: 'destAuthors',
+        remoteTableId: ['tblDestAuthors'],
+        existingFields: [{ name: 'age', columnPath: 'age', kind: 'text' }],
+      },
+    };
+    const { fieldPlans, notes } = generateCreatePlanFromSources({
+      sources: [source],
+      destinationConnectorAccountId: 'destConn',
+    });
+    // age is neither created (name collision) nor adopted (kind mismatch) → exists.
+    expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['name', 'bio']);
+    expect(notes.find((note) => note.fieldName === 'age')).toMatchObject({ status: 'exists' });
   });
 
   it('downgrades a sibling-ref foreignKey to unsupported when adding to an existing table', () => {
@@ -342,7 +395,7 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
       tableName: 'Posts',
       remoteTableIds: ['tblPosts'],
       schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblAuthors' } })],
-      existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], fieldNames: [] },
+      existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], existingFields: [] },
     };
     // authorsSource registers tblAuthors as a sibling, so the FK would otherwise resolve to { ref }.
     const { tables, fieldPlans, notes } = generateCreatePlanFromSources({
@@ -364,7 +417,7 @@ describe('generateCreatePlanFromSources — existing destination table (add-fiel
       tableName: 'Posts',
       remoteTableIds: ['tblPosts'],
       schemaFields: [field({ path: 'author', type: 'string', foreignKey: { linkedTableId: 'tblExternal' } })],
-      existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], fieldNames: [] },
+      existingDestination: { dataFolderId: 'destPosts', remoteTableId: ['tblDestPosts'], existingFields: [] },
     };
     const { fieldPlans } = generateCreatePlanFromSources({
       sources: [postsIntoExisting],
@@ -454,11 +507,15 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
       tableName: 'Contacts',
       remoteTableIds: ['tblContacts'],
       schemaFields: [
-        field({ path: 'a', type: 'string', displayLabel: 'Name' }), // already on destination → skipped
+        field({ path: 'a', type: 'string', displayLabel: 'Name' }), // already on destination → adopted
         field({ path: 'b', type: 'string', displayLabel: 'Color' }), // new → Color
         field({ path: 'c', type: 'string', displayLabel: 'Color' }), // duplicate new → Color 2
       ],
-      existingDestination: { dataFolderId: 'destContacts', remoteTableId: ['tblDest'], fieldNames: ['Name'] },
+      existingDestination: {
+        dataFolderId: 'destContacts',
+        remoteTableId: ['tblDest'],
+        existingFields: [{ name: 'Name', columnPath: 'Name', kind: 'text' }],
+      },
     };
     const { fieldPlans, notes } = generateCreatePlanFromSources({
       sources: [source],
@@ -466,7 +523,7 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
     });
 
     expect(fieldPlans[0].fields.map((f) => f.name)).toEqual(['Color', 'Color 2']);
-    expect(notes.find((note) => note.sourceFieldPath === 'a')).toMatchObject({ status: 'exists' });
+    expect(notes.find((note) => note.sourceFieldPath === 'a')).toMatchObject({ status: 'adopted' });
     expect(notes.find((note) => note.sourceFieldPath === 'c')).toMatchObject({
       fieldName: 'Color 2',
       renamedFromName: 'Color',
@@ -483,7 +540,11 @@ describe('generateCreatePlanFromSources — duplicate field names (DEV-10441)', 
         field({ path: 'b', type: 'string', displayLabel: 'Color' }),
         field({ path: 'c', type: 'string', displayLabel: 'Color' }),
       ],
-      existingDestination: { dataFolderId: 'destContacts', remoteTableId: ['tblDest'], fieldNames: ['Color 2'] },
+      existingDestination: {
+        dataFolderId: 'destContacts',
+        remoteTableId: ['tblDest'],
+        existingFields: [{ name: 'Color 2', columnPath: 'Color 2', kind: 'text' }],
+      },
     };
     const { fieldPlans } = generateCreatePlanFromSources({
       sources: [source],

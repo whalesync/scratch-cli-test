@@ -220,11 +220,13 @@ function deriveSyncResult(progress: SyncDataFoldersPublicProgress | undefined): 
 
   const sum = (selector: (table: SyncDataFoldersPublicProgress['tables'][number]) => number): number =>
     tables.reduce((total, table) => total + (selector(table) ?? 0), 0);
+  // A sync STAGES changes that a later publish step actually executes, so these counters describe what
+  // *will* happen on publish ("to create"), not a completed action ("created").
   const stats: JobResultStat[] = [
-    { label: 'Created', value: sum((t) => t.creates) },
-    { label: 'Updated', value: sum((t) => t.updates) },
-    { label: 'Deleted', value: sum((t) => t.deletes) },
-    { label: 'Skipped', value: sum((t) => t.skipped) },
+    { label: 'to create', value: sum((t) => t.creates) },
+    { label: 'to update', value: sum((t) => t.updates) },
+    { label: 'to delete', value: sum((t) => t.deletes) },
+    { label: 'skipped', value: sum((t) => t.skipped) },
   ];
 
   // `publicProgress` is a JSON column that can be partial on an old/odd record, so coalesce every
@@ -298,7 +300,13 @@ function derivePublishResult(progress: PublishPublicProgress | undefined, mode: 
   // still report how many changes the connector accepted ("… • N successful").
   let summary: string;
   if (failedCount > 0) {
-    const summaryParts = ['Publishing failed', `${pluralize(failedCount, 'update')} rejected`];
+    // Attribute the rejection to the destination service ("rejected by PostgreSQL") so it's clear the
+    // service rejected the records, not Scratch. Falls back to a bare "rejected" when the service name
+    // wasn't resolved.
+    const rejectedClause = progress.destinationServiceName
+      ? `${pluralize(failedCount, 'update')} rejected by ${progress.destinationServiceName}`
+      : `${pluralize(failedCount, 'update')} rejected`;
+    const summaryParts = ['Publishing failed', rejectedClause];
     if (executedChangeCount > 0) {
       summaryParts.push(`${executedChangeCount} successful`);
     }
