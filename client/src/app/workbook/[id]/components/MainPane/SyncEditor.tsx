@@ -39,7 +39,6 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import type {
-  AutoConvertOptions,
   ColumnMapping,
   DataFolderId,
   PreviewFieldResult,
@@ -50,7 +49,7 @@ import type {
   TransformerConfig,
   WorkbookId,
 } from '@spinner/shared-types';
-import { getTransformerLabel, ScheduleAction, TransformerTypes } from '@spinner/shared-types';
+import { getTransformerLabel, pickMappingTransformers, ScheduleAction } from '@spinner/shared-types';
 import { getHumanReadableErrorMessage } from '@spinner/shared-types/api-client';
 import CodeMirror from '@uiw/react-codemirror';
 import {
@@ -316,7 +315,16 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
   const [aiContextCopying, setAiContextCopying] = useState(false);
   const [errorBanner, setErrorBanner] = useState<{ title: string; body: string } | null>(null);
   const [schemaCache, setSchemaCache] = useState<
-    Record<string, { path: string; type: string; displayLabel?: string; suggestedTransformer?: TransformerConfig }[]>
+    Record<
+      string,
+      {
+        path: string;
+        type: string;
+        displayLabel?: string;
+        suggestedTransformer?: TransformerConfig;
+        suggestedInTransformer?: TransformerConfig;
+      }[]
+    >
   >({});
   const [transformerModalOpen, setTransformerModalOpen] = useState(false);
   const [editingTransformerTarget, setEditingTransformerTarget] = useState<{
@@ -957,25 +965,13 @@ export function SyncEditor({ workbookId, syncId }: SyncEditorProps) {
     if (!sourceField || !destField) return [];
 
     const pair = folderPairs[pairIndex];
-    const sourceSchema = schemaCache[pair.sourceId] || [];
-    const destSchema = schemaCache[pair.destId] || [];
-    const sourceInfo = sourceSchema.find((f) => f.path === sourceField);
-    const destInfo = destSchema.find((f) => f.path === destField);
+    const sourceInfo = (schemaCache[pair.sourceId] || []).find((f) => f.path === sourceField);
+    const destInfo = (schemaCache[pair.destId] || []).find((f) => f.path === destField);
 
-    // Check for suggested transformer from the source field
-    if (sourceInfo?.suggestedTransformer) {
-      return [sourceInfo.suggestedTransformer];
-    }
-
-    // Auto-convert when source and dest types differ
-    if (!sourceInfo || !destInfo) return [];
-    if (sourceInfo.type === destInfo.type) return [];
-
-    const targetType = destInfo.type as AutoConvertOptions['targetType'];
-    const validTargets: AutoConvertOptions['targetType'][] = ['string', 'number', 'integer', 'boolean', 'array'];
-    if (!validTargets.includes(targetType)) return [];
-
-    return [{ type: TransformerTypes.AutoConvert, options: { targetType } }];
+    // The source field's unpack hint (native → plain) plus the destination field's
+    // pack hint (plain → native), with an auto_convert fallback on a plain type
+    // mismatch. Shared with the server's create-schema plan so both pick identically.
+    return pickMappingTransformers(sourceInfo, destInfo);
   };
 
   const handleReapplyDefaults = (scope: 'current' | 'all') => {

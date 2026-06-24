@@ -6,6 +6,8 @@ import {
   X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
+  X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
+  X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
 import { buildNotionJsonTableSpec, notionPropertyToJsonSchema } from '../notion-json-schema';
@@ -40,6 +42,50 @@ function collectStringFormats(node: SchemaNode | undefined): string[] {
   const variants = (node.anyOf as SchemaNode[]) ?? (node.allOf as SchemaNode[]) ?? [];
   return variants.flatMap((variant) => collectStringFormats(variant));
 }
+
+describe('notionPropertyToJsonSchema — transform hints', () => {
+  it('rich_text carries both a pack (in) and an unpack (out) hint', () => {
+    const node = prop('rich_text');
+    expect(node[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'wrap_object',
+      options: { template: { type: 'rich_text', rich_text: [{ type: 'text', text: { content: '$value' } }] } },
+    });
+    expect(node[X_SCRATCH_SUGGESTED_TRANSFORMER]).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$.rich_text[*].plain_text', arrayHandling: 'concat' },
+    });
+  });
+
+  it('title carries a pack hint; its unpack stays a virtual field', () => {
+    const node = prop('title');
+    expect(node[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'wrap_object',
+      options: { template: { type: 'title', title: [{ type: 'text', text: { content: '$value' } }] } },
+    });
+    expect(node[X_SCRATCH_SUGGESTED_TRANSFORMER]).toBeUndefined();
+    expect(node[X_SCRATCH_VIRTUAL_FIELDS]).toBeDefined();
+  });
+
+  it('scalar types carry a pack hint that wraps into their envelope', () => {
+    expect(prop('number')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'wrap_object',
+      options: { template: { type: 'number', number: '$value' } },
+    });
+    expect(prop('checkbox')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'wrap_object',
+      options: { template: { type: 'checkbox', checkbox: '$value' } },
+    });
+    expect(prop('select')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'wrap_object',
+      options: { template: { type: 'select', select: { name: '$value' } } },
+    });
+  });
+
+  it('deferred / reference types carry no pack hint', () => {
+    expect(prop('multi_select')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toBeUndefined();
+    expect(prop('relation', { relation: { database_id: 'db1' } })[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toBeUndefined();
+  });
+});
 
 describe('notionPropertyToJsonSchema — raw envelope shape', () => {
   describe('every property is an object envelope { id, type, <typeKey> }', () => {

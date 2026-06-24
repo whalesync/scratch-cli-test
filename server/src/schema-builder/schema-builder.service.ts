@@ -30,7 +30,7 @@ import { ConnectorsService } from 'src/remote-service/connectors/connectors.serv
 import { getServiceDisplayName } from 'src/remote-service/connectors/display-names';
 import { NormalizedCreateTablePlan } from 'src/remote-service/connectors/schema-creation.types';
 import { Actor } from 'src/users/types';
-import { extractSchemaFields } from 'src/utils/schema-helpers';
+import { SchemaField, extractSchemaFields } from 'src/utils/schema-helpers';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import { createRunContext } from 'src/worker/jobs/base-types';
@@ -347,6 +347,12 @@ export class SchemaBuilderService {
         : {}),
     });
 
+    // Sync transforms are NOT computed here: in a create plan every mapped
+    // destination field is being created, so its real schema (and the transform
+    // hints that drive selection) doesn't exist yet. The transform is picked once
+    // the field is real — at sync-draft materialize, from the freshly-created
+    // table's live schema (see SyncDraftService).
+
     const plan: CreateSchemaTablesDto = {
       connectorAccountId: dto.destinationConnectorAccountId,
       ...(dto.remoteParentId ? { remoteParentId: dto.remoteParentId } : {}),
@@ -362,6 +368,24 @@ export class SchemaBuilderService {
       prerequisites: schemaCreationPrerequisitesFromCapabilities(destinationCapabilities),
       destinationSupportsCreation: connector.supportsSchemaCreation(),
     };
+  }
+
+  /**
+   * Flattened schema fields — with their `x-scratch-*` transform hints — for a
+   * remote table identified by `remoteTableId`, fetched live from the connector
+   * (no local DataFolder required). Used by the sync-draft materialize step to
+   * pick sync transforms for freshly-created destination columns, whose real
+   * schema only exists once the table has been created.
+   */
+  async fetchSchemaFieldsForRemoteTable(
+    workbookId: WorkbookId,
+    connectorAccountId: string,
+    remoteTableId: string[],
+    actor: Actor,
+  ): Promise<SchemaField[]> {
+    const { connector } = await this.resolveConnectorForWorkbook(connectorAccountId, workbookId, actor);
+    const spec = await connector.fetchJsonTableSpec({ wsId: remoteTableId[0], remoteId: remoteTableId });
+    return extractSchemaFields(spec.schema);
   }
 
   /**

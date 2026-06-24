@@ -6,6 +6,7 @@ import {
   X_SCRATCH_PREFIX,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
+  X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
@@ -72,7 +73,10 @@ export interface SchemaField {
   displayLabel?: string;
   description?: string;
   remoteFieldId?: string;
+  /** Unpack transform applied when this field is a sync source (native → plain). */
   suggestedTransformer?: TransformerConfig;
+  /** Pack transform applied when this field is a sync destination (plain → native). */
+  suggestedInTransformer?: TransformerConfig;
   readonly?: boolean;
   foreignKey?: { linkedTableId: string };
 }
@@ -105,6 +109,8 @@ export function extractSchemaFields(schema: TSchema, parentPath = ''): SchemaFie
     if (remoteFieldId) field.remoteFieldId = remoteFieldId;
     const suggested = schema[X_SCRATCH_SUGGESTED_TRANSFORMER] as TransformerConfig | undefined;
     if (suggested) field.suggestedTransformer = suggested;
+    const suggestedIn = schema[X_SCRATCH_SUGGESTED_IN_TRANSFORMER] as TransformerConfig | undefined;
+    if (suggestedIn) field.suggestedInTransformer = suggestedIn;
     if (schema[X_SCRATCH_READONLY] === true) field.readonly = true;
     const fk = schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] as ForeignKeyOptionSchema | undefined;
     if (fk?.linkedTableId) field.foreignKey = { linkedTableId: fk.linkedTableId };

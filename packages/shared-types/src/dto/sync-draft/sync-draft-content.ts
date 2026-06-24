@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { TransformerConfig } from '../../sync-mapping';
 import { createFieldSpecSchema, createTableSpecSchema } from '../schema/create-schema.dto';
 
 /**
@@ -87,10 +88,29 @@ export const draftColumnDestinationSchema = z.discriminatedUnion('kind', [
 ]);
 export type DraftColumnDestination = z.infer<typeof draftColumnDestinationSchema>;
 
+/**
+ * A transformer pipeline carried verbatim from a create plan's `FieldMappingNote`
+ * into the draft, then threaded into the resulting sync's column-mapping source by
+ * apply. The draft is a pass-through carrier: it does NOT re-validate the
+ * connector-specific transformer shape here — the authoritative validation is the
+ * full `TransformerConfig` union, enforced when the sync is saved. We only assert
+ * each entry names a `type`, and type the schema as `TransformerConfig` so the
+ * value flows create-plan → draft → sync mapping without being reshaped.
+ */
+const draftColumnTransformerSchema = z
+  .object({ type: z.string().min(1) })
+  .passthrough() as unknown as z.ZodType<TransformerConfig>;
+
 export const draftColumnMappingSchema = z.object({
   /** Existing source column path id (the source is always a real, existing folder). */
   source: z.object({ columnId: z.string().min(1) }),
   destination: draftColumnDestinationSchema,
+  /**
+   * Optional transformer pipeline copied verbatim from the create plan
+   * (CRM Bridge), applied to the source value before it is written to the
+   * destination column. Apply moves this onto `ColumnMappingSource.transformers`.
+   */
+  transformers: z.array(draftColumnTransformerSchema).min(1).optional(),
 });
 export type DraftColumnMapping = z.infer<typeof draftColumnMappingSchema>;
 

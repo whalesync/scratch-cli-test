@@ -28,6 +28,15 @@ export function validateSchemaMapping(
       continue;
     }
 
+    // A transformer reshapes the source value before it reaches the destination, so
+    // the raw source→destination type check no longer applies — the transform
+    // exists precisely to bridge the mismatch (e.g. a string wrapped into Notion's
+    // object-shaped `rich_text` envelope). The richer editor-time type tracer
+    // (type-validator.ts) still validates the predicted types through the pipeline.
+    if (mapping.transformer || (mapping.transformers && mapping.transformers.length > 0)) {
+      continue;
+    }
+
     const sourceType = getSchemaType(sourceFieldSchema);
     const destType = getSchemaType(destFieldSchema);
 

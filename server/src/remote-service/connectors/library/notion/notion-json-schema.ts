@@ -9,8 +9,10 @@ import {
   X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
+  X_SCRATCH_SUGGESTED_IN_TRANSFORMER,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
+  type TransformerConfig,
   type VirtualFieldDef,
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
@@ -451,5 +453,71 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
   if (virtualFields) schema[X_SCRATCH_VIRTUAL_FIELDS] = virtualFields;
   if (assetFieldOptions) schema[X_SCRATCH_ASSET_FIELD] = assetFieldOptions;
   if (foreignKeyOptions) schema[X_SCRATCH_FOREIGN_KEY_OPTIONS] = foreignKeyOptions;
+
+  // Declarative transform hints so a sync wraps/unwraps the Notion envelope
+  // automatically (see notionInboundPackTransformer / notionOutboundUnpackTransformer).
+  const inboundPack = notionInboundPackTransformer(property.type);
+  if (inboundPack) schema[X_SCRATCH_SUGGESTED_IN_TRANSFORMER] = inboundPack;
+  // `title`/`files` already expose their unpack via a virtual field; don't override it.
+  if (!virtualFields) {
+    const outboundUnpack = notionOutboundUnpackTransformer(property.type);
+    if (outboundUnpack) schema[X_SCRATCH_SUGGESTED_TRANSFORMER] = outboundUnpack;
+  }
   return schema;
+}
+
+/** A single recursive `wrap_object` step that builds `template` with `"$value"` substituted in. */
+function notionWrapTransformer(template: Record<string, unknown>): TransformerConfig {
+  return { type: TransformerTypes.WrapObject, options: { template } };
+}
+
+/**
+ * The inbound (pack) transform a sync applies to a plain value before WRITING it
+ * into a Notion property of `notionType` — wrapping it into the
+ * `{ type, <typeKey>: value }` envelope Notion's write API expects (the connector's
+ * `transformPropertiesForUpdate` then strips `type`/`id`). Built from a single
+ * recursive `wrap_object`. Returns undefined for types we don't (yet) write or
+ * that need element mapping / id resolution (`multi_select`, `relation`, `files`,
+ * read-only types) — those are a fast-follow.
+ */
+function notionInboundPackTransformer(notionType: string): TransformerConfig | undefined {
+  switch (notionType) {
+    case 'title':
+      return notionWrapTransformer({ type: 'title', title: [{ type: 'text', text: { content: '$value' } }] });
+    case 'rich_text':
+      return notionWrapTransformer({ type: 'rich_text', rich_text: [{ type: 'text', text: { content: '$value' } }] });
+    case 'number':
+      return notionWrapTransformer({ type: 'number', number: '$value' });
+    case 'checkbox':
+      return notionWrapTransformer({ type: 'checkbox', checkbox: '$value' });
+    case 'date':
+      // A scalar date populates `start`; `end`/`time_zone` are left for the editor.
+      return notionWrapTransformer({ type: 'date', date: { start: '$value' } });
+    case 'url':
+      return notionWrapTransformer({ type: 'url', url: '$value' });
+    case 'email':
+      return notionWrapTransformer({ type: 'email', email: '$value' });
+    case 'phone_number':
+      return notionWrapTransformer({ type: 'phone_number', phone_number: '$value' });
+    case 'select':
+      return notionWrapTransformer({ type: 'select', select: { name: '$value' } });
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The outbound (unpack) transform a sync applies when READING a Notion property of
+ * `notionType` as a source — flattening the envelope to a plain value. Only
+ * `rich_text` for now (`title` and `files` unpack via their virtual field);
+ * unpack hints for the other types are a fast-follow.
+ */
+function notionOutboundUnpackTransformer(notionType: string): TransformerConfig | undefined {
+  if (notionType === 'rich_text') {
+    return {
+      type: TransformerTypes.JSONPath,
+      options: { expression: '$.rich_text[*].plain_text', arrayHandling: 'concat' },
+    };
+  }
+  return undefined;
 }

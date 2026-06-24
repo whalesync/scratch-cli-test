@@ -81,11 +81,13 @@ describe('SyncDraftService', () => {
     schemaBuilderService = {
       createTables: jest.fn(),
       createFields: jest.fn(),
+      fetchSchemaFieldsForRemoteTable: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<SchemaBuilderService>;
 
     dataFolderService = {
       createFolder: jest.fn(),
       fetchSchemaSpec: jest.fn(),
+      getSchemaPaths: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<DataFolderService>;
 
     routineService = {
@@ -203,7 +205,7 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.create).not.toHaveBeenCalled();
     });
 
-    it('rejects a sync whose mapping carries a transformer with 422', async () => {
+    it('carries source transformer(s) back onto the draft so a transform-bearing sync round-trips', async () => {
       syncService.getSync.mockResolvedValue({
         id: SYNC_ID,
         workbookId: WORKBOOK_ID,
@@ -219,15 +221,36 @@ describe('SyncDraftService', () => {
                   destinationColumnId: 'name',
                   source: { kind: 'column', columnId: 'title', transformer: { type: 'trim' } },
                 },
+                {
+                  destinationColumnId: 'notes',
+                  source: {
+                    kind: 'column',
+                    columnId: 'bio',
+                    transformers: [{ type: 'wrap_object', options: { template: { rich_text: '$value' } } }],
+                  },
+                },
               ],
             },
           ],
         },
       } as never);
-
-      await expect(service.getOrCreate(WORKBOOK_ID, { fromSyncId: SYNC_ID } as never, ACTOR)).rejects.toBeInstanceOf(
-        UnprocessableEntityException,
+      (dbService.client.schedule.findFirst as jest.Mock).mockResolvedValue(null);
+      (dbService.client.syncDraft.create as jest.Mock).mockImplementation(
+        ({ data }: { data: Record<string, unknown> }) => makeDraftRow(data),
       );
+
+      const draft = await service.getOrCreate(WORKBOOK_ID, { fromSyncId: SYNC_ID } as never, ACTOR);
+      const columnMappings = draft.tableMappings[0].columnMappings;
+      // A single `transformer` normalizes to a one-element pipeline.
+      expect(columnMappings[0]).toEqual({
+        source: { columnId: 'title' },
+        destination: { kind: 'existing', columnId: 'name' },
+        transformers: [{ type: 'trim' }],
+      });
+      // An existing pipeline carries through unchanged.
+      expect(columnMappings[1].transformers).toEqual([
+        { type: 'wrap_object', options: { template: { rich_text: '$value' } } },
+      ]);
     });
 
     it('404s when the source sync belongs to a different workbook', async () => {
@@ -347,6 +370,96 @@ describe('SyncDraftService', () => {
       expect(dbService.client.syncDraft.update).toHaveBeenCalled();
       const dest = res.draft.tableMappings[0].destination;
       expect(dest.kind === 'placeholderTable' && dest.resolved?.remoteTableId).toEqual(['base1', 'tbl1']);
+    });
+
+    it('picks the sync transform for a created column from its real schema and writes it to the draft', async () => {
+      const packHint = { type: 'wrap_object', options: { template: { rich_text: '$value' } } };
+      const row = makeDraftRow({
+        tableMappings: [
+          {
+            ref: 'tm1',
+            source: { dataFolderId: 'dfd_src' },
+            destination: {
+              kind: 'placeholderTable',
+              ref: 'ph_contacts',
+              connectorAccountId: 'coa_1',
+              remoteParentId: ['base1'],
+              createSpec: {
+                ref: 'spec_contacts',
+                name: 'Contacts',
+                fields: [{ name: 'Name', fieldType: { kind: 'text' } }],
+              },
+            },
+            columnMappings: [{ source: { columnId: 'title' }, destination: { kind: 'placeholderField', ref: 'Name' } }],
+          },
+        ],
+      });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          { ref: 'spec_contacts', name: 'Contacts', status: 'created', remoteTableId: ['base1', 'tbl1'], fields: [] },
+        ],
+      } as never);
+      // The freshly-created table's 'Name' field carries a pack hint (real schema).
+      (schemaBuilderService.fetchSchemaFieldsForRemoteTable as jest.Mock).mockResolvedValue([
+        { path: 'properties.Name', type: 'object', suggestedInTransformer: packHint },
+      ]);
+      // The source 'title' column is a plain string (no hint).
+      (dataFolderService.getSchemaPaths as jest.Mock).mockResolvedValue([{ path: 'title', type: 'string' }]);
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      expect(schemaBuilderService.fetchSchemaFieldsForRemoteTable).toHaveBeenCalledWith(
+        WORKBOOK_ID,
+        'coa_1',
+        ['base1', 'tbl1'],
+        ACTOR,
+      );
+      expect(res.draft.tableMappings[0].columnMappings[0].transformers).toEqual([packHint]);
+    });
+
+    it('does not overwrite a transformer already on a created column', async () => {
+      const existing = { type: 'trim' };
+      const row = makeDraftRow({
+        tableMappings: [
+          {
+            ref: 'tm1',
+            source: { dataFolderId: 'dfd_src' },
+            destination: {
+              kind: 'placeholderTable',
+              ref: 'ph_contacts',
+              connectorAccountId: 'coa_1',
+              remoteParentId: ['base1'],
+              createSpec: {
+                ref: 'spec_contacts',
+                name: 'Contacts',
+                fields: [{ name: 'Name', fieldType: { kind: 'text' } }],
+              },
+            },
+            columnMappings: [
+              {
+                source: { columnId: 'title' },
+                destination: { kind: 'placeholderField', ref: 'Name' },
+                transformers: [existing],
+              },
+            ],
+          },
+        ],
+      });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      schemaBuilderService.createTables.mockResolvedValue({
+        status: 'ok',
+        tables: [
+          { ref: 'spec_contacts', name: 'Contacts', status: 'created', remoteTableId: ['base1', 'tbl1'], fields: [] },
+        ],
+      } as never);
+
+      const res = await service.materialize(DRAFT_ID, ACTOR);
+
+      // The column already had a transformer, so we don't even fetch its schema.
+      expect(schemaBuilderService.fetchSchemaFieldsForRemoteTable).not.toHaveBeenCalled();
+      expect(res.draft.tableMappings[0].columnMappings[0].transformers).toEqual([existing]);
     });
 
     it('does not re-attempt an already-resolved placeholder (noop)', async () => {
@@ -509,6 +622,60 @@ describe('SyncDraftService', () => {
       expect(archiveData.appliedSyncId).toBe('syn_new');
       expect(archiveData.archivedAt).toBeInstanceOf(Date);
       expect(sync.id).toBe('syn_new');
+    });
+
+    it('threads a draft column mapping transformer pipeline onto the created sync (CRM Bridge into Notion)', async () => {
+      const transformers = [
+        { type: 'wrap_object', options: { template: { content: '$value' } } },
+        { type: 'wrap_object', options: { template: { type: 'text', text: '$value' } } },
+        { type: 'auto_convert', options: { targetType: 'array' } },
+        { type: 'wrap_object', options: { template: { type: 'rich_text', rich_text: '$value' } } },
+      ];
+      const row = makeDraftRow({
+        tableMappings: [
+          {
+            ref: 'tm1',
+            source: { dataFolderId: 'dfd_src' },
+            destination: {
+              kind: 'placeholderTable',
+              ref: 'ph1',
+              connectorAccountId: 'coa_1',
+              remoteParentId: ['base1'],
+              createSpec: { ref: 's1', name: 'Contacts', fields: [{ name: 'Name', fieldType: { kind: 'text' } }] },
+              resolved: { remoteTableId: ['base1', 'tbl1'], actualName: 'Contacts' },
+            },
+            columnMappings: [
+              { source: { columnId: 'title' }, destination: { kind: 'placeholderField', ref: 'Name' }, transformers },
+            ],
+          },
+        ],
+      });
+      (dbService.client.syncDraft.findFirst as jest.Mock).mockResolvedValue(row);
+      (dataFolderService.createFolder as jest.Mock).mockResolvedValue({ id: 'dfd_new' });
+      (dataFolderService.fetchSchemaSpec as jest.Mock).mockResolvedValue({
+        schema: {
+          type: 'object',
+          properties: { fields: { type: 'object', properties: { Name: { type: 'string' } } } },
+        },
+      });
+      (syncService.createSync as jest.Mock).mockResolvedValue({ id: 'syn_new' });
+      (syncService.getSyncForExecution as jest.Mock).mockResolvedValue(makeFullSync('syn_new'));
+
+      await service.apply(DRAFT_ID, ACTOR);
+
+      const createSyncCalls = (syncService.createSync as jest.Mock).mock.calls as Array<
+        [
+          unknown,
+          {
+            mappings: {
+              tableMappings: Array<{ columnMappings: Array<{ source: { kind: string; transformers?: unknown } }> }>;
+            };
+          },
+        ]
+      >;
+      const source = createSyncCalls[0][1].mappings.tableMappings[0].columnMappings[0].source;
+      expect(source.kind).toBe('column');
+      expect(source.transformers).toEqual(transformers);
     });
 
     it('updates the existing sync when sourceSyncId is set (existing mappings only)', async () => {

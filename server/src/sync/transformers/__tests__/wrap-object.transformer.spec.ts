@@ -64,4 +64,30 @@ describe('wrapObjectTransformer', () => {
     const result = await wrapObjectTransformer.transform(createContext('hello'));
     expect(result).toEqual({ success: false, error: 'wrap_object requires a "template" option (object)' });
   });
+
+  it('substitutes $value nested inside objects', async () => {
+    const result = await wrapObjectTransformer.transform(
+      createContext('Hi', { template: { type: 'text', text: { content: '$value' } } }),
+    );
+    expect(result).toEqual({ success: true, value: { type: 'text', text: { content: 'Hi' } } });
+  });
+
+  it('substitutes $value nested inside arrays (builds a Notion rich_text envelope in one step)', async () => {
+    const result = await wrapObjectTransformer.transform(
+      createContext('Hi', {
+        template: { type: 'rich_text', rich_text: [{ type: 'text', text: { content: '$value' } }] },
+      }),
+    );
+    expect(result).toEqual({
+      success: true,
+      value: { type: 'rich_text', rich_text: [{ type: 'text', text: { content: 'Hi' } }] },
+    });
+  });
+
+  it('keeps non-$value nested literals as-is', async () => {
+    const result = await wrapObjectTransformer.transform(
+      createContext('x', { template: { wrap: { keep: 'literal', here: '$value' } } }),
+    );
+    expect(result).toEqual({ success: true, value: { wrap: { keep: 'literal', here: 'x' } } });
+  });
 });

@@ -11,6 +11,7 @@ import {
   type DraftTableMapping,
   type MaterializePlaceholderResult,
   type MaterializeResponse,
+  pickMappingTransformers,
   type SaveSyncBody,
   ScheduleAction,
   type Sync,
@@ -205,6 +206,9 @@ export class SyncDraftService {
 
     await this.materializePlaceholderTables(workbookId, draftId, tableMappings, results, actor);
     await this.materializeFieldAdditions(workbookId, draftId, tableMappings, results, actor);
+    // Now the destination fields are real: pick the sync transform for each
+    // newly-created column from its actual schema hints and write it to the draft.
+    await this.attachTransformersToMaterializedColumns(workbookId, draftId, tableMappings, actor);
 
     const fresh = await this.loadDraftOrThrow(draftId);
     return { draft: SyncDraftEntity.from(fresh), results, status: aggregateMaterializeStatus(results) };
@@ -281,7 +285,15 @@ export class SyncDraftService {
         );
         columnMappings.push({
           destinationColumnId,
-          source: { kind: 'column' as const, columnId: columnMapping.source.columnId },
+          source: {
+            kind: 'column' as const,
+            columnId: columnMapping.source.columnId,
+            // Carry the create-plan's transformer pipeline (e.g. wrapping a string
+            // into Notion's rich_text envelope) verbatim onto the sync mapping.
+            ...(columnMapping.transformers && columnMapping.transformers.length > 0
+              ? { transformers: columnMapping.transformers }
+              : {}),
+          },
         });
       }
       const recordMatching = tableMapping.recordMatching
@@ -556,6 +568,122 @@ export class SyncDraftService {
     });
   }
 
+  // ── materialize: transform selection ─────────────────────────────────────────
+
+  /**
+   * After materialize has created the real tables/fields, pick the sync transform
+   * for each newly-created (`placeholderField`) destination column from its now-real
+   * schema hints and write it onto the draft column mapping; apply later threads it
+   * onto the sync. This is computed here — not in the create plan — because a
+   * created field's real schema (and the `x-scratch-suggested-(in-)transformer`
+   * hints that drive selection) only exists once the field has been created.
+   *
+   * Only `placeholderField` (newly-created) columns are touched, and only when they
+   * carry no transformer yet, so a transformer a user set or that came back via the
+   * `fromSyncId` edit flow is never clobbered. Best-effort: a fetch/pick failure for
+   * one table is logged and skipped rather than failing materialize.
+   */
+  private async attachTransformersToMaterializedColumns(
+    workbookId: WorkbookId,
+    draftId: SyncDraftId,
+    tableMappings: DraftTableMapping[],
+    actor: Actor,
+  ): Promise<void> {
+    const sourceFieldsByFolderId = new Map<string, SchemaField[]>();
+    const sourceFieldsFor = async (dataFolderId: string): Promise<SchemaField[]> => {
+      const cached = sourceFieldsByFolderId.get(dataFolderId);
+      if (cached) return cached;
+      const fields = await this.dataFolderService.getSchemaPaths(dataFolderId as DataFolderId, actor);
+      sourceFieldsByFolderId.set(dataFolderId, fields);
+      return fields;
+    };
+
+    let changed = false;
+    for (const tableMapping of tableMappings) {
+      const needsTransform = tableMapping.columnMappings.some(
+        (columnMapping) =>
+          columnMapping.destination.kind === 'placeholderField' &&
+          !(columnMapping.transformers && columnMapping.transformers.length > 0),
+      );
+      if (!needsTransform) continue;
+
+      try {
+        const destinationFields = await this.materializedDestinationFields(workbookId, tableMapping, actor);
+        if (!destinationFields) continue; // table didn't materialize
+        const sourceFields = await sourceFieldsFor(tableMapping.source.dataFolderId);
+
+        for (const columnMapping of tableMapping.columnMappings) {
+          if (columnMapping.destination.kind !== 'placeholderField') continue;
+          if (columnMapping.transformers && columnMapping.transformers.length > 0) continue;
+
+          const fieldName = this.resolvePlaceholderFieldName(columnMapping.destination.ref, tableMapping);
+          if (!fieldName) continue;
+          const destinationField = destinationFields.find(
+            (field) => field.path.split('.').pop() === fieldName || field.displayLabel === fieldName,
+          );
+          const sourceField = sourceFields.find((field) => field.path === columnMapping.source.columnId);
+          const transformers = pickMappingTransformers(sourceField, destinationField);
+          if (transformers.length > 0) {
+            columnMapping.transformers = transformers;
+            changed = true;
+          }
+        }
+      } catch (error) {
+        WSLogger.warn({
+          source: 'SyncDraftService.materialize',
+          message: 'Failed to pick sync transforms for a materialized table; skipping',
+          draftId,
+          tableMappingRef: tableMapping.ref,
+          error: errorMessage(error),
+        });
+      }
+    }
+
+    if (changed) await this.persistTableMappings(draftId, tableMappings);
+  }
+
+  /**
+   * The destination table's flattened schema fields (with transform hints), fetched
+   * live so just-created tables and just-added fields are reflected — a placeholder
+   * table by its newly-assigned remote id (no local folder exists yet), an existing
+   * table by its data folder. Returns null when the table didn't materialize.
+   */
+  private async materializedDestinationFields(
+    workbookId: WorkbookId,
+    tableMapping: DraftTableMapping,
+    actor: Actor,
+  ): Promise<SchemaField[] | null> {
+    const destination = tableMapping.destination;
+    if (destination.kind === 'placeholderTable') {
+      const remoteTableId = destination.resolved?.remoteTableId;
+      if (!remoteTableId) return null;
+      return this.schemaBuilderService.fetchSchemaFieldsForRemoteTable(
+        workbookId,
+        destination.connectorAccountId,
+        remoteTableId,
+        actor,
+      );
+    }
+    const spec = await this.dataFolderService.fetchSchemaSpec(destination.dataFolderId as DataFolderId, actor);
+    return spec?.schema ? extractSchemaFields(spec.schema) : null;
+  }
+
+  /**
+   * The created field's name a placeholder-field `ref` points at — a field addition
+   * (its actual created name) or a placeholder table's create spec. Mirrors
+   * {@link resolvePlaceholderFieldTarget} but needs only the name. Null when the ref
+   * is dangling.
+   */
+  private resolvePlaceholderFieldName(ref: string, tableMapping: DraftTableMapping): string | null {
+    const addition = tableMapping.fieldAdditions?.find((field) => field.ref === ref);
+    if (addition) return addition.resolved?.actualName ?? addition.createFieldSpec.name;
+    if (tableMapping.destination.kind === 'placeholderTable') {
+      const field = tableMapping.destination.createSpec.fields.find((spec) => spec.name === ref);
+      if (field) return field.name;
+    }
+    return null;
+  }
+
   // ── apply internals ──────────────────────────────────────────────────────────
 
   private destinationFolderId(destination: DraftTableDestination): string {
@@ -682,11 +810,14 @@ export class SyncDraftService {
 
   /**
    * Converts an existing sync into blank-slate draft form: its v2 table mappings
-   * become all-`existing`, zero-placeholder draft mappings. Constructs the draft
-   * model can't yet represent (constant column sources, transformers, non-default
-   * unmatched policies) are rejected with a 422 rather than silently dropped —
-   * surfacing the limitation instead of corrupting the edit on re-apply. Syncs
-   * produced by this flow are transformer-free, so they always round-trip.
+   * become all-`existing`, zero-placeholder draft mappings. A source column's
+   * transformer pipeline is carried back onto the draft mapping, so a transform-
+   * bearing sync (e.g. one built by CRM Bridge into Notion) round-trips through the
+   * editor instead of being locked out. Constructs the draft model still can't
+   * represent — a constant column source, a per-column `when` other than `matched`,
+   * or a non-default unmatched-source/-destination policy — are rejected with a 422
+   * rather than silently dropped, surfacing the limitation instead of corrupting the
+   * edit on re-apply.
    */
   private async initializeFromExistingSync(
     workbookId: WorkbookId,
@@ -734,15 +865,17 @@ export class SyncDraftService {
       if (cm.source.kind !== 'column') {
         throw this.unsupportedEditError(syncId, 'a constant column mapping');
       }
-      if (cm.source.transformer || (cm.source.transformers && cm.source.transformers.length > 0)) {
-        throw this.unsupportedEditError(syncId, 'a column transformer');
-      }
       if (cm.when && cm.when !== 'matched') {
         throw this.unsupportedEditError(syncId, `a column mapping with when='${cm.when}'`);
       }
+      // Carry the source transformer(s) back so a transform-bearing sync round-trips.
+      // The draft model holds a pipeline, so a single `transformer` normalizes to a
+      // one-element `transformers`; apply threads it back onto the sync's source.
+      const transformers = cm.source.transformers ?? (cm.source.transformer ? [cm.source.transformer] : undefined);
       return {
         source: { columnId: cm.source.columnId },
         destination: { kind: 'existing' as const, columnId: cm.destinationColumnId },
+        ...(transformers && transformers.length > 0 ? { transformers } : {}),
       };
     });
 

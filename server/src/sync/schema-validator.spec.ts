@@ -101,6 +101,46 @@ describe('validateSchemaMapping', () => {
     const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
     expect(errors).toHaveLength(0);
   });
+
+  it('flags string -> object when no transformer bridges it (the CRM-Bridge-into-Notion failure)', () => {
+    const columnMappings: ColumnMapping[] = [{ sourceColumnId: 'name', destinationColumnId: 'meta' }];
+    const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("Source type 'string' cannot be mapped to Destination type 'object'");
+  });
+
+  it('skips the raw type check when a transformer is present (it bridges the mismatch)', () => {
+    const withPipeline: ColumnMapping[] = [
+      {
+        sourceColumnId: 'name',
+        destinationColumnId: 'meta',
+        transformers: [{ type: 'wrap_object', options: { template: {} } }],
+      },
+    ];
+    expect(validateSchemaMapping(sourceSchema, destSchema, withPipeline)).toHaveLength(0);
+
+    const withSingle: ColumnMapping[] = [
+      {
+        sourceColumnId: 'name',
+        destinationColumnId: 'meta',
+        transformer: { type: 'wrap_object', options: { template: {} } },
+      },
+    ];
+    expect(validateSchemaMapping(sourceSchema, destSchema, withSingle)).toHaveLength(0);
+  });
+
+  it('still flags a missing destination field even when a transformer is present', () => {
+    const columnMappings: ColumnMapping[] = [
+      {
+        sourceColumnId: 'name',
+        destinationColumnId: 'nope',
+        transformers: [{ type: 'wrap_object', options: { template: {} } }],
+      },
+    ];
+    const errors = validateSchemaMapping(sourceSchema, destSchema, columnMappings);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("Destination field 'nope' not found");
+  });
 });
 
 describe('findConstantTypeMismatches', () => {

@@ -141,12 +141,26 @@ export function createDataFoldersApi(http: Http) {
       return res.data;
     },
 
-    /** GET `/data-folder/:folderId/schema-paths` — flattened schema paths + suggested transformers. */
+    /** GET `/data-folder/:folderId/schema-paths` — flattened schema paths + suggested transformers (source-side and destination-side). */
     getSchemaPaths: async (
       folderId: string,
-    ): Promise<{ path: string; type: string; displayLabel?: string; suggestedTransformer?: TransformerConfig }[]> => {
+    ): Promise<
+      {
+        path: string;
+        type: string;
+        displayLabel?: string;
+        suggestedTransformer?: TransformerConfig;
+        suggestedInTransformer?: TransformerConfig;
+      }[]
+    > => {
       const res = await http.get<
-        { path: string; type: string; displayLabel?: string; suggestedTransformer?: TransformerConfig }[]
+        {
+          path: string;
+          type: string;
+          displayLabel?: string;
+          suggestedTransformer?: TransformerConfig;
+          suggestedInTransformer?: TransformerConfig;
+        }[]
       >(`/data-folder/${folderId}/schema-paths`, { fallbackMessage: 'Failed to fetch schema paths' });
       return res.data;
     },
