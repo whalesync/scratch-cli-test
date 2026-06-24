@@ -216,6 +216,33 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
                     continue;
                 }
                 let pointer = error.instance_path().to_string();
+                // A blank ("" or null) nested inside an `anyOf`-wrapped (or otherwise
+                // container-typed) field is not caught by the two leaf-level skips
+                // above: the jsonschema crate collapses the failure into a single
+                // `anyOf`/`type` error whose instance is the WHOLE container (e.g.
+                // WordPress `acf`, typed `anyOf[object, array(maxItems:0)]`). The
+                // leaf-level skips never see the `""`/`null` leaf, so an empty ACF
+                // number field surfaces as a false positive at `field_path = acf`.
+                // Extend the same blank exemption inward: when the failing instance is
+                // a container and the error is an `anyOf`/container-`type` failure,
+                // skip it only if the container fails SOLELY because of blank leaves —
+                // re-validate a blank-stripped clone and require that no error remains
+                // at the container. A genuinely-wrong nested value (e.g. a string where
+                // a number is required) keeps an error alive and still surfaces.
+                // (DEV-10540)
+                let instance_is_container =
+                    error.instance().is_object() || error.instance().is_array();
+                let error_is_anyof_or_container_type = matches!(
+                    error.kind(),
+                    jsonschema::error::ValidationErrorKind::AnyOf { .. }
+                        | jsonschema::error::ValidationErrorKind::Type { .. }
+                );
+                if instance_is_container
+                    && error_is_anyof_or_container_type
+                    && container_failure_is_only_nested_blanks(&validator, &ctx.record, &pointer)
+                {
+                    continue;
+                }
                 let field_path = if pointer.is_empty() {
                     "(record)".to_string()
                 } else {
@@ -436,6 +463,84 @@ fn schema_property_permits_null(node: &serde_json::Value) -> bool {
     false
 }
 
+/// Parity with the top-level `""` / `null` skips in `enforce_schema`: an empty
+/// string or a JSON null is the service's verbatim "blank/unset" sentinel. An empty
+/// object `{}` or array `[]` is a real value, never a blank.
+fn is_blank_leaf(value: &serde_json::Value) -> bool {
+    value.is_null() || value.as_str() == Some("")
+}
+
+/// Recursively removes every object entry whose value is a blank leaf (`""` / null),
+/// descending into nested objects and into array elements. Scalar array elements are
+/// left intact — removing them would shift indices and interact with `min`/`maxItems`.
+/// Non-blank leaves are never touched, so any genuine violation survives a
+/// re-validation of the stripped value. Bounded by `MAX_SCHEMA_PROPERTY_RECURSION_DEPTH`
+/// so a pathological instance can't recurse without end. Returns `true` if it removed
+/// at least one blank entry.
+fn strip_blank_object_entries(node: &mut serde_json::Value, depth_budget: usize) -> bool {
+    if depth_budget == 0 {
+        return false;
+    }
+    let mut removed_any_blank = false;
+    match node {
+        serde_json::Value::Object(map) => {
+            map.retain(|_key, value| {
+                if is_blank_leaf(value) {
+                    removed_any_blank = true;
+                    false
+                } else {
+                    true
+                }
+            });
+            for value in map.values_mut() {
+                removed_any_blank |= strip_blank_object_entries(value, depth_budget - 1);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for value in items.iter_mut() {
+                removed_any_blank |= strip_blank_object_entries(value, depth_budget - 1);
+            }
+        }
+        _ => {}
+    }
+    removed_any_blank
+}
+
+/// Returns `true` when the container that failed validation at `container_pointer`
+/// fails ONLY because of nested blank (`""` / null) leaves. Strips every blank object
+/// entry from a clone of `record` at that pointer and re-validates the whole clone
+/// with the SAME compiled `validator` (so `format` checks stay live and parity with
+/// the top-level blank skips is preserved). Returns `false` — meaning surface the
+/// original error — when the pointer can't be located, when no blank was stripped (so
+/// blanks were not the cause), or when any error still remains at or under
+/// `container_pointer` (a real, non-blank violation survives). Mirrors the top-level
+/// `""` / null skips, extended to blanks nested inside `anyOf`/object container
+/// failures. (DEV-10540)
+fn container_failure_is_only_nested_blanks(
+    validator: &jsonschema::Validator,
+    record: &serde_json::Value,
+    container_pointer: &str,
+) -> bool {
+    let mut blank_stripped_record = record.clone();
+    let container = match blank_stripped_record.pointer_mut(container_pointer) {
+        Some(container) => container,
+        None => return false,
+    };
+    if !strip_blank_object_entries(container, MAX_SCHEMA_PROPERTY_RECURSION_DEPTH) {
+        return false;
+    }
+    let nested_error_pointer_prefix = format!("{container_pointer}/");
+    for remaining_error in validator.iter_errors(&blank_stripped_record) {
+        let remaining_error_pointer = remaining_error.instance_path().to_string();
+        if remaining_error_pointer == container_pointer
+            || remaining_error_pointer.starts_with(&nested_error_pointer_prefix)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// Maximum depth `collect_schema_properties` descends through nested object
 /// `properties`. Connector-generated schemas are shallow, acyclic trees (no
 /// `$ref`), so this never fires in practice — it only bounds a pathological or
@@ -628,6 +733,209 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].field_path, "email");
         assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    // ── DEV-10540: blanks nested inside an anyOf-wrapped container ────────────
+
+    /// WordPress `acf` shape: `anyOf[ object{ number_field: number|null }, array(maxItems:0) ]`.
+    /// `extra_object_properties` are merged into the object branch's `properties`.
+    fn schema_anyof_wrapped_acf(extra_object_properties: serde_json::Value) -> serde_json::Value {
+        let mut object_branch_properties = json!({
+            "number_field": { "anyOf": [{ "type": "number" }, { "type": "null" }] }
+        });
+        if let (Some(target), Some(extra)) = (
+            object_branch_properties.as_object_mut(),
+            extra_object_properties.as_object(),
+        ) {
+            for (key, value) in extra {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        json!({ "schema": { "properties": {
+            "acf": { "anyOf": [
+                { "type": "object", "properties": object_branch_properties },
+                { "type": "array", "maxItems": 0 }
+            ]}
+        }}})
+    }
+
+    #[test]
+    fn nested_blank_empty_string_in_anyof_container_is_clean() {
+        // An empty ACF number field comes back as "" inside the anyOf-wrapped object;
+        // it must not surface (DEV-10540).
+        let ctx = record_ctx(
+            json!({ "acf": { "number_field": "" } }),
+            None,
+            schema_anyof_wrapped_acf(json!({})),
+        );
+        let results = enforce_schema(&ctx);
+        assert!(
+            results.is_empty(),
+            "blank nested field should be clean, got {} error(s)",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn nested_blank_null_in_anyof_container_is_clean() {
+        // A nested `null` blank inside an anyOf-wrapped object. The field is typed
+        // non-nullable `number` so the `null` actually fails the object branch and the
+        // failure bubbles to the `acf` container — exercising the nested-blank path.
+        let schema = json!({ "schema": { "properties": {
+            "acf": { "anyOf": [
+                { "type": "object", "properties": { "number_field": { "type": "number" } } },
+                { "type": "array", "maxItems": 0 }
+            ]}
+        }}});
+        let ctx = record_ctx(json!({ "acf": { "number_field": null } }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn nested_wrong_type_in_anyof_container_still_errors() {
+        // A genuinely-wrong nested value (non-blank string where a number is required)
+        // must still surface.
+        let schema = json!({ "schema": { "properties": {
+            "acf": { "anyOf": [
+                { "type": "object", "properties": { "number_field": { "type": "number" } } },
+                { "type": "array", "maxItems": 0 }
+            ]}
+        }}});
+        let ctx = record_ctx(
+            json!({ "acf": { "number_field": "not-a-number" } }),
+            None,
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].field_path, "acf");
+        assert_eq!(results[0].level, ValidationLevel::Error);
+    }
+
+    #[test]
+    fn nested_blank_beside_wrong_value_still_errors() {
+        // One blank ("") and one genuinely-wrong value in the SAME container: the blank
+        // is stripped but the bad sibling survives re-validation, so the error stays.
+        let ctx = record_ctx(
+            json!({ "acf": { "number_field": "", "other_number": "wrong" } }),
+            None,
+            schema_anyof_wrapped_acf(json!({ "other_number": { "type": "number" } })),
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(
+            results.len(),
+            1,
+            "blank must not mask the sibling bad value, got {} error(s)",
+            results.len()
+        );
+        assert_eq!(results[0].field_path, "acf");
+    }
+
+    #[test]
+    fn empty_array_branch_with_actual_empty_array_is_clean() {
+        // WordPress returns `acf: []` (PHP empty associative array); it matches the
+        // `maxItems: 0` branch directly and is clean.
+        let ctx = record_ctx(
+            json!({ "acf": [] }),
+            None,
+            schema_anyof_wrapped_acf(json!({})),
+        );
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn deeply_nested_blank_in_anyof_container_is_clean() {
+        // A blank two levels down inside the wrapped object; recursion + format parity.
+        let schema = json!({ "schema": { "properties": {
+            "acf": { "anyOf": [
+                { "type": "object", "properties": {
+                    "image": { "type": "object", "properties": {
+                        "url": { "type": "string", "format": "uri" }
+                    }}
+                }},
+                { "type": "array", "maxItems": 0 }
+            ]}
+        }}});
+        let ctx = record_ctx(json!({ "acf": { "image": { "url": "" } } }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn blank_inside_array_element_object_is_clean() {
+        // An anyOf-wrapped array of objects whose only element holds a blank leaf.
+        let schema = json!({ "schema": { "properties": {
+            "gallery": { "anyOf": [
+                { "type": "array", "items": { "type": "object", "properties": {
+                    "caption": { "type": "string", "format": "uri" }
+                }}},
+                { "type": "array", "maxItems": 0 }
+            ]}
+        }}});
+        let ctx = record_ctx(json!({ "gallery": [ { "caption": "" } ] }), None, schema);
+        assert!(enforce_schema(&ctx).is_empty());
+    }
+
+    #[test]
+    fn blank_and_bad_in_separate_array_elements_still_errors() {
+        // `[{n:""}, {n:"bad"}]` — element 0's blank is stripped, element 1's bad value
+        // survives, so the container error still surfaces.
+        let schema = json!({ "schema": { "properties": {
+            "items_field": { "anyOf": [
+                { "type": "array", "items": { "type": "object", "properties": {
+                    "n": { "anyOf": [{ "type": "number" }, { "type": "null" }] }
+                }}},
+                { "type": "array", "maxItems": 0 }
+            ]}
+        }}});
+        let ctx = record_ctx(
+            json!({ "items_field": [ { "n": "" }, { "n": "bad" } ] }),
+            None,
+            schema,
+        );
+        let results = enforce_schema(&ctx);
+        assert_eq!(
+            results.len(),
+            1,
+            "bad sibling array element must surface, got {} error(s)",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn required_nested_field_blank_in_anyof_container_still_errors() {
+        // If the nested field is REQUIRED inside the branch, stripping the blank makes
+        // the branch fail `required`, the anyOf re-fails, and the error surfaces. This
+        // is the documented conservative behaviour (safe, never masks; no worse than
+        // before this change).
+        let schema = json!({ "schema": { "properties": {
+            "acf": { "anyOf": [
+                { "type": "object",
+                  "required": ["number_field"],
+                  "properties": { "number_field": { "type": "number" } } },
+                { "type": "array", "maxItems": 0 }
+            ]}
+        }}});
+        let ctx = record_ctx(json!({ "acf": { "number_field": "" } }), None, schema);
+        let results = enforce_schema(&ctx);
+        assert_eq!(
+            results.len(),
+            1,
+            "required-but-blank nested field must surface, got {} error(s)",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn flat_top_level_blank_still_clean_after_nested_change() {
+        // Regression guard: the original top-level "" / null leaf skips still fire and
+        // the new container guard does not change flat-field behaviour.
+        let schema = json!({ "schema": { "properties": {
+            "email": { "anyOf": [{ "type": "string", "format": "email" }, { "type": "null" }] }
+        }}});
+        assert!(
+            enforce_schema(&record_ctx(json!({ "email": "" }), None, schema.clone())).is_empty()
+        );
+        assert!(enforce_schema(&record_ctx(json!({ "email": null }), None, schema)).is_empty());
     }
 
     // ── nullable-aware required check (Fix 1) ─────────────────────────────────
