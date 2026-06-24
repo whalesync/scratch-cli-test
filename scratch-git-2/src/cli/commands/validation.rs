@@ -452,3 +452,162 @@ pub fn dry_run_command(
     println!("{}", serde_json::to_string(&all_violations)?);
     Ok(())
 }
+
+/// JSON summary printed by `validation rerun`.
+#[derive(Serialize)]
+struct RerunSummary {
+    scope: &'static str,
+    folders_revalidated: usize,
+    records_validated: usize,
+    errors: i64,
+    warnings: i64,
+    skipped_folders: usize,
+}
+
+/// `validation rerun`: force re-run all validators against the CURRENT index and refresh the
+/// stored results, non-destructively, for a single folder, a whole connection, or the whole
+/// workbook. Exactly one scope is set (clap's `ArgGroup` enforces it). Per-folder progress goes
+/// to stderr; the aggregate JSON summary goes to stdout.
+pub fn rerun_command(
+    workspace_start: &std::path::Path,
+    folder: Option<&str>,
+    connection: Option<&str>,
+    all: bool,
+    debug: bool,
+) -> anyhow::Result<()> {
+    let workspace_dir = resolve_workspace(workspace_start)?;
+
+    // Resolve the scope label and the concrete list of `<connection>/<subfolder>` folders to
+    // revalidate. Connection/workspace scopes enumerate working-dir subfolders the same way
+    // `index rebuild-all` does (one level under each connection dir, skipping dotfiles).
+    let (scope, folders): (&'static str, Vec<String>) = if let Some(f) = folder {
+        let normalized = f.trim_end_matches('/').to_string();
+        if normalized.is_empty() || !normalized.contains('/') {
+            anyhow::bail!("--folder must be '<connection>/<subfolder>', got: {f}");
+        }
+        ("folder", vec![normalized])
+    } else if let Some(conn) = connection {
+        let marker = super::index::read_workspace_marker(&workspace_dir)?;
+        if !marker.connections.iter().any(|c| c.dir_name == conn) {
+            anyhow::bail!(
+                "Connection '{conn}' was not found in {}",
+                workspace_dir.display()
+            );
+        }
+        (
+            "connection",
+            subfolders_for_connection(&workspace_dir, conn),
+        )
+    } else if all {
+        let marker = super::index::read_workspace_marker(&workspace_dir)?;
+        let mut folders = Vec::new();
+        for c in &marker.connections {
+            folders.extend(subfolders_for_connection(&workspace_dir, &c.dir_name));
+        }
+        ("workspace", folders)
+    } else {
+        // Unreachable: clap's required ArgGroup guarantees exactly one scope flag.
+        anyhow::bail!("exactly one of --folder, --connection, or --all is required");
+    };
+
+    let mut folders_revalidated = 0usize;
+    let mut records_validated = 0usize;
+    let mut skipped_folders = 0usize;
+
+    for folder_path in &folders {
+        eprintln!("[rerun] revalidating {folder_path}...");
+        match crate::shared::folder_index::revalidate_folder(&workspace_dir, folder_path, debug) {
+            Ok(result) => {
+                folders_revalidated += 1;
+                records_validated += result.validated;
+            }
+            Err(e) => {
+                eprintln!("  ERROR revalidating {folder_path}: {e}");
+                skipped_folders += 1;
+            }
+        }
+    }
+
+    // Sum error/warning totals for the scope from the freshly-updated results table.
+    // `collect_validation_stats` returns `folder_path` with the connection prefix stripped, so
+    // we compare its `folder_path` against the subfolder portion, not the full `<conn>/<sub>`.
+    let stats = crate::shared::validation_stats::collect_validation_stats(&workspace_dir)?;
+    let mut errors = 0i64;
+    let mut warnings = 0i64;
+    for stat in &stats {
+        let in_scope = match scope {
+            "folder" => {
+                let folder_arg = folder.unwrap_or_default().trim_end_matches('/');
+                let (conn, sub) = folder_arg.split_once('/').unwrap_or((folder_arg, ""));
+                stat.connection == conn && stat.folder_path == sub
+            }
+            "connection" => stat.connection == connection.unwrap_or_default(),
+            _ => true, // workspace scope
+        };
+        if in_scope {
+            errors += stat.errors;
+            warnings += stat.warnings;
+        }
+    }
+
+    let summary = RerunSummary {
+        scope,
+        folders_revalidated,
+        records_validated,
+        errors,
+        warnings,
+        skipped_folders,
+    };
+    println!("{}", serde_json::to_string(&summary)?);
+    Ok(())
+}
+
+/// List `<dir_name>/<subfolder>` folders for one connection's working directory, mirroring
+/// `index rebuild-all` (immediate subdirectories, skipping dotfiles). A missing or unreadable
+/// working dir yields an empty list — the connection simply contributes no folders.
+fn subfolders_for_connection(
+    workspace_dir: &std::path::Path,
+    connection_dir_name: &str,
+) -> Vec<String> {
+    let working_dir = workspace_dir.join(connection_dir_name);
+    let entries = match std::fs::read_dir(&working_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .map(|e| format!("{connection_dir_name}/{}", e.file_name().to_string_lossy()))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn subfolders_for_connection_lists_dirs_and_skips_dotfiles_and_files() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::create_dir_all(ws.join("conn").join("posts")).unwrap();
+        fs::create_dir_all(ws.join("conn").join("tags")).unwrap();
+        fs::create_dir_all(ws.join("conn").join(".scratch")).unwrap(); // dot-dir → skipped
+        fs::write(ws.join("conn").join("notafolder.txt"), "x").unwrap(); // file → skipped
+
+        let mut folders = subfolders_for_connection(ws, "conn");
+        folders.sort();
+        assert_eq!(
+            folders,
+            vec!["conn/posts".to_string(), "conn/tags".to_string()]
+        );
+    }
+
+    #[test]
+    fn subfolders_for_connection_missing_dir_is_empty() {
+        let tmp = TempDir::new().unwrap();
+        assert!(subfolders_for_connection(tmp.path(), "nope").is_empty());
+    }
+}

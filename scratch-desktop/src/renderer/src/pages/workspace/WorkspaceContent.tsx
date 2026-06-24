@@ -1,10 +1,16 @@
 import { Box } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { Workspace } from '@spinner/shared-types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { ReviewStat } from '../../../../shared/review-types';
-import type { ValidationStat, ValidatorConfig } from '../../../../shared/validation-types';
-import { trackOpenConnectionsDialog } from '../../lib/posthog';
+import type {
+  RerunValidationScope,
+  RerunValidationSummary,
+  ValidationStat,
+  ValidatorConfig,
+} from '../../../../shared/validation-types';
+import { trackOpenConnectionsDialog, trackRerunValidation } from '../../lib/posthog';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import type { WorkspaceConnection } from '../../types/local-files';
 import { ConnectionsPanel } from './ConnectionsPanel';
@@ -47,6 +53,28 @@ interface WorkspaceContentProps {
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 500;
 const DEFAULT_SIDEBAR_WIDTH = 280;
+
+/** Human-readable summary for the "rerun validation" completion toast. */
+function rerunSummaryMessage(summary: RerunValidationSummary): string {
+  const folders = `${summary.folders_revalidated} folder${summary.folders_revalidated === 1 ? '' : 's'}`;
+  const problems =
+    summary.errors === 0 && summary.warnings === 0
+      ? 'no problems'
+      : [
+          summary.errors > 0 ? `${summary.errors} error${summary.errors === 1 ? '' : 's'}` : null,
+          summary.warnings > 0 ? `${summary.warnings} warning${summary.warnings === 1 ? '' : 's'}` : null,
+        ]
+          .filter(Boolean)
+          .join(', ');
+  const skipped = summary.skipped_folders > 0 ? ` (${summary.skipped_folders} skipped)` : '';
+  return `Revalidated ${folders}: ${problems}${skipped}`;
+}
+
+/** Extract the folder path from a `[rerun] revalidating <folder>...` progress line. */
+function parseRerunProgressFolder(line: string): string | null {
+  const match = /^\[rerun] revalidating (.+?)\.\.\.\s*$/.exec(line);
+  return match ? match[1] : null;
+}
 
 export function WorkspaceContent({
   workspace,
@@ -127,6 +155,52 @@ export function WorkspaceContent({
     void trackOpenConnectionsDialog(workspace.id);
   }, [workspace.id, setShowConnectionsPanel]);
 
+  // Shared "rerun validation" action for all three scopes (folder / connector / workbook).
+  // Re-runs every validator against the current index and refreshes stored results, then
+  // refreshes the sidebar/panel counts. Non-destructive — unlike "Clear Index".
+  const handleRerunValidation = useCallback(
+    async (scope: RerunValidationScope) => {
+      if (!localPath) return;
+      const toastId = 'rerun-validation';
+      const scopeLabel =
+        scope.kind === 'connection'
+          ? `connection "${scope.connection}"`
+          : scope.kind === 'folder'
+            ? 'folder'
+            : 'workspace';
+      const unsubscribe = window.scratchDesktop.onRerunValidationProgress((line) => {
+        const folder = parseRerunProgressFolder(line);
+        if (folder) {
+          notifications.update({ id: toastId, message: `Revalidating ${folder}…`, loading: true, autoClose: false });
+        }
+      });
+      notifications.show({ id: toastId, message: `Revalidating ${scopeLabel}…`, loading: true, autoClose: false });
+      void trackRerunValidation(workspace.id, scope.kind);
+      try {
+        const summary = await window.scratchDesktop.rerunValidation(localPath, scope);
+        notifications.update({
+          id: toastId,
+          loading: false,
+          color: summary.errors > 0 ? 'red' : 'green',
+          message: rerunSummaryMessage(summary),
+          autoClose: 5000,
+        });
+        onRefreshValidationStats?.();
+      } catch (error) {
+        notifications.update({
+          id: toastId,
+          loading: false,
+          color: 'red',
+          message: `Revalidation failed: ${error instanceof Error ? error.message : String(error)}`,
+          autoClose: 6000,
+        });
+      } finally {
+        unsubscribe();
+      }
+    },
+    [localPath, onRefreshValidationStats, workspace.id],
+  );
+
   // Load local folders when workspace is downloaded
   useEffect(() => {
     if (!localPath) {
@@ -192,6 +266,7 @@ export function WorkspaceContent({
         configs={validationConfigs ?? []}
         configsLoading={validationConfigsLoading ?? false}
         onRefreshStats={onRefreshValidationStats ?? (() => undefined)}
+        onRerunAll={() => void handleRerunValidation({ kind: 'workspace' })}
         onNavigateToField={(folderPath, filename, fieldName) => {
           setShowValidationPanel(false);
           setSelectedFolderPath(folderPath);
@@ -262,6 +337,7 @@ export function WorkspaceContent({
         settingsPanelOpen={showSettingsPanel}
         validationStats={validationStats}
         reviewStats={reviewStats}
+        onRerunValidation={(scope) => void handleRerunValidation(scope)}
       />
 
       {/* Resize Handle */}

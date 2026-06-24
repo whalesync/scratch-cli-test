@@ -6,6 +6,7 @@ import {
   Avatar,
   Badge,
   Box,
+  Button,
   Divider,
   Group,
   Loader,
@@ -23,6 +24,7 @@ import {
   CircleXIcon,
   ExternalLinkIcon,
   InfoIcon,
+  RefreshCwIcon,
   ShieldCheck,
   ShieldCheckIcon,
   TriangleAlertIcon,
@@ -44,6 +46,8 @@ interface ValidationPanelProps {
   configs: ValidatorConfig[];
   configsLoading: boolean;
   onRefreshStats: () => void;
+  /** Re-run all validators across the whole workbook and refresh stored results. */
+  onRerunAll: () => void;
   onNavigateToField?: (folderPath: string, filename: string, fieldName: string) => void;
 }
 
@@ -476,6 +480,7 @@ export function ValidationPanel({
   statsLoading,
   configs,
   configsLoading,
+  onRerunAll,
   onNavigateToField,
 }: ValidationPanelProps) {
   const validateEnabled = useWorkspaceUiStore((s) => s.validateEnabled);
@@ -511,13 +516,25 @@ export function ValidationPanel({
           <StyledLucideIcon Icon={ShieldCheck} size={16} c="var(--fg-secondary)" />
           <Text16Medium c="var(--fg-primary)">Validation</Text16Medium>
         </Group>
-        <Switch
-          checked={validateEnabled}
-          onChange={(e) => setValidateEnabled(e.currentTarget.checked)}
-          label={validateEnabled ? 'On' : 'Off'}
-          size="md"
-          styles={{ label: { paddingLeft: 8, fontSize: 13 } }}
-        />
+        <Group gap={10} align="center">
+          <Tooltip label="Re-run all validators across the workbook" position="bottom" withArrow>
+            <Button
+              variant="default"
+              size="xs"
+              leftSection={<StyledLucideIcon Icon={RefreshCwIcon} size={14} />}
+              onClick={onRerunAll}
+            >
+              Rerun all
+            </Button>
+          </Tooltip>
+          <Switch
+            checked={validateEnabled}
+            onChange={(e) => setValidateEnabled(e.currentTarget.checked)}
+            label={validateEnabled ? 'On' : 'Off'}
+            size="md"
+            styles={{ label: { paddingLeft: 8, fontSize: 13 } }}
+          />
+        </Group>
       </Group>
 
       {/* Tabs */}

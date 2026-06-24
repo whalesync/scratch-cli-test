@@ -43,6 +43,29 @@ export type ValidationStat = {
 };
 
 /**
+ * Scope for a "rerun validation" action — re-run all validators against the current index
+ * and refresh stored results, non-destructively. One of three scopes:
+ * a single data folder, a whole connector, or the entire workbook.
+ */
+export type RerunValidationScope =
+  | { kind: 'folder'; folderPath: string }
+  | { kind: 'connection'; connection: string }
+  | { kind: 'workspace' };
+
+/**
+ * Aggregate result of `scratchmd validation rerun` (mirrors the Rust `RerunSummary`).
+ * snake_case to match the CLI's JSON output.
+ */
+export type RerunValidationSummary = {
+  scope: 'folder' | 'connection' | 'workspace';
+  folders_revalidated: number;
+  records_validated: number;
+  errors: number;
+  warnings: number;
+  skipped_folders: number;
+};
+
+/**
  * Validation entry mapped to camelCase for use in UI components.
  * Produced by mapping a `ValidationResultRow` after the CLI call returns.
  */

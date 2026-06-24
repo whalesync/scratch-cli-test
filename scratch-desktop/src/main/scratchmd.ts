@@ -18,7 +18,12 @@ import { app, BrowserWindow } from 'electron';
 import { join, relative, resolve } from 'path';
 import { performance } from 'perf_hooks';
 import type { ReviewStat } from '../shared/review-types';
-import type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
+import type {
+  RerunValidationScope,
+  RerunValidationSummary,
+  ValidationResultRow,
+  ValidationStat,
+} from '../shared/validation-types';
 import { WORKSPACE_NEEDS_REINIT_CHANNEL, type WorkspaceNeedsReinitEvent } from '../shared/workspace-reinit-events';
 import { nativeGetReviewStats, nativeGetValidationStats } from './native/scratchmd-native';
 import { bundledGitBinaryPath } from './setup-git-env';
@@ -989,7 +994,12 @@ export async function reconcilePublishedRecord(
 }
 
 export type { ReviewStat } from '../shared/review-types';
-export type { ValidationResultRow, ValidationStat } from '../shared/validation-types';
+export type {
+  RerunValidationScope,
+  RerunValidationSummary,
+  ValidationResultRow,
+  ValidationStat,
+} from '../shared/validation-types';
 
 export async function getValidationResults(
   workspacePath: string,
@@ -1026,6 +1036,31 @@ export async function getFolderValidationResults(
 export async function clearFolderIndex(workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> {
   const relFolder = relative(workspacePath, folderPath).replace(/\\/g, '/');
   return runScratchmdJson<{ rows_cleared: number }>(['index', 'clear-folder', '--folder', relFolder], workspacePath);
+}
+
+/**
+ * Force re-run all validators against the CURRENT index and refresh the stored
+ * `validation_results`, non-destructively (preserves index rows + dynamic columns — unlike
+ * {@link clearFolderIndex}). Rust fans out across folders for connector/workbook scope and
+ * returns an aggregate summary; `onProgress` receives per-folder `[rerun] revalidating …`
+ * lines from stderr so a long-running scope can show live progress.
+ */
+export async function rerunValidation(
+  workspacePath: string,
+  scope: RerunValidationScope,
+  onProgress?: (line: string) => void,
+): Promise<RerunValidationSummary> {
+  const args = ['validation', 'rerun'];
+  if (scope.kind === 'folder') {
+    // The CLI splits the folder on POSIX `/`; normalize a Windows backslash path.
+    const relFolder = relative(workspacePath, scope.folderPath).replace(/\\/g, '/');
+    args.push('--folder', relFolder);
+  } else if (scope.kind === 'connection') {
+    args.push('--connection', scope.connection);
+  } else {
+    args.push('--all');
+  }
+  return runScratchmdJson<RerunValidationSummary>(args, workspacePath, onProgress);
 }
 
 export async function getFilenamesWithErrors(

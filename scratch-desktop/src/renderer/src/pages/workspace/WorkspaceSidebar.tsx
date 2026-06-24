@@ -14,9 +14,9 @@ import {
   TriangleAlertIcon,
   UnplugIcon,
 } from 'lucide-react';
-import { JSX, useMemo } from 'react';
+import { JSX, type MouseEvent as ReactMouseEvent, useMemo } from 'react';
 import type { ReviewStat } from '../../../../shared/review-types';
-import type { ValidationStat } from '../../../../shared/validation-types';
+import type { RerunValidationScope, ValidationStat } from '../../../../shared/validation-types';
 import { UserMenu } from '../../components/user-menu';
 import { useCurrentUser } from '../../hooks/use-current-user';
 import { useDevTools } from '../../hooks/use-dev-tools';
@@ -48,6 +48,8 @@ interface WorkspaceSidebarProps {
   settingsPanelOpen?: boolean;
   validationStats?: ValidationStat[];
   reviewStats?: ReviewStat[];
+  /** Re-run validators for a folder, a connector, or the whole workbook (non-destructive). */
+  onRerunValidation?: (scope: RerunValidationScope) => void;
 }
 
 export function WorkspaceSidebar({
@@ -73,6 +75,7 @@ export function WorkspaceSidebar({
   settingsPanelOpen,
   validationStats,
   reviewStats,
+  onRerunValidation,
 }: WorkspaceSidebarProps) {
   const { isDevToolsEnabled } = useDevTools();
   const { user } = useCurrentUser();
@@ -164,6 +167,7 @@ export function WorkspaceSidebar({
               invalidateWorkspaceLevelData={invalidateWorkspaceLevelData}
               validationByFolder={validateEnabled ? validationByFolder : undefined}
               reviewByFolder={reviewByFolder}
+              onRerunValidation={onRerunValidation}
             />
           </>
         )}
@@ -192,6 +196,19 @@ export function WorkspaceSidebar({
             Icon={ShieldCheckIcon}
             isSelected={validationPanelOpen}
             onClick={onToggleValidationPanel}
+            onContextMenu={
+              onRerunValidation
+                ? (event) => {
+                    event.preventDefault();
+                    window.scratchDesktop.showNativeContextMenu(
+                      [{ id: 'rerun-validation-workspace', label: 'Rerun validation (whole workspace)' }],
+                      (id) => {
+                        if (id === 'rerun-validation-workspace') onRerunValidation({ kind: 'workspace' });
+                      },
+                    );
+                  }
+                : undefined
+            }
             rightLabel={
               !validateEnabled ? (
                 <Badge size="xs" variant="light" color="gray" radius="sm">
@@ -253,6 +270,7 @@ function MenuButton({
   isSelected,
   devOnly,
   rightLabel,
+  onContextMenu,
 }: {
   title: string;
   onClick: () => void;
@@ -260,6 +278,7 @@ function MenuButton({
   isSelected?: boolean;
   devOnly?: boolean;
   rightLabel?: JSX.Element;
+  onContextMenu?: (event: ReactMouseEvent) => void;
 }) {
   return (
     <UnstyledButton
@@ -269,6 +288,7 @@ function MenuButton({
       bg={isSelected ? 'var(--highlight-fill)' : undefined}
       c={devOnly ? 'var(--mantine-color-devTool-9)' : 'var(--fg-secondary)'}
       onClick={onClick}
+      onContextMenu={onContextMenu}
     >
       <Group gap={8} wrap="nowrap" justify="space-between">
         <Icon size={14} />

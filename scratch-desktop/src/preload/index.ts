@@ -11,6 +11,8 @@ import type { ReviewStat } from '../shared/review-types';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import { UPDATER_EVENT_CHANNEL, type UpdaterEvent } from '../shared/updater-events';
 import type {
+  RerunValidationScope,
+  RerunValidationSummary,
   ValidationResultRow,
   ValidationStat,
   ValidatorConfig,
@@ -116,6 +118,15 @@ const scratchDesktop = {
     invoke('scratch:prepare-workspace-index', workspacePath),
   clearFolderIndex: (workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> =>
     invoke('scratch:clear-folder-index', workspacePath, folderPath),
+  rerunValidation: (workspacePath: string, scope: RerunValidationScope): Promise<RerunValidationSummary> =>
+    invoke('scratch:rerun-validation', workspacePath, scope),
+  onRerunValidationProgress: (callback: (line: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, line: string): void => callback(line);
+    ipcRenderer.on('scratch:rerun-validation-progress', listener);
+    return () => {
+      ipcRenderer.removeListener('scratch:rerun-validation-progress', listener);
+    };
+  },
   refreshPaths: (workspacePath: string, paths: string[], singleFile?: string): Promise<void> =>
     invoke('scratch:refresh-paths', workspacePath, paths, singleFile),
   acceptAllChanges: (

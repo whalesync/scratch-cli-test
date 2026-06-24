@@ -7,6 +7,8 @@ import type { ReviewStat } from '../shared/review-types';
 import type { ColumnDefinition, NormalizedRecordRow } from '../shared/schema-columns';
 import type { UpdaterEvent } from '../shared/updater-events';
 import type {
+  RerunValidationScope,
+  RerunValidationSummary,
   ValidationResultRow,
   ValidationStat,
   ValidatorConfig,
@@ -89,6 +91,8 @@ interface ScratchDesktopAPI {
   removeWorkspace: (workbookId: string) => Promise<void>;
   prepareWorkspaceIndex: (workspacePath: string) => Promise<void>;
   clearFolderIndex: (workspacePath: string, folderPath: string) => Promise<{ rows_cleared: number }>;
+  rerunValidation: (workspacePath: string, scope: RerunValidationScope) => Promise<RerunValidationSummary>;
+  onRerunValidationProgress: (callback: (line: string) => void) => () => void;
   refreshPaths: (workspacePath: string, paths: string[], singleFile?: string) => Promise<void>;
   acceptAllChanges: (
     workspacePath: string,

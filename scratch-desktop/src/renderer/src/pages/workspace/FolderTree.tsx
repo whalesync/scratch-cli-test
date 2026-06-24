@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { DataFolder, IncrementalPullSupport } from '@spinner/shared-types';
 import { ChevronDown, ChevronRight, EllipsisVertical, Folder, FolderLock } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+import type { RerunValidationScope } from '../../../../shared/validation-types';
 import { useConfirmModal } from '../../components/ConfirmModal';
 import { getServiceName, useConnectorsMetadata } from '../../hooks/use-connectors-metadata';
 import { trackOpenTableInService, trackPullTable, trackShowFolderInfo } from '../../lib/posthog';
@@ -157,6 +158,7 @@ interface FolderTreeNodeProps {
   onShowColumnDefs?: (folderPath: string) => void;
   workspacePath: string | null;
   onClearFolderIndex?: (folderPath: string) => void;
+  onRerunValidation?: (scope: RerunValidationScope) => void;
   dataFolderByLocalPath: Map<string, DataFolder>;
   dataFoldersByConnection: Map<string, DataFolder[]>;
   onRequestPull: (request: PullRequest) => void;
@@ -175,6 +177,7 @@ function FolderTreeNodeRow({
   onShowColumnDefs,
   workspacePath,
   onClearFolderIndex,
+  onRerunValidation,
   dataFolderByLocalPath,
   dataFoldersByConnection,
   onRequestPull,
@@ -229,6 +232,9 @@ function FolderTreeNodeRow({
         } else {
           items.push({ id: 'pull-full', label: 'Pull All Tables' });
         }
+        if (onRerunValidation) {
+          items.push({ id: 'rerun-validation-connection', label: 'Rerun validation (all tables)' });
+        }
         items.push({ id: 'pull-sep', label: '', type: 'separator' });
       }
 
@@ -247,6 +253,9 @@ function FolderTreeNodeRow({
             id: 'view-in-service',
             label: `View in ${getServiceName(connectorsMetadata, mappedFolder.connectorService ?? '')}`,
           });
+        }
+        if (onRerunValidation) {
+          items.push({ id: 'rerun-validation-folder', label: 'Rerun validation' });
         }
       }
 
@@ -309,6 +318,8 @@ function FolderTreeNodeRow({
         }
         if (id === 'column-defs') onShowColumnDefs?.(path);
         if (id === 'clear-index') onClearFolderIndex?.(path);
+        if (id === 'rerun-validation-folder') onRerunValidation?.({ kind: 'folder', folderPath: path });
+        if (id === 'rerun-validation-connection') onRerunValidation?.({ kind: 'connection', connection: node.name });
         if (id === 'show-info' && mappedFolder && node.folder) {
           onShowFolderInfo({ folder: mappedFolder, localFolder: node.folder, workingCopyPath: path });
         }
@@ -326,6 +337,7 @@ function FolderTreeNodeRow({
       node.folder,
       node.name,
       onClearFolderIndex,
+      onRerunValidation,
       onRequestPull,
       onShowColumnDefs,
       onShowFolderInfo,
@@ -545,6 +557,7 @@ function FolderTreeNodeRow({
               onShowColumnDefs={onShowColumnDefs}
               workspacePath={workspacePath}
               onClearFolderIndex={onClearFolderIndex}
+              onRerunValidation={onRerunValidation}
               dataFolderByLocalPath={dataFolderByLocalPath}
               dataFoldersByConnection={dataFoldersByConnection}
               onRequestPull={onRequestPull}
@@ -574,6 +587,7 @@ interface FolderTreeProps {
   invalidateWorkspaceLevelData: () => void;
   validationByFolder?: Map<string, { errors: number; warnings: number }>;
   reviewByFolder?: Map<string, { unreviewed: number; approved: number }>;
+  onRerunValidation?: (scope: RerunValidationScope) => void;
 }
 
 export function FolderTree({
@@ -588,6 +602,7 @@ export function FolderTree({
   invalidateWorkspaceLevelData,
   validationByFolder,
   reviewByFolder,
+  onRerunValidation,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildTree(localFolders), [localFolders]);
   const rootChildren = useMemo(() => Array.from(tree.children.values()), [tree]);
@@ -700,6 +715,7 @@ export function FolderTree({
           isDevToolsEnabled={isDevToolsEnabled}
           onShowColumnDefs={handleShowColumnDefs}
           onClearFolderIndex={(p) => void handleClearFolderIndex(p)}
+          onRerunValidation={onRerunValidation}
           workspacePath={workspacePath}
           dataFolderByLocalPath={dataFolderByLocalPath}
           dataFoldersByConnection={dataFoldersByConnection}

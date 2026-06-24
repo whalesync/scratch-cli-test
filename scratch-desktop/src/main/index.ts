@@ -45,6 +45,7 @@ import {
   type WorkbookSettings,
 } from './preferences-store';
 import { reviewStatsNotifier } from './review-stats-notifier';
+import type { RerunValidationScope, RerunValidationSummary } from './scratchmd';
 import {
   acceptFieldChanges,
   clearFolderIndex,
@@ -61,6 +62,7 @@ import {
   refreshFolderIndex,
   reindexFiles,
   rejectFieldChanges,
+  rerunValidation,
   restoreDeletedRecord as restoreDeletedRecordViaCli,
   runScratchmd,
   runScratchmdCapture,
@@ -749,6 +751,17 @@ ipcMain.handle(
   'scratch:clear-folder-index',
   async (_, workspacePath: string, folderPath: string): Promise<{ rows_cleared: number }> => {
     return clearFolderIndex(workspacePath, folderPath);
+  },
+);
+ipcMain.handle(
+  'scratch:rerun-validation',
+  async (event, workspacePath: string, scope: RerunValidationScope): Promise<RerunValidationSummary> => {
+    // Forward per-folder stderr progress lines so the renderer can update a live toast.
+    return rerunValidation(workspacePath, scope, (line) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('scratch:rerun-validation-progress', line);
+      }
+    });
   },
 );
 ipcMain.handle('scratch:refresh-paths', () => {

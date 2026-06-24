@@ -2916,6 +2916,66 @@ pub fn refresh_folder(
     })
 }
 
+/// Result of `revalidate_folder`. Mirrors [`RefreshFolderResult`], but `validated` is always
+/// present (a revalidate always runs validators) rather than `Option`.
+#[derive(Debug, serde::Serialize)]
+pub struct RevalidateFolderResult {
+    pub base_refreshed: usize,
+    pub columns_refreshed: usize,
+    pub validated: usize,
+}
+
+/// Force re-run ALL validators for every live record in `folder` against the CURRENT index,
+/// non-destructively. Unlike `clear_folder_index` (`index clear-folder`), this preserves the
+/// folder's index rows and dynamic columns — it only re-runs validation and refreshes the
+/// stored `validation_results`.
+///
+/// Mechanism: `validate_page_records` (reached via `refresh_folder(validate=true)`) skips
+/// records whose validation watermarks are already fresh, so a plain refresh is a no-op on an
+/// up-to-date folder. To force every record to revalidate we first NULL the three
+/// `validated_mtime_*` watermark columns — which makes `is_validation_stale` treat every live
+/// record as stale — then delegate to the existing `refresh_folder` machinery (which deletes
+/// stale results, re-runs validators, reinserts violations, and updates watermarks +
+/// `has_errors`).
+///
+/// This relies on `reindex_files` NOT writing the `validated_mtime_*` columns, so the NULLs we
+/// set survive `refresh_folder`'s base/column reindex steps and are only re-populated by the
+/// validation step. (If that invariant ever changes, the revalidate tests will catch it.)
+pub fn revalidate_folder(
+    workspace: &Path,
+    folder: &str,
+    debug: bool,
+) -> anyhow::Result<RevalidateFolderResult> {
+    // Mark every live record validation-stale by clearing its watermarks. A never-indexed
+    // folder has no db yet — skip the UPDATE; `refresh_folder`'s cold reindex below inserts
+    // rows with NULL watermarks, so they validate anyway. The connection is dropped at the end
+    // of this block, before `refresh_folder` opens its own.
+    let db_path = resolve_db_path(workspace, folder, None);
+    if db_path.exists() {
+        let conn = open_conn(&db_path)?;
+        let table = table_name_from_folder(folder);
+        ensure_schema(&conn, &table)?;
+        let tq = quote_ident(&table);
+        // Scope to live records (working_mtime IS NOT NULL) to mirror is_validation_stale's
+        // deleted-record guard; deleted records are excluded from revalidation regardless.
+        conn.execute(
+            &format!(
+                "UPDATE {tq} SET validated_mtime_working = NULL, \
+                 validated_mtime_master = NULL, validated_mtime_validator = NULL \
+                 WHERE working_mtime IS NOT NULL"
+            ),
+            [],
+        )?;
+    }
+
+    let refreshed = refresh_folder(workspace, folder, true, debug)?;
+    Ok(RevalidateFolderResult {
+        base_refreshed: refreshed.base_refreshed,
+        columns_refreshed: refreshed.columns_refreshed,
+        validated: refreshed.validated.unwrap_or(0),
+    })
+}
+
 /// Reindex specific files using only the working-tree version.
 /// Updates all active field column values (col, col:mt, col:sz) but does NOT
 /// touch the base row (approvedChanges, unapprovedChanges, dirty_*, master_*).
@@ -4450,6 +4510,228 @@ mod tests {
         assert_eq!(
             unapproved_changes, 1,
             "legacy 7396 strips the null on reconstruct — the stuck state we migrated away from"
+        );
+    }
+
+    // ── revalidate_folder ────────────────────────────────────────────────────
+
+    /// Write a `validation.json` for `folder` (`<connection>/<subfolder>`) with the given
+    /// JSON array of validator entries, e.g. `[{"validator":"required","field":"title"}]`.
+    fn write_validation_json(ws: &Path, folder: &str, entries_json: &str) {
+        let path = resolve_validation_json_path(ws, folder);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, entries_json).unwrap();
+    }
+
+    /// Count `validation_results` rows for a folder. Returns 0 if the db doesn't exist.
+    fn count_validation_results(ws: &Path, folder: &str) -> i64 {
+        let conn_name = conn_name_from_folder(folder);
+        let db_path = ws.join(".repos").join(format!("{conn_name}.db"));
+        if !db_path.exists() {
+            return 0;
+        }
+        let conn = Connection::open(&db_path).unwrap();
+        let table = validation_results_table();
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE folder_path = ?1"),
+            params![folder],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    }
+
+    /// Count index rows with `has_errors = 1` for a folder's table.
+    fn count_has_errors(ws: &Path, folder: &str) -> i64 {
+        let conn_name = conn_name_from_folder(folder);
+        let db_path = ws.join(".repos").join(format!("{conn_name}.db"));
+        if !db_path.exists() {
+            return 0;
+        }
+        let conn = Connection::open(&db_path).unwrap();
+        let tq = quote_ident(&table_name_from_folder(folder));
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {tq} WHERE has_errors = 1"),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+    }
+
+    /// Delete all `validation_results` rows for a folder, leaving index watermarks intact —
+    /// simulates externally-lost results so a follow-up refresh-vs-revalidate can be compared.
+    fn clear_validation_results(ws: &Path, folder: &str) {
+        let conn_name = conn_name_from_folder(folder);
+        let db_path = ws.join(".repos").join(format!("{conn_name}.db"));
+        let conn = Connection::open(&db_path).unwrap();
+        let table = validation_results_table();
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE folder_path = ?1"),
+            params![folder],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_revalidate_after_rule_change() {
+        // Headline: a config-only change (no data-file edit) is reflected after revalidation.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        write_json(
+            &ws.join("conn").join("posts"),
+            "rec1.json",
+            r#"{"title":""}"#,
+        );
+
+        // No rules yet → revalidation produces no problems.
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(count_validation_results(&ws, "conn/posts"), 0);
+        assert_eq!(count_has_errors(&ws, "conn/posts"), 0);
+
+        // Add a rule the existing record violates — WITHOUT touching the data file.
+        write_validation_json(
+            &ws,
+            "conn/posts",
+            r#"[{"validator":"required","field":"title"}]"#,
+        );
+        let result = revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(result.validated, 1);
+        assert_eq!(count_validation_results(&ws, "conn/posts"), 1);
+        assert_eq!(count_has_errors(&ws, "conn/posts"), 1);
+    }
+
+    #[test]
+    fn test_revalidate_forces_fresh_files() {
+        // Proves the force mechanism: a plain refresh skips a fresh file, but revalidate
+        // re-runs validators on it even when nothing on disk changed.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        write_json(
+            &ws.join("conn").join("posts"),
+            "rec1.json",
+            r#"{"title":""}"#,
+        );
+        write_validation_json(
+            &ws,
+            "conn/posts",
+            r#"[{"validator":"required","field":"title"}]"#,
+        );
+
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(count_validation_results(&ws, "conn/posts"), 1);
+
+        // Simulate externally-lost results; index watermarks remain "fresh".
+        clear_validation_results(&ws, "conn/posts");
+        assert_eq!(count_validation_results(&ws, "conn/posts"), 0);
+
+        // A plain refresh sees the file as fresh and does NOT re-validate.
+        refresh_folder(&ws, "conn/posts", true, false).unwrap();
+        assert_eq!(
+            count_validation_results(&ws, "conn/posts"),
+            0,
+            "refresh_folder must skip a validation-fresh file"
+        );
+
+        // revalidate FORCES re-validation, repopulating the result.
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(
+            count_validation_results(&ws, "conn/posts"),
+            1,
+            "revalidate_folder must re-run validators on a fresh file"
+        );
+    }
+
+    #[test]
+    fn test_revalidate_clears_when_rules_removed() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        write_json(
+            &ws.join("conn").join("posts"),
+            "rec1.json",
+            r#"{"title":""}"#,
+        );
+        write_validation_json(
+            &ws,
+            "conn/posts",
+            r#"[{"validator":"required","field":"title"}]"#,
+        );
+
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(count_validation_results(&ws, "conn/posts"), 1);
+        assert_eq!(count_has_errors(&ws, "conn/posts"), 1);
+
+        // Remove all rules → revalidation clears the stored problems.
+        write_validation_json(&ws, "conn/posts", "[]");
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(count_validation_results(&ws, "conn/posts"), 0);
+        assert_eq!(count_has_errors(&ws, "conn/posts"), 0);
+    }
+
+    #[test]
+    fn test_revalidate_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        write_json(
+            &ws.join("conn").join("posts"),
+            "rec1.json",
+            r#"{"title":""}"#,
+        );
+        write_validation_json(
+            &ws,
+            "conn/posts",
+            r#"[{"validator":"required","field":"title"}]"#,
+        );
+
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        let first = count_validation_results(&ws, "conn/posts");
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        let second = count_validation_results(&ws, "conn/posts");
+        assert_eq!(first, 1);
+        assert_eq!(second, 1, "revalidate must not duplicate result rows");
+    }
+
+    #[test]
+    fn test_revalidate_never_indexed_folder() {
+        // First operation on the folder is a revalidate — it cold-builds the index and flags.
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        write_json(
+            &ws.join("conn").join("posts"),
+            "rec1.json",
+            r#"{"title":""}"#,
+        );
+        write_validation_json(
+            &ws,
+            "conn/posts",
+            r#"[{"validator":"required","field":"title"}]"#,
+        );
+
+        let result = revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(result.validated, 1);
+        assert_eq!(count_validation_results(&ws, "conn/posts"), 1);
+        assert_eq!(count_has_errors(&ws, "conn/posts"), 1);
+    }
+
+    #[test]
+    fn test_revalidate_deleted_record_excluded() {
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let working_dir = ws.join("conn").join("posts");
+        write_json(&working_dir, "rec1.json", r#"{"title":""}"#);
+        write_validation_json(
+            &ws,
+            "conn/posts",
+            r#"[{"validator":"required","field":"title"}]"#,
+        );
+
+        revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(count_has_errors(&ws, "conn/posts"), 1);
+
+        // Delete the working file: revalidation must not re-process the now-absent record.
+        fs::remove_file(working_dir.join("rec1.json")).unwrap();
+        let result = revalidate_folder(&ws, "conn/posts", false).unwrap();
+        assert_eq!(
+            result.validated, 0,
+            "a deleted record is excluded from revalidation"
         );
     }
 }

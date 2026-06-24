@@ -401,6 +401,29 @@ enum ValidationCommands {
         #[arg(long)]
         schema: Option<String>,
     },
+    /// Force re-run all validators against the CURRENT index and refresh stored results,
+    /// non-destructively (preserves index rows + dynamic columns — unlike `index clear-folder`).
+    /// Exactly one scope flag is required.
+    /// Outputs JSON: { scope, folders_revalidated, records_validated, errors, warnings, skipped_folders }
+    #[command(name = "rerun")]
+    #[command(group = clap::ArgGroup::new("scope").required(true).args(["folder", "connection", "all"]))]
+    Rerun {
+        /// Workspace directory (default: auto-detected from CWD)
+        #[arg(long, default_value = ".")]
+        workspace: std::path::PathBuf,
+        /// Single data folder scope: <connection>/<subfolder>
+        #[arg(long)]
+        folder: Option<String>,
+        /// Whole-connector scope: the connection's dir_name (NOT its display name)
+        #[arg(long)]
+        connection: Option<String>,
+        /// Whole-workbook scope: every folder in every connection
+        #[arg(long)]
+        all: bool,
+        /// Print per-folder progress to stderr
+        #[arg(long)]
+        debug: bool,
+    },
 }
 
 fn require_git() -> anyhow::Result<()> {
@@ -594,6 +617,19 @@ async fn main() {
                 master.as_deref(),
                 validation_json.as_deref(),
                 schema.as_deref(),
+            ),
+            ValidationCommands::Rerun {
+                workspace,
+                folder,
+                connection,
+                all,
+                debug,
+            } => validation::rerun_command(
+                &workspace,
+                folder.as_deref(),
+                connection.as_deref(),
+                all,
+                debug,
             ),
         },
 
