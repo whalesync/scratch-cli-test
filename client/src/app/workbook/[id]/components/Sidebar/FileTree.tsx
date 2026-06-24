@@ -94,6 +94,19 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
     return connectorAccounts.filter((account) => !connectorIdsWithFolders.has(account.id));
   }, [connectorAccounts, dataFolderGroups]);
 
+  // Total record count across every data folder in the workbook, for the status line at the bottom
+  // of the tree. Git-sourced per-folder counts, so this can briefly lag local edits between refreshes.
+  const totalRecordCount = useMemo(
+    () =>
+      dataFolderGroups.reduce(
+        (groupSum, group) =>
+          groupSum + group.dataFolders.reduce((folderSum, folder) => folderSum + folder.recordCount, 0),
+        0,
+      ),
+    [dataFolderGroups],
+  );
+  const hasConnections = (connectorAccounts?.length ?? 0) > 0;
+
   // Auto-expand all connection nodes once, on the first render where connection
   // data is available. This must run at most once per mount: using
   // `expandedNodes.size === 0` alone as the trigger is wrong because that
@@ -152,72 +165,81 @@ export function FileTree({ workbook, mode = 'files' }: FileTreeProps) {
   }
 
   return (
-    <ScrollArea h="100%" type="auto">
-      <Stack gap={0} py="xs">
-        {/* Section title */}
-        <Box px="sm" py={4} mb={4}>
-          <Group justify="space-between" align="center">
-            <Group gap={6} align="center">
-              <Text12Regular
-                c="var(--fg-muted)"
-                style={{ textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.5px' }}
+    <Box style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <ScrollArea type="auto" style={{ flex: 1, minHeight: 0 }}>
+        <Stack gap={0} py="xs">
+          {/* Section title */}
+          <Box px="sm" py={4} mb={4}>
+            <Group justify="space-between" align="center">
+              <Group gap={6} align="center">
+                <Text12Regular
+                  c="var(--fg-muted)"
+                  style={{ textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.5px' }}
+                >
+                  {mode === 'review' ? 'Edited files' : 'All files'}
+                </Text12Regular>
+                {mode === 'review' && dirtyFiles.length > 0 && (
+                  <Badge size="sm" variant="filled" color="orange" radius="xl">
+                    {dirtyFiles.length}
+                  </Badge>
+                )}
+              </Group>
+              <UnstyledButton
+                onClick={mode === 'review' ? refreshDirtyFiles : refreshDataFolders}
+                style={{ opacity: 0.4, padding: 2 }}
+                title="Refresh"
               >
-                {mode === 'review' ? 'Edited files' : 'All files'}
-              </Text12Regular>
-              {mode === 'review' && dirtyFiles.length > 0 && (
-                <Badge size="sm" variant="filled" color="orange" radius="xl">
-                  {dirtyFiles.length}
-                </Badge>
-              )}
+                <RefreshCwIcon size={12} />
+              </UnstyledButton>
             </Group>
-            <UnstyledButton
-              onClick={mode === 'review' ? refreshDirtyFiles : refreshDataFolders}
-              style={{ opacity: 0.4, padding: 2 }}
-              title="Refresh"
-            >
-              <RefreshCwIcon size={12} />
-            </UnstyledButton>
-          </Group>
-        </Box>
+          </Box>
 
-        {/* Workspace repo browser (admin only) */}
-        {mode === 'files' && isAdmin && <WorkbookRepoNode workbookId={workbook.id} />}
+          {/* Workspace repo browser (admin only) */}
+          {mode === 'files' && isAdmin && <WorkbookRepoNode workbookId={workbook.id} />}
 
-        {/* Data folder groups (connections with tables) */}
-        {sortedGroups.map((group) => {
-          const connectorAccountId = group.dataFolders[0]?.connectorAccountId;
-          const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
-          const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
+          {/* Data folder groups (connections with tables) */}
+          {sortedGroups.map((group) => {
+            const connectorAccountId = group.dataFolders[0]?.connectorAccountId;
+            const connectorAccount = connectorAccountId ? connectorAccountMap.get(connectorAccountId) : undefined;
+            const key = connectorAccountId ? `${group.name}-${connectorAccountId}` : group.name;
 
-          if (mode === 'review') {
-            // Scratch group has no connectorAccountId; its dirty files (none today) would
-            // come from the workbook config repo and are not aggregated here.
-            const groupDirtyPaths = connectorAccountId
-              ? (dirtyFilesByConnection.get(connectorAccountId) ?? EMPTY_DIRTY_PATHS)
-              : EMPTY_DIRTY_PATHS;
+            if (mode === 'review') {
+              // Scratch group has no connectorAccountId; its dirty files (none today) would
+              // come from the workbook config repo and are not aggregated here.
+              const groupDirtyPaths = connectorAccountId
+                ? (dirtyFilesByConnection.get(connectorAccountId) ?? EMPTY_DIRTY_PATHS)
+                : EMPTY_DIRTY_PATHS;
+              return (
+                <ReviewConnectionNode
+                  key={key}
+                  group={group}
+                  workbookId={workbook.id}
+                  connectorAccount={connectorAccount}
+                  connectorAccountId={connectorAccountId ?? undefined}
+                  dirtyFilePaths={groupDirtyPaths}
+                />
+              );
+            }
+
             return (
-              <ReviewConnectionNode
-                key={key}
-                group={group}
-                workbookId={workbook.id}
-                connectorAccount={connectorAccount}
-                connectorAccountId={connectorAccountId ?? undefined}
-                dirtyFilePaths={groupDirtyPaths}
-              />
+              <ConnectionNode key={key} group={group} workbookId={workbook.id} connectorAccount={connectorAccount} />
             );
-          }
+          })}
 
-          return (
-            <ConnectionNode key={key} group={group} workbookId={workbook.id} connectorAccount={connectorAccount} />
-          );
-        })}
-
-        {/* Empty connector accounts (connections without tables yet) — files mode only */}
-        {mode === 'files' &&
-          emptyConnectorAccounts.map((account) => (
-            <EmptyConnectionNode key={account.id} connectorAccount={account} workbookId={workbook.id} />
-          ))}
-      </Stack>
-    </ScrollArea>
+          {/* Empty connector accounts (connections without tables yet) — files mode only */}
+          {mode === 'files' &&
+            emptyConnectorAccounts.map((account) => (
+              <EmptyConnectionNode key={account.id} connectorAccount={account} workbookId={workbook.id} />
+            ))}
+        </Stack>
+      </ScrollArea>
+      {mode === 'files' && hasConnections && (
+        <Box px="sm" py={6} style={{ borderTop: '1px solid var(--fg-divider)', flexShrink: 0 }}>
+          <Text12Regular c="var(--fg-muted)" ta="right">
+            {totalRecordCount.toLocaleString()} record{totalRecordCount === 1 ? '' : 's'}
+          </Text12Regular>
+        </Box>
+      )}
+    </Box>
   );
 }

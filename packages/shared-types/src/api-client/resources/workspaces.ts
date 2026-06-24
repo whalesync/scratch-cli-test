@@ -2,6 +2,7 @@ import type { Workspace } from '../../db';
 import type { CreateWorkbookDto } from '../../dto/workbook/create-workbook.dto';
 import type { DeleteWorkbookResponseDto } from '../../dto/workbook/delete-workbook.dto';
 import type { WorkbookListQuery } from '../../dto/workbook/list-workbooks-query.dto';
+import type { OrganizationUsageSummaryResponseDto } from '../../dto/workbook/organization-usage-summary.dto';
 import type { RecordCountResponseDto } from '../../dto/workbook/record-count.dto';
 import type { UpdateWorkbookSettingsDto } from '../../dto/workbook/update-workbook-settings.dto';
 import type { UpdateWorkbookDto } from '../../dto/workbook/update-workbook.dto';
@@ -103,6 +104,17 @@ export function createWorkspacesApi(http: Http) {
     organizationRecordCount: async (): Promise<RecordCountResponseDto> => {
       const res = await http.get<RecordCountResponseDto>('/workbook/record-count/total', {
         fallbackMessage: 'Failed to fetch organization record count',
+      });
+      return res.data;
+    },
+
+    /**
+     * Organization-wide usage summary (workbook count, total record count, connector services in
+     * use) for the billing page. Org-scoped, unlike the membership-scoped workspace list.
+     */
+    organizationUsageSummary: async (): Promise<OrganizationUsageSummaryResponseDto> => {
+      const res = await http.get<OrganizationUsageSummaryResponseDto>('/workbook/organization-usage-summary', {
+        fallbackMessage: 'Failed to fetch organization usage summary',
       });
       return res.data;
     },

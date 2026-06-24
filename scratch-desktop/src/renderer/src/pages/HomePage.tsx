@@ -122,7 +122,8 @@ function EmptySectionPlaceholder({ children, dense }: { children: React.ReactNod
 
 export function HomePage() {
   const navigate = useNavigate();
-  const { localWorkspaces, remoteWorkspaces, loading, error, isConnectionError, fetchWorkspaces } = useWorkspaces();
+  const { localWorkspaces, remoteWorkspaces, localFileCountById, loading, error, isConnectionError, fetchWorkspaces } =
+    useWorkspaces();
 
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
@@ -323,6 +324,7 @@ export function HomePage() {
                   <DownloadedWorkspaceCard
                     key={ws.id}
                     workspace={ws}
+                    fileCount={localFileCountById.get(ws.id) ?? 0}
                     onOpen={() => handleOpen(ws)}
                     onRemove={() => void handleRemove(ws)}
                   />
@@ -349,6 +351,7 @@ export function HomePage() {
                     <CloudWorkspaceCard
                       key={ws.id}
                       workspace={ws}
+                      fileCount={ws.recordCount ?? 0}
                       onDownload={() => void startDownload(ws)}
                       inGroup
                       isFirst={i === 0}

@@ -5,7 +5,7 @@ import { Workspace } from '@spinner/shared-types';
 import { Download, MoreHorizontal } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ButtonSecondaryOutline, IconButtonGhost } from './base/buttons';
-import { Text12Medium, TextTitle4 } from './base/text';
+import { Text12Medium, Text12Regular, TextTitle4 } from './base/text';
 import { StyledLucideIcon } from './icons/StyledLucideIcon';
 
 function useConnectorServices(workspace: Workspace): string[] {
@@ -58,10 +58,13 @@ export function DownloadedWorkspaceCard({
   workspace,
   onOpen,
   onRemove,
+  fileCount,
 }: {
   workspace: Workspace;
   onOpen: () => void;
   onRemove: () => void;
+  /** Local on-disk file count for this downloaded workspace. */
+  fileCount: number;
 }) {
   const [hovered, setHovered] = useState(false);
   return (
@@ -91,7 +94,12 @@ export function DownloadedWorkspaceCard({
         <TextTitle4 mb={6} lineClamp={1}>
           {workspace.name || 'Untitled Workspace'}
         </TextTitle4>
-        <ServiceIcons workspace={workspace} />
+        <Group gap={8} align="center">
+          <ServiceIcons workspace={workspace} />
+          {(workspace.dataFolders?.length ?? 0) >= 1 && (
+            <Text12Regular c="var(--fg-muted)">{fileCount.toLocaleString()} files</Text12Regular>
+          )}
+        </Group>
       </Box>
       <Box
         onClick={(e) => {
@@ -124,6 +132,7 @@ export function CloudWorkspaceCard({
   onDownload,
   inGroup,
   isFirst,
+  fileCount,
 }: {
   workspace: Workspace;
   onDownload: () => void;
@@ -131,9 +140,13 @@ export function CloudWorkspaceCard({
   inGroup?: boolean;
   /** When inGroup, suppress the top hairline divider for the first row. */
   isFirst?: boolean;
+  /** Server-side record total for this not-yet-downloaded workspace. */
+  fileCount: number;
 }) {
   const [hovered, setHovered] = useState(false);
   const services = useConnectorServices(workspace);
+  const hasDataFolders = (workspace.dataFolders?.length ?? 0) >= 1;
+  const showMeta = services.length > 0 || hasDataFolders;
   // Longhand border properties (never the `border` shorthand): React warns when
   // a shorthand (`border`) and a longhand (`borderTop`) for the same property
   // coexist and one updates on rerender — which happened here because the
@@ -178,12 +191,17 @@ export function CloudWorkspaceCard({
         <TextTitle4
           c="var(--fg-secondary)"
           lineClamp={1}
-          mb={services.length > 0 ? 6 : 0}
+          mb={showMeta ? 6 : 0}
           style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}
         >
           {workspace.name || 'Untitled Workspace'}
         </TextTitle4>
-        {services.length > 0 && <ServiceIcons workspace={workspace} faded size={18} />}
+        {showMeta && (
+          <Group gap={8} align="center">
+            {services.length > 0 && <ServiceIcons workspace={workspace} faded size={18} />}
+            {hasDataFolders && <Text12Regular c="var(--fg-muted)">{fileCount.toLocaleString()} files</Text12Regular>}
+          </Group>
+        )}
       </Box>
       <Box onClick={(e) => e.stopPropagation()} style={{ visibility: hovered ? 'visible' : 'hidden' }}>
         <ButtonSecondaryOutline

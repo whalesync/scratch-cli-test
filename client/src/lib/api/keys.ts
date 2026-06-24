@@ -41,6 +41,7 @@ export const SWR_KEYS = {
     detail: (id: WorkbookId) => ['workbook', 'detail', id],
     permissions: (id: WorkbookId) => ['workbook', 'permissions', id] as const,
     invites: (id: WorkbookId) => ['workbook', 'invites', id] as const,
+    organizationUsageSummary: () => ['workbook', 'organization-usage-summary'] as const,
   },
   users: {
     activeUser: () => ['users', 'activeUser'],

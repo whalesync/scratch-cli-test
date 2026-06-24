@@ -803,6 +803,11 @@ function TableNode({ folder, workbookId, depth }: TableNodeProps) {
             <Text12Regular c="var(--fg-primary)" truncate>
               {folder.name}
             </Text12Regular>
+            {folder.recordCount > 0 && (
+              <Text12Regular c="var(--fg-muted)" style={{ flexShrink: 0 }}>
+                ({folder.recordCount.toLocaleString()})
+              </Text12Regular>
+            )}
           </Group>
 
           {/* Dirty badge when collapsed */}

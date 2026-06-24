@@ -18,6 +18,7 @@ import {
 import type {
   DataFolderGroup,
   DeleteWorkbookResponseDto,
+  OrganizationUsageSummaryResponseDto,
   PullAssetsResponseDto,
   PullFilesResponseDto,
   RecordCountResponseDto,
@@ -116,6 +117,23 @@ export class WorkbookController {
     const { organizationId } = userToActor(req.user);
     const recordCount = await this.dataFolderService.sumRecordCountForOrganization(organizationId);
     return { recordCount };
+  }
+
+  /**
+   * Organization-wide usage summary for the billing page: workbook count, total record count, and
+   * the connector services in use. Org-scoped (by `Workbook.organizationId`), unlike the
+   * membership-scoped workspace list. Declared before `:id` so the static path is never captured
+   * as a workbook id.
+   */
+  @Get('organization-usage-summary')
+  async getOrganizationUsageSummary(@Req() req: RequestWithUser): Promise<OrganizationUsageSummaryResponseDto> {
+    const { organizationId } = userToActor(req.user);
+    const [workbookCount, recordCount, connectorServices] = await Promise.all([
+      this.service.countForOrganization(organizationId),
+      this.dataFolderService.sumRecordCountForOrganization(organizationId),
+      this.dataFolderService.listConnectorServicesForOrganization(organizationId),
+    ]);
+    return { workbookCount, recordCount, connectorServices };
   }
 
   /** Total record count for a single workbook (sum of its folders' counts). */

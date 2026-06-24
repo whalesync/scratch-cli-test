@@ -461,6 +461,17 @@ export class WorkbookService {
     });
   }
 
+  /**
+   * Count of workbooks owned by an organization, excluding those pending deletion. Org-scoped (by
+   * `Workbook.organizationId`), NOT membership-scoped like {@link findAllForUser} — used for the
+   * organization usage summary on the billing page.
+   */
+  countForOrganization(organizationId: string): Promise<number> {
+    return this.db.client.workbook.count({
+      where: { organizationId, isPendingDelete: false },
+    });
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async findOne(id: WorkbookId, _actor: Actor): Promise<WorkbookCluster.Workbook | null> {
     return this.db.client.workbook.findFirst({

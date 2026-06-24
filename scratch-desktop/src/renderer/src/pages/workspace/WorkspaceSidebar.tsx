@@ -111,6 +111,9 @@ export function WorkspaceSidebar({
   const totalErrors = validationStats?.reduce((sum, s) => sum + s.errors, 0) ?? 0;
   const totalWarnings = validationStats?.reduce((sum, s) => sum + s.warnings, 0) ?? 0;
 
+  // Total file count across every leaf folder in the workspace, for the line at the bottom of the tree.
+  const totalFiles = useMemo(() => localFolders.reduce((sum, folder) => sum + folder.fileCount, 0), [localFolders]);
+
   return (
     <Stack
       gap={0}
@@ -172,6 +175,15 @@ export function WorkspaceSidebar({
           </>
         )}
       </Box>
+
+      {/* Total files in the workspace */}
+      {localFolders.length > 0 && (
+        <Box px="sm" py={6} style={{ borderTop: '1px solid var(--fg-divider)', flexShrink: 0 }}>
+          <Text12Regular c="var(--fg-muted)" ta="right">
+            {totalFiles.toLocaleString()} total files
+          </Text12Regular>
+        </Box>
+      )}
 
       {/* Footer */}
       <Box

@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { ActiveSubscriptionSection } from './components/ActiveSubscriptionSection';
 import { BillingDevTools } from './components/BillingDevTools';
 import { PlanCard } from './components/PlanCard';
+import { UsageSection } from './components/UsageSection';
 
 export default function BillingSettingsPage() {
   const { plans, isLoading, error } = usePayments();
@@ -27,6 +28,8 @@ export default function BillingSettingsPage() {
         <Stack gap="20px" maw={800}>
           {error && <Alert color="red">{error}</Alert>}
           {planError && <Alert color="red">{planError}</Alert>}
+          <UsageSection />
+          <Divider c="var(--mantine-color-gray-3)" />
           <ActiveSubscriptionSection />
           <Divider c="var(--mantine-color-gray-3)" />
           <ConfigSection title="Plans" description="Upgrade or change your plan" hasBorder={false} p="0">

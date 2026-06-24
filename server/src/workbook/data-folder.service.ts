@@ -92,6 +92,27 @@ export class DataFolderService {
   }
 
   /**
+   * Distinct connector services used by at least one data folder across every workbook owned by an
+   * organization (excluding workbooks pending deletion), ordered alphabetically. Includes services
+   * whose connection is broken or disconnected — membership is by data folder, not by a live
+   * connection. Powers the connector icons in the billing page's organization usage summary.
+   */
+  async listConnectorServicesForOrganization(organizationId: string): Promise<Service[]> {
+    const dataFoldersWithDistinctConnectorService = await this.db.client.dataFolder.findMany({
+      where: {
+        workbook: { organizationId, isPendingDelete: false },
+        connectorService: { not: null },
+      },
+      distinct: ['connectorService'],
+      select: { connectorService: true },
+      orderBy: { connectorService: 'asc' },
+    });
+    return dataFoldersWithDistinctConnectorService.flatMap((dataFolder) =>
+      dataFolder.connectorService ? [dataFolder.connectorService] : [],
+    );
+  }
+
+  /**
    * Compute a folder's {@link IncrementalPullSupport} for the REST API, without
    * instantiating the connector or hitting any remote API. The connector
    * registry answers from the persisted `options` + `tableId` alone for most

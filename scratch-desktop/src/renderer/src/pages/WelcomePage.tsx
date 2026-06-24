@@ -94,6 +94,7 @@ export function WelcomePage() {
               <CloudWorkspaceCard
                 key={workspace.id}
                 workspace={workspace}
+                fileCount={workspace.recordCount ?? 0}
                 onDownload={() => void handleDownload(workspace)}
               />
             ),
