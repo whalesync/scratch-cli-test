@@ -1099,3 +1099,41 @@ export async function getFolderValidationSample(workspacePath: string, folder: s
 export async function discardCreatedRecord(workspacePath: string, recordPath: string): Promise<void> {
   await runScratchmd(['files', 'discard-created-record', recordPath], workspacePath);
 }
+
+/**
+ * Sync the desktop's stored credentials to the scratchmd CLI (`scratchmd auth set-credentials`)
+ * so the CLI and in-process napi can authenticate without a separate login. Best-effort: a
+ * failure is logged (debug) but never thrown, matching the original inline behavior of the
+ * `auth:save-credentials` IPC handler. No-op unless apiToken, email, and tokenExpiresAt are
+ * all present (the device-code login always provides all three).
+ */
+export async function syncCredentialsToScratchmdCli(credentials: {
+  apiToken?: string | null;
+  email?: string | null;
+  tokenExpiresAt?: string | null;
+  serverUrl: string;
+}): Promise<void> {
+  if (!credentials.apiToken || !credentials.email || !credentials.tokenExpiresAt) {
+    return;
+  }
+  try {
+    const args = [
+      'auth',
+      'set-credentials',
+      '--apiToken',
+      credentials.apiToken,
+      '--email',
+      credentials.email,
+      '--expiresAt',
+      credentials.tokenExpiresAt,
+      '--scratch-url',
+      credentials.serverUrl,
+    ];
+    const result = await runScratchmdCapture(args);
+    if (result.exitCode !== 0) {
+      console.debug('[auth] scratchmd set-credentials failed:', result.stderr.trim() || result.stdout.trim());
+    }
+  } catch (error) {
+    console.debug('[auth] scratchmd set-credentials error:', error);
+  }
+}

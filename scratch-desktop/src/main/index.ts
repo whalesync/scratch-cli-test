@@ -66,9 +66,11 @@ import {
   runScratchmdCapture,
   runScratchmdJson,
   startScratchmdLiveCommand,
+  syncCredentialsToScratchmdCli,
   uploadWorkspaceChanges,
 } from './scratchmd';
 import { configureBundledGitEnvironment } from './setup-git-env';
+import { seedTestCredentialsFromEnvIfPresent } from './test-credentials';
 import { initAutoUpdater } from './updater';
 import {
   ensureSchemaValidatorSeededInEveryFolder,
@@ -90,6 +92,13 @@ import {
 // before anything can invoke them, so a packaged build never falls back to
 // /usr/bin/git (the Xcode CLT stub) on a clean macOS machine. No-op in dev.
 configureBundledGitEnvironment();
+
+// Test-only: when SCRATCH_DESKTOP_TEST_CREDENTIALS_JSON is set in a dev build, seed a
+// logged-in session so a Playwright (`_electron`) test can skip the interactive
+// device-code login. This persists the credentials to the auth store and points
+// SCRATCH_URL at the test server; the scratchmd CLI is synced once the app is ready
+// (see the app.whenReady handler below). Returns null (no-op) outside tests.
+const seededTestCredentials = seedTestCredentialsFromEnvIfPresent();
 
 // Point the scratchmd CLI (spawned children) and the in-process napi at the
 // same Scratch server the desktop authenticated against — credentials are keyed
@@ -589,29 +598,8 @@ ipcMain.handle(
       process.env.SCRATCH_URL = creds.serverUrl;
     }
 
-    // Sync credentials to the scratchmd CLI so it can authenticate without a separate login
-    if (creds.apiToken && creds.email && creds.tokenExpiresAt) {
-      try {
-        const args = [
-          'auth',
-          'set-credentials',
-          '--apiToken',
-          creds.apiToken,
-          '--email',
-          creds.email,
-          '--expiresAt',
-          creds.tokenExpiresAt,
-          '--scratch-url',
-          creds.serverUrl,
-        ];
-        const result = await runScratchmdCapture(args);
-        if (result.exitCode !== 0) {
-          console.debug('[auth] scratchmd set-credentials failed:', result.stderr.trim() || result.stdout.trim());
-        }
-      } catch (error) {
-        console.debug('[auth] scratchmd set-credentials error:', error);
-      }
-    }
+    // Sync credentials to the scratchmd CLI so it can authenticate without a separate login.
+    await syncCredentialsToScratchmdCli(creds);
   },
 );
 ipcMain.handle('auth:clear-credentials', () => clearCredentials());
@@ -1367,6 +1355,13 @@ void app.whenReady().then(() => {
   });
 
   createWindow();
+
+  // Sync any test-seeded credentials (SCRATCH_DESKTOP_TEST_CREDENTIALS_JSON) to the scratchmd
+  // CLI so CLI-backed operations are authenticated without going through the renderer's
+  // save-credentials path (which never runs when login is bypassed). Best-effort.
+  if (seededTestCredentials) {
+    void syncCredentialsToScratchmdCli(seededTestCredentials);
+  }
 
   cliInstalled = isCliSymlinkInstalled();
   Menu.setApplicationMenu(buildApplicationMenu());

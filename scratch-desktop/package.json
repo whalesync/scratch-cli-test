@@ -22,6 +22,8 @@
     "prettier:check": "prettier --check \"src/**/*.ts\" \"src/**/*.tsx\"",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "yarn build && playwright test",
+    "test:e2e:live": "VITE_SCRATCH_API_URL=https://test-api.scratch.md VITE_SCRATCH_WEB_URL=https://test.scratch.md yarn build && SCRATCH_E2E_LIVE=1 playwright test e2e/live.spec.ts",
     "postinstall": "node scripts/ensure-electron-binary.cjs && node scripts/install-app-deps.cjs",
     "build:mac": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} electron-builder --mac",
     "build:mac:unsigned": "electron-vite build && UPDATE_CHANNEL=${UPDATE_CHANNEL:-desktop-test} CSC_IDENTITY='-' electron-builder --mac --config electron-builder.unsigned-mac.yml",
@@ -70,6 +72,7 @@
   "devDependencies": {
     "@electron/notarize": "^3.1.1",
     "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.56.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.5.2",

@@ -11,9 +11,16 @@ resources/bin/
 .env
 .env.*
 !.env.example*
+!.env.e2e.example
 node_modules/
 
 # electron-vite writes a temp bundled config file next to electron.vite.config.ts
 # on every load and unlinks it afterwards; if the process is killed mid-load it
 # can be left behind. Ignore it so it never gets committed.
 electron.vite.config.*.mjs
+
+# Playwright (_electron) end-to-end test artifacts.
+test-results/
+playwright-report/
+blob-report/
+.playwright/
