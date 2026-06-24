@@ -29,8 +29,6 @@ export enum PostHogEvents {
   WORKSPACE_CLOUD_SYNC_DETECTED = 'workspace_cloud_sync_detected',
   OPEN_CONNECTIONS_DIALOG = 'open_connections_dialog',
   FIRST_RUN_DOWNLOAD = 'first_run_download',
-  OPEN_CLAUDE_CHAT_PANEL = 'open_claude_chat_panel',
-  SEND_CLAUDE_CHAT_MESSAGE = 'send_claude_chat_message',
   ADD_WORKSPACE_PERMISSION = 'add_workspace_permission',
   REMOVE_WORKSPACE_PERMISSION = 'remove_workspace_permission',
   REMOVE_WORKSPACE_INVITE = 'remove_workspace_invite',
@@ -105,15 +103,6 @@ export async function trackPageView(url: string): Promise<void> {
 
 export async function trackOpenWorkspace(workspaceId: string): Promise<void> {
   await captureEvent(PostHogEvents.OPEN_WORKSPACE, { workspaceId });
-}
-
-export async function trackOpenClaudeChatPanel(workspaceId: string): Promise<void> {
-  await captureEvent(PostHogEvents.OPEN_CLAUDE_CHAT_PANEL, { workspaceId });
-}
-
-/** Tracks the act of sending a chat message. `messageLength` only — never the message text (user content). */
-export async function trackSendClaudeChatMessage(workspaceId: string, messageLength: number): Promise<void> {
-  await captureEvent(PostHogEvents.SEND_CLAUDE_CHAT_MESSAGE, { workspaceId, messageLength });
 }
 
 export async function trackDownloadWorkspace(workspaceId: string): Promise<void> {

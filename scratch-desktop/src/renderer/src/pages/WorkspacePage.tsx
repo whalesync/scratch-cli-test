@@ -8,7 +8,6 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ButtonPrimaryLight } from '../components/base/buttons';
 import { Text13Regular, TextMono12Regular } from '../components/base/text';
 import { ServerConnectionSplash } from '../components/ServerConnectionSplash';
-import { useClaudeChatEnabled } from '../hooks/use-claude-chat-enabled';
 import { useReviewStats } from '../hooks/use-review-stats';
 import { useValidation } from '../hooks/use-validation';
 import { CloudSyncWarning, listLocalWorkspaces } from '../lib/local-workspaces';
@@ -178,7 +177,6 @@ export function WorkspacePage() {
   const [deepLinkedPath, setDeepLinkedPath] = useState<DeepLinkedWorkspacePath | null>(null);
   const [workspaceLevelDataInvalidationCounter, setDataRefreshKey] = useState(0);
   const [watchingEnabled, setWatchingEnabled] = useState(true);
-  const { claudeChatEnabled, toggleClaudeChatEnabled } = useClaudeChatEnabled();
   const validation = useValidation(localPath, workspaceLevelDataInvalidationCounter);
   const reviewStats = useReviewStats(localPath, workspaceLevelDataInvalidationCounter);
   const [gridFilterActivation, setGridFilterActivation] = useState<{
@@ -778,8 +776,6 @@ export function WorkspacePage() {
         }}
         watchingEnabled={watchingEnabled}
         onToggleWatching={() => void handleToggleWatching()}
-        claudeChatEnabled={claudeChatEnabled}
-        onToggleClaudeChat={toggleClaudeChatEnabled}
       />
       {localPath && cloudSyncWarning && (
         <CloudSyncWarningBanner
@@ -826,7 +822,6 @@ export function WorkspacePage() {
         validationConfigsLoading={validation.configsLoading}
         onRefreshValidationStats={validation.refreshStats}
         reviewStats={reviewStats.stats}
-        claudeChatEnabled={claudeChatEnabled}
       />
     </Box>
   );

@@ -25,16 +25,6 @@ export type SortState = { column: string | null; direction: 'asc' | 'desc' | nul
 
 export type DiffViewMode = 'side-by-side' | 'inline-words';
 
-// ── Center-pane tabs ──
-
-/**
- * The workspace center pane is a Conductor-style tab strip. `chat` (the
- * embedded Claude chat) is the primary/default tab; `data` shows the selected
- * folder's grid — or the connections / publish-history / validation panel —
- * and only exists when one of those is active.
- */
-export type CenterTab = 'chat' | 'data';
-
 // ── Store state ──
 
 export interface WorkspaceUiState {
@@ -59,9 +49,6 @@ export interface WorkspaceUiState {
   /** When non-null while `showPublishHistoryPanel` is true, the panel drills
    * into the detail view for this plan id. Null means "show the list". */
   publishHistoryDetailPlanId: string | null;
-  /** Which center-pane tab is active. `chat` is the default/main tab; `data`
-   * holds the grid (or a connections/publish-history/validation panel). */
-  activeCenterTab: CenterTab;
 
   // --- Grid Configuration ---
   sort: SortState;
@@ -88,7 +75,6 @@ export interface WorkspaceUiState {
   setShowValidationPanel: (show: boolean) => void;
   setShowSettingsPanel: (show: boolean) => void;
   setPublishHistoryDetailPlanId: (planId: string | null) => void;
-  setActiveCenterTab: (tab: CenterTab) => void;
 
   /**
    * Switch to grid view, clearing record/field selection.
@@ -138,7 +124,6 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   showValidationPanel: false,
   showSettingsPanel: false,
   publishHistoryDetailPlanId: null,
-  activeCenterTab: 'chat',
 
   // --- Grid Configuration ---
   sort: { column: null, direction: null },
@@ -164,49 +149,26 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
   setShowConnectionsPanel: (show) =>
     set({
       showConnectionsPanel: show,
-      // Opening a center panel focuses the data tab; the other panels close.
-      ...(show
-        ? {
-            showPublishHistoryPanel: false,
-            showValidationPanel: false,
-            showSettingsPanel: false,
-            activeCenterTab: 'data',
-          }
-        : {}),
+      ...(show ? { showPublishHistoryPanel: false, showValidationPanel: false, showSettingsPanel: false } : {}),
     }),
   setShowPublishHistoryPanel: (show) =>
     set({
       showPublishHistoryPanel: show,
       ...(show
-        ? { showConnectionsPanel: false, showValidationPanel: false, showSettingsPanel: false, activeCenterTab: 'data' }
+        ? { showConnectionsPanel: false, showValidationPanel: false, showSettingsPanel: false }
         : { publishHistoryDetailPlanId: null }),
     }),
   setShowValidationPanel: (show) =>
     set({
       showValidationPanel: show,
-      ...(show
-        ? {
-            showConnectionsPanel: false,
-            showPublishHistoryPanel: false,
-            showSettingsPanel: false,
-            activeCenterTab: 'data',
-          }
-        : {}),
+      ...(show ? { showConnectionsPanel: false, showPublishHistoryPanel: false, showSettingsPanel: false } : {}),
     }),
   setShowSettingsPanel: (show) =>
     set({
       showSettingsPanel: show,
-      ...(show
-        ? {
-            showConnectionsPanel: false,
-            showPublishHistoryPanel: false,
-            showValidationPanel: false,
-            activeCenterTab: 'data',
-          }
-        : {}),
+      ...(show ? { showConnectionsPanel: false, showPublishHistoryPanel: false, showValidationPanel: false } : {}),
     }),
   setPublishHistoryDetailPlanId: (planId) => set({ publishHistoryDetailPlanId: planId }),
-  setActiveCenterTab: (tab) => set({ activeCenterTab: tab }),
 
   showGrid: () => set({ selectedRecordFilename: null, focusedFieldName: null, diffViewMode: null }),
   showRecord: (filename) => {
@@ -239,7 +201,6 @@ export const useWorkspaceUiStore = create<WorkspaceUiState>((set, get) => ({
       showValidationPanel: false,
       showSettingsPanel: false,
       publishHistoryDetailPlanId: null,
-      activeCenterTab: 'chat',
     }),
   hydrateWorkbookSettings: (settings) => {
     set({ validateEnabled: settings.validateEnabled ?? true });

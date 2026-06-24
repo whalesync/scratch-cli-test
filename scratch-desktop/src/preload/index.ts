@@ -1,12 +1,6 @@
 import { electronAPI } from '@electron-toolkit/preload';
 import type { TableView } from '@spinner/shared-types';
 import { contextBridge, ipcRenderer } from 'electron';
-import {
-  CLAUDE_CHAT_EVENT_CHANNEL,
-  type ClaudeChatAvailability,
-  type ClaudeChatEvent,
-  type StartClaudeChatTurnResult,
-} from '../shared/claude-chat';
 import { CLI_INSTALL_EVENT_CHANNEL, type CliInstallEvent } from '../shared/cli-install-events';
 import { APP_QUIT_CONFIRMED_CHANNEL, APP_WILL_QUIT_CHANNEL, type AppWillQuitPayload } from '../shared/lifecycle-events';
 import {
@@ -179,22 +173,6 @@ const scratchDesktop = {
     invoke('scratch:validate-local-sync', workspacePath, syncName),
   startRunLocalSync: (workspacePath: string, syncName: string): Promise<{ sessionId: string }> =>
     invoke('scratch:start-run-local-sync', workspacePath, syncName),
-  // ── Embedded Claude chat (Approach A) ──
-  /** Probe whether the BYO `claude` CLI is installed on this machine. */
-  checkClaudeChatAvailable: (): Promise<ClaudeChatAvailability> => invoke('scratch:claude-chat-check'),
-  /**
-   * Send one chat message. The renderer mints `requestId` so it can subscribe
-   * to `onClaudeChatEvent` BEFORE this resolves, avoiding a first-event race.
-   */
-  sendClaudeChatMessage: (
-    workspacePath: string,
-    message: string,
-    requestId: string,
-  ): Promise<StartClaudeChatTurnResult> => invoke('scratch:claude-chat-send', workspacePath, message, requestId),
-  /** SIGTERM the in-flight turn for `requestId`. */
-  stopClaudeChat: (requestId: string): Promise<void> => invoke('scratch:claude-chat-stop', requestId),
-  /** Forget the workspace's session so the next message starts a fresh chat. */
-  resetClaudeChatSession: (workspacePath: string): Promise<void> => invoke('scratch:claude-chat-reset', workspacePath),
   pullAllLinkedTables: (workspacePath: string): Promise<{ jobIds: string[] }> =>
     invoke('scratch:pull-all-linked-tables', workspacePath),
   showInFolder: (folderPath: string): Promise<void> => invoke('scratch:show-in-folder', folderPath),
@@ -301,15 +279,6 @@ const scratchDesktop = {
     ipcRenderer.on('scratch:command-event', listener);
     return () => {
       ipcRenderer.removeListener('scratch:command-event', listener);
-    };
-  },
-  onClaudeChatEvent: (callback: (event: ClaudeChatEvent) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: ClaudeChatEvent): void => {
-      callback(payload);
-    };
-    ipcRenderer.on(CLAUDE_CHAT_EVENT_CHANNEL, listener);
-    return () => {
-      ipcRenderer.removeListener(CLAUDE_CHAT_EVENT_CHANNEL, listener);
     };
   },
   onWorkspaceFilesChanged: (callback: (event: WorkspaceFilesChangedEvent) => void): (() => void) => {

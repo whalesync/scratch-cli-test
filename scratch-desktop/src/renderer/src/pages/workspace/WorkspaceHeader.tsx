@@ -31,8 +31,6 @@ interface WorkspaceHeaderProps {
   onPullAll: (mode: 'full' | 'incremental') => void;
   watchingEnabled?: boolean;
   onToggleWatching?: () => void;
-  claudeChatEnabled?: boolean;
-  onToggleClaudeChat?: () => void;
 }
 
 const isMac = window.electron?.process?.platform === 'darwin';
@@ -55,8 +53,6 @@ export function WorkspaceHeader({
   onPullAll,
   watchingEnabled,
   onToggleWatching,
-  claudeChatEnabled,
-  onToggleClaudeChat,
 }: WorkspaceHeaderProps) {
   const navigate = useNavigate();
   const { width } = useViewportSize();
@@ -69,13 +65,11 @@ export function WorkspaceHeader({
     window.scratchDesktop.showNativeContextMenu(
       [
         { id: 'toggle-watching', label: 'Watching files', checked: !!watchingEnabled },
-        { id: 'toggle-claude-chat', label: 'Claude chat', checked: !!claudeChatEnabled },
         { id: 'sep', label: '', type: 'separator' },
         { id: 'debug', label: 'Debug Viewer' },
       ],
       (id) => {
         if (id === 'toggle-watching') onToggleWatching?.();
-        if (id === 'toggle-claude-chat') onToggleClaudeChat?.();
         if (id === 'debug') void navigate(`/workspace/${workspace.id}/debug`);
       },
     );
