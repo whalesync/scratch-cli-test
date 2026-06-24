@@ -49,7 +49,7 @@ export interface RecordFieldRow {
   displayMode?: FieldValueDisplayMode;
   editing?: boolean;
   referenceValue?: string;
-  onClick?: () => void;
+  onClick?: (event?: React.MouseEvent) => void;
   onEditCommit?: (nextValue: string) => void;
   onEditCancel?: () => void;
   onApprove?: () => void;
@@ -79,6 +79,8 @@ interface RecordFieldsGridProps {
    */
   valueViewMode?: FieldValueViewMode;
   onValueViewModeChange?: (mode: FieldValueViewMode) => void;
+  /** Caret offset to seed the field editor with on mount (where the user clicked). */
+  editorInitialCaretOffset?: number | null;
 }
 
 export type FieldValueViewMode = 'source' | 'pretty' | 'preview';
@@ -125,12 +127,23 @@ const CONTROLS_COLUMN_WIDTH = 48;
 const FieldEditor = memo(function FieldEditor({
   row,
   onChange,
+  initialCaretOffset,
 }: {
   row: RecordFieldRow;
   onChange?: (value: string) => void;
+  /** Caret position to seed on mount (where the user clicked). Falls back to the start when null. */
+  initialCaretOffset?: number | null;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const committedRef = useRef(false);
+
+  // autoFocus handles focusing; this places the caret where the user clicked.
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || initialCaretOffset == null) return;
+    const clampedOffset = Math.max(0, Math.min(initialCaretOffset, textarea.value.length));
+    textarea.setSelectionRange(clampedOffset, clampedOffset);
+  }, [initialCaretOffset]);
 
   const commit = () => {
     if (committedRef.current) return;
@@ -177,7 +190,15 @@ const FieldEditor = memo(function FieldEditor({
  * Side-by-side editing: left column shows a live diff (current vs typed value),
  * right column shows the textarea editor.
  */
-function SideBySideEditingCells({ row, layout }: { row: RecordFieldRow; layout: 'grid' | 'focused' }) {
+function SideBySideEditingCells({
+  row,
+  layout,
+  initialCaretOffset,
+}: {
+  row: RecordFieldRow;
+  layout: 'grid' | 'focused';
+  initialCaretOffset?: number | null;
+}) {
   const [editValue, setEditValue] = useState(row.value);
 
   if (layout === 'focused') {
@@ -189,7 +210,7 @@ function SideBySideEditingCells({ row, layout }: { row: RecordFieldRow; layout: 
         </Box>
         <Box style={{ backgroundColor: 'var(--fg-divider)' }} />
         <Box style={{ minWidth: 0 }}>
-          <FieldEditor row={row} onChange={setEditValue} />
+          <FieldEditor row={row} onChange={setEditValue} initialCaretOffset={initialCaretOffset} />
         </Box>
       </Box>
     );
@@ -464,6 +485,7 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
   onFocusedFieldChange,
   valueViewMode: valueViewModeProp,
   onValueViewModeChange,
+  editorInitialCaretOffset,
 }: RecordFieldsGridProps) {
   const [focusedFieldName, setFocusedFieldNameInternal] = useState<string | null>(initialFocusedFieldName ?? null);
   const storedDiffViewMode = useWorkspaceUiStore((s) => s.diffViewMode);
@@ -649,9 +671,13 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
           >
             {focusedRow.editing ? (
               isSideBySide && focusedRow.fromValue != null ? (
-                <SideBySideEditingCells row={focusedRow} layout="focused" />
+                <SideBySideEditingCells
+                  row={focusedRow}
+                  layout="focused"
+                  initialCaretOffset={editorInitialCaretOffset}
+                />
               ) : (
-                <FieldEditor row={focusedRow} />
+                <FieldEditor row={focusedRow} initialCaretOffset={editorInitialCaretOffset} />
               )
             ) : focusedIsDiff ? (
               <Box
@@ -896,11 +922,15 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
 
                   {/* Value column(s) */}
                   {isSideBySide ? (
-                    <SideBySideValueCells row={row} mode={tableEffectiveMode} />
+                    <SideBySideValueCells
+                      row={row}
+                      mode={tableEffectiveMode}
+                      initialCaretOffset={editorInitialCaretOffset}
+                    />
                   ) : (
                     <Box>
                       {row.editing ? (
-                        <FieldEditor row={row} />
+                        <FieldEditor row={row} initialCaretOffset={editorInitialCaretOffset} />
                       ) : (
                         <InlineValueCell row={row} mode={tableEffectiveMode} />
                       )}
@@ -923,7 +953,15 @@ export const RecordFieldsGrid = memo(function RecordFieldsGrid({
 });
 
 /** Renders the Current and New value cells for side-by-side mode. */
-function SideBySideValueCells({ row, mode = 'source' }: { row: RecordFieldRow; mode?: FieldValueViewMode }) {
+function SideBySideValueCells({
+  row,
+  mode = 'source',
+  initialCaretOffset,
+}: {
+  row: RecordFieldRow;
+  mode?: FieldValueViewMode;
+  initialCaretOffset?: number | null;
+}) {
   const clickProps = row.onClick
     ? {
         onClick: row.onClick,
@@ -940,7 +978,7 @@ function SideBySideValueCells({ row, mode = 'source' }: { row: RecordFieldRow; m
     : { style: { cursor: 'default' as const } };
 
   if (row.editing) {
-    return <SideBySideEditingCells row={row} layout="grid" />;
+    return <SideBySideEditingCells row={row} layout="grid" initialCaretOffset={initialCaretOffset} />;
   }
 
   const isDiff = row.diffKind != null;

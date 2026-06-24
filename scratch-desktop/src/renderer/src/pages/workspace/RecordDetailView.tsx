@@ -14,7 +14,11 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import {
+  coerceCellInputTextAgainstExistingValueOrSchema,
+  resolveSchemaLeafHint,
+} from '../../../../shared/cell-value-coercion';
 import { getByPath } from '../../../../shared/schema-columns';
 import type { ValidationEntry, ValidationResultRow } from '../../../../shared/validation-types';
 import { ButtonSecondaryGhost, ButtonSecondaryOutline, IconButtonGhost } from '../../components/base/buttons';
@@ -268,6 +272,33 @@ function applyAcceptedFieldChangeToOpenRecordData(
   return { ...prev, row: nextRow, displayData: nextDisplayData };
 }
 
+/**
+ * Maps a click on a field's displayed value to the matching character offset in
+ * that text, so the editor can seed the caret where the user clicked instead of
+ * at the start. Returns null when the mapping can't be trusted — no mouse event,
+ * the caret API is unavailable, or the displayed text differs from the editable
+ * value (number/date formatting, diff/prettified/preview rendering) — so the
+ * caller falls back to the default caret.
+ */
+function computeCaretOffsetWithinClickedText(event: ReactMouseEvent | undefined, editableValue: string): number | null {
+  if (!event) return null;
+  const clickedElement = event.currentTarget;
+  if (!(clickedElement instanceof HTMLElement)) return null;
+  // Only trust the mapping when the displayed text is exactly the editable value.
+  if (clickedElement.textContent !== editableValue) return null;
+  const caretRange = document.caretRangeFromPoint(event.clientX, event.clientY);
+  if (!caretRange) return null;
+  const textNodeWalker = document.createTreeWalker(clickedElement, NodeFilter.SHOW_TEXT);
+  let absoluteOffset = 0;
+  for (let node = textNodeWalker.nextNode(); node; node = textNodeWalker.nextNode()) {
+    if (node === caretRange.startContainer) {
+      return absoluteOffset + caretRange.startOffset;
+    }
+    absoluteOffset += node.textContent?.length ?? 0;
+  }
+  return null;
+}
+
 export const RecordDetailView = memo(function RecordDetailView({
   rows,
   selectedIndex,
@@ -301,6 +332,9 @@ export const RecordDetailView = memo(function RecordDetailView({
   const [openRecordValidationReloadCounter, setValidationReloadKey] = useState(0);
   const [validationResults, setValidationResults] = useState<ValidationResultRow[]>([]);
   const [editingFieldName, setEditingFieldName] = useState<string | null>(null);
+  // Caret offset to seed the field editor with on its next mount, so clicking a
+  // value drops the cursor where the user clicked rather than at the start.
+  const [editorInitialCaretOffset, setEditorInitialCaretOffset] = useState<number | null>(null);
   const [showAllFields, setShowAllFields] = useState(false);
   const focusedFieldName = useWorkspaceUiStore((s) => s.focusedFieldName);
   const handleFocusedFieldChange = useWorkspaceUiStore((s) => s.setFocusedFieldName);
@@ -311,6 +345,9 @@ export const RecordDetailView = memo(function RecordDetailView({
 
   const selectedItemRef = useRef<HTMLButtonElement | null>(null);
   const editingFieldRef = useRef<string | null>(null);
+  // Field paths with an in-flight optimistic save. A same-record refetch must not
+  // clobber these with pre-write on-disk state before the write + reindex settles.
+  const pendingFieldSavesRef = useRef<Set<string>>(new Set());
   const loadedRecordKeyRef = useRef<string | null>(null);
 
   const currentRow = rows[selectedIndex];
@@ -377,10 +414,13 @@ export const RecordDetailView = memo(function RecordDetailView({
     window.scratchFiles
       .readDiffRecordData(folderPath, workspacePath, selectedFilename)
       .then((result) => {
-        if (!cancelled) {
-          setRecordData(result);
-          loadedRecordKeyRef.current = recordKey;
-        }
+        if (cancelled) return;
+        // Don't let a same-record refetch (e.g. an external file-watch bump) overwrite
+        // an in-flight optimistic field save with pre-write disk state. Record switches
+        // and first loads (!isSameRecordReload) always apply.
+        if (isSameRecordReload && pendingFieldSavesRef.current.size > 0) return;
+        setRecordData(result);
+        loadedRecordKeyRef.current = recordKey;
       })
       .catch(() => {
         if (!cancelled) {
@@ -428,11 +468,14 @@ export const RecordDetailView = memo(function RecordDetailView({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        console.log('Escape key pressed');
+        // While a field edit is active, let the FieldEditor's own Escape handler
+        // cancel the edit (revert to viewing, stay in place) rather than closing
+        // the overlay or exiting focus mode. editingFieldRef is a ref, so it reads
+        // the live edit state here without re-subscribing the listener.
+        if (editingFieldRef.current) return;
         e.stopPropagation();
         if (focusedFieldName) {
           handleFocusedFieldChange(null);
-          console.log('Focused field minimized');
         } else {
           onClose();
         }
@@ -630,9 +673,10 @@ export const RecordDetailView = memo(function RecordDetailView({
     onRecordStructurallyChangedRefetchAll?.();
   }, [reloadRecordAndValidations, onRecordStructurallyChangedRefetchAll]);
 
-  const beginFieldEdit = useCallback((fieldName: string) => {
+  const beginFieldEdit = useCallback((fieldName: string, caretOffset?: number | null) => {
     editingFieldRef.current = fieldName;
     setEditingFieldName(fieldName);
+    setEditorInitialCaretOffset(caretOffset ?? null);
   }, []);
 
   const cancelFieldEdit = useCallback(
@@ -659,10 +703,27 @@ export const RecordDetailView = memo(function RecordDetailView({
 
       clearFieldEdit();
 
-      // The typed text is interpreted schema-free in the main process (against
-      // the current on-disk leaf) and the parsed value comes back as
-      // `result.value` — we mirror that into the optimistic UI state rather than
-      // re-deriving it here. See DEV-10308.
+      // Apply the edit optimistically before awaiting the IPC so the field never
+      // repaints its pre-edit value in the gap between edit mode closing and the
+      // backend write completing (the source of the "value reverts on quick
+      // click-out" report). We interpret the typed text the same way the main
+      // process does — existing on-disk leaf wins, the JSON schema only hints the
+      // scalar type of an empty leaf (coerceCellInputTextAgainstExistingValueOrSchema
+      // / DEV-10308) — so the optimistic value matches what gets written. The
+      // `.then()` reconciles with the authoritative parsed `result.value`.
+      const schemaHint = resolveSchemaLeafHint(schema, fieldName);
+      setRecordData((prev) => {
+        if (!prev) return prev;
+        const existingValueAtFieldPath = prev.displayData ? getByPath(prev.displayData, fieldName) : undefined;
+        const optimisticValue = coerceCellInputTextAgainstExistingValueOrSchema(
+          existingValueAtFieldPath,
+          schemaHint,
+          nextValue,
+        );
+        return applyAcceptedFieldChangeToOpenRecordData(prev, fieldName, optimisticValue);
+      });
+
+      pendingFieldSavesRef.current.add(fieldName);
       void window.scratchFiles
         .acceptFieldEditFromInputText(folderPath, workspacePath, filename, fieldName, nextValue)
         .then((result) => {
@@ -679,9 +740,21 @@ export const RecordDetailView = memo(function RecordDetailView({
             title: 'Failed to save field',
             message: err instanceof Error ? err.message : 'Unknown error',
           });
+          // The optimistic value never persisted — resync with authoritative disk state.
+          reloadRecordAndValidations();
+        })
+        .finally(() => {
+          pendingFieldSavesRef.current.delete(fieldName);
         });
     },
-    [clearFieldEdit, folderPath, workspacePath, onSingleFieldAcceptedApplyOptimistically],
+    [
+      clearFieldEdit,
+      folderPath,
+      workspacePath,
+      schema,
+      reloadRecordAndValidations,
+      onSingleFieldAcceptedApplyOptimistically,
+    ],
   );
 
   const validationWarnings = useMemo(() => {
@@ -773,7 +846,7 @@ export const RecordDetailView = memo(function RecordDetailView({
         fromValue,
         diffKind,
         displayMode: isUnreviewed ? 'diff' : 'current',
-        editing: isEditable && editingFieldName === fieldName,
+        editing: isEditable && editingFieldName === effectivePath,
         referenceValue: diffKind !== null ? fromValue : undefined,
         column: { readonly: isReadOnly, type: fieldType },
         contentMediaType,
@@ -784,10 +857,11 @@ export const RecordDetailView = memo(function RecordDetailView({
                 editingFieldRef.current = effectivePath;
                 commitFieldEdit(effectivePath, value, toggled);
               }
-            : () => beginFieldEdit(fieldName)
+            : (event?: ReactMouseEvent) =>
+                beginFieldEdit(effectivePath, computeCaretOffsetWithinClickedText(event, value))
           : undefined,
         onEditCommit: isEditable ? (nv: string) => commitFieldEdit(effectivePath, value, nv) : undefined,
-        onEditCancel: isEditable ? () => cancelFieldEdit(fieldName) : undefined,
+        onEditCancel: isEditable ? () => cancelFieldEdit(effectivePath) : undefined,
         onApprove:
           isDeleted || !isUnreviewed ? undefined : () => handleApproveFieldClick(effectivePath, value, 'approve'),
         onUndo: isDeleted
@@ -1297,6 +1371,7 @@ export const RecordDetailView = memo(function RecordDetailView({
                     onFocusedFieldChange={handleFocusedFieldChange}
                     valueViewMode={valueViewMode}
                     onValueViewModeChange={setValueViewMode}
+                    editorInitialCaretOffset={editorInitialCaretOffset}
                     footer={
                       hiddenCount > 0 ? (
                         <Box style={{ padding: '8px 12px' }}>
