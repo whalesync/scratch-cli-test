@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use anyhow::Context;
-use rusqlite::{params, types::ToSql, Connection, TransactionBehavior};
+use rusqlite::{params, types::ToSql, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::shared::validators::{run_validators_dry, ValidatorEntry};
 
@@ -418,6 +419,18 @@ fn load_folder_schema(workspace: &Path, folder: &str) -> Option<serde_json::Valu
     serde_json::from_str(&raw).ok()
 }
 
+/// SHA-256 (lowercase hex) of the folder's synced `schema.json` bytes, or `None` if the file is
+/// absent or unreadable. Hashes the exact file `enforce_schema` loads (`resolve_folder_schema_path`)
+/// so the hash reflects what validation saw. Raw bytes, no canonicalization —
+/// `sync_schema_files_from_worktree` copies the server's schema verbatim, so identical server
+/// content yields an identical hash (the reason DEV-10518 hashes content rather than trusting mtime,
+/// which the per-download rewrite always bumps).
+fn compute_schema_hash(workspace: &Path, folder: &str) -> Option<String> {
+    let path = resolve_folder_schema_path(workspace, folder);
+    let bytes = fs::read(&path).ok()?;
+    Some(format!("{:x}", Sha256::digest(&bytes)))
+}
+
 /// True if a JSON Schema property node represents a numeric type.
 /// Handles `"type": "number" | "integer"`, the array form `"type": ["number", "null"]`,
 /// and the nullable wrapper forms `anyOf` / `oneOf` (e.g. `[{type: number}, {type: null}]`).
@@ -564,6 +577,26 @@ fn sweep_stale_version_tables(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Name of the persisted per-folder schema-hash table (DEV-10518). Underscore-prefixed so the
+/// version sweep in `open_conn` deliberately preserves it across `INDEX_SCHEMA_VERSION` bumps
+/// (see `sweep_stale_version_tables`) — the schema hash is independent of the index table schema,
+/// so it should survive a cold rebuild of the versioned tables.
+const FOLDER_SCHEMA_HASHES_TABLE: &str = "_folder_schema_hashes";
+
+/// Create the `_folder_schema_hashes` metadata table if absent. Maps a `folder_path` to the
+/// SHA-256 of the `schema.json` it was last reconciled against, so a later download can detect a
+/// schema change and clear stale `enforce_schema` results (DEV-10518).
+fn ensure_folder_schema_hash_table(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {FOLDER_SCHEMA_HASHES_TABLE} (
+            folder_path TEXT PRIMARY KEY,
+            schema_hash TEXT NOT NULL
+        );"
+    ))
+    .context("failed to ensure _folder_schema_hashes table")?;
+    Ok(())
+}
+
 fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
     let tq = quote_ident(table);
 
@@ -617,6 +650,8 @@ fn ensure_schema(conn: &Connection, table: &str) -> anyhow::Result<()> {
         );"
     ))
     .context("failed to ensure schema")?;
+
+    ensure_folder_schema_hash_table(conn)?;
 
     Ok(())
 }
@@ -2976,6 +3011,140 @@ pub fn revalidate_folder(
     })
 }
 
+/// True if a table named `table` exists in this database.
+fn table_exists(conn: &Connection, table: &str) -> anyhow::Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![table],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Recompute the denormalized `has_errors` flag for every record in `folder`'s index table from
+/// the current validation_results rows: a record has errors iff at least one result row remains
+/// for its filename. Used after selectively deleting one validator's results (e.g. `enforce_schema`)
+/// so records that still violate other validators keep `has_errors = 1` while records whose only
+/// violations were cleared flip to 0. No-op when the folder's index table doesn't exist yet.
+fn recompute_has_errors_for_folder(
+    tx: &rusqlite::Transaction<'_>,
+    folder: &str,
+    vr_tq: &str,
+) -> anyhow::Result<()> {
+    let table = table_name_from_folder(folder);
+    if !table_exists(tx, &table)? {
+        return Ok(());
+    }
+    let tq = quote_ident(&table);
+    tx.execute(
+        &format!(
+            "UPDATE {tq} SET has_errors = CASE WHEN EXISTS (
+                 SELECT 1 FROM {vr_tq} vr
+                 WHERE vr.folder_path = ?1 AND vr.filename = {tq}.filename
+             ) THEN 1 ELSE 0 END"
+        ),
+        params![folder],
+    )?;
+    Ok(())
+}
+
+/// Result of [`reconcile_enforce_schema_results_after_schema_change`].
+#[derive(Debug, Default, serde::Serialize)]
+pub struct SchemaHashReconcileResult {
+    /// Folders whose `schema.json` hash changed since the last reconcile, whose `enforce_schema`
+    /// validation results were therefore cleared.
+    pub folders_with_changed_schema: Vec<String>,
+}
+
+/// DEV-10518: after a download, clear stale `enforce_schema` validation results for data folders
+/// whose `schema.json` content changed.
+///
+/// For each folder we compare the freshly computed `schema.json` hash against the hash stored in
+/// `_folder_schema_hashes`. When they differ AND a prior hash existed, we (1) delete that folder's
+/// `enforce_schema` rows from the validation_results table and (2) recompute each record's
+/// `has_errors` flag (other validators' rows may remain). The new hash is always recorded so the
+/// next download compares against it. The first time we see a folder (no stored hash) we only record
+/// the baseline — never clearing on first sight means rolling this out doesn't wipe every folder's
+/// warnings on the next pull.
+///
+/// This only clears results; it does not re-run validation. Cleared `enforce_schema` warnings
+/// repopulate on the next validation trigger (a record edit, an accept/reject, a desktop folder
+/// refresh). To also re-run immediately, feed `folders_with_changed_schema` into [`revalidate_folder`].
+///
+/// `folders` may span connections; each folder's `.repos/<conn>.db` is resolved via
+/// [`resolve_db_path`] (honoring `db_path_override`) and folders are grouped per database so each is
+/// opened once. A cold workspace missing the validation_results or per-folder tables is tolerated
+/// (nothing to clear) — the baseline hash is still recorded.
+pub fn reconcile_enforce_schema_results_after_schema_change(
+    workspace: &Path,
+    folders: &[String],
+    db_path_override: Option<&Path>,
+) -> anyhow::Result<SchemaHashReconcileResult> {
+    use std::collections::BTreeMap;
+
+    // Group folders by the database they live in so each connection DB is opened once.
+    let mut folders_by_db: BTreeMap<PathBuf, Vec<&String>> = BTreeMap::new();
+    for folder in folders {
+        let db_path = resolve_db_path(workspace, folder, db_path_override);
+        folders_by_db.entry(db_path).or_default().push(folder);
+    }
+
+    let vr_table = validation_results_table();
+    let vr_tq = quote_ident(&vr_table);
+    let mut result = SchemaHashReconcileResult::default();
+
+    for (db_path, db_folders) in folders_by_db {
+        let mut conn = open_conn(&db_path)?;
+        ensure_folder_schema_hash_table(&conn)?;
+        let validation_results_exists = table_exists(&conn, &vr_table)?;
+
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for folder in db_folders {
+            let new_hash = compute_schema_hash(workspace, folder);
+            let old_hash: Option<String> = tx
+                .query_row(
+                    &format!(
+                        "SELECT schema_hash FROM {FOLDER_SCHEMA_HASHES_TABLE} WHERE folder_path = ?1"
+                    ),
+                    params![folder],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            // Only clear when we have a prior hash to compare against and it actually moved.
+            if old_hash.is_some() && old_hash != new_hash {
+                if validation_results_exists {
+                    tx.execute(
+                        &format!(
+                            "DELETE FROM {vr_tq} WHERE folder_path = ?1 AND validator_kind = 'enforce_schema'"
+                        ),
+                        params![folder],
+                    )?;
+                    recompute_has_errors_for_folder(&tx, folder, &vr_tq)?;
+                }
+                result.folders_with_changed_schema.push(folder.clone());
+            }
+
+            // Record the new baseline (or drop the row if the schema vanished).
+            match &new_hash {
+                Some(hash) => tx.execute(
+                    &format!(
+                        "INSERT OR REPLACE INTO {FOLDER_SCHEMA_HASHES_TABLE} (folder_path, schema_hash) VALUES (?1, ?2)"
+                    ),
+                    params![folder, hash],
+                )?,
+                None => tx.execute(
+                    &format!("DELETE FROM {FOLDER_SCHEMA_HASHES_TABLE} WHERE folder_path = ?1"),
+                    params![folder],
+                )?,
+            };
+        }
+        tx.commit()?;
+    }
+
+    Ok(result)
+}
+
 /// Reindex specific files using only the working-tree version.
 /// Updates all active field column values (col, col:mt, col:sz) but does NOT
 /// touch the base row (approvedChanges, unapprovedChanges, dirty_*, master_*).
@@ -3424,6 +3593,135 @@ mod tests {
         assert_eq!(result.summary.unapproved_changes, 1);
     }
 
+    /// DEV-10518: a changed schema.json hash clears only the folder's `enforce_schema` results,
+    /// leaves other validators' results alone, recomputes `has_errors`, and is a no-op when the
+    /// schema is unchanged or seen for the first time.
+    #[test]
+    fn test_schema_hash_change_clears_only_enforce_schema_results() {
+        use rusqlite::params;
+
+        let tmp = TempDir::new().unwrap();
+        let ws = make_workspace(&tmp);
+        let folder = "conn/posts";
+
+        // Write the initial schema.json where the validator (and the hasher) read it.
+        let schema_path = resolve_folder_schema_path(&ws, folder);
+        fs::create_dir_all(schema_path.parent().unwrap()).unwrap();
+        fs::write(&schema_path, r#"{"type":"object","required":["title"]}"#).unwrap();
+
+        // Seed the index DB directly: two live records flagged has_errors=1, an `enforce_schema`
+        // result for each, plus a `required` result on rec2 that must survive the clear.
+        let db_path = resolve_db_path(&ws, folder, None);
+        let table = table_name_from_folder(folder);
+        {
+            let conn = open_conn(&db_path).unwrap();
+            ensure_schema(&conn, &table).unwrap();
+            let tq = quote_ident(&table);
+            let vrq = quote_ident(&validation_results_table());
+            for filename in ["rec1.json", "rec2.json"] {
+                conn.execute(
+                    &format!(
+                        "INSERT INTO {tq} (filename, working_mtime, has_errors) VALUES (?1, 1, 1)"
+                    ),
+                    params![filename],
+                )
+                .unwrap();
+                conn.execute(
+                    &format!(
+                        "INSERT INTO {vrq} (folder_path, filename, field_path, validator_kind, level, message, description, fixable)
+                         VALUES (?1, ?2, 'fields.title', 'enforce_schema', 'warning', 'missing', NULL, 0)"
+                    ),
+                    params![folder, filename],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                &format!(
+                    "INSERT INTO {vrq} (folder_path, filename, field_path, validator_kind, level, message, description, fixable)
+                     VALUES (?1, 'rec2.json', 'fields.title', 'required', 'error', 'required', NULL, 0)"
+                ),
+                params![folder],
+            )
+            .unwrap();
+        }
+
+        let count_kind = |kind: &str| -> i64 {
+            let conn = open_conn(&db_path).unwrap();
+            let vrq = quote_ident(&validation_results_table());
+            conn.query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM {vrq} WHERE folder_path = ?1 AND validator_kind = ?2"
+                ),
+                params![folder, kind],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let has_errors = |filename: &str| -> i64 {
+            let conn = open_conn(&db_path).unwrap();
+            let tq = quote_ident(&table_name_from_folder(folder));
+            conn.query_row(
+                &format!("SELECT has_errors FROM {tq} WHERE filename = ?1"),
+                params![filename],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        let folders = vec![folder.to_string()];
+
+        // First reconcile: no stored hash → record baseline, clear nothing.
+        let r1 = reconcile_enforce_schema_results_after_schema_change(&ws, &folders, None).unwrap();
+        assert!(
+            r1.folders_with_changed_schema.is_empty(),
+            "first sight records a baseline, never clears"
+        );
+        // The baseline must persist a hash row — an empty `_folder_schema_hashes` was the
+        // DEV-10518 symptom, and a missing baseline means a later change can never be detected.
+        {
+            let conn = open_conn(&db_path).unwrap();
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM _folder_schema_hashes WHERE folder_path = ?1",
+                    params![folder],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                n, 1,
+                "baseline reconcile must write a _folder_schema_hashes row"
+            );
+        }
+        assert_eq!(count_kind("enforce_schema"), 2);
+        assert_eq!(count_kind("required"), 1);
+
+        // Change the schema content → enforce_schema results cleared, required survives,
+        // has_errors recomputed per record.
+        fs::write(&schema_path, r#"{"type":"object","required":[]}"#).unwrap();
+        let r2 = reconcile_enforce_schema_results_after_schema_change(&ws, &folders, None).unwrap();
+        assert_eq!(r2.folders_with_changed_schema, vec![folder.to_string()]);
+        assert_eq!(
+            count_kind("enforce_schema"),
+            0,
+            "enforce_schema rows cleared"
+        );
+        assert_eq!(count_kind("required"), 1, "other validators untouched");
+        assert_eq!(has_errors("rec1.json"), 0, "rec1 had only enforce_schema");
+        assert_eq!(
+            has_errors("rec2.json"),
+            1,
+            "rec2 still has the required error"
+        );
+
+        // Unchanged schema → no-op.
+        let r3 = reconcile_enforce_schema_results_after_schema_change(&ws, &folders, None).unwrap();
+        assert!(
+            r3.folders_with_changed_schema.is_empty(),
+            "unchanged schema is a no-op"
+        );
+        assert_eq!(count_kind("required"), 1);
+    }
+
     #[test]
     fn test_malformed_json_in_parse_errors() {
         let tmp = TempDir::new().unwrap();
@@ -3640,6 +3938,11 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         for name in &table_names {
+            // `_`-prefixed metadata tables (e.g. `_folder_schema_hashes`) are intentionally
+            // preserved by the sweep — only versioned tables must carry the current suffix.
+            if name.starts_with('_') {
+                continue;
+            }
             assert!(
                 name.ends_with(&suffix),
                 "found stale-version table after sweep: {name}"
@@ -3648,6 +3951,9 @@ mod tests {
         // And the new versioned validation_results table exists.
         let expected_vr = format!("validation_results{suffix}");
         assert!(table_names.iter().any(|n| n == &expected_vr));
+        // The `_`-prefixed schema-hash metadata table is created by ensure_schema and survives
+        // the sweep (it carries no version suffix; DEV-10518).
+        assert!(table_names.iter().any(|n| n == "_folder_schema_hashes"));
     }
 
     #[test]

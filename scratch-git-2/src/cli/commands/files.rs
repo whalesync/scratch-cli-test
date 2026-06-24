@@ -771,6 +771,56 @@ async fn run_download(
     // multi-connection workspace" and produces a zero-cost no-op.
     if !skip_folder_index {
         reindex_folder_index_for_changes(&workspace_dir, &all_changed_workspace_paths)?;
+
+        // DEV-10518: a server schema change leaves the cached `enforce_schema` results for that
+        // folder stale. For each connection that actually pulled new server state, refresh the
+        // synced schema.json from the (now freshly-checked-out) worktree, then reconcile its
+        // folders' schema hashes — clearing stale `enforce_schema` results when the schema changed.
+        //
+        // This is gated on the per-connection download status, NOT `master_update.moved`: that flag
+        // is always false here because `download_single_repo` advances `refs/heads/main` to
+        // origin/main before `update_main_worktree_after_pull` recomputes it. `results` is aligned
+        // with `contexts` (one push per iteration above). Best-effort — a failure here must never
+        // fail an otherwise-successful download.
+        for (ctx, download_result) in contexts.iter().zip(results.iter()) {
+            let folders: &[DataFolder] = server_state
+                .get(&ctx.connection_id)
+                .map(|s| s.data_folders.as_slice())
+                .unwrap_or(&[]);
+            if folders.is_empty() {
+                continue;
+            }
+            // Only a connection that pulled new server state can have a changed schema; refresh its
+            // synced schema files first (the worktree `.scratch` was just reset to new main).
+            if download_result.status == "downloaded" {
+                let _ = sync_schema_files_from_worktree(ctx);
+            }
+            let folder_keys: Vec<String> = folders
+                .iter()
+                .filter_map(|df| df.path.as_deref())
+                .map(|path| {
+                    let sub = path.trim_start_matches('/');
+                    if sub.is_empty() {
+                        ctx.conn_dir_name.clone()
+                    } else {
+                        format!("{}/{}", ctx.conn_dir_name, sub)
+                    }
+                })
+                .collect();
+            let db_path = workspace_dir
+                .join(".repos")
+                .join(format!("{}.db", ctx.conn_dir_name));
+            if let Err(err) = folder_index::reconcile_enforce_schema_results_after_schema_change(
+                &workspace_dir,
+                &folder_keys,
+                Some(db_path.as_path()),
+            ) {
+                eprintln!(
+                    "Warning: failed to reconcile schema-hash validation for {}: {err}",
+                    db_path.display()
+                );
+            }
+        }
     }
 
     // Collect the DEV-10523 hard conflicts across every connection before
