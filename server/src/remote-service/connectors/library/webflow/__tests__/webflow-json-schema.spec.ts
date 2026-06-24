@@ -117,6 +117,53 @@ describe('buildWebflowJsonTableSpec — optional fields accept null (DEV-10453)'
   });
 });
 
+describe('buildWebflowJsonTableSpec — VideoLink models the oEmbed object (not a bare URL)', () => {
+  // Webflow's "Video Link" field returns an enriched oEmbed object, e.g.
+  // { url, metadata: { html, title, thumbnail_url, … } } — not a bare URL string.
+  const videoCollection = {
+    id: 'col-vid',
+    displayName: 'Solutions',
+    slug: 'solutions',
+    fields: [
+      { id: 'f-name', type: FieldType.PlainText, slug: 'name', displayName: 'Name', isRequired: true },
+      {
+        id: 'f-video',
+        type: FieldType.VideoLink,
+        slug: 'overview-video',
+        displayName: 'Overview Video',
+        isRequired: false,
+      },
+    ],
+  } as Collection;
+  const videoSpec = buildWebflowJsonTableSpec(
+    { wsId: 'col-vidws', remoteId: ['site-1', 'col-vid'] },
+    site,
+    videoCollection,
+  );
+  const videoFields = ((videoSpec.schema as TObject).properties.fieldData as TObject).properties as Record<
+    string,
+    Record<string, unknown>
+  >;
+
+  it('accepts the oEmbed object { url, metadata } Webflow returns, still nullable', () => {
+    const branches = anyOf(videoFields['overview-video']);
+    expect(branches.some((m) => m.type === 'null')).toBe(true);
+    const nonNull = branches.find((m) => Array.isArray(m.anyOf)) as { anyOf: Array<Record<string, unknown>> };
+    const objectBranch = nonNull.anyOf.find((m) => m.type === 'object') as {
+      properties: Record<string, { type?: string; format?: string }>;
+    };
+    expect(objectBranch.properties.url.type).toBe('string');
+    expect(objectBranch.properties.url.format).toBe('uri');
+    expect('metadata' in objectBranch.properties).toBe(true);
+    // A bare URI string is still accepted defensively (e.g. an unresolved embed).
+    expect(nonNull.anyOf.some((m) => m.type === 'string' && m.format === 'uri')).toBe(true);
+  });
+
+  it('keeps the VideoLink connector-data-type annotation', () => {
+    expect(videoFields['overview-video'][X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('VideoLink');
+  });
+});
+
 describe('buildWebflowAssetsJsonTableSpec — optional fields accept null (DEV-10453)', () => {
   const assetsSpec = buildWebflowAssetsJsonTableSpec({ wsId: '__assets__site-1', remoteId: ['site-1'] }, site);
   const assetProps = (assetsSpec.schema as TObject).properties as Record<string, Record<string, unknown>>;

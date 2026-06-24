@@ -104,6 +104,10 @@ describe('buildWordPressJsonTableSpec — verbatim WordPress data validates (no 
     expect(schemaErrorsFor(postRecord({ acf: { ...ALL_ACF_FIELDS_NULL, post_field: 9 } }))).toEqual([]);
   });
 
+  it('accepts "" for an ACF number field (ACF\'s empty-value sentinel, e.g. price/rating)', () => {
+    expect(schemaErrorsFor(postRecord({ acf: { ...ALL_ACF_FIELDS_NULL, number_field: '' } }))).toEqual([]);
+  });
+
   it('accepts a status value outside the declared enum (e.g. media "inherit")', () => {
     expect(schemaErrorsFor(postRecord({ status: 'inherit' }))).toEqual([]);
   });

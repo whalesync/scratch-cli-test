@@ -253,13 +253,23 @@ export function wordpressFieldToJsonSchema(
   // `null`), so — since records are verbatim — accept `null` regardless of the
   // declared type rather than trusting it. Reuse an existing union's members so the
   // result stays a flat `anyOf` instead of a nested one.
+  //
+  // ACF additionally uses the empty string `""` — not `null` — as its unset sentinel: an
+  // empty ACF number field (e.g. `price`, `rating`) comes back as `""`, which a
+  // `number`-typed schema rejects. Since records are verbatim, accept that blank too for
+  // ACF fields (mirrors the nullability rationale). This blank can't be cleared by the
+  // validator's top-level empty-string skip: it sits inside the `acf` object, which is
+  // wrapped in an anyOf for the `acf: []` quirk, so the failure is reported against the
+  // whole object, not the `""` — allowing it here is what clears the false positive.
+  // Harmless for ACF text fields, which already accept "".
+  const blankStringSentinelMembers: TSchema[] = isAcf ? [Type.Literal('')] : [];
   let schema: TSchema;
   if (baseAlreadyAcceptsNull) {
     schema = baseSchema;
   } else if (isUnionSchema(baseSchema)) {
-    schema = Type.Union([...baseSchema.anyOf, Type.Null()], { description });
+    schema = Type.Union([...baseSchema.anyOf, Type.Null(), ...blankStringSentinelMembers], { description });
   } else {
-    schema = Type.Union([baseSchema, Type.Null()], { description });
+    schema = Type.Union([baseSchema, Type.Null(), ...blankStringSentinelMembers], { description });
   }
 
   // Set foreign key metadata for known FK fields (non-ACF only). All x-scratch

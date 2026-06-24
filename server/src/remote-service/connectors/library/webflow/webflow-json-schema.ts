@@ -75,8 +75,22 @@ export function webflowFieldToJsonSchema(field: Field): TSchema {
       break;
 
     case FieldType.Link:
-    case FieldType.VideoLink:
       schema = Type.String({ description, format: 'uri' });
+      break;
+
+    case FieldType.VideoLink:
+      // A populated Webflow "Video Link" field comes back as an oEmbed *object*
+      // (`{ url, metadata: { html, title, thumbnail_url, … } }`) — Webflow enriches the
+      // pasted video URL server-side — not the bare URI string a `Link` returns. Model
+      // that verbatim object shape (metadata is an opaque passthrough we don't enumerate)
+      // while still accepting a bare URI string defensively (e.g. an unresolved embed).
+      schema = Type.Union(
+        [
+          Type.Object({ url: Type.String({ format: 'uri' }), metadata: Type.Optional(Type.Unknown()) }),
+          Type.String({ format: 'uri' }),
+        ],
+        { description },
+      );
       break;
 
     case FieldType.Color:

@@ -145,7 +145,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered
-- (none yet — see SKILL.md → Stage E for what to hunt for)
+- **`VideoLink` returns an oEmbed object, not a URL string.** A populated "Video Link" field comes back as `{ url, metadata: { html, title, thumbnail_url, … } }` — Webflow enriches the pasted video URL server-side — so the schema models that object (with a bare-URI string fallback), not the `format:'uri'` string a `Link` returns. Found via prod `enforce_schema` noise; fixed in `webflow-json-schema.ts` (`FieldType.VideoLink` case).
 
 ## Gotchas
 - (connector-specific operational notes)

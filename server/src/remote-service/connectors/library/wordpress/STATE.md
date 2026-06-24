@@ -145,7 +145,7 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 - Association endpoint (if any): <describe> — ⬜
 
 ## Edge cases discovered
-- (none yet — see SKILL.md → Stage E for what to hunt for)
+- **ACF uses `""` (empty string), not `null`, as its unset sentinel.** An empty ACF number field (e.g. `price`, `rating`) comes back as `""`, which a `number`-typed schema rejects. The failure surfaces against the whole `acf` object (anyOf-wrapped for the `acf: []` PHP quirk), so the validator's top-level empty-string skip can't see the nested blank — ACF fields therefore also accept `""` in the schema. Found via prod `enforce_schema` noise; fixed in `wordpress-json-schema.ts` (`wordpressFieldToJsonSchema`, `isAcf` branch).
 
 ## Gotchas
 - (connector-specific operational notes)
