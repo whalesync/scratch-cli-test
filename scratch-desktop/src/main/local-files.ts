@@ -857,6 +857,26 @@ async function resolveFilterStatus(
 // from the bare repo. "Working" stays a TS-side fs read.
 
 /**
+ * Convert an absolute folder path inside a workspace into the workspace-relative,
+ * POSIX-separated path the `scratchmd` CLI expects for its `--folder` argument
+ * (connection dir first, no leading slash). `path.relative` handles mixed
+ * `/`-vs-`\` separators, drive-letter casing, and `..` segments; we then swap the
+ * native separator for `/` because the CLI splits on `/` to find the connection.
+ *
+ * This is the single absolute→relative seam for the review IPC handlers — the
+ * renderer passes the absolute folder it already holds and never relativizes
+ * itself (a Windows backslash left by the old renderer string math produced a
+ * rooted `\Conn\Folder` path the CLI re-anchored to the drive root).
+ *
+ * Returns `''` when `folderPath` is the workspace root itself, and a `..`-prefixed
+ * path when `folderPath` is outside the workspace — callers must treat both as
+ * "not a folder inside this workspace" rather than passing them to the CLI.
+ */
+export function toWorkspaceRelativeCliFolder(workspacePath: string, folderPath: string): string {
+  return relative(workspacePath, folderPath).split(sep).join('/');
+}
+
+/**
  * Split `<workspace>/<conn>/<sub-path>` into the connection dir name + the
  * connection-relative folder path that the napi binding accepts. Throws if
  * `folderPath` isn't inside `workspacePath`.

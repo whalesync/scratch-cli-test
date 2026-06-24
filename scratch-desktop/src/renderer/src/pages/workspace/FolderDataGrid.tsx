@@ -63,6 +63,7 @@ import { getWordDiffSegments } from '../../../../shared/word-diff';
 import { Text12Medium, Text12Regular, Text13Medium, Text13Regular } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { trackRefreshFolderDataGrid } from '../../lib/posthog';
+import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { useViewMode, useWorkspaceUiStore, type FilterKind, type GridFilter } from '../../stores/workspace-ui-store';
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
@@ -2082,15 +2083,14 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     async (action: 'approve' | 'reject' | 'discard') => {
       if (!workspacePath) return;
 
-      const relativeFolderPath =
-        selectedFolderPath && selectedFolderPath.startsWith(workspacePath)
-          ? selectedFolderPath.slice(workspacePath.length).replace(/^\//, '')
-          : (selectedFolderPath?.replace(/^\//, '') ?? '');
+      // Pass the absolute folder path straight through; the main process is the
+      // single place that converts it to the CLI's workspace-relative form.
+      const folderPath = selectedFolderPath || undefined;
 
       setBulkActionLoading(true);
       try {
         if (action === 'approve') {
-          const result = await window.scratchDesktop.acceptAllChanges(workspacePath, relativeFolderPath || undefined);
+          const result = await window.scratchDesktop.acceptAllChanges(workspacePath, folderPath);
           if (result.exitCode !== 0) {
             throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to approve changes');
           }
@@ -2100,7 +2100,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
             message: `Approved all pending changes.`,
           });
         } else if (action === 'discard') {
-          const result = await window.scratchDesktop.discardAllChanges(workspacePath, relativeFolderPath || undefined);
+          const result = await window.scratchDesktop.discardAllChanges(workspacePath, folderPath);
           if (result.exitCode !== 0) {
             throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to discard changes');
           }
@@ -2112,7 +2112,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         } else {
           // Reject all: one CLI call, folder-scoped, covers every unreviewed file
           // in the folder — not just the visible page.
-          const result = await window.scratchDesktop.rejectAllChanges(workspacePath, relativeFolderPath || undefined);
+          const result = await window.scratchDesktop.rejectAllChanges(workspacePath, folderPath);
           if (result.exitCode !== 0) {
             throw new Error(result.stderr.trim() || result.stdout.trim() || 'Failed to reject changes');
           }
@@ -3509,9 +3509,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
 
           // Record-level popover for creates/deletes
           if (cellPopover.recordLevel && cellPopover.recordAction) {
-            const relativeFolderPath = selectedFolderPath.startsWith(workspacePath)
-              ? selectedFolderPath.slice(workspacePath.length).replace(/^\//, '')
-              : selectedFolderPath.replace(/^\//, '');
+            const relativeFolderPath = workspaceRelativePosixPath(workspacePath, selectedFolderPath);
             const recordPath = relativeFolderPath ? `${relativeFolderPath}/${filename}` : filename;
             const handleRecordApprove = () => {
               void window.scratchDesktop.acceptRecord(workspacePath, recordPath).then((result) => {

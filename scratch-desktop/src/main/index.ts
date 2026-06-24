@@ -33,6 +33,7 @@ import {
   readSchema,
   readWorkspaceConfig,
   revertUnreviewedFieldEditToApproved,
+  toWorkspaceRelativeCliFolder,
   writeFileTextRaw,
   type DiffGridFilter,
   type FilterStatus,
@@ -68,6 +69,7 @@ import {
   startScratchmdLiveCommand,
   syncCredentialsToScratchmdCli,
   uploadWorkspaceChanges,
+  type ScratchmdResult,
 } from './scratchmd';
 import { configureBundledGitEnvironment } from './setup-git-env';
 import { seedTestCredentialsFromEnvIfPresent } from './test-credentials';
@@ -760,22 +762,52 @@ ipcMain.handle('scratch:refresh-paths', () => {
   // that performed the mutation.
   return { success: true };
 });
+// The bulk review handlers receive the absolute folder path the renderer holds
+// (its `selectedFolderPath`) and relativize it to the CLI's workspace-relative
+// POSIX form here — the single absolute→relative conversion seam, so the
+// renderer never does fragile path math. `files <op>-all` reindexes the affected
+// folders itself; no follow-up call needed.
+//
+// Resolve the optional absolute `folderPath` into the CLI's `--folder` args. A
+// folder that was passed but does NOT resolve to a path inside the workspace is
+// refused outright: we must never fall through to a folder-less (whole-workspace)
+// run, which for `discard-all` would throw away every pending and approved change
+// in the workbook. `''` (folder is the workspace root) and a `..`-prefixed result
+// (folder is outside the workspace) both fail this check.
+function resolveBulkReviewFolderArgs(
+  workspacePath: string,
+  folderPath: string | undefined,
+): { ok: true; folderArgs: string[] } | { ok: false; result: ScratchmdResult } {
+  if (!folderPath) return { ok: true, folderArgs: [] };
+  const cliFolder = toWorkspaceRelativeCliFolder(workspacePath, folderPath);
+  if (!cliFolder || cliFolder.startsWith('..')) {
+    return {
+      ok: false,
+      result: {
+        exitCode: 1,
+        stdout: '',
+        stderr: `Folder ${JSON.stringify(folderPath)} is not inside workspace ${JSON.stringify(workspacePath)}.`,
+      },
+    };
+  }
+  return { ok: true, folderArgs: ['--folder', cliFolder] };
+}
 ipcMain.handle('scratch:accept-all-changes', async (_, workspacePath: string, folderPath?: string) => {
-  // `files accept-all` reindexes the affected folders itself; no follow-up call needed.
-  const args = ['files', 'accept-all'];
-  if (folderPath) args.push('--folder', folderPath);
+  const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
+  if (!folder.ok) return folder.result;
+  const args = ['files', 'accept-all', ...folder.folderArgs];
   return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
 ipcMain.handle('scratch:discard-all-changes', async (_, workspacePath: string, folderPath?: string) => {
-  // `files discard-all` reindexes the affected folders itself; no follow-up call needed.
-  const args = ['files', 'discard-all'];
-  if (folderPath) args.push('--folder', folderPath);
+  const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
+  if (!folder.ok) return folder.result;
+  const args = ['files', 'discard-all', ...folder.folderArgs];
   return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
 ipcMain.handle('scratch:reject-all-changes', async (_, workspacePath: string, folderPath?: string) => {
-  // `files reject-all` reindexes the affected folders itself; no follow-up call needed.
-  const args = ['files', 'reject-all'];
-  if (folderPath) args.push('--folder', folderPath);
+  const folder = resolveBulkReviewFolderArgs(workspacePath, folderPath);
+  if (!folder.ok) return folder.result;
+  const args = ['files', 'reject-all', ...folder.folderArgs];
   return withWorkspaceInternalMutation(workspacePath, () => runScratchmdCapture(args, workspacePath));
 });
 ipcMain.handle('scratch:accept-record', async (_, workspacePath: string, recordPath: string) =>

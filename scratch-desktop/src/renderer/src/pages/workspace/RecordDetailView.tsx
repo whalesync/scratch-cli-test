@@ -22,6 +22,7 @@ import { Text12Regular, TextTitle2 } from '../../components/base/text';
 import { StyledLucideIcon } from '../../components/icons/StyledLucideIcon';
 import { RecordRawJsonFileEditorModal } from '../../components/RecordRawJsonFileEditorModal';
 import { ScratchJsonCodeMirror, type ColumnHoverCallbacks } from '../../components/ScratchJsonCodeMirror';
+import { workspaceRelativePosixPath } from '../../lib/workspace-relative-path';
 import { useWorkspaceUiStore } from '../../stores/workspace-ui-store';
 import { RecordFieldsGrid, type FieldValueViewMode, type RecordFieldRow } from './RecordFieldsGrid';
 
@@ -335,8 +336,9 @@ export const RecordDetailView = memo(function RecordDetailView({
 
   const currentRecordCliPath = useMemo(() => {
     const filename = typeof currentRow?.__filename === 'string' ? currentRow.__filename : undefined;
-    if (!filename || !folderPath.startsWith(workspacePath)) return null;
-    const relativeFolderPath = folderPath.slice(workspacePath.length).replace(/^\//, '');
+    if (!filename) return null;
+    const relativeFolderPath = workspaceRelativePosixPath(workspacePath, folderPath);
+    if (!relativeFolderPath) return null;
     return `${relativeFolderPath}/${filename}`;
   }, [currentRow, folderPath, workspacePath]);
 
