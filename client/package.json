@@ -44,8 +44,6 @@
     "@spinner/shared-types": "0.0.0-dev",
     "@types/uuid": "^10.0.0",
     "@uiw/react-codemirror": "^4.25.3",
-    "ag-grid-community": "^34.2.0",
-    "ag-grid-react": "^34.2.0",
     "axios": "1.14.0",
     "classnames": "^2.5.1",
     "dayjs": "^1.11.18",
