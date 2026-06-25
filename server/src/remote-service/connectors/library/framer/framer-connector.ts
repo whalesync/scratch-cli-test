@@ -116,10 +116,10 @@ export class FramerConnector extends Connector {
     base: null,
     bases: null,
     logo: 'https://static.scratch.md/connector-icons/framer.svg',
-    // Dev-only until a maintainer signs off on making it visible. Validated
-    // end-to-end via the scratchmd CLI (full CRUD incl. image write, FK re-parent)
-    // and an adversarial codex review; logo uploaded (200).
-    visible: false,
+    // Visible in the product. Validated end-to-end via the scratchmd CLI (full CRUD
+    // incl. image write, FK re-parent) and an adversarial codex review; logo serves
+    // 200. Maintainer sign-off granted 2026-06-25 (DEV-10491).
+    visible: true,
     incrementalPull: false,
     incrementalPullInstructions: null,
     supportsSchemaCreation: false,

@@ -55,7 +55,7 @@ Framer's **Server API** (beta) is a **stateful WebSocket** transport driven by t
 - [x] Live integration spec + idempotent bootstrap seed script written (durable fixtures).
 - [x] **Logo uploaded** to `gs://spv1eu-production-static/connector-icons/framer.svg` → `https://static.scratch.md/connector-icons/framer.svg` returns **200**. (SVG source kept at `framer-logo.svg`.)
 - [x] **Image write** CLI edit→push confirmed (external URL re-hosted to framerusercontent.com); **draft toggle** confirmed; **empty-string clear** confirmed (null-clear is the platform merge-patch drop — documented).
-- [ ] **Flip `metadata.visible` to `true`** — gated on a maintainer's sign-off (kept `false` for now). Everything that gates it is done: full CRUD + FK + image + adversarial review passed, logo serves 200.
+- [x] **Flip `metadata.visible` to `true`** — maintainer sign-off granted 2026-06-25 (DEV-10491). Everything that gated it was done: full CRUD + FK + image + adversarial review passed, logo serves 200.
 - [x] **Adversarial codex review** run — 3 real fixes applied (disconnect-mask, deterministic translation maps, create-read-back-miss throw); rest documented (see Adversarial review section).
 - [ ] (Low) CLI-push **file** + **array** field writes (file shares the image asset path which is confirmed; array is image-only sub-items — rare).
 - [ ] (Follow-up) Consolidate write to **one WebSocket per write** (currently translate/upsert/read-back = 3 connects) — perf + removes a theoretical translation-vs-write race.

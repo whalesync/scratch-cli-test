@@ -76,3 +76,7 @@ Bug hunt (SDK probes + CLI):
 [03:55:00] [Service API] Probed update behavior: MERGE confirmed (partial fieldData preserves other fields — no data loss); empty multi-ref []=clear; ref-to-nonexistent throws; numbers/long-strings/date-with-time all fine; slug-change-on-update normalizes.
 [04:00:00] [Manual Edits] BUG FIX: link schema format:'uri' rejected an empty/cleared link ("" fails uri format) → verbatim record failed enforce_schema. Dropped format:'uri'; added regression unit test. Verified live → [].
 [04:02:00] [Manual Edits] Hardening: unsupported field values marked x-scratch-readonly. 21 unit tests green.
+
+## 2026-06-25 — maintainer sign-off → visible
+
+[Manual Edits] Maintainer sign-off granted (DEV-10491). Flipped `metadata.visible` → `true` in framer-connector.ts; checked off the STATE.md gate; summary-table Visible → 👁️ in docs/connector-build.md. Framer now shows + connects in the product. No technical blocker remained (full CRUD + FK + image + adversarial review all passed on 2026-06-19).
