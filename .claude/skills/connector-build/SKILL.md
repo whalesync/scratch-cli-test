@@ -46,13 +46,15 @@ Scale effort to the surface, not to your patience. A 15-field-type service means
 - `/connector-build <name> [account: <id|creds|"use the open browser session">]` — same, but use a provided/known account instead of creating one.
 - `/connector-build <name> resume` — read `STATE.md` and continue.
 
+**Login is automated — you do NOT type credentials.** Authenticate via the saved gstack session (`$B state load <connector>`) or, if it expired, the connector's login script (`server/src/remote-service/connectors/library/<connector>/test/login.sh`), which reads the password from `.env.connector-build` and enters it **without you ever seeing it**. Provisioning + login wiring are done once, up front, by [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md). Full model: [docs/connector-test-accounts.md](/docs/connector-test-accounts.md). These are **disposable, company-owned QA accounts** on `testing@whalesync.com` with no real data — authenticating them is routine, not sensitive.
+
 **Drive yourself end-to-end. PAUSE only for gates a human must clear:**
-1. **Service login / SSO** (entering the user's credentials).
+1. **An emailed confirmation** — a verification link or code sent to `testing@whalesync.com` that the flow requires (you can't read that mailbox). This is the one routine pause.
 2. **Credit card / billing** for a trial or paid signup.
-3. **Captcha / 2FA / email or phone verification.**
+3. **Captcha** (or a 2FA prompt the login script can't pass).
 4. An explicitly **destructive** confirmation (deleting a real account, mass-deleting real data).
 
-Everything else — signup form fill, folder scaffolding, connection creation, pulls, edits, pushes, FK wiring, edge-case probing, coverage updates — you do **without asking**. The bar is: *you should be able to launch ~10 of these in parallel and only get pulled in for billing and login.*
+Everything else — signup form fill, folder scaffolding, connection creation, pulls, edits, pushes, FK wiring, edge-case probing, coverage updates — you do **without asking**. The bar is: *you should be able to launch ~10 of these in parallel and only get pulled in for an emailed confirmation or a card.*
 
 ### When blocked, alert the developer out loud
 A parallel run that silently stalls wastes time. Whenever you hit a gate above — or any unexpected blocker that needs the user — do this in order:
@@ -77,17 +79,25 @@ Do this **before** pulling/pushing anything. The browser is not optional: create
 
 **gstack path (default):**
 1. Launch/verify the gstack browser: `$B connect` then `$B status` → must show `Mode: headed`.
-2. `$B goto` the service and `snapshot` — confirm you are **logged in** (authenticated UI, not a login wall).
+2. **Restore the saved session:** `$B state load <connector>`, then `$B goto` the service and `snapshot` — confirm you are **logged in** (authenticated UI, not a login wall).
+3. **If you hit a login wall**, run the connector's login script — `bash server/src/remote-service/connectors/library/<connector>/test/login.sh` — which logs in from `.env.connector-build` **without you seeing the password** and re-saves the session; then re-snapshot. (No login script / no session yet? The connector hasn't been prepared — run [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md) first.)
 
 **Chrome-extension path (only if the user asked):** load the tools via ToolSearch → `tabs_create_mcp` to make **your own** tab → `navigate` it to the service → `read_page`/`screenshot` to confirm you're **logged in**. Drive only that tab id for the rest of the run.
 
-**If the browser won't start, the service won't load, or you're not logged in and can't get logged in** (and the user isn't available to log in), **STOP and exit early**: post a one-line warning naming exactly what failed (e.g. "Browser preflight failed: gstack headed mode won't start" / "Not logged into Acme — need a login"), `/read` it, and do not proceed with a partial CLI-only pass. Resume once the gate clears.
+**If the browser won't start, the service won't load, or login can't be automated** (the login script hits an emailed confirmation / captcha and the user isn't available), **STOP and exit early**: post a one-line warning naming exactly what failed (e.g. "Browser preflight failed: gstack headed mode won't start" / "Acme login needs an emailed code — testing@whalesync.com"), `/read` it, and do not proceed with a partial CLI-only pass. Resume once the gate clears.
 
 ---
 
 ## Step 0 — Resume & account detection (ALWAYS run first)
 
-**First, load the cross-connector playbook:** read [`docs/connector-build.md`](/docs/connector-build.md) — the accumulated catalog of tricks and problems seen on prior connectors — so you start already knowing what to watch for. You'll append to it in Stage E.
+**First task — env-var preflight (fail fast).** Before anything else, confirm the test-account credentials exist. Look up the connector's row in [`docs/connector-candidates.md`](/docs/connector-candidates.md) **Test env vars** column, then check they're present in `.env.connector-build`:
+```bash
+H=.claude/skills/prepare-connector-build/lib/credential-helpers.sh
+bash $H require CB_<SVC>_API_TOKEN [CB_<SVC>_...]   # exits non-zero, naming any missing var
+```
+If the file or the vars are **missing**, **stop immediately**: post a one-line message that the connector isn't prepared — run [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md) (or copy the latest `.env.connector-build` from the 1Password note) — `/read` it, and wait. Don't start a run you can't authenticate.
+
+**Then load the cross-connector playbook:** read [`docs/connector-build.md`](/docs/connector-build.md) — the accumulated catalog of tricks and problems seen on prior connectors — so you start already knowing what to watch for. You'll append to it in Stage E.
 
 1. **Pick the connector** + folder `server/src/remote-service/connectors/library/<connector>/`; service constant in `service-constants.ts`.
 2. **Read `STATE.md`.** Exists → it is the state (resume at first `⬜`); also re-read the **Test account** section so you reuse the same account. Missing → create it from [coverage-template.md](coverage-template.md) once you've classified + picked an account.
@@ -162,11 +172,11 @@ Do this autonomously; only stop if a real API decision needs the user.
 
 ## Stage A0 — Provision the test account
 
-Reached only when Step 0 found no usable account.
+**Provisioning is normally [`/prepare-connector-build <connector>`](/.claude/skills/prepare-connector-build/SKILL.md)'s job, done up front** — registering the account, generating the password, storing creds in `.env.connector-build`, and building the login script. If you're here, the connector wasn't prepared; prefer running that skill. If you provision inline, follow the same rules:
 
-1. In the gstack browser, go to the service's **sign-up** page and fill the signup form autonomously (name, work email, company). Prefer the user's email/org if known.
-2. **PAUSE** at the first human gate — email/phone verification, captcha, credit-card for a trial, or SSO login — with a one-line ask. Resume after.
-3. Once in, capture: account/org id, login email, plan + **trial end date**, and where API credentials are generated.
+1. In the gstack browser, go to the service's **sign-up** page and fill the signup form autonomously, using **`testing@whalesync.com`** (default test email) + a company name. **At the password step, generate + enter the password via the credential helper so you never see it:** `bash .claude/skills/prepare-connector-build/lib/credential-helpers.sh gen-password CB_<SVC>_PASSWORD`, then `enter-secret CB_<SVC>_PASSWORD '<selector>'`.
+2. **PAUSE only** for an **emailed confirmation** (link/code to `testing@whalesync.com`) the flow requires — or a card/captcha if one appears — with a one-line ask + `/read`. Resume after. Everything else, do autonomously.
+3. Once in, capture: account/org id, login email, plan + **trial end date**, and where API credentials are generated. Store secrets with the helper's `set-secret` (no echo).
 4. **Record it in the coverage doc immediately** — the **Test account** section (no API key, just where to find it) and, if it's a paid trial, the **TRIAL — CANCEL BY <date>** banner at the very top. This is how nobody gets surprise-charged.
 
 ---
