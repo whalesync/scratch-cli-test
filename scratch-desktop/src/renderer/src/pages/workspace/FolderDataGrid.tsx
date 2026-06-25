@@ -54,6 +54,7 @@ import {
 import { classifyFieldChange, type FieldChangeClassification } from '../../../../shared/field-change-classification';
 import {
   createFallbackTableView,
+  createFallbackTableViewFromColumnDefinitions,
   flattenTableViewColumns,
   getByPath,
   resolveDisplayString,
@@ -1569,11 +1570,27 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
     }
   }, [page, totalPages, setPage]);
 
+  /**
+   * The view that actually drives the grid columns. Normally this is the
+   * schema-backed `tableView`. When a table has no schema file (or a schema that
+   * yields no columns) there is no schema-derived view, so fall back to columns
+   * discovered from the record data (`diffData.columns`) — otherwise the grid
+   * would have no columns and render blank pages even though the data was pulled
+   * (DEV-10419).
+   */
+  const effectiveTableView = useMemo(() => {
+    if (tableView && tableView.cols.length > 0) return tableView;
+    if (diffData && diffData.columns.length > 0) {
+      return createFallbackTableViewFromColumnDefinitions(diffData.columns);
+    }
+    return tableView;
+  }, [tableView, diffData]);
+
   /** Flatten view cols (handle banner groups) into a single ordered list. */
   const flatViewCols: TableViewCol[] = useMemo(() => {
-    if (!tableView) return [];
-    return flattenTableViewColumns(tableView);
-  }, [tableView]);
+    if (!effectiveTableView) return [];
+    return flattenTableViewColumns(effectiveTableView);
+  }, [effectiveTableView]);
 
   /** Build a lookup from path → TableViewCol for rendering. */
   const viewColMap = useMemo(() => {
@@ -1585,8 +1602,8 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
   /** Map from column path → group name for banner-group columns. */
   const columnGroupMap = useMemo(() => {
     const map = new Map<string, string>();
-    if (!tableView) return map;
-    for (const item of tableView.cols) {
+    if (!effectiveTableView) return map;
+    for (const item of effectiveTableView.cols) {
       if (item.kind === 'banner-group') {
         for (const col of item.cols) {
           map.set(col.path, item.name);
@@ -1594,17 +1611,17 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       }
     }
     return map;
-  }, [tableView]);
+  }, [effectiveTableView]);
 
   const hasAnyGroups = columnGroupMap.size > 0;
 
   /** Column groups for ColumnPickerMenu — derived from banner-group items in the view. */
   const columnGroups = useMemo(() => {
-    if (!tableView) return [];
-    return tableView.cols
+    if (!effectiveTableView) return [];
+    return effectiveTableView.cols
       .filter((item): item is TableViewBannerGroup => item.kind === 'banner-group')
       .map((group) => ({ name: group.name, columnIds: group.cols.map((c) => c.path) }));
-  }, [tableView]);
+  }, [effectiveTableView]);
 
   const titleColumnId = useMemo(() => flatViewCols[0]?.path ?? null, [flatViewCols]);
 

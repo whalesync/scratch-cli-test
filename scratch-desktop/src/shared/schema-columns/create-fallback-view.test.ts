@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createFallbackTableView } from './create-fallback-view';
+import { createFallbackTableView, createFallbackTableViewFromColumnDefinitions } from './create-fallback-view';
+import type { ColumnDefinition } from './types';
 
 function makeSchema(
   properties: Record<string, unknown>,
@@ -163,5 +164,82 @@ describe('createFallbackTableView', () => {
     expect(view.cols).toHaveLength(2);
     expect(view.cols[0]).toMatchObject({ path: 'address.street', name: 'Street' });
     expect(view.cols[1]).toMatchObject({ path: 'address.city', name: 'City' });
+  });
+});
+
+function makeColumn(id: string, overrides: Partial<ColumnDefinition> = {}): ColumnDefinition {
+  return {
+    id,
+    displayName: id,
+    dataType: 'unknown',
+    attributes: { readOnly: false, writeOnce: false, required: false, nested: id.includes('.') },
+    ...overrides,
+  };
+}
+
+describe('createFallbackTableViewFromColumnDefinitions', () => {
+  it('maps data-derived (schema-less) column definitions into a generated view', () => {
+    // Mirrors the shape readDiffGridDataPage emits when a table has no schema file:
+    // every flattened leaf path comes through with dataType 'unknown'. The grid renders
+    // these columns so a schema-less table shows its data instead of blank pages (DEV-10419).
+    const columns: ColumnDefinition[] = [makeColumn('id'), makeColumn('name'), makeColumn('fields.email')];
+
+    const view = createFallbackTableViewFromColumnDefinitions(columns);
+
+    expect(view.name).toBe('Generated');
+    expect(view.cols).toEqual([
+      {
+        kind: 'col',
+        name: 'id',
+        path: 'id',
+        type: undefined,
+        readonly: undefined,
+        writeOnce: undefined,
+        hidden: false,
+      },
+      {
+        kind: 'col',
+        name: 'name',
+        path: 'name',
+        type: undefined,
+        readonly: undefined,
+        writeOnce: undefined,
+        hidden: false,
+      },
+      {
+        kind: 'col',
+        name: 'fields.email',
+        path: 'fields.email',
+        type: undefined,
+        readonly: undefined,
+        writeOnce: undefined,
+        hidden: false,
+      },
+    ]);
+  });
+
+  it('returns an empty generated view for no columns', () => {
+    expect(createFallbackTableViewFromColumnDefinitions([])).toEqual({ name: 'Generated', cols: [] });
+  });
+
+  it('carries through resolved types and readonly/writeOnce attributes', () => {
+    const columns: ColumnDefinition[] = [
+      makeColumn('count', { dataType: 'integer' }),
+      makeColumn('published', { dataType: 'boolean' }),
+      makeColumn('createdAt', { dataType: 'string', format: 'date-time' }),
+      makeColumn('rid', {
+        dataType: 'string',
+        attributes: { readOnly: true, writeOnce: false, required: false, nested: false },
+      }),
+    ];
+
+    const view = createFallbackTableViewFromColumnDefinitions(columns);
+
+    const byPath = (path: string) =>
+      view.cols.find((c): c is Extract<typeof c, { kind: 'col' }> => c.kind === 'col' && c.path === path);
+    expect(byPath('count')?.type).toBe('number');
+    expect(byPath('published')?.type).toBe('checkbox');
+    expect(byPath('createdAt')?.type).toBe('date');
+    expect(byPath('rid')?.readonly).toBe(true);
   });
 });

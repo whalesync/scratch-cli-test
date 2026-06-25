@@ -222,10 +222,20 @@ export async function getFolderMetadata(folderPath: string, workspacePath: strin
     listConnectionViewNames(workspacePath, relPath),
     countRecordFilesInFolder(folderPath),
   ]);
+  // A missing schema.json is not fatal: a table can be pulled before its schema
+  // file exists. Return null schema/view rather than throwing — the renderer
+  // falls back to columns discovered from the record data so the grid still shows
+  // the data instead of rendering blank pages (DEV-10419).
   if (!schema) {
-    throw new Error(
-      `Schema not found for folder "${folderName}" at ${join(SCRATCH_DIR, CONNECTIONS_DIR, relPath, 'schema.json')}`,
-    );
+    return {
+      name: folderName,
+      path: folderPath,
+      fileCount,
+      schema: null,
+      columnDefinitions: [],
+      view: null,
+      availableViewNames,
+    };
   }
 
   return {

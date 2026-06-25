@@ -61,6 +61,21 @@ function colDefToViewCol(colDef: ColumnDefinition): TableViewCol {
 }
 
 /**
+ * Creates a fallback `TableView` directly from an ordered list of `ColumnDefinition`s.
+ * The first column is treated as the title column; all columns default to visible.
+ *
+ * Used when there is no schema wrapper to derive columns from — e.g. a table that was
+ * pulled before any `schema.json` file existed. In that case the grid still needs to
+ * render the record data, so columns are discovered from the data itself (see
+ * `readDiffGridDataPage`'s data-derived columns) and handed here. Without this, a
+ * missing schema would leave the grid with no columns and render blank pages
+ * (DEV-10419).
+ */
+export function createFallbackTableViewFromColumnDefinitions(colDefs: ColumnDefinition[]): TableView {
+  return { name: 'Generated', cols: colDefs.map(colDefToViewCol) };
+}
+
+/**
  * Creates a fallback `TableView` from a schema wrapper when no `views/default.json` exists on disk.
  * Uses `buildColumnDefinitions()` to derive column metadata, then maps each definition to a `TableViewCol`.
  * Title column is placed first; all columns default to visible.
@@ -88,6 +103,5 @@ export function createFallbackTableView(schemaWrapper: Record<string, unknown>):
     if (def.id !== titleColumnId) ordered.push(def);
   }
 
-  const cols: TableViewCol[] = ordered.map(colDefToViewCol);
-  return { name: 'Generated', cols };
+  return createFallbackTableViewFromColumnDefinitions(ordered);
 }
