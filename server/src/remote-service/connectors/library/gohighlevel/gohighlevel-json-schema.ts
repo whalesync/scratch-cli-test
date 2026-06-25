@@ -8,7 +8,7 @@ import {
   type TableViewBannerGroup,
   type TableViewCol,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { GenericFieldType, GoHighLevelGenericEntityField } from './gohighlevel-entities';
 import {
   GoHighLevelCustomFieldDefinition,
@@ -213,8 +213,8 @@ export function buildContactsJsonTableSpec(
     slug: id.wsId,
     name: 'Contacts',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['contactName'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('contactName'),
     basePath: ['Standard Objects'],
     defaultView: buildStandardEntityDefaultView(properties, contactCustomFieldDefinitions),
     generatedAt: new Date().toISOString(),
@@ -296,8 +296,8 @@ export function buildOpportunitiesJsonTableSpec(
     slug: id.wsId,
     name: 'Opportunities',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
     basePath: ['Standard Objects'],
     defaultView: buildStandardEntityDefaultView(properties, opportunityCustomFieldDefinitions),
     generatedAt: new Date().toISOString(),
@@ -342,8 +342,8 @@ export function buildPipelinesJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Pipelines',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
     basePath: ['Standard Objects'],
     generatedAt: new Date().toISOString(),
   };
@@ -527,7 +527,7 @@ export function buildCustomObjectJsonTableSpec(
     slug: id.wsId,
     name: displayName,
     schema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     // Human-defined custom objects (`custom_objects.*`) → /Custom Objects/; the
     // standard objects-API objects (the built-in `business`/Companies) → /Standard
     // Objects/ with the other built-ins.
@@ -628,8 +628,8 @@ export function buildGenericEntityJsonTableSpec(
     slug: id.wsId,
     name: displayName,
     schema,
-    idColumnRemoteId: idPath(idField),
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath(idField),
+    titlePath: dotPath('name'),
     basePath: ['Standard Objects'],
     generatedAt: new Date().toISOString(),
   };

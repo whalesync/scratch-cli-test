@@ -653,7 +653,7 @@ the following checks:
    permits null** (`type: "null"`, a `type` array containing `"null"`, or an
    `anyOf`/`oneOf` branch permitting null) — a nullable field legitimately holds a
    verbatim null/blank. Emits an **error** for each violation.
-   - Exception: the remote-ID column (`idColumnRemoteId`) is skipped for new
+   - Exception: the remote-ID column (`idPath`) is skipped for new
      records that have not yet been published (the remote service assigns the ID
      on first publish).
 

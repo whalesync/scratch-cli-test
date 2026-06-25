@@ -27,9 +27,9 @@ describe('buildBrevoContactsJsonTableSpec', () => {
 
     expect(spec.name).toBe('Contacts');
     expect(spec.slug).toBe('contacts');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['email']);
-    expect(spec.slugFieldPath).toBe('email');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('email');
+    expect(spec.slugPath).toBe('email');
   });
 
   it('includes all system fields', () => {
@@ -164,9 +164,9 @@ describe('buildBrevoTemplatesJsonTableSpec', () => {
 
     expect(spec.name).toBe('Email Templates');
     expect(spec.slug).toBe('templates');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
-    expect(spec.slugFieldPath).toBe('name');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
+    expect(spec.slugPath).toBe('name');
   });
 
   it('includes all template fields', () => {
@@ -232,9 +232,9 @@ describe('buildBrevoMailingListsJsonTableSpec', () => {
 
     expect(spec.name).toBe('Mailing Lists');
     expect(spec.slug).toBe('mailing_lists');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
-    expect(spec.slugFieldPath).toBe('name');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
+    expect(spec.slugPath).toBe('name');
   });
 
   it('includes all mailing list fields', () => {

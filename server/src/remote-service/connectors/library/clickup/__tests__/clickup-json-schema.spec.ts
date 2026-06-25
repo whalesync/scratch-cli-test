@@ -13,9 +13,9 @@ function specProperties(listName = 'Project 1', defs: ClickUpCustomFieldDefiniti
 describe('buildClickUpJsonTableSpec', () => {
   it('sets id path, title/main-content columns, and name', () => {
     const { spec } = specProperties('My List');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
-    expect(spec.mainContentColumnRemoteId).toEqual(['description']);
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
+    expect(spec.mainContentPath).toEqual('description');
     expect(spec.name).toBe('My List');
   });
 

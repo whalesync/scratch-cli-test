@@ -347,8 +347,8 @@ describe('SyncService - syncTableMapping', () => {
   beforeEach(async () => {
     writtenFiles = [];
     gitSchemasByPath = {
-      '/src': { idColumnRemoteId: 'id' },
-      '/dest': { idColumnRemoteId: 'id' },
+      '/src': { idPath: 'id' },
+      '/dest': { idPath: 'id' },
     };
 
     dbService = { client: prisma } as unknown as DbService;
@@ -1294,9 +1294,9 @@ describe('SyncService - syncTableMapping', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it('should handle dot-separated idColumnRemoteId when parsing records', async () => {
+  it('should handle dot-separated idPath when parsing records', async () => {
     // Source folder uses a nested ID column — register its schema in the git mock
-    gitSchemasByPath['/nested-src'] = { idColumnRemoteId: 'sys.id' };
+    gitSchemasByPath['/nested-src'] = { idPath: 'sys.id' };
 
     const nestedIdFolderId = createDataFolderId();
     await prisma.dataFolder.create({
@@ -1749,10 +1749,10 @@ describe('SyncService - source_fk_to_dest_fk transformer (two-phase)', () => {
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
-          '/src-authors': { idColumnRemoteId: 'id' },
-          '/dest-authors': { idColumnRemoteId: 'id' },
-          '/src-posts': { idColumnRemoteId: 'id' },
-          '/dest-posts': { idColumnRemoteId: 'id' },
+          '/src-authors': { idPath: 'id' },
+          '/dest-authors': { idPath: 'id' },
+          '/src-posts': { idPath: 'id' },
+          '/dest-posts': { idPath: 'id' },
         };
         return Promise.resolve(schemas[folderPath] ?? null);
       }),
@@ -2500,9 +2500,9 @@ describe('SyncService - lookup_field transformer', () => {
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
-          '/src-categories': { idColumnRemoteId: 'id' },
-          '/src-posts': { idColumnRemoteId: 'id' },
-          '/dest-posts': { idColumnRemoteId: 'id' },
+          '/src-categories': { idPath: 'id' },
+          '/src-posts': { idPath: 'id' },
+          '/dest-posts': { idPath: 'id' },
         };
         return Promise.resolve(schemas[folderPath] ?? null);
       }),

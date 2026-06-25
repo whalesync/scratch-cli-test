@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, idPath } from '../../../types';
+import { BaseJsonTableSpec, dotPath } from '../../../types';
 import { getForeignKeyOptions, isForeignKey, isReadonlyField } from '../youtube-json-schema';
 
 // Regression for DEV-10126: YouTube uses dot-notation field paths
@@ -29,7 +29,7 @@ describe('youtube JSON Pointer escaping (RFC 6901)', () => {
           'tilde~name': Type.String({ [X_SCRATCH_READONLY]: true }),
         }),
       }),
-      idColumnRemoteId: idPath('id'),
+      idPath: dotPath('id'),
     };
   }
 

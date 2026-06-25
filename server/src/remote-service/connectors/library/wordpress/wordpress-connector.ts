@@ -438,7 +438,7 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath ?? tableSpec.slugColumnRemoteId);
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

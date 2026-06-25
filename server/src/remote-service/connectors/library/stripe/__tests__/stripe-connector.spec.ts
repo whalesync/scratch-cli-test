@@ -1,7 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { StripeConnector } from '../stripe-connector';
 import { StripeEntityType } from '../stripe-types';
 
@@ -45,7 +45,7 @@ function buildTableSpec(tableType: string): BaseJsonTableSpec {
     slug: tableType,
     name: tableType,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 
@@ -154,7 +154,7 @@ describe('StripeConnector', () => {
     it.each(entityTypes)('builds schema for %s', async (entityType) => {
       const spec = await connector.fetchJsonTableSpec({ wsId: entityType, remoteId: [entityType] });
 
-      expect(spec.idColumnRemoteId).toBe('id');
+      expect(spec.idPath).toBe('id');
       expect(spec.slug).toBe(entityType);
       expect(spec.schema).toBeDefined();
     });
@@ -340,26 +340,26 @@ describe('StripeConnector', () => {
   // ---------------------------------------------------------------------------
 
   describe('getSuggestedRecordFileNames', () => {
-    it('uses name for customers via slugFieldPath', () => {
+    it('uses name for customers via slugPath', () => {
       const records: ConnectorFile[] = [
         { id: 'cus_1', name: 'Alice Corp' },
         { id: 'cus_2', name: 'Bob LLC' },
       ];
       const tableSpec = buildTableSpec('customers');
-      tableSpec.slugFieldPath = 'name';
+      tableSpec.slugPath = dotPath('name');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
       expect(names).toEqual(['Alice Corp', 'Bob LLC']);
     });
 
-    it('uses name for products via slugFieldPath', () => {
+    it('uses name for products via slugPath', () => {
       const records: ConnectorFile[] = [
         { id: 'prod_1', name: 'Pro Plan' },
         { id: 'prod_2', name: 'Enterprise Plan' },
       ];
       const tableSpec = buildTableSpec('products');
-      tableSpec.slugFieldPath = 'name';
+      tableSpec.slugPath = dotPath('name');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
@@ -372,17 +372,17 @@ describe('StripeConnector', () => {
         { id: 'cus_2', name: 'Bob LLC' },
       ];
       const tableSpec = buildTableSpec('customers');
-      tableSpec.slugFieldPath = 'name';
+      tableSpec.slugPath = dotPath('name');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
       expect(names).toEqual(['cus_1', 'Bob LLC']);
     });
 
-    it('uses id for charges via slugFieldPath', () => {
+    it('uses id for charges via slugPath', () => {
       const records: ConnectorFile[] = [{ id: 'ch_1', amount: 1000 }];
       const tableSpec = buildTableSpec('charges');
-      tableSpec.slugFieldPath = 'id';
+      tableSpec.slugPath = dotPath('id');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 

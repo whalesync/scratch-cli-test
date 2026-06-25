@@ -1,7 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { ForeignKeyOptionSchema, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, DotPath, dotPath, EntityId } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import {
   channelsTableLinkId,
@@ -41,17 +41,17 @@ function tableSpecTail(
   name: string,
   schema: TSchema,
   basePath: string[],
-  titleColumnRemoteId: EntityId['remoteId'],
-  mainContentColumnRemoteId?: EntityId['remoteId'],
+  titlePath: DotPath,
+  mainContentPath?: DotPath,
 ): BaseJsonTableSpec {
   return {
     id,
     slug: id.wsId,
     name,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId,
-    ...(mainContentColumnRemoteId ? { mainContentColumnRemoteId } : {}),
+    idPath: dotPath('id'),
+    titlePath,
+    ...(mainContentPath ? { mainContentPath } : {}),
     basePath,
     generatedAt: new Date().toISOString(),
   };
@@ -148,7 +148,7 @@ export function buildYouTubeJsonTableSpec(id: EntityId, channelId: string, chann
     { $id: `youtube/videos/${channelId}`, title: 'Videos' },
   );
 
-  return tableSpecTail(id, 'Videos', schema, [channelTitle], ['snippet', 'title'], ['snippet', 'description']);
+  return tableSpecTail(id, 'Videos', schema, [channelTitle], dotPath('snippet.title'), dotPath('snippet.description'));
 }
 
 // --- Playlists ------------------------------------------------------------
@@ -196,7 +196,14 @@ export function buildPlaylistsJsonTableSpec(id: EntityId, channelId: string, cha
     { $id: `youtube/playlists/${channelId}`, title: 'Playlists' },
   );
 
-  return tableSpecTail(id, 'Playlists', schema, [channelTitle], ['snippet', 'title'], ['snippet', 'description']);
+  return tableSpecTail(
+    id,
+    'Playlists',
+    schema,
+    [channelTitle],
+    dotPath('snippet.title'),
+    dotPath('snippet.description'),
+  );
 }
 
 // --- Playlist items -------------------------------------------------------
@@ -261,7 +268,7 @@ export function buildPlaylistItemsJsonTableSpec(
     { $id: `youtube/playlistItems/${channelId}`, title: 'PlaylistItems' },
   );
 
-  return tableSpecTail(id, 'PlaylistItems', schema, [channelTitle], ['snippet', 'title']);
+  return tableSpecTail(id, 'PlaylistItems', schema, [channelTitle], dotPath('snippet.title'));
 }
 
 // --- Channel sections -----------------------------------------------------
@@ -305,7 +312,7 @@ export function buildChannelSectionsJsonTableSpec(
     { $id: `youtube/channelSections/${channelId}`, title: 'ChannelSections' },
   );
 
-  return tableSpecTail(id, 'ChannelSections', schema, [channelTitle], ['snippet', 'title']);
+  return tableSpecTail(id, 'ChannelSections', schema, [channelTitle], dotPath('snippet.title'));
 }
 
 // --- Channel (one-row table) ----------------------------------------------
@@ -404,7 +411,7 @@ export function buildChannelsJsonTableSpec(id: EntityId): BaseJsonTableSpec {
   // Top-level table (`basePath: []`) — one row per channel in the connection,
   // landing at `/{connection}/Channels/{channel}.json`. It is the FK target the
   // per-channel tables resolve `snippet.channelId` against (row `id` = channelId).
-  return tableSpecTail(id, 'Channels', schema, [], ['snippet', 'title'], ['snippet', 'description']);
+  return tableSpecTail(id, 'Channels', schema, [], dotPath('snippet.title'), dotPath('snippet.description'));
 }
 
 // --- Subscriptions (owner-only) -------------------------------------------
@@ -453,7 +460,7 @@ export function buildSubscriptionsJsonTableSpec(
     { $id: `youtube/subscriptions/${channelId}`, title: 'Subscriptions' },
   );
 
-  return tableSpecTail(id, 'Subscriptions', schema, [channelTitle], ['snippet', 'title']);
+  return tableSpecTail(id, 'Subscriptions', schema, [channelTitle], dotPath('snippet.title'));
 }
 
 // --- Members (owner-only, read-only) --------------------------------------
@@ -488,7 +495,7 @@ export function buildMembersJsonTableSpec(id: EntityId, channelId: string, chann
   );
   // Members have no top-level `id` (the snippet is keyed by member channel id);
   // keep the id path at `id` and let the framework fall back to the filename index.
-  return tableSpecTail(id, 'Members', schema, [channelTitle], ['snippet', 'memberDetails', 'displayName']);
+  return tableSpecTail(id, 'Members', schema, [channelTitle], dotPath('snippet.memberDetails.displayName'));
 }
 
 // --- Membership levels (owner-only, read-only) ----------------------------
@@ -521,7 +528,7 @@ export function buildMembershipsLevelsJsonTableSpec(
     },
     { $id: `youtube/membershipsLevels/${channelId}`, title: 'MembershipsLevels' },
   );
-  return tableSpecTail(id, 'MembershipsLevels', schema, [channelTitle], ['snippet', 'levelDetails', 'displayName']);
+  return tableSpecTail(id, 'MembershipsLevels', schema, [channelTitle], dotPath('snippet.levelDetails.displayName'));
 }
 
 // --- Reference tables (public, read-only) ---------------------------------
@@ -551,7 +558,7 @@ export function buildReferenceJsonTableSpec(
     { $id: `youtube/${kind}`, title: displayName },
   );
 
-  return tableSpecTail(id, displayName, schema, [YOUTUBE_REFERENCE_PARENT_PATH], ['snippet', 'title']);
+  return tableSpecTail(id, displayName, schema, [YOUTUBE_REFERENCE_PARENT_PATH], dotPath('snippet.title'));
 }
 
 // --- JSON-pointer helpers (used by isReadonlyField / isForeignKey) --------

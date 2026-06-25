@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { IncrementalPullSupport, X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
-import { BaseJsonTableSpec, ConnectorFile, idPath, PullRecordFilesOptions } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath, PullRecordFilesOptions } from '../../../types';
 
 jest.mock('../../../display-names', () => ({
   getServiceDisplayName: jest.fn(() => 'HubSpot'),
@@ -43,7 +43,7 @@ function buildTableSpec(annotateModified: boolean): BaseJsonTableSpec {
       id: Type.String(),
       properties: Type.Object(propsBag),
     }),
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

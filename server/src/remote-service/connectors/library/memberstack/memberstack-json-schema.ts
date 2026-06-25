@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 
 /**
  * Build a BaseJsonTableSpec for the Memberstack Members table.
@@ -14,9 +14,9 @@ export function buildMemberstackJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Members',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['auth', 'email'],
-    slugFieldPath: 'auth.email',
+    idPath: dotPath('id'),
+    titlePath: dotPath('auth.email'),
+    slugPath: dotPath('auth.email'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

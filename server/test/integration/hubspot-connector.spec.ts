@@ -145,7 +145,7 @@ describe('HubspotConnector with fake API', () => {
 
       expect(spec.name).toBe('Contacts');
       expect(spec.id).toEqual(CONTACTS_ENTITY_ID);
-      expect(spec.idColumnRemoteId).toBe('id');
+      expect(spec.idPath).toBe('id');
       expect(spec.schema).toBeDefined();
       expect(spec.schema.properties).toHaveProperty('id');
       expect(spec.schema.properties).toHaveProperty('properties');

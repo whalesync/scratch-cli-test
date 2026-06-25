@@ -29,19 +29,23 @@ export type TablePreview = {
 };
 
 /**
- * A lodash-style dot path into a record file pointing at the value used as
- * its remote id (e.g. `'id'` for flat ids, `'id.record_id'` for Attio's id
- * triple). Branded so callers must construct it via `idPath(...)` and can't
- * accidentally pass a plain string.
+ * A lodash-style dot path into a record file (e.g. `'id'` for a flat field,
+ * `'id.record_id'` for Attio's id triple, `'fieldData.slug'` for a Webflow
+ * slug). Used for every "path into a record" on a `BaseJsonTableSpec` — the
+ * record id (`idPath`), the title/header field (`titlePath`), the main-content
+ * field (`mainContentPath`), and the slug (`slugPath`). Branded so callers must
+ * construct it via `dotPath(...)` and can't accidentally pass a plain string.
+ * Read with `lodash/get` / `lodash/toPath`, never bracket access.
  */
-export type IdPath = string & { readonly __idPath: unique symbol };
+export type DotPath = string & { readonly __dotPath: unique symbol };
 
 /**
- * Construct an `IdPath` from a lodash-style dot path string. Use at every site
- * a connector schema declares its `idColumnRemoteId`.
+ * Construct a `DotPath` from a lodash-style dot path string. Use at every site
+ * a connector schema declares one of its path-shaped fields (`idPath`,
+ * `titlePath`, `mainContentPath`, `slugPath`).
  */
-export function idPath(path: string): IdPath {
-  return path as IdPath;
+export function dotPath(path: string): DotPath {
+  return path as DotPath;
 }
 
 /**
@@ -50,7 +54,7 @@ export function idPath(path: string): IdPath {
  * or write the value back into a file via `lodash.set` see exactly what's on
  * disk. Use `readRecordIdAsString` when you need a string for index/lookup.
  */
-export function readRecordId(record: Record<string, unknown>, idPath: IdPath): unknown {
+export function readRecordId(record: Record<string, unknown>, idPath: DotPath): unknown {
   return get(record, idPath);
 }
 
@@ -60,7 +64,7 @@ export function readRecordId(record: Record<string, unknown>, idPath: IdPath): u
  * missing or is neither a string nor a finite number — callers that want a
  * string fallback typically write `readRecordIdAsString(...) ?? ''`.
  */
-export function readRecordIdAsString(record: Record<string, unknown>, idPath: IdPath): string | null {
+export function readRecordIdAsString(record: Record<string, unknown>, idPath: DotPath): string | null {
   const v = readRecordId(record, idPath);
   if (typeof v === 'string') return v;
   if (typeof v === 'number' && Number.isFinite(v)) return String(v);
@@ -72,7 +76,7 @@ export function readRecordIdAsString(record: Record<string, unknown>, idPath: Id
  * recovering an id that was missing from the file content (filename-index
  * fallback) so the connector and git see a consistent value before the write.
  */
-export function writeRecordId(record: Record<string, unknown>, idPath: IdPath, value: string | number): void {
+export function writeRecordId(record: Record<string, unknown>, idPath: DotPath, value: string | number): void {
   set(record, idPath, value);
 }
 
@@ -81,7 +85,7 @@ export function writeRecordId(record: Record<string, unknown>, idPath: IdPath, v
  * to strip pending-publish sentinels off newly-created records before they
  * reach the connector's create endpoint.
  */
-export function clearRecordId(record: Record<string, unknown>, idPath: IdPath): void {
+export function clearRecordId(record: Record<string, unknown>, idPath: DotPath): void {
   unset(record, idPath);
 }
 
@@ -94,10 +98,10 @@ export function clearRecordId(record: Record<string, unknown>, idPath: IdPath): 
  * service): a flat column name that itself contains lodash path
  * metacharacters (a Postgres PK literally named `"user.id"`) is not
  * representable in a fresh stub — `set` nests it. The proper fix is
- * bracket-escaping such names at `idPath(...)` construction time in the
+ * bracket-escaping such names at `dotPath(...)` construction time in the
  * connector that owns them.
  */
-export function recordWithId(idPath: IdPath, value: string | number): Record<string, unknown> {
+export function recordWithId(idPath: DotPath, value: string | number): Record<string, unknown> {
   return set({}, idPath, value);
 }
 
@@ -113,7 +117,7 @@ export function recordWithId(idPath: IdPath, value: string | number): Record<str
  * path-root value when it is a string. For a flat id path this is exactly
  * `readRecordId`.
  */
-export function readRecordIdForSentinelDetection(record: Record<string, unknown>, idPath: IdPath): unknown {
+export function readRecordIdForSentinelDetection(record: Record<string, unknown>, idPath: DotPath): unknown {
   const valueAtFullIdPath = get(record, idPath);
   if (valueAtFullIdPath !== undefined) return valueAtFullIdPath;
   const idPathSegments = toPath(idPath);
@@ -130,7 +134,7 @@ export function readRecordIdForSentinelDetection(record: Record<string, unknown>
  * `id: {}`. Clones only the objects along the id path — O(path depth), not
  * O(record size) — and never mutates the input.
  */
-export function recordWithIdCleared(record: Record<string, unknown>, idPath: IdPath): Record<string, unknown> {
+export function recordWithIdCleared(record: Record<string, unknown>, idPath: DotPath): Record<string, unknown> {
   const recordCopy = { ...record };
   // Literal-own-key first, mirroring how lodash `get` (used by every id READ
   // in the pipeline) resolves a path: an existing own key named exactly like
@@ -193,7 +197,7 @@ export function recordWithIdCleared(record: Record<string, unknown>, idPath: IdP
  */
 export function recordWithIdWritten(
   record: Record<string, unknown>,
-  idPath: IdPath,
+  idPath: DotPath,
   value: string | number,
 ): Record<string, unknown> {
   const recordCopy = { ...record };
@@ -224,20 +228,30 @@ export type BaseJsonTableSpec = {
   schema: TSchema;
   /**
    * Lodash-style dot path into a record file that locates its remote id.
-   * Most connectors use a flat `idPath('id')`; Attio uses `idPath('id.record_id')`
-   * (and `idPath('id.entry_id')` for list entries) because its id is an object.
+   * Most connectors use a flat `dotPath('id')`; Attio uses `dotPath('id.record_id')`
+   * (and `dotPath('id.entry_id')` for list entries) because its id is an object.
    * Read with `lodash/get`, never bracket access.
    */
-  idColumnRemoteId: IdPath;
-  // The remoteId of the column that should be used as the title/header column for visualizing records
-  titleColumnRemoteId?: EntityId['remoteId'];
-  // The remoteId of the column that should be used as the main content/body in MD view
-  // This is used to display the main content of the record in the MD view.
-  mainContentColumnRemoteId?: EntityId['remoteId'];
-  // Lodash dot-path into a record for extracting a slug value used in filenames.
-  // Example: 'fieldData.slug' for Webflow records.
-  slugFieldPath?: string;
-  /** @deprecated Use slugFieldPath instead */
+  idPath: DotPath;
+  // Dot path into a record locating the value used as the title/header column
+  // when visualizing records (e.g. `dotPath('fields.Name')`).
+  //
+  // Dot-metacharacter caveat: a connector whose field/property names can contain
+  // a literal `.` (Airtable field names, Notion property names) is NOT round-trip
+  // safe here — joining `['fields', 'Quarterly.Revenue']` to `'fields.Quarterly.Revenue'`
+  // and reading it back with `lodash/toPath` over-splits the leaf. Same limitation
+  // as the id path (see `recordWithId`); the proper fix is bracket-escaping such
+  // names at `dotPath(...)` construction time. Impact is confined to title display
+  // and filename suggestion (which fall back gracefully) — never id resolution.
+  titlePath?: DotPath;
+  // Dot path into a record locating the main content/body shown in the Markdown
+  // view (e.g. `dotPath('fieldData.content')`). Shares the `titlePath` dot-metacharacter
+  // caveat above for connectors with dotted field names.
+  mainContentPath?: DotPath;
+  // Dot path into a record for extracting a slug value used in filenames
+  // (e.g. `dotPath('fieldData.slug')` for Webflow records).
+  slugPath?: DotPath;
+  /** @deprecated Use slugPath instead */
   slugColumnRemoteId?: string;
 
   // The root path of this connector including any sites, bases, collections that should precede the table

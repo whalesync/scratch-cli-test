@@ -6,7 +6,7 @@
 
 import { type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import {
   CyclesSchema,
   ENTITY_REGISTRY,
@@ -84,7 +84,7 @@ export function buildLinearJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: entityType,
     name: config.displayName,
     schema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     generatedAt: new Date().toISOString(),
   };
 
@@ -92,13 +92,13 @@ export function buildLinearJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     | { slug?: string; title?: readonly string[]; mainContent?: readonly string[] }
     | undefined;
   if (columns?.slug) {
-    spec.slugFieldPath = columns.slug;
+    spec.slugPath = dotPath(columns.slug);
   }
   if (columns?.title) {
-    spec.titleColumnRemoteId = [...columns.title];
+    spec.titlePath = dotPath(columns.title.join('.'));
   }
   if (columns?.mainContent) {
-    spec.mainContentColumnRemoteId = [...columns.mainContent];
+    spec.mainContentPath = dotPath(columns.mainContent.join('.'));
   }
 
   spec.defaultView = buildLinearDefaultView(schema, entityType);

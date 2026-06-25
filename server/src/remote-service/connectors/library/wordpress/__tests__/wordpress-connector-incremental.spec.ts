@@ -1,6 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
-import { BaseJsonTableSpec, idPath, PullRecordFilesOptions } from '../../../types';
+import { BaseJsonTableSpec, dotPath, PullRecordFilesOptions } from '../../../types';
 import { WORDPRESS_POLLING_PAGE_SIZE } from '../wordpress-constants';
 
 // Break the connector-registry circular import chain (same shape as the
@@ -28,7 +28,7 @@ function postSpec(): BaseJsonTableSpec {
     id: { wsId: 'posts', remoteId: ['posts'] },
     slug: 'posts',
     name: 'Posts',
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     schema: {
       properties: {
         title: {},
@@ -44,7 +44,7 @@ function taxonomySpec(): BaseJsonTableSpec {
     id: { wsId: 'categories', remoteId: ['categories'] },
     slug: 'categories',
     name: 'Categories',
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     schema: { properties: { name: {}, slug: {} } } as unknown as TSchema,
   };
 }

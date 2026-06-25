@@ -92,7 +92,7 @@ describeIfKey('AirtableConnector — live API', () => {
     it('builds a spec with the expected top-level structure', () => {
       expect(firstSpec.id).toEqual(firstTable.id);
       expect(firstSpec.name).toBe(firstTable.displayName);
-      expect(firstSpec.idColumnRemoteId).toBe('id');
+      expect(firstSpec.idPath).toBe('id');
       expect(firstSpec.schema).toBeDefined();
 
       const props = (firstSpec.schema as unknown as { properties: Record<string, unknown> }).properties;

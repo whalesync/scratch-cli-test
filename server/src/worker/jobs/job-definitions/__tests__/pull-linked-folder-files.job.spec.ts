@@ -11,7 +11,7 @@ import { FileReferenceService } from '../../../../publish-plan/file-reference.se
 import { ConnectorAccountService } from '../../../../remote-service/connector-account/connector-account.service';
 import { connectorRegistry } from '../../../../remote-service/connectors/connector-registry';
 import { ConnectorsService } from '../../../../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../../remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../../remote-service/connectors/types';
 import { ScratchGitService } from '../../../../scratch-git/scratch-git.service';
 import { JsonSafeObject } from '../../../../utils/objects';
 import { WorkbookEventService } from '../../../../workbook/workbook-event.service';
@@ -39,9 +39,9 @@ describe('PullLinkedFolderFilesJobHandler', () => {
   let mockExperimentsService: jest.Mocked<ExperimentsService>;
 
   const defaultTableSpec: BaseJsonTableSpec = {
-    idColumnRemoteId: idPath('id'),
-    slugFieldPath: 'slug',
-    titleColumnRemoteId: ['title'],
+    idPath: dotPath('id'),
+    slugPath: dotPath('slug'),
+    titlePath: dotPath('title'),
     id: { remoteId: ['tbl_abc'], wsId: 'tbl_abc' },
     slug: 'example',
     name: 'Example',

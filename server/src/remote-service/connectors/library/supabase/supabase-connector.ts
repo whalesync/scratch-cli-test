@@ -25,7 +25,7 @@ import { ConnectorInstantiationError } from '../../error';
 import { sanitizeForTableWsId } from '../../ids';
 import { Service } from '../../service-constants';
 import {
-  idPath,
+  dotPath,
   type BaseJsonTableSpec,
   type ConnectorErrorDetails,
   type ConnectorFile,
@@ -338,7 +338,7 @@ export class SupabaseConnector extends Connector {
         slug: tableName,
         name: tableName,
         schema: tableSchema,
-        idColumnRemoteId: idPath(primaryKey),
+        idPath: dotPath(primaryKey),
         basePath: [schema],
         generatedAt: new Date().toISOString(),
         defaultView: buildPgDefaultView(tableSchema),
@@ -429,7 +429,7 @@ export class SupabaseConnector extends Connector {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     await this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
       const filter = rawFilter;
       let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
 
@@ -464,7 +464,7 @@ export class SupabaseConnector extends Connector {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
 
       for (let i = 0; i < ids.length; i += READ_BATCH_SIZE) {
         const batch = ids.slice(i, i + READ_BATCH_SIZE);
@@ -501,7 +501,7 @@ export class SupabaseConnector extends Connector {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
 
       return client.insertMany(schema, tableName, pk, files);
     }, resolved.connectionString);
@@ -519,7 +519,7 @@ export class SupabaseConnector extends Connector {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
 
       const records = files.map((file, i) => ({
         id: file[pk] as string | number,
@@ -542,7 +542,7 @@ export class SupabaseConnector extends Connector {
     const resolved = this.resolveConnection(tableSpec.id.remoteId);
     return this.withPgClient(async (client) => {
       const { schema, tableName } = resolved;
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
 
       const ids = files.map((file) => file[pk] as string | number);
       if (ids.length > 0) {
@@ -552,8 +552,8 @@ export class SupabaseConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId, titlePath);
+    const titlePath = tableSpec.titlePath && !tableSpec.titlePath.includes('.') ? tableSpec.titlePath : undefined;
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath ?? tableSpec.slugColumnRemoteId, titlePath);
   }
 
   // -------------------------------------------------------------------------

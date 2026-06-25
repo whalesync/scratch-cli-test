@@ -393,9 +393,16 @@ export function ChooseTablesModal({
           setFieldSelections((prev) => {
             if (prev.has(tableKey)) return prev;
             const next = new Map(prev);
-            const detectedNameField =
-              result.titleColumnRemoteId && result.titleColumnRemoteId.length > 0 ? result.titleColumnRemoteId : null;
-            next.set(tableKey, { idField: result.idColumnRemoteId, nameField: detectedNameField });
+            // titlePath / idPath are lodash dot paths (DEV-10092). Fall back to the
+            // legacy names from a server predating the rename; nameField is a segment
+            // array, so split the dot path back into segments.
+            const detectedTitlePath =
+              result.titlePath ?? (result.titleColumnRemoteId ? result.titleColumnRemoteId.join('.') : undefined);
+            const detectedNameField = detectedTitlePath ? detectedTitlePath.split('.') : null;
+            next.set(tableKey, {
+              idField: result.idPath ?? result.idColumnRemoteId ?? '',
+              nameField: detectedNameField,
+            });
             return next;
           });
         })
@@ -901,7 +908,7 @@ export function ChooseTablesModal({
                       };
                       const currentIdPath = currentSelection?.idField
                         ? [currentSelection.idField]
-                        : [tableSchema.idColumnRemoteId];
+                        : [tableSchema.idPath ?? tableSchema.idColumnRemoteId ?? ''];
                       return (
                         <>
                           <Select

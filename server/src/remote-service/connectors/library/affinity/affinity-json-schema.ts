@@ -5,7 +5,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { AffinityApiClient } from './affinity-api-client';
 import { buildAffinityDefaultView } from './affinity-default-view';
 import { AffinityEntityType, AffinityFieldMetadata, AffinityList, AffinityValueType } from './affinity-types';
@@ -227,22 +227,22 @@ export async function buildAffinityJsonTableSpec(
   );
 
   // Title field varies by entity type — Person uses firstName since lastName is nullable.
-  const titleColumnRemoteId = list.type === 'person' ? ['entity', 'firstName'] : ['entity', 'name'];
+  const titlePath = dotPath(list.type === 'person' ? 'entity.firstName' : 'entity.name');
 
   return {
     id,
     slug: id.wsId,
     name: list.name,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId,
+    idPath: dotPath('id'),
+    titlePath,
     // Nest user-created lists under a top-level "Lists" folder in the workbook
     // tree. Mirrors the `parentPath: 'Lists'` grouping in the picker — but the
     // workbook hierarchy is actually controlled by `basePath`, not `parentPath`,
     // so both have to be set to keep the picker and the workbook tree consistent.
     basePath: ['Lists'],
     generatedAt: new Date().toISOString(),
-    defaultView: buildAffinityDefaultView(schema, titleColumnRemoteId.join('.')),
+    defaultView: buildAffinityDefaultView(schema, titlePath),
   };
 }
 
@@ -295,10 +295,10 @@ export async function buildAffinityPersonsTableSpec(
     slug: id.wsId,
     name: 'People',
     schema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     // No `entity.` prefix — tenant records are flat. firstName chosen over
     // lastName because lastName is nullable in Affinity.
-    titleColumnRemoteId: ['firstName'],
+    titlePath: dotPath('firstName'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAffinityDefaultView(schema, 'firstName'),
@@ -342,8 +342,8 @@ export async function buildAffinityCompaniesTableSpec(
     slug: id.wsId,
     name: 'Companies',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAffinityDefaultView(schema, 'name'),
@@ -378,8 +378,8 @@ export function buildAffinityOpportunitiesTableSpec(id: EntityId): BaseJsonTable
     slug: id.wsId,
     name: 'Opportunities',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAffinityDefaultView(schema, 'name'),
@@ -458,8 +458,8 @@ export function buildAffinityNotesTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Notes',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['type'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('type'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAffinityDefaultView(schema, 'type'),
@@ -496,8 +496,8 @@ export function buildAffinityUsersTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Users',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['firstName'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('firstName'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAffinityDefaultView(schema, 'firstName'),
@@ -547,8 +547,8 @@ export function buildAffinityEntityFilesTableSpec(id: EntityId): BaseJsonTableSp
     slug: id.wsId,
     name: 'Entity Files',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAffinityDefaultView(schema, 'name'),

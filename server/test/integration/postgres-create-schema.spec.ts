@@ -128,7 +128,7 @@ describe('Postgres create-schema — real DDL round-trip', () => {
     expect(posts?.disabledCreates).toBeUndefined();
 
     const spec = await connector.fetchJsonTableSpec({ wsId: 'posts', remoteId: [SCHEMA, 'posts'] });
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
     expect(properties.author_id[X_SCRATCH_FOREIGN_KEY_OPTIONS]).toEqual({ linkedTableId: `${SCHEMA}.users` });
   });

@@ -127,10 +127,12 @@ type BaseJsonTableSpec = {
   slug: string;
   name: string;
   schema: TSchema; // TypeBox JSON Schema
-  idColumnRemoteId: IdPath; // Lodash dot-path to the record's remote id (e.g. idPath('id') or idPath('id.record_id'))
-  titleColumnRemoteId?: EntityId['remoteId'];
-  mainContentColumnRemoteId?: EntityId['remoteId'];
-  slugFieldPath?: string; // Lodash dot-path for filename slug (e.g. 'fieldData.slug')
+  // All four path-shaped fields are branded DotPath (lodash dot-path strings),
+  // constructed via dotPath(...). See "The DotPath convention" below.
+  idPath: DotPath; // Dot-path to the record's remote id (e.g. dotPath('id') or dotPath('id.record_id'))
+  titlePath?: DotPath; // Dot-path to the title/header field (e.g. dotPath('fields.Name'))
+  mainContentPath?: DotPath; // Dot-path to the markdown body field
+  slugPath?: DotPath; // Dot-path for the filename slug (e.g. dotPath('fieldData.slug'))
   basePath?: string[]; // Root path grouping (e.g. site name, base name)
   remoteWebUrl?: string; // Deep link to the table in the SERVICE's web UI (e.g. https://airtable.com/{baseId}/{tableId}); omit if not constructible
   generatedAt?: string; // ISO 8601 timestamp of schema generation
@@ -242,8 +244,9 @@ Build a `BaseJsonTableSpec` with a TypeBox JSON Schema describing every field. P
 
 Key considerations:
 
-- Set `idColumnRemoteId` to a lodash dot-path that locates the record's remote id, wrapped in the `idPath()` constructor — e.g. `idPath('id')` for flat ids, `idPath('id.record_id')` when the API returns an id object (Attio). The path is read with `lodash.get` everywhere; never with bracket access. Helpers `readRecordId`, `readRecordIdAsString`, `writeRecordId`, `clearRecordId`, and `recordWithId` (in `connectors/types.ts`) are the canonical accessors — use them instead of raw lodash so future readers see the intent at every call site.
-- Optionally set `titleColumnRemoteId` (display name), `mainContentColumnRemoteId` (markdown body), `slugFieldPath` (lodash dot-path for filename slug, e.g. `'fieldData.slug'`)
+- **The `DotPath` convention.** The four "path into a record" fields — `idPath`, `titlePath`, `mainContentPath`, `slugPath` — are all the branded type `DotPath`: a single lodash dot-path **string** constructed via the `dotPath(...)` constructor (`connectors/types.ts`). A nested path is one dotted string, never a segment array: `dotPath('id.record_id')`, `dotPath('fields.Name')`. Read them back with `lodash.get` / `lodash.toPath`, never bracket access. (DEV-10092 unified these — the old names `idColumnRemoteId` / `titleColumnRemoteId` / `mainContentColumnRemoteId` / `slugFieldPath`, and the old segment-array shape for title/mainContent, are accepted on read for `schema.json` files committed before the rename, via a compat shim in `ScratchGitService.readSchemaFromGit`; emit only the new names.)
+- Set `idPath` to the dot-path that locates the record's remote id — e.g. `dotPath('id')` for flat ids, `dotPath('id.record_id')` when the API returns an id object (Attio). Helpers `readRecordId`, `readRecordIdAsString`, `writeRecordId`, `clearRecordId`, and `recordWithId` (in `connectors/types.ts`) are the canonical accessors — use them instead of raw lodash so future readers see the intent at every call site.
+- Optionally set `titlePath` (display name, e.g. `dotPath('fields.Name')`), `mainContentPath` (markdown body), `slugPath` (filename slug, e.g. `dotPath('fieldData.slug')`).
 - Set `remoteWebUrl` to a deep link to this table in the **service's own web UI** (a URL on _their_ site, not a Scratch URL) when the service exposes a stable, constructible link — e.g. Airtable `https://airtable.com/{baseId}/{tableId}`, Notion `https://www.notion.so/{databaseId-without-dashes}`, Stripe `https://dashboard.stripe.com/{entity}`. It is stamped onto `DataFolder.remoteWebUrl` at folder-create time and refreshed on every pull, and the client uses it to offer an "open in {service}" link. **Omit it rather than emit a guessed or broken URL** — a wrong link is worse than none.
 - Annotate fields with `x-scratch-*` extensions (see [Section 5](#5-json-schema-extensions))
 
@@ -432,7 +435,7 @@ Use the `suggestFileNamesFromFieldPaths()` helper for connectors with simple rec
 import { suggestFileNamesFromFieldPaths } from '../connector';
 
 getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-  return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'name', 'title');
+  return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'name', 'title');
 }
 ```
 
@@ -1155,7 +1158,7 @@ A default view is a `TableView` object set on `tableSpec.defaultView` in your `f
 
 **1. Schema-driven, not hardcoded.** Read the TypeBox schema produced by your `fetchJsonTableSpec()` to discover fields dynamically. This way new fields added by the service appear automatically. Only use hardcoded lists for _ordering_ and _visibility_ preferences, not for defining which columns exist.
 
-**2. Title column first.** The field identified by `titleColumnRemoteId` in the table spec should always be the first visible column. This is the field users recognize each record by (e.g. `name`, `email`, `title`). If the connector already has per-entity `titleFieldPath` or similar config, use it to find and prioritize that column.
+**2. Title column first.** The field identified by `titlePath` in the table spec should always be the first visible column. This is the field users recognize each record by (e.g. `name`, `email`, `title`). If the connector already has per-entity `titleFieldPath` or similar config, use it to find and prioritize that column.
 
 **3. Priority ordering.** Define a priority list of important fields that should appear first (after the title column). Fields not in the list go after, sorted in the order they appear from the server, or worst-case, alphabetically. This gives users a sensible default column order.
 

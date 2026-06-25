@@ -23,7 +23,7 @@ describe('buildStripeJsonTableSpec', () => {
     const spec = buildStripeJsonTableSpec(entityId, entityType);
 
     expect(spec.slug).toBe(entityType);
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     expect(spec.basePath).toEqual([]);
     expect(spec.generatedAt).toBeDefined();
   });
@@ -58,27 +58,27 @@ describe('buildStripeJsonTableSpec', () => {
 
   it('uses name as title for customers', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'customers', remoteId: ['customers'] }, 'customers');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.titlePath).toEqual('name');
   });
 
   it('uses name as title for products', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'products', remoteId: ['products'] }, 'products');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.titlePath).toEqual('name');
   });
 
   it('uses nickname as title for prices', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'prices', remoteId: ['prices'] }, 'prices');
-    expect(spec.titleColumnRemoteId).toEqual(['nickname']);
+    expect(spec.titlePath).toEqual('nickname');
   });
 
   it('uses number as title for invoices', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'invoices', remoteId: ['invoices'] }, 'invoices');
-    expect(spec.titleColumnRemoteId).toEqual(['number']);
+    expect(spec.titlePath).toEqual('number');
   });
 
   it('uses id as title for subscriptions', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'subscriptions', remoteId: ['subscriptions'] }, 'subscriptions');
-    expect(spec.titleColumnRemoteId).toEqual(['id']);
+    expect(spec.titlePath).toEqual('id');
   });
 
   // ---------------------------------------------------------------------------
@@ -87,27 +87,27 @@ describe('buildStripeJsonTableSpec', () => {
 
   it('uses name as slug for customers', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'customers', remoteId: ['customers'] }, 'customers');
-    expect(spec.slugFieldPath).toBe('name');
+    expect(spec.slugPath).toBe('name');
   });
 
   it('uses name as slug for products', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'products', remoteId: ['products'] }, 'products');
-    expect(spec.slugFieldPath).toBe('name');
+    expect(spec.slugPath).toBe('name');
   });
 
   it('uses nickname as slug for prices', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'prices', remoteId: ['prices'] }, 'prices');
-    expect(spec.slugFieldPath).toBe('nickname');
+    expect(spec.slugPath).toBe('nickname');
   });
 
   it('uses number as slug for invoices', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'invoices', remoteId: ['invoices'] }, 'invoices');
-    expect(spec.slugFieldPath).toBe('number');
+    expect(spec.slugPath).toBe('number');
   });
 
   it('uses id as slug for subscriptions', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'subscriptions', remoteId: ['subscriptions'] }, 'subscriptions');
-    expect(spec.slugFieldPath).toBe('id');
+    expect(spec.slugPath).toBe('id');
   });
 
   it('uses id as slug for payment_intents', () => {
@@ -115,12 +115,12 @@ describe('buildStripeJsonTableSpec', () => {
       { wsId: 'payment_intents', remoteId: ['payment_intents'] },
       'payment_intents',
     );
-    expect(spec.slugFieldPath).toBe('id');
+    expect(spec.slugPath).toBe('id');
   });
 
   it('uses id as slug for charges', () => {
     const spec = buildStripeJsonTableSpec({ wsId: 'charges', remoteId: ['charges'] }, 'charges');
-    expect(spec.slugFieldPath).toBe('id');
+    expect(spec.slugPath).toBe('id');
   });
 
   // ---------------------------------------------------------------------------

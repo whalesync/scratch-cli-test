@@ -1032,7 +1032,7 @@ export class PublishPlanRunService {
     repoId: string,
     useRemoteReturnedRows: boolean,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId;
+    const idField = tableSpec.idPath;
 
     // `rawContents` is filtered (entries with no `content` are dropped). The
     // filter applies in lockstep with the downstream iteration below.
@@ -1248,7 +1248,7 @@ export class PublishPlanRunService {
     planId: string,
     repoId: string,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId;
+    const idField = tableSpec.idPath;
     const connectorAccountId = await this.resolveConnectorAccountIdForPlan(planId);
 
     // Per-entry context for revert-creates: the prior remote id encoded in the
@@ -1403,7 +1403,7 @@ export class PublishPlanRunService {
     planId: string,
     repoId: string,
   ): Promise<void> {
-    const idField = tableSpec.idColumnRemoteId;
+    const idField = tableSpec.idPath;
     const filters: ConnectorFile[] = [];
     const validEntries: PublishOperation[] = [];
 

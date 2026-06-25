@@ -165,7 +165,7 @@ describe('buildZohoJsonTableSpec', () => {
 
   it('adds an implicit read-only id field and uses it as the id column', () => {
     expect(propsOf(spec).id[X_SCRATCH_READONLY]).toBe(true);
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
   });
 
   it('annotates Modified_Time as the last-modified field and read-only', () => {
@@ -179,7 +179,7 @@ describe('buildZohoJsonTableSpec', () => {
   });
 
   it('picks a sensible title column', () => {
-    expect(spec.titleColumnRemoteId).toEqual(['Last_Name']);
+    expect(spec.titlePath).toEqual('Last_Name');
   });
 });
 

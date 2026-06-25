@@ -100,6 +100,7 @@ import { SchemaHelperService } from 'src/publish-plan/schema-helper.service';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { Service } from 'src/remote-service/connectors/service-constants';
+import { dotPath } from 'src/remote-service/connectors/types';
 import { DIRTY_BRANCH, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { EncryptionService } from 'src/utils/encryption';
 import { WorkbookEventService } from 'src/workbook/workbook-event.service';
@@ -331,8 +332,8 @@ describe('Fetch → Edit → Publish Integration', () => {
       slug: AUTHORS_TABLE,
       name: AUTHORS_TABLE,
       schema: authorsSchema,
-      idColumnRemoteId: 'id',
-      titleColumnRemoteId: ['name'],
+      idPath: 'id',
+      titlePath: dotPath('name'),
       basePath: ['public'],
       generatedAt: new Date().toISOString(),
     };
@@ -342,8 +343,8 @@ describe('Fetch → Edit → Publish Integration', () => {
       slug: POSTS_TABLE,
       name: POSTS_TABLE,
       schema: postsSchema,
-      idColumnRemoteId: 'id',
-      titleColumnRemoteId: ['title'],
+      idPath: 'id',
+      titlePath: dotPath('title'),
       basePath: ['public'],
       generatedAt: new Date().toISOString(),
     };

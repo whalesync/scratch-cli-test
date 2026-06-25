@@ -327,7 +327,7 @@ export class ZohoConnector extends Connector<string, ZohoDownloadProgress> {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    const titlePath = tableSpec.titlePath && !tableSpec.titlePath.includes('.') ? tableSpec.titlePath : undefined;
     return suggestFileNamesFromFieldPaths(records, titlePath);
   }
 

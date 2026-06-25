@@ -39,8 +39,8 @@ import {
   BaseJsonTableSpec,
   ConnectorErrorDetails,
   ConnectorFile,
+  dotPath,
   EntityId,
-  idPath,
   PullRecordFilesOptions,
   PullRecordFilesResult,
   TablePreview,
@@ -564,7 +564,7 @@ function buildBaseJsonTableSpec(
     slug: labelOrFallback,
     name: labelOrFallback,
     schema,
-    idColumnRemoteId: idPath(folderOpts.probe.idPath),
+    idPath: dotPath(folderOpts.probe.idPath),
     generatedAt: folderOpts.probe.lastProbedAt,
   };
 }

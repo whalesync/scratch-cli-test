@@ -4,7 +4,7 @@ import {
   X_SCRATCH_LAST_MODIFIED_FIELD,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { buildMocoDefaultView } from './moco-default-view';
 import { MocoEntityType } from './moco-types';
 
@@ -550,9 +550,9 @@ export function buildMocoJsonTableSpec(id: EntityId, entityType: MocoEntityType)
     slug: id.wsId,
     name: ENTITY_DISPLAY_NAMES[entityType],
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: getTitleColumnRemoteId(entityType).slice(1),
-    mainContentColumnRemoteId: getMainContentColumnRemoteId(entityType).slice(1),
+    idPath: dotPath('id'),
+    titlePath: dotPath(getTitleColumnRemoteId(entityType).slice(1).join('.')),
+    mainContentPath: dotPath(getMainContentColumnRemoteId(entityType).slice(1).join('.')),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildMocoDefaultView(schema, entityType),

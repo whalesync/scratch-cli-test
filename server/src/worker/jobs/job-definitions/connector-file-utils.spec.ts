@@ -1,11 +1,11 @@
 import { Type } from '@sinclair/typebox';
-import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../remote-service/connectors/types';
 import { buildGitFilesFromConnectorFiles } from './connector-file-utils';
 
 const tableSpec: BaseJsonTableSpec = {
-  idColumnRemoteId: idPath('id'),
-  slugFieldPath: 'slug',
-  titleColumnRemoteId: ['title'],
+  idPath: dotPath('id'),
+  slugPath: dotPath('slug'),
+  titlePath: dotPath('title'),
   id: { remoteId: ['tbl_abc'], wsId: 'tbl_abc' },
   slug: 'crm',
   name: 'CRM',

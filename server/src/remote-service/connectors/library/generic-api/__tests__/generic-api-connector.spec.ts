@@ -21,7 +21,7 @@ jest.mock('undici', () => {
 import { DataFolderOptions, GenericApiConnectorExtras, GenericApiFolderOptions } from '@spinner/shared-types';
 import { promises as dns } from 'dns';
 import * as undici from 'undici';
-import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { MaxPagesReachedError, NonJsonResponseError, PaginationLoopError } from '../apiget';
 import { buildAuthHeaders, endpointToTableId, GenericApiConnector } from '../generic-api-connector';
 
@@ -219,14 +219,14 @@ describe('GenericApiConnector — fetchJsonTableSpec', () => {
     ).rejects.toThrow(/probed/);
   });
 
-  it('returns a BaseJsonTableSpec with the persisted idPath as idColumnRemoteId', async () => {
+  it('returns a BaseJsonTableSpec with the persisted idPath as idPath', async () => {
     const connector = buildConnector();
     const spec = await connector.fetchJsonTableSpec({
       wsId: 'ep_projects',
       remoteId: ['GET', EP_REST_1.url],
     });
     expect(spec.id.wsId).toBe('ep_projects');
-    expect(spec.idColumnRemoteId).toEqual(idPath('id'));
+    expect(spec.idPath).toEqual(dotPath('id'));
     expect(spec.generatedAt).toBe('2026-05-18T20:00:00Z');
   });
 });
@@ -280,7 +280,7 @@ describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pul
         slug: 'ep_projects',
         name: 'ep_projects',
         schema: {} as never,
-        idColumnRemoteId: idPath('id'),
+        idPath: dotPath('id'),
       };
       await expect(
         connector.pullRecordFiles(
@@ -315,7 +315,7 @@ describe('GenericApiConnector — SAFETY: duplicate remote IDs hard-fail the pul
         slug: 'ep_projects',
         name: 'ep_projects',
         schema: {} as never,
-        idColumnRemoteId: idPath('id'),
+        idPath: dotPath('id'),
       };
       await expect(
         connector.pullRecordFiles(tableSpec, () => Promise.resolve(), { pageIndex: 0 }, {

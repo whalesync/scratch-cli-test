@@ -1,6 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { IncrementalPullSupport } from '@spinner/shared-types';
-import { BaseJsonTableSpec, PullRecordFilesOptions, idPath } from '../../../types';
+import { BaseJsonTableSpec, PullRecordFilesOptions, dotPath } from '../../../types';
 
 // Break the connector-registry circular import chain (same shape as the Linear
 // incremental spec).
@@ -38,7 +38,7 @@ function buildTableSpec(): BaseJsonTableSpec {
     id: { wsId: 'companies', remoteId: ['companies'] },
     slug: 'companies',
     name: 'Companies',
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     schema: {} as unknown as TSchema,
   };
 }

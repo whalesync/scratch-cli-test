@@ -36,7 +36,7 @@ import {
   resolveIncrementalPullSupportForService,
 } from '../remote-service/connectors/connector-registry';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, idPath } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec, dotPath } from '../remote-service/connectors/types';
 import { DIRTY_BRANCH, ScratchGitService } from '../scratch-git/scratch-git.service';
 import { escapeConnectorFolderPathSegment } from './connector-folder-path.util';
 import { DataFolderEntity, DataFolderGroupEntity } from './entities/data-folder.entity';
@@ -408,7 +408,7 @@ export class DataFolderService {
         if (!schema?.properties || !(schema.properties as Record<string, unknown>)[idFieldOverride]) {
           throw new BadRequestException(`ID field "${idFieldOverride}" does not exist in the table schema`);
         }
-        tableSpec.idColumnRemoteId = idPath(idFieldOverride);
+        tableSpec.idPath = dotPath(idFieldOverride);
       }
       if (nameFieldOverride && nameFieldOverride.length > 0) {
         // Validate that the field path exists in the schema. lodash.get takes a path array
@@ -421,7 +421,7 @@ export class DataFolderService {
             `Name field path "${nameFieldOverride.join('.')}" does not exist in the table schema`,
           );
         }
-        tableSpec.titleColumnRemoteId = nameFieldOverride;
+        tableSpec.titlePath = dotPath(nameFieldOverride.join('.'));
       }
     }
 
@@ -1007,10 +1007,10 @@ export class DataFolderService {
       const idOverride = 'idFieldOverride' in options ? options.idFieldOverride : undefined;
       const nameOverride = 'nameFieldOverride' in options ? options.nameFieldOverride : undefined;
       if (typeof idOverride === 'string') {
-        tableSpec.idColumnRemoteId = idPath(idOverride);
+        tableSpec.idPath = dotPath(idOverride);
       }
       if (Array.isArray(nameOverride) && nameOverride.length > 0) {
-        tableSpec.titleColumnRemoteId = nameOverride;
+        tableSpec.titlePath = dotPath(nameOverride.join('.'));
       }
 
       // Write schema and default view to git repo

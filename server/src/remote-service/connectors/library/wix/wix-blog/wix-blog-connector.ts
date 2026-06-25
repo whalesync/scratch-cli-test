@@ -287,7 +287,7 @@ export class WixBlogConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'title');
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'title');
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

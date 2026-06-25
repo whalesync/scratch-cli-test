@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, idPath } from '../../../types';
+import { BaseJsonTableSpec, dotPath } from '../../../types';
 import { getForeignKeyOptions, isForeignKey, isReadonlyField } from '../webflow-json-schema';
 
 // Regression for DEV-10126: Webflow collection field slugs interpolated into
@@ -25,7 +25,7 @@ describe('webflow JSON Pointer escaping (RFC 6901)', () => {
           [fieldWithTilde]: Type.String({ [X_SCRATCH_READONLY]: true }),
         }),
       }),
-      idColumnRemoteId: idPath('id'),
+      idPath: dotPath('id'),
     };
   }
 

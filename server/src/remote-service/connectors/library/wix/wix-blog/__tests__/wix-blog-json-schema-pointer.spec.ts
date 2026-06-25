@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, idPath } from '../../../../types';
+import { BaseJsonTableSpec, dotPath } from '../../../../types';
 import { getForeignKeyOptions, isForeignKey, isReadonlyField } from '../wix-blog-json-schema';
 
 // Regression for DEV-10126: Wix blog field names interpolated into JSON
@@ -22,7 +22,7 @@ describe('wix-blog JSON Pointer escaping (RFC 6901)', () => {
         }),
         [fieldWithTilde]: Type.String({ [X_SCRATCH_READONLY]: true }),
       }),
-      idColumnRemoteId: idPath('_id'),
+      idPath: dotPath('_id'),
     };
   }
 

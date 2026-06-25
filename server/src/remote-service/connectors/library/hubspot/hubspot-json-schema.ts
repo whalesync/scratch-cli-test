@@ -6,7 +6,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { HubspotApiClient } from './hubspot-api-client';
 import { buildHubspotDefaultView } from './hubspot-default-view';
@@ -151,16 +151,16 @@ export async function buildHubspotJsonTableSpec(
 
   // Determine title column — it's always nested under 'properties'
   const titleField = config?.titleFieldPath?.replace('properties.', '');
-  const titleColumnRemoteId = titleField ? ['properties', titleField] : undefined;
+  const titlePath = titleField ? dotPath(`properties.${titleField}`) : undefined;
 
   const spec: BaseJsonTableSpec = {
     id,
     slug: id.wsId,
     name: displayName,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId,
-    slugFieldPath: config?.titleFieldPath,
+    idPath: dotPath('id'),
+    titlePath,
+    slugPath: config?.titleFieldPath ? dotPath(config.titleFieldPath) : undefined,
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildHubspotDefaultView(schema, config?.titleFieldPath, config?.priorityFields),

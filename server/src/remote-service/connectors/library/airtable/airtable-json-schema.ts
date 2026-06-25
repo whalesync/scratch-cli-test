@@ -13,7 +13,7 @@ import {
   X_SCRATCH_REMOTE_FIELD_ID,
   X_SCRATCH_SUGGESTED_TRANSFORMER,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildAirtableDefaultView } from './airtable-default-view';
 import { AirtableBase, AirtableDataType, AirtableFieldsV2, AirtableTableV2 } from './airtable-types';
@@ -31,8 +31,8 @@ export function buildAirtableJsonTableSpec(
   const [baseId, tableId] = id.remoteId;
 
   const fieldProperties: Record<string, TSchema> = {};
-  let titleColumnRemoteId: EntityId['remoteId'] | undefined;
-  let mainContentColumnRemoteId: EntityId['remoteId'] | undefined;
+  let titlePath: DotPath | undefined;
+  let mainContentPath: DotPath | undefined;
 
   for (const field of table.fields) {
     const fieldSchema = airtableFieldToJsonSchema(field);
@@ -41,12 +41,12 @@ export function buildAirtableJsonTableSpec(
 
     // Track title column (primary field)
     if (field.id === table.primaryFieldId) {
-      titleColumnRemoteId = ['fields', field.name];
+      titlePath = dotPath(['fields', field.name].join('.'));
     }
 
     // Track main content column (first rich text field)
-    if (!mainContentColumnRemoteId && (field.type as AirtableDataType) === AirtableDataType.RICH_TEXT) {
-      mainContentColumnRemoteId = ['fields', field.name];
+    if (!mainContentPath && (field.type as AirtableDataType) === AirtableDataType.RICH_TEXT) {
+      mainContentPath = dotPath(['fields', field.name].join('.'));
     }
   }
 
@@ -68,9 +68,9 @@ export function buildAirtableJsonTableSpec(
     slug: id.wsId,
     name: table.name,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId,
-    mainContentColumnRemoteId,
+    idPath: dotPath('id'),
+    titlePath,
+    mainContentPath,
     basePath: [base.name],
     // Deep link to the table in Airtable's web UI, e.g.
     // https://airtable.com/appXXXX/tblYYYY/

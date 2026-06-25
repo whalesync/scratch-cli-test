@@ -129,8 +129,8 @@ describeIfKey('PipedriveConnector — live API', () => {
     it('builds a spec with the expected top-level structure for the primary table', () => {
       expect(primarySpec.id).toEqual(primaryTable.id);
       expect(primarySpec.name).toBe(ENTITY_DISPLAY_NAMES[PRIMARY_ENTITY_TYPE]);
-      expect(primarySpec.idColumnRemoteId).toBe('id');
-      expect(primarySpec.titleColumnRemoteId).toEqual(['name']);
+      expect(primarySpec.idPath).toBe('id');
+      expect(primarySpec.titlePath).toEqual('name');
       expect(primarySpec.schema).toBeDefined();
 
       const props = schemaProperties(primarySpec);

@@ -305,7 +305,7 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
     const titlePropertyName = this.resolveTitlePropertyName(tableSpec);
     if (!titlePropertyName) {
-      return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath ?? tableSpec.slugColumnRemoteId);
     }
     return records.map((record) => {
       const titleProp = _.get(record, ['properties', titlePropertyName]) as unknown;
@@ -321,21 +321,27 @@ export class NotionConnector extends Connector<string, NotionDownloadProgress> {
 
   /**
    * Resolve the title property name for filename extraction.
-   * titleColumnRemoteId is now ['properties', propertyName], so just return the property name directly.
+   * titlePath is now the dot path 'properties.<propertyName>', so split it back
+   * into segments and return the property name (the segment after 'properties').
+   *
+   * Caveat: a Notion property name containing a literal `.` over-splits here and
+   * yields a truncated name (see `BaseJsonTableSpec.titlePath`). This only affects
+   * the suggested filename — it falls back to the record id — never correctness.
    */
   private resolveTitlePropertyName(tableSpec: BaseJsonTableSpec): string | undefined {
-    if (!tableSpec.titleColumnRemoteId || tableSpec.titleColumnRemoteId.length === 0) {
+    if (!tableSpec.titlePath) {
       return undefined;
     }
 
-    // titleColumnRemoteId is ['properties', propertyName] — return the property name directly
-    if (tableSpec.titleColumnRemoteId.length >= 2) {
-      return tableSpec.titleColumnRemoteId[1];
+    const titlePathSegments = _.toPath(tableSpec.titlePath);
+    // 'properties.<propertyName>' — return the property name directly.
+    if (titlePathSegments.length >= 2) {
+      return titlePathSegments[1];
     }
 
-    // Fallback for single-element array (shouldn't happen with new schema)
-    if (tableSpec.titleColumnRemoteId.length === 1) {
-      return tableSpec.titleColumnRemoteId[0];
+    // Fallback for a single-segment path (shouldn't happen with the current schema).
+    if (titlePathSegments.length === 1) {
+      return titlePathSegments[0];
     }
 
     return undefined;

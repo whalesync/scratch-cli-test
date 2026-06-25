@@ -170,7 +170,7 @@ describeIfToken('IntercomConnector — live API', () => {
 
     it('builds a schema with all collection fields', () => {
       expect(collectionsSpec.name).toBe('Collections');
-      expect(collectionsSpec.idColumnRemoteId).toBe('id');
+      expect(collectionsSpec.idPath).toBe('id');
       expect(collectionsSpec.schema.properties).toHaveProperty('id');
       expect(collectionsSpec.schema.properties).toHaveProperty('name');
       expect(collectionsSpec.schema.properties).toHaveProperty('description');
@@ -268,7 +268,7 @@ describeIfToken('IntercomConnector — live API', () => {
 
     it('builds a schema with all article fields', () => {
       expect(articlesSpec.name).toBe('Articles');
-      expect(articlesSpec.idColumnRemoteId).toBe('id');
+      expect(articlesSpec.idPath).toBe('id');
       expect(articlesSpec.schema.properties).toHaveProperty('id');
       expect(articlesSpec.schema.properties).toHaveProperty('title');
       expect(articlesSpec.schema.properties).toHaveProperty('body');

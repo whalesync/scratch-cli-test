@@ -16,7 +16,7 @@ import {
   X_SCRATCH_SUGGESTED_TRANSFORMER,
 } from '@spinner/shared-types';
 import _ from 'lodash';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildWebflowDefaultView } from './webflow-default-view';
 import {
@@ -233,8 +233,8 @@ export function buildWebflowJsonTableSpec(
     : cmsLocaleId;
 
   const properties: Record<string, TSchema> = {};
-  let titleColumnRemoteId: EntityId['remoteId'] | undefined;
-  let mainContentColumnRemoteId: EntityId['remoteId'] | undefined;
+  let titlePath: DotPath | undefined;
+  let mainContentPath: DotPath | undefined;
 
   // Add item-level metadata fields (these are present in all Webflow items)
   properties['id'] = Type.String({ description: 'Unique item identifier (read-only)', [X_SCRATCH_READONLY]: true });
@@ -298,12 +298,12 @@ export function buildWebflowJsonTableSpec(
 
     // Track title column (name field)
     if (field.slug === 'name') {
-      titleColumnRemoteId = ['fieldData', field.slug];
+      titlePath = dotPath(['fieldData', field.slug].join('.'));
     }
 
     // Track main content column (first RichText field)
-    if (!mainContentColumnRemoteId && field.type === FieldType.RichText) {
-      mainContentColumnRemoteId = ['fieldData', field.slug];
+    if (!mainContentPath && field.type === FieldType.RichText) {
+      mainContentPath = dotPath(['fieldData', field.slug].join('.'));
     }
   }
 
@@ -325,10 +325,10 @@ export function buildWebflowJsonTableSpec(
     // base path unchanged (DEV-10529).
     name: isSecondaryLocale ? (localeFolderName ?? collection.displayName) : collection.displayName,
     schema,
-    titleColumnRemoteId,
-    mainContentColumnRemoteId,
-    idColumnRemoteId: idPath('id'),
-    slugFieldPath: 'fieldData.slug',
+    titlePath,
+    mainContentPath,
+    idPath: dotPath('id'),
+    slugPath: dotPath('fieldData.slug'),
     // v2 accounts nest collections under /<Site>/Collections/; v1 stay flat at
     // /<Site>/. Single source of truth shared with the folder-move migration. A
     // secondary locale nests one level deeper, inside its primary collection.
@@ -402,8 +402,8 @@ export function buildWebflowAssetsJsonTableSpec(id: EntityId, site: Site, struct
     slug: id.wsId,
     name: 'Assets',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['displayName'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('displayName'),
     // Assets always stay flat at /<Site>/Assets regardless of version — only
     // collections nest. Stamp the account's structure version for consistency.
     basePath: [webflowSiteFolderName(site)],
@@ -504,8 +504,8 @@ export function buildWebflowPagesJsonTableSpec(id: EntityId, site: Site, structu
     slug: id.wsId,
     name: 'Pages',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['slug'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('slug'),
     // Pages always stay flat at /<Site>/Pages regardless of version — only
     // collections nest. Stamp the account's structure version for consistency.
     basePath: [webflowSiteFolderName(site)],

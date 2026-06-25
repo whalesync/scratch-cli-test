@@ -8,7 +8,7 @@ import {
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
 import { WSLogger } from 'src/logger';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { buildZohoDefaultView } from './zoho-default-view';
 import { ZohoFieldMetadata } from './zoho-types';
 
@@ -275,8 +275,8 @@ export function buildZohoJsonTableSpec(
     slug: id.wsId,
     name: displayName,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: titleField ? [titleField] : undefined,
+    idPath: dotPath('id'),
+    titlePath: titleField ? dotPath(titleField) : undefined,
     // Standard fields flat; user-created custom fields grouped under a banner.
     defaultView: buildZohoDefaultView(fields, properties),
     generatedAt: new Date().toISOString(),
@@ -343,8 +343,8 @@ export function buildZohoUsersTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Users',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['full_name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('full_name'),
     generatedAt: new Date().toISOString(),
   };
 }

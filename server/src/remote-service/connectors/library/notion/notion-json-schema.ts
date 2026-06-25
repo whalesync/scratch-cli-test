@@ -16,7 +16,7 @@ import {
   type VirtualFieldDef,
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { getDataSourceDisplayName } from './notion-data-source-types';
 import { buildNotionDefaultView } from './notion-default-view';
 
@@ -47,14 +47,14 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
   const [databaseId] = id.remoteId;
 
   const propertySchemas: Record<string, TSchema> = {};
-  let titleColumnRemoteId: string[] | undefined;
+  let titlePath: DotPath | undefined;
 
   for (const [name, property] of Object.entries(dataSource.properties)) {
     const propSchema = notionPropertyToJsonSchema(property);
     propertySchemas[name] = Type.Optional(propSchema);
 
     if (property.type === 'title') {
-      titleColumnRemoteId = ['properties', name];
+      titlePath = dotPath(`properties.${name}`);
     }
   }
 
@@ -183,8 +183,8 @@ export function buildNotionJsonTableSpec(id: EntityId, dataSource: DataSourceObj
     slug: id.wsId,
     name: sanitizeForTableWsId(tableTitle),
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId,
+    idPath: dotPath('id'),
+    titlePath,
     basePath: [],
     // Deep link to the database in Notion's web UI. notion.so addresses a
     // database by its id with dashes stripped (the 32-char hex form), e.g.

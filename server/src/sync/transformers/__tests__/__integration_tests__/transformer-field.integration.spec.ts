@@ -7,7 +7,7 @@
 import { TSchema, Type } from '@sinclair/typebox';
 import { ColumnMapping, TransformerConfig, TransformerTypes } from '@spinner/shared-types';
 import { Service } from 'src/remote-service/connectors/service-constants';
-import { BaseJsonTableSpec, idPath } from 'src/remote-service/connectors/types';
+import { BaseJsonTableSpec, dotPath } from 'src/remote-service/connectors/types';
 import { applyTransformerPipeline, getTransformerConfigs } from '../../transformer-pipeline';
 import { LookupTools, SyncRecord } from '../../transformer.types';
 
@@ -30,7 +30,7 @@ function makeTableSpec(schema: TSchema): BaseJsonTableSpec {
     id: { wsId: 'table', remoteId: ['table'] },
     slug: 'table',
     name: 'Table',
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     schema: Type.Object({ a: schema }),
   };
 }

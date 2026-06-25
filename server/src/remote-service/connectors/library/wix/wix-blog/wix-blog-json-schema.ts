@@ -7,7 +7,7 @@ import {
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../../types';
 import { escapePointerToken } from '../../../utils/json-pointer';
 
 /**
@@ -126,9 +126,9 @@ export function buildWixBlogJsonTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Blog Posts',
     schema,
-    idColumnRemoteId: idPath('_id'),
-    titleColumnRemoteId: ['title'],
-    mainContentColumnRemoteId: ['richContent'],
+    idPath: dotPath('_id'),
+    titlePath: dotPath('title'),
+    mainContentPath: dotPath('richContent'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

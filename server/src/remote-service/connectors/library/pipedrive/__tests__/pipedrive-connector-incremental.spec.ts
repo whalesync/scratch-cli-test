@@ -1,6 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { IncrementalPullSupport } from '@spinner/shared-types';
-import { BaseJsonTableSpec, PullRecordFilesOptions, idPath } from '../../../types';
+import { BaseJsonTableSpec, PullRecordFilesOptions, dotPath } from '../../../types';
 
 // Break the connector-registry circular import chain (same shape as the existing
 // pipedrive-connector spec).
@@ -37,7 +37,7 @@ function buildTableSpec(entityType: PipedriveEntityType): BaseJsonTableSpec {
     id: { wsId: entityType, remoteId: [entityType] },
     slug: entityType,
     name: entityType,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     schema: {} as unknown as TSchema,
   };
 }

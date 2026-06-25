@@ -102,8 +102,8 @@ function parseRemoteFieldId(value: unknown): string | string[] | undefined {
 }
 
 /**
- * Parses a Scratch table-wrapper `schema.json` (the object that contains `schema`, `titleColumnRemoteId`,
- * `idColumnRemoteId`, etc.) into an ordered list of `ColumnDefinition`s.
+ * Parses a Scratch table-wrapper `schema.json` (the object that contains `schema`, `titlePath`,
+ * `idPath`, etc.) into an ordered list of `ColumnDefinition`s.
  *
  * Recursion rules:
  *   - Recurse into a nested `type: 'object'` property **only** when it has inline `.properties`

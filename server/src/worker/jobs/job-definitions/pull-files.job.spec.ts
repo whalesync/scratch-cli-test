@@ -163,7 +163,7 @@ describe('PullFilesJobHandler', () => {
 
   describe('resolved repo ID usage', () => {
     const TABLE_SPEC = {
-      idColumnRemoteId: 'remoteId',
+      idPath: 'remoteId',
       schema: { remoteId: { type: 'string' }, name: { type: 'string' } },
       columns: [],
       tableRemoteId: 'tbl_1',

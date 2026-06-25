@@ -1,7 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { IntercomConnector } from '../intercom-connector';
 import { buildIntercomUpdatedSinceQuery } from '../intercom-incremental';
 import { IntercomArticle, IntercomCollection, IntercomConversation } from '../intercom-types';
@@ -64,7 +64,7 @@ function buildTableSpec(tableType: string): BaseJsonTableSpec {
     slug: tableType,
     name: tableType,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 
@@ -259,24 +259,24 @@ describe('IntercomConnector', () => {
       const spec = await connector.fetchJsonTableSpec({ wsId: 'articles', remoteId: ['articles'] });
 
       expect(spec.name).toBe('Articles');
-      expect(spec.idColumnRemoteId).toBe('id');
-      expect(spec.titleColumnRemoteId).toEqual(['title']);
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toEqual('title');
     });
 
     it('builds collections schema', async () => {
       const spec = await connector.fetchJsonTableSpec({ wsId: 'collections', remoteId: ['collections'] });
 
       expect(spec.name).toBe('Collections');
-      expect(spec.idColumnRemoteId).toBe('id');
-      expect(spec.titleColumnRemoteId).toEqual(['name']);
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toEqual('name');
     });
 
     it('builds conversations schema', async () => {
       const spec = await connector.fetchJsonTableSpec({ wsId: 'conversations', remoteId: ['conversations'] });
 
       expect(spec.name).toBe('Conversations');
-      expect(spec.idColumnRemoteId).toBe('id');
-      expect(spec.titleColumnRemoteId).toEqual(['title']);
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toEqual('title');
     });
 
     it('throws for unknown table', async () => {
@@ -799,7 +799,7 @@ describe('IntercomConnector', () => {
         { id: '2', title: 'Advanced Topics' },
       ];
       const tableSpec = buildTableSpec('articles');
-      tableSpec.slugFieldPath = 'title';
+      tableSpec.slugPath = dotPath('title');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
@@ -812,7 +812,7 @@ describe('IntercomConnector', () => {
         { id: '2', source: { subject: 'Feature request' } },
       ];
       const tableSpec = buildTableSpec('conversations');
-      tableSpec.slugFieldPath = 'source.subject';
+      tableSpec.slugPath = dotPath('source.subject');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
@@ -825,7 +825,7 @@ describe('IntercomConnector', () => {
         { id: '2', name: 'Guides' },
       ];
       const tableSpec = buildTableSpec('collections');
-      tableSpec.slugFieldPath = 'name';
+      tableSpec.slugPath = dotPath('name');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 

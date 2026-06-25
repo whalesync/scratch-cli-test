@@ -183,7 +183,7 @@ export class MemberstackConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'auth.email');
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'auth.email');
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

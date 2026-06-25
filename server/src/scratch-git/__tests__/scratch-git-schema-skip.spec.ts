@@ -1,4 +1,4 @@
-import { BaseJsonTableSpec } from '../../remote-service/connectors/types';
+import { BaseJsonTableSpec, dotPath } from '../../remote-service/connectors/types';
 import { ScratchGitClient } from '../scratch-git.client';
 import { ScratchGitService } from '../scratch-git.service';
 
@@ -12,8 +12,8 @@ function baseSpec(): BaseJsonTableSpec {
     slug: 'posts',
     name: 'posts',
     schema: { type: 'object', properties: { id: { type: 'string' } } },
-    idColumnRemoteId: ['id'],
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
     basePath: ['public'],
     generatedAt: '2026-05-27T20:08:44.699Z',
   } as unknown as BaseJsonTableSpec;
@@ -88,8 +88,8 @@ describe('ScratchGitService.writeSchemaToGit — skip when unchanged', () => {
     expect(mockCommitFiles).not.toHaveBeenCalled();
   });
 
-  it('does not falsely diff on undefined-valued optional keys (slugFieldPath regression)', async () => {
-    // Existing file on disk doesn't have slugFieldPath (because JSON.stringify dropped it).
+  it('does not falsely diff on undefined-valued optional keys (slugPath regression)', async () => {
+    // Existing file on disk doesn't have slugPath (because JSON.stringify dropped it).
     const existing = baseSpec();
     mockGetFile.mockImplementation((_repo: string, _branch: string, path: string) => {
       if (path === SCHEMA_GIT_PATH) {
@@ -98,8 +98,8 @@ describe('ScratchGitService.writeSchemaToGit — skip when unchanged', () => {
       return Promise.resolve(null);
     });
 
-    // New in-memory spec has slugFieldPath explicitly set to undefined.
-    const newSpec = { ...baseSpec(), slugFieldPath: undefined } as BaseJsonTableSpec;
+    // New in-memory spec has slugPath explicitly set to undefined.
+    const newSpec = { ...baseSpec(), slugPath: undefined } as BaseJsonTableSpec;
     await service.writeSchemaToGit(REPO_ID, FOLDER_PATH, newSpec);
 
     expect(mockCommitFiles).not.toHaveBeenCalled();

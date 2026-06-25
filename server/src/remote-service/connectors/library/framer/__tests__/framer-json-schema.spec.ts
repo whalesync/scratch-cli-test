@@ -37,16 +37,16 @@ describe('buildFramerJsonTableSpec', () => {
   const spec = buildFramerJsonTableSpec(ID, COLLECTION);
 
   it('uses the slug for filenames and the id as the remote id', () => {
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.slugFieldPath).toBe('slug');
+    expect(spec.idPath).toBe('id');
+    expect(spec.slugPath).toBe('slug');
     // Project is singular per connection → collections sit at the top level.
     expect(spec.basePath).toEqual([]);
     expect(spec.name).toBe('Blog Posts');
   });
 
   it('picks the first text field as the title and the first formattedText as main content', () => {
-    expect(spec.titleColumnRemoteId).toEqual(['fieldData', 'fTitle', 'value']);
-    expect(spec.mainContentColumnRemoteId).toEqual(['fieldData', 'fBody', 'value']);
+    expect(spec.titlePath).toEqual('fieldData.fTitle.value');
+    expect(spec.mainContentPath).toEqual('fieldData.fBody.value');
   });
 
   it('excludes layout-only (divider) fields from fieldData', () => {

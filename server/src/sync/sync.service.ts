@@ -45,7 +45,7 @@ import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { Service as ServiceConst } from 'src/remote-service/connectors/service-constants';
-import { BaseJsonTableSpec, IdPath, idPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
+import { BaseJsonTableSpec, DotPath, dotPath, readRecordIdAsString } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { ScratchGitNotFoundError } from 'src/scratch-git/scratch-git.client';
 import { DIRTY_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
@@ -939,12 +939,12 @@ export class SyncService {
   }
 
   /**
-   * Extracts the idColumnRemoteId from a DataFolder's schema.
-   * Falls back to `idPath('id')` if the schema doesn't specify an idColumnRemoteId.
+   * Extracts the idPath from a DataFolder's schema.
+   * Falls back to `dotPath('id')` if the schema doesn't specify an idPath.
    */
-  private getIdColumnFromSchema(schema: unknown): IdPath {
+  private getIdColumnFromSchema(schema: unknown): DotPath {
     const jsonSchema = schema as BaseJsonTableSpec | null;
-    return jsonSchema?.idColumnRemoteId ?? idPath('id');
+    return jsonSchema?.idPath ?? dotPath('id');
   }
 
   /**
@@ -1068,7 +1068,7 @@ export class SyncService {
       destinationFolder.connectorAccountId,
     );
 
-    // Get idColumnRemoteId from schemas
+    // Get idPath from schemas
     const sourceIdColumn = this.getIdColumnFromSchema(sourceTableSpec);
     const destinationIdColumn = this.getIdColumnFromSchema(destinationTableSpec);
 
@@ -1210,7 +1210,7 @@ export class SyncService {
     // Get the destination folder path for new files
     const destinationFolderPath = destinationFolder.path?.replace(/^\//, '') ?? '';
 
-    // Get the destination idColumnRemoteId from schema
+    // Get the destination idPath from schema
     const destIdColumn = this.getIdColumnFromSchema(destinationTableSpec);
 
     // Create lookup tools for transformers that need FK resolution
@@ -1344,7 +1344,7 @@ export class SyncService {
             }
 
             // Resolve filename: prefer slug from destination schema, fall back to temp ID
-            const slugPath = destinationTableSpec?.slugFieldPath ?? destinationTableSpec?.slugColumnRemoteId;
+            const slugPath = destinationTableSpec?.slugPath ?? destinationTableSpec?.slugColumnRemoteId;
             const slugValue = slugPath ? (get(transformedFields, slugPath) as string | undefined) : undefined;
             const baseName = resolveBaseFileName({ slugValue, idValue: tempId });
             const fileName = deduplicateFileName(baseName, '.json', usedDestFileNames, tempId);
@@ -2416,10 +2416,10 @@ export class SyncService {
  * Parse a file's content to extract fields from front matter and body.
  *
  * @param file - The file content to parse
- * @param idColumnRemoteId - The column ID to use as the record ID (from schema.idColumnRemoteId)
+ * @param idPath - The column ID to use as the record ID (from schema.idPath)
  * @returns A SyncRecord with the ID extracted from the specified column
  */
-function parseFileToRecord(file: FileContent, idColumnRemoteId: IdPath): SyncRecord {
+function parseFileToRecord(file: FileContent, idPath: DotPath): SyncRecord {
   const fields: Record<string, unknown> = {};
 
   if (file.content) {
@@ -2428,9 +2428,9 @@ function parseFileToRecord(file: FileContent, idColumnRemoteId: IdPath): SyncRec
     Object.assign(fields, parsed);
   }
 
-  const recordId = readRecordIdAsString(fields, idColumnRemoteId);
+  const recordId = readRecordIdAsString(fields, idPath);
   if (recordId === null) {
-    throw new Error(`Record in file ${file.path} is missing or has non-stringable id at path: ${idColumnRemoteId}`);
+    throw new Error(`Record in file ${file.path} is missing or has non-stringable id at path: ${idPath}`);
   }
 
   return {

@@ -104,8 +104,8 @@ describe('ClickUpConnector', () => {
       const spec = await connector.fetchJsonTableSpec({ wsId: LIST_ID, remoteId: [LIST_ID] });
 
       expect(spec.name).toBe('Project 1');
-      expect(spec.idColumnRemoteId).toBe('id');
-      expect(spec.titleColumnRemoteId).toEqual(['name']);
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toEqual('name');
       const customFields = (spec.schema as unknown as { properties: { custom_fields: Record<string, unknown> } })
         .properties.custom_fields;
       expect(JSON.stringify(customFields)).toContain('cf1=Priority Score (number)');

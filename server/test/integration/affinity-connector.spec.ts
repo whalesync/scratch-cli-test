@@ -169,7 +169,7 @@ describeIfKey('AffinityConnector — live API', () => {
     it('builds a spec with list-entry top-level fields', () => {
       expect(listSpec.id).toEqual(fixtureList.id);
       expect(listSpec.name).toBe(fixtureList.displayName);
-      expect(listSpec.idColumnRemoteId).toBe('id');
+      expect(listSpec.idPath).toBe('id');
 
       const props = (listSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
@@ -180,8 +180,8 @@ describeIfKey('AffinityConnector — live API', () => {
       expect(props).toHaveProperty('entity');
     });
 
-    it('points titleColumnRemoteId at a real entity field', () => {
-      const path = listSpec.titleColumnRemoteId;
+    it('points titlePath at a real entity field', () => {
+      const path = listSpec.titlePath;
       expect(path?.[0]).toBe('entity');
       expect(['name', 'firstName']).toContain(path?.[1]);
     });
@@ -208,7 +208,7 @@ describeIfKey('AffinityConnector — live API', () => {
       const spec = await connector.fetchJsonTableSpec(table.id);
 
       expect(spec.name).toBe('Companies');
-      expect(spec.idColumnRemoteId).toBe('id');
+      expect(spec.idPath).toBe('id');
 
       const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
@@ -220,7 +220,7 @@ describeIfKey('AffinityConnector — live API', () => {
       const spec = await connector.fetchJsonTableSpec(table.id);
 
       expect(spec.name).toBe('People');
-      expect(spec.idColumnRemoteId).toBe('id');
+      expect(spec.idPath).toBe('id');
 
       const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
@@ -233,7 +233,7 @@ describeIfKey('AffinityConnector — live API', () => {
       const spec = await connector.fetchJsonTableSpec(table.id);
 
       expect(spec.name).toBe('Opportunities');
-      expect(spec.idColumnRemoteId).toBe('id');
+      expect(spec.idPath).toBe('id');
 
       const props = (spec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');

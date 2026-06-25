@@ -145,8 +145,8 @@ describeIfKey('FramerConnector — live API', () => {
       expect(props.id['x-scratch-readonly']).toBe(true);
       expect(props.slug.type).toBe('string');
       expect(props.fieldData.type).toBe('object');
-      expect(tableSpec.idColumnRemoteId).toBe('id');
-      expect(tableSpec.slugFieldPath).toBe('slug');
+      expect(tableSpec.idPath).toBe('id');
+      expect(tableSpec.slugPath).toBe('slug');
     });
 
     it('annotates reference fields as foreign keys at the value leaf', () => {

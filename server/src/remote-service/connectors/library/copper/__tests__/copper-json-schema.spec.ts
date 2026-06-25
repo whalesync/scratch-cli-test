@@ -13,8 +13,8 @@ function specProperties(entityType: CopperEntityType, defs: CopperCustomFieldDef
 describe('buildCopperJsonTableSpec', () => {
   it('sets id path, title column, and name from entity config', () => {
     const { spec } = specProperties('people');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
     expect(spec.name).toBe('People');
   });
 

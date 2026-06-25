@@ -546,7 +546,7 @@ export class GoHighLevelConnector extends Connector {
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const recordId = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      const recordId = readRecordIdAsString(file, tableSpec.idPath);
       const changed = changedFields[i] ?? {};
       if (!recordId) {
         // No remote id to target — return the input unchanged.
@@ -588,13 +588,13 @@ export class GoHighLevelConnector extends Connector {
   }
 
   /**
-   * Delete records. `files` here are `{ [idColumnRemoteId]: remoteId }` filters
+   * Delete records. `files` here are `{ [idPath]: remoteId }` filters
    * built by the publish flow. Each delete ignores 404 (already gone).
    */
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     const wsId = tableSpec.id.wsId;
     for (const filter of files) {
-      const recordId = readRecordIdAsString(filter, tableSpec.idColumnRemoteId);
+      const recordId = readRecordIdAsString(filter, tableSpec.idPath);
       if (!recordId) continue;
       if (wsId === CONTACTS_TABLE_WS_ID) {
         await this.client.deleteContact(recordId);
@@ -611,14 +611,7 @@ export class GoHighLevelConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return suggestFileNamesFromFieldPaths(
-      records,
-      tableSpec.slugFieldPath,
-      'contactName',
-      'name',
-      'firstName',
-      'email',
-    );
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'contactName', 'name', 'firstName', 'email');
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

@@ -13,7 +13,7 @@ import type { ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import type { Actor, WorkspacePermissionRole } from 'src/users/types';
 import type { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import type { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, idPath } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec, dotPath } from '../remote-service/connectors/types';
 import { DataFolderService } from './data-folder.service';
 import type { FilesService } from './files.service';
 import type { WorkbookEventService } from './workbook-event.service';
@@ -32,7 +32,7 @@ describe('DataFolderService.buildConnectorFolderPath', () => {
     slug: 'table-slug',
     name: 'My Table',
     schema: {} as TSchema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     ...overrides,
   });
 

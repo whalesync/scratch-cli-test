@@ -10,7 +10,7 @@ import {
   X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
 import { sanitizeForTableWsId } from '../../ids';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, dotPath, EntityId } from '../../types';
 import { AttioApiClient } from './attio-api-client';
 import { buildAttioDefaultView, LIST_VIEW_CONFIG, OBJECT_VIEW_CONFIG } from './attio-default-view';
 import { AttioAttribute, AttioAttributeType, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
@@ -206,11 +206,11 @@ export async function buildAttioObjectTableSpec(
     slug: id.wsId,
     name: resolvedDisplay.plural,
     schema,
-    idColumnRemoteId: idPath('id.record_id'),
+    idPath: dotPath('id.record_id'),
     // All three v1 objects (companies, people, deals) expose a `name` attribute
     // suitable for filenames — for people it's the `personal-name` type, for
     // companies/deals it's plain text.
-    titleColumnRemoteId: ['values', 'name'],
+    titlePath: dotPath('values.name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAttioDefaultView(schema, viewConfig),
@@ -266,10 +266,10 @@ export async function buildAttioListTableSpec(
     slug: id.wsId,
     name: listName,
     schema,
-    idColumnRemoteId: idPath('id.entry_id'),
+    idPath: dotPath('id.entry_id'),
     // List entries don't carry a name of their own; the parent_record_id is
     // the closest stable identifier for filenames + display.
-    titleColumnRemoteId: ['parent_record_id'],
+    titlePath: dotPath('parent_record_id'),
     basePath: ['Lists'],
     generatedAt: new Date().toISOString(),
     defaultView: buildAttioDefaultView(schema, LIST_VIEW_CONFIG),
@@ -310,8 +310,8 @@ export function buildAttioMembersTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Workspace Members',
     schema,
-    idColumnRemoteId: idPath('id.workspace_member_id'),
-    titleColumnRemoteId: ['email_address'],
+    idPath: dotPath('id.workspace_member_id'),
+    titlePath: dotPath('email_address'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };
@@ -360,8 +360,8 @@ export function buildAttioTasksTableSpec(id: EntityId): BaseJsonTableSpec {
     slug: id.wsId,
     name: 'Tasks',
     schema,
-    idColumnRemoteId: idPath('id.task_id'),
-    titleColumnRemoteId: ['content_plaintext'],
+    idPath: dotPath('id.task_id'),
+    titlePath: dotPath('content_plaintext'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

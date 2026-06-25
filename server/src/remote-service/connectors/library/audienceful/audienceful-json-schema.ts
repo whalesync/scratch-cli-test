@@ -1,7 +1,7 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { ValuePointer } from '@sinclair/typebox/value';
 import { ForeignKeyOptionSchema, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildAudiencefulDefaultView } from './audienceful-default-view';
 import { AudiencefulField } from './audienceful-types';
@@ -18,9 +18,9 @@ export function buildAudiencefulJsonTableSpec(id: EntityId, customFields: Audien
     slug: id.wsId,
     name: 'People',
     schema,
-    idColumnRemoteId: idPath('uid'),
-    titleColumnRemoteId: ['email'],
-    mainContentColumnRemoteId: ['notes'],
+    idPath: dotPath('uid'),
+    titlePath: dotPath('email'),
+    mainContentPath: dotPath('notes'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildAudiencefulDefaultView(schema),

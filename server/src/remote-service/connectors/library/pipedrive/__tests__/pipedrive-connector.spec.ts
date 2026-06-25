@@ -1,6 +1,6 @@
 import { TSchema } from '@sinclair/typebox';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { PipedriveConnector } from '../pipedrive-connector';
 
 // Mock display-names to break circular import chain
@@ -49,7 +49,7 @@ function buildTableSpec(entityType: string): BaseJsonTableSpec {
     slug: entityType,
     name: entityType,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 

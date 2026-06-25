@@ -5,7 +5,7 @@ import { WSLogger } from 'src/logger';
 import { Schema } from 'src/utils/objects';
 import { CredentialEncryptionService } from '../credential-encryption/credential-encryption.service';
 import { ConnectorsService } from '../remote-service/connectors/connectors.service';
-import { BaseJsonTableSpec, idPath } from '../remote-service/connectors/types';
+import { BaseJsonTableSpec, dotPath } from '../remote-service/connectors/types';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { EncryptedData } from '../utils/encryption';
 
@@ -260,10 +260,10 @@ export class SchemaHelperService {
         const nameOverride =
           'nameFieldOverride' in options ? (options as Record<string, unknown>).nameFieldOverride : undefined;
         if (typeof idOverride === 'string') {
-          tableSpec.idColumnRemoteId = idPath(idOverride);
+          tableSpec.idPath = dotPath(idOverride);
         }
         if (Array.isArray(nameOverride) && nameOverride.length > 0) {
-          tableSpec.titleColumnRemoteId = nameOverride;
+          tableSpec.titlePath = dotPath(nameOverride.join('.'));
         }
 
         // Write refreshed schema and default view to git

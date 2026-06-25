@@ -28,11 +28,12 @@ import {
 } from '../../schema-creation.types';
 import { Service } from '../../service-constants';
 import {
-  idPath,
+  dotPath,
   type BaseJsonTableSpec,
   type ConnectorErrorDetails,
   type ConnectorFile,
   type CreateDestination,
+  type DotPath,
   type EntityId,
   type PullRecordFilesOptions,
   type PullRecordFilesResult,
@@ -248,8 +249,8 @@ export class PostgresConnector extends Connector {
       }
 
       const schemaProperties: Record<string, TSchema> = {};
-      let titleColumnRemoteId: string[] | undefined;
-      let slugFieldPath: string | undefined;
+      let titlePath: DotPath | undefined;
+      let slugPath: DotPath | undefined;
 
       for (const col of columns) {
         const isNullable = col.is_nullable === 'YES';
@@ -273,16 +274,12 @@ export class PostgresConnector extends Connector {
 
         schemaProperties[col.column_name] = isNullable || hasDefault ? Type.Optional(annotated) : annotated;
 
-        if (
-          !titleColumnRemoteId &&
-          TITLE_COLUMN_CANDIDATES.includes(col.column_name) &&
-          PG_TEXT_TYPES.has(col.udt_name)
-        ) {
-          titleColumnRemoteId = [col.column_name];
+        if (!titlePath && TITLE_COLUMN_CANDIDATES.includes(col.column_name) && PG_TEXT_TYPES.has(col.udt_name)) {
+          titlePath = dotPath(col.column_name);
         }
 
         if (col.column_name === 'slug') {
-          slugFieldPath = 'slug';
+          slugPath = dotPath('slug');
         }
       }
 
@@ -296,9 +293,9 @@ export class PostgresConnector extends Connector {
         slug: tableName,
         name: tableName,
         schema: tableSchema,
-        idColumnRemoteId: idPath(primaryKey),
-        titleColumnRemoteId,
-        slugFieldPath,
+        idPath: dotPath(primaryKey),
+        titlePath,
+        slugPath,
         basePath: [schema],
         generatedAt: new Date().toISOString(),
         defaultView: buildPgDefaultView(tableSchema),
@@ -386,7 +383,7 @@ export class PostgresConnector extends Connector {
 
     const [schema, tableName] = tableSpec.id.remoteId;
     await this.withPgClient(async (client) => {
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
       let offset = (progress as { nextOffset?: number })?.nextOffset ?? 0;
 
       while (true) {
@@ -419,7 +416,7 @@ export class PostgresConnector extends Connector {
   ): Promise<void> {
     const [schema, tableName] = tableSpec.id.remoteId;
     return this.withPgClient(async (client) => {
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
 
       for (let i = 0; i < ids.length; i += READ_BATCH_SIZE) {
         const batch = ids.slice(i, i + READ_BATCH_SIZE);
@@ -607,7 +604,7 @@ export class PostgresConnector extends Connector {
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
     const [schema, tableName] = tableSpec.id.remoteId;
     return this.withPgClient(async (client) => {
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
       return client.insertMany(schema, tableName, pk, files);
     });
   }
@@ -619,7 +616,7 @@ export class PostgresConnector extends Connector {
   ): Promise<ConnectorFile[]> {
     const [schema, tableName] = tableSpec.id.remoteId;
     return this.withPgClient(async (client) => {
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
       const records = files.map((file, index) => {
         const data = { ...(changedFields?.[index] ?? file) };
         delete data[pk];
@@ -639,7 +636,7 @@ export class PostgresConnector extends Connector {
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     const [schema, tableName] = tableSpec.id.remoteId;
     return this.withPgClient(async (client) => {
-      const pk = tableSpec.idColumnRemoteId;
+      const pk = tableSpec.idPath;
       const ids = files.map((file) => file[pk] as string | number);
       if (ids.length > 0) {
         await client.deleteMany(schema, tableName, ids, pk);
@@ -648,8 +645,8 @@ export class PostgresConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, titlePath);
+    const titlePath = tableSpec.titlePath && !tableSpec.titlePath.includes('.') ? tableSpec.titlePath : undefined;
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, titlePath);
   }
 
   // -------------------------------------------------------------------------

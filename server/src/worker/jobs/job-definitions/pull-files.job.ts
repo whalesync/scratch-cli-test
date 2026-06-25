@@ -235,7 +235,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
         fileCount: files.length,
       });
 
-      const batchRecordIds = files.map((f) => readRecordIdAsString(f, tableSpec.idColumnRemoteId) ?? '');
+      const batchRecordIds = files.map((f) => readRecordIdAsString(f, tableSpec.idPath) ?? '');
       const existingFileNames = await this.fileIndexService.getFilenamesByRecordIds(
         dataFolder.workbookId,
         dataFolder.path?.replace(/^\//, '') ?? '',
@@ -301,7 +301,7 @@ export class PullFilesJobHandler implements JobHandlerBuilder<PullFilesJobDefini
             const assetEntries = builtFiles.flatMap((f) => {
               const normalizedPath = f.path.startsWith('/') ? f.path.slice(1) : f.path;
               const recordContent = f.parsedRecord as Record<string, unknown>;
-              const recordRemoteId = readRecordIdAsString(recordContent, tableSpec.idColumnRemoteId) ?? undefined;
+              const recordRemoteId = readRecordIdAsString(recordContent, tableSpec.idPath) ?? undefined;
               return this.assetExtractorService.extractAssets(connector, {
                 workbookId: dataFolder.workbookId,
                 service: dataFolder.connectorService as Service,

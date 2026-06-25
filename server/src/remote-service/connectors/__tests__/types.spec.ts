@@ -3,8 +3,8 @@ import { X_SCRATCH_LAST_MODIFIED_FIELD } from '@spinner/shared-types';
 import {
   BaseJsonTableSpec,
   clearRecordId,
+  dotPath,
   findLastModifiedFieldName,
-  idPath,
   readRecordId,
   readRecordIdAsString,
   readRecordIdForSentinelDetection,
@@ -19,64 +19,64 @@ function specWithSchema(schema: unknown): BaseJsonTableSpec {
     id: { wsId: 't', remoteId: ['t'] },
     slug: 't',
     name: 't',
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
     schema: schema as TSchema,
   };
 }
 
-describe('IdPath helpers', () => {
+describe('DotPath helpers', () => {
   // ── readRecordId ──────────────────────────────────────────────────────────
   describe('readRecordId', () => {
     it('returns the raw value at a top-level path', () => {
-      expect(readRecordId({ id: 'rec_1' }, idPath('id'))).toBe('rec_1');
+      expect(readRecordId({ id: 'rec_1' }, dotPath('id'))).toBe('rec_1');
     });
 
     it('returns the raw object at a top-level path so callers can detect non-primitive ids', () => {
       const triple = { workspace_id: 'w', object_id: 'o', record_id: 'r' };
-      expect(readRecordId({ id: triple }, idPath('id'))).toEqual(triple);
+      expect(readRecordId({ id: triple }, dotPath('id'))).toEqual(triple);
     });
 
     it('traverses dot paths into nested objects', () => {
       const record = { id: { workspace_id: 'w', object_id: 'o', record_id: 'r' } };
-      expect(readRecordId(record, idPath('id.record_id'))).toBe('r');
+      expect(readRecordId(record, dotPath('id.record_id'))).toBe('r');
     });
 
     it('returns undefined when the path is missing', () => {
-      expect(readRecordId({ id: 'rec_1' }, idPath('id.record_id'))).toBeUndefined();
-      expect(readRecordId({}, idPath('id'))).toBeUndefined();
+      expect(readRecordId({ id: 'rec_1' }, dotPath('id.record_id'))).toBeUndefined();
+      expect(readRecordId({}, dotPath('id'))).toBeUndefined();
     });
   });
 
   // ── readRecordIdAsString ──────────────────────────────────────────────────
   describe('readRecordIdAsString', () => {
     it('returns string ids as-is', () => {
-      expect(readRecordIdAsString({ id: 'rec_1' }, idPath('id'))).toBe('rec_1');
+      expect(readRecordIdAsString({ id: 'rec_1' }, dotPath('id'))).toBe('rec_1');
     });
 
     it('coerces finite numeric ids to a string', () => {
-      expect(readRecordIdAsString({ id: 42 }, idPath('id'))).toBe('42');
+      expect(readRecordIdAsString({ id: 42 }, dotPath('id'))).toBe('42');
     });
 
     it('returns the leaf string at a nested dot path', () => {
       const record = { id: { record_id: 'r_1', workspace_id: 'w', object_id: 'o' } };
-      expect(readRecordIdAsString(record, idPath('id.record_id'))).toBe('r_1');
+      expect(readRecordIdAsString(record, dotPath('id.record_id'))).toBe('r_1');
     });
 
     it('returns null when the path resolves to a non-primitive value (e.g. the whole id triple)', () => {
       const record = { id: { record_id: 'r_1' } };
       // Asking for the whole triple — not a string id, callers must drill deeper.
-      expect(readRecordIdAsString(record, idPath('id'))).toBeNull();
+      expect(readRecordIdAsString(record, dotPath('id'))).toBeNull();
     });
 
     it('returns null for null, undefined, and missing values', () => {
-      expect(readRecordIdAsString({ id: null as unknown as string }, idPath('id'))).toBeNull();
-      expect(readRecordIdAsString({}, idPath('id'))).toBeNull();
-      expect(readRecordIdAsString({ id: undefined as unknown as string }, idPath('id'))).toBeNull();
+      expect(readRecordIdAsString({ id: null as unknown as string }, dotPath('id'))).toBeNull();
+      expect(readRecordIdAsString({}, dotPath('id'))).toBeNull();
+      expect(readRecordIdAsString({ id: undefined as unknown as string }, dotPath('id'))).toBeNull();
     });
 
     it('returns null for non-finite numbers', () => {
-      expect(readRecordIdAsString({ id: NaN as unknown as number }, idPath('id'))).toBeNull();
-      expect(readRecordIdAsString({ id: Infinity as unknown as number }, idPath('id'))).toBeNull();
+      expect(readRecordIdAsString({ id: NaN as unknown as number }, dotPath('id'))).toBeNull();
+      expect(readRecordIdAsString({ id: Infinity as unknown as number }, dotPath('id'))).toBeNull();
     });
   });
 
@@ -84,13 +84,13 @@ describe('IdPath helpers', () => {
   describe('writeRecordId', () => {
     it('sets a value at a flat top-level path', () => {
       const record: Record<string, unknown> = {};
-      writeRecordId(record, idPath('id'), 'rec_1');
+      writeRecordId(record, dotPath('id'), 'rec_1');
       expect(record).toEqual({ id: 'rec_1' });
     });
 
     it('sets a value at a nested dot path, creating intermediate objects', () => {
       const record: Record<string, unknown> = {};
-      writeRecordId(record, idPath('id.record_id'), 'r_1');
+      writeRecordId(record, dotPath('id.record_id'), 'r_1');
       expect(record).toEqual({ id: { record_id: 'r_1' } });
     });
 
@@ -98,7 +98,7 @@ describe('IdPath helpers', () => {
       const record: Record<string, unknown> = {
         id: { workspace_id: 'w', object_id: 'o' },
       };
-      writeRecordId(record, idPath('id.record_id'), 'r_1');
+      writeRecordId(record, dotPath('id.record_id'), 'r_1');
       expect(record).toEqual({ id: { workspace_id: 'w', object_id: 'o', record_id: 'r_1' } });
     });
   });
@@ -107,7 +107,7 @@ describe('IdPath helpers', () => {
   describe('clearRecordId', () => {
     it('removes a top-level id', () => {
       const record: Record<string, unknown> = { id: 'rec_1', name: 'x' };
-      clearRecordId(record, idPath('id'));
+      clearRecordId(record, dotPath('id'));
       expect(record).toEqual({ name: 'x' });
     });
 
@@ -116,13 +116,13 @@ describe('IdPath helpers', () => {
         id: { workspace_id: 'w', object_id: 'o', record_id: 'r' },
         name: 'x',
       };
-      clearRecordId(record, idPath('id.record_id'));
+      clearRecordId(record, dotPath('id.record_id'));
       expect(record).toEqual({ id: { workspace_id: 'w', object_id: 'o' }, name: 'x' });
     });
 
     it('is a no-op when the path is missing', () => {
       const record: Record<string, unknown> = { name: 'x' };
-      expect(() => clearRecordId(record, idPath('id.record_id'))).not.toThrow();
+      expect(() => clearRecordId(record, dotPath('id.record_id'))).not.toThrow();
       expect(record).toEqual({ name: 'x' });
     });
   });
@@ -130,45 +130,47 @@ describe('IdPath helpers', () => {
   // ── recordWithId ──────────────────────────────────────────────────────────
   describe('recordWithId', () => {
     it('builds a flat stub for a top-level id path', () => {
-      expect(recordWithId(idPath('id'), 'rec_1')).toEqual({ id: 'rec_1' });
+      expect(recordWithId(dotPath('id'), 'rec_1')).toEqual({ id: 'rec_1' });
     });
 
     it('builds a nested stub for a dot path — the shape used as a connector delete filter', () => {
-      expect(recordWithId(idPath('id.record_id'), 'r_1')).toEqual({ id: { record_id: 'r_1' } });
+      expect(recordWithId(dotPath('id.record_id'), 'r_1')).toEqual({ id: { record_id: 'r_1' } });
     });
 
     it('accepts numeric ids', () => {
-      expect(recordWithId(idPath('id'), 42)).toEqual({ id: 42 });
+      expect(recordWithId(dotPath('id'), 42)).toEqual({ id: 42 });
     });
   });
 
   // ── readRecordIdForSentinelDetection ──────────────────────────────────────
   describe('readRecordIdForSentinelDetection', () => {
     it('returns the leaf value when the full path resolves (flat)', () => {
-      expect(readRecordIdForSentinelDetection({ id: 'rec_1' }, idPath('id'))).toBe('rec_1');
+      expect(readRecordIdForSentinelDetection({ id: 'rec_1' }, dotPath('id'))).toBe('rec_1');
     });
 
     it('returns the leaf value when the full path resolves (nested)', () => {
-      expect(readRecordIdForSentinelDetection({ id: { record_id: 'r_1' } }, idPath('id.record_id'))).toBe('r_1');
+      expect(readRecordIdForSentinelDetection({ id: { record_id: 'r_1' } }, dotPath('id.record_id'))).toBe('r_1');
     });
 
     it('falls back to a sentinel STRING occupying the path root (the CLI revert-recreate shape)', () => {
-      expect(readRecordIdForSentinelDetection({ id: 'scratch_pending_recreate_old1' }, idPath('id.record_id'))).toBe(
+      expect(readRecordIdForSentinelDetection({ id: 'scratch_pending_recreate_old1' }, dotPath('id.record_id'))).toBe(
         'scratch_pending_recreate_old1',
       );
     });
 
     it('does NOT fall back to a non-string root (an id object missing the leaf is not a sentinel)', () => {
-      expect(readRecordIdForSentinelDetection({ id: { workspace_id: 'ws1' } }, idPath('id.record_id'))).toBeUndefined();
+      expect(
+        readRecordIdForSentinelDetection({ id: { workspace_id: 'ws1' } }, dotPath('id.record_id')),
+      ).toBeUndefined();
     });
 
     it('returns undefined for a flat path with no value (no root fallback applies)', () => {
-      expect(readRecordIdForSentinelDetection({ title: 'T' }, idPath('id'))).toBeUndefined();
+      expect(readRecordIdForSentinelDetection({ title: 'T' }, dotPath('id'))).toBeUndefined();
     });
 
     it('reads an existing literal own key as literal (lodash get resolves the key before the path)', () => {
       const record = { 'user.id': 'scratch_pending_publish_x' };
-      expect(readRecordIdForSentinelDetection(record, idPath('user.id'))).toBe('scratch_pending_publish_x');
+      expect(readRecordIdForSentinelDetection(record, dotPath('user.id'))).toBe('scratch_pending_publish_x');
     });
   });
 
@@ -176,51 +178,51 @@ describe('IdPath helpers', () => {
   describe('recordWithIdCleared', () => {
     it('removes a flat id without mutating the input', () => {
       const input = { id: 'rec_1', title: 'T' };
-      expect(recordWithIdCleared(input, idPath('id'))).toEqual({ title: 'T' });
+      expect(recordWithIdCleared(input, dotPath('id'))).toEqual({ title: 'T' });
       expect(input.id).toBe('rec_1');
     });
 
     it('removes a nested leaf and prunes the empty ancestor husk', () => {
       const input = { id: { record_id: 'r_1' }, values: { a: 1 } };
-      expect(recordWithIdCleared(input, idPath('id.record_id'))).toEqual({ values: { a: 1 } });
+      expect(recordWithIdCleared(input, dotPath('id.record_id'))).toEqual({ values: { a: 1 } });
     });
 
     it('keeps a non-empty ancestor when siblings remain', () => {
       const input = { id: { workspace_id: 'ws1', record_id: 'r_1' }, values: {} };
-      expect(recordWithIdCleared(input, idPath('id.record_id'))).toEqual({ id: { workspace_id: 'ws1' }, values: {} });
+      expect(recordWithIdCleared(input, dotPath('id.record_id'))).toEqual({ id: { workspace_id: 'ws1' }, values: {} });
     });
 
     it('does not mutate the shared nested object of the input', () => {
       const sharedNestedId = { workspace_id: 'ws1', record_id: 'r_1' };
       const input = { id: sharedNestedId };
-      recordWithIdCleared(input, idPath('id.record_id'));
+      recordWithIdCleared(input, dotPath('id.record_id'));
       expect(sharedNestedId.record_id).toBe('r_1');
     });
 
     it('drops a root-sentinel string for a nested path (the CLI revert-recreate shape)', () => {
       const input = { id: 'scratch_pending_recreate_old1', values: { a: 1 } };
-      expect(recordWithIdCleared(input, idPath('id.record_id'))).toEqual({ values: { a: 1 } });
+      expect(recordWithIdCleared(input, dotPath('id.record_id'))).toEqual({ values: { a: 1 } });
     });
 
     it('returns an equivalent copy when the path does not resolve', () => {
       const input = { values: { a: 1 } };
-      expect(recordWithIdCleared(input, idPath('id.record_id'))).toEqual({ values: { a: 1 } });
+      expect(recordWithIdCleared(input, dotPath('id.record_id'))).toEqual({ values: { a: 1 } });
     });
 
     it('treats an existing literal own key as literal, mirroring lodash get (Postgres PK named "user.id")', () => {
       const input = { 'user.id': 'scratch_pending_publish_x', title: 'T' };
-      expect(recordWithIdCleared(input, idPath('user.id'))).toEqual({ title: 'T' });
+      expect(recordWithIdCleared(input, dotPath('user.id'))).toEqual({ title: 'T' });
       expect(input['user.id']).toBe('scratch_pending_publish_x');
     });
 
     it('clears a 3-segment path and prunes the whole empty chain', () => {
       const input = { a: { b: { c: 'sentinel' } }, keep: 1 };
-      expect(recordWithIdCleared(input, idPath('a.b.c'))).toEqual({ keep: 1 });
+      expect(recordWithIdCleared(input, dotPath('a.b.c'))).toEqual({ keep: 1 });
     });
 
     it('bails without clearing when a nested path runs into an array intermediate', () => {
       const input = { id: ['x'], values: {} };
-      expect(recordWithIdCleared(input, idPath('id.record_id'))).toEqual({ id: ['x'], values: {} });
+      expect(recordWithIdCleared(input, dotPath('id.record_id'))).toEqual({ id: ['x'], values: {} });
     });
   });
 
@@ -228,12 +230,12 @@ describe('IdPath helpers', () => {
   describe('recordWithIdWritten', () => {
     it('writes a flat id without mutating the input', () => {
       const input: Record<string, unknown> = { title: 'T' };
-      expect(recordWithIdWritten(input, idPath('id'), 'rec_1')).toEqual({ id: 'rec_1', title: 'T' });
+      expect(recordWithIdWritten(input, dotPath('id'), 'rec_1')).toEqual({ id: 'rec_1', title: 'T' });
       expect(input.id).toBeUndefined();
     });
 
     it('writes a nested id, creating intermediate objects', () => {
-      expect(recordWithIdWritten({ values: {} }, idPath('id.record_id'), 'r_1')).toEqual({
+      expect(recordWithIdWritten({ values: {} }, dotPath('id.record_id'), 'r_1')).toEqual({
         id: { record_id: 'r_1' },
         values: {},
       });
@@ -241,29 +243,29 @@ describe('IdPath helpers', () => {
 
     it('preserves siblings inside an existing intermediate object without mutating it', () => {
       const sharedNestedId: Record<string, unknown> = { workspace_id: 'ws1' };
-      const result = recordWithIdWritten({ id: sharedNestedId }, idPath('id.record_id'), 'r_1');
+      const result = recordWithIdWritten({ id: sharedNestedId }, dotPath('id.record_id'), 'r_1');
       expect(result).toEqual({ id: { workspace_id: 'ws1', record_id: 'r_1' } });
       expect(sharedNestedId.record_id).toBeUndefined();
     });
 
     it('replaces a non-object intermediate (e.g. a leftover sentinel string) with a fresh object', () => {
-      expect(recordWithIdWritten({ id: 'scratch_pending_recreate_x' }, idPath('id.record_id'), 'r_1')).toEqual({
+      expect(recordWithIdWritten({ id: 'scratch_pending_recreate_x' }, dotPath('id.record_id'), 'r_1')).toEqual({
         id: { record_id: 'r_1' },
       });
     });
 
     it('writes to an existing literal own key as literal, mirroring lodash set on objects that carry it', () => {
       const input = { 'user.id': 'old', title: 'T' };
-      expect(recordWithIdWritten(input, idPath('user.id'), 'new')).toEqual({ 'user.id': 'new', title: 'T' });
+      expect(recordWithIdWritten(input, dotPath('user.id'), 'new')).toEqual({ 'user.id': 'new', title: 'T' });
       expect(input['user.id']).toBe('old');
     });
 
     it('writes a 3-segment path, creating the chain', () => {
-      expect(recordWithIdWritten({}, idPath('a.b.c'), 'v')).toEqual({ a: { b: { c: 'v' } } });
+      expect(recordWithIdWritten({}, dotPath('a.b.c'), 'v')).toEqual({ a: { b: { c: 'v' } } });
     });
 
     it('replaces an array intermediate with an object (id paths never index into arrays)', () => {
-      expect(recordWithIdWritten({ id: ['x'] }, idPath('id.record_id'), 'r_1')).toEqual({
+      expect(recordWithIdWritten({ id: ['x'] }, dotPath('id.record_id'), 'r_1')).toEqual({
         id: { record_id: 'r_1' },
       });
     });

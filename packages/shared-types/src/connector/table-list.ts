@@ -59,10 +59,26 @@ export interface TableSchemaPreview {
   slug: string;
   name: string;
   schema: Record<string, unknown>;
-  idColumnRemoteId: string;
+  /** Lodash dot path to the record's remote id (e.g. `'id'`, `'id.record_id'`). */
+  idPath: string;
+  /** Lodash dot path to the title/header field (e.g. `'fields.Name'`). */
+  titlePath?: string;
+  /** Lodash dot path to the main content/body field. */
+  mainContentPath?: string;
+  /** Lodash dot path to the slug field. */
+  slugPath?: string;
+  /**
+   * @deprecated DEV-10092 — superseded by `idPath`. A server predating the
+   * path-field rename still sends this; readers should prefer `idPath` and fall
+   * back to this during the transition.
+   */
+  idColumnRemoteId?: string;
+  /** @deprecated DEV-10092 — superseded by `titlePath` (now a dot string; this was a segment array). */
   titleColumnRemoteId?: string[];
+  /** @deprecated DEV-10092 — superseded by `mainContentPath` (now a dot string; this was a segment array). */
   mainContentColumnRemoteId?: string[];
+  /** @deprecated DEV-10092 — superseded by `slugPath`. */
   slugFieldPath?: string;
-  /** @deprecated Use slugFieldPath */
+  /** @deprecated Use slugPath */
   slugColumnRemoteId?: string;
 }

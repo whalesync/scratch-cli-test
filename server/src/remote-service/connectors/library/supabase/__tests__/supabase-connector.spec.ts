@@ -5,7 +5,7 @@ import {
   X_SCRATCH_MAX_LENGTH,
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, PullRecordFilesOptions, idPath } from '../../../types';
+import { BaseJsonTableSpec, EntityId, PullRecordFilesOptions, dotPath } from '../../../types';
 import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
 import { SupabaseConnector } from '../supabase-connector';
 
@@ -140,7 +140,7 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
     expect(properties.id[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('numeric');
     expect(properties.title[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('text');
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     expect(spec.schema.required).toEqual(['title']);
     expect(spec.schema.$id).toBe('supabase/public.records');
     expect(spec.schema.title).toBe('records');
@@ -208,7 +208,7 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
   it('falls back to "id" when no primary key candidates are returned', async () => {
     mockFindPrimaryColumnCandidates.mockResolvedValue([]);
     const spec = await fetchSchema([buildColumn({ column_name: 'id', data_type: 'integer', udt_name: 'int4' })]);
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
   });
 
   it('prefers an auto-generated PK when multiple PK candidates are present', async () => {
@@ -222,7 +222,7 @@ describe('SupabaseConnector.fetchJsonTableSpec', () => {
         column_default: 'gen_random_uuid()',
       }),
     ]);
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
   });
 
   it('maps array columns to typed array schemas', async () => {
@@ -266,7 +266,7 @@ function buildIncrementalTableSpec(): BaseJsonTableSpec {
       name: Type.String(),
       updated_at: Type.String(),
     }),
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 

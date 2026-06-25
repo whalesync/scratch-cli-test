@@ -688,7 +688,7 @@ export class YouTubeConnector extends Connector {
     const results: ConnectorFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const recordId = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      const recordId = readRecordIdAsString(file, tableSpec.idPath);
       if (!recordId) {
         results.push(file);
         continue;
@@ -803,7 +803,7 @@ export class YouTubeConnector extends Connector {
     const parsed = this.parseTableId(tableSpec.id);
     this.assertOwnedWritable(parsed, 'delete');
     for (const filter of files) {
-      const recordId = readRecordIdAsString(filter, tableSpec.idColumnRemoteId);
+      const recordId = readRecordIdAsString(filter, tableSpec.idPath);
       if (!recordId) continue;
       switch (parsed.kind) {
         case 'playlists':

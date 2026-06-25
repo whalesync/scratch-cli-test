@@ -32,11 +32,68 @@ export function getDefaultRepoPath(orgId: string, workbookId: WorkbookId, connAc
   return [orgId, workbookId, connAccountId].join('/') as RepoId;
 }
 
+/**
+ * Backward-compat shim (DEV-10092): `BaseJsonTableSpec`'s path-shaped fields
+ * were renamed and unified on the `*Path: DotPath` (lodash dot-path string)
+ * convention. `schema.json` files committed into workbook git repos before the
+ * rename still carry the old names. This normalizes a freshly-parsed stored
+ * schema in place — filling the new field from the legacy one only when the new
+ * field is absent (new writers always emit the new names) and converting the
+ * old `string[]` segment arrays for title/mainContent into dot-path strings.
+ *
+ * The legacy keys are dropped after normalizing so the returned object matches
+ * `BaseJsonTableSpec` (`slugColumnRemoteId` is intentionally kept — it remains a
+ * recognised `@deprecated` field). Stored schemas are migrated to the new shape
+ * lazily: the next pull regenerates the spec and `writeSchemaToGit` rewrites it.
+ * Returns the legacy field names that were found, for a one-time warn log.
+ *
+ * Remove this shim in a follow-up once every workbook has re-pulled.
+ */
+function normalizeStoredSchemaPathFields(parsed: Record<string, unknown>): { legacyFieldsFound: string[] } {
+  const legacyFieldsFound: string[] = [];
+
+  if (parsed.idPath === undefined && typeof parsed.idColumnRemoteId === 'string') {
+    parsed.idPath = parsed.idColumnRemoteId;
+    legacyFieldsFound.push('idColumnRemoteId');
+  }
+  if (
+    parsed.titlePath === undefined &&
+    Array.isArray(parsed.titleColumnRemoteId) &&
+    parsed.titleColumnRemoteId.length > 0
+  ) {
+    parsed.titlePath = parsed.titleColumnRemoteId
+      .filter((segment): segment is string => typeof segment === 'string')
+      .join('.');
+    legacyFieldsFound.push('titleColumnRemoteId');
+  }
+  if (
+    parsed.mainContentPath === undefined &&
+    Array.isArray(parsed.mainContentColumnRemoteId) &&
+    parsed.mainContentColumnRemoteId.length > 0
+  ) {
+    parsed.mainContentPath = parsed.mainContentColumnRemoteId
+      .filter((segment): segment is string => typeof segment === 'string')
+      .join('.');
+    legacyFieldsFound.push('mainContentColumnRemoteId');
+  }
+  if (parsed.slugPath === undefined && typeof parsed.slugFieldPath === 'string') {
+    parsed.slugPath = parsed.slugFieldPath;
+    legacyFieldsFound.push('slugFieldPath');
+  }
+
+  delete parsed.idColumnRemoteId;
+  delete parsed.titleColumnRemoteId;
+  delete parsed.mainContentColumnRemoteId;
+  delete parsed.slugFieldPath;
+
+  return { legacyFieldsFound };
+}
+
 function stripGeneratedAt(spec: Record<string, unknown>): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { generatedAt, ...rest } = spec as Record<string, unknown> & { generatedAt?: unknown };
   // Round-trip through JSON to drop any `undefined`-valued keys. This matches what
-  // gets serialized to disk — otherwise `{slugFieldPath: undefined}` (in-memory)
+  // gets serialized to disk — otherwise `{slugPath: undefined}` (in-memory)
   // would compare unequal to `{}` (on-disk, after JSON.stringify dropped it).
   return JSON.parse(JSON.stringify(rest)) as Record<string, unknown>;
 }
@@ -497,7 +554,19 @@ export class ScratchGitService {
         (await this.getRepoFile(repoId, MAIN_BRANCH, newGitPath)) ??
         (await this.getRepoFile(repoId, MAIN_BRANCH, legacyGitPath));
       if (!file) return null;
-      return JSON.parse(file.content) as BaseJsonTableSpec;
+      const parsed = JSON.parse(file.content) as Record<string, unknown>;
+      const { legacyFieldsFound } = normalizeStoredSchemaPathFields(parsed);
+      if (legacyFieldsFound.length > 0) {
+        WSLogger.warn({
+          source: 'ScratchGitService.readSchemaFromGit',
+          message:
+            'Read a schema.json using legacy path-field names (DEV-10092); normalized to *Path. The stored schema will be rewritten on the next pull.',
+          repoId,
+          folderPath,
+          legacyFieldsFound,
+        });
+      }
+      return parsed as unknown as BaseJsonTableSpec;
     } catch (error) {
       WSLogger.error({
         source: 'ScratchGitService.readSchemaFromGit',

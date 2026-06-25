@@ -14,10 +14,10 @@ describe('buildIntercomArticlesJsonTableSpec', () => {
 
     expect(spec.name).toBe('Articles');
     expect(spec.slug).toBe('articles');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['title']);
-    expect(spec.mainContentColumnRemoteId).toEqual(['body']);
-    expect(spec.slugFieldPath).toBe('title');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('title');
+    expect(spec.mainContentPath).toEqual('body');
+    expect(spec.slugPath).toBe('title');
   });
 
   it('includes all article fields', () => {
@@ -97,9 +97,9 @@ describe('buildIntercomCollectionsJsonTableSpec', () => {
 
     expect(spec.name).toBe('Collections');
     expect(spec.slug).toBe('collections');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
-    expect(spec.slugFieldPath).toBe('name');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
+    expect(spec.slugPath).toBe('name');
   });
 
   it('includes all collection fields', () => {
@@ -168,9 +168,9 @@ describe('buildIntercomConversationsJsonTableSpec', () => {
 
     expect(spec.name).toBe('Conversations');
     expect(spec.slug).toBe('conversations');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['title']);
-    expect(spec.slugFieldPath).toBe('source.subject');
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('title');
+    expect(spec.slugPath).toBe('source.subject');
   });
 
   it('includes all conversation fields', () => {

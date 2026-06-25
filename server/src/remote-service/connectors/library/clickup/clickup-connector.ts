@@ -304,7 +304,7 @@ export class ClickUpConnector extends Connector<string, ClickUpDownloadProgress>
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const taskId = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      const taskId = readRecordIdAsString(file, tableSpec.idPath);
       if (!taskId) {
         WSLogger.warn({ source: LOG_SOURCE, message: 'Skipping update for task with no id' });
         results.push(file);
@@ -338,14 +338,14 @@ export class ClickUpConnector extends Connector<string, ClickUpDownloadProgress>
       return;
     }
     for (const file of files) {
-      const taskId = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      const taskId = readRecordIdAsString(file, tableSpec.idPath);
       if (!taskId) continue;
       await this.client.deleteTask(taskId);
     }
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    const titlePath = tableSpec.titlePath && !tableSpec.titlePath.includes('.') ? tableSpec.titlePath : undefined;
     return suggestFileNamesFromFieldPaths(records, titlePath, 'name');
   }
 

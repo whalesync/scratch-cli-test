@@ -1,7 +1,7 @@
 import { TSchema } from '@sinclair/typebox';
 import { AxiosError } from 'axios';
 import { Service } from '../../../service-constants';
-import { BaseJsonTableSpec, ConnectorFile, idPath } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
 import { BrevoConnector } from '../brevo-connector';
 import { BrevoContact, BrevoContactAttribute, BrevoTemplate } from '../brevo-types';
 
@@ -63,7 +63,7 @@ function buildTableSpec(tableType: string): BaseJsonTableSpec {
     slug: tableType,
     name: tableType,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 
@@ -191,8 +191,8 @@ describe('BrevoConnector', () => {
       const spec = await connector.fetchJsonTableSpec({ wsId: 'contacts', remoteId: ['contacts'] });
 
       expect(spec.name).toBe('Contacts');
-      expect(spec.idColumnRemoteId).toBe('id');
-      expect(spec.titleColumnRemoteId).toEqual(['email']);
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toEqual('email');
       expect(mockGetContactAttributes).toHaveBeenCalledTimes(1);
     });
 
@@ -200,8 +200,8 @@ describe('BrevoConnector', () => {
       const spec = await connector.fetchJsonTableSpec({ wsId: 'templates', remoteId: ['templates'] });
 
       expect(spec.name).toBe('Email Templates');
-      expect(spec.idColumnRemoteId).toBe('id');
-      expect(spec.titleColumnRemoteId).toEqual(['name']);
+      expect(spec.idPath).toBe('id');
+      expect(spec.titlePath).toEqual('name');
       expect(mockGetContactAttributes).not.toHaveBeenCalled();
     });
 
@@ -548,7 +548,7 @@ describe('BrevoConnector', () => {
         { id: 2, email: 'bob@example.com' },
       ];
       const tableSpec = buildTableSpec('contacts');
-      tableSpec.slugFieldPath = 'email';
+      tableSpec.slugPath = dotPath('email');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
@@ -561,7 +561,7 @@ describe('BrevoConnector', () => {
         { id: 2, name: 'Newsletter' },
       ];
       const tableSpec = buildTableSpec('templates');
-      tableSpec.slugFieldPath = 'name';
+      tableSpec.slugPath = dotPath('name');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
@@ -571,7 +571,7 @@ describe('BrevoConnector', () => {
     it('uses name for mailing lists', () => {
       const records: ConnectorFile[] = [{ id: 1, name: 'VIP List' }];
       const tableSpec = buildTableSpec('mailing_lists');
-      tableSpec.slugFieldPath = 'name';
+      tableSpec.slugPath = dotPath('name');
 
       const names = connector.getSuggestedRecordFileNames(records, tableSpec);
 
@@ -595,7 +595,7 @@ describe('BrevoConnector', () => {
     it('builds mailing lists schema', async () => {
       const spec = await connector.fetchJsonTableSpec({ wsId: 'mailing_lists', remoteId: ['mailing_lists'] });
       expect(spec.name).toBe('Mailing Lists');
-      expect(spec.idColumnRemoteId).toBe('id');
+      expect(spec.idPath).toBe('id');
     });
 
     it('pulls mailing lists', async () => {

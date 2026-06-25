@@ -203,7 +203,7 @@ export class AirtableConnector extends Connector {
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
     const primaryFieldName = this.resolvePrimaryFieldName(tableSpec);
     if (!primaryFieldName) {
-      return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath ?? tableSpec.slugColumnRemoteId);
     }
     return records.map((record) => {
       const value = _.get(record, ['fields', primaryFieldName]) as unknown;
@@ -213,21 +213,27 @@ export class AirtableConnector extends Connector {
 
   /**
    * Resolve the primary field name for filename extraction.
-   * titleColumnRemoteId is now ['fields', fieldName], so just return the field name directly.
+   * titlePath is now the dot path 'fields.<fieldName>', so split it back into
+   * segments and return the field name (the segment after 'fields').
+   *
+   * Caveat: an Airtable field name containing a literal `.` over-splits here and
+   * yields a truncated name (see `BaseJsonTableSpec.titlePath`). This only affects
+   * the suggested filename — it falls back to the record id — never correctness.
    */
   private resolvePrimaryFieldName(tableSpec: BaseJsonTableSpec): string | undefined {
-    if (!tableSpec.titleColumnRemoteId || tableSpec.titleColumnRemoteId.length === 0) {
+    if (!tableSpec.titlePath) {
       return undefined;
     }
 
-    // titleColumnRemoteId is ['fields', fieldName] — return the field name directly
-    if (tableSpec.titleColumnRemoteId.length >= 2) {
-      return tableSpec.titleColumnRemoteId[1];
+    const titlePathSegments = _.toPath(tableSpec.titlePath);
+    // 'fields.<fieldName>' — return the field name directly.
+    if (titlePathSegments.length >= 2) {
+      return titlePathSegments[1];
     }
 
-    // Fallback for single-element array (shouldn't happen with new schema)
-    if (tableSpec.titleColumnRemoteId.length === 1) {
-      return tableSpec.titleColumnRemoteId[0];
+    // Fallback for a single-segment path (shouldn't happen with the current schema).
+    if (titlePathSegments.length === 1) {
+      return titlePathSegments[0];
     }
 
     return undefined;

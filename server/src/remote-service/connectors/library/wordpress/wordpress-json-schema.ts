@@ -10,7 +10,7 @@ import {
   X_SCRATCH_READONLY,
 } from '@spinner/shared-types';
 import { isArray } from 'lodash';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { WORDPRESS_MODIFIED_COLUMN_ID, WORDPRESS_STATUS_COLUMN_ID } from './wordpress-constants';
 import { buildWordPressDefaultView } from './wordpress-default-view';
@@ -300,8 +300,8 @@ export function buildWordPressJsonTableSpec(
   const [tableId] = id.remoteId;
 
   const properties: Record<string, TSchema> = {};
-  let titleColumnRemoteId: EntityId['remoteId'] | undefined;
-  let mainContentColumnRemoteId: EntityId['remoteId'] | undefined;
+  let titlePath: DotPath | undefined;
+  let mainContentPath: DotPath | undefined;
 
   // Get schema properties from the endpoint OPTIONS response
   const schemaProps = optionsResponse.schema?.properties || {};
@@ -327,12 +327,12 @@ export function buildWordPressJsonTableSpec(
 
     // Track title column
     if (fieldId === 'title') {
-      titleColumnRemoteId = ['title', 'raw'];
+      titlePath = dotPath('title.raw');
     }
 
     // Track main content column
-    if (fieldId === 'content' && !mainContentColumnRemoteId) {
-      mainContentColumnRemoteId = [fieldId, 'raw'];
+    if (fieldId === 'content' && !mainContentPath) {
+      mainContentPath = dotPath([fieldId, 'raw'].join('.'));
     }
   }
 
@@ -405,10 +405,10 @@ export function buildWordPressJsonTableSpec(
     slug: id.wsId,
     name: formatTableName(tableId),
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId,
-    mainContentColumnRemoteId,
-    slugFieldPath: 'slug',
+    idPath: dotPath('id'),
+    titlePath,
+    mainContentPath,
+    slugPath: dotPath('slug'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

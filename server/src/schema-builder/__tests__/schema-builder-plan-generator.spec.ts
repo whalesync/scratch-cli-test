@@ -228,7 +228,7 @@ describe('generateCreatePlanFromSources — injected source-record-id field', ()
     });
     const injected = tables[0].fields.find((f) => f.isSourceRecordId);
     expect(injected?.name).toBe('postgres_record_id');
-    // The note pairs the source's idColumnRemoteId path with the injected field name,
+    // The note pairs the source's idPath path with the injected field name,
     // so the client/sync knows where to source this column's value from.
     expect(notes.find((note) => note.fieldName === 'postgres_record_id')).toEqual({
       sourceDataFolderId: 'posts',

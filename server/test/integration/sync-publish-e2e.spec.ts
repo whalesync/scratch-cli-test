@@ -33,7 +33,7 @@ import { RefCleanerService } from 'src/publish-plan/ref-cleaner.service';
 import { RefResolverService } from 'src/publish-plan/ref-resolver.service';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
 import { Service } from 'src/remote-service/connectors/service-constants';
-import { BaseJsonTableSpec, ConnectorFile } from 'src/remote-service/connectors/types';
+import { BaseJsonTableSpec, ConnectorFile, dotPath } from 'src/remote-service/connectors/types';
 import { ScheduleService } from 'src/schedule/schedule.service';
 import { DIRTY_BRANCH, getDefaultRepoPath, MAIN_BRANCH, ScratchGitService } from 'src/scratch-git/scratch-git.service';
 import { SyncService } from 'src/sync/sync.service';
@@ -117,12 +117,12 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         .mockImplementation((connectorAccountId: string) => Promise.resolve(connectorAccountId)),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
-          '/src-tags': { idColumnRemoteId: 'id' },
-          '/dest-tags': { idColumnRemoteId: 'id', slugFieldPath: 'slug' },
-          '/src-posts': { idColumnRemoteId: 'id' },
+          '/src-tags': { idPath: 'id' },
+          '/dest-tags': { idPath: 'id', slugPath: dotPath('slug') },
+          '/src-posts': { idPath: 'id' },
           '/dest-posts': {
-            idColumnRemoteId: 'id',
-            slugFieldPath: 'slug',
+            idPath: 'id',
+            slugPath: dotPath('slug'),
             schema: {
               type: 'object',
               properties: {
@@ -198,7 +198,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
     mockConnector = {
       getBatchSize: jest.fn().mockReturnValue(25),
       createRecords: jest.fn().mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
-        const idField = tableSpec.idColumnRemoteId;
+        const idField = tableSpec.idPath;
         for (const file of files) {
           if (idField in file) {
             throw new Error(
@@ -209,7 +209,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
         return Promise.resolve(
           files.map((file) => ({
             ...file,
-            [tableSpec.idColumnRemoteId]: nextWpId++,
+            [tableSpec.idPath]: nextWpId++,
           })),
         );
       }),
@@ -221,7 +221,7 @@ describe('Sync + Publish E2E Pipeline (Airtable → WordPress)', () => {
             files: ConnectorFile[],
             changedFields?: (Record<string, unknown> | undefined)[],
           ) => {
-            const idField = tableSpec.idColumnRemoteId;
+            const idField = tableSpec.idPath;
             for (const file of files) {
               const idValue = file[idField];
               const numericValue = Number(idValue);
@@ -1237,12 +1237,12 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       }),
       readSchemaFromGit: jest.fn().mockImplementation((_repoId: string, folderPath: string) => {
         const schemas: Record<string, Record<string, unknown>> = {
-          '/src-tags': { idColumnRemoteId: 'id' },
-          '/dest-tags': { idColumnRemoteId: 'id', slugFieldPath: 'slug' },
-          '/src-posts': { idColumnRemoteId: 'id' },
+          '/src-tags': { idPath: 'id' },
+          '/dest-tags': { idPath: 'id', slugPath: dotPath('slug') },
+          '/src-posts': { idPath: 'id' },
           '/dest-posts': {
-            idColumnRemoteId: 'id',
-            slugFieldPath: 'slug',
+            idPath: 'id',
+            slugPath: dotPath('slug'),
             schema: {
               type: 'object',
               properties: {
@@ -1318,7 +1318,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     mockConnector = {
       getBatchSize: jest.fn().mockReturnValue(25),
       createRecords: jest.fn().mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
-        const idField = tableSpec.idColumnRemoteId;
+        const idField = tableSpec.idPath;
         for (const file of files) {
           if (idField in file) {
             throw new Error(
@@ -1329,7 +1329,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
         return Promise.resolve(
           files.map((file) => ({
             ...file,
-            [tableSpec.idColumnRemoteId]: nextWpId++,
+            [tableSpec.idPath]: nextWpId++,
           })),
         );
       }),
@@ -1341,7 +1341,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
             files: ConnectorFile[],
             changedFields?: (Record<string, unknown> | undefined)[],
           ) => {
-            const idField = tableSpec.idColumnRemoteId;
+            const idField = tableSpec.idPath;
             for (const file of files) {
               const idValue = file[idField];
               const numericValue = Number(idValue);
@@ -1783,10 +1783,10 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
     // is the folder slug, which matches `/dest-tags`.
     (scratchGitService.readSchemaFromGit as jest.Mock).mockImplementation((_repoId: string, folderPath: string) => {
       const schemas: Record<string, Record<string, unknown>> = {
-        '/dest-tags': { idColumnRemoteId: 'id', slugFieldPath: 'slug' },
+        '/dest-tags': { idPath: 'id', slugPath: dotPath('slug') },
         '/dest-posts': {
-          idColumnRemoteId: 'id',
-          slugFieldPath: 'slug',
+          idPath: 'id',
+          slugPath: dotPath('slug'),
           schema: {
             type: 'object',
             properties: {
@@ -1842,7 +1842,7 @@ describe('Sync + Publish E2E Pipeline (V2 workbook — repo-per-connection)', ()
       [];
     mockConnector.createRecords.mockImplementation((tableSpec: BaseJsonTableSpec, files: ConnectorFile[]) => {
       createPayloads.push(files);
-      const idField = tableSpec.idColumnRemoteId;
+      const idField = tableSpec.idPath;
       // Mirror the default mock's auto-incrementing ids so we can assert
       // the connector-assigned values made it into the remap + commit.
       return Promise.resolve(files.map((f) => ({ ...f, [idField]: 2000 + createPayloads.flat().indexOf(f) + 1 })));

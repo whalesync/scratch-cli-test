@@ -138,8 +138,8 @@ describeIfCreds('ZohoConnector — live API (read-only)', () => {
       expect(modified['x-scratch-last-modified-field']).toBe(true);
       expect(modified[X_SCRATCH_READONLY]).toBe(true);
 
-      expect(leadsSpec.idColumnRemoteId).toBe('id');
-      expect(leadsSpec.titleColumnRemoteId).toEqual(['Last_Name']);
+      expect(leadsSpec.idPath).toBe('id');
+      expect(leadsSpec.titlePath).toEqual('Last_Name');
     });
 
     it('annotates the Owner ownerlookup as a foreign key to users', () => {

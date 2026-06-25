@@ -20,12 +20,12 @@ describe('buildWebflowPagesJsonTableSpec', () => {
     expect(spec.name).toBe('Pages');
   });
 
-  it('should use the id column for idColumnRemoteId', () => {
-    expect(spec.idColumnRemoteId).toBe('id');
+  it('should use the id column for idPath', () => {
+    expect(spec.idPath).toBe('id');
   });
 
-  it('should use the slug column for titleColumnRemoteId', () => {
-    expect(spec.titleColumnRemoteId).toEqual(['slug']);
+  it('should use the slug column for titlePath', () => {
+    expect(spec.titlePath).toEqual('slug');
   });
 
   it('should set basePath from site displayName', () => {

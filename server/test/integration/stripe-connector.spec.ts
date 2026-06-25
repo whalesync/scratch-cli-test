@@ -172,8 +172,8 @@ describeIfKey('StripeConnector — live API', () => {
 
     it('builds a schema with customer fields', () => {
       expect(customersSpec.name).toBe('Customers');
-      expect(customersSpec.idColumnRemoteId).toBe('id');
-      expect(customersSpec.titleColumnRemoteId).toEqual(['name']);
+      expect(customersSpec.idPath).toBe('id');
+      expect(customersSpec.titlePath).toEqual('name');
 
       const props = customersSpec.schema.properties;
       expect(props).toHaveProperty('id');
@@ -238,7 +238,7 @@ describeIfKey('StripeConnector — live API', () => {
 
     it('builds a schema with product fields', () => {
       expect(productsSpec.name).toBe('Products');
-      expect(productsSpec.titleColumnRemoteId).toEqual(['name']);
+      expect(productsSpec.titlePath).toEqual('name');
 
       const props = productsSpec.schema.properties;
       expect(props).toHaveProperty('name');
@@ -272,7 +272,7 @@ describeIfKey('StripeConnector — live API', () => {
 
     it('builds a schema with price fields', () => {
       expect(pricesSpec.name).toBe('Prices');
-      expect(pricesSpec.titleColumnRemoteId).toEqual(['nickname']);
+      expect(pricesSpec.titlePath).toEqual('nickname');
 
       const props = pricesSpec.schema.properties;
       expect(props).toHaveProperty('product');
@@ -343,7 +343,7 @@ describeIfKey('StripeConnector — live API', () => {
 
     it('builds a schema with invoice fields', () => {
       expect(invoicesSpec.name).toBe('Invoices');
-      expect(invoicesSpec.titleColumnRemoteId).toEqual(['number']);
+      expect(invoicesSpec.titlePath).toEqual('number');
 
       const props = invoicesSpec.schema.properties;
       expect(props).toHaveProperty('customer');

@@ -13,6 +13,7 @@ import { ApiRateLimitGuard } from 'src/rate-limiter/api-rate-limit.guard';
 import { ConnectorAccountService } from 'src/remote-service/connector-account/connector-account.service';
 import { Connector } from 'src/remote-service/connectors/connector';
 import { ConnectorsService } from 'src/remote-service/connectors/connectors.service';
+import { dotPath } from 'src/remote-service/connectors/types';
 import { DataFolderService } from 'src/workbook/data-folder.service';
 import { WorkbookService } from 'src/workbook/workbook.service';
 import request from 'supertest';
@@ -218,8 +219,8 @@ describe('SchemaBuilderController (controller-level e2e)', () => {
     const sourceStoredSchema = {
       schema: sourceSchema,
       name: 'Authors',
-      idColumnRemoteId: 'id',
-      titleColumnRemoteId: ['name'],
+      idPath: 'id',
+      titlePath: dotPath('name'),
     };
 
     it('generates a create-tables plan when no existing destination is given', async () => {

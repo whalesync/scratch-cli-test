@@ -167,8 +167,12 @@ pub fn enforce_schema(ctx: &RecordValidationContext) -> Vec<RecordValidationResu
     // publish, so missing id is expected and must not be flagged.
     {
         let modified: Option<serde_json::Value> = if ctx.master_record.is_none() {
+            // DEV-10092: `idColumnRemoteId` was renamed `idPath`. Read the new name
+            // first, falling back to the legacy name for schemas committed before
+            // the rename. Drop the fallback once every workbook has re-pulled.
             ctx.schema
-                .get("idColumnRemoteId")
+                .get("idPath")
+                .or_else(|| ctx.schema.get("idColumnRemoteId"))
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.split('.').next())
                 .map(|id_seg| {
@@ -616,10 +620,12 @@ mod tests {
         json!({ "schema": { "required": [], "properties": props } })
     }
 
-    /// Schema where `id` is the primary key (idColumnRemoteId) and also required.
+    /// Schema where `id` is the primary key (idPath) and also required.
+    /// Uses the new `idPath` field name (DEV-10092); the Attio fixture below
+    /// keeps the legacy `idColumnRemoteId` to cover backward compat.
     fn schema_with_id_column() -> serde_json::Value {
         json!({
-            "idColumnRemoteId": "id",
+            "idPath": "id",
             "schema": {
                 "required": ["id", "name"],
                 "properties": {

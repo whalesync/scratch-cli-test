@@ -372,8 +372,8 @@ describe('buildPipedriveJsonTableSpec', () => {
     const spec = await buildPipedriveJsonTableSpec(entityId, 'deals', mockClient as unknown as PipedriveApiClient);
 
     expect(spec.name).toBe('Deals');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['title']);
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('title');
     expect(spec.schema.properties).toHaveProperty('id');
     expect(spec.schema.properties).toHaveProperty('title');
     expect(spec.schema.properties).toHaveProperty('custom_fields');
@@ -451,7 +451,7 @@ describe('buildPipedriveJsonTableSpec', () => {
       );
 
       expect(spec.name).toBe('Leads');
-      expect(spec.titleColumnRemoteId).toEqual(['title']);
+      expect(spec.titlePath).toEqual('title');
       // Static lead system fields are present...
       expect(spec.schema.properties).toHaveProperty('title');
       expect(spec.schema.properties).toHaveProperty('value');
@@ -486,7 +486,7 @@ describe('buildPipedriveJsonTableSpec', () => {
 
       expect(mockClient.getFields).not.toHaveBeenCalled();
       expect(spec.name).toBe('Notes');
-      expect(spec.titleColumnRemoteId).toBeUndefined();
+      expect(spec.titlePath).toBeUndefined();
       expect(spec.schema.properties).toHaveProperty('content');
       expect(spec.schema.properties).toHaveProperty('deal_id');
       expect(spec.schema.properties).not.toHaveProperty('custom_fields');
@@ -530,7 +530,7 @@ describe('buildPipedriveJsonTableSpec', () => {
 
       expect(mockClient.getFields).not.toHaveBeenCalled();
       expect(spec.name).toBe('Pipelines');
-      expect(spec.titleColumnRemoteId).toEqual(['name']);
+      expect(spec.titlePath).toEqual('name');
       expect(spec.schema.properties).toHaveProperty('name');
       expect(spec.schema.properties).not.toHaveProperty('custom_fields');
       expect(spec.schema.properties.update_time[X_SCRATCH_READONLY]).toBe(true);

@@ -151,7 +151,7 @@ describeIfKey('NotionConnector — live API', () => {
       // `name` is the wsId-sanitized form (lowercase + underscores), not the
       // display title — see buildNotionJsonTableSpec at notion-json-schema.ts.
       expect(primarySpec.name).toBe(primarySpec.id.wsId);
-      expect(primarySpec.idColumnRemoteId).toBe('id');
+      expect(primarySpec.idPath).toBe('id');
       expect(primarySpec.schema).toBeDefined();
 
       const props = (primarySpec.schema as unknown as { properties: Record<string, unknown> }).properties;
@@ -659,9 +659,9 @@ async function fetchById(
 
 /** Find the Notion title property name (every database has exactly one). */
 function findTitlePropertyName(spec: BaseJsonTableSpec): string {
-  const remoteId = spec.titleColumnRemoteId;
+  const remoteId = spec.titlePath;
   if (!remoteId || remoteId.length < 2) {
-    throw new Error('Spec is missing titleColumnRemoteId — seed database must have a title-typed property.');
+    throw new Error('Spec is missing titlePath — seed database must have a title-typed property.');
   }
   return remoteId[1];
 }

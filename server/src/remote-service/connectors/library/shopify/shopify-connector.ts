@@ -23,8 +23,8 @@ import {
   BaseJsonTableSpec,
   ConnectorErrorDetails,
   ConnectorFile,
+  dotPath,
   EntityId,
-  idPath,
   PullRecordFilesOptions,
   PullRecordFilesResult,
   TablePreview,
@@ -232,7 +232,7 @@ export class ShopifyConnector extends Connector {
       slug: entityType,
       name: config.displayName,
       schema: resolvedSchema,
-      idColumnRemoteId: idPath('id'),
+      idPath: dotPath('id'),
       generatedAt: new Date().toISOString(),
     };
 
@@ -243,13 +243,13 @@ export class ShopifyConnector extends Connector {
       | { slug?: string; title?: readonly string[]; mainContent?: readonly string[] }
       | undefined;
     if (columns?.slug) {
-      spec.slugFieldPath = columns.slug;
+      spec.slugPath = dotPath(columns.slug);
     }
     if (columns?.title) {
-      spec.titleColumnRemoteId = [...columns.title];
+      spec.titlePath = dotPath(columns.title.join('.'));
     }
     if (columns?.mainContent) {
-      spec.mainContentColumnRemoteId = [...columns.mainContent];
+      spec.mainContentPath = dotPath(columns.mainContent.join('.'));
     }
 
     return spec;
@@ -495,7 +495,7 @@ export class ShopifyConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath ?? tableSpec.slugColumnRemoteId);
   }
 
   /**

@@ -40,14 +40,14 @@ export function buildGitFilesFromConnectorFiles(
   existingFileNames: Map<string, string>,
   suggestedFileNames: (string | undefined)[],
 ): BuiltFile[] {
-  const idColumnRemoteId = tableSpec.idColumnRemoteId;
+  const idPath = tableSpec.idPath;
   const processedFiles: BuiltFile[] = [];
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
     const parsedRecord = record as JsonSafeObject;
     const content = formatRecordJson(parsedRecord as Record<string, unknown>);
-    const recordId = readRecordIdAsString(record, idColumnRemoteId) ?? '';
+    const recordId = readRecordIdAsString(record, idPath) ?? '';
 
     let fileName = existingFileNames.get(recordId);
 

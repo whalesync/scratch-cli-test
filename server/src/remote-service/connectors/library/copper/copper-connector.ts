@@ -235,7 +235,7 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const id = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      const id = readRecordIdAsString(file, tableSpec.idPath);
       if (!id) {
         WSLogger.warn({ source: LOG_SOURCE, message: `Skipping update for ${entityType} record with no id` });
         continue;
@@ -257,14 +257,14 @@ export class CopperConnector extends Connector<string, CopperDownloadProgress> {
     const entityType = this.resolveEntityType(tableSpec.id.wsId);
 
     for (const file of files) {
-      const id = readRecordIdAsString(file, tableSpec.idColumnRemoteId);
+      const id = readRecordIdAsString(file, tableSpec.idPath);
       if (!id) continue;
       await this.client.deleteEntity(entityType, parseInt(id, 10));
     }
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    const titlePath = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    const titlePath = tableSpec.titlePath && !tableSpec.titlePath.includes('.') ? tableSpec.titlePath : undefined;
     return suggestFileNamesFromFieldPaths(records, titlePath, 'name');
   }
 

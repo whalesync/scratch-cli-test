@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { buildStripeDefaultView } from './stripe-default-view';
 import { StripeEntityType } from './stripe-types';
 
@@ -597,9 +597,9 @@ export function buildStripeJsonTableSpec(id: EntityId, entityType: StripeEntityT
     slug: id.wsId,
     name: ENTITY_DISPLAY_NAMES[entityType],
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: getTitleColumnRemoteId(entityType),
-    slugFieldPath: getSlugFieldPath(entityType),
+    idPath: dotPath('id'),
+    titlePath: dotPath(getTitleColumnRemoteId(entityType).join('.')),
+    slugPath: dotPath(getSlugFieldPath(entityType)),
     basePath: [],
     // Deep link to this entity's list view in the Stripe dashboard, e.g.
     // https://dashboard.stripe.com/customers (live mode).

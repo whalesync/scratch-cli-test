@@ -7,7 +7,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, DotPath, EntityId, dotPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildFramerDefaultView } from './framer-default-view';
 import { FramerCollectionMeta, FramerFieldMeta, FramerFieldType, NON_DATA_FRAMER_FIELD_TYPES } from './framer-types';
@@ -136,21 +136,18 @@ function framerFieldEntrySchema(field: FramerFieldMeta): TSchema {
  */
 export function buildFramerJsonTableSpec(id: EntityId, collection: FramerCollectionMeta): BaseJsonTableSpec {
   const fieldDataProperties: Record<string, TSchema> = {};
-  let titleColumnRemoteId: EntityId['remoteId'] | undefined;
-  let mainContentColumnRemoteId: EntityId['remoteId'] | undefined;
+  let titlePath: DotPath | undefined;
+  let mainContentPath: DotPath | undefined;
 
   for (const field of collection.fields) {
     if (NON_DATA_FRAMER_FIELD_TYPES.has(field.type)) continue;
     fieldDataProperties[field.id] = framerFieldEntrySchema(field);
 
-    if (
-      !titleColumnRemoteId &&
-      (field.type === FramerFieldType.String || field.type === FramerFieldType.FormattedText)
-    ) {
-      titleColumnRemoteId = ['fieldData', field.id, 'value'];
+    if (!titlePath && (field.type === FramerFieldType.String || field.type === FramerFieldType.FormattedText)) {
+      titlePath = dotPath(['fieldData', field.id, 'value'].join('.'));
     }
-    if (!mainContentColumnRemoteId && field.type === FramerFieldType.FormattedText) {
-      mainContentColumnRemoteId = ['fieldData', field.id, 'value'];
+    if (!mainContentPath && field.type === FramerFieldType.FormattedText) {
+      mainContentPath = dotPath(['fieldData', field.id, 'value'].join('.'));
     }
   }
 
@@ -176,10 +173,10 @@ export function buildFramerJsonTableSpec(id: EntityId, collection: FramerCollect
     slug: id.wsId,
     name: collection.name,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: titleColumnRemoteId ?? ['slug'],
-    mainContentColumnRemoteId,
-    slugFieldPath: 'slug',
+    idPath: dotPath('id'),
+    titlePath: titlePath ?? dotPath('slug'),
+    mainContentPath,
+    slugPath: dotPath('slug'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildFramerDefaultView(collection),

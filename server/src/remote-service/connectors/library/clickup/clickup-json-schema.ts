@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { CLICKUP_DOCS_TABLE_NAME, CLICKUP_USERS_TABLE_NAME, ClickUpCustomFieldDefinition } from './clickup-types';
 
 /**
@@ -166,9 +166,9 @@ export function buildClickUpJsonTableSpec(
     slug: id.wsId,
     name: listName,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
-    mainContentColumnRemoteId: ['description'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
+    mainContentPath: dotPath('description'),
     // Structural hierarchy → folder path: records land at
     // `/{Workspace}/{Space}/{Folder}/{List}/{task}.json` (Space/Folder from `basePath`).
     basePath,
@@ -201,8 +201,8 @@ export function buildClickUpUsersTableSpec(id: EntityId, workspaceName: string):
     slug: id.wsId,
     name: CLICKUP_USERS_TABLE_NAME,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['username'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('username'),
     basePath: workspaceName ? [workspaceName] : [],
     generatedAt: new Date().toISOString(),
   };
@@ -231,8 +231,8 @@ export function buildClickUpDocsTableSpec(id: EntityId, workspaceName: string): 
     slug: id.wsId,
     name: CLICKUP_DOCS_TABLE_NAME,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
     basePath: workspaceName ? [workspaceName] : [],
     generatedAt: new Date().toISOString(),
   };

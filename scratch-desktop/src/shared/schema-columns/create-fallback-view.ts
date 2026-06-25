@@ -28,12 +28,22 @@ function mapDataTypeToPropertyType(dataType: ColumnDataType, format?: string): T
 }
 
 function resolveTitleColumnId(wrapper: Record<string, unknown>, colIds: string[]): string | null {
-  const raw = wrapper.titleColumnRemoteId;
-  if (Array.isArray(raw) && raw.length > 0 && raw.every((s): s is string => typeof s === 'string')) {
-    const realValue = raw.join('.');
-    if (colIds.includes(realValue)) {
-      return realValue;
+  // `titlePath` is a lodash dot path (DEV-10092). Fall back to the legacy
+  // `titleColumnRemoteId` segment array for schema.json files committed before
+  // the rename (the desktop reads these straight off disk, so it must accept
+  // both shapes until every workbook has re-pulled).
+  let realValue: string | undefined;
+  const titlePath = wrapper.titlePath;
+  if (typeof titlePath === 'string' && titlePath.length > 0) {
+    realValue = titlePath;
+  } else {
+    const legacy = wrapper.titleColumnRemoteId;
+    if (Array.isArray(legacy) && legacy.length > 0 && legacy.every((s): s is string => typeof s === 'string')) {
+      realValue = legacy.join('.');
     }
+  }
+  if (realValue !== undefined && colIds.includes(realValue)) {
+    return realValue;
   }
   return colIds[0] ?? null;
 }

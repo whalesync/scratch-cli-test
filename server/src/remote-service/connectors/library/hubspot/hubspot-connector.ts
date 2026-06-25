@@ -431,7 +431,7 @@ export class HubspotConnector extends Connector<string, HubspotDownloadProgress>
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath);
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath);
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

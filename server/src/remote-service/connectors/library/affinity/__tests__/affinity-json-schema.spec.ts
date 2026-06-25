@@ -76,7 +76,7 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
 
     expect(spec.name).toBe('Vendors');
     expect(spec.slug).toBe('list_500');
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     // Lists are nested under "Lists/" in both the picker AND the workbook
     // tree — see CONNECTOR_GUIDE.md "Fixed vs. user-defined tables".
     expect(spec.basePath).toEqual(['Lists']);
@@ -89,7 +89,7 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
 
     const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500, type: 'person' }), mockClient);
 
-    expect(spec.titleColumnRemoteId).toEqual(['entity', 'firstName']);
+    expect(spec.titlePath).toEqual('entity.firstName');
   });
 
   it('uses entity.name as the title for company lists', async () => {
@@ -97,7 +97,7 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
 
     const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500, type: 'company' }), mockClient);
 
-    expect(spec.titleColumnRemoteId).toEqual(['entity', 'name']);
+    expect(spec.titlePath).toEqual('entity.name');
   });
 
   it('uses entity.name as the title for opportunity lists', async () => {
@@ -105,7 +105,7 @@ describe('buildAffinityJsonTableSpec (list-entries)', () => {
 
     const spec = await buildAffinityJsonTableSpec(entityId, makeList({ id: 500, type: 'opportunity' }), mockClient);
 
-    expect(spec.titleColumnRemoteId).toEqual(['entity', 'name']);
+    expect(spec.titlePath).toEqual('entity.name');
   });
 
   it('mounts list-entry top-level fields with correct readonly flags', async () => {
@@ -232,13 +232,13 @@ describe('buildAffinityPersonsTableSpec', () => {
 
     expect(spec.name).toBe('People');
     expect(spec.slug).toBe('persons');
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     // Tenant tables live at the workbook root — no Lists/ wrapper.
     expect(spec.basePath).toEqual([]);
     // FLAT title field — no `entity.` prefix because tenant records have no
     // entity wrapper. firstName chosen because lastName is nullable.
-    expect(spec.titleColumnRemoteId).toEqual(['firstName']);
-    expect(spec.titleColumnRemoteId).not.toEqual(['entity', 'firstName']);
+    expect(spec.titlePath).toEqual('firstName');
+    expect(spec.titlePath).not.toEqual('entity.firstName');
   });
 
   it('mounts entity-shape properties at the TOP LEVEL (no entity wrapper)', async () => {
@@ -295,10 +295,10 @@ describe('buildAffinityCompaniesTableSpec', () => {
 
     expect(spec.name).toBe('Companies');
     expect(spec.slug).toBe('companies');
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     expect(spec.basePath).toEqual([]);
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
-    expect(spec.titleColumnRemoteId).not.toEqual(['entity', 'name']);
+    expect(spec.titlePath).toEqual('name');
+    expect(spec.titlePath).not.toEqual('entity.name');
   });
 
   it('mounts company properties at the top level (no entity wrapper)', async () => {
@@ -350,8 +350,8 @@ describe('buildAffinityOpportunitiesTableSpec', () => {
     const spec = buildAffinityOpportunitiesTableSpec(entityId);
 
     expect(spec.name).toBe('Opportunities');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
     expect(spec.basePath).toEqual([]);
     // None of the field-metadata mocks should have been touched — opportunities
     // have no /fields endpoint.
@@ -399,7 +399,7 @@ describe('buildAffinityNotesTableSpec', () => {
     const spec = buildAffinityNotesTableSpec(entityId);
 
     expect(spec.name).toBe('Notes');
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     expect(spec.basePath).toEqual([]);
     expect((spec.schema as any).$id).toBe('affinity/notes');
   });
@@ -438,8 +438,8 @@ describe('buildAffinityEntityFilesTableSpec', () => {
     const spec = buildAffinityEntityFilesTableSpec(entityId);
 
     expect(spec.name).toBe('Entity Files');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
     // Entity Files are top-level (not under Interactions)
     expect(spec.basePath).toEqual([]);
     expect((spec.schema as any).$id).toBe('affinity/entity-files');

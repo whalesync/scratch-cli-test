@@ -1,10 +1,11 @@
 //! Lodash-style dot-path access into `serde_json::Value` trees.
 //!
-//! Mirrors the TypeScript `IdPath` contract on the server (see
+//! Mirrors the TypeScript `DotPath` contract on the server (see
 //! `server/src/remote-service/connectors/types.ts`). A connector schema
-//! declares `idColumnRemoteId` as a dot path into a record file (e.g. `"id"`
-//! for flat ids, `"id.record_id"` for Attio's id triple); both sides must
-//! traverse it the same way.
+//! declares `idPath` as a dot path into a record file (e.g. `"id"` for flat
+//! ids, `"id.record_id"` for Attio's id triple); both sides must traverse it
+//! the same way. (DEV-10092 renamed this field from `idColumnRemoteId`; the
+//! reader in `index.rs` still accepts the legacy name on older schemas.)
 //!
 //! Path syntax:
 //! * Segments are separated by `.`.
@@ -13,13 +14,12 @@
 //!   missing segment.
 //!
 //! Bracket notation and array indices are intentionally not supported —
-//! `idColumnRemoteId` only ever points at object-shaped ids.
+//! `idPath` only ever points at object-shaped ids.
 
 use serde_json::Value;
 
 /// Default id path used when a folder's schema.json doesn't declare its own
-/// `idColumnRemoteId`. Mirrors the TypeScript fallback in
-/// `getIdColumnFromSchema`.
+/// `idPath`. Mirrors the TypeScript fallback in `getIdColumnFromSchema`.
 pub const DEFAULT_ID_PATH: &str = "id";
 
 /// Return the first segment of a dot path. Useful for matching a path against

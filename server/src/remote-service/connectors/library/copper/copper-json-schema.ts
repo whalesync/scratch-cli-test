@@ -1,6 +1,6 @@
 import { Type, type TObject, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_FOREIGN_KEY_OPTIONS, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { customFieldColumnKey } from './copper-custom-fields';
 import { buildCopperDefaultView } from './copper-default-view';
 import {
@@ -344,8 +344,8 @@ export function buildCopperJsonTableSpec(
     slug: id.wsId,
     name: config.displayName,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: [config.titleField],
+    idPath: dotPath('id'),
+    titlePath: dotPath(config.titleField),
     basePath: [],
     // System fields flat; custom fields grouped under a "Custom Fields" banner.
     defaultView: buildCopperDefaultView(properties, customFieldDefinitions),
@@ -406,8 +406,8 @@ export function buildCopperReferenceTableSpec(id: EntityId, refType: CopperRefer
     slug: id.wsId,
     name: config.displayName,
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: [config.titleField],
+    idPath: dotPath('id'),
+    titlePath: dotPath(config.titleField),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

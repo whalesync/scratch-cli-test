@@ -187,7 +187,7 @@ export function generateCreatePlanFromSources(args: {
       if (sourceRecordIdField && source.idFieldPath !== undefined) {
         fields.push(sourceRecordIdField);
         // Record where this injected field is fed from: the source's remote-id
-        // path (`idColumnRemoteId`). The client/sync reads `sourceFieldPath ->
+        // path (`idPath`). The client/sync reads `sourceFieldPath ->
         // fieldName` from notes to wire the source identity into this column.
         notes.push({
           sourceDataFolderId: source.dataFolderId,

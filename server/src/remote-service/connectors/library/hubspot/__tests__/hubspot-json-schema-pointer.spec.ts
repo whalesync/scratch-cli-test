@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, idPath } from '../../../types';
+import { BaseJsonTableSpec, dotPath } from '../../../types';
 import { isReadonlyHubspotProperty } from '../hubspot-json-schema';
 
 // Regression for DEV-10126: HubSpot property names are auto-sanitized to
@@ -21,7 +21,7 @@ describe('hubspot JSON Pointer escaping (RFC 6901)', () => {
           [propertyWithTilde]: Type.String({ [X_SCRATCH_READONLY]: true }),
         }),
       }),
-      idColumnRemoteId: idPath('id'),
+      idPath: dotPath('id'),
     };
   }
 

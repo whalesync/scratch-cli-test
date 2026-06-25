@@ -232,7 +232,7 @@ export class StripeConnector extends Connector {
   }
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'id');
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'id');
   }
 
   /**

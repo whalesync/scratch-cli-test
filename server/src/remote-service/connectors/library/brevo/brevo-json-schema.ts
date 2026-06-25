@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { BrevoContactAttribute } from './brevo-types';
 
 // ---------------------------------------------------------------------------
@@ -20,9 +20,9 @@ export function buildBrevoContactsJsonTableSpec(id: EntityId, attributes: BrevoC
     slug: id.wsId,
     name: 'Contacts',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['email'],
-    slugFieldPath: 'email',
+    idPath: dotPath('id'),
+    titlePath: dotPath('email'),
+    slugPath: dotPath('email'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };
@@ -113,9 +113,9 @@ export function buildBrevoTemplatesJsonTableSpec(id: EntityId): BaseJsonTableSpe
     slug: id.wsId,
     name: 'Email Templates',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
-    slugFieldPath: 'name',
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
+    slugPath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };
@@ -178,9 +178,9 @@ export function buildBrevoMailingListsJsonTableSpec(id: EntityId): BaseJsonTable
     slug: id.wsId,
     name: 'Mailing Lists',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
-    slugFieldPath: 'name',
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
+    slugPath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

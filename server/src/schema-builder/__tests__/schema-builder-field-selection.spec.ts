@@ -76,9 +76,9 @@ describe('selectPlanFieldsFromTableView', () => {
     });
 
     it('anchors the title column to the envelope path so primary-field matching still works', () => {
-      // titleColumnRemoteId is ['properties','Name'] → the derived field must use
+      // titlePath is ['properties','Name'] → the derived field must use
       // that envelope path (not the drilled `properties.Name.title`).
-      expect(spec.titleColumnRemoteId).toEqual(['properties', 'Name']);
+      expect(spec.titlePath).toEqual('properties.Name');
       expect(result.schemaFields.some((f) => f.path === 'properties.Name')).toBe(true);
     });
 

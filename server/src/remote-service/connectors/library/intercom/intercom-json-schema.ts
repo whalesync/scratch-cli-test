@@ -1,6 +1,6 @@
 import { Type } from '@sinclair/typebox';
 import { X_SCRATCH_AGENT_INSTRUCTIONS, X_SCRATCH_LAST_MODIFIED_FIELD, X_SCRATCH_READONLY } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { buildIntercomDefaultView } from './intercom-default-view';
 
 // ---------------------------------------------------------------------------
@@ -81,10 +81,10 @@ export function buildIntercomArticlesJsonTableSpec(id: EntityId): BaseJsonTableS
     slug: id.wsId,
     name: 'Articles',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['title'],
-    mainContentColumnRemoteId: ['body'],
-    slugFieldPath: 'title',
+    idPath: dotPath('id'),
+    titlePath: dotPath('title'),
+    mainContentPath: dotPath('body'),
+    slugPath: dotPath('title'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildIntercomDefaultView(schema, 'articles'),
@@ -141,9 +141,9 @@ export function buildIntercomCollectionsJsonTableSpec(id: EntityId): BaseJsonTab
     slug: id.wsId,
     name: 'Collections',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['name'],
-    slugFieldPath: 'name',
+    idPath: dotPath('id'),
+    titlePath: dotPath('name'),
+    slugPath: dotPath('name'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildIntercomDefaultView(schema, 'collections'),
@@ -315,9 +315,9 @@ export function buildIntercomConversationsJsonTableSpec(id: EntityId): BaseJsonT
     slug: id.wsId,
     name: 'Conversations',
     schema,
-    idColumnRemoteId: idPath('id'),
-    titleColumnRemoteId: ['title'],
-    slugFieldPath: 'source.subject',
+    idPath: dotPath('id'),
+    titlePath: dotPath('title'),
+    slugPath: dotPath('source.subject'),
     basePath: [],
     generatedAt: new Date().toISOString(),
     defaultView: buildIntercomDefaultView(schema, 'conversations'),

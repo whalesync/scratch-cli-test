@@ -14,7 +14,7 @@ import type { ConnectorsService } from '../../../remote-service/connectors/conne
 import {
   type BaseJsonTableSpec,
   type ConnectorFile,
-  idPath,
+  dotPath,
   type PullRecordFilesOptions,
   readRecordIdAsString,
 } from '../../../remote-service/connectors/types';
@@ -605,10 +605,10 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
     const nameOverride =
       'nameFieldOverride' in options ? (options as Record<string, unknown>).nameFieldOverride : undefined;
     if (typeof idOverride === 'string') {
-      tableSpec.idColumnRemoteId = idPath(idOverride);
+      tableSpec.idPath = dotPath(idOverride);
     }
     if (typeof nameOverride === 'string') {
-      tableSpec.titleColumnRemoteId = [nameOverride];
+      tableSpec.titlePath = dotPath(nameOverride);
     }
 
     // Write refreshed schema to git
@@ -975,7 +975,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       const { files, connectorProgress } = callbackParams;
 
       // Resolve filenames (DB query) — needed for proper file naming
-      const recordIds = files.map((f) => readRecordIdAsString(f, tableSpec.idColumnRemoteId) ?? '');
+      const recordIds = files.map((f) => readRecordIdAsString(f, tableSpec.idPath) ?? '');
       const existingFileNames = await this.fileIndexService.getFilenamesByRecordIds(
         dataFolder.workbookId,
         dataFolder.path?.replace(/^\//, '') ?? '',
@@ -1116,7 +1116,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
           });
           continue;
         }
-        const recordId = readRecordIdAsString(parsedRecord, tableSpec.idColumnRemoteId) ?? '';
+        const recordId = readRecordIdAsString(parsedRecord, tableSpec.idPath) ?? '';
         builtFiles.push({
           path: `${stagingFolder}/${f.path}`,
           content: f.content,
@@ -1390,7 +1390,7 @@ export class PullLinkedFolderFilesJobHandler implements JobHandlerBuilder<PullLi
       const assetEntries = builtFiles.flatMap((f) => {
         const normalizedPath = f.path.startsWith('/') ? f.path.slice(1) : f.path;
         const recordContent = f.parsedRecord as Record<string, unknown>;
-        const recordRemoteId = readRecordIdAsString(recordContent, folderCtx.tableSpec.idColumnRemoteId) ?? undefined;
+        const recordRemoteId = readRecordIdAsString(recordContent, folderCtx.tableSpec.idPath) ?? undefined;
         return this.assetExtractorService.extractAssets(folderCtx.connector, {
           workbookId: folderCtx.dataFolder.workbookId,
           service: folderCtx.dataFolder.connectorService,

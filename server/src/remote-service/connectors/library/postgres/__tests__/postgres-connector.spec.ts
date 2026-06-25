@@ -7,7 +7,7 @@ import {
   type CreateFieldSpec,
 } from '@spinner/shared-types';
 import { type NormalizedCreateFieldsPlan, type NormalizedCreateTablePlan } from '../../../schema-creation.types';
-import { BaseJsonTableSpec, ConnectorFile, EntityId, PullRecordFilesOptions, idPath } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, EntityId, PullRecordFilesOptions, dotPath } from '../../../types';
 import { PG_INCREMENTAL_CLOCK_SKEW_MS, type InformationSchemaColumn, type PostgresForeignKey } from '../../pg-common';
 import { PostgresConnector } from '../postgres-connector';
 
@@ -93,7 +93,7 @@ function buildTableSpec(): BaseJsonTableSpec {
       name: Type.String(),
       status: Type.String(),
     }),
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 
@@ -292,7 +292,7 @@ describe('PostgresConnector.fetchJsonTableSpec', () => {
     const properties = spec.schema.properties as Record<string, Record<string | symbol, unknown>>;
     expect(properties.id[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('numeric');
     expect(properties.title[X_SCRATCH_CONNECTOR_DATA_TYPE]).toBe('text');
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     expect(spec.schema.required).toEqual(['title']);
     expect(spec.schema.$id).toBe('postgres/public.records');
     expect(spec.schema.title).toBe('records');
@@ -363,7 +363,7 @@ describe('PostgresConnector.fetchJsonTableSpec', () => {
       buildColumn({ column_name: 'name', data_type: 'character varying', udt_name: 'varchar' }),
     ]);
 
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.titlePath).toEqual('name');
   });
 
   it('detects slug field path when a slug column exists', async () => {
@@ -372,13 +372,13 @@ describe('PostgresConnector.fetchJsonTableSpec', () => {
       buildColumn({ column_name: 'slug', data_type: 'text', udt_name: 'text' }),
     ]);
 
-    expect(spec.slugFieldPath).toBe('slug');
+    expect(spec.slugPath).toBe('slug');
   });
 
   it('falls back to "id" when no primary key candidates are returned', async () => {
     mockFindPrimaryColumnCandidates.mockResolvedValue([]);
     const spec = await fetchSchema([buildColumn({ column_name: 'id', data_type: 'integer', udt_name: 'int4' })]);
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
   });
 
   it('prefers an auto-generated PK when multiple PK candidates are present', async () => {
@@ -392,7 +392,7 @@ describe('PostgresConnector.fetchJsonTableSpec', () => {
         column_default: "nextval('records_id_seq'::regclass)",
       }),
     ]);
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
   });
 
   it('maps array columns to typed array schemas', async () => {
@@ -437,7 +437,7 @@ function buildIncrementalTableSpec(): BaseJsonTableSpec {
       name: Type.String(),
       updated_at: Type.String(),
     }),
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 

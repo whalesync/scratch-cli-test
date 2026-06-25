@@ -1,5 +1,5 @@
 import { TSchema } from '@sinclair/typebox';
-import { BaseJsonTableSpec, ConnectorFile, EntityId, idPath } from '../../../types';
+import { BaseJsonTableSpec, ConnectorFile, EntityId, dotPath } from '../../../types';
 import { AffinityConnector, parseAffinityTableId } from '../affinity-connector';
 import {
   AffinityCompany,
@@ -192,7 +192,7 @@ function buildTableSpec(remoteId: string): BaseJsonTableSpec {
     slug: remoteId,
     name: remoteId,
     schema: {} as unknown as TSchema,
-    idColumnRemoteId: idPath('id'),
+    idPath: dotPath('id'),
   };
 }
 
@@ -301,8 +301,8 @@ describe('AffinityConnector.fetchJsonTableSpec', () => {
     const spec = await connector.fetchJsonTableSpec({ wsId: 'list_500', remoteId: ['500'] });
 
     expect(spec.name).toBe('Some List');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['entity', 'name']);
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('entity.name');
     expect(mockListListFields).toHaveBeenCalledWith(500);
     // Lists must nest under "Lists/" in the workbook tree. The picker uses
     // parentPath for grouping, but the workbook tree hierarchy comes from
@@ -317,9 +317,9 @@ describe('AffinityConnector.fetchJsonTableSpec', () => {
     const spec = await connector.fetchJsonTableSpec({ wsId: 'persons', remoteId: ['persons'] });
 
     expect(spec.name).toBe('People');
-    expect(spec.idColumnRemoteId).toBe('id');
+    expect(spec.idPath).toBe('id');
     // No `entity.` prefix — tenant records are flat.
-    expect(spec.titleColumnRemoteId).toEqual(['firstName']);
+    expect(spec.titlePath).toEqual('firstName');
     expect(mockListPersonFields).toHaveBeenCalled();
     expect(mockListListFields).not.toHaveBeenCalled();
     // Tenant tables live at the workbook tree root.
@@ -333,7 +333,7 @@ describe('AffinityConnector.fetchJsonTableSpec', () => {
     const spec = await connector.fetchJsonTableSpec({ wsId: 'companies', remoteId: ['companies'] });
 
     expect(spec.name).toBe('Companies');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.titlePath).toEqual('name');
     expect(mockListCompanyFields).toHaveBeenCalled();
     expect(spec.basePath).toEqual([]);
   });
@@ -346,8 +346,8 @@ describe('AffinityConnector.fetchJsonTableSpec', () => {
     });
 
     expect(spec.name).toBe('Opportunities');
-    expect(spec.idColumnRemoteId).toBe('id');
-    expect(spec.titleColumnRemoteId).toEqual(['name']);
+    expect(spec.idPath).toBe('id');
+    expect(spec.titlePath).toEqual('name');
     expect(spec.basePath).toEqual([]);
     // Opportunities have no fields metadata — none of the field fetchers should fire.
     expect(mockListPersonFields).not.toHaveBeenCalled();

@@ -352,12 +352,12 @@ export class IntercomConnector extends Connector {
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
     if (tableSpec.id.wsId === 'articles') {
-      return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'title');
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'title');
     }
     if (tableSpec.id.wsId === 'conversations') {
-      return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'source.subject', 'title');
+      return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'source.subject', 'title');
     }
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath, 'name');
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath, 'name');
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

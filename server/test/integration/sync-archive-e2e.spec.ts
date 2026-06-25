@@ -36,7 +36,7 @@ import { DataFolderService } from 'src/workbook/data-folder.service';
 // Destination schema that DECLARES the match-key column (`email`), so Pass 3's
 // "match-key column exists in destination schema" gate passes.
 const DEST_SCHEMA_WITH_EMAIL = {
-  idColumnRemoteId: 'id',
+  idPath: 'id',
   schema: {
     type: 'object',
     properties: {
@@ -101,7 +101,7 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
   beforeEach(async () => {
     writtenFiles = [];
     gitSchemasByPath = {
-      '/src': { idColumnRemoteId: 'id' },
+      '/src': { idPath: 'id' },
       '/dest': DEST_SCHEMA_WITH_EMAIL,
     };
 
@@ -411,7 +411,7 @@ describe('SyncService - Pass 3 unmatched-destination write (archive)', () => {
   it('skips Pass 3 (never crashes) when the match-key column is missing from the destination schema', async () => {
     // Destination schema omits `email` → the match-key existence gate fails.
     gitSchemasByPath['/dest'] = {
-      idColumnRemoteId: 'id',
+      idPath: 'id',
       schema: { type: 'object', properties: { id: { type: 'string' }, archived: { type: 'boolean' } } },
     };
     seedArchiveFixture();

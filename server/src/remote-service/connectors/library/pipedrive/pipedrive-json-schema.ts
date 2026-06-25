@@ -6,7 +6,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_REMOTE_FIELD_ID,
 } from '@spinner/shared-types';
-import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
+import { BaseJsonTableSpec, EntityId, dotPath } from '../../types';
 import { PipedriveApiClient } from './pipedrive-api-client';
 import { STATIC_SYSTEM_SCHEMAS } from './pipedrive-static-schemas';
 import {
@@ -509,8 +509,8 @@ export async function buildPipedriveJsonTableSpec(
     slug: id.wsId,
     name: ENTITY_DISPLAY_NAMES[entityType],
     schema,
-    idColumnRemoteId: idPath(config.idField),
-    titleColumnRemoteId: config.titleField ? [config.titleField] : undefined,
+    idPath: dotPath(config.idField),
+    titlePath: config.titleField ? dotPath(config.titleField) : undefined,
     basePath: [],
     generatedAt: new Date().toISOString(),
   };

@@ -4381,7 +4381,7 @@ fn print_blocked_dirty_result(
     Ok(())
 }
 
-/// Resolve the connector's `idColumnRemoteId` (dot path into a record file)
+/// Resolve the connector's `idPath` (dot path into a record file)
 /// for the folder that owns `rel_path`. Reads `.scratch/<folder>/schema.json`
 /// from the given on-disk tree map. Returns [`json_path::DEFAULT_ID_PATH`]
 /// when the schema is missing or doesn't declare an id column — same fallback

@@ -164,15 +164,20 @@ fn collect_schema_maps(
     Ok(())
 }
 
-/// Extract the `idColumnRemoteId` dot path from a schema.json object.
+/// Extract the record-id dot path from a schema.json object.
 ///
 /// The path tells the index where in each record file the remote id lives —
 /// `"id"` for flat ids, `"id.record_id"` for Attio's id triple, etc. Returns
 /// `None` if the schema doesn't declare one; callers should fall back to
 /// [`DEFAULT_ID_PATH`].
+///
+/// DEV-10092: the field was renamed `idColumnRemoteId` → `idPath`. Reads the new
+/// name first and falls back to the legacy name for `schema.json` files committed
+/// before the rename. Drop the fallback once every workbook has re-pulled.
 pub fn extract_id_path(outer: &Value) -> Option<String> {
     outer
-        .get("idColumnRemoteId")
+        .get("idPath")
+        .or_else(|| outer.get("idColumnRemoteId"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
 }
@@ -829,8 +834,34 @@ pub fn read_references(db_path: &Path) -> anyhow::Result<Vec<ReferenceRow>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{conn_scratch_dir, db_path, scratch_dir};
+    use super::{conn_scratch_dir, db_path, extract_id_path, scratch_dir};
+    use serde_json::json;
     use tempfile::TempDir;
+
+    #[test]
+    fn extract_id_path_reads_new_id_path_field() {
+        let schema = json!({ "idPath": "id.record_id" });
+        assert_eq!(extract_id_path(&schema), Some("id.record_id".to_string()));
+    }
+
+    #[test]
+    fn extract_id_path_falls_back_to_legacy_id_column_remote_id() {
+        // DEV-10092 backward compat: schema.json committed before the rename.
+        let schema = json!({ "idColumnRemoteId": "id" });
+        assert_eq!(extract_id_path(&schema), Some("id".to_string()));
+    }
+
+    #[test]
+    fn extract_id_path_prefers_new_field_over_legacy() {
+        let schema = json!({ "idPath": "id", "idColumnRemoteId": "legacy" });
+        assert_eq!(extract_id_path(&schema), Some("id".to_string()));
+    }
+
+    #[test]
+    fn extract_id_path_returns_none_when_absent() {
+        let schema = json!({ "slug": "x" });
+        assert_eq!(extract_id_path(&schema), None);
+    }
 
     #[test]
     fn wrappers_follow_new_cli_layout_when_v3_connections_are_available() {

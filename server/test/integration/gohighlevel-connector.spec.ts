@@ -192,7 +192,7 @@ describeIfCreds('GoHighLevelConnector — live API', () => {
 
   describe('fetchJsonTableSpec (contacts)', () => {
     it('builds a contacts spec with an `id` id-column and standard fields', () => {
-      expect(contactsSpec.idColumnRemoteId).toBe('id');
+      expect(contactsSpec.idPath).toBe('id');
       const props = (contactsSpec.schema as unknown as { properties: Record<string, unknown> }).properties;
       expect(props).toHaveProperty('id');
       expect(Object.keys(props).length).toBeGreaterThan(0);

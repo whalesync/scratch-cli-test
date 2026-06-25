@@ -294,8 +294,8 @@ export class LinearConnector extends Connector {
 
   getSuggestedRecordFileNames(records: ConnectorFile[], tableSpec: BaseJsonTableSpec): (string | undefined)[] {
     const entityType = tableSpec.id.wsId as EntityType;
-    const slugField = tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId;
-    const titleField = tableSpec.titleColumnRemoteId?.length === 1 ? tableSpec.titleColumnRemoteId[0] : undefined;
+    const slugField = tableSpec.slugPath ?? tableSpec.slugColumnRemoteId;
+    const titleField = tableSpec.titlePath && !tableSpec.titlePath.includes('.') ? tableSpec.titlePath : undefined;
     // Issues use identifier (e.g. "DEV-123") as slug — prefer it over title.
     // Other entities: prefer title over slug, since Linear slugs are often hashes (e.g. project slugId).
     const fieldPaths =

@@ -139,7 +139,7 @@ describeIfKey('BrevoConnector — live API', () => {
 
     it('builds a dynamic schema with system fields and attributes', () => {
       expect(contactsSpec.name).toBe('Contacts');
-      expect(contactsSpec.idColumnRemoteId).toBe('id');
+      expect(contactsSpec.idPath).toBe('id');
       expect(contactsSpec.schema.properties).toHaveProperty('id');
       expect(contactsSpec.schema.properties).toHaveProperty('email');
       expect(contactsSpec.schema.properties).toHaveProperty('attributes');

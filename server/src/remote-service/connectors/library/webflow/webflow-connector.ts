@@ -910,7 +910,7 @@ export class WebflowConnector extends Connector {
       });
     }
 
-    return suggestFileNamesFromFieldPaths(records, tableSpec.slugFieldPath ?? tableSpec.slugColumnRemoteId);
+    return suggestFileNamesFromFieldPaths(records, tableSpec.slugPath ?? tableSpec.slugColumnRemoteId);
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {

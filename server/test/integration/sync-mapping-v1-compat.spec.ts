@@ -81,8 +81,8 @@ describe('SyncService - v1 compatibility regression gate', () => {
   beforeEach(async () => {
     writtenFiles = [];
     gitSchemasByPath = {
-      '/src': { idColumnRemoteId: 'id' },
-      '/dest': { idColumnRemoteId: 'id' },
+      '/src': { idPath: 'id' },
+      '/dest': { idPath: 'id' },
     };
 
     dbService = { client: prisma } as unknown as DbService;

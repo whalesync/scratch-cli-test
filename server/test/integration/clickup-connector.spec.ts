@@ -100,7 +100,7 @@ describeIfKey('ClickUpConnector — live API', () => {
     expect(properties.status['x-scratch-readonly']).toBeUndefined();
     expect(properties.id['x-scratch-readonly']).toBe(true);
     expect(properties.url['x-scratch-readonly']).toBe(true);
-    expect(tableSpec.idColumnRemoteId).toBe('id');
+    expect(tableSpec.idPath).toBe('id');
   });
 
   it('pulls tasks (verbatim array of objects)', async () => {

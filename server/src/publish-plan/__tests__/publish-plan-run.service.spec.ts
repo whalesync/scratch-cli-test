@@ -132,14 +132,14 @@ describe('PublishPlanRunService', () => {
     schemaService = {
       getTableSpec: jest.fn().mockResolvedValue({
         name: 'Articles',
-        idColumnRemoteId: 'id',
+        idPath: 'id',
         schema: {},
         id: { wsId: 'articles', remoteId: ['base1', 'tbl1'] },
         slug: 'articles',
       }),
       getTableSpecById: jest.fn().mockResolvedValue({
         name: 'Articles',
-        idColumnRemoteId: 'id',
+        idPath: 'id',
         schema: {},
         id: { wsId: 'articles', remoteId: ['base1', 'tbl1'] },
         slug: 'articles',
@@ -246,14 +246,14 @@ describe('PublishPlanRunService', () => {
   }
 
   /**
-   * Sets the table spec's `idColumnRemoteId` for both schema lookups. Used by
+   * Sets the table spec's `idPath` for both schema lookups. Used by
    * the flat-vs-nested id-path tests; `'id'` matches every flat-id connector,
    * `'id.record_id'` matches Attio's nested id triple.
    */
   function setTableSpecIdColumnRemoteId(idColumnRemoteIdDotPath: string) {
     const tableSpecWithIdPath = {
       name: 'Articles',
-      idColumnRemoteId: idColumnRemoteIdDotPath,
+      idPath: idColumnRemoteIdDotPath,
       schema: {},
       id: { wsId: 'articles', remoteId: ['base1', 'tbl1'] },
       slug: 'articles',
@@ -316,7 +316,7 @@ describe('PublishPlanRunService', () => {
     );
   }
 
-  describe('remote-id path handling (flat vs nested idColumnRemoteId)', () => {
+  describe('remote-id path handling (flat vs nested idPath)', () => {
     describe('dispatchCreateBatch — FileIndex row extraction', () => {
       it('flat id path: indexes the created record by its top-level string id (regression for every flat-id connector)', async () => {
         setTableSpecIdColumnRemoteId('id');

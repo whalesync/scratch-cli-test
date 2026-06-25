@@ -3,7 +3,7 @@ import { createFallbackTableView } from './create-fallback-view';
 
 function makeSchema(
   properties: Record<string, unknown>,
-  opts?: { titleColumnRemoteId?: unknown },
+  opts?: { titlePath?: unknown; titleColumnRemoteId?: unknown },
 ): Record<string, unknown> {
   return {
     schema: { type: 'object', properties },
@@ -17,7 +17,7 @@ describe('createFallbackTableView', () => {
     expect(view.name).toBe('Generated');
   });
 
-  it('places the title column first when titleColumnRemoteId is set', () => {
+  it('places the title column first when titlePath is set', () => {
     const view = createFallbackTableView(
       makeSchema(
         {
@@ -25,14 +25,29 @@ describe('createFallbackTableView', () => {
           name: { type: 'string', title: 'Name' },
           email: { type: 'string', title: 'Email' },
         },
-        { titleColumnRemoteId: ['name'] },
+        { titlePath: 'name' },
       ),
     );
     expect(view.cols[0]).toMatchObject({ kind: 'col', path: 'name', name: 'Name' });
     expect(view.cols.map((c) => ('path' in c ? c.path : ''))).toEqual(['name', 'id', 'email']);
   });
 
-  it('falls back to first column as title when titleColumnRemoteId is missing', () => {
+  it('reads the legacy titleColumnRemoteId segment array (DEV-10092 compat)', () => {
+    const view = createFallbackTableView(
+      makeSchema(
+        {
+          id: { type: 'string', title: 'ID' },
+          name: { type: 'string', title: 'Name' },
+          email: { type: 'string', title: 'Email' },
+        },
+        // schema.json committed before the rename: a segment array under the old key.
+        { titleColumnRemoteId: ['name'] },
+      ),
+    );
+    expect(view.cols[0]).toMatchObject({ kind: 'col', path: 'name', name: 'Name' });
+  });
+
+  it('falls back to first column as title when titlePath is missing', () => {
     const view = createFallbackTableView(
       makeSchema({
         id: { type: 'string', title: 'ID' },
@@ -42,14 +57,14 @@ describe('createFallbackTableView', () => {
     expect(view.cols[0]).toMatchObject({ kind: 'col', path: 'id', name: 'ID' });
   });
 
-  it("falls back to first column when titleColumnRemoteId doesn't match any column", () => {
+  it("falls back to first column when titlePath doesn't match any column", () => {
     const view = createFallbackTableView(
       makeSchema(
         {
           id: { type: 'string', title: 'ID' },
           name: { type: 'string', title: 'Name' },
         },
-        { titleColumnRemoteId: ['nonexistent'] },
+        { titlePath: 'nonexistent' },
       ),
     );
     expect(view.cols[0]).toMatchObject({ kind: 'col', path: 'id', name: 'ID' });
