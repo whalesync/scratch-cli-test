@@ -39,10 +39,16 @@ export const wrapObjectTransformer: FieldTransformer = {
   // eslint-disable-next-line @typescript-eslint/require-await
   async transform(ctx: TransformContext): Promise<TransformResult> {
     const { sourceValue, options } = ctx;
-    const { template } = options as WrapObjectOptions;
+    const { template, emptyTemplate } = options as WrapObjectOptions;
 
-    if (sourceValue === null || sourceValue === undefined) {
-      return { success: true, value: null };
+    // An empty source clears the field. `emptyTemplate` (when the connector declares one)
+    // is the service's "cleared" shape — e.g. Notion date `{ type: 'date', date: null }` or
+    // rich_text `{ rich_text: [] }` — so syncing an empty value clears the destination instead
+    // of wrapping "" into the envelope (which a service like Notion rejects). Without an
+    // emptyTemplate we fall back to `null`, which the write path drops (field left unchanged).
+    // `undefined` never reaches here — transformRecordAsync skips an undefined source field.
+    if (sourceValue === null || sourceValue === undefined || sourceValue === '') {
+      return { success: true, value: emptyTemplate ? applyTemplate(emptyTemplate, null) : null };
     }
 
     if (!template || typeof template !== 'object') {

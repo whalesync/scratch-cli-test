@@ -492,6 +492,14 @@ export interface ReplaceRegexOptions {
 export interface WrapObjectOptions {
   /** Template object where "$value" strings are replaced with the source value */
   template: Record<string, unknown>;
+  /**
+   * Static shape emitted when the source value is empty (null/undefined/""), used to
+   * CLEAR the field rather than wrap the empty value. Carries no "$value". When omitted,
+   * an empty source packs to `null` (which a connector's write path typically drops, i.e.
+   * leaves the field unchanged). A connector declares this to make "sync an empty value →
+   * clear the field" work — e.g. Notion date → `{ type: 'date', date: null }`.
+   */
+  emptyTemplate?: Record<string, unknown>;
 }
 
 /** Options for the map_array transformer */

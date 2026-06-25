@@ -1,5 +1,6 @@
 import { type DataSourceObjectResponse } from '@notionhq/client';
 import {
+  TransformerConfig,
   X_SCRATCH_ASSET_FIELD,
   X_SCRATCH_CONNECTOR_DATA_TYPE,
   X_SCRATCH_FOREIGN_KEY_OPTIONS,
@@ -10,6 +11,8 @@ import {
   X_SCRATCH_SUGGESTED_TRANSFORMER,
   X_SCRATCH_VIRTUAL_FIELDS,
 } from '@spinner/shared-types';
+import { Service } from 'src/remote-service/connectors/service-constants';
+import { applyTransformerPipeline, createNullLookupTools } from 'src/sync/transformers';
 import { buildNotionJsonTableSpec, notionPropertyToJsonSchema } from '../notion-json-schema';
 
 type SchemaNode = Record<string, unknown>;
@@ -44,11 +47,17 @@ function collectStringFormats(node: SchemaNode | undefined): string[] {
 }
 
 describe('notionPropertyToJsonSchema — transform hints', () => {
-  it('rich_text carries both a pack (in) and an unpack (out) hint', () => {
+  it('rich_text carries a pack (in) hint with a clear emptyTemplate and an unpack (out) hint', () => {
     const node = prop('rich_text');
     expect(node[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
       type: 'wrap_object',
-      options: { template: { type: 'rich_text', rich_text: [{ type: 'text', text: { content: '$value' } }] } },
+      options: {
+        template: {
+          type: 'rich_text',
+          rich_text: [{ type: 'text', text: { content: '$value' }, plain_text: '$value' }],
+        },
+        emptyTemplate: { type: 'rich_text', rich_text: [] },
+      },
     });
     expect(node[X_SCRATCH_SUGGESTED_TRANSFORMER]).toEqual({
       type: 'jsonpath',
@@ -56,28 +65,41 @@ describe('notionPropertyToJsonSchema — transform hints', () => {
     });
   });
 
-  it('title carries a pack hint; its unpack stays a virtual field', () => {
+  it('title carries a pack hint with a clear emptyTemplate; its unpack stays a virtual field', () => {
     const node = prop('title');
     expect(node[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
       type: 'wrap_object',
-      options: { template: { type: 'title', title: [{ type: 'text', text: { content: '$value' } }] } },
+      options: {
+        template: { type: 'title', title: [{ type: 'text', text: { content: '$value' }, plain_text: '$value' }] },
+        emptyTemplate: { type: 'title', title: [] },
+      },
     });
     expect(node[X_SCRATCH_SUGGESTED_TRANSFORMER]).toBeUndefined();
     expect(node[X_SCRATCH_VIRTUAL_FIELDS]).toBeDefined();
   });
 
-  it('scalar types carry a pack hint that wraps into their envelope', () => {
+  it('scalar types carry a pack hint that wraps into their envelope, with a null clear shape', () => {
     expect(prop('number')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
       type: 'wrap_object',
-      options: { template: { type: 'number', number: '$value' } },
-    });
-    expect(prop('checkbox')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
-      type: 'wrap_object',
-      options: { template: { type: 'checkbox', checkbox: '$value' } },
+      options: { template: { type: 'number', number: '$value' }, emptyTemplate: { type: 'number', number: null } },
     });
     expect(prop('select')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
       type: 'wrap_object',
-      options: { template: { type: 'select', select: { name: '$value' } } },
+      options: {
+        template: { type: 'select', select: { name: '$value' } },
+        emptyTemplate: { type: 'select', select: null },
+      },
+    });
+    expect(prop('email')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'wrap_object',
+      options: { template: { type: 'email', email: '$value' }, emptyTemplate: { type: 'email', email: null } },
+    });
+  });
+
+  it('checkbox has no clear shape (boolean is never empty), so it omits emptyTemplate', () => {
+    expect(prop('checkbox')[X_SCRATCH_SUGGESTED_IN_TRANSFORMER]).toEqual({
+      type: 'wrap_object',
+      options: { template: { type: 'checkbox', checkbox: '$value' } },
     });
   });
 
@@ -280,5 +302,57 @@ describe('buildNotionJsonTableSpec top-level field annotations', () => {
     expect(typeConsts).toEqual(expect.arrayContaining(['emoji', 'external', 'file', 'icon', 'custom_emoji']));
     // The null branch keeps the field nullable (a page with no icon).
     expect(branches.some((branch) => branch.type === 'null')).toBe(true);
+  });
+});
+
+describe('notionPropertyToJsonSchema — pack/unpack round-trips for matchable types', () => {
+  // Record matching canonicalizes a value with the field's OUTBOUND (unpack) transform.
+  // For a locally-created record (packed by a sync but never round-tripped through Notion),
+  // the INBOUND (pack) transform must populate exactly what the unpack reads — otherwise the
+  // match key reduces to null and the next sync can't match the record, creating a duplicate
+  // (and, if the push keeps failing, a fresh duplicate every run). This invariant —
+  // unpack(pack(x)) === x — guards that contract for every type record matching can use.
+  const SAMPLE = 'hubspot-12345';
+
+  async function applyTransformer(config: TransformerConfig, value: unknown): Promise<unknown> {
+    const result = await applyTransformerPipeline([config], value, {
+      sourceRecord: { id: 'r', filePath: 'r.json', fields: {} },
+      sourceFieldPath: 'field',
+      sourceTableSpec: null,
+      sourceService: Service.NOTION,
+      destinationFieldPath: 'field',
+      destinationTableSpec: null,
+      destinationService: Service.NOTION,
+      lookupTools: createNullLookupTools(),
+      phase: 'DATA',
+    });
+    if (!result.success) throw new Error(`transform failed: ${result.error}`);
+    return result.value;
+  }
+
+  /** The unpack transform a field exposes for matching — either directly or via its virtual field. */
+  function unpackHint(node: SchemaNode): TransformerConfig | undefined {
+    const direct = node[X_SCRATCH_SUGGESTED_TRANSFORMER] as TransformerConfig | undefined;
+    if (direct) return direct;
+    const virtual = node[X_SCRATCH_VIRTUAL_FIELDS] as Array<{ suggestedTransformer: TransformerConfig }> | undefined;
+    return virtual?.[0]?.suggestedTransformer;
+  }
+
+  // The Notion types matching can use: they declare BOTH a pack and an unpack (rich_text's
+  // unpack is a direct hint; title's is its virtual field). A type with a pack but no unpack
+  // (number, date, …) can't be a match key, so the round-trip doesn't apply.
+  it.each(['rich_text', 'title'])('%s: unpack(pack(value)) returns the original value', async (type) => {
+    const node = prop(type);
+    const pack = node[X_SCRATCH_SUGGESTED_IN_TRANSFORMER] as TransformerConfig | undefined;
+    const unpack = unpackHint(node);
+    expect(pack).toBeDefined();
+    expect(unpack).toBeDefined();
+
+    const packed = await applyTransformer(pack as TransformerConfig, SAMPLE);
+    const unpacked = await applyTransformer(unpack as TransformerConfig, packed);
+
+    // Fails if the pack omits what the unpack reads (e.g. rich_text/title `plain_text`),
+    // which is exactly the bug that left pending files unmatchable.
+    expect(unpacked).toBe(SAMPLE);
   });
 });

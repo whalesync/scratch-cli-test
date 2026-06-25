@@ -481,34 +481,46 @@ export class PublishPlanRunService {
       const successByPhase: Record<string, number> = {};
       const finalTotalByPhase: Record<string, number> = {};
       let successCount = 0;
-      let failedCount = 0;
       for (const row of countRows) {
         finalTotalByPhase[row.phase] = (finalTotalByPhase[row.phase] ?? 0) + row._count;
         if (row.status === 'success') {
           successByPhase[row.phase] = (successByPhase[row.phase] ?? 0) + row._count;
           successCount += row._count;
-        } else if (row.status === 'failed-batch') {
-          failedCount += row._count;
         }
       }
 
+      // `failedCount` is a count of failed *records*, not failed operation rows. One
+      // record can fail in more than one phase (e.g. a create push that the service
+      // rejected, plus that pending file's rename), which is two `failed-batch` rows
+      // for a single record. Counting rows would double-report it ("2 rejected" for
+      // one record) and inflate the total — so count distinct file paths instead.
+      const failedDistinctPaths = await this.db.client.publishPlanOperation.findMany({
+        where: { planId: pipelineId, status: 'failed-batch' },
+        select: { filePath: true },
+        distinct: ['filePath'],
+      });
+      const failedCount = failedDistinctPaths.length;
+
       // Collect a bounded sample of the per-record connector rejections so the
       // run-job can surface *why* records didn't publish (the connector's own
-      // message, persisted on `error` by processBatch), not just a count.
-      // Authoritative total stays `failedCount`; this caps the inline detail.
+      // message, persisted on `error` by processBatch), not just a count. Collapse
+      // to one entry per record, preferring the primary (non-rename) phase so the
+      // surfaced reason is the service's actual rejection, not a downstream rename error.
       let failedOperations: PublishFailedOperation[] | undefined;
       if (failedCount > 0) {
         const failedRows = await this.db.client.publishPlanOperation.findMany({
           where: { planId: pipelineId, status: 'failed-batch' },
           select: { filePath: true, phase: true, error: true },
           orderBy: { filePath: 'asc' },
-          take: PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP,
         });
-        failedOperations = failedRows.map((row) => ({
-          filePath: row.filePath,
-          phase: row.phase,
-          error: row.error,
-        }));
+        const failedOperationByPath = new Map<string, PublishFailedOperation>();
+        for (const row of failedRows) {
+          const existing = failedOperationByPath.get(row.filePath);
+          if (!existing || (existing.phase === 'rename-files' && row.phase !== 'rename-files')) {
+            failedOperationByPath.set(row.filePath, { filePath: row.filePath, phase: row.phase, error: row.error });
+          }
+        }
+        failedOperations = Array.from(failedOperationByPath.values()).slice(0, PUBLISH_FAILED_OPERATIONS_SUMMARY_CAP);
       }
 
       // If we exit early intentionally because of single-phase execution, retain the completed suffix.
@@ -1497,7 +1509,18 @@ export class PublishPlanRunService {
         const { filename: oldName } = parsePath(entry.filePath);
         const recordId = filenameToRecordId.get(oldName);
         if (!recordId) {
-          throw new Error(`Cannot find recordId for ${oldName} in folder ${folderPath} during rename`);
+          // No fileIndex row means the create push for this pending file failed, so it
+          // was never assigned a real remote id. Leave it as a pending file to retry on
+          // the next publish rather than failing the rename — the failed create already
+          // counted as one failure; a rename failure here would manufacture a second
+          // failure for the same record (and abort renames for its successful siblings).
+          WSLogger.warn({
+            source: 'PublishRunService.dispatchRenameBatch',
+            message: 'Skipping rename for pending file with no recordId (create likely failed); left as pending',
+            workbookId,
+            data: { folderPath, filename: oldName },
+          });
+          continue;
         }
         const newName = `${recordId}.json`;
 

@@ -466,9 +466,17 @@ export function notionPropertyToJsonSchema(property: DataSourceObjectResponse['p
   return schema;
 }
 
-/** A single recursive `wrap_object` step that builds `template` with `"$value"` substituted in. */
-function notionWrapTransformer(template: Record<string, unknown>): TransformerConfig {
-  return { type: TransformerTypes.WrapObject, options: { template } };
+/**
+ * A single recursive `wrap_object` step that builds `template` with `"$value"` substituted in.
+ * `emptyTemplate` (when given) is the field's "cleared" shape Notion accepts, emitted when the
+ * source value is empty so that syncing an empty/null value clears the field instead of writing
+ * an invalid envelope (e.g. `{ date: { start: "" } }`).
+ */
+function notionWrapTransformer(
+  template: Record<string, unknown>,
+  emptyTemplate?: Record<string, unknown>,
+): TransformerConfig {
+  return { type: TransformerTypes.WrapObject, options: emptyTemplate ? { template, emptyTemplate } : { template } };
 }
 
 /**
@@ -482,25 +490,46 @@ function notionWrapTransformer(template: Record<string, unknown>): TransformerCo
  */
 function notionInboundPackTransformer(notionType: string): TransformerConfig | undefined {
   switch (notionType) {
+    // `plain_text` mirrors what a Notion *pull* returns on every span. It's a
+    // read-only field Notion ignores on write, but writing it here keeps a
+    // locally-created record (packed but never round-tripped through Notion) the
+    // same shape as a pulled one — so the outbound unpack ($.title/$.rich_text[*].plain_text),
+    // which record matching uses to canonicalize, can read it. Without it, a pending
+    // file's match key reduces to null and the next sync fails to match it, creating a
+    // duplicate. See notion-json-schema round-trip test.
+    // Each type passes an `emptyTemplate`: the shape Notion accepts to CLEAR the field when
+    // an empty/null value is synced (an empty rich_text/title array, or a null scalar). This
+    // matches what a Notion *pull* returns for an empty field, keeping a cleared record the
+    // same shape as a pulled one. `checkbox` has no clear shape (it's a boolean, never empty),
+    // so it omits emptyTemplate and an empty value falls back to null (dropped, unchanged).
     case 'title':
-      return notionWrapTransformer({ type: 'title', title: [{ type: 'text', text: { content: '$value' } }] });
+      return notionWrapTransformer(
+        { type: 'title', title: [{ type: 'text', text: { content: '$value' }, plain_text: '$value' }] },
+        { type: 'title', title: [] },
+      );
     case 'rich_text':
-      return notionWrapTransformer({ type: 'rich_text', rich_text: [{ type: 'text', text: { content: '$value' } }] });
+      return notionWrapTransformer(
+        { type: 'rich_text', rich_text: [{ type: 'text', text: { content: '$value' }, plain_text: '$value' }] },
+        { type: 'rich_text', rich_text: [] },
+      );
     case 'number':
-      return notionWrapTransformer({ type: 'number', number: '$value' });
+      return notionWrapTransformer({ type: 'number', number: '$value' }, { type: 'number', number: null });
     case 'checkbox':
       return notionWrapTransformer({ type: 'checkbox', checkbox: '$value' });
     case 'date':
       // A scalar date populates `start`; `end`/`time_zone` are left for the editor.
-      return notionWrapTransformer({ type: 'date', date: { start: '$value' } });
+      return notionWrapTransformer({ type: 'date', date: { start: '$value' } }, { type: 'date', date: null });
     case 'url':
-      return notionWrapTransformer({ type: 'url', url: '$value' });
+      return notionWrapTransformer({ type: 'url', url: '$value' }, { type: 'url', url: null });
     case 'email':
-      return notionWrapTransformer({ type: 'email', email: '$value' });
+      return notionWrapTransformer({ type: 'email', email: '$value' }, { type: 'email', email: null });
     case 'phone_number':
-      return notionWrapTransformer({ type: 'phone_number', phone_number: '$value' });
+      return notionWrapTransformer(
+        { type: 'phone_number', phone_number: '$value' },
+        { type: 'phone_number', phone_number: null },
+      );
     case 'select':
-      return notionWrapTransformer({ type: 'select', select: { name: '$value' } });
+      return notionWrapTransformer({ type: 'select', select: { name: '$value' } }, { type: 'select', select: null });
     default:
       return undefined;
   }

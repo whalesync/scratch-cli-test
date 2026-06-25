@@ -60,6 +60,35 @@ describe('wrapObjectTransformer', () => {
     expect(result).toEqual({ success: true, value: null });
   });
 
+  it('returns null for an empty string when no emptyTemplate is given (field dropped, not wrapped)', async () => {
+    // Without an emptyTemplate, "" must not wrap into e.g. a Notion date `{ date: { start: "" } }`
+    // (rejected as an invalid ISO 8601 date); it falls back to null, which the write path drops.
+    const result = await wrapObjectTransformer.transform(
+      createContext('', { template: { type: 'date', date: { start: '$value' } } }),
+    );
+    expect(result).toEqual({ success: true, value: null });
+  });
+
+  it('emits the emptyTemplate (clear shape) for an empty string, not the value template', async () => {
+    const result = await wrapObjectTransformer.transform(
+      createContext('', {
+        template: { type: 'date', date: { start: '$value' } },
+        emptyTemplate: { type: 'date', date: null },
+      }),
+    );
+    expect(result).toEqual({ success: true, value: { type: 'date', date: null } });
+  });
+
+  it('emits the emptyTemplate for a null source too (null clears the field)', async () => {
+    const result = await wrapObjectTransformer.transform(
+      createContext(null, {
+        template: { type: 'rich_text', rich_text: [{ type: 'text', text: { content: '$value' } }] },
+        emptyTemplate: { type: 'rich_text', rich_text: [] },
+      }),
+    );
+    expect(result).toEqual({ success: true, value: { type: 'rich_text', rich_text: [] } });
+  });
+
   it('should error when template is missing', async () => {
     const result = await wrapObjectTransformer.transform(createContext('hello'));
     expect(result).toEqual({ success: false, error: 'wrap_object requires a "template" option (object)' });

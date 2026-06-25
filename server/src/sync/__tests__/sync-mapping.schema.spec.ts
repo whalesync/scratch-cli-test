@@ -135,6 +135,30 @@ describe('syncMappingV2Schema — save-time validation', () => {
     }
   });
 
+  it('accepts a wrap_object source transformer that carries an emptyTemplate (clear-on-empty)', () => {
+    const result = syncMappingV2Schema.safeParse(
+      v2Sync([
+        {
+          destinationColumnId: 'due',
+          source: {
+            kind: 'column',
+            columnId: 'due',
+            transformers: [
+              {
+                type: 'wrap_object',
+                options: {
+                  template: { type: 'date', date: { start: '$value' } },
+                  emptyTemplate: { type: 'date', date: null },
+                },
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    expect(result.success).toBe(true);
+  });
+
   it('rejects a column source that sets both `transformer` and `transformers`', () => {
     const result = syncMappingV2Schema.safeParse(
       v2Sync([

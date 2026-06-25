@@ -92,6 +92,36 @@ describe('NotionConnector.updateRecords', () => {
     expect(callArg.properties.Title).toEqual({ title: [{ plain_text: 'New' }] });
   });
 
+  it('sends the cleared shape to Notion (clear-on-empty) instead of dropping it', async () => {
+    const files: ConnectorFile[] = [
+      {
+        id: 'page_1',
+        properties: {
+          Due: { id: 'pid_a', type: 'date', date: { start: '2026-01-01' } },
+          Notes: { id: 'pid_b', type: 'rich_text', rich_text: [{ plain_text: 'old' }] },
+        },
+      },
+    ];
+    // The clear shapes wrap_object's emptyTemplate emits when an empty/null value is synced.
+    const changedFields: Record<string, unknown>[] = [
+      {
+        properties: {
+          Due: { type: 'date', date: null },
+          Notes: { type: 'rich_text', rich_text: [] },
+        },
+      },
+    ];
+
+    await connector.updateRecords(buildTableSpec(), files, changedFields);
+
+    expect(mockUpdatePage).toHaveBeenCalledTimes(1);
+    const [callArg] = mockUpdatePage.mock.calls[0] as [{ page_id: string; properties: Record<string, unknown> }];
+    // The clear payloads must reach the API so Notion clears the fields — they must NOT be
+    // dropped (the `null`/`[]` carry meaning here; only a property-level null gets dropped).
+    expect(callArg.properties.Due).toEqual({ date: null });
+    expect(callArg.properties.Notes).toEqual({ rich_text: [] });
+  });
+
   it('skips the API call entirely when only read-only properties changed', async () => {
     const files: ConnectorFile[] = [
       {

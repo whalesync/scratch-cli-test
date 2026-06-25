@@ -127,7 +127,13 @@ const transformerConfigSchema: z.ZodType = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal(TransformerTypes.WrapObject),
-    options: z.object({ template: z.record(z.string(), z.unknown()) }).strict(),
+    options: z
+      .object({
+        template: z.record(z.string(), z.unknown()),
+        // Static "cleared" shape emitted when the source value is empty (clear-on-empty).
+        emptyTemplate: z.record(z.string(), z.unknown()).optional(),
+      })
+      .strict(),
   }),
   z.object({
     type: z.literal(TransformerTypes.MapArray),
