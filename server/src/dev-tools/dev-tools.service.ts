@@ -9,12 +9,14 @@ import {
   createSyncTablePairId,
   createWorkbookId,
   createWorkspacePermissionId,
+  ScratchPlanType,
 } from '@spinner/shared-types';
 import { CredentialEncryptionService } from 'src/credential-encryption/credential-encryption.service';
 import { DbService } from 'src/db/db.service';
 import { WSLogger } from 'src/logger';
 import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { getDefaultRepoPath, ScratchGitService } from 'src/scratch-git/scratch-git.service';
+import { isErr } from 'src/types/results';
 import { SubscriptionService } from 'src/users/subscription.service';
 import { UsersService } from 'src/users/users.service';
 import type { EncryptedData } from 'src/utils/encryption';
@@ -471,6 +473,27 @@ export class DevToolsService {
           data: { deleted: true },
         });
       }
+    }
+  }
+
+  /**
+   * Grant a free trial to a user who has never had a subscription. Creates a REAL Stripe trial via
+   * `StripePaymentService.createTrialSubscription` (no card collected; Stripe auto-cancels at trial end
+   * if none is added). The "never had a subscription" eligibility rule and the 14-day trial length are
+   * enforced inside that method.
+   *
+   * Unlike the fake-subscription dev endpoints, this is allowed in production — it is how an admin comps
+   * a real trial. Defaults to the Pro plan.
+   */
+  async startTrialForUser(userId: string, planType: ScratchPlanType = ScratchPlanType.PRO_PLAN): Promise<void> {
+    const user = await this.usersService.findOne(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const result = await this.stripePaymentService.createTrialSubscription(user, planType);
+    if (isErr(result)) {
+      throw new BadRequestException(result.error);
     }
   }
 }

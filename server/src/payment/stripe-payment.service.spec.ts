@@ -41,6 +41,7 @@ const mockDbService = {
       create: jest.fn(),
       update: jest.fn(),
       upsert: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue({ id: 'sub_db_audit' }),
     },
     invoiceResult: {
       create: jest.fn(),
@@ -262,7 +263,7 @@ describe('StripePaymentService', () => {
       expect(mockStripeInstance.subscriptions.create).toHaveBeenCalledWith(
         expect.objectContaining({
           customer: 'cus_existing123',
-          trial_period_days: 7,
+          trial_period_days: 14,
           metadata: expect.objectContaining({
             application: 'scratch',
             planType: ScratchPlanType.PRO_PLAN,
@@ -273,6 +274,61 @@ describe('StripePaymentService', () => {
       expect(mockPostHogService.trackTrialStarted).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 'usr_test123' }),
         ScratchPlanType.PRO_PLAN,
+      );
+    });
+
+    it('should refuse to start a trial when the user already has a subscription', async () => {
+      const user = createMockUser({
+        stripeCustomerId: 'cus_existing123',
+        organization: {
+          id: 'org_123',
+          subscriptions: [{ id: 'sub_prior', userId: 'usr_test123', stripeStatus: 'canceled' }],
+        },
+      });
+
+      mockStripeInstance.subscriptions.create = jest.fn();
+
+      const result = await service.createTrialSubscription(user, ScratchPlanType.PRO_PLAN);
+
+      expect(isErr(result)).toBe(true);
+      if (isErr(result)) {
+        expect(result.code).toBe(ErrorCode.BadRequestError);
+        expect(result.error).toContain('already has a subscription');
+      }
+      expect(mockStripeInstance.subscriptions.create).not.toHaveBeenCalled();
+    });
+
+    it('should write a trial-started audit-log entry', async () => {
+      const user = createMockUser({ stripeCustomerId: 'cus_existing123' });
+      const mockSubscription = {
+        id: 'sub_trialaudit',
+        status: 'trialing',
+        customer: 'cus_existing123',
+        metadata: { application: 'scratch', planType: ScratchPlanType.PRO_PLAN },
+        items: {
+          data: [
+            {
+              price: { id: VALID_TEST_PRICE_ID },
+              current_period_end: Math.floor(Date.now() / 1000) + 86400 * 14,
+              plan: { amount: 1000, currency: 'usd' },
+            },
+          ],
+        },
+      } as unknown as Stripe.Subscription;
+
+      mockStripeInstance.subscriptions.create = jest.fn().mockResolvedValue(mockSubscription);
+      (mockDbService.client.subscription.upsert as jest.Mock).mockResolvedValue({});
+      (mockDbService.client.subscription.findUnique as jest.Mock).mockResolvedValueOnce({ id: 'sub_db_audit' });
+
+      const result = await service.createTrialSubscription(user, ScratchPlanType.PRO_PLAN);
+
+      expect(isOk(result)).toBe(true);
+      expect(mockAuditLogService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'create',
+          message: expect.stringContaining('trial'),
+          entityId: 'sub_db_audit',
+        }),
       );
     });
 
@@ -362,7 +418,7 @@ describe('StripePaymentService', () => {
             }),
           ]),
           subscription_data: expect.objectContaining({
-            trial_period_days: 7,
+            trial_period_days: 14,
             trial_settings: expect.objectContaining({
               end_behavior: expect.objectContaining({
                 missing_payment_method: 'cancel',

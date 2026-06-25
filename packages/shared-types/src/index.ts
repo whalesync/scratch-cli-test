@@ -43,6 +43,7 @@ export * from './dto/data-folder/update-data-folder.dto';
 export * from './dto/desktop-release/desktop-release.dto';
 export * from './dto/dev-tools/change-user-organization.dto';
 export * from './dto/dev-tools/get-all-jobs.dto';
+export * from './dto/dev-tools/start-user-trial.dto';
 export * from './dto/dev-tools/update-dev-subscription.dto';
 export * from './dto/dev-tools/user-detail.dto';
 export * from './dto/generic-api/generic-api-responses.dto';

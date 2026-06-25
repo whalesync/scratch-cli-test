@@ -54,7 +54,7 @@ import { DbJobStatus, dbJobToJobEntity } from '../job/entities/job.entity';
 import { JobService } from '../job/job.service';
 import { UpdateSettingsDto } from '../users/dto/update-settings.dto';
 import { DevToolsService, WorkbookExportJson } from './dev-tools.service';
-import { ChangeUserOrganizationDto, UpdateDevSubscriptionDto } from './dto/dev-tools.dto';
+import { ChangeUserOrganizationDto, StartUserTrialDto, UpdateDevSubscriptionDto } from './dto/dev-tools.dto';
 import { UserDetail } from './entities/user-detail.entity';
 
 interface SyncDataFoldersRequestBody {
@@ -146,6 +146,25 @@ export class DevToolsController {
     }
 
     await this.usersService.updateUserSettings(targetUser, dto);
+  }
+
+  /**
+   * Grant a free trial to a user who has never had a subscription. Creates a REAL Stripe trial (no card
+   * collected; auto-cancels at trial end if none is added). Unlike the fake-subscription endpoints
+   * below, this is allowed in production. Defaults to the Pro plan when no `planType` is supplied.
+   */
+  @Post('users/:id/start-trial')
+  @HttpCode(204)
+  async startUserTrial(
+    @Param('id') id: string,
+    @Body() dto: StartUserTrialDto,
+    @Req() req: RequestWithUser,
+  ): Promise<void> {
+    if (!hasAdminToolsPermission(req.user)) {
+      throw new UnauthorizedException('Only admins can start a trial for a user');
+    }
+
+    await this.devToolsService.startTrialForUser(id, dto.planType);
   }
 
   /* Subscription testing tools */

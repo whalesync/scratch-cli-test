@@ -38,7 +38,8 @@ import { getPlan, getPlans } from './plans';
  * For upgrading this, see: https://stripe.com/docs/upgrades#api-versions
  */
 const STRIPE_API_VERSION = '2025-08-27.basil';
-const TRIAL_PERIOD_DAYS = 7;
+// Length, in days, of trials created by `createTrialSubscription` (and the dead checkout-trial branch).
+const TRIAL_PERIOD_DAYS = 14;
 
 type StripeWebhookResult = 'success' | 'ignored';
 
@@ -104,8 +105,19 @@ export class StripePaymentService {
   }
 
   /**
-   * Creates a trial subscription on Stripe for a user withouth going through checkout or the billing portal
+   * Creates a trial subscription on Stripe for a user without going through checkout or the billing
+   * portal. No payment method is collected and Stripe cancels the subscription at the end of the trial
+   * if none was added (`trial_settings.end_behavior.missing_payment_method: 'cancel'`).
+   *
+   * Refuses if the user's organization already has ANY subscription (active, expired, or canceled): the
+   * product rule is that once a user has had a subscription they never return to the Free plan, so they
+   * are not eligible for a fresh trial. This guard centralizes that rule for both callers — auto-trial
+   * on sign-up and the admin grant-trial dev tool.
+   *
+   * The trial runs for `TRIAL_PERIOD_DAYS` (14) days.
+   *
    * @param user - The user to create the trial subscription for
+   * @param planType - The plan tier to put the trial on (e.g. Pro)
    * @returns A result indicating success or a failure message
    */
   async createTrialSubscription(user: UserCluster.User, planType: ScratchPlanType): AsyncResult<string> {
@@ -113,6 +125,12 @@ export class StripePaymentService {
       source: StripePaymentService.name,
       message: `Creating trial subscription for user ${user.id}`,
     });
+
+    // Only users who have never had a subscription are eligible for a trial.
+    const existingSubscriptions = user.organization?.subscriptions ?? [];
+    if (existingSubscriptions.length > 0) {
+      return badRequestError('User already has a subscription; cannot start a trial');
+    }
 
     const stripePriceId = this.getDefaultPriceId(planType);
     if (!stripePriceId) {
@@ -148,11 +166,45 @@ export class StripePaymentService {
       }
 
       this.postHogService.trackTrialStarted(userToActor(user), planType);
+      await this.logTrialStartedAuditEvent(user, planType, subscription.id);
 
       return ok('success');
     } catch (err) {
       return stripeLibraryError(`Failed to create trial subscription: ${_.toString(err)}`, {
         context: { stripeCustomerId, stripePriceId },
+      });
+    }
+  }
+
+  /**
+   * Records a user-visible audit-log entry for a trial start. The Stripe subscription row was just
+   * persisted by `upsertSubscription`, so we look it up by `stripeSubscriptionId` to attach the audit
+   * event to it. Best-effort: a failure here never fails trial creation.
+   */
+  private async logTrialStartedAuditEvent(
+    user: UserCluster.User,
+    planType: ScratchPlanType,
+    stripeSubscriptionId: string,
+  ): Promise<void> {
+    try {
+      const dbSubscription = await this.dbService.client.subscription.findUnique({
+        where: { stripeSubscriptionId },
+      });
+      if (!dbSubscription) {
+        return;
+      }
+      const planDisplayName = getPlan(planType)?.displayName ?? planType;
+      await this.auditLogService.logEvent({
+        actor: userToActor(user),
+        eventType: 'create',
+        message: `Started ${TRIAL_PERIOD_DAYS}-day ${planDisplayName} trial`,
+        entityId: dbSubscription.id as SubscriptionId,
+      });
+    } catch (err) {
+      WSLogger.error({
+        source: StripePaymentService.name,
+        message: `Failed to write trial-started audit log for user ${user.id}`,
+        error: err,
       });
     }
   }

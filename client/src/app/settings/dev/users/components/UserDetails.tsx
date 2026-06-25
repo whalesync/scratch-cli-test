@@ -110,6 +110,34 @@ export const UserDetailsCard = ({
     });
   }, [newOrgId, deleteOldOrg, details, openConfirm, onRefreshUser]);
 
+  const handleStartTrial = useCallback(() => {
+    openConfirm({
+      title: 'Start free trial',
+      message: `Start a 14-day Pro trial for "${details.user.name}"? This creates a real Stripe trial (no card collected) and only succeeds if the user has never had a subscription.`,
+      confirmLabel: 'Start trial',
+      variant: 'primary',
+      onConfirm: async () => {
+        try {
+          setSaving(true);
+          await scratchApiClient.devTools.startUserTrial(details.user.id);
+          ScratchpadNotifications.success({
+            title: 'Trial started',
+            message: 'A Pro trial subscription has been created for the user',
+          });
+          onRefreshUser(details.user.id);
+        } catch (error) {
+          console.error('Failed to start trial', error);
+          ScratchpadNotifications.error({
+            title: 'Failed to start trial',
+            message: 'The trial could not be started — the user may already have, or have had, a subscription',
+          });
+        } finally {
+          setSaving(false);
+        }
+      },
+    });
+  }, [details, openConfirm, onRefreshUser]);
+
   const handleViewCredentials = useCallback(
     async (connectionId: string) => {
       if (credentialsMap[connectionId] !== undefined) {
@@ -274,6 +302,23 @@ export const UserDetailsCard = ({
           </Accordion>
         </Stack>
         <ConfirmDialog {...dialogProps} />
+      </Card.Section>
+      <Card.Section p="xs" withBorder>
+        <Stack>
+          <Group gap="xs">
+            <StyledLucideIcon Icon={CreditCardIcon} size={14} c="var(--fg-secondary)" />
+            <TextTitle3>Billing</TextTitle3>
+          </Group>
+          <LabelValuePair label="Subscription" value={<SubscriptionInfo user={details.user} />} />
+          <Group justify="flex-start">
+            <ButtonPrimaryLight onClick={handleStartTrial} loading={saving} size="xs">
+              Start 14-day Pro trial
+            </ButtonPrimaryLight>
+          </Group>
+          <Text13Book c="var(--fg-secondary)">
+            Creates a real Stripe trial. Only works for a user who has never had a subscription.
+          </Text13Book>
+        </Stack>
       </Card.Section>
       <Card.Section p="xs" withBorder>
         <Stack>

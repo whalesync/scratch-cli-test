@@ -60,6 +60,18 @@ export function createDevToolsApi(http: Http) {
       });
     },
 
+    /**
+     * Start a free trial subscription for a user who has never had a subscription (admin only).
+     * Defaults to the Pro plan when `planType` is omitted. Allowed in production.
+     */
+    startUserTrial: async (userId: string, planType?: ScratchPlanType): Promise<void> => {
+      await http.post(
+        `/dev-tools/users/${userId}/start-trial`,
+        { planType },
+        { fallbackMessage: 'Failed to start trial for user: ' + userId },
+      );
+    },
+
     updateUserSubscription: async (newPlan: ScratchPlanType): Promise<void> => {
       await http.post(
         '/dev-tools/subscription/plan/update',

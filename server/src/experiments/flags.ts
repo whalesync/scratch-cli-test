@@ -3,7 +3,7 @@ import { FlagDataType } from './types';
 /**
  * Configuration and tuning flags that are system-wide and not scoped to a specific user.
  * DO NOT USE Persist flag across authentication steps on Posthog flag settings, or they will be hidden from us.
- * Use All Caps for flag names separated by underscores.
+ * Use ALL CAPS for both enum and flag names separated by underscores.
  */
 export enum SystemFeatureFlag {
   SAMPLE_SYSTEM_FLAG = 'sample_system_flag',
@@ -15,6 +15,16 @@ export enum SystemFeatureFlag {
    * over-publish behavior. Evaluated per-org via `getBooleanFlagForOrg`.
    */
   DESKTOP_DIRTY_GATE_ENABLED = 'desktop_dirty_gate_enabled',
+  /**
+   * DEV-10535 gate for auto-starting a Pro trial subscription when a new user
+   * signs up. When enabled for the newly-created user's organization, native
+   * (Clerk) sign-up starts a 14-day Pro trial via
+   * `StripePaymentService.createTrialSubscription` (see
+   * `UsersService.maybeStartProTrialForNewUser`). When FALSE (default), no
+   * subscription is created at sign-up and the user stays on the Free plan.
+   * Fail-closed: default false
+   */
+  AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP = 'AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP',
 }
 
 /**

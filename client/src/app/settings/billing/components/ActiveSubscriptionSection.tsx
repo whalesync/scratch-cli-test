@@ -1,3 +1,4 @@
+import { Badge } from '@/app/components/base/badge';
 import { ButtonSecondaryOutline } from '@/app/components/base/buttons';
 import { Text13Book, Text13Regular } from '@/app/components/base/text';
 import { ConfigSection } from '@/app/components/ConfigSection';
@@ -14,8 +15,18 @@ export const ActiveSubscriptionSection = () => {
   content = (
     <Group px="12px" py="10px" justify="space-between" align="flex-start">
       <Stack gap="2px">
-        <Text13Regular>{subscription.planDisplayName} plan</Text13Regular>
+        <Group gap="xs" align="center">
+          <Text13Regular>{subscription.planDisplayName} plan</Text13Regular>
+          {subscription.isTrial && <Badge color="green">Trial</Badge>}
+        </Group>
         <Text13Book c="dimmed">${subscription.costUSD} per month</Text13Book>
+        {subscription.isTrial && (
+          <Text13Regular c="dimmed">
+            {subscription.daysRemaining > 0
+              ? `Free trial - ${subscription.daysRemaining} ${subscription.daysRemaining === 1 ? 'day' : 'days'} remaining`
+              : 'Free trial - ends today'}
+          </Text13Regular>
+        )}
         {subscription.status === 'payment_failed' && (
           <Text13Regular c="dimmed">Payment failed - please update your payment method.</Text13Regular>
         )}

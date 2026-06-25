@@ -93,6 +93,8 @@ describe('UsersService — Whalesync shadow users', () => {
       slackNotificationService as never, // slackNotificationService — used by the adopt path
       {} as never, // emailService — unused
       workbookProvisioningService,
+      {} as never, // experimentsService — unused by the shadow-user path (no auto-trial)
+      {} as never, // stripePaymentService — unused by the shadow-user path (no auto-trial)
     );
   });
 

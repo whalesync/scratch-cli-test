@@ -5,6 +5,7 @@ import {
   createOrganizationId,
   createUserId,
   createWorkspacePermissionId,
+  ScratchPlanType,
   TokenType,
   UpdateSettingsDto,
   WorkbookId,
@@ -12,10 +13,14 @@ import {
 import { ScratchConfigService } from 'src/config/scratch-config.service';
 import { UserCluster } from 'src/db/cluster-types';
 import { EmailService } from 'src/email/email.service';
+import { ExperimentsService } from 'src/experiments/experiments.service';
+import { SystemFeatureFlag } from 'src/experiments/flags';
 import { WSLogger } from 'src/logger';
+import { StripePaymentService } from 'src/payment/stripe-payment.service';
 import { PostHogService } from 'src/posthog/posthog.service';
 import { SlackFormatters } from 'src/slack/slack-formatters';
 import { SlackNotificationService } from 'src/slack/slack-notification.service';
+import { isErr } from 'src/types/results';
 import { WorkbookProvisioningService } from 'src/workbook/workbook-provisioning.service';
 import { DbService } from '../db/db.service';
 import {
@@ -39,6 +44,8 @@ export class UsersService {
     private readonly slackNotificationService: SlackNotificationService,
     private readonly emailService: EmailService,
     private readonly workbookProvisioningService: WorkbookProvisioningService,
+    private readonly experimentsService: ExperimentsService,
+    private readonly stripePaymentService: StripePaymentService,
   ) {}
 
   public async findOne(id: string): Promise<UserCluster.User | null> {
@@ -124,6 +131,8 @@ export class UsersService {
 
     this.postHogService.identifyNewUser(newUser);
 
+    await this.maybeStartProTrialForNewUser(newUser);
+
     await this.slackNotificationService.sendMessage(SlackFormatters.newUserSignup(newUser));
 
     if (email) {
@@ -131,6 +140,50 @@ export class UsersService {
     }
 
     return newUser;
+  }
+
+  /**
+   * If the `AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP` system flag is enabled for the newly-created user's
+   * organization, start a 14-day Pro trial. Best-effort: any flag-evaluation or Stripe failure is
+   * logged and swallowed so it can never block sign-up — the same stance
+   * `createUserWithOrgAndDefaultWorkbook` takes for workbook provisioning.
+   *
+   * Only invoked from the native (Clerk) sign-up path, so Whalesync shadow users never get an
+   * auto-trial. The `createTrialSubscription` guard keeps this idempotent: a user who already has a
+   * subscription is left untouched.
+   */
+  private async maybeStartProTrialForNewUser(newUser: UserCluster.User): Promise<void> {
+    try {
+      if (!newUser.organizationId) {
+        return;
+      }
+
+      const autoTrialEnabled = await this.experimentsService.getBooleanFlag(
+        SystemFeatureFlag.AUTO_TRIAL_SUBSCRIPTION_ON_SIGNUP,
+        false,
+      );
+      if (!autoTrialEnabled) {
+        return;
+      }
+
+      const result = await this.stripePaymentService.createTrialSubscription(newUser, ScratchPlanType.PRO_PLAN);
+      if (isErr(result)) {
+        WSLogger.error({
+          source: 'UsersService',
+          message: `Failed to auto-start Pro trial for new user ${newUser.id}: ${result.error}`,
+          error: result.cause,
+        });
+        return;
+      }
+
+      WSLogger.info({ source: 'UsersService', message: `Auto-started Pro trial for new user ${newUser.id}` });
+    } catch (error) {
+      WSLogger.error({
+        source: 'UsersService',
+        message: `Unexpected error auto-starting Pro trial for new user ${newUser.id}`,
+        error,
+      });
+    }
   }
 
   /**
