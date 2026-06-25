@@ -160,34 +160,24 @@ describe('buildAttioDefaultView (object)', () => {
   });
 
   describe('type mapping', () => {
-    it('should map text to string type', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.name') as TableViewCol;
-      expect(col.type).toBe('string');
-    });
-
-    it('should map domain to url type', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.domains') as TableViewCol;
-      expect(col.type).toBe('url');
-    });
-
-    it('should map currency to number type', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.estimated_arr') as TableViewCol;
-      expect(col.type).toBe('number');
-    });
-
-    it('should map checkbox to checkbox type', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.is_active') as TableViewCol;
-      expect(col.type).toBe('checkbox');
-    });
-
-    it('should map date to date type', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.founded_date') as TableViewCol;
-      expect(col.type).toBe('date');
-    });
-
-    it('should map location to object type', () => {
-      const col = view.cols.find((c) => c.kind === 'col' && c.path === 'values.primary_location') as TableViewCol;
-      expect(col.type).toBe('object');
+    // Value columns that carry a displayTransformer render the flattened scalar
+    // as text — the grid's number/checkbox/url cell kinds ignore displayTransformer
+    // and would render the raw value array instead — so they are all typed
+    // 'string' regardless of the underlying Attio attribute type.
+    it('should type value columns with a displayTransformer as string', () => {
+      for (const path of [
+        'values.name', // text
+        'values.domains', // domain
+        'values.estimated_arr', // currency
+        'values.is_active', // checkbox
+        'values.founded_date', // date
+        'values.primary_location', // location
+        'values.email_addresses', // email-address
+        'values.team', // actor-reference
+      ]) {
+        const col = view.cols.find((c) => c.kind === 'col' && c.path === path) as TableViewCol;
+        expect(col.type).toBe('string');
+      }
     });
 
     it('should map date-time format fixed field to date type', () => {
@@ -198,6 +188,84 @@ describe('buildAttioDefaultView (object)', () => {
     it('should map id Object Kind to object type', () => {
       const col = view.cols.find((c) => c.kind === 'col' && c.path === 'id') as TableViewCol;
       expect(col.type).toBe('object');
+    });
+  });
+
+  describe('display transformer (declarative value-array flattening)', () => {
+    it('extracts the scalar value via JSONPath for simple value types', () => {
+      const name = view.cols.find((c) => c.kind === 'col' && c.path === 'values.name') as TableViewCol;
+      expect(name.displayTransformer).toEqual({
+        type: 'jsonpath',
+        options: { expression: '$[0].value', arrayHandling: 'first' },
+      });
+      const arr = view.cols.find((c) => c.kind === 'col' && c.path === 'values.estimated_arr') as TableViewCol;
+      expect(arr.displayTransformer).toEqual({
+        type: 'jsonpath',
+        options: { expression: '$[0].value', arrayHandling: 'first' },
+      });
+    });
+
+    it('extracts type-specific payload keys (domain, email, actor-reference)', () => {
+      const domains = view.cols.find((c) => c.kind === 'col' && c.path === 'values.domains') as TableViewCol;
+      expect(domains.displayTransformer?.options.expression).toBe('$[0].domain');
+      const emails = view.cols.find((c) => c.kind === 'col' && c.path === 'values.email_addresses') as TableViewCol;
+      expect(emails.displayTransformer?.options.expression).toBe('$[0].email_address');
+      const team = view.cols.find((c) => c.kind === 'col' && c.path === 'values.team') as TableViewCol;
+      expect(team.displayTransformer?.options.expression).toBe('$[0].referenced_actor_id');
+    });
+
+    it('does not attach a transformer to types without an extraction expression', () => {
+      // `record_id` (attribute type `record-id`) has no entry in ATTIO_VALUE_EXPRESSION.
+      const recordId = view.cols.find((c) => c.kind === 'col' && c.path === 'values.record_id') as TableViewCol;
+      expect(recordId.displayTransformer).toBeUndefined();
+    });
+
+    it('does not attach a transformer to fixed (non-value) columns', () => {
+      const id = view.cols.find((c) => c.kind === 'col' && c.path === 'id') as TableViewCol;
+      const createdAt = view.cols.find((c) => c.kind === 'col' && c.path === 'created_at') as TableViewCol;
+      expect(id.displayTransformer).toBeUndefined();
+      expect(createdAt.displayTransformer).toBeUndefined();
+    });
+
+    it('extracts a personal-name title via full_name', () => {
+      const peopleSchema = Type.Object({
+        id: Type.Object({
+          workspace_id: Type.String(),
+          object_id: Type.String(),
+          record_id: Type.String(),
+        }),
+        values: Type.Object({ name: attr('personal-name') }),
+      });
+      const peopleView = buildAttioDefaultView(peopleSchema, OBJECT_VIEW_CONFIG['people']);
+      const nameCol = peopleView.cols.find((c) => c.kind === 'col' && c.path === 'values.name') as TableViewCol;
+      expect(nameCol.displayTransformer).toEqual({
+        type: 'jsonpath',
+        options: { expression: '$[0].full_name', arrayHandling: 'first' },
+      });
+    });
+  });
+
+  describe('id column subfield', () => {
+    it('defaults the id triple to its record_id subfield instead of raw JSON', () => {
+      const id = view.cols.find((c) => c.kind === 'col' && c.path === 'id') as TableViewCol;
+      expect(id.subfields).toEqual([{ relativePath: 'record_id', name: 'Record Id', type: 'string' }]);
+      expect(id.selectedSubfield).toBe(0);
+      // The id column itself stays read-only; the subfield doesn't change that.
+      expect(id.readonly).toBe(true);
+    });
+
+    it('leaves a plain (non-object) id with no subfield', () => {
+      const stringIdSchema = Type.Object({
+        id: Type.String(),
+        custom_values: Type.Object({ title: attr('text') }),
+      });
+      const stringIdView = buildAttioDefaultView(stringIdSchema, {
+        valuesKey: 'custom_values',
+        titleField: 'title',
+      });
+      const id = stringIdView.cols.find((c) => c.kind === 'col' && c.path === 'id') as TableViewCol;
+      expect(id.subfields).toBeUndefined();
+      expect(id.selectedSubfield).toBeUndefined();
     });
   });
 
@@ -268,9 +336,24 @@ describe('buildAttioDefaultView (list)', () => {
     expect(stagePath).toBeDefined();
   });
 
+  it('should attach a status-title displayTransformer to a status entry value', () => {
+    const stage = view.cols.find((c) => c.kind === 'col' && c.path === 'entry_values.stage') as TableViewCol;
+    expect(stage.type).toBe('string');
+    expect(stage.displayTransformer).toEqual({
+      type: 'jsonpath',
+      options: { expression: '$[0].status.title', arrayHandling: 'first' },
+    });
+  });
+
   it('should place id first when no title field is configured', () => {
     const first = view.cols[0] as TableViewCol;
     expect(first.path).toBe('id');
+  });
+
+  it('should default the list id triple to its entry_id subfield', () => {
+    const id = view.cols.find((c) => c.kind === 'col' && c.path === 'id') as TableViewCol;
+    expect(id.subfields).toEqual([{ relativePath: 'entry_id', name: 'Entry Id', type: 'string' }]);
+    expect(id.selectedSubfield).toBe(0);
   });
 
   it('should place entry value fields after id', () => {

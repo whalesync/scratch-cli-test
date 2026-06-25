@@ -14,33 +14,7 @@ import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { AttioApiClient } from './attio-api-client';
 import { buildAttioDefaultView, LIST_VIEW_CONFIG, OBJECT_VIEW_CONFIG } from './attio-default-view';
 import { AttioAttribute, AttioAttributeType, STANDARD_OBJECT_DISPLAY, type AttioStandardObject } from './attio-types';
-
-/**
- * JSONPath expression to extract the primary value from a single-element Attio
- * value array, keyed by attribute type. Each attribute type stores its useful
- * payload at a different key inside the array element object.
- *
- * Types not listed here (e.g. `interaction`) are too complex for a simple
- * extraction and are left as raw arrays.
- */
-const ATTIO_VALUE_EXPRESSION: Partial<Record<AttioAttributeType, string>> = {
-  text: '$[0].value',
-  number: '$[0].value',
-  checkbox: '$[0].value',
-  currency: '$[0].value',
-  date: '$[0].value',
-  timestamp: '$[0].value',
-  rating: '$[0].value',
-  domain: '$[0].domain',
-  'email-address': '$[0].email_address',
-  'phone-number': '$[0].phone_number',
-  status: '$[0].status.title',
-  select: '$[0].option.title',
-  'record-reference': '$[0].target_record_id',
-  'actor-reference': '$[0].referenced_actor_id',
-  location: '$[0].locality',
-  'personal-name': '$[*].first_name',
-};
+import { ATTIO_VALUE_EXPRESSION } from './attio-value-expressions';
 
 /** Build a virtual field definition for an Attio attribute, if applicable. */
 function buildVirtualField(attr: AttioAttribute): VirtualFieldDef[] | undefined {

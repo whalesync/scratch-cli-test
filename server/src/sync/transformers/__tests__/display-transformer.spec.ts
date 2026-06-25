@@ -74,16 +74,37 @@ describe('applyDisplayTransformer (fail-closed display)', () => {
     expect(applyDisplayTransformer(richText, undefined)).toEqual({ ok: false });
   });
 
-  it('supports arrayHandling=first, requiring a string match', () => {
+  it('supports arrayHandling=first: string verbatim, scalar number/boolean stringified', () => {
     const first: DisplayTransformerConfig = {
       type: 'jsonpath',
       options: { expression: '$[*].plain_text', arrayHandling: 'first' },
     };
+    // A string first-match is shown verbatim.
     expect(applyDisplayTransformer(first, [{ plain_text: 'one' }, { plain_text: 'two' }])).toEqual({
       ok: true,
       value: 'one',
     });
-    expect(applyDisplayTransformer(first, [{ plain_text: 5 }])).toEqual({ ok: false });
+    // Scalar number / boolean first-matches (e.g. an Attio number, currency,
+    // rating, or checkbox value) render as their display string — 0 and false
+    // must show, not blank. This is a faithful display, not a dropped/corrupted
+    // value, so it does not violate fail-closed (the concat path above still
+    // enforces it for the rich-text case).
+    expect(applyDisplayTransformer(first, [{ plain_text: 5 }])).toEqual({ ok: true, value: '5' });
+    expect(applyDisplayTransformer(first, [{ plain_text: 0 }])).toEqual({ ok: true, value: '0' });
+    expect(applyDisplayTransformer(first, [{ plain_text: false }])).toEqual({ ok: true, value: 'false' });
+  });
+
+  it('arrayHandling=first blanks an empty array, fails closed on a missing key or object match', () => {
+    const firstValue: DisplayTransformerConfig = {
+      type: 'jsonpath',
+      options: { expression: '$[0].value', arrayHandling: 'first' },
+    };
+    // An empty value array (an unset Attio field stored as `[]`) renders blank.
+    expect(applyDisplayTransformer(firstValue, [])).toEqual({ ok: true, value: '' });
+    // A non-empty array whose key is missing fails closed (surfaces the issue).
+    expect(applyDisplayTransformer(firstValue, [{ other: 'x' }])).toEqual({ ok: false });
+    // An object first-match (not a scalar) fails closed.
+    expect(applyDisplayTransformer(firstValue, [{ value: { nested: true } }])).toEqual({ ok: false });
   });
 
   it('FAILS CLOSED on an unsupported transformer type', () => {

@@ -35,7 +35,7 @@ Status: ✅ done · 🔄 in progress · ⬜ not started. **All ⬜ pending live 
 | 5 | **Full write CRUD** (create + edit + delete, pushed) | ✅ | all entity kinds incl. **Tasks (P6)**: edit/create/delete pushed via CLI + API-verified. **Required a publish-pipeline fix** — see Edge cases: nested-IdPath bug |
 | 6 | **Foreign keys tested** (CLI move parent→parent) | ✅ | FKs declared (P1) on record-reference + actor-reference; move parent→parent verified (person→Atlas) |
 | 7 | **Edge cases & quirks tested** (Pass 2) | ✅ | field-type matrix (11 types round-tripped live), select/status terse-write, date no-tz-shift, task content write-once (immutable on update), read-only `is_writable` propagation — all live-verified |
-| 8 | **View(s) built** (default view) | 🔄 | `attio-default-view.ts` builds object + list views; not confirmed in desktop |
+| 8 | **View(s) built** (default view) | 🔄 | `attio-default-view.ts` builds object + list views. **DEV-10532:** each value column now carries a declarative `displayTransformer` (JSONPath from `attio-value-expressions.ts`, e.g. `$[0].value` / `$[0].status.title`) typed `string`, so the desktop grid flattens the verbatim value array to a clean scalar instead of raw JSON (mirrors Notion rich-text). Not yet confirmed in desktop |
 | 9 | **OAuth** (final / pre-release) | ⬜ | Not wired; Bearer wire format already matches so add `'oauth'` + `AttioOAuthProvider` when ready |
 
 ## TODOs — known pending tasks

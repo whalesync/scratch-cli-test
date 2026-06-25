@@ -31,6 +31,11 @@ export type DisplayResult = { ok: true; value: string } | { ok: false };
  *   - a span with `plain_text:null` -> non-string match            -> {ok:false}
  *   - an empty array                -> '' (an empty field shows blank)
  * honoring the product principle *Surface failures, never silently succeed*.
+ *
+ * `arrayHandling: 'first'` (e.g. an Attio value array `[{value: X, ...}]` keyed
+ * with `$[0].value`) extracts a single scalar: a string is shown verbatim, a
+ * number / boolean is rendered as its display string, an empty array shows
+ * blank, and anything else (object / array / missing key) fails closed.
  */
 export function applyDisplayTransformer(config: DisplayTransformerConfig, value: unknown): DisplayResult {
   if (value === null || value === undefined) return { ok: false };
@@ -48,8 +53,20 @@ export function applyDisplayTransformer(config: DisplayTransformerConfig, value:
 
       switch (arrayHandling) {
         case 'first': {
+          // An empty array input (e.g. an unset Attio field stored as `[]`) has
+          // nothing to extract — show blank, mirroring the empty-array handling
+          // in the join branches below. A *non-empty* array whose key is missing
+          // still falls through to fail closed (raw value shown), so a genuinely
+          // malformed value surfaces rather than silently blanking.
+          if (Array.isArray(value) && value.length === 0) return { ok: true, value: '' };
           const first = matches[0];
-          return typeof first === 'string' ? { ok: true, value: first } : { ok: false };
+          if (typeof first === 'string') return { ok: true, value: first };
+          // Scalar number / boolean first-matches (e.g. an Attio number, currency,
+          // rating, or checkbox value) render as their decimal / `true|false`
+          // string. Objects / arrays / null / undefined still fail closed so the
+          // caller falls back to showing the raw value verbatim.
+          if (typeof first === 'number' || typeof first === 'boolean') return { ok: true, value: String(first) };
+          return { ok: false };
         }
         case 'concat':
         case 'join_space':

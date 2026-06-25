@@ -7,6 +7,7 @@ import {
   X_SCRATCH_READONLY,
   X_SCRATCH_WRITE_ONCE,
 } from '@spinner/shared-types';
+import { buildAttioDisplayTransformer } from './attio-value-expressions';
 
 // ── Top-level fixed fields ──
 
@@ -247,13 +248,33 @@ function isAlwaysReadonlyValueField(attrSlug: string): boolean {
   return ALWAYS_READONLY_VALUE_FIELDS.has(attrSlug);
 }
 
+/**
+ * The id field is an object triple — `{ workspace_id, <container>_id, <record>_id }`
+ * (objects: `object_id` / `record_id`; lists: `list_id` / `entry_id`). Return the
+ * record's own id key so the `id` column can default to a subfield that renders
+ * `rec_…` / `entry_…` instead of the raw `{ ... }` JSON. Returns undefined when
+ * the schema isn't a recognizable id object (e.g. a plain string id).
+ */
+function idRecordSubfieldKey(idSchema: TSchema | undefined): string | undefined {
+  const props = (idSchema as TSchema & { properties?: Record<string, TSchema> })?.properties;
+  if (!props) return undefined;
+  const keys = Object.keys(props);
+  // Prefer the canonical record-id keys; otherwise fall back to the last
+  // non-workspace key (the triple lists the record id last).
+  for (const preferred of ['record_id', 'entry_id']) {
+    if (keys.includes(preferred)) return preferred;
+  }
+  const nonWorkspaceKeys = keys.filter((k) => k !== 'workspace_id');
+  return nonWorkspaceKeys.length > 0 ? nonWorkspaceKeys[nonWorkspaceKeys.length - 1] : undefined;
+}
+
 /** Build a TableViewCol for a fixed top-level field. */
 function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): TableViewCol {
   const hidden = HIDDEN_FIXED_FIELDS.has(fieldId) || undefined;
   const isReadonly = READONLY_FIXED_FIELDS.has(fieldId) || fieldSchema?.[X_SCRATCH_READONLY] === true;
   const isWriteOnce = fieldSchema?.[X_SCRATCH_WRITE_ONCE] === true;
 
-  return {
+  const col: TableViewCol = {
     kind: 'col',
     path: fieldId,
     name: formatFieldName(fieldId),
@@ -262,6 +283,19 @@ function buildFixedCol(fieldId: string, fieldSchema: TSchema | undefined): Table
     writeOnce: isWriteOnce || undefined,
     hidden,
   };
+
+  // The id triple is an object; default to showing the record's own id as a
+  // subfield (the column path is a plain object, so getByPath can drill it)
+  // rather than rendering the whole `{ workspace_id, ... }` envelope as JSON.
+  if (fieldId === 'id') {
+    const recordIdKey = idRecordSubfieldKey(fieldSchema);
+    if (recordIdKey) {
+      col.subfields = [{ relativePath: recordIdKey, name: formatFieldName(recordIdKey), type: 'string' }];
+      col.selectedSubfield = 0;
+    }
+  }
+
+  return col;
 }
 
 /** Build a TableViewCol for an Attio attribute value field (under values.* or entry_values.*). */
@@ -271,13 +305,29 @@ function buildValueCol(attrSlug: string, attrSchema: TSchema | undefined, values
   const isWriteOnce = attrSchema?.[X_SCRATCH_WRITE_ONCE] === true;
   const hidden = isHiddenValueField(attrSlug) || undefined;
 
-  return {
+  // Every Attio attribute is stored verbatim as a value array
+  // (`[{ attribute_type, active_from, ..., <payload>: X }]`). A `displayTransformer`
+  // flattens that array to the single scalar the user cares about so the grid
+  // renders clean values instead of raw JSON. Display-only: the stored value
+  // stays the verbatim array for edit / copy / publish.
+  const displayTransformer = buildAttioDisplayTransformer(connectorDataType);
+
+  const col: TableViewCol = {
     kind: 'col',
     path: `${valuesKey}.${attrSlug}`,
     name: formatFieldName(attrSlug),
-    type: mapValueType(connectorDataType),
+    // With a displayTransformer attached, the column DISPLAYS the flattened
+    // scalar string, so it must render through the grid's text cell — the only
+    // cell kind that consults `displayTransformer`. A 'number' / 'checkbox' /
+    // 'url' type hint would instead route to a cell kind that renders the raw
+    // value array (NaN / empty / JSON) and ignore the transformer entirely.
+    // Columns without a transformer (e.g. `interaction`) keep their mapped type.
+    type: displayTransformer ? 'string' : mapValueType(connectorDataType),
     readonly: isReadonly || undefined,
     writeOnce: isWriteOnce || undefined,
     hidden,
   };
+
+  if (displayTransformer) col.displayTransformer = displayTransformer;
+  return col;
 }

@@ -50,3 +50,42 @@ describe('resolveDisplayString', () => {
     expect(JSON.stringify(input)).toBe(snapshot);
   });
 });
+
+// An Attio value column: drilled to the verbatim value array + a `$[0].value`
+// (or type-specific key) transformer that flattens the array to its scalar.
+describe('resolveDisplayString — Attio value arrays (arrayHandling: first)', () => {
+  const valueCol: Pick<TableViewCol, 'displayTransformer'> = {
+    displayTransformer: { type: 'jsonpath', options: { expression: '$[0].value', arrayHandling: 'first' } },
+  };
+  const statusCol: Pick<TableViewCol, 'displayTransformer'> = {
+    displayTransformer: { type: 'jsonpath', options: { expression: '$[0].status.title', arrayHandling: 'first' } },
+  };
+
+  it('flattens a text value array to its string', () => {
+    expect(resolveDisplayString([{ attribute_type: 'text', value: 'Acme Corp' }], valueCol)).toBe('Acme Corp');
+  });
+
+  it('renders a number value as its decimal string', () => {
+    expect(resolveDisplayString([{ attribute_type: 'currency', value: 42 }], valueCol)).toBe('42');
+    // Zero must display, not blank.
+    expect(resolveDisplayString([{ attribute_type: 'number', value: 0 }], valueCol)).toBe('0');
+  });
+
+  it('renders a boolean checkbox value as true/false', () => {
+    expect(resolveDisplayString([{ attribute_type: 'checkbox', value: true }], valueCol)).toBe('true');
+    expect(resolveDisplayString([{ attribute_type: 'checkbox', value: false }], valueCol)).toBe('false');
+  });
+
+  it('extracts a nested status title', () => {
+    expect(resolveDisplayString([{ attribute_type: 'status', status: { title: 'Open' } }], statusCol)).toBe('Open');
+  });
+
+  it('renders an unset field (empty value array) as blank', () => {
+    expect(resolveDisplayString([], valueCol)).toBe('');
+  });
+
+  it('falls back to raw JSON when the expected key is missing on a non-empty array', () => {
+    const missing = [{ attribute_type: 'text' }];
+    expect(resolveDisplayString(missing, valueCol)).toBe(JSON.stringify(missing));
+  });
+});
