@@ -1,0 +1,206 @@
+<!-- @dsCard group="Components" name="Connector icons" subtitle="Square contained service-logo tile: sizes, generic-API knife fallback, missing-logo state" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Connector icons</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 30px;
+        max-width: 700px;
+        line-height: 1.5;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 16px;
+      }
+      .note {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin: -8px 0 16px;
+        max-width: 700px;
+        line-height: 1.5;
+      }
+      .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 10px;
+        display: block;
+      }
+
+      /* The container: fixed square, contained, never cropped */
+      .ci {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .logo {
+        width: 100%;
+        height: 100%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-heading);
+        font-weight: 600;
+        color: #fff;
+        border-radius: 4px;
+      }
+
+      .row {
+        display: flex;
+        gap: 32px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+      }
+      .spec {
+        text-align: center;
+      }
+      .spec .px {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+        margin-top: 8px;
+      }
+
+      .gallery {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 6px 12px 6px 8px;
+        border: 0.5px solid var(--fg-divider);
+        font-size: 13px;
+      }
+
+      .states {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .state {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        border: 0.5px solid var(--fg-divider);
+        font-size: 13px;
+        color: var(--fg-secondary);
+      }
+      .fallback {
+        width: 24px;
+        height: 24px;
+        background: var(--bg-selected);
+        color: var(--fg-muted);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        flex: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Connector icons</h1>
+    <p class="lede">
+      A connector's identity is its service logo, loaded from connector metadata and rendered in a fixed square
+      that <em>contains</em> (never crops) the artwork. The component takes a <code>size</code> and optional
+      padding; <code>GENERIC_API</code> has no logo, so it falls back to a pocket-knife glyph, and a failed or
+      missing logo renders nothing (or a neutral monogram in lists). Monograms below stand in for real logos.
+    </p>
+
+    <h2>Sizes</h2>
+    <p class="note">Same component, three call sites: 16px in the tree, 24px in lists, 32px in the connect dialog.</p>
+    <div class="row">
+      <div class="spec">
+        <span class="ci" style="width: 16px; height: 16px"><span class="logo" style="background: #ffbf00; color: #1c1f25; font-size: 9px; border-radius: 3px">A</span></span>
+        <div class="px">16 · tree</div>
+      </div>
+      <div class="spec">
+        <span class="ci" style="width: 24px; height: 24px"><span class="logo" style="background: #ffbf00; color: #1c1f25; font-size: 13px">A</span></span>
+        <div class="px">24 · default</div>
+      </div>
+      <div class="spec">
+        <span class="ci" style="width: 32px; height: 32px"><span class="logo" style="background: #ffbf00; color: #1c1f25; font-size: 17px; border-radius: 6px">A</span></span>
+        <div class="px">32 · dialog</div>
+      </div>
+    </div>
+    <span class="tok">ConnectorIcon size={16 | 24 | 32}</span>
+
+    <h2>In context</h2>
+    <div class="gallery">
+      <span class="pill"><span class="ci" style="width: 18px; height: 18px"><span class="logo" style="background: #ffbf00; color: #1c1f25; font-size: 10px">A</span></span> Airtable</span>
+      <span class="pill"><span class="ci" style="width: 18px; height: 18px"><span class="logo" style="background: #146ef5; font-size: 10px">W</span></span> Webflow</span>
+      <span class="pill"><span class="ci" style="width: 18px; height: 18px"><span class="logo" style="background: #000; font-size: 10px">N</span></span> Notion</span>
+      <span class="pill"><span class="ci" style="width: 18px; height: 18px"><span class="logo" style="background: #21759b; font-size: 10px">Wp</span></span> WordPress</span>
+      <span class="pill"><span class="ci" style="width: 18px; height: 18px"><span class="logo" style="background: #1a73e8; font-size: 9px">Pd</span></span> Pipedrive</span>
+    </div>
+
+    <h2>Fallbacks</h2>
+    <div class="states">
+      <div class="state">
+        <span class="ci" style="width: 24px; height: 24px; color: #1c1f25"
+          ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m10 2 4 4-7 7-4 1 1-4 6-8Z" /><path d="m18 8 4 4-8 8H10v-4l8-8Z" /></svg
+        ></span>
+        Generic REST/GraphQL API
+      </div>
+      <div class="state">
+        <span class="fallback">?</span>
+        Logo missing or failed to load
+      </div>
+    </div>
+    <span class="tok">GENERIC_API → PocketKnife · failed → null / monogram</span>
+  </body>
+</html>

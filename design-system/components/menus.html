@@ -1,0 +1,267 @@
+<!-- @dsCard group="Components" name="Menus & popovers" subtitle="Dropdown menu (light + dark-overlay variant), item states, popover with arrow" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Menus & popovers</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --gray-5: #cdcfd4;
+        --highlight-border: #d4c800;
+        --red-8: #e30000;
+        --devtool: #7c3aed;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 36px;
+        max-width: 680px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 16px;
+      }
+      .stage {
+        display: flex;
+        gap: 48px;
+        flex-wrap: wrap;
+        align-items: flex-start;
+      }
+      .col .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 10px;
+        display: block;
+      }
+
+      /* Menu */
+      .menu {
+        width: 250px;
+        background: var(--bg-base);
+        border: 0.5px solid var(--gray-5);
+        border-radius: 0;
+        box-shadow: 0 4px 16px rgba(2, 5, 18, 0.12);
+        padding: 4px;
+      }
+      .menu .mlabel {
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.25px;
+        color: var(--fg-secondary);
+        padding: 8px 10px 4px;
+      }
+      .mitem {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 10px;
+        font-size: 13px;
+        color: var(--fg-primary);
+        cursor: pointer;
+      }
+      .mitem .sec {
+        color: var(--fg-muted);
+        display: inline-flex;
+      }
+      .mitem svg {
+        width: 15px;
+        height: 15px;
+      }
+      .mitem .kbd {
+        margin-left: auto;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+        border: 0.5px solid var(--fg-divider);
+        padding: 0 5px;
+        line-height: 16px;
+        text-transform: uppercase;
+      }
+      .mitem.hover {
+        background: var(--bg-panel);
+      }
+      .mitem.accept,
+      .mitem.accept .sec {
+        color: var(--highlight-border);
+      }
+      .mitem.delete,
+      .mitem.delete .sec {
+        color: var(--red-8);
+      }
+      .mitem.dev,
+      .mitem.dev .sec {
+        color: var(--devtool);
+      }
+      .mdiv {
+        height: 0.5px;
+        background: var(--gray-5);
+        margin: 4px;
+      }
+
+      /* Dark-overlay variant */
+      .menu.dark {
+        background: #1a1c1f;
+        border-color: #2b2d31;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      }
+      .menu.dark .mitem {
+        color: #f5f6f9;
+      }
+      .menu.dark .mitem .sec {
+        color: #dce0e999;
+      }
+      .menu.dark .mitem.hover {
+        background: #383a3f;
+      }
+      .menu.dark .mlabel {
+        color: #dce0e999;
+      }
+      .menu.dark .mdiv {
+        background: #e2e8f333;
+      }
+      .menu.dark .mitem.delete,
+      .menu.dark .mitem.delete .sec {
+        color: #ff6b5e;
+      }
+
+      /* Popover */
+      .pop {
+        position: relative;
+        width: 250px;
+        background: var(--bg-base);
+        border: 0.5px solid var(--gray-5);
+        box-shadow: 0 4px 16px rgba(2, 5, 18, 0.12);
+        padding: 12px;
+        font-size: 13px;
+        line-height: 19px;
+      }
+      .pop .arrow {
+        position: absolute;
+        top: -6px;
+        left: 28px;
+        width: 11px;
+        height: 11px;
+        background: var(--bg-base);
+        border-left: 0.5px solid var(--gray-5);
+        border-top: 0.5px solid var(--gray-5);
+        transform: rotate(45deg);
+      }
+      .pop .ptitle {
+        font-weight: 475;
+        margin-bottom: 4px;
+      }
+      .pop .pbody {
+        color: var(--fg-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Menus &amp; popovers</h1>
+    <p class="lede">
+      Square dropdowns with a hairline border and a soft shadow. Item color carries intent — accept reads yellow,
+      destructive reads red, dev-tool reads violet. Menus shown over the data grid flip to the dark-overlay
+      variant. (In the desktop app, true right-click menus are native; this is the in-app dropdown style.)
+    </p>
+
+    <div class="stage">
+      <div class="col">
+        <div class="menu">
+          <div class="mlabel">Record</div>
+          <div class="mitem hover">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4v16h16v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z" /></svg></span>
+            Edit fields
+          </div>
+          <div class="mitem">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="1" /><path d="M5 15V5a1 1 0 0 1 1-1h10" /></svg></span>
+            Copy remote ID
+            <span class="kbd">⌘C</span>
+          </div>
+          <div class="mitem accept">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
+            Accept change
+          </div>
+          <div class="mdiv"></div>
+          <div class="mitem dev">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /></svg></span>
+            Inspect raw JSON
+          </div>
+          <div class="mitem delete">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></span>
+            Delete record
+          </div>
+        </div>
+        <span class="tok">Menu · default</span>
+      </div>
+
+      <div class="col">
+        <div class="menu dark">
+          <div class="mlabel">Cell</div>
+          <div class="mitem hover">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4v16h16v-7" /><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4Z" /></svg></span>
+            Edit value
+          </div>
+          <div class="mitem">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0" /><path d="M12 7v5l3 3" /></svg></span>
+            Revert to published
+          </div>
+          <div class="mdiv"></div>
+          <div class="mitem delete">
+            <span class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg></span>
+            Clear cell
+          </div>
+        </div>
+        <span class="tok">Menu · dark-overlay (on grid)</span>
+      </div>
+
+      <div class="col">
+        <div class="pop">
+          <div class="arrow"></div>
+          <div class="ptitle">Needs review</div>
+          <div class="pbody">This field was edited locally and hasn't been accepted yet. Accept it to stage for publish.</div>
+        </div>
+        <span class="tok">Popover · withArrow</span>
+      </div>
+    </div>
+  </body>
+</html>

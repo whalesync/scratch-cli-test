@@ -1,0 +1,238 @@
+<!-- @dsCard group="Components" name="Folder tree" subtitle="Workspace sidebar: nested folders, connector folders, record files, hover kebab, selection" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Folder tree</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --highlight-border: #d4c800;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 28px;
+        max-width: 680px;
+      }
+
+      .sidebar {
+        width: 300px;
+        border: 0.5px solid var(--fg-divider);
+        background: var(--bg-base);
+        padding: 6px 0;
+      }
+      .secthead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px 6px;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.25px;
+        color: var(--fg-secondary);
+      }
+      .secthead .add {
+        color: var(--fg-muted);
+        cursor: pointer;
+      }
+
+      .row {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding-right: 8px;
+        font-size: 13px;
+        color: var(--fg-primary);
+        cursor: pointer;
+        user-select: none;
+      }
+      .row:hover {
+        background: var(--bg-panel);
+      }
+      .row.selected {
+        background: var(--bg-selected);
+        box-shadow: inset 2px 0 0 var(--highlight-border);
+      }
+      .chev {
+        width: 14px;
+        height: 14px;
+        color: var(--fg-muted);
+        flex: none;
+        transition: transform 0.1s ease;
+      }
+      .chev.closed {
+        transform: rotate(-90deg);
+      }
+      .chev.leaf {
+        visibility: hidden;
+      }
+      .ico {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        color: var(--fg-secondary);
+        display: inline-flex;
+      }
+      .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .name.file {
+        color: var(--fg-secondary);
+      }
+      .count {
+        margin-left: auto;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .kebab {
+        margin-left: auto;
+        color: var(--fg-muted);
+        opacity: 0;
+        flex: none;
+      }
+      .row:hover .kebab {
+        opacity: 1;
+      }
+      .row:hover .count {
+        display: none;
+      }
+      /* Connector logo tile */
+      .logo {
+        width: 16px;
+        height: 16px;
+        flex: none;
+        border-radius: 3px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-heading);
+        font-size: 9px;
+        font-weight: 600;
+        color: #fff;
+      }
+      .pad1 {
+        padding-left: 12px;
+      }
+      .pad2 {
+        padding-left: 30px;
+      }
+      .pad3 {
+        padding-left: 48px;
+      }
+      .note {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin-top: 14px;
+        max-width: 300px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Folder tree</h1>
+    <p class="lede">
+      The workspace sidebar — a dense, VS Code-like tree. Folders nest connection → table → records; connector
+      folders carry the service logo. Rows are 28px, selection shows a yellow inset rail, and the kebab only
+      appears on hover so the resting state stays calm.
+    </p>
+
+    <div class="sidebar">
+      <div class="secthead">
+        <span>Workspace</span>
+        <span class="add"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg></span>
+      </div>
+
+      <!-- Connection: Airtable -->
+      <div class="row pad1">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+        <span class="logo" style="background: #ffbf00; color: #1c1f25">A</span>
+        <span class="name">Marketing base</span>
+        <svg class="kebab ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></svg>
+      </div>
+
+      <div class="row pad2">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
+        <span class="name">Blog posts</span>
+        <span class="count">128</span>
+      </div>
+      <div class="row selected pad3">
+        <svg class="chev leaf" viewBox="0 0 24 24"></svg>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3v5h5M7 3h8l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /></svg>
+        <span class="name file" style="color: var(--fg-primary)">the-fastest-way-to-sync.json</span>
+        <svg class="kebab ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></svg>
+      </div>
+      <div class="row pad3">
+        <svg class="chev leaf" viewBox="0 0 24 24"></svg>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3v5h5M7 3h8l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /></svg>
+        <span class="name file">spring-update.json</span>
+      </div>
+
+      <div class="row pad2">
+        <svg class="chev closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
+        <span class="name">Authors</span>
+        <span class="count">9</span>
+      </div>
+
+      <!-- Connection: Webflow (collapsed) -->
+      <div class="row pad1">
+        <svg class="chev closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+        <span class="logo" style="background: #146ef5">W</span>
+        <span class="name">Company site</span>
+      </div>
+
+      <!-- Generic API connection -->
+      <div class="row pad1">
+        <svg class="chev closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color: #1c1f25"><path d="m10 2 4 4-7 7-4 1 1-4 6-8Z" /><path d="m18 8 4 4-8 8H10v-4l8-8Z" /></svg>
+        <span class="name">REST: status API</span>
+      </div>
+    </div>
+
+    <p class="note">Hover any row to reveal its kebab; the selected record keeps the yellow rail.</p>
+  </body>
+</html>

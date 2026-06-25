@@ -1,0 +1,297 @@
+<!-- @dsCard group="Foundations" name="Colors" subtitle="Brand highlight, gray scale, semantic fg/bg, review-state palette" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Colors</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        /* Brand / highlight */
+        --highlight-fill: #fefb8a;
+        --highlight-border: #d4c800;
+        --highlight-text: #000000;
+        --highlight-fill-hover: #f5f542;
+        --highlight-border-hover: #b8ae00;
+        --logo-yellow: #ffff66;
+
+        /* Semantic (light mode) */
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+
+        --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 36px;
+        max-width: 640px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 32px 0 14px;
+      }
+      .sectionnote {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin: -8px 0 16px;
+        max-width: 640px;
+        line-height: 1.5;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+      }
+      .swatch {
+        border: 0.5px solid var(--fg-divider);
+      }
+      .chip {
+        height: 64px;
+        display: flex;
+        align-items: flex-end;
+        padding: 8px;
+      }
+      .chip .on {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.25px;
+      }
+      .meta {
+        padding: 8px 10px;
+        background: var(--bg-base);
+      }
+      .meta .name {
+        font-size: 12px;
+        font-weight: 475;
+      }
+      .meta .val {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 2px;
+      }
+      .checker {
+        background-image: linear-gradient(45deg, #eee 25%, transparent 25%),
+          linear-gradient(-45deg, #eee 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #eee 75%),
+          linear-gradient(-45deg, transparent 75%, #eee 75%);
+        background-size: 12px 12px;
+        background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
+      }
+
+      /* Gray ramp */
+      .ramp {
+        display: flex;
+        border: 0.5px solid var(--fg-divider);
+      }
+      .ramp > div {
+        flex: 1;
+        height: 56px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 6px;
+        font-family: var(--font-mono);
+        font-size: 9px;
+      }
+
+      /* Review-state pairs */
+      .states {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      .state {
+        border-radius: 0;
+        padding: 14px 16px;
+        border-left: 4px solid;
+        font-size: 13px;
+        font-weight: 425;
+      }
+      .state .label {
+        font-weight: 475;
+      }
+      .state .codes {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        margin-top: 6px;
+        opacity: 0.75;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Colors</h1>
+    <p class="lede">
+      A neutral gray-forward surface with a single saturated accent — the yellow highlight — reserved for
+      primary action and "live edit" emphasis. All neutrals are defined as a light/dark virtual color so a
+      single token resolves correctly in both schemes.
+    </p>
+
+    <h2>Brand · Yellow highlight</h2>
+    <p class="sectionnote">
+      The one accent in the product. Used for the primary button, selection, checked states, and the focus ring.
+      Text on yellow is always near-black (<code>--highlight-text</code>), never a palette shade.
+    </p>
+    <div class="grid">
+      <div class="swatch">
+        <div class="chip" style="background: #fefb8a"><span class="on" style="color: #000">Aa</span></div>
+        <div class="meta"><div class="name">Fill</div><div class="val">#FEFB8A</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #d4c800"><span class="on" style="color: #000">Aa</span></div>
+        <div class="meta"><div class="name">Border · primary</div><div class="val">#D4C800</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #f5f542"><span class="on" style="color: #000">Aa</span></div>
+        <div class="meta"><div class="name">Fill · hover</div><div class="val">#F5F542</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #b8ae00"><span class="on" style="color: #000">Aa</span></div>
+        <div class="meta"><div class="name">Border · hover</div><div class="val">#B8AE00</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #ffff66"><span class="on" style="color: #000">Aa</span></div>
+        <div class="meta"><div class="name">Logo yellow</div><div class="val">#FFFF66</div></div>
+      </div>
+    </div>
+
+    <h2>Semantic · Foreground & background</h2>
+    <p class="sectionnote">
+      Components reference these tokens, not raw palette shades — so a screen recolors correctly by theme without
+      touching component code.
+    </p>
+    <div class="grid">
+      <div class="swatch">
+        <div class="chip checker"><span class="on" style="background: #fff; padding: 1px 4px">base</span></div>
+        <div class="meta"><div class="name">--bg-base</div><div class="val">#FFFFFF</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #f8f8f9"></div>
+        <div class="meta"><div class="name">--bg-panel</div><div class="val">#F8F8F9</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #f1f1f3"></div>
+        <div class="meta"><div class="name">--bg-selected</div><div class="val">#F1F1F3</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #1c1f25"><span class="on" style="color: #fff">Aa</span></div>
+        <div class="meta"><div class="name">--fg-primary</div><div class="val">#1C1F25</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #62646b"><span class="on" style="color: #fff">Aa</span></div>
+        <div class="meta"><div class="name">--fg-secondary</div><div class="val">#62646B</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #808288"><span class="on" style="color: #fff">Aa</span></div>
+        <div class="meta"><div class="name">--fg-muted</div><div class="val">#808288</div></div>
+      </div>
+    </div>
+
+    <h2>Gray ramp</h2>
+    <p class="sectionnote">10-stop neutral scale (light scheme). Shade 0–1 are surfaces; 7–9 carry text.</p>
+    <div class="ramp">
+      <div style="background: #f8f8f9">0</div>
+      <div style="background: #f1f1f3">1</div>
+      <div style="background: #e9eaec">2</div>
+      <div style="background: #e3e4e7">3</div>
+      <div style="background: #d8dade">4</div>
+      <div style="background: #cdcfd4">5</div>
+      <div style="background: #8b8c92; color: #fff">6</div>
+      <div style="background: #808288; color: #fff">7</div>
+      <div style="background: #62646b; color: #fff">8</div>
+      <div style="background: #1c1f25; color: #fff">9</div>
+    </div>
+
+    <h2>Status accents</h2>
+    <div class="grid">
+      <div class="swatch">
+        <div class="chip" style="background: #e30000"><span class="on" style="color: #fff">Aa</span></div>
+        <div class="meta"><div class="name">Red · danger</div><div class="val">#E30000</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #1f67f6"><span class="on" style="color: #fff">Aa</span></div>
+        <div class="meta"><div class="name">Blue</div><div class="val">#1F67F6</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #15803d"><span class="on" style="color: #fff">Aa</span></div>
+        <div class="meta"><div class="name">Green · accept</div><div class="val">#15803D</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #7c3aed"><span class="on" style="color: #fff">Aa</span></div>
+        <div class="meta"><div class="name">Violet · dev tools</div><div class="val">#7C3AED</div></div>
+      </div>
+    </div>
+
+    <h2>Review-state palette</h2>
+    <p class="sectionnote">
+      The product's signature: every change carries both a <em>kind</em> (modified / created / deleted) and a
+      <em>stage</em> on the publish ladder (needs-review → approved). Each of the six pairings has its own
+      fill + stroke so a glance reads both axes at once.
+    </p>
+    <div class="states">
+      <div class="state" style="background: #e0e7ff; border-color: #0551cd; color: #1c1f25">
+        <span class="label">Modified</span> · needs review
+        <div class="codes">bg #E0E7FF · stroke #0551CD</div>
+      </div>
+      <div class="state" style="background: #f1f5f9; border-color: #94a3b8; color: #1c1f25">
+        <span class="label">Modified</span> · approved
+        <div class="codes">bg #F1F5F9 · stroke #94A3B8</div>
+      </div>
+      <div class="state" style="background: #dcfce7; border-color: #15803d; color: #1c1f25">
+        <span class="label">Created</span> · needs review
+        <div class="codes">bg #DCFCE7 · stroke #15803D</div>
+      </div>
+      <div class="state" style="background: #f0f4f1; border-color: #708a78; color: #1c1f25">
+        <span class="label">Created</span> · approved
+        <div class="codes">bg #F0F4F1 · stroke #708A78</div>
+      </div>
+      <div class="state" style="background: #ffe4e6; border-color: #be123c; color: #1c1f25">
+        <span class="label">Deleted</span> · needs review
+        <div class="codes">bg #FFE4E6 · stroke #BE123C</div>
+      </div>
+      <div class="state" style="background: #f4f0f1; border-color: #a07880; color: #1c1f25">
+        <span class="label">Deleted</span> · approved
+        <div class="codes">bg #F4F0F1 · stroke #A07880</div>
+      </div>
+    </div>
+  </body>
+</html>

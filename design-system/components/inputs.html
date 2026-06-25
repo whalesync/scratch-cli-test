@@ -1,0 +1,262 @@
+<!-- @dsCard group="Components" name="Inputs & toggles" subtitle="Text input, textarea, select, checkbox, switch — square corners, yellow focus ring & checked state" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Inputs & toggles</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --gray-4: #d8dade;
+        --gray-5: #cdcfd4;
+        --highlight-fill: #fefb8a;
+        --highlight-border: #d4c800;
+        --highlight-text: #000000;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 36px;
+        max-width: 680px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 16px;
+      }
+      .cols {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 28px 32px;
+        max-width: 900px;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .label {
+        font-size: 13px;
+        font-weight: 475;
+        color: var(--fg-secondary);
+      }
+      .desc {
+        font-size: 12px;
+        color: var(--fg-muted);
+      }
+      .input {
+        height: 34px;
+        padding: 0 12px;
+        font-family: var(--font-body);
+        font-size: 14px;
+        color: var(--fg-primary);
+        background: var(--bg-base);
+        border: 1px solid var(--gray-4);
+        border-radius: 0;
+        outline: none;
+        width: 100%;
+      }
+      .input::placeholder {
+        color: var(--fg-muted);
+      }
+      .input.focused {
+        border-color: var(--gray-5);
+        outline: 1.5px solid var(--highlight-border);
+        outline-offset: -1.5px;
+      }
+      textarea.input {
+        height: auto;
+        padding: 10px 12px;
+        line-height: 19px;
+        resize: vertical;
+      }
+      .select {
+        position: relative;
+      }
+      .select::after {
+        content: '';
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        width: 7px;
+        height: 7px;
+        border-right: 1.5px solid var(--fg-muted);
+        border-bottom: 1.5px solid var(--fg-muted);
+        transform: translateY(-65%) rotate(45deg);
+        pointer-events: none;
+      }
+      .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+      }
+
+      /* Checkbox */
+      .checkrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+      }
+      .cbox {
+        width: 16px;
+        height: 16px;
+        border: 1px solid var(--gray-5);
+        border-radius: 0;
+        background: var(--bg-base);
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .cbox.checked {
+        background: var(--highlight-fill);
+        border-color: var(--highlight-border);
+      }
+      .cbox svg {
+        width: 11px;
+        height: 11px;
+        color: var(--highlight-text);
+        display: none;
+      }
+      .cbox.checked svg {
+        display: block;
+      }
+
+      /* Switch */
+      .switch {
+        width: 38px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--gray-4);
+        position: relative;
+        flex: none;
+        transition: background 0.12s ease;
+        border: 1px solid transparent;
+      }
+      .switch::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #fff;
+        transition: left 0.12s ease;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      }
+      .switch.on {
+        background: var(--highlight-fill);
+        border-color: var(--highlight-border);
+      }
+      .switch.on::after {
+        left: 18px;
+      }
+      .togglerow {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 13px;
+      }
+      .hint {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin: -8px 0 16px;
+        max-width: 680px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Inputs &amp; toggles</h1>
+    <p class="lede">
+      Stock fields styled by the theme: square corners, a hairline neutral border, and the one shared accent — a
+      1.5px yellow focus ring on focus, yellow fill on a checked box or an on switch.
+    </p>
+
+    <h2>Text fields</h2>
+    <div class="cols">
+      <div class="field">
+        <span class="label">Workspace name</span>
+        <input class="input" value="Marketing site" />
+        <span class="tok">TextInput · rest</span>
+      </div>
+      <div class="field">
+        <span class="label">Workspace name</span>
+        <input class="input focused" value="Marketing site" />
+        <span class="tok">TextInput · focused</span>
+      </div>
+      <div class="field">
+        <span class="label">API base URL</span>
+        <div class="select">
+          <input class="input" value="https://api.airtable.com" readonly />
+        </div>
+        <span class="tok">Select</span>
+      </div>
+      <div class="field" style="grid-column: span 2; max-width: 552px">
+        <span class="label">Notes</span>
+        <textarea class="input" rows="3">Records are stored as the verbatim response from the external service.</textarea>
+        <span class="tok">Textarea</span>
+      </div>
+    </div>
+
+    <h2>Checkbox</h2>
+    <p class="hint">Default size xs (16px). Checked = highlight fill + border, black check.</p>
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <label class="checkrow">
+        <span class="cbox checked"
+          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg
+        ></span>
+        Include schema files in publish
+      </label>
+      <label class="checkrow">
+        <span class="cbox"></span>
+        Overwrite read-only fields
+      </label>
+    </div>
+
+    <h2>Switch</h2>
+    <p class="hint">On = highlight fill + border. Used for per-table and per-connection settings.</p>
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div class="togglerow"><span class="switch on"></span> Auto re-download daily</div>
+      <div class="togglerow"><span class="switch"></span> Sync the entire connection</div>
+    </div>
+  </body>
+</html>

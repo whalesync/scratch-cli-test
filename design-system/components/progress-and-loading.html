@@ -1,0 +1,259 @@
+<!-- @dsCard group="Components" name="Progress & loading" subtitle="Spinner, determinate progress, live CLI output stream, skeleton placeholders" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Progress & loading</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --highlight-fill: #fefb8a;
+        --highlight-border: #d4c800;
+        --green: #15803d;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 34px;
+        max-width: 680px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 16px;
+      }
+      .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 12px;
+        display: block;
+      }
+      .row {
+        display: flex;
+        gap: 40px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      /* Spinner */
+      @keyframes scratch-icon-spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .spinner {
+        width: 22px;
+        height: 22px;
+        border: 2.5px solid var(--bg-selected);
+        border-top-color: var(--highlight-border);
+        border-radius: 50%;
+        animation: scratch-icon-spin 0.8s linear infinite;
+      }
+      .logo-spin {
+        width: 26px;
+        height: 26px;
+        animation: scratch-icon-spin 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+      .inline-load {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--fg-secondary);
+      }
+      .inline-load .spinner {
+        width: 15px;
+        height: 15px;
+        border-width: 2px;
+      }
+
+      /* Progress bar */
+      .progress {
+        max-width: 420px;
+      }
+      .pmeta {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: var(--fg-secondary);
+        margin-bottom: 6px;
+      }
+      .pmeta .mono {
+        font-family: var(--font-mono);
+        color: var(--fg-muted);
+      }
+      .ptrack {
+        height: 6px;
+        background: var(--bg-selected);
+        border-radius: 0;
+        overflow: hidden;
+      }
+      .pfill {
+        height: 100%;
+        background: var(--highlight-border);
+      }
+      .pfill.indet {
+        width: 35%;
+        animation: indet 1.2s ease-in-out infinite;
+      }
+      @keyframes indet {
+        0% {
+          margin-left: -35%;
+        }
+        100% {
+          margin-left: 100%;
+        }
+      }
+
+      /* Live command output */
+      .terminal {
+        max-width: 620px;
+        background: #1a1c1f;
+        border: 0.5px solid var(--fg-divider);
+        border-radius: 0;
+        padding: 12px 14px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 19px;
+        color: #dce0e9;
+      }
+      .terminal .dim {
+        color: #8e9298;
+      }
+      .terminal .ok {
+        color: #62d5c5;
+      }
+      .terminal .warn {
+        color: #fefb8a;
+      }
+      .terminal .cursor {
+        display: inline-block;
+        width: 7px;
+        height: 13px;
+        background: #dce0e9;
+        vertical-align: text-bottom;
+        animation: blink 1s steps(1) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* Skeleton */
+      .skel-card {
+        max-width: 420px;
+        border: 0.5px solid var(--fg-divider);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .skel {
+        height: 12px;
+        background: linear-gradient(90deg, var(--bg-panel) 25%, var(--bg-selected) 37%, var(--bg-panel) 63%);
+        background-size: 400% 100%;
+        animation: shimmer 1.4s ease infinite;
+      }
+      @keyframes shimmer {
+        0% {
+          background-position: 100% 0;
+        }
+        100% {
+          background-position: 0 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Progress &amp; loading</h1>
+    <p class="lede">
+      Long operations — pull, publish, sync — run through the CLI, so loading states lean on a shared spin
+      animation, a thin determinate bar, and a live output stream rather than blocking the whole window.
+    </p>
+
+    <h2>Spinners</h2>
+    <div class="row">
+      <div class="spinner"></div>
+      <svg class="logo-spin" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="18" height="18" rx="2" fill="#fefb8a" stroke="#d4c800" stroke-width="1.5" />
+        <path d="M8 12h8M12 8v8" stroke="#1c1f25" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+      <span class="inline-load"><span class="spinner"></span> Pulling records…</span>
+    </div>
+    <span class="tok">scratch-icon-spin · Loader</span>
+
+    <h2>Progress</h2>
+    <div class="progress" style="margin-bottom: 22px">
+      <div class="pmeta"><span>Publishing to Airtable</span><span class="mono">8 / 12</span></div>
+      <div class="ptrack"><div class="pfill" style="width: 66%"></div></div>
+    </div>
+    <div class="progress">
+      <div class="pmeta"><span>Indexing workbook</span><span class="mono">working…</span></div>
+      <div class="ptrack"><div class="pfill indet"></div></div>
+    </div>
+    <span class="tok">Progress · determinate &amp; indeterminate</span>
+
+    <h2>Live command output</h2>
+    <div class="terminal">
+      <div><span class="dim">$</span> scratchmd files download --workspace wkb_4Kд</div>
+      <div class="dim">resolving connection repos…</div>
+      <div>pulled <span class="ok">128</span> records from <span class="ok">Blog posts</span></div>
+      <div>pulled <span class="ok">9</span> records from <span class="ok">Authors</span></div>
+      <div class="warn">⚠ 2 records skipped (read-only)</div>
+      <div><span class="ok">✓</span> done in 4.2s<span class="cursor"></span></div>
+    </div>
+    <span class="tok">LiveCommandOutput</span>
+
+    <h2>Skeleton</h2>
+    <div class="skel-card">
+      <div class="skel" style="width: 40%; height: 16px"></div>
+      <div class="skel" style="width: 100%"></div>
+      <div class="skel" style="width: 88%"></div>
+      <div class="skel" style="width: 64%"></div>
+    </div>
+    <span class="tok">Skeleton</span>
+  </body>
+</html>

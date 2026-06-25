@@ -1,0 +1,279 @@
+<!-- @dsCard group="Components" name="Overlays" subtitle="Tooltip (reversed), centered modal, notification toast" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Overlays</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --gray-5: #cdcfd4;
+        --gray-9: #1c1f25;
+        --highlight-fill: #fefb8a;
+        --highlight-border: #d4c800;
+        --highlight-text: #000000;
+        --green: #15803d;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 36px;
+        max-width: 680px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 34px 0 16px;
+      }
+      .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 10px;
+        display: block;
+      }
+
+      /* Tooltip */
+      .tip {
+        display: inline-block;
+        position: relative;
+        background: var(--fg-primary);
+        color: var(--bg-base);
+        font-size: 13px;
+        line-height: 19px;
+        padding: 5px 9px;
+        border-radius: 6px;
+      }
+      .tip::after {
+        content: '';
+        position: absolute;
+        bottom: -5px;
+        left: 16px;
+        width: 9px;
+        height: 9px;
+        background: var(--fg-primary);
+        transform: rotate(45deg);
+      }
+
+      /* Kbd */
+      .kbd {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        text-transform: uppercase;
+        color: var(--fg-primary);
+        background: var(--bg-base);
+        border: 0.5px solid var(--fg-divider);
+        border-radius: 0;
+        padding: 1px 6px;
+        line-height: 18px;
+        letter-spacing: 0.25px;
+      }
+
+      /* Modal */
+      .scrim {
+        background: rgba(2, 5, 18, 0.45);
+        padding: 40px;
+        display: flex;
+        justify-content: center;
+        max-width: 620px;
+        border: 0.5px solid var(--fg-divider);
+      }
+      .modal {
+        width: 460px;
+        background: var(--bg-base);
+        border-radius: 0;
+        box-shadow: 0 12px 48px rgba(2, 5, 18, 0.35);
+      }
+      .modal .mhead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 0.5px solid var(--fg-divider);
+      }
+      .modal .mtitle {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+      }
+      .modal .x {
+        color: var(--fg-muted);
+        cursor: pointer;
+      }
+      .modal .mbody {
+        padding: 20px;
+        font-size: 13px;
+        line-height: 19px;
+        color: var(--fg-secondary);
+      }
+      .modal .mfoot {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 14px 20px;
+        border-top: 0.5px solid var(--fg-divider);
+      }
+      .btn {
+        height: 34px;
+        padding: 0 16px;
+        font-size: 14px;
+        border-radius: 0;
+        border: none;
+        cursor: pointer;
+        font-family: var(--font-body);
+      }
+      .btn-ghost {
+        background: transparent;
+        color: var(--gray-9);
+      }
+      .btn-primary {
+        background: var(--highlight-fill);
+        color: var(--highlight-text);
+        border: 1.5px solid var(--highlight-border);
+        font-weight: 500;
+      }
+
+      /* Notification */
+      .toast {
+        width: 380px;
+        background: var(--bg-base);
+        border: 0.5px solid var(--fg-divider);
+        border-radius: 0;
+        box-shadow: 0 6px 20px rgba(2, 5, 18, 0.16);
+        padding: 14px 16px;
+        display: flex;
+        gap: 12px;
+        position: relative;
+      }
+      .toast .bar {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 4px;
+        background: var(--green);
+      }
+      .toast .ico {
+        color: var(--green);
+        flex: none;
+        margin-top: 1px;
+      }
+      .toast .ttitle {
+        font-size: 13px;
+        font-weight: 475;
+        margin-bottom: 2px;
+      }
+      .toast .tmsg {
+        font-size: 13px;
+        color: var(--fg-secondary);
+        line-height: 18px;
+      }
+      .toast .x {
+        margin-left: auto;
+        color: var(--fg-muted);
+        cursor: pointer;
+        flex: none;
+      }
+      .row {
+        display: flex;
+        gap: 48px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Overlays</h1>
+    <p class="lede">
+      Floating surfaces. Tooltips invert the page (dark on light) for instant contrast; modals center and stay
+      square; toasts carry a status rail and auto-dismiss.
+    </p>
+
+    <h2>Tooltip &amp; keyboard key</h2>
+    <div class="row">
+      <div>
+        <span class="tip">Stage this edit for publish</span>
+        <span class="tok">Tooltip · withArrow</span>
+      </div>
+      <div>
+        <span style="font-size: 13px; color: var(--fg-secondary)">Publish <span class="kbd">⌘</span> <span class="kbd">↵</span></span>
+        <span class="tok">Kbd</span>
+      </div>
+    </div>
+
+    <h2>Modal</h2>
+    <div class="scrim">
+      <div class="modal">
+        <div class="mhead">
+          <span class="mtitle">Publish 12 changes?</span>
+          <span class="x"
+            ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg
+          ></span>
+        </div>
+        <div class="mbody">
+          This ships 9 modified and 3 new records to Airtable. Approved deletions are included. Nothing that
+          hasn't been accepted will be published.
+        </div>
+        <div class="mfoot">
+          <button class="btn btn-ghost">Cancel</button>
+          <button class="btn btn-primary">Publish changes</button>
+        </div>
+      </div>
+    </div>
+    <span class="tok">Modal · centered</span>
+
+    <h2>Notification</h2>
+    <div class="toast">
+      <span class="bar"></span>
+      <span class="ico"
+        ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" /></svg
+      ></span>
+      <div>
+        <div class="ttitle">Publish complete</div>
+        <div class="tmsg">12 records pushed to Airtable in 4.2s.</div>
+      </div>
+      <span class="x"
+        ><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg
+      ></span>
+    </div>
+    <span class="tok">Notification</span>
+  </body>
+</html>

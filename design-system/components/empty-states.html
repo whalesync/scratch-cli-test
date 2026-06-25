@@ -1,0 +1,185 @@
+<!-- @dsCard group="Components" name="Empty states" subtitle="Centered glyph + title + one-line guidance + a single primary action" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Empty states</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --highlight-fill: #fefb8a;
+        --highlight-border: #d4c800;
+        --highlight-text: #000000;
+        --green: #15803d;
+        --green-bg: #dcfce7;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 32px;
+        max-width: 680px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 14px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 18px;
+        max-width: 940px;
+      }
+      .empty {
+        border: 0.5px solid var(--fg-divider);
+        padding: 40px 28px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+      .empty .glyph {
+        width: 44px;
+        height: 44px;
+        border-radius: 0;
+        background: var(--bg-panel);
+        border: 0.5px solid var(--fg-divider);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--fg-muted);
+        margin-bottom: 4px;
+      }
+      .empty .glyph.good {
+        background: var(--green-bg);
+        border-color: transparent;
+        color: var(--green);
+      }
+      .empty .title {
+        font-size: 14px;
+        font-weight: 475;
+        color: var(--fg-primary);
+      }
+      .empty .desc {
+        font-size: 13px;
+        color: var(--fg-muted);
+        line-height: 19px;
+        max-width: 260px;
+      }
+      .btn {
+        margin-top: 8px;
+        height: 32px;
+        padding: 0 14px;
+        font-size: 13px;
+        border-radius: 0;
+        cursor: pointer;
+        font-family: var(--font-body);
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .btn-primary {
+        background: var(--highlight-fill);
+        color: var(--highlight-text);
+        border: 1.5px solid var(--highlight-border);
+        font-weight: 500;
+      }
+      .btn-ghost {
+        background: transparent;
+        color: var(--fg-primary);
+        border: none;
+      }
+      .btn svg {
+        width: 15px;
+        height: 15px;
+      }
+      .note {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin: -6px 0 16px;
+        max-width: 680px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Empty states</h1>
+    <p class="lede">
+      One quiet glyph, a plain title, a single line of guidance, and at most one primary action. Empty isn't an
+      error — the tone stays calm and points at the next step. A resolved/all-clear state turns the glyph green.
+    </p>
+    <p class="note">Same anatomy whether the surface is empty by default, filtered to nothing, or fully resolved.</p>
+
+    <div class="grid">
+      <!-- No connections -->
+      <div class="empty">
+        <span class="glyph"
+          ><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8" /></svg
+        ></span>
+        <span class="title">No connections yet</span>
+        <span class="desc">Connect a service to pull its records into this workspace.</span>
+        <button class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          Connect a service
+        </button>
+      </div>
+
+      <!-- No records / filtered -->
+      <div class="empty">
+        <span class="glyph"
+          ><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg
+        ></span>
+        <span class="title">No records match</span>
+        <span class="desc">Nothing in this table matches the current filter.</span>
+        <button class="btn btn-ghost">Clear filter</button>
+      </div>
+
+      <!-- All clear (resolved) -->
+      <div class="empty">
+        <span class="glyph good"
+          ><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg
+        ></span>
+        <span class="title">Nothing to review</span>
+        <span class="desc">All edits are accepted and staged. You're clear to publish.</span>
+      </div>
+    </div>
+  </body>
+</html>

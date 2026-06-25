@@ -1,0 +1,244 @@
+<!-- @dsCard group="Components" name="Table & dividers" subtitle="Mono uppercase headers, hairline rows, dividers, status badges" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Table & dividers</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --green: #15803d;
+        --green-bg: #dcfce7;
+        --gray-bg: #f1f5f9;
+        --gray-stroke: #94a3b8;
+        --blue: #0551cd;
+        --blue-bg: #e0e7ff;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 32px;
+        max-width: 680px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 32px 0 14px;
+      }
+      .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 10px;
+        display: block;
+      }
+
+      table {
+        width: 100%;
+        max-width: 720px;
+        border-collapse: collapse;
+        border: 0.5px solid var(--fg-divider);
+      }
+      thead th {
+        text-align: left;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        font-size: 12px;
+        font-weight: 405;
+        letter-spacing: 0.25px;
+        color: var(--fg-secondary);
+        padding: 9px 14px;
+        background: var(--bg-panel);
+        border-bottom: 0.5px solid var(--fg-divider);
+      }
+      tbody td {
+        font-size: 13px;
+        font-weight: 425;
+        line-height: 19px;
+        color: var(--fg-primary);
+        padding: 11px 14px;
+        border-bottom: 0.5px solid var(--fg-divider);
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      tbody tr:hover td {
+        background: var(--bg-panel);
+      }
+      td.mono {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--fg-muted);
+      }
+
+      /* Status badge */
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        font-weight: 425;
+        padding: 1px 8px 1px 6px;
+        border-radius: 0;
+        border-left: 3px solid;
+      }
+      .badge .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+      }
+      .badge.published {
+        background: var(--green-bg);
+        color: #0f5132;
+        border-color: var(--green);
+      }
+      .badge.published .dot {
+        background: var(--green);
+      }
+      .badge.review {
+        background: var(--blue-bg);
+        color: #1c2c66;
+        border-color: var(--blue);
+      }
+      .badge.review .dot {
+        background: var(--blue);
+      }
+      .badge.draft {
+        background: var(--gray-bg);
+        color: #475569;
+        border-color: var(--gray-stroke);
+      }
+      .badge.draft .dot {
+        background: var(--gray-stroke);
+      }
+
+      /* Dividers */
+      .panel {
+        max-width: 360px;
+        border: 0.5px solid var(--fg-divider);
+        padding: 16px;
+      }
+      .divider {
+        height: 0.5px;
+        background: var(--fg-divider);
+        margin: 14px 0;
+      }
+      .divider.labeled {
+        height: auto;
+        background: none;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .divider.labeled::before,
+      .divider.labeled::after {
+        content: '';
+        height: 0.5px;
+        background: var(--fg-divider);
+        flex: 1;
+      }
+      .panel .line {
+        font-size: 13px;
+        color: var(--fg-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Table &amp; dividers</h1>
+    <p class="lede">
+      Tables are the workhorse surface. Headers are uppercase Geist Mono; rows are 13px Inter on hairline
+      separators with a quiet panel-gray hover. Status badges carry a left rail in the same language as the
+      review-state cells.
+    </p>
+
+    <h2>Table</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 30%">Name</th>
+          <th style="width: 28%">Remote ID</th>
+          <th style="width: 22%">Updated</th>
+          <th style="width: 20%">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Acme launch</td>
+          <td class="mono">rec_8Kd0Pq</td>
+          <td class="mono">2m ago</td>
+          <td><span class="badge published"><span class="dot"></span>Published</span></td>
+        </tr>
+        <tr>
+          <td>Spring update</td>
+          <td class="mono">rec_2Lf9Wz</td>
+          <td class="mono">1h ago</td>
+          <td><span class="badge review"><span class="dot"></span>Needs review</span></td>
+        </tr>
+        <tr>
+          <td>Field guide</td>
+          <td class="mono">—</td>
+          <td class="mono">just now</td>
+          <td><span class="badge draft"><span class="dot"></span>Draft</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Status badges</h2>
+    <div style="display: flex; gap: 12px; flex-wrap: wrap">
+      <span class="badge published"><span class="dot"></span>Published</span>
+      <span class="badge review"><span class="dot"></span>Needs review</span>
+      <span class="badge draft"><span class="dot"></span>Draft</span>
+    </div>
+    <span class="tok">Badge</span>
+
+    <h2>Dividers</h2>
+    <div class="panel">
+      <div class="line">Connection settings</div>
+      <div class="divider"></div>
+      <div class="line">Schedule</div>
+      <div class="divider labeled">or</div>
+      <div class="line">Advanced</div>
+    </div>
+    <span class="tok">Divider · plain &amp; labeled (0.5px)</span>
+  </body>
+</html>

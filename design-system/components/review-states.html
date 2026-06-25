@@ -1,0 +1,262 @@
+<!-- @dsCard group="Components" name="Review-state cells" subtitle="Published → approved → local visualized on grid cells: modified / created / deleted × needs-review / approved" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Review-state cells</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+
+        --mod-rev-bg: #e0e7ff;
+        --mod-rev-stroke: #0551cd;
+        --mod-app-bg: #f1f5f9;
+        --mod-app-stroke: #94a3b8;
+        --new-rev-bg: #dcfce7;
+        --new-rev-stroke: #15803d;
+        --new-app-bg: #f0f4f1;
+        --new-app-stroke: #708a78;
+        --del-rev-bg: #ffe4e6;
+        --del-rev-stroke: #be123c;
+        --del-app-bg: #f4f0f1;
+        --del-app-stroke: #a07880;
+
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 32px;
+        max-width: 700px;
+        line-height: 1.5;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 14px;
+      }
+
+      /* ── Grid ── */
+      .grid {
+        border: 0.5px solid var(--fg-divider);
+        width: 100%;
+        max-width: 760px;
+        font-size: 13px;
+      }
+      .grid .thead {
+        display: grid;
+        grid-template-columns: 200px 1fr 140px;
+        background: var(--bg-panel);
+        border-bottom: 0.5px solid var(--fg-divider);
+      }
+      .grid .thead > div {
+        padding: 8px 14px;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        font-size: 12px;
+        font-weight: 405;
+        letter-spacing: 0.25px;
+        color: var(--fg-secondary);
+      }
+      .grid .trow {
+        display: grid;
+        grid-template-columns: 200px 1fr 140px;
+        border-bottom: 0.5px solid var(--fg-divider);
+      }
+      .grid .trow:last-child {
+        border-bottom: none;
+      }
+      .grid .cell {
+        padding: 11px 14px;
+        line-height: 19px;
+        font-weight: 425;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* The diff cell carries an inset 4px rail + wash, exactly like the app */
+      .cell.diff {
+        box-shadow: inset 4px 0 0 var(--rail);
+        background: var(--wash);
+      }
+      .mono {
+        font-family: var(--font-mono);
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .strike {
+        text-decoration: line-through;
+        color: var(--fg-muted);
+      }
+
+      /* ── Legend ── */
+      .legend {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(280px, 1fr));
+        gap: 10px;
+        max-width: 760px;
+      }
+      .leg {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border: 0.5px solid var(--fg-divider);
+      }
+      .leg .chip {
+        width: 34px;
+        height: 24px;
+        flex: none;
+        box-shadow: inset 4px 0 0 var(--rail);
+        background: var(--wash);
+        border: 0.5px solid var(--fg-divider);
+      }
+      .leg .txt {
+        font-size: 13px;
+      }
+      .leg .txt b {
+        font-weight: 475;
+      }
+      .leg .txt .sub {
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+
+      .ladder {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--fg-secondary);
+        margin-bottom: 28px;
+        flex-wrap: wrap;
+      }
+      .ladder .step {
+        padding: 5px 12px;
+        border: 0.5px solid var(--fg-divider);
+        background: var(--bg-panel);
+      }
+      .ladder .arrow {
+        color: var(--fg-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Review-state cells</h1>
+    <p class="lede">
+      Every field moves through three states — <strong>published</strong> (live in the service),
+      <strong>approved</strong> (staged), and <strong>local</strong> (the working edit). The grid encodes this on
+      the cell itself: a 4px left rail in the state's stroke over a colored wash. Two axes read at a glance — the
+      kind of change (modified / created / deleted) by hue, and the stage (needs-review vs approved) by saturation.
+    </p>
+
+    <div class="ladder">
+      <span class="step">published</span>
+      <span class="arrow">→ accept →</span>
+      <span class="step">approved</span>
+      <span class="arrow">→ publish →</span>
+      <span class="step">live</span>
+    </div>
+
+    <h2>On the record grid</h2>
+    <div class="grid">
+      <div class="thead">
+        <div>Name</div>
+        <div>Headline</div>
+        <div>Status</div>
+      </div>
+
+      <div class="trow">
+        <div class="cell">Acme launch</div>
+        <div class="cell diff" style="--wash: var(--mod-rev-bg); --rail: var(--mod-rev-stroke)">
+          The fastest way to sync content
+        </div>
+        <div class="cell mono">published</div>
+      </div>
+
+      <div class="trow">
+        <div class="cell">Spring update</div>
+        <div class="cell diff" style="--wash: var(--mod-app-bg); --rail: var(--mod-app-stroke)">
+          Now with two-way publishing
+        </div>
+        <div class="cell mono">draft</div>
+      </div>
+
+      <div class="trow" style="background: var(--new-rev-bg); box-shadow: inset 4px 0 0 var(--new-rev-stroke)">
+        <div class="cell">Field guide <span class="mono">· new</span></div>
+        <div class="cell">A practical handbook for editors</div>
+        <div class="cell mono">draft</div>
+      </div>
+
+      <div class="trow" style="background: var(--del-rev-bg); box-shadow: inset 4px 0 0 var(--del-rev-stroke)">
+        <div class="cell strike">Legacy FAQ</div>
+        <div class="cell strike">Frequently asked questions</div>
+        <div class="cell mono strike">published</div>
+      </div>
+    </div>
+
+    <h2>Legend</h2>
+    <div class="legend">
+      <div class="leg" style="--wash: var(--mod-rev-bg); --rail: var(--mod-rev-stroke)">
+        <div class="chip"></div>
+        <div class="txt"><b>Modified</b> · needs review<div class="sub">edited locally, not yet accepted</div></div>
+      </div>
+      <div class="leg" style="--wash: var(--mod-app-bg); --rail: var(--mod-app-stroke)">
+        <div class="chip"></div>
+        <div class="txt"><b>Modified</b> · approved<div class="sub">accepted, staged for publish</div></div>
+      </div>
+      <div class="leg" style="--wash: var(--new-rev-bg); --rail: var(--new-rev-stroke)">
+        <div class="chip"></div>
+        <div class="txt"><b>Created</b> · needs review<div class="sub">new record, not yet accepted</div></div>
+      </div>
+      <div class="leg" style="--wash: var(--new-app-bg); --rail: var(--new-app-stroke)">
+        <div class="chip"></div>
+        <div class="txt"><b>Created</b> · approved<div class="sub">new record, staged for publish</div></div>
+      </div>
+      <div class="leg" style="--wash: var(--del-rev-bg); --rail: var(--del-rev-stroke)">
+        <div class="chip"></div>
+        <div class="txt"><b>Deleted</b> · needs review<div class="sub">marked for deletion locally</div></div>
+      </div>
+      <div class="leg" style="--wash: var(--del-app-bg); --rail: var(--del-app-stroke)">
+        <div class="chip"></div>
+        <div class="txt"><b>Deleted</b> · approved<div class="sub">deletion staged for publish</div></div>
+      </div>
+    </div>
+  </body>
+</html>

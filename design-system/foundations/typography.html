@@ -1,0 +1,304 @@
+<!-- @dsCard group="Foundations" name="Typography" subtitle="Funnel Display headings · Inter text scale · Geist Mono" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Typography</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 32px;
+        max-width: 660px;
+      }
+      .families {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 40px;
+      }
+      .fam {
+        border: 0.5px solid var(--fg-divider);
+        padding: 18px 20px;
+      }
+      .fam .big {
+        font-size: 30px;
+        line-height: 1.1;
+        margin-bottom: 10px;
+      }
+      .fam .role {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.25px;
+      }
+      .fam .nm {
+        font-size: 13px;
+        font-weight: 475;
+        margin-top: 2px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th {
+        text-align: left;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        font-size: 12px;
+        font-weight: 405;
+        letter-spacing: 0.25px;
+        color: var(--fg-secondary);
+        padding: 8px 12px;
+        border-bottom: 0.5px solid var(--fg-divider);
+      }
+      td {
+        padding: 14px 12px;
+        border-bottom: 0.5px solid var(--fg-divider);
+        vertical-align: baseline;
+      }
+      td.token {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--fg-secondary);
+        white-space: nowrap;
+      }
+      td.spec {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+        white-space: nowrap;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 8px 0 12px;
+      }
+      .sectionnote {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin-bottom: 14px;
+        max-width: 660px;
+        line-height: 1.5;
+      }
+      .sample-h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+      }
+      .sample-h2 {
+        font-family: var(--font-heading);
+        font-size: 18px;
+        font-weight: 500;
+        line-height: 1.7;
+      }
+      .sample-h3 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        line-height: 1.5;
+      }
+      .sample-h4 {
+        font-family: var(--font-heading);
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 1.6;
+      }
+      .w475 {
+        font-weight: 475;
+      }
+      .w425 {
+        font-weight: 425;
+      }
+      .w375 {
+        font-weight: 375;
+      }
+      .mono {
+        font-family: var(--font-mono);
+        font-weight: 400;
+        letter-spacing: 0.25px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Typography</h1>
+    <p class="lede">
+      Three families: <strong>Funnel Display</strong> for headings (geometric, a touch of character),
+      <strong>Inter</strong> for body, and <strong>Geist Mono</strong> for code, table headers, keys, and IDs.
+      Body weights are deliberately fine-grained — Medium 475 / Regular 425 / Book 375 — to tune density without
+      changing size.
+    </p>
+
+    <div class="families">
+      <div class="fam">
+        <div class="big" style="font-family: var(--font-heading); font-weight: 500">Ag</div>
+        <div class="role">Heading</div>
+        <div class="nm">Funnel Display</div>
+      </div>
+      <div class="fam">
+        <div class="big" style="font-family: var(--font-body); font-weight: 425">Ag</div>
+        <div class="role">Body</div>
+        <div class="nm">Inter</div>
+      </div>
+      <div class="fam">
+        <div class="big mono">Ag</div>
+        <div class="role">Mono</div>
+        <div class="nm">Geist Mono</div>
+      </div>
+    </div>
+
+    <h2>Headings — Funnel Display</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 130px">Token</th>
+          <th>Sample</th>
+          <th style="width: 180px">Spec</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="token">TextTitle1</td>
+          <td><span class="sample-h1">Workbook overview</span></td>
+          <td class="spec">24px · 500 · 160%</td>
+        </tr>
+        <tr>
+          <td class="token">TextTitle2</td>
+          <td><span class="sample-h2">Connections</span></td>
+          <td class="spec">18px · 500 · 170%</td>
+        </tr>
+        <tr>
+          <td class="token">TextTitle3</td>
+          <td><span class="sample-h3">Publish plan</span></td>
+          <td class="spec">16px · 500 · 150%</td>
+        </tr>
+        <tr>
+          <td class="token">TextTitle4</td>
+          <td><span class="sample-h4">Field details</span></td>
+          <td class="spec">14px · 500 · 160%</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 style="margin-top: 36px">Body — Inter</h2>
+    <p class="sectionnote">Three weights at each size. Default body is 13px Regular (425).</p>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 130px">Token</th>
+          <th>Sample</th>
+          <th style="width: 180px">Spec</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="token">Text16Medium</td>
+          <td style="font-size: 16px; line-height: 20px" class="w475">The quick brown fox</td>
+          <td class="spec">16px · 475 · 20</td>
+        </tr>
+        <tr>
+          <td class="token">Text16Regular</td>
+          <td style="font-size: 16px; line-height: 20px" class="w425">The quick brown fox</td>
+          <td class="spec">16px · 425 · 20</td>
+        </tr>
+        <tr>
+          <td class="token">Text16Book</td>
+          <td style="font-size: 16px; line-height: 20px" class="w375">The quick brown fox</td>
+          <td class="spec">16px · 375 · 20</td>
+        </tr>
+        <tr>
+          <td class="token">Text13Medium</td>
+          <td style="font-size: 13px; line-height: 19px" class="w475">The quick brown fox jumps over</td>
+          <td class="spec">13px · 475 · 19</td>
+        </tr>
+        <tr>
+          <td class="token">Text13Regular</td>
+          <td style="font-size: 13px; line-height: 19px" class="w425">The quick brown fox jumps over</td>
+          <td class="spec">13px · 425 · 19</td>
+        </tr>
+        <tr>
+          <td class="token">Text13Book</td>
+          <td style="font-size: 13px; line-height: 19px" class="w375">The quick brown fox jumps over</td>
+          <td class="spec">13px · 375 · 19</td>
+        </tr>
+        <tr>
+          <td class="token">Text12Regular</td>
+          <td style="font-size: 12px; line-height: 18px" class="w425">The quick brown fox jumps over the lazy dog</td>
+          <td class="spec">12px · 425 · 18</td>
+        </tr>
+        <tr>
+          <td class="token">Text9Regular</td>
+          <td style="font-size: 9px; line-height: 12px" class="w425">THE QUICK BROWN FOX</td>
+          <td class="spec">9px · 425 · 12</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 style="margin-top: 36px">Mono — Geist Mono</h2>
+    <p class="sectionnote">
+      Table headers, keyboard keys, record IDs, and code. Always 0.25px letter-spacing; headers are uppercased.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 130px">Token</th>
+          <th>Sample</th>
+          <th style="width: 180px">Spec</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="token">TextMono13Regular</td>
+          <td class="mono" style="font-size: 13px; line-height: 19px">rec_8Kd0Pq · /Site/Collections</td>
+          <td class="spec">13px · 400 · 19</td>
+        </tr>
+        <tr>
+          <td class="token">TextMono12Regular</td>
+          <td class="mono" style="font-size: 12px; line-height: 19px">2026-06-25T14:02:11Z</td>
+          <td class="spec">12px · 400 · 19</td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>

@@ -1,0 +1,192 @@
+<!-- @dsCard group="Foundations" name="Spacing & Radius" subtitle="4px spacing scale · sharp-corner default with optional radii" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Spacing & Radius</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --fg-primary: #1c1f25;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --highlight-fill: #fefb8a;
+        --highlight-border: #d4c800;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 36px;
+        max-width: 660px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 32px 0 8px;
+      }
+      .sectionnote {
+        color: var(--fg-muted);
+        font-size: 12px;
+        margin-bottom: 18px;
+        max-width: 660px;
+        line-height: 1.5;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 10px;
+      }
+      .row .tok {
+        width: 60px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--fg-muted);
+      }
+      .row .px {
+        width: 48px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .bar {
+        height: 16px;
+        background: var(--highlight-fill);
+        border: 1px solid var(--highlight-border);
+      }
+
+      .radii {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+      }
+      .radius {
+        text-align: center;
+      }
+      .radius .box {
+        width: 76px;
+        height: 76px;
+        background: var(--bg-panel);
+        border: 1px solid var(--fg-divider);
+        margin-bottom: 8px;
+      }
+      .radius .tok {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-primary);
+      }
+      .radius .px {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+      }
+      .callout {
+        border-left: 4px solid var(--highlight-border);
+        background: #fffef5;
+        padding: 14px 18px;
+        font-size: 13px;
+        line-height: 1.55;
+        max-width: 660px;
+        margin-top: 8px;
+      }
+      .callout strong {
+        font-weight: 475;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Spacing &amp; Radius</h1>
+    <p class="lede">
+      A 4px-based spacing scale and a deliberately <strong>square</strong> default. Corners stay sharp unless a
+      component opts into a radius — which keeps the dense, IDE-like surfaces feeling precise rather than soft.
+    </p>
+
+    <h2>Spacing scale</h2>
+    <p class="sectionnote">Named steps from 4px to 32px. <code>md</code> (16px) is the default gutter.</p>
+    <div class="row"><span class="tok">2xs</span><span class="px">4px</span><div class="bar" style="width: 4px"></div></div>
+    <div class="row"><span class="tok">xs</span><span class="px">8px</span><div class="bar" style="width: 8px"></div></div>
+    <div class="row"><span class="tok">sm</span><span class="px">12px</span><div class="bar" style="width: 12px"></div></div>
+    <div class="row"><span class="tok">md</span><span class="px">16px</span><div class="bar" style="width: 16px"></div></div>
+    <div class="row"><span class="tok">lg</span><span class="px">24px</span><div class="bar" style="width: 24px"></div></div>
+    <div class="row"><span class="tok">xl</span><span class="px">32px</span><div class="bar" style="width: 32px"></div></div>
+
+    <h2>Corner radius</h2>
+    <p class="sectionnote">
+      Default radius is <code>0px</code> — square. The scale below exists for the few elements that round (menus,
+      popovers, tooltips, avatars).
+    </p>
+    <div class="radii">
+      <div class="radius">
+        <div class="box" style="border-radius: 0"></div>
+        <div class="tok">default</div>
+        <div class="px">0px</div>
+      </div>
+      <div class="radius">
+        <div class="box" style="border-radius: 4px"></div>
+        <div class="tok">xs</div>
+        <div class="px">4px</div>
+      </div>
+      <div class="radius">
+        <div class="box" style="border-radius: 6px"></div>
+        <div class="tok">sm</div>
+        <div class="px">6px</div>
+      </div>
+      <div class="radius">
+        <div class="box" style="border-radius: 8px"></div>
+        <div class="tok">md</div>
+        <div class="px">8px</div>
+      </div>
+      <div class="radius">
+        <div class="box" style="border-radius: 10px"></div>
+        <div class="tok">lg</div>
+        <div class="px">10px</div>
+      </div>
+      <div class="radius">
+        <div class="box" style="border-radius: 50%"></div>
+        <div class="tok">full</div>
+        <div class="px">100%</div>
+      </div>
+    </div>
+
+    <h2>Borders</h2>
+    <p class="sectionnote">Hairlines are 0.5px on retina. The focus ring is a 1.5px highlight-border outline, inset.</p>
+    <div class="callout">
+      <strong>Signature corner-bracket border.</strong> Outlined controls draw an L-bracket at each corner in the
+      full <code>currentColor</code> and the rest of the frame at 50% opacity — a small, recognizable detail that
+      shows up on secondary/outline buttons and toolbar chips. See it live on the Buttons card.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,231 @@
+<!-- @dsCard group="Components" name="Field diff" subtitle="Word-level value diffs: struck-red removals, green additions, side-by-side & in-grid, revert action" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Field diff</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+
+        --bg-added: #b2f2bb;
+        --fg-added: #0c5d3f;
+        --bg-removed: #ffd0c6;
+        --fg-removed: #c0341d;
+
+        --mod-rev-bg: #e0e7ff;
+        --mod-rev-stroke: #0551cd;
+
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 32px;
+        max-width: 700px;
+        line-height: 1.5;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 12px;
+      }
+      .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 10px;
+        display: block;
+      }
+
+      .diffbox {
+        max-width: 640px;
+        border: 0.5px solid var(--fg-divider);
+        position: relative;
+      }
+      .diffhead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 7px 12px;
+        background: var(--bg-panel);
+        border-bottom: 0.5px solid var(--fg-divider);
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.25px;
+        color: var(--fg-secondary);
+      }
+      .revert {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--fg-muted);
+        font-family: var(--font-body);
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        cursor: pointer;
+      }
+      .revert:hover {
+        color: var(--fg-primary);
+      }
+      .difftext {
+        padding: 12px;
+        font-size: 13px;
+        line-height: 21px;
+        color: var(--fg-primary);
+      }
+      .added {
+        background: var(--bg-added);
+        color: var(--fg-added);
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
+        padding: 1px 0;
+      }
+      .removed {
+        background: var(--bg-removed);
+        color: var(--fg-removed);
+        text-decoration: line-through;
+        box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
+        padding: 1px 0;
+      }
+
+      /* Side-by-side */
+      .sbs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        max-width: 720px;
+        border: 0.5px solid var(--fg-divider);
+      }
+      .sbs > div {
+        padding: 0;
+      }
+      .sbs .colhead {
+        padding: 7px 12px;
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.25px;
+        color: var(--fg-secondary);
+        background: var(--bg-panel);
+        border-bottom: 0.5px solid var(--fg-divider);
+      }
+      .sbs .left {
+        border-right: 0.5px solid var(--fg-divider);
+      }
+      .sbs .body {
+        padding: 12px;
+        font-size: 13px;
+        line-height: 21px;
+      }
+
+      /* In-grid */
+      .gridcell {
+        max-width: 520px;
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        border: 0.5px solid var(--fg-divider);
+        font-size: 13px;
+      }
+      .gridcell .k {
+        padding: 11px 14px;
+        color: var(--fg-secondary);
+        border-right: 0.5px solid var(--fg-divider);
+        font-weight: 425;
+      }
+      .gridcell .v {
+        padding: 11px 14px;
+        line-height: 21px;
+        box-shadow: inset 4px 0 0 var(--mod-rev-stroke);
+        background: var(--mod-rev-bg);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Field diff</h1>
+    <p class="lede">
+      How an edited value reads against what's published. Diffs are word-level: removed words are struck through
+      in red, added words sit on green. The same renderer drives the inline view, the side-by-side compare, and
+      the in-grid cell — and every diff carries a one-click revert back to the published value.
+    </p>
+
+    <h2>Inline (unified)</h2>
+    <div class="diffbox">
+      <div class="diffhead">
+        Headline
+        <span class="revert"
+          ><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-1" /></svg>
+          Revert</span
+        >
+      </div>
+      <div class="difftext">
+        The <span class="removed">fastest</span><span class="added">simplest</span> way to sync content
+        <span class="added">across every tool you use</span>.
+      </div>
+    </div>
+    <span class="tok">UnifiedDiff</span>
+
+    <h2>Side-by-side</h2>
+    <div class="sbs">
+      <div class="left">
+        <div class="colhead">Published</div>
+        <div class="body">The <span class="removed">fastest</span> way to sync content.</div>
+      </div>
+      <div>
+        <div class="colhead">Local edit</div>
+        <div class="body">
+          The <span class="added">simplest</span> way to sync content
+          <span class="added">across every tool you use</span>.
+        </div>
+      </div>
+    </div>
+    <span class="tok">SideBySideCurrentDiff · SideBySideNewDiff</span>
+
+    <h2>In the record grid</h2>
+    <div class="gridcell">
+      <div class="k">headline</div>
+      <div class="v">
+        The <span class="removed">fastest</span><span class="added">simplest</span> way to sync content.
+      </div>
+    </div>
+    <span class="tok">Diff cell · modified · needs review</span>
+  </body>
+</html>

@@ -1,0 +1,182 @@
+<!-- @dsCard group="Components" name="Tabs & segmented" subtitle="Underline tabs (yellow active rule) and a square segmented control" -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch — Tabs & segmented</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&family=Geist+Mono:wght@400..600&family=Inter:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-base: #ffffff;
+        --bg-panel: #f8f8f9;
+        --bg-selected: #f1f1f3;
+        --fg-primary: #1c1f25;
+        --fg-secondary: #62646b;
+        --fg-muted: #808288;
+        --fg-divider: rgba(2, 5, 18, 0.16);
+        --highlight-border: #d4c800;
+        --font-body: 'Inter', sans-serif;
+        --font-heading: 'Funnel Display', 'Inter', sans-serif;
+        --font-mono: 'Geist Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        padding: 40px;
+      }
+      h1 {
+        font-family: var(--font-heading);
+        font-size: 24px;
+        font-weight: 500;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        margin-bottom: 4px;
+      }
+      .lede {
+        color: var(--fg-muted);
+        font-size: 14px;
+        margin-bottom: 34px;
+        max-width: 680px;
+      }
+      h2 {
+        font-family: var(--font-heading);
+        font-size: 16px;
+        font-weight: 500;
+        margin: 30px 0 16px;
+      }
+      .tok {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--fg-muted);
+        letter-spacing: 0.25px;
+        margin-top: 12px;
+        display: block;
+      }
+
+      /* Tabs */
+      .tabs {
+        display: flex;
+        gap: 4px;
+        border-bottom: 0.5px solid var(--fg-divider);
+        max-width: 560px;
+      }
+      .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 9px 14px;
+        font-size: 13px;
+        color: var(--fg-secondary);
+        border-bottom: 2px solid transparent;
+        margin-bottom: -0.5px;
+        cursor: pointer;
+      }
+      .tab svg {
+        width: 15px;
+        height: 15px;
+      }
+      .tab:hover {
+        color: var(--fg-primary);
+      }
+      .tab.active {
+        color: var(--fg-primary);
+        font-weight: 475;
+        border-bottom-color: var(--highlight-border);
+      }
+      .tab .badge {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--fg-muted);
+        background: var(--bg-selected);
+        padding: 0 5px;
+        line-height: 16px;
+      }
+      .panel {
+        padding: 18px 4px;
+        font-size: 13px;
+        color: var(--fg-secondary);
+        line-height: 19px;
+        max-width: 560px;
+      }
+
+      /* Segmented control */
+      .seg {
+        display: inline-flex;
+        background: var(--bg-selected);
+        padding: 3px;
+        gap: 2px;
+        border-radius: 0;
+      }
+      .seg .opt {
+        padding: 5px 16px;
+        font-size: 13px;
+        color: var(--fg-secondary);
+        border-radius: 0;
+        cursor: pointer;
+      }
+      .seg .opt.active {
+        background: var(--bg-base);
+        color: var(--fg-primary);
+        font-weight: 475;
+        box-shadow: 0 1px 2px rgba(2, 5, 18, 0.14);
+      }
+      .seg.small .opt {
+        padding: 3px 12px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Tabs &amp; segmented</h1>
+    <p class="lede">
+      Two ways to switch a view. Tabs are an underline rule (active = yellow, the one accent again) for top-level
+      panels; the segmented control is a compact square toggle for in-panel modes and filters.
+    </p>
+
+    <h2>Tabs</h2>
+    <div class="tabs">
+      <span class="tab active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
+        Records <span class="badge">128</span>
+      </span>
+      <span class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v4l3 2" /></svg>
+        Publish history
+      </span>
+      <span class="tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+        Validation <span class="badge">3</span>
+      </span>
+    </div>
+    <div class="panel">128 records across this table. 9 have local edits awaiting review.</div>
+    <span class="tok">Tabs · default (underline)</span>
+
+    <h2>Segmented control</h2>
+    <div style="display: flex; flex-direction: column; gap: 22px; align-items: flex-start">
+      <div class="seg">
+        <span class="opt active">All</span>
+        <span class="opt">Changed</span>
+        <span class="opt">New</span>
+        <span class="opt">Deleted</span>
+      </div>
+      <div class="seg small">
+        <span class="opt active">Grid</span>
+        <span class="opt">JSON</span>
+      </div>
+    </div>
+    <span class="tok">SegmentedControl</span>
+  </body>
+</html>

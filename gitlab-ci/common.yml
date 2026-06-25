@@ -108,6 +108,7 @@ include:
     - .claude/**/*
     - gitlab-ci/**/*
     - docs/**/*
+    - design-system/**/*
     - .vscode/**/*
     - experimental/**/*
     - scratch-git-2/**/*
