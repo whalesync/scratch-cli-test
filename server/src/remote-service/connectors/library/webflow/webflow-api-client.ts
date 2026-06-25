@@ -182,13 +182,21 @@ export class WebflowApiClient {
    * mid-pull migrates to the tail — at worst re-pulled on the next page, never
    * skipped. Full pulls pass it `undefined` and the request is byte-identical to
    * the pre-incremental call (offset + limit only).
+   *
+   * `cmsLocaleId` (DEV-10529) targets a single secondary locale; the returned
+   * items carry that locale's localized field values (and that `cmsLocaleId`),
+   * still sharing the primary item's `id`. Omitted ⇒ Webflow defaults to the
+   * site's primary locale, byte-identical to the pre-localization request.
    */
   async listCollectionItems(
     collectionId: string,
-    params: { offset: number; limit: number; lastUpdatedSince?: string },
+    params: { offset: number; limit: number; lastUpdatedSince?: string; cmsLocaleId?: string },
   ): Promise<CollectionItemList> {
-    const { offset, limit, lastUpdatedSince } = params;
+    const { offset, limit, lastUpdatedSince, cmsLocaleId } = params;
     const query: Record<string, string | number> = { offset, limit };
+    if (cmsLocaleId !== undefined) {
+      query.cmsLocaleId = cmsLocaleId;
+    }
     if (lastUpdatedSince !== undefined) {
       query['lastUpdated[gte]'] = lastUpdatedSince;
       query.sortBy = 'lastUpdated';
@@ -200,11 +208,18 @@ export class WebflowApiClient {
     return response.data;
   }
 
-  async getCollectionItem(collectionId: string, itemId: string): Promise<CollectionItem> {
+  /**
+   * Fetch one collection item. `cmsLocaleId` (DEV-10529) selects a secondary
+   * locale's localized variant; omitted ⇒ the site's primary locale.
+   */
+  async getCollectionItem(collectionId: string, itemId: string, cmsLocaleId?: string): Promise<CollectionItem> {
+    const url = `/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}`;
+    // Keep the primary-locale request byte-identical (single-arg) to the
+    // pre-localization call; only attach the locale query param when present.
     const response = await this.withRetry(() =>
-      this.http.get<CollectionItem>(
-        `/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}`,
-      ),
+      cmsLocaleId !== undefined
+        ? this.http.get<CollectionItem>(url, { params: { cmsLocaleId } })
+        : this.http.get<CollectionItem>(url),
     );
     return response.data;
   }

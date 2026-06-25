@@ -44,8 +44,10 @@ import {
   CollectionItemFieldData,
   CollectionItemWithIdInput,
   CollectionItemWithIdInputFieldData,
+  Locale,
   Page,
   PageMetadataWrite,
+  Site,
   WEBFLOW_ECOMMERCE_COLLECTION_SLUGS,
 } from './webflow-types';
 
@@ -136,12 +138,23 @@ export class WebflowConnector extends Connector {
       const collectionsResponse = await this.client.listCollections(site.id);
       const collections = collectionsResponse.collections || [];
 
+      // Secondary (non-primary) locales are surfaced as additional opt-in tables
+      // nested inside each collection (DEV-10529). Resolve them once per site.
+      const secondaryLocales = await this.getSecondaryLocales(site);
+
       for (const collection of collections) {
         // Skip ecommerce collections (Products, Categories, SKUs)
         if (collection.slug && WEBFLOW_ECOMMERCE_COLLECTION_SLUGS.includes(collection.slug)) {
           continue;
         }
         tables.push(this.schemaParser.parseTablePreview(site, collection, this.structureVersion));
+        // One additional table per secondary locale, nested under the primary
+        // collection at /<Site>/Collections/<Collection>/<Locale>.
+        for (const locale of secondaryLocales) {
+          tables.push(
+            this.schemaParser.parseSecondaryLocaleTablePreview(site, collection, locale, this.structureVersion),
+          );
+        }
       }
 
       // Add a site-level Assets table
@@ -184,6 +197,21 @@ export class WebflowConnector extends Connector {
     }
 
     return tables;
+  }
+
+  /**
+   * The site's enabled secondary locales (DEV-10529). `listSites` may return a
+   * site without its `locales`, or with a partial `locales` object (e.g.
+   * `primary` populated but `secondary` omitted), so fall back to a single
+   * authoritative `getSite` fetch whenever `secondary` is not present as an
+   * array. An explicit `secondary: []` is the unambiguous "no secondary locales"
+   * signal and is trusted as-is (no extra fetch). Only enabled locales carrying a
+   * `cmsLocaleId` (the CMS-item locale dimension) can become tables.
+   */
+  private async getSecondaryLocales(site: Site): Promise<Locale[]> {
+    const siteWithLocales = Array.isArray(site.locales?.secondary) ? site : await this.client.getSite(site.id);
+    const secondary = siteWithLocales.locales?.secondary ?? [];
+    return secondary.filter((locale) => locale.enabled !== false && Boolean(locale.cmsLocaleId));
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await
@@ -288,7 +316,9 @@ export class WebflowConnector extends Connector {
     options: PullRecordFilesOptions,
   ): Promise<PullRecordFilesResult> {
     WSLogger.info({ source: 'WebflowConnector', message: 'pullRecordFiles called', tableId: tableSpec.id.wsId });
-    const [siteId, collectionId] = tableSpec.id.remoteId;
+    // remoteId[2] (DEV-10529) is the secondary-locale cmsLocaleId, present only
+    // for per-locale collection tables; undefined ⇒ the site's primary locale.
+    const [siteId, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
 
     // Handle assets table (full pull only — no changed-since filter)
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
@@ -320,11 +350,13 @@ export class WebflowConnector extends Connector {
     let hasMore = true;
 
     while (hasMore) {
-      // List items with pagination (filtered by lastUpdated when incremental)
+      // List items with pagination (filtered by lastUpdated when incremental,
+      // scoped to a single secondary locale when cmsLocaleId is set).
       const response = await this.client.listCollectionItems(collectionId, {
         offset,
         limit: WEBFLOW_DEFAULT_BATCH_SIZE,
         lastUpdatedSince,
+        cmsLocaleId,
       });
 
       const items = response.items || [];
@@ -464,7 +496,7 @@ export class WebflowConnector extends Connector {
     ids: string[],
     callback: (params: { files: ConnectorFile[] }) => Promise<void>,
   ): Promise<void> {
-    const [, collectionId] = tableSpec.id.remoteId;
+    const [, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
 
     // Handle assets table
     if (collectionId.startsWith(WEBFLOW_ASSETS_TABLE_ID_PREFIX)) {
@@ -524,7 +556,7 @@ export class WebflowConnector extends Connector {
 
     for (const itemId of ids) {
       try {
-        const item = await this.client.getCollectionItem(collectionId, itemId);
+        const item = await this.client.getCollectionItem(collectionId, itemId, cmsLocaleId);
         if (item) {
           buffer.push(item as unknown as ConnectorFile);
         }
@@ -560,10 +592,19 @@ export class WebflowConnector extends Connector {
    * Returns the created items.
    */
   async createRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<ConnectorFile[]> {
-    const [, collectionId] = tableSpec.id.remoteId;
+    const [, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
 
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
       throw new Error('Creating pages is not supported via the Webflow API');
+    }
+
+    // Secondary-locale tables disable creates (TablePreview.disabledCreates); this
+    // guard surfaces the rule loudly if a create ever reaches here. A localized
+    // variant is created together with its primary item — create in the primary.
+    if (cmsLocaleId) {
+      throw new Error(
+        'Creating items in a secondary Webflow locale is not supported — create the item in the primary locale and Webflow will localize it.',
+      );
     }
 
     // Use the Live endpoint so Scratch publish == Webflow live publish in one round-trip.
@@ -598,7 +639,7 @@ export class WebflowConnector extends Connector {
     files: ConnectorFile[],
     changedFields?: (Record<string, unknown> | undefined)[],
   ): Promise<ConnectorFile[]> {
-    const [, collectionId] = tableSpec.id.remoteId;
+    const [, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
 
     // Handle pages table — update page settings one at a time
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
@@ -641,6 +682,10 @@ export class WebflowConnector extends Connector {
         id: file.id as string,
         fieldData: fieldData as CollectionItemWithIdInputFieldData,
       };
+      // Target a secondary locale's variant when this is a per-locale table
+      // (DEV-10529). Webflow updates the primary locale unless a per-item
+      // cmsLocaleId is supplied; the item id is shared across all locales.
+      if (cmsLocaleId) item.cmsLocaleId = cmsLocaleId;
       if (typeof source.isArchived === 'boolean') item.isArchived = source.isArchived;
       if (typeof source.isDraft === 'boolean') item.isDraft = source.isDraft;
       items.push(item);
@@ -665,10 +710,19 @@ export class WebflowConnector extends Connector {
    * Returns successfully if items are already deleted (404).
    */
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
-    const [, collectionId] = tableSpec.id.remoteId;
+    const [, collectionId, cmsLocaleId] = tableSpec.id.remoteId;
 
     if (collectionId.startsWith(WEBFLOW_PAGES_TABLE_ID_PREFIX)) {
       throw new Error('Deleting pages is not supported via the Webflow API');
+    }
+
+    // Secondary-locale tables disable deletes (TablePreview.disabledDeletes); this
+    // guard surfaces the rule loudly if a delete ever reaches here. Deleting an
+    // item removes it from every locale (one shared id) — delete in the primary.
+    if (cmsLocaleId) {
+      throw new Error(
+        'Deleting items from a secondary Webflow locale is not supported — delete the item in the primary locale.',
+      );
     }
 
     const items = files.map((file) => ({ id: file.id as string }));

@@ -307,6 +307,67 @@ describeIfKey('WebflowConnector — live API', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Secondary locales (DEV-10529)
+  //
+  // Read-only: asserts the locale table shape and that pulling a locale table
+  // scopes items to that locale. Gracefully no-ops when the test site has no
+  // secondary locale enabled (localization is a paid Webflow feature), so CI
+  // stays green. The edit→publish write path is covered by unit tests
+  // (webflow-connector-locales.spec.ts) and deliberately not exercised live
+  // here — we won't mutate data on a site whose localization state we don't
+  // control or can't reliably restore.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('secondary locales', () => {
+    // A locale table carries a 3-element remoteId: [siteId, collectionId, cmsLocaleId].
+    const localeTables = (): TablePreview[] => allTables.filter((t) => t.id.remoteId.length === 3);
+
+    it('surfaces an opt-in, creates/deletes-disabled table per secondary locale (or no-ops if none)', () => {
+      const tables = localeTables();
+      if (tables.length === 0) {
+        // eslint-disable-next-line no-console
+        console.warn('[webflow locales] test site has no secondary locale enabled — skipping locale assertions');
+        return;
+      }
+      for (const localeTable of tables) {
+        expect(localeTable.id.remoteId[2]).toBeTruthy(); // cmsLocaleId
+        expect(localeTable.disabledCreates).toBe(true);
+        expect(localeTable.disabledDeletes).toBe(true);
+        expect(localeTable.disabledUpdates).toBeUndefined(); // editing localized values IS allowed
+        expect(localeTable.parentPath).toBeTruthy();
+      }
+    });
+
+    it('pulls a locale table scoped to its cmsLocaleId', async () => {
+      const localeTable = localeTables()[0];
+      if (!localeTable) {
+        // eslint-disable-next-line no-console
+        console.warn('[webflow locales] no secondary locale — skipping locale pull');
+        return;
+      }
+      const cmsLocaleId = localeTable.id.remoteId[2];
+      const localeSpec = await connector.fetchJsonTableSpec(localeTable.id);
+
+      const pulled: ConnectorFile[] = [];
+      await connector.pullRecordFiles(
+        localeSpec,
+        async ({ files }) => {
+          pulled.push(...files);
+        },
+        {},
+        { pullMode: 'full' } as never,
+      );
+
+      // Every item Webflow returns for a locale-scoped list reports that locale.
+      for (const file of pulled) {
+        if (file.cmsLocaleId !== undefined) {
+          expect(file.cmsLocaleId).toBe(cmsLocaleId);
+        }
+      }
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Connector properties
   // ─────────────────────────────────────────────────────────────────────────
 

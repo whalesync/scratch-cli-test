@@ -1,4 +1,4 @@
-import { Site } from './webflow-types';
+import { Locale, Site } from './webflow-types';
 
 /**
  * The folder segment that groups CMS collections under a site in the v2 (nested)
@@ -49,4 +49,44 @@ export function webflowCollectionBasePath(site: Site, structureVersion: number):
   return structureVersion >= WEBFLOW_NESTED_STRUCTURE_VERSION
     ? [siteName, WEBFLOW_COLLECTIONS_FOLDER_SEGMENT]
     : [siteName];
+}
+
+/**
+ * The on-disk folder name for a Webflow **secondary locale** — the leaf segment
+ * of a per-locale collection table's path (DEV-10529). Prefer the human-friendly
+ * `displayName` ("Spanish (Spain)"); fall back through `tag` ("es-ES"),
+ * `subdirectory` ("es"), then the locale ids so the segment is never empty.
+ */
+export function webflowSecondaryLocaleFolderName(locale: Locale): string {
+  return locale.displayName || locale.tag || locale.subdirectory || locale.cmsLocaleId || locale.id || '';
+}
+
+/**
+ * The `basePath` (folder segments preceding the table's own name) for a Webflow
+ * **secondary-locale** CMS collection table (DEV-10529). The locale folder nests
+ * one level *inside* its primary collection folder, so its base path is the
+ * primary collection's full path and its leaf name is the locale name:
+ *
+ *   - v2 (nested): `/<Site>/Collections/<Collection>/<Locale>`
+ *   - v1 (flat):   `/<Site>/<Collection>/<Locale>`
+ *
+ * The leaf `<Locale>` is supplied separately as the table-spec `name`
+ * (`webflowSecondaryLocaleFolderName`), so this returns everything up to and
+ * including the primary collection's own folder.
+ */
+export function webflowSecondaryLocaleBasePath(
+  site: Site,
+  collectionDisplayName: string,
+  structureVersion: number,
+): string[] {
+  return [...webflowCollectionBasePath(site, structureVersion), collectionDisplayName];
+}
+
+/**
+ * Find a site's secondary locale by its `cmsLocaleId` — the dimension that
+ * distinguishes a per-locale collection table (`remoteId[2]`) from the primary.
+ * Returns `undefined` if the locale no longer exists on the site.
+ */
+export function findWebflowSecondaryLocaleByCmsLocaleId(site: Site, cmsLocaleId: string): Locale | undefined {
+  return site.locales?.secondary?.find((locale) => locale.cmsLocaleId === cmsLocaleId);
 }

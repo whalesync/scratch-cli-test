@@ -93,10 +93,24 @@ describe('WebflowApiClient', () => {
       });
     });
 
+    it('listCollectionItems with cmsLocaleId → adds the cmsLocaleId query param (DEV-10529)', async () => {
+      mockGet.mockResolvedValue({ data: { items: [], pagination: { total: 0, offset: 0, limit: 100 } } });
+      await client.listCollectionItems('c1', { offset: 0, limit: 100, cmsLocaleId: 'cms-es' });
+      expect(mockGet).toHaveBeenCalledWith('/collections/c1/items', {
+        params: { offset: 0, limit: 100, cmsLocaleId: 'cms-es' },
+      });
+    });
+
     it('getCollectionItem → GET /collections/{id}/items/{itemId}', async () => {
       mockGet.mockResolvedValue({ data: { id: 'i1', fieldData: { name: 'x', slug: 'x' } } });
       await client.getCollectionItem('c1', 'i1');
       expect(mockGet).toHaveBeenCalledWith('/collections/c1/items/i1');
+    });
+
+    it('getCollectionItem with cmsLocaleId → adds the cmsLocaleId query param (DEV-10529)', async () => {
+      mockGet.mockResolvedValue({ data: { id: 'i1', cmsLocaleId: 'cms-es', fieldData: { name: 'x', slug: 'x' } } });
+      await client.getCollectionItem('c1', 'i1', 'cms-es');
+      expect(mockGet).toHaveBeenCalledWith('/collections/c1/items/i1', { params: { cmsLocaleId: 'cms-es' } });
     });
 
     it('createItemsLive → POST /collections/{id}/items/live, body {items}, skipInvalidFiles as a query param', async () => {

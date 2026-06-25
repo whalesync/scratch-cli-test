@@ -19,7 +19,13 @@ import _ from 'lodash';
 import { BaseJsonTableSpec, EntityId, idPath } from '../../types';
 import { escapePointerToken } from '../../utils/json-pointer';
 import { buildWebflowDefaultView } from './webflow-default-view';
-import { webflowCollectionBasePath, webflowSiteFolderName } from './webflow-folder-paths';
+import {
+  findWebflowSecondaryLocaleByCmsLocaleId,
+  webflowCollectionBasePath,
+  webflowSecondaryLocaleBasePath,
+  webflowSecondaryLocaleFolderName,
+  webflowSiteFolderName,
+} from './webflow-folder-paths';
 import { Collection, Field, FieldType, Site } from './webflow-types';
 
 /**
@@ -202,6 +208,14 @@ function makeWebflowFieldSchemaOptionalNullable(annotatedFieldSchema: TSchema): 
  * Build a BaseJsonTableSpec schema from Webflow site and collection data.
  * Converts Webflow field types to JSON Schema types.
  * Uses field slugs as property keys.
+ *
+ * When `id.remoteId[2]` carries a `cmsLocaleId` (DEV-10529), this is a
+ * **secondary-locale** table: the schema is identical to the primary (Webflow
+ * localizes field *values*, not field *definitions*), but the folder nests one
+ * level inside the primary collection at `/<Site>/Collections/<Collection>/<Locale>`,
+ * and the title is suffixed with the locale name. The schema `$id` stays the bare
+ * `collectionId` so reference fields (whose item ids are shared across locales)
+ * keep resolving against the same collection.
  */
 export function buildWebflowJsonTableSpec(
   id: EntityId,
@@ -209,7 +223,14 @@ export function buildWebflowJsonTableSpec(
   collection: Collection,
   structureVersion = 1,
 ): BaseJsonTableSpec {
-  const [, collectionId] = id.remoteId;
+  const [, collectionId, cmsLocaleId] = id.remoteId;
+  const isSecondaryLocale = Boolean(cmsLocaleId);
+  const secondaryLocale = cmsLocaleId ? findWebflowSecondaryLocaleByCmsLocaleId(site, cmsLocaleId) : undefined;
+  // For an unknown/deleted locale, fall back to the cmsLocaleId itself so the
+  // folder is never empty-named and pull/publish still target the right locale.
+  const localeFolderName = secondaryLocale
+    ? webflowSecondaryLocaleFolderName(secondaryLocale) || cmsLocaleId
+    : cmsLocaleId;
 
   const properties: Record<string, TSchema> = {};
   let titleColumnRemoteId: EntityId['remoteId'] | undefined;
@@ -293,21 +314,27 @@ export function buildWebflowJsonTableSpec(
 
   const schema = Type.Object(properties, {
     $id: collectionId,
-    title: collection.displayName,
+    title: isSecondaryLocale ? `${collection.displayName} (${localeFolderName})` : collection.displayName,
   });
 
   return {
     id,
     slug: collection.slug ?? id.wsId,
-    name: collection.displayName,
+    // Secondary-locale tables take the locale name as their folder leaf and nest
+    // inside the primary collection; primary tables keep the collection name and
+    // base path unchanged (DEV-10529).
+    name: isSecondaryLocale ? (localeFolderName ?? collection.displayName) : collection.displayName,
     schema,
     titleColumnRemoteId,
     mainContentColumnRemoteId,
     idColumnRemoteId: idPath('id'),
     slugFieldPath: 'fieldData.slug',
     // v2 accounts nest collections under /<Site>/Collections/; v1 stay flat at
-    // /<Site>/. Single source of truth shared with the folder-move migration.
-    basePath: webflowCollectionBasePath(site, structureVersion),
+    // /<Site>/. Single source of truth shared with the folder-move migration. A
+    // secondary locale nests one level deeper, inside its primary collection.
+    basePath: isSecondaryLocale
+      ? webflowSecondaryLocaleBasePath(site, collection.displayName, structureVersion)
+      : webflowCollectionBasePath(site, structureVersion),
     structureVersion,
     generatedAt: new Date().toISOString(),
     defaultView: buildWebflowDefaultView(schema, 'collection_items'),

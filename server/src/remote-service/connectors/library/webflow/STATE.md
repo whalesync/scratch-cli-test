@@ -146,9 +146,11 @@ One row per FK. **Tested = set via the CLI**: edit the FK field to point at a *d
 
 ## Edge cases discovered
 - **`VideoLink` returns an oEmbed object, not a URL string.** A populated "Video Link" field comes back as `{ url, metadata: { html, title, thumbnail_url, … } }` — Webflow enriches the pasted video URL server-side — so the schema models that object (with a bare-URI string fallback), not the `format:'uri'` string a `Link` returns. Found via prod `enforce_schema` noise; fixed in `webflow-json-schema.ts` (`FieldType.VideoLink` case).
+- **Secondary locales (DEV-10529):** Webflow CMS items in a secondary locale **share the same item `id`** as their primary-locale counterpart (distinguished only by `cmsLocaleId`), so primary + secondary cannot live in one folder. Each enabled secondary locale is surfaced as its own opt-in table, **nested inside** the primary collection at `/<Site>/Collections/<Collection>/<Locale>` (remoteId `[siteId, collectionId, cmsLocaleId]`). Pull passes `?cmsLocaleId=`; edit→publish sets per-item `cmsLocaleId` on the `PATCH …/items/live`. Creates + deletes are **disabled** on locale tables (a localized variant is added/removed with its primary item).
 
 ## Gotchas
-- (connector-specific operational notes)
+- **Locale tables are additive — no migration.** Primary tables stay `[siteId, collectionId]` and unchanged; locale tables only appear in the picker when the site has enabled secondary locales. They nest as a real DataFolder *inside* the primary collection folder (record→folder association is exact-path everywhere, so the parent never absorbs the child). One consequence: the `move_folder` op refuses to move a folder that contains a child DataFolder — irrelevant today (the v1→v2 folder restructure already ran), but a future collection move would need the locale subfolders handled first.
+- `listSites` may omit `site.locales`; the connector falls back to a single `getSite` per site when discovering locales.
 
 ## Integration tests
 Automated **live-API** coverage in `server/test/integration/`, and whether it runs in the **post-deploy CI job** (`gitlab-ci/stages/06-environment-tests.yml` → `environment tests for test env post-deploy`). Cross-connector view + column legend: [`docs/connector-build.md` → Connector summary table](/docs/connector-build.md) (**IT 📄** = a spec exists, **IT ✅** = it runs in the pipeline).
