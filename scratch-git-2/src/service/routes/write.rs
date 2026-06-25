@@ -504,6 +504,11 @@ pub async fn discard_changes(
 #[derive(Deserialize)]
 pub struct RebaseBody {
     pub strategy: Option<String>,
+    /// Paths to converge to `main` instead of re-applying the user's edit — the
+    /// publish reconcile's scoped exclusion set (DEV-10048). Absent/empty ⇒
+    /// re-apply every edit (legacy behavior).
+    #[serde(rename = "excludePaths", default)]
+    pub exclude_paths: Vec<String>,
 }
 
 pub async fn rebase(
@@ -512,6 +517,7 @@ pub async fn rebase(
     Json(body): Json<RebaseBody>,
 ) -> Response {
     let strategy = body.strategy.unwrap_or_else(|| "diff3".to_string());
+    let exclude_paths = body.exclude_paths;
 
     let _guard = state.write_locks.acquire(&id, DIRTY_BRANCH).await;
 
@@ -520,7 +526,8 @@ pub async fn rebase(
         let id = id.clone();
         move || {
             let git_repo = GitRepo::open(&repos_dir, &id)?;
-            let (rebased, conflicts) = git_repo.rebase_dirty(&strategy)?;
+            let (rebased, conflicts) =
+                git_repo.rebase_dirty_excluding(&strategy, &exclude_paths)?;
             Ok::<_, AppError>(json!({ "rebased": rebased, "conflicts": conflicts }))
         }
     })

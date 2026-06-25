@@ -156,6 +156,17 @@ The file IS the wire format. `files upload` ships it verbatim to `/upload-patch`
 
 It's safe to `cat` and inspect; it's a normal JSON file. Mutating callers acquire the workspace lock at `<workspace>/.scratch/lock` first, and writes are atomic (`<file>.tmp.<pid>` → fsync → rename).
 
+### `failed-patches.json` (post-publish connector rejections, DEV-10048)
+
+Sibling to `accepted-patches.json`, at `<workspace>/.scratch/connections/<conn>/failed-patches.json`. After a publish, a record the destination connector **rejected** moves OUT of `accepted-patches.json` and INTO this file, carrying the connector's error. It uses the same `{ version, patches }` envelope, with two extra per-entry fields:
+
+- `error` — the record-level connector message (e.g. `"Organization cannot be null"`).
+- `fieldErrors` — optional per-field messages keyed by RFC 6902 JSON Pointer (e.g. `{ "/Organization": "Organization cannot be null" }`), driving the per-field "failed to publish" warning in the grid.
+
+The error lives at the **entry** level, never on the RFC 6902 ops, so `patch` stays a conformant op array / merge patch and re-applies through the same machinery as an accepted patch.
+
+The failed edit is re-applied to the **working tree** during the post-publish reconcile (so it shows as **needs-approval**), but is NOT in `accepted-patches.json` — so it is not staged to publish again until the user deliberately re-accepts it (which removes the `failed-patches.json` entry and folds the edit back into `accepted-patches.json`). An empty set deletes the file; a clean publish leaves none behind. See the publish redesign doc, [`docs/plans/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign.md).
+
 ### `unreviewed-changes.json` (the pull conflict stash, DEV-10523)
 
 Sibling to `accepted-patches.json`, at `<workspace>/.scratch/connections/<conn>/unreviewed-changes.json`, with the same `{ version, patches }` envelope. `files download` re-applies unreviewed working-tree edits user-wins across a server advance instead of refusing the pull. The narrow set it **can't** re-apply — the server deleted the very record the user was editing, or the patch genuinely fails to reconstruct — would be lost when the worktree is overwritten with the new approved state. Before that overwrite, each such record is written here as a self-contained `create`-shaped entry carrying the user's full intended content (the base it was diffed against no longer exists), so the work is recoverable.

@@ -247,6 +247,24 @@ pub enum FilesCommands {
         #[arg(long = "file-path")]
         file_path: String,
     },
+
+    /// Post-publish reconcile for one connection (publish redesign, DEV-10048).
+    /// Run by the desktop after a connection's run-job: fetches origin,
+    /// re-anchors `accepted-patches.json` against the new `main`, routes
+    /// connector-rejected records into `failed-patches.json` (re-surfacing them
+    /// in the worktree as needs-approval edits), drops publish-no-op survivors
+    /// (e.g. removed keys), and preserves unrelated unreviewed edits (DEV-10523).
+    #[command(name = "reconcile-after-publish")]
+    ReconcileAfterPublish {
+        /// The connector account id (or connection dir name) just published.
+        #[arg(long = "connection")]
+        connection: String,
+        /// JSON array of the run-job's `failedOperations`
+        /// (`[{ "filePath", "phase", "error", "fieldErrors" }]`). Omitted/empty
+        /// when nothing was rejected.
+        #[arg(long = "failed-ops-json")]
+        failed_ops_json: Option<String>,
+    },
 }
 
 #[derive(Clone)]
@@ -605,6 +623,16 @@ pub async fn run(cmd: FilesCommands, server_url: &str, json: bool) -> anyhow::Re
         FilesCommands::ReconcilePublished { file_path } => {
             run_reconcile_published(&cwd, server_url, &file_path, json)
         }
+        FilesCommands::ReconcileAfterPublish {
+            connection,
+            failed_ops_json,
+        } => run_reconcile_after_publish(
+            &cwd,
+            server_url,
+            &connection,
+            failed_ops_json.as_deref(),
+            json,
+        ),
     }
 }
 
@@ -728,7 +756,7 @@ async fn run_download(
             .get(&ctx.connection_id)
             .map(|s| s.data_folders.as_slice())
             .unwrap_or(&[]);
-        let mut download_result = download_single_repo(ctx, &workspace_dir, &token, folders)?;
+        let mut download_result = download_single_repo(ctx, &workspace_dir, &token, folders, None)?;
         // `update_main_worktree_after_pull` is best-effort — failures here shouldn't
         // bubble up because the dirty-side download already succeeded. Fall
         // back to "no master change" on error.
@@ -1631,7 +1659,9 @@ async fn publish_single_connection(
     // the local state. Surfacing this as a per-connection warning matches
     // the desktop's fire-and-forget `refreshLocal` policy documented in
     // `scratch-git-2/docs/PULL_AFTER_PUBLISH.md`.
-    if let Err(e) = reconcile_accepted_after_publish(ctx, workspace_dir, token) {
+    if let Err(e) =
+        reconcile_accepted_after_publish(ctx, workspace_dir, token, &run_job_failed_operations)
+    {
         return PublishConnectionOutcome::PublishedWithReconcileWarning {
             name,
             warning: format!("post-publish refresh failed: {e}. Run `scratchmd files download` to sync local state."),
@@ -3540,7 +3570,7 @@ fn refresh_workbook_for_contexts(
             .get(&ctx.connection_id)
             .map(|s| s.data_folders.as_slice())
             .unwrap_or(&[]);
-        download_single_repo(ctx, workspace_dir, token, folders)?;
+        download_single_repo(ctx, workspace_dir, token, folders, None)?;
         if update_main_worktree_after_pull(ctx, token).is_ok() {
             let _ = sync_schema_files_from_worktree(ctx);
         }
@@ -4707,9 +4737,18 @@ fn reconcile_accepted_after_publish(
     ctx: &ConnectionContext,
     workspace_dir: &Path,
     token: &str,
+    failed_operations: &[crate::api::JobFailedOperation],
 ) -> anyhow::Result<()> {
     let connection_dir = accepted_patches_dir(ctx);
     let accepted = crate::shared::accepted_patches::load(&connection_dir)?;
+
+    let failed_by_path = failed_ops_by_path(failed_operations);
+
+    // The paths we attempted to publish this round. Their `failed-patches.json`
+    // entries get refreshed (added on failure, cleared on success); paths we
+    // didn't touch keep any prior failed entry.
+    let reprocessed_paths: HashSet<String> =
+        accepted.patches.iter().map(|p| p.path.clone()).collect();
 
     let ReAnchorAgainstPublishedMain {
         re_anchored,
@@ -4723,33 +4762,58 @@ fn reconcile_accepted_after_publish(
         &accepted.patches,
     )?;
 
+    let (surviving_accepted_patches, newly_failed_patches) = partition_reanchored_after_publish(
+        re_anchored.patches,
+        &failed_by_path,
+        &file_path_to_contents_map_in_main_branch_after_publish,
+    )?;
+
     let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
-        patches: re_anchored.patches,
+        patches: surviving_accepted_patches,
     };
 
-    // Snap the worktree to the post-publish canonical state: successfully
-    // published paths get `new_main` bytes; failed-publish paths get
-    // `apply(new_main, surviving_patch)`. Mirrors the same materialize step
-    // `download_single_repo` runs after re-anchor — without it, the CLI
-    // publish flow leaves the worktree byte-different from `main` (no
-    // subsequent `files download` re-canonicalizes because main has already
-    // advanced and the "up to date" short-circuit fires). Only meaningful
-    // when there is actually a worktree on disk; tests that exercise
-    // reconcile against a bare-only fixture skip this branch.
+    // Merge `failed-patches.json`: drop prior entries for paths we just
+    // re-published (they either succeeded or are re-captured below), then add
+    // this round's failures. Paths outside this publish keep their prior entry.
+    let mut failed_file = crate::shared::failed_patches::load(&connection_dir)?;
+    failed_file
+        .patches
+        .retain(|p| !reprocessed_paths.contains(&p.path));
+    failed_file.patches.extend(newly_failed_patches);
+
+    // Snap the worktree to the post-publish canonical state. Published / no-op
+    // paths get `new_main` bytes; still-accepted paths get `apply(new_main,
+    // accepted_patch)`; failed paths get `apply(new_main, failed_patch)` so they
+    // re-surface as needs-approval edits in the grid (they are NOT written back
+    // to `accepted-patches.json`, so they aren't staged to publish again until
+    // the user re-accepts). Only meaningful when a worktree exists on disk; the
+    // CLI publish flow requires a clean unreviewed state, so there is nothing to
+    // preserve here (the desktop's separate pull path keeps DEV-10523).
     if ctx.worktree_dir.join(".git").exists() {
-        let file_path_to_contents_map_for_approved_state_after_publish = compute_accepted_state(
+        let mut worktree_patches = new_accepted.patches.clone();
+        worktree_patches.extend(
+            failed_file
+                .patches
+                .iter()
+                .map(crate::shared::failed_patches::FailedPatch::to_anchored),
+        );
+        let combined = crate::shared::accepted_patches::AcceptedPatchesFile {
+            patches: worktree_patches,
+        };
+        let file_path_to_contents_map_for_worktree_after_publish = compute_accepted_state(
             &file_path_to_contents_map_in_main_branch_after_publish,
-            &new_accepted,
+            &combined,
         )?;
         let file_path_to_contents_map_in_worktree = read_worktree_files_and_scratch_state(ctx)?;
         materialize_local_repo(
             ctx,
-            &file_path_to_contents_map_for_approved_state_after_publish,
+            &file_path_to_contents_map_for_worktree_after_publish,
             &file_path_to_contents_map_in_worktree,
         )?;
     }
 
     crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
+    crate::shared::failed_patches::save_atomic(&connection_dir, &failed_file)?;
 
     if let Some(hash) = new_main_hash.as_deref() {
         git_update_ref(&ctx.bare_repo, "refs/heads/main", hash)?;
@@ -4764,6 +4828,95 @@ fn reconcile_accepted_after_publish(
     }
 
     Ok(())
+}
+
+/// Whether a surviving re-anchored patch is a **publish no-op** against the
+/// post-publish `main` — i.e. the server's publish would compute empty
+/// `changedFields` and never call the connector for it (classically a removed
+/// key). Such a patch survives `re_anchor` (its outcome still differs from `main`
+/// by the removal) but must be dropped so it stops showing as "accepted"
+/// (DEV-10048). Deletes and creates are real intents and are never no-ops here.
+fn is_publish_no_op_survivor(
+    entry: &crate::shared::re_anchor::AnchoredPatch,
+    new_main_map: &FileMap,
+) -> anyhow::Result<bool> {
+    use crate::shared::re_anchor::PatchKind;
+    if entry.kind == PatchKind::Delete {
+        return Ok(false);
+    }
+    let main_value = parse_json_value_at(
+        new_main_map,
+        &entry.path,
+        "refs/remotes/origin/main (post-publish)",
+    )?;
+    let intended = match entry.kind {
+        PatchKind::Create => entry.patch.clone(),
+        PatchKind::Update => {
+            let base = main_value.clone().unwrap_or(serde_json::Value::Null);
+            crate::shared::json_patch::apply_update_patch(&base, &entry.patch)?
+        }
+        PatchKind::Delete => unreachable!("handled above"),
+    };
+    Ok(crate::shared::re_anchor::is_publish_no_op_against_main(
+        main_value.as_ref(),
+        &intended,
+    ))
+}
+
+/// Per-path connector rejection detail: `(record-level error, per-field errors)`.
+type FailedOpsByPath = HashMap<String, (Option<String>, Option<BTreeMap<String, String>>)>;
+
+/// Index a run-job's failed operations by record path. Multiple ops can fail for
+/// one record (edit + backfill) — keep the first record-level error and union the
+/// per-field errors.
+fn failed_ops_by_path(failed_operations: &[crate::api::JobFailedOperation]) -> FailedOpsByPath {
+    let mut by_path: FailedOpsByPath = HashMap::new();
+    for op in failed_operations {
+        let entry = by_path.entry(op.file_path.clone()).or_insert((None, None));
+        if entry.0.is_none() {
+            entry.0 = op.error.clone();
+        }
+        if let Some(field_errors) = &op.field_errors {
+            let merged = entry.1.get_or_insert_with(BTreeMap::new);
+            for (key, message) in field_errors {
+                merged.entry(key.clone()).or_insert_with(|| message.clone());
+            }
+        }
+    }
+    by_path
+}
+
+/// Partition the surviving (non-published) re-anchored patches after a publish
+/// (the publish redesign, DEV-10048):
+///   - connector-rejected paths → `failed-patches.json` entries (with error);
+///   - publish-no-op survivors (e.g. a removed key main never advanced for) →
+///     dropped, so they stop showing as "accepted";
+///   - everything else → a genuine still-pending edit, kept accepted.
+fn partition_reanchored_after_publish(
+    re_anchored_patches: Vec<crate::shared::re_anchor::AnchoredPatch>,
+    failed_by_path: &FailedOpsByPath,
+    new_main_map: &FileMap,
+) -> anyhow::Result<(
+    Vec<crate::shared::re_anchor::AnchoredPatch>,
+    Vec<crate::shared::failed_patches::FailedPatch>,
+)> {
+    let mut surviving_accepted = Vec::new();
+    let mut newly_failed = Vec::new();
+    for entry in re_anchored_patches {
+        if let Some((error, field_errors)) = failed_by_path.get(&entry.path) {
+            newly_failed.push(crate::shared::failed_patches::FailedPatch::from_anchored(
+                entry,
+                error.clone(),
+                field_errors.clone(),
+            ));
+            continue;
+        }
+        if is_publish_no_op_survivor(&entry, new_main_map)? {
+            continue;
+        }
+        surviving_accepted.push(entry);
+    }
+    Ok((surviving_accepted, newly_failed))
 }
 
 /// The shared re-anchor core for the post-publish reconcile. Fetches origin,
@@ -5022,6 +5175,74 @@ fn run_reconcile_published(
     Ok(())
 }
 
+/// `scratchmd files reconcile-after-publish --connection <id> [--failed-ops-json <json>]`.
+///
+/// The desktop's post-publish reconcile for one connection (publish redesign,
+/// DEV-10048). Resolves the connection, parses the run-job's `failedOperations`,
+/// and runs the post-publish [`download_single_repo`]: re-anchor accepted patches,
+/// route rejected records → `failed-patches.json`, drop publish-no-op survivors,
+/// preserve unreviewed edits. `data_folders` is left empty — it only drives
+/// cosmetic empty-dir pruning, not the reconcile correctness.
+fn run_reconcile_after_publish(
+    cwd: &Path,
+    server_url: &str,
+    connection: &str,
+    failed_ops_json: Option<&str>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let (_marker, workspace_dir, contexts, workspace_server_url) =
+        resolve_workspace_and_connections(cwd, server_url, json)?;
+    if contexts.is_empty() {
+        anyhow::bail!("No connections found. Run `scratchmd workspaces init` first.");
+    }
+    let token = get_token(&workspace_server_url)?;
+    let _lock = crate::config::workspace_lock::acquire(&workspace_dir)?;
+
+    let ctx = contexts
+        .iter()
+        .find(|c| c.connection_id == connection || c.conn_dir_name == connection)
+        .ok_or_else(|| anyhow::anyhow!("Connection not found: {connection}"))?;
+
+    let failed_ops: Vec<crate::api::JobFailedOperation> = match failed_ops_json {
+        Some(raw) if !raw.trim().is_empty() => {
+            serde_json::from_str(raw).context("failed to parse --failed-ops-json")?
+        }
+        _ => Vec::new(),
+    };
+
+    let result = download_single_repo(ctx, &workspace_dir, &token, &[], Some(&failed_ops))?;
+
+    // Reindex changed records (paths come back connection-relative) so the grid
+    // reflects the post-publish + failed-patches state.
+    let changed_workspace_paths: Vec<String> = result
+        .changed_paths
+        .iter()
+        .map(|relpath| format!("{}/{}", ctx.conn_dir_name, relpath))
+        .collect();
+    if !changed_workspace_paths.is_empty() {
+        reindex_folder_index_for_changes(&workspace_dir, &changed_workspace_paths)?;
+    }
+
+    if json {
+        let payload = serde_json::json!({
+            "status": result.status,
+            "connection": ctx.conn_dir_name,
+            "filesCreated": result.files_created,
+            "filesUpdated": result.files_updated,
+            "filesDeleted": result.files_deleted,
+            "failedCount": failed_ops.len(),
+        });
+        println!("{}", serde_json::to_string(&payload)?);
+    } else {
+        println!(
+            "Reconciled {} after publish ({} failed record(s)).",
+            ctx.conn_dir_name,
+            failed_ops.len()
+        );
+    }
+    Ok(())
+}
+
 /// Pull the latest server state for one connection.
 ///
 /// Pre-fetch invariant: the caller has already verified the connection has no
@@ -5046,6 +5267,12 @@ fn download_single_repo(
     workspace_dir: &Path,
     token: &str,
     data_folders: &[DataFolder],
+    // Publish redesign (DEV-10048). `None` = a plain pull: re-anchor accepted
+    // patches and preserve unreviewed edits exactly as before. `Some(failed_ops)`
+    // = a post-publish reconcile: additionally route connector-rejected paths to
+    // `failed-patches.json`, drop publish-no-op survivors (e.g. removed keys), and
+    // re-surface the failed edits in the worktree as needs-approval.
+    post_publish_failed_ops: Option<&[crate::api::JobFailedOperation]>,
 ) -> anyhow::Result<DownloadResult> {
     // Fetch first, then short-circuit if `main` didn't move. Connections that
     // haven't advanced server-side pay only the (incremental, ~50ms) fetch —
@@ -5111,12 +5338,58 @@ fn download_single_repo(
         append_pull_conflict_to_log(ctx, workspace_dir, conflict);
     }
 
+    // Plain pull: every re-anchored patch stays accepted. Post-publish reconcile:
+    // partition into still-accepted vs connector-rejected (→ failed-patches.json),
+    // dropping publish-no-op survivors (DEV-10048).
+    let (surviving_accepted_patches, newly_failed_patches) = match post_publish_failed_ops {
+        Some(failed_ops) => partition_reanchored_after_publish(
+            re_anchored.patches,
+            &failed_ops_by_path(failed_ops),
+            &file_path_to_contents_map_in_main_branch_after_publish,
+        )?,
+        None => (re_anchored.patches, Vec::new()),
+    };
     let new_accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
-        patches: re_anchored.patches,
+        patches: surviving_accepted_patches,
+    };
+
+    // Post-publish only: merge `failed-patches.json` — drop prior entries for
+    // paths we just re-published, then add this round's failures (paths outside
+    // this publish keep their prior entry). A plain pull leaves the file alone.
+    let failed_file = if post_publish_failed_ops.is_some() {
+        let reprocessed_paths: std::collections::HashSet<String> = accepted_file
+            .patches
+            .iter()
+            .map(|p| p.path.clone())
+            .collect();
+        let mut ff = crate::shared::failed_patches::load(&connection_dir)?;
+        ff.patches.retain(|p| !reprocessed_paths.contains(&p.path));
+        ff.patches.extend(newly_failed_patches);
+        Some(ff)
+    } else {
+        None
+    };
+
+    // The worktree should reflect the still-accepted patches PLUS — on a
+    // post-publish reconcile — the failed patches re-applied (so they show as
+    // needs-approval; they are not in `accepted-patches.json`). On a plain pull
+    // the failed edits are already on disk as unreviewed edits and are preserved
+    // by the DEV-10523 re-apply below, so we don't add them here.
+    let worktree_base = match &failed_file {
+        Some(ff) => {
+            let mut patches = new_accepted.patches.clone();
+            patches.extend(
+                ff.patches
+                    .iter()
+                    .map(crate::shared::failed_patches::FailedPatch::to_anchored),
+            );
+            crate::shared::accepted_patches::AcceptedPatchesFile { patches }
+        }
+        None => new_accepted.clone(),
     };
     let file_path_to_contents_map_for_approved_state_after_publish = compute_accepted_state(
         &file_path_to_contents_map_in_main_branch_after_publish,
-        &new_accepted,
+        &worktree_base,
     )?;
 
     // DEV-10523: the worktree may hold *unreviewed* edits (`local != approved`)
@@ -5177,6 +5450,9 @@ fn download_single_repo(
     // recomputes and converges. Inverse order would orphan the file against
     // a stale anchor.
     crate::shared::accepted_patches::save_atomic(&connection_dir, &new_accepted)?;
+    if let Some(ff) = &failed_file {
+        crate::shared::failed_patches::save_atomic(&connection_dir, ff)?;
+    }
     git_update_ref(&ctx.bare_repo, "refs/heads/main", &new_main_hash)?;
 
     // Summary counts come from the actual file_path_to_contents_map_in_worktree → final_worktree_map

@@ -309,6 +309,48 @@ pub fn compute_entry(
     }
 }
 
+/// True when `intended` is a **publish no-op** against `main` — i.e. the server's
+/// publish pipeline would compute empty `changedFields` and never call the
+/// connector for it. Mirrors `computeChangedFields`
+/// (`server/src/publish-plan/diff-utils.ts`): it walks only the keys present in
+/// `intended`, recurses into plain (non-array) objects, compares everything else
+/// by value, and — crucially — **ignores keys present on `main` but absent from
+/// `intended`** (a removed key is deliberately not a publishable change).
+///
+/// The publish reconcile (DEV-10048) uses this to drop a stranded no-op edit
+/// (classically a removed JSON key) that `main` never advanced for: re-anchor
+/// keeps such a patch (its outcome still differs from `main` by the removal), but
+/// the publish would never act on it, so it must be dropped instead of staying
+/// stuck as "accepted".
+///
+/// Leaf/array comparison is by JSON value equality (slightly more lenient than
+/// the server's `JSON.stringify` only for the pathological case of arrays of
+/// objects with reordered keys — semantically equal there, which is the more
+/// correct call).
+pub fn is_publish_no_op_against_main(main: Option<&JsonValue>, intended: &JsonValue) -> bool {
+    match intended {
+        JsonValue::Object(intended_obj) => {
+            let main_obj = main.and_then(|m| m.as_object());
+            for (key, intended_val) in intended_obj {
+                let main_val = main_obj.and_then(|m| m.get(key));
+                let both_plain_objects =
+                    intended_val.is_object() && main_val.map(JsonValue::is_object).unwrap_or(false);
+                if both_plain_objects {
+                    if !is_publish_no_op_against_main(main_val, intended_val) {
+                        return false;
+                    }
+                } else if main_val != Some(intended_val) {
+                    return false;
+                }
+            }
+            true
+        }
+        // A non-object intended value (scalar / array / null) is a no-op only when
+        // it already equals `main` exactly.
+        _ => main == Some(intended),
+    }
+}
+
 /// Re-anchor a batch of patches. `old_at` and `new_at` look up file content
 /// per path; either may return an error which is propagated.
 pub fn re_anchor_patches<F1, F2>(
@@ -1138,5 +1180,56 @@ mod tests {
                 revert: false,
             })
         );
+    }
+
+    // ── is_publish_no_op_against_main (DEV-10048) ───────────────────────────
+
+    #[test]
+    fn no_op_when_intended_only_removes_keys() {
+        // The DEV-10048 case: the user's intent drops key `b`; the publish ignores
+        // removed keys, so it's a no-op against main.
+        let main = json!({"a": 1, "b": 2});
+        let intended = json!({"a": 1});
+        assert!(is_publish_no_op_against_main(Some(&main), &intended));
+    }
+
+    #[test]
+    fn not_no_op_when_a_value_changed() {
+        let main = json!({"a": 1, "b": 2});
+        let intended = json!({"a": 9, "b": 2});
+        assert!(!is_publish_no_op_against_main(Some(&main), &intended));
+    }
+
+    #[test]
+    fn not_no_op_when_a_key_added() {
+        let main = json!({"a": 1});
+        let intended = json!({"a": 1, "c": 3});
+        assert!(!is_publish_no_op_against_main(Some(&main), &intended));
+    }
+
+    #[test]
+    fn no_op_for_nested_removed_key_only() {
+        let main = json!({"props": {"a": 1, "b": 2}});
+        let intended = json!({"props": {"a": 1}});
+        assert!(is_publish_no_op_against_main(Some(&main), &intended));
+    }
+
+    #[test]
+    fn not_no_op_for_nested_changed_value() {
+        let main = json!({"props": {"a": 1, "b": 2}});
+        let intended = json!({"props": {"a": 1, "b": 9}});
+        assert!(!is_publish_no_op_against_main(Some(&main), &intended));
+    }
+
+    #[test]
+    fn not_no_op_for_create_against_missing_main() {
+        let intended = json!({"name": "Acme"});
+        assert!(!is_publish_no_op_against_main(None, &intended));
+    }
+
+    #[test]
+    fn no_op_when_equal() {
+        let v = json!({"a": 1, "b": [1, 2, 3]});
+        assert!(is_publish_no_op_against_main(Some(&v), &v.clone()));
     }
 }

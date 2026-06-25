@@ -170,6 +170,8 @@ describe('PublishJobHandler — self-planning publish (DEV-10436)', () => {
       expect.any(AbortSignal),
       expect.any(Function),
       expect.any(Function),
+      // DEV-10048: publishOrigin — undefined here (this self-planning job sets none).
+      undefined,
     );
 
     const completed = checkpointedProgress(params).find((p) => p.status === 'completed');

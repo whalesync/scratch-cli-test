@@ -1,8 +1,9 @@
 import type {
   PublishPlanBuildDto as IPublishPlanBuildDto,
   PublishPlanRunDto as IPublishPlanRunDto,
+  PublishOrigin,
 } from '@spinner/shared-types';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class PublishPlanBuildDto implements IPublishPlanBuildDto {
   @IsString()
@@ -40,4 +41,14 @@ export class PublishPlanRunDto implements IPublishPlanRunDto {
   @IsBoolean()
   @IsOptional()
   executeSinglePhase?: boolean;
+
+  /**
+   * Surface that initiated the publish; routes a record's *failed* edit during the
+   * post-publish reconcile. `'desktop'` strips failures from server `dirty` (they
+   * travel back to the client); `'web'` keeps them on `dirty`. Absent ⇒ `'web'`.
+   * See {@link PublishOrigin} in shared-types.
+   */
+  @IsIn(['web', 'desktop'])
+  @IsOptional()
+  publishOrigin?: PublishOrigin;
 }

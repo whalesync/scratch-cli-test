@@ -130,16 +130,18 @@ describe('publish.viaCliRoute.planJob', () => {
 });
 
 describe('publish.viaCliRoute.runJob', () => {
-  it('POSTs to /cli/v1/workbooks/:id/publish-v2/run-job with pipelineId', async () => {
+  it('POSTs to /cli/v1/workbooks/:id/publish-v2/run-job with pipelineId and publishOrigin=desktop', async () => {
     const { scratchApiClient } = await import('../scratch-api-client');
     responseQueue.push({ jobId: 'job_2' });
 
     const result = await scratchApiClient.publish.viaCliRoute.runJob('wkb_123', 'pipe_1');
 
+    // DEV-10048: the desktop/CLI route always sends publishOrigin=desktop so the
+    // server routes connector-rejected paths back to the client (failed-patches.json).
     expect(calls).toEqual([
       {
         url: '/cli/v1/workbooks/wkb_123/publish-v2/run-job',
-        body: { pipelineId: 'pipe_1' },
+        body: { pipelineId: 'pipe_1', publishOrigin: 'desktop' },
       },
     ]);
     expect(result).toEqual({ jobId: 'job_2' });

@@ -4,6 +4,25 @@ export { PublishPlanStatus };
 
 // ── Request DTOs ──────────────────────────────────────────────────────────────
 
+/**
+ * Which surface initiated a publish. Decides where a record's *failed* edit goes
+ * after the run (see the publish redesign, DEV-10048):
+ *
+ *   - `'web'`     — the web app has no local working tree; its only notion of
+ *                   "pending" is the server `dirty` branch, so a failed edit is
+ *                   **kept on `dirty`** (re-applied during the post-publish
+ *                   reconcile) and re-surfaced as needs-approval there.
+ *   - `'desktop'` — the desktop/CLI owns a local working tree + `accepted-patches.json`;
+ *                   a failed edit is **stripped from server `dirty`** and travels
+ *                   back to the client (via the run-job's `failedOperations`), which
+ *                   moves it into `failed-patches.json` and re-applies it to the
+ *                   working tree as a needs-approval edit.
+ *
+ * Absent ⇒ treated as `'web'` (keep failures on `dirty`) — the conservative legacy
+ * default that matches the pre-redesign `rebaseDirty` behavior.
+ */
+export type PublishOrigin = 'web' | 'desktop';
+
 export interface PublishPlanBuildDto {
   connectorAccountId?: string;
   runAfterPlan?: boolean;
@@ -26,6 +45,18 @@ export interface PublishPlanBuildDto {
 export interface PublishPlanRunDto {
   pipelineId: string;
   executeSinglePhase?: boolean;
+  /**
+   * Surface that initiated the publish; routes a record's *failed* edit during the
+   * post-publish `dirty`/`main` reconcile. `'desktop'` strips failed paths from the
+   * server `dirty` branch (they travel back to the client via the run-job's
+   * `failedOperations`); `'web'` keeps them on `dirty`. Absent ⇒ `'web'`.
+   *
+   * Every client sends it explicitly: the desktop/CLI route (`viaCliRoute.runJob`)
+   * sends `'desktop'`, and the web route (`viaWorkbookRoute.runJob`) sends `'web'`.
+   * The `'web'` default exists for the web's `runAfterPlan` path (plan-job auto-runs
+   * the pipeline with no separate run-job DTO) and for legacy callers. See {@link PublishOrigin}.
+   */
+  publishOrigin?: PublishOrigin;
 }
 
 // ── Response Entities ─────────────────────────────────────────────────────────

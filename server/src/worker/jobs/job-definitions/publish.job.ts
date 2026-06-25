@@ -1,4 +1,10 @@
-import { type JobTrigger, JobType, type PublishPublicProgress, type WorkbookId } from '@spinner/shared-types';
+import {
+  type JobTrigger,
+  JobType,
+  type PublishOrigin,
+  type PublishPublicProgress,
+  type WorkbookId,
+} from '@spinner/shared-types';
 import type { PostHogService } from 'src/posthog/posthog.service';
 import { PublishDirtyDriftError, type PublishPlanBuildService } from 'src/publish-plan/publish-plan-build.service';
 import type { PublishPlanRunService } from 'src/publish-plan/publish-plan-run.service';
@@ -36,6 +42,13 @@ export type PublishJobDefinition = JobDefinitionBuilder<
     /** DEV-10316 TOCTOU token — see PublishPlanBuildDto.expectedBaseDirtyHead. */
     expectedBaseDirtyHead?: string;
     executeSinglePhase?: boolean; // If only executing a single stage
+    /**
+     * Surface that initiated the publish; routes a record's *failed* edit during
+     * the post-publish reconcile (`'desktop'` strips failed paths from server
+     * `dirty`; `'web'` keeps them). Set on the explicit run-job; absent (the
+     * `runAfterPlan` web path and legacy callers) ⇒ `'web'`. See PublishOrigin.
+     */
+    publishOrigin?: PublishOrigin;
     trigger?: JobTrigger;
   },
   PublishPublicProgress,
@@ -288,6 +301,7 @@ export class PublishJobHandler implements JobHandlerBuilder<PublishJobDefinition
         abortSignal,
         onRunProgress,
         onError,
+        data.publishOrigin,
       );
 
       // Resolve the destination service's display name so the terminal checkpoint can attribute any

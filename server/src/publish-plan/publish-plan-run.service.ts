@@ -5,6 +5,7 @@ import {
   isScratchPendingRecreateId,
   parseScratchPendingRecreateId,
   type PublishFailedOperation,
+  type PublishOrigin,
 } from '@spinner/shared-types';
 import axios from 'axios';
 import { WSLogger } from 'src/logger';
@@ -116,6 +117,7 @@ export class PublishPlanRunService {
       currentPhase: string;
     }) => Promise<void>,
     onError?: (errorInfo: { lastSyncError: string; errorCount: number }) => void,
+    publishOrigin?: PublishOrigin,
   ): Promise<PublishPlanInfo> {
     const plan = await this.db.client.publishPlan.findUnique({ where: { id: pipelineId } });
     if (!plan) {
@@ -528,13 +530,59 @@ export class PublishPlanRunService {
         },
       });
 
-      // Rebase dirty on top of main so published changes disappear from dirty
+      // Reconcile `dirty` against the post-publish `main` (publish redesign,
+      // DEV-10048). `rebaseDirty` force-resets `dirty` to `main` and re-applies the
+      // user's edits; we hand it a set of paths to *converge to main* (skip
+      // re-applying) so the reconcile is scoped to what this plan touched:
+      //
+      //   - every plan path that did NOT fail (success + no-op edits) converges to
+      //     `main` — this is what stops a no-op/removed-key edit from re-accumulating
+      //     on `dirty` as a phantom (the old bug);
+      //   - failed paths converge too IFF the publish came from the desktop/CLI
+      //     (the failed edit travels back to the client via `failedOperations` and
+      //     lives in its working tree / `failed-patches.json`); for a `web` publish
+      //     they are left on `dirty` (the web has no working tree) and re-surface as
+      //     needs-approval there;
+      //   - a path with ANY still-`pending` op is left on `dirty`. Single-phase
+      //     execution (web "Execute 1 Phase") runs one phase and leaves later
+      //     phases' ops `pending` — those records were NOT published yet, so
+      //     converging them would wrongly drop a not-yet-run create/delete/backfill
+      //     edit from `dirty`. (Also covers a record split across an executed phase
+      //     and a pending one, e.g. a landed `edit` + a pending `backfill`.)
+      //   - paths NOT in this plan (concurrent or partial-scope edits) are never
+      //     excluded, so they are preserved on `dirty`.
+      const planOperationPaths = await this.db.client.publishPlanOperation.findMany({
+        where: { planId: pipelineId },
+        select: { filePath: true, status: true },
+      });
+      const pendingPlanPaths = new Set(
+        planOperationPaths.filter((op) => op.status === 'pending').map((op) => op.filePath),
+      );
+      const failedPlanPaths = new Set(
+        planOperationPaths.filter((op) => op.status === 'failed-batch').map((op) => op.filePath),
+      );
+      // Only paths whose every op has run (none still `pending`) are eligible to
+      // converge. After a full pipeline run nothing is pending, so this is every
+      // plan path — unchanged behavior; it only narrows for single-phase runs.
+      const terminalPlanPaths = [
+        ...new Set(planOperationPaths.map((op) => op.filePath).filter((path) => !pendingPlanPaths.has(path))),
+      ];
+      const isDesktopPublish = publishOrigin === 'desktop';
+      const pathsToConvergeToMain = terminalPlanPaths.filter((path) => isDesktopPublish || !failedPlanPaths.has(path));
       WSLogger.info({
         source: 'PublishRunService.runPipeline',
-        message: 'Rebasing dirty on main',
+        message: 'Reconciling dirty against main',
         workbookId: plan.workbookId,
+        data: {
+          pipelineId,
+          publishOrigin: publishOrigin ?? 'web',
+          terminalPathCount: terminalPlanPaths.length,
+          pendingPathCount: pendingPlanPaths.size,
+          failedPathCount: failedPlanPaths.size,
+          convergePathCount: pathsToConvergeToMain.length,
+        },
       });
-      await this.scratchGitService.rebaseDirty(repoId);
+      await this.scratchGitService.rebaseDirty(repoId, pathsToConvergeToMain);
 
       // Tag and persist the resulting main commit so rollback can reference what was
       // shipped. Include partial publishes — those commits landed and may still need undo.

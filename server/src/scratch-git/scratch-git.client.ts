@@ -271,8 +271,12 @@ export class ScratchGitClient {
     })) as { success: boolean; moved: boolean };
   }
 
-  async rebaseDirty(repoId: string): Promise<{ rebased: boolean; conflicts: string[] }> {
-    return this.callGitApi(`/api/repo/write/${this.encodeRepoId(repoId)}/rebase`, 'POST', {}) as Promise<{
+  async rebaseDirty(repoId: string, excludePaths?: string[]): Promise<{ rebased: boolean; conflicts: string[] }> {
+    // `excludePaths` (publish reconcile, DEV-10048): paths to converge to `main`
+    // instead of re-applying the user's edit. Omitted when empty so legacy callers
+    // and the generic proxy keep sending `{}`.
+    const body = excludePaths && excludePaths.length > 0 ? { excludePaths } : {};
+    return this.callGitApi(`/api/repo/write/${this.encodeRepoId(repoId)}/rebase`, 'POST', body) as Promise<{
       rebased: boolean;
       conflicts: string[];
     }>;

@@ -2,10 +2,27 @@ use crate::service::error::AppError;
 use crate::service::git::merge::merge_file_contents;
 use crate::service::git::repo::GitRepo;
 use crate::service::types::*;
+use std::collections::HashSet;
 
 impl GitRepo {
-    /// Full rebase of dirty branch onto main.
+    /// Full rebase of dirty branch onto main, re-applying every user edit.
     pub fn rebase_dirty(&self, strategy: &str) -> Result<(bool, Vec<String>), AppError> {
+        self.rebase_dirty_excluding(strategy, &[])
+    }
+
+    /// Rebase dirty onto main, re-applying the user's edits EXCEPT for paths in
+    /// `exclude_paths`, which are left converged to `main` (their edit is dropped
+    /// from `dirty`). The publish reconcile (DEV-10048) passes the set of paths it
+    /// published / treated as no-ops / (for a desktop publish) failed, so those
+    /// drop off `dirty` while every edit it didn't touch is preserved.
+    /// `exclude_paths` empty ⇒ identical to the legacy "re-apply everything" rebase.
+    pub fn rebase_dirty_excluding(
+        &self,
+        strategy: &str,
+        exclude_paths: &[String],
+    ) -> Result<(bool, Vec<String>), AppError> {
+        let exclude_set: HashSet<&str> = exclude_paths.iter().map(String::as_str).collect();
+
         // 1. Ensure dirty exists (create from main if missing)
         let main_oid = self.resolve_ref(MAIN_BRANCH)?;
         let dirty_oid = match self.resolve_ref(DIRTY_BRANCH) {
@@ -76,6 +93,12 @@ impl GitRepo {
         let mut changes_to_commit: Vec<FileChange> = Vec::new();
 
         for edit in &edits {
+            // Converge-to-main: skip re-applying this edit so it stays at the
+            // (already force-reset) `main` content. Used by the publish reconcile
+            // to drop published / no-op / desktop-failed edits from `dirty`.
+            if exclude_set.contains(edit.path.as_str()) {
+                continue;
+            }
             if edit.status == "deleted" {
                 if self.get_file_content(MAIN_BRANCH, &edit.path)?.is_some() {
                     changes_to_commit.push(FileChange {
@@ -380,5 +403,128 @@ mod tests {
         let dirty_oid = repo2.resolve_ref(DIRTY_BRANCH).unwrap();
         let main_oid = repo2.resolve_ref(MAIN_BRANCH).unwrap();
         assert_eq!(dirty_oid, main_oid);
+    }
+
+    // ── rebase_dirty_excluding (publish reconcile, DEV-10048) ───────────────
+
+    /// The no-op / removed-key case the publish redesign fixes: the user's edit
+    /// is a publish no-op (here, a removed key), so the publish skipped it and
+    /// `main` never advanced. Excluding the path during reconcile converges it
+    /// back to `main` instead of re-accumulating the edit on `dirty` as a phantom.
+    #[test]
+    fn rebase_excluding_converges_excluded_path_to_main() {
+        let (_tmp, repo) = setup_repo();
+
+        // main has the published record with two keys.
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[FileChange {
+                path: "rec.json".to_string(),
+                content: Some("{\"a\":1,\"b\":2}".to_string()),
+                oid: None,
+                change_type: ChangeType::Add,
+            }],
+            "seed main",
+        )
+        .unwrap();
+        repo.rebase_dirty("diff3").unwrap(); // dirty == merge_base == main
+
+        // User removes key `b` on dirty (a publish no-op — main does NOT advance).
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[FileChange {
+                path: "rec.json".to_string(),
+                content: Some("{\"a\":1}".to_string()),
+                oid: None,
+                change_type: ChangeType::Modify,
+            }],
+            "user removes key b",
+        )
+        .unwrap();
+
+        // Reconcile excluding the no-op path → it converges to main, removal dropped.
+        let (success, conflicts) = repo
+            .rebase_dirty_excluding("diff3", &["rec.json".to_string()])
+            .unwrap();
+        assert!(success);
+        assert!(conflicts.is_empty());
+
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "rec.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"a\":1,\"b\":2}"),
+            "excluded path must converge to main (phantom removal dropped)"
+        );
+    }
+
+    /// A non-excluded edit (e.g. a web-origin failure that stays on `dirty`) is
+    /// still re-applied, while a sibling excluded path converges to `main`.
+    #[test]
+    fn rebase_excluding_keeps_non_excluded_edit() {
+        let (_tmp, repo) = setup_repo();
+
+        repo.commit_changes_to_ref(
+            MAIN_BRANCH,
+            &[
+                FileChange {
+                    path: "r1.json".to_string(),
+                    content: Some("{\"v\":1}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+                FileChange {
+                    path: "r2.json".to_string(),
+                    content: Some("{\"v\":1}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Add,
+                },
+            ],
+            "seed main",
+        )
+        .unwrap();
+        repo.rebase_dirty("diff3").unwrap();
+
+        // User edits both records on dirty.
+        repo.commit_changes_to_ref(
+            DIRTY_BRANCH,
+            &[
+                FileChange {
+                    path: "r1.json".to_string(),
+                    content: Some("{\"v\":\"user1\"}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                },
+                FileChange {
+                    path: "r2.json".to_string(),
+                    content: Some("{\"v\":\"user2\"}".to_string()),
+                    oid: None,
+                    change_type: ChangeType::Modify,
+                },
+            ],
+            "user edits both",
+        )
+        .unwrap();
+
+        // Exclude only r1 (it published / was a no-op); r2 stays pending on dirty.
+        let (success, _) = repo
+            .rebase_dirty_excluding("diff3", &["r1.json".to_string()])
+            .unwrap();
+        assert!(success);
+
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "r1.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"v\":1}"),
+            "excluded r1 converges to main"
+        );
+        assert_eq!(
+            repo.get_file_content(DIRTY_BRANCH, "r2.json")
+                .unwrap()
+                .as_deref(),
+            Some("{\"v\":\"user2\"}"),
+            "non-excluded r2 keeps the user edit"
+        );
     }
 }

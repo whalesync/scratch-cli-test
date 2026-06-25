@@ -431,6 +431,13 @@ pub struct JobFailedOperation {
     pub phase: String,
     #[serde(default)]
     pub error: Option<String>,
+    /// Per-field connector rejection messages keyed by RFC 6902 JSON Pointer
+    /// (e.g. `/Organization`). Mirrors `PublishFailedOperation.fieldErrors`.
+    /// Absent/`null` when only a record-level `error` is available. Moved into
+    /// the matching `failed-patches.json` entry during the post-publish reconcile
+    /// to drive the per-field "this field failed to publish" warning.
+    #[serde(rename = "fieldErrors", default)]
+    pub field_errors: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// Response from endpoints that start a background job.
@@ -820,7 +827,11 @@ impl ApiClient {
     ) -> ApiResult<PublishPlanRunResponse> {
         self.post(
             &format!("workbooks/{}/publish-v2/run-job", workbook_id),
-            &serde_json::json!({ "pipelineId": pipeline_id }),
+            // `publishOrigin: "desktop"` (publish redesign, DEV-10048): the CLI
+            // owns a local working tree + `accepted-patches.json`, so the server
+            // strips failed paths from its `dirty` branch and the failures travel
+            // back here (the run-job's `failedOperations` → `failed-patches.json`).
+            &serde_json::json!({ "pipelineId": pipeline_id, "publishOrigin": "desktop" }),
         )
         .await
     }

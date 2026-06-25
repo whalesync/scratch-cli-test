@@ -58,6 +58,7 @@ import {
   listUnpushedChanges,
   listUnreviewedChanges,
   pullWorkspaceChanges,
+  reconcileAfterPublish,
   reconcilePublishedRecord,
   refreshFolderIndex,
   reindexFiles,
@@ -860,6 +861,22 @@ ipcMain.handle('scratch:upload-workspace-changes', async (_, workspacePath: stri
 // other unreviewed edits in the workspace don't block the refresh.
 ipcMain.handle('scratch:reconcile-published-record', async (_, workspacePath: string, filePath: string) =>
   withWorkspaceInternalMutation(workspacePath, () => reconcilePublishedRecord(workspacePath, filePath)),
+);
+// Per-connection post-publish reconcile (publish redesign, DEV-10048). Run after a
+// connection's run-job: routes connector-rejected records into `failed-patches.json`,
+// drops publish-no-op survivors, and re-surfaces failed edits as needs-approval —
+// replacing the generic `pullWorkspaceChanges` for the publish path so failures
+// aren't lost. `failedOpsJson` is the run-job's `failedOperations` as a JSON string.
+ipcMain.handle(
+  'scratch:reconcile-after-publish',
+  async (_, workspacePath: string, connectionId: string, failedOpsJson: string) =>
+    withWorkspaceInternalMutation(workspacePath, async () => {
+      const result = await reconcileAfterPublish(workspacePath, connectionId, failedOpsJson);
+      // Mirror the pull handler: re-seed schema validators for any folders the
+      // reconcile materialized so validation counts stay current.
+      await seedSchemaValidatorsAndPopulateProblems(workspacePath);
+      return result;
+    }),
 );
 ipcMain.handle(
   'scratch:pull-workspace-changes',

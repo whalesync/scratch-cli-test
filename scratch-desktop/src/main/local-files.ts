@@ -401,6 +401,15 @@ export interface DiffRow extends Record<string, unknown> {
   __filename: string;
   /** Set when __rowStatus is invalidJson (which side failed is encoded in the string). */
   __parseError?: string;
+  /**
+   * Publish redesign (DEV-10048): per-field connector rejection messages for a
+   * record that a prior publish failed, keyed by dot-path field key (from
+   * `failed-patches.json`'s `fieldErrors`). Drives the per-field "this field
+   * failed to publish" warning. Absent when the record has no failed-publish entry.
+   */
+  __failedFields?: Record<string, string>;
+  /** Record-level connector rejection message (DEV-10048), when no per-field detail. */
+  __failedError?: string;
   /** The full nested (non-flattened) record from the working tree, used by the renderer. */
   __raw: Record<string, unknown>;
 }
@@ -976,6 +985,74 @@ async function readFolderApprovedAndPublishedSnapshots(
   return { approved, published };
 }
 
+/** One record's connector-rejection detail from `failed-patches.json` (DEV-10048). */
+export interface FailedRecordDetail {
+  /** Per-field messages keyed by dot-path field key (from `fieldErrors`). */
+  fields: Record<string, string>;
+  /** Record-level connector message, when no per-field detail is available. */
+  recordError?: string;
+}
+
+/** RFC 6902 JSON Pointer → grid dot-path key: `/properties/city` → `properties.city`. */
+export function jsonPointerToFieldKey(pointer: string): string {
+  return pointer
+    .replace(/^\//, '')
+    .split('/')
+    .map((seg) => seg.replace(/~1/g, '/').replace(/~0/g, '~'))
+    .join('.');
+}
+
+/**
+ * Read `failed-patches.json` (publish redesign, DEV-10048) for the connection
+ * owning `folderPath` and index the entries in this folder by filename. Drives the
+ * per-field "this field failed to publish" warning in the grid. Returns an empty
+ * map when there is no `failed-patches.json` (the clean case).
+ */
+export async function readFailedRecordDetailsByFile(
+  workspacePath: string,
+  folderPath: string,
+): Promise<Map<string, FailedRecordDetail>> {
+  const byFile = new Map<string, FailedRecordDetail>();
+  let connectionDirName: string;
+  let folderRelPath: string;
+  try {
+    ({ connectionDirName, folderRelPath } = splitWorkspaceFolderPath(workspacePath, folderPath));
+  } catch {
+    return byFile;
+  }
+  const failedPatchesPath = join(workspacePath, '.scratch', 'connections', connectionDirName, 'failed-patches.json');
+  let raw: string;
+  try {
+    raw = await readFile(failedPatchesPath, 'utf8');
+  } catch {
+    return byFile; // No file → nothing failed.
+  }
+  let parsed: { patches?: Array<{ path?: unknown; error?: unknown; fieldErrors?: unknown }> };
+  try {
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch {
+    return byFile;
+  }
+  for (const entry of parsed.patches ?? []) {
+    if (typeof entry?.path !== 'string') continue;
+    const slash = entry.path.lastIndexOf('/');
+    const dir = slash >= 0 ? entry.path.slice(0, slash) : '';
+    const filename = slash >= 0 ? entry.path.slice(slash + 1) : entry.path;
+    if (dir !== folderRelPath) continue;
+    const fields: Record<string, string> = {};
+    if (entry.fieldErrors && typeof entry.fieldErrors === 'object') {
+      for (const [pointer, message] of Object.entries(entry.fieldErrors as Record<string, unknown>)) {
+        if (typeof message === 'string') fields[jsonPointerToFieldKey(pointer)] = message;
+      }
+    }
+    byFile.set(filename, {
+      fields,
+      recordError: typeof entry.error === 'string' ? entry.error : undefined,
+    });
+  }
+  return byFile;
+}
+
 async function readJsonFileSnapshot(filePath: string, leafPaths?: Set<string>): Promise<JsonFileSnapshot> {
   let content: string;
   try {
@@ -1458,9 +1535,10 @@ export async function readDiffGridDataPage(
   // hundreds of MB into the Electron main process for 20k+ row folders
   // (mr29 D5). Slice F retired the on-disk mirrors at
   // `.scratch/connections/{dirty,master}/`.
-  const [workingFiles, approvedAndPublished] = await Promise.all([
+  const [workingFiles, approvedAndPublished, failedRecordDetailsByFile] = await Promise.all([
     readNamedSnapshots(workingPath, cliResult.filenames, leafPaths),
     readFolderApprovedAndPublishedSnapshots(workspacePath, folderPath, leafPaths, cliResult.filenames),
+    readFailedRecordDetailsByFile(workspacePath, folderPath),
   ]);
   const { approved: approvedFiles, published: publishedFiles } = approvedAndPublished;
 
@@ -1477,6 +1555,13 @@ export async function readDiffGridDataPage(
     );
     if (!compared) continue;
     for (const column of compared.columns) columnSet.add(column);
+    // DEV-10048: annotate records a prior publish failed (from failed-patches.json)
+    // so the grid can show a per-field / record-level "failed to publish" warning.
+    const failed = failedRecordDetailsByFile.get(name);
+    if (failed) {
+      if (Object.keys(failed.fields).length > 0) compared.row.__failedFields = failed.fields;
+      if (failed.recordError) compared.row.__failedError = failed.recordError;
+    }
     rows.push(compared.row);
   }
 

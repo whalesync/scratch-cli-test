@@ -1,4 +1,5 @@
 pub mod accepted_patches;
+pub mod failed_patches;
 pub mod folder_index;
 pub mod git_exec;
 pub mod git_local;

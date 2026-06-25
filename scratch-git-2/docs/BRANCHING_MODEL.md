@@ -27,6 +27,23 @@ A file is **unpublished** when it has an entry in `accepted-patches.json`.
 | `scratchmd files publish`   | Trigger the server-side publish plan + run jobs. On success, advance local `refs/heads/main`; re-anchor `accepted-patches.json` against the new main (`reconcile_accepted_after_publish`). |
 | `scratchmd files download`  | Refuse if any field is unreviewed. Otherwise fetch origin, re-anchor accepted patches against the new main, and replay on top of new blobs. |
 
+## Publish reconcile (DEV-10048)
+
+After a publish, `accepted-patches.json` and the server `dirty` branch are
+reconciled per the publish redesign
+([`docs/plans/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign.md)):
+
+- The run-job carries a **`publishOrigin`** (`'desktop'` / `'web'`) that routes a
+  record's **failed** edit. The server reconciles `dirty` via `rebaseDirty` with an
+  **exclude-set** — paths to converge to `main` (published + no-op edits, plus
+  failed paths on a desktop publish) — so a no-op edit (e.g. a removed key `main`
+  never advanced for) stops re-accumulating on `dirty` as a phantom.
+- The client post-publish reconcile (`reconcile_accepted_after_publish`, and the
+  new `files reconcile-after-publish` the desktop runs per connection) moves
+  connector-rejected records into **`failed-patches.json`** (re-surfaced in the
+  worktree as needs-approval, with the connector error), drops publish-no-op
+  survivors, keeps genuine still-pending edits, and preserves unreviewed edits.
+
 ## Single-record publish (DEV-10413)
 
 `files upload --file-path <workspace-relative-path>` and `files reconcile-published --file-path <…>` publish exactly **one** record without disturbing the rest of the workspace. The desktop's per-record **Publish** button drives them; they mirror Scratch Web's single-file publish.

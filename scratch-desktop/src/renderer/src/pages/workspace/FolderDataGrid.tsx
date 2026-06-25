@@ -68,6 +68,7 @@ import { useViewMode, useWorkspaceUiStore, type FilterKind, type GridFilter } fr
 import type { ColumnDefinition } from '../../types/local-files';
 import { ColumnPickerMenu } from './ColumnPickerMenu';
 import { EditPropertyDialog } from './EditPropertyDialog';
+import { resolveCellFailedError } from './failed-fields';
 import { formatFieldDisplay } from './field-formatters';
 import { FieldReferenceStrip } from './FieldReferenceStrip';
 import { FieldValuePanel, type FieldValueDiffKind } from './FieldValuePanel';
@@ -96,6 +97,10 @@ interface DiffRow {
   __masterFields: Record<string, unknown>;
   __filename: string;
   __parseError?: string;
+  /** DEV-10048: per-field connector rejection messages from a prior failed publish. */
+  __failedFields?: Record<string, string>;
+  /** DEV-10048: record-level connector rejection message from a prior failed publish. */
+  __failedError?: string;
   __raw: Record<string, unknown>;
 }
 
@@ -228,6 +233,9 @@ function validationCellKey(filename: string, fieldPath: string): string {
 
 const DIFF_WORKING_BG = () => getCssVar('--modified-needs-review-bg');
 const DIFF_WORKING_BORDER = () => getCssVar('--modified-needs-review-stroke');
+// DEV-10048: red foreground for a cell whose value a prior publish rejected. Literal
+// (no theme token exists yet for an error color); promote to a CSS var when one lands.
+const DIFF_FAILED_TEXT = () => 'rgb(220, 38, 38)';
 const DIFF_UNPUBLISHED_BG = () => getCssVar('--modified-approved-bg');
 const DIFF_UNPUBLISHED_BORDER = () => getCssVar('--modified-approved-stroke');
 const DIFF_CREATE_REVIEW_BG = () => getCssVar('--create-needs-review-bg');
@@ -563,6 +571,12 @@ interface CellDiffState {
   fromValue: string;
   /** Populated only when diffKind !== null. */
   classification: FieldChangeClassification | null;
+  /**
+   * DEV-10048: the connector's rejection message when a prior publish failed for
+   * this field (or record-level error on a failed record). Drives the per-field
+   * "failed to publish" warning. Undefined when the field has no failed-publish detail.
+   */
+  failedError?: string;
 }
 
 function getCellDiffState(row: DiffRow, fieldName: string, viewCol: TableViewCol | undefined): CellDiffState {
@@ -594,12 +608,23 @@ function getCellDiffState(row: DiffRow, fieldName: string, viewCol: TableViewCol
     : row.__unpublishedFields.includes(effectivePath)
       ? effectivePath
       : fieldName;
+  // DEV-10048: a prior publish rejected this record. A per-field message (from
+  // failed-patches.json's fieldErrors) takes precedence; otherwise the record-level
+  // error applies to whichever field the user is re-editing on this failed record.
+  const failedError = resolveCellFailedError({
+    failedFields: row.__failedFields,
+    recordError: row.__failedError,
+    effectivePath,
+    fieldName,
+    hasDiff: isUnreviewed || isUnpublished,
+  });
   if (isUnreviewed) {
     const rawFrom = row.__fromFields[diffKey];
     return {
       diffKind: 'unreviewed',
       fromValue: toDisplayString(rawFrom),
       classification: classifyFieldChange(rawFrom, getByPath(row.__raw, effectivePath), viewCol),
+      failedError,
     };
   }
   if (isUnpublished) {
@@ -608,9 +633,10 @@ function getCellDiffState(row: DiffRow, fieldName: string, viewCol: TableViewCol
       diffKind: 'unpublished',
       fromValue: toDisplayString(rawFrom),
       classification: classifyFieldChange(rawFrom, getByPath(row.__raw, effectivePath), viewCol),
+      failedError,
     };
   }
-  return { diffKind: null, fromValue: '', classification: null };
+  return { diffKind: null, fromValue: '', classification: null, failedError };
 }
 
 /** When a subfield is selected on a view column, returns the full dot-path to the subfield; otherwise the root colId. */
@@ -2210,15 +2236,18 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
       const rowTheme = { ...(rowBg ? { bgCell: rowBg } : {}), ...(rowTextColor ? { textDark: rowTextColor } : {}) };
       const effectivePath = resolveEffectivePath(colId, viewCol);
       const val = getByPath(r.__raw, effectivePath);
-      const { diffKind } = getCellDiffState(r, colId, viewCol);
+      const { diffKind, failedError } = getCellDiffState(r, colId, viewCol);
       const diffTheme =
         diffKind === 'unreviewed'
           ? { bgCell: DIFF_WORKING_BG(), textDark: DIFF_WORKING_BORDER() }
           : diffKind === 'unpublished'
             ? { bgCell: DIFF_UNPUBLISHED_BG() }
             : {};
+      // DEV-10048: a prior publish rejected this field — tint the value red on top of
+      // the (still unreviewed) cell so it stands out as needs-attention.
+      const failedTheme = failedError ? { textDark: DIFF_FAILED_TEXT() } : {};
       const readOnlyTheme = isReadOnly ? { textDark: getCssVar('--fg-muted') } : {};
-      const themeOverride = { ...rowTheme, ...diffTheme, ...readOnlyTheme };
+      const themeOverride = { ...rowTheme, ...diffTheme, ...failedTheme, ...readOnlyTheme };
       const allowOverlay =
         !isReadOnly && status !== 'deleted' && status !== 'deletedUnpublished' && status !== 'invalidJson';
 
@@ -2552,7 +2581,7 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         return;
       }
 
-      const { diffKind, fromValue, classification } = getCellDiffState(row, colId, viewColMap.get(colId));
+      const { diffKind, fromValue, classification, failedError } = getCellDiffState(row, colId, viewColMap.get(colId));
 
       // Check for validation entries up-front so we can clip content away from the gutter.
       const validationEntries = validationByCell.get(validationCellKey(row.__filename, colId));
@@ -2595,9 +2624,15 @@ export const FolderDataGrid = memo(function FolderDataGrid(props: FolderDataGrid
         args.ctx.restore();
       }
 
-      if (diffKind !== null) {
+      if (diffKind !== null || failedError) {
         args.ctx.save();
-        args.ctx.fillStyle = diffKind === 'unreviewed' ? DIFF_WORKING_BORDER() : DIFF_UNPUBLISHED_BORDER();
+        // DEV-10048: a red left-edge bar marks a field a prior publish rejected (it
+        // also still reads as unreviewed); otherwise the usual unreviewed/unpublished bar.
+        args.ctx.fillStyle = failedError
+          ? DIFF_FAILED_TEXT()
+          : diffKind === 'unreviewed'
+            ? DIFF_WORKING_BORDER()
+            : DIFF_UNPUBLISHED_BORDER();
         args.ctx.fillRect(args.rect.x, args.rect.y, 3, args.rect.height);
         args.ctx.restore();
       }

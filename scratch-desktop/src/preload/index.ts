@@ -174,6 +174,20 @@ const scratchDesktop = {
     filePath: string,
   ): Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }> =>
     invoke('scratch:reconcile-published-record', workspacePath, filePath),
+  // Publish redesign (DEV-10048): per-connection post-publish reconcile. `failedOpsJson`
+  // is the run-job's `failedOperations` array serialized to a JSON string.
+  reconcileAfterPublish: (
+    workspacePath: string,
+    connectionId: string,
+    failedOpsJson: string,
+  ): Promise<{
+    status: string;
+    connection: string;
+    filesCreated: number;
+    filesUpdated: number;
+    filesDeleted: number;
+    failedCount: number;
+  }> => invoke('scratch:reconcile-after-publish', workspacePath, connectionId, failedOpsJson),
   pullWorkspaceChanges: (workspacePath: string, opts?: { onDelete?: string; filePath?: string }) =>
     invoke('scratch:pull-workspace-changes', workspacePath, opts),
   listLocalSyncs: (workspacePath: string): Promise<string[]> => invoke('scratch:list-local-syncs', workspacePath),

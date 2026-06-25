@@ -39,7 +39,10 @@ export function createPublishViaWorkbookRouteApi(http: Http) {
       publishPlanId: string,
       executeSinglePhase?: boolean,
     ): Promise<{ jobId: string }> => {
-      const body: PublishPlanRunDto = { pipelineId: publishPlanId, executeSinglePhase };
+      // DEV-10048: `publishOrigin: 'web'` keeps connector-rejected paths on the server
+      // `dirty` branch (the web has no local working tree), where they re-surface as
+      // needs-approval. Explicit even though `'web'` is the server default.
+      const body: PublishPlanRunDto = { pipelineId: publishPlanId, executeSinglePhase, publishOrigin: 'web' };
       const res = await http.post<{ jobId: string }>(`/workbook/${workbookId}/publish-v2/run-job`, body, {
         fallbackMessage: 'Failed to start run job',
       });

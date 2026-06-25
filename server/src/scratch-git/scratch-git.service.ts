@@ -76,8 +76,15 @@ export class ScratchGitService {
     await this.scratchGitClient.resetRepo(repoId, path);
   }
 
-  async rebaseDirty(repoId: string) {
-    await this.scratchGitClient.rebaseDirty(repoId);
+  /**
+   * Reconcile `dirty` onto `main`, re-applying the user's edits. `excludePaths`
+   * are paths to **converge to `main`** (skip re-applying), used by the publish
+   * reconcile to drop published / no-op / desktop-failed edits from `dirty` while
+   * preserving every other edit. Empty/omitted ⇒ the legacy "re-apply everything"
+   * behavior. See the publish redesign (DEV-10048).
+   */
+  async rebaseDirty(repoId: string, excludePaths?: string[]) {
+    await this.scratchGitClient.rebaseDirty(repoId, excludePaths);
   }
 
   async runGitGc(repoId: string, aggressive?: boolean) {

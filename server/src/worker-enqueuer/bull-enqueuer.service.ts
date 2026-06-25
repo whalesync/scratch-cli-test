@@ -289,6 +289,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
     executeSinglePhase: boolean | undefined,
     initialProgress: import('src/types/progress').Progress | undefined,
     runContext: RunContext,
+    publishOrigin?: import('@spinner/shared-types').PublishOrigin,
   ): Promise<Job> {
     const id = `publish-${workbookId}-${createPlainId()}`;
     const data: PublishJobDefinition['data'] = {
@@ -300,6 +301,7 @@ export class BullEnqueuerService implements OnModuleDestroy {
       // We are enqueuing a run explicitly
       runAfterPlan: true,
       ...(executeSinglePhase && { executeSinglePhase }),
+      ...(publishOrigin && { publishOrigin }),
     };
     return await this.createAndEnqueue(
       {

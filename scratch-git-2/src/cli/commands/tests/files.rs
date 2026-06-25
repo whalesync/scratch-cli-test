@@ -2269,7 +2269,7 @@ fn download_re_anchors_accepted_patch_when_server_touches_disjoint_field() {
         "server renames Acme",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     assert_eq!(result.conflicts_auto_resolved, 0);
@@ -2341,7 +2341,7 @@ fn download_logs_conflict_and_user_wins_when_server_overwrites_same_field() {
         "server changes industry",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     assert_eq!(result.conflicts_auto_resolved, 1);
@@ -2390,7 +2390,7 @@ fn download_returns_up_to_date_when_server_main_unchanged() {
 
     // No server-side advance — should short-circuit to up_to_date with no
     // ref bump, no conflict log, no patch-file mutation.
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
     assert_eq!(result.status, "up_to_date");
     assert_eq!(result.files_created, 0);
     assert_eq!(result.files_updated, 0);
@@ -2444,7 +2444,7 @@ fn download_preserves_unreviewed_edit_on_disjoint_field() {
         "server renames Acme",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     assert_eq!(result.unreviewed_conflicts_auto_resolved, 0);
@@ -2495,7 +2495,7 @@ fn download_drops_unreviewed_edit_when_server_independently_matched_it() {
         "server matches user",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     assert_eq!(result.unreviewed_conflicts_auto_resolved, 0);
@@ -2542,7 +2542,7 @@ fn download_unreviewed_same_field_collision_is_user_wins_and_logged() {
         "server changes industry",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     // Soft conflict — counted, logged, but NOT a failure.
@@ -2600,7 +2600,7 @@ fn download_preserves_unreviewed_local_create() {
         "server bumps rec_a",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     assert!(result.hard_conflict_paths.is_empty());
@@ -2650,7 +2650,7 @@ fn download_hard_conflict_when_server_deleted_an_edited_record() {
     // Server DELETES the record the user was editing.
     delete_remote_record(&fixture, "posts/rec_edit.json", "server deletes rec_edit");
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     // Hard conflict: the edited record is reported (workspace-relative) and
     // saved to the stash.
@@ -2703,7 +2703,7 @@ fn download_clean_when_no_unreviewed_edits_writes_no_stash() {
         "server bump",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     assert!(result.hard_conflict_paths.is_empty());
@@ -2738,7 +2738,7 @@ fn download_unreviewed_delete_that_server_also_deleted_is_noop() {
     // Server independently deleted the same record.
     delete_remote_record(&fixture, "posts/rec_del.json", "server deletes rec_del");
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     // Both sides agree the record is gone — no conflict, no stash, no log.
     assert_eq!(result.status, "downloaded");
@@ -2782,7 +2782,7 @@ fn download_ignores_whitespace_or_key_order_only_local_reformat() {
         "server bumps y",
     );
 
-    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+    let result = download_single_repo(&ctx, &workspace_dir, "test-token", &[], None).unwrap();
 
     assert_eq!(result.status, "downloaded");
     assert_eq!(result.unreviewed_conflicts_auto_resolved, 0);
@@ -2870,7 +2870,7 @@ fn reconcile_keeps_patch_when_server_main_did_not_advance() {
     crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
 
     // Connector batch failed → server's main did NOT advance.
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
 
     // Patch must still be there for the next publish attempt.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
@@ -2925,7 +2925,7 @@ fn reconcile_drops_patch_when_server_published_the_change() {
         "publish lands user's edit",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
 
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert!(
@@ -2937,6 +2937,122 @@ fn reconcile_drops_patch_when_server_published_the_change() {
     let origin_main = git_rev_parse(&ctx.bare_repo, "refs/remotes/origin/main").unwrap();
     assert_eq!(local_main, origin_main);
     assert!(!workspace_dir.join(".scratch/conflicts.log").exists());
+}
+
+#[test]
+fn reconcile_moves_failed_op_to_failed_patches() {
+    // Publish redesign (DEV-10048): a connector-rejected record moves out of
+    // accepted-patches.json and into failed-patches.json carrying the error.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"name\": \"Acme\",\n  \"industry\": \"Tech\"\n}\n",
+    );
+    let connection_dir = accepted_patches_dir(&ctx);
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!({"industry": "SaaS"}),
+            revert: false,
+        }],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    // The connector rejected this record (main did NOT advance for it).
+    let failed_op = crate::api::JobFailedOperation {
+        file_path: "posts/rec_acme.json".into(),
+        phase: "edit".into(),
+        error: Some("industry must be one of: Tech, Bio".into()),
+        field_errors: Some(
+            [(
+                "/industry".to_string(),
+                "industry must be one of: Tech, Bio".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        ),
+    };
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[failed_op]).unwrap();
+
+    // Moved OUT of accepted-patches.json...
+    let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(
+        accepted_after.patches.is_empty(),
+        "a failed edit must leave accepted-patches.json"
+    );
+    // ...and INTO failed-patches.json, carrying the connector error + field error.
+    let failed_after = crate::shared::failed_patches::load(&connection_dir).unwrap();
+    assert_eq!(failed_after.patches.len(), 1);
+    assert_eq!(failed_after.patches[0].path, "posts/rec_acme.json");
+    assert_eq!(
+        failed_after.patches[0].error.as_deref(),
+        Some("industry must be one of: Tech, Bio")
+    );
+    assert_eq!(
+        failed_after.patches[0]
+            .field_errors
+            .as_ref()
+            .and_then(|m| m.get("/industry"))
+            .map(String::as_str),
+        Some("industry must be one of: Tech, Bio")
+    );
+}
+
+#[test]
+fn reconcile_drops_removed_key_no_op_survivor() {
+    // Publish redesign (DEV-10048): a removed-key edit is a publish no-op (the
+    // server never advances main for it), so re-anchor keeps it — but the
+    // reconcile must drop it so it stops showing as "accepted" forever.
+    if !git_available() {
+        eprintln!("skipping git-dependent test: git executable not available");
+        return;
+    }
+
+    let fixture = create_bare_fixture();
+    let tmp = TempDir::new().unwrap();
+    let workspace_dir = tmp.path().to_path_buf();
+    let ctx = make_connection_context(&workspace_dir, &fixture.local_bare);
+
+    seed_main_with_record(
+        &fixture,
+        &ctx,
+        "posts/rec_acme.json",
+        "{\n  \"a\": 1,\n  \"b\": 2\n}\n",
+    );
+    let connection_dir = accepted_patches_dir(&ctx);
+    // The user removed key `b` and accepted it. main does NOT advance (no-op).
+    let accepted = crate::shared::accepted_patches::AcceptedPatchesFile {
+        patches: vec![crate::shared::re_anchor::AnchoredPatch {
+            path: "posts/rec_acme.json".to_string(),
+            kind: crate::shared::re_anchor::PatchKind::Update,
+            patch: serde_json::json!([{"op": "remove", "path": "/b"}]),
+            revert: false,
+        }],
+    };
+    crate::shared::accepted_patches::save_atomic(&connection_dir, &accepted).unwrap();
+
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
+
+    let accepted_after = crate::shared::accepted_patches::load(&connection_dir).unwrap();
+    assert!(
+        accepted_after.patches.is_empty(),
+        "removed-key publish no-op must be dropped, not left stuck as accepted"
+    );
+    // It was not misfiled as a failure either.
+    let failed_after = crate::shared::failed_patches::load(&connection_dir).unwrap();
+    assert!(failed_after.patches.is_empty());
 }
 
 #[test]
@@ -2983,7 +3099,7 @@ fn reconcile_keeps_failed_record_when_partial_publish_succeeded() {
         "publish lands A",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
 
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
     assert_eq!(
@@ -4080,6 +4196,7 @@ mod publish_results_formatting {
                 file_path: "Activities/call-nishant-tare.json".into(),
                 phase: "create".into(),
                 error: Some(connector_message.into()),
+                field_errors: None,
             }],
         );
         assert!(warning.contains("call-nishant-tare"));
@@ -4096,6 +4213,7 @@ mod publish_results_formatting {
                 file_path: "Activities/call-nishant-tare.json".into(),
                 phase: "create".into(),
                 error: Some(connector_message.into()),
+                field_errors: None,
             }],
         }];
         let json = parse_json_output(&outcomes);
@@ -4256,7 +4374,7 @@ fn reconcile_rewrites_worktree_to_canonical_bytes_after_publish() {
         "publish lands user's edit",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
 
     // Patch dropped, main advanced, AND worktree now matches main byte-for-byte.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();
@@ -4325,7 +4443,7 @@ fn reconcile_materializes_failed_publish_patch_value_to_worktree() {
         "publish lands A",
     );
 
-    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token").unwrap();
+    reconcile_accepted_after_publish(&ctx, &workspace_dir, "test-token", &[]).unwrap();
 
     // rec_a's patch was dropped; rec_b's survives.
     let reloaded = crate::shared::accepted_patches::load(&connection_dir).unwrap();

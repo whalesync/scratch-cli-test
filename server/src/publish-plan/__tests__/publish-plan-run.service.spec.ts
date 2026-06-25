@@ -1063,4 +1063,59 @@ describe('PublishPlanRunService', () => {
       ]);
     });
   });
+
+  // DEV-10048: the post-publish reconcile hands `rebaseDirty` a set of paths to
+  // converge to `main` (skip re-applying), scoped to what the plan touched.
+  describe('post-publish dirty reconcile exclude-set (DEV-10048)', () => {
+    // The plan touched two records: one published cleanly, one the connector rejected.
+    function mockReconcilePlanOps() {
+      db.client.publishPlanOperation.findMany.mockImplementation(
+        (args: { where?: { planId?: string }; distinct?: string[]; select?: Record<string, boolean> }) => {
+          if (args?.where?.planId === PLAN_ID && args?.select?.filePath) {
+            return Promise.resolve([
+              { filePath: 'Articles/ok.json', status: 'success' },
+              { filePath: 'Articles/bad.json', status: 'failed-batch' },
+            ]);
+          }
+          return Promise.resolve([]);
+        },
+      );
+    }
+
+    it('web publish converges succeeded/no-op paths and keeps failed paths on dirty', async () => {
+      mockReconcilePlanOps();
+      await service.runPipeline(PLAN_ID, undefined, undefined, undefined, undefined, 'web');
+      // Failed path is NOT excluded — it stays on `dirty` (re-applied) for the web.
+      expect(scratchGitService.rebaseDirty).toHaveBeenCalledWith(REPO_ID, ['Articles/ok.json']);
+    });
+
+    it('desktop publish converges ALL plan paths (failed edits travel back to the client)', async () => {
+      mockReconcilePlanOps();
+      await service.runPipeline(PLAN_ID, undefined, undefined, undefined, undefined, 'desktop');
+      const calls = jest.mocked(scratchGitService.rebaseDirty).mock.calls;
+      const lastArgs = calls[calls.length - 1];
+      expect(lastArgs[0]).toBe(REPO_ID);
+      expect([...(lastArgs[1] as string[])].sort()).toEqual(['Articles/bad.json', 'Articles/ok.json']);
+    });
+
+    it('single-phase run leaves still-pending paths on dirty (does not converge un-run phases)', async () => {
+      // The "Execute 1 Phase" case: the edit phase ran (success) but a later
+      // phase's create op is still `pending`. The pending path must NOT converge —
+      // it was never published — or its create would vanish from `dirty`.
+      db.client.publishPlanOperation.findMany.mockImplementation(
+        (args: { where?: { planId?: string }; distinct?: string[]; select?: Record<string, boolean> }) => {
+          if (args?.where?.planId === PLAN_ID && args?.select?.filePath) {
+            return Promise.resolve([
+              { filePath: 'Articles/edited.json', status: 'success' },
+              { filePath: 'Articles/pending-create.json', status: 'pending' },
+            ]);
+          }
+          return Promise.resolve([]);
+        },
+      );
+      await service.runPipeline(PLAN_ID, true, undefined, undefined, undefined, 'web');
+      // Only the executed (success) path converges; the pending one stays on dirty.
+      expect(scratchGitService.rebaseDirty).toHaveBeenCalledWith(REPO_ID, ['Articles/edited.json']);
+    });
+  });
 });

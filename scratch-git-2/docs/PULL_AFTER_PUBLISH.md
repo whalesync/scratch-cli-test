@@ -8,6 +8,37 @@ The publish pipeline runs entirely on the server: it applies RFC 7396 patches to
 
 Without a sync, the desktop would keep showing stale "unpublished" badges for records that were just published, and the user's `accepted-patches.json` would still contain entries for records that are now live on `main`. The next `files upload` would try to re-publish them.
 
+## Publish redesign (DEV-10048) — failed edits + scoped reconcile
+
+The post-publish reconcile was reworked so the `dirty` branch and the local
+`accepted-patches.json` converge cleanly even when a publish is a **no-op** (the
+old bug: a removed-key edit `main` never advanced for stayed stuck as "accepted"
+forever) or **fails** for some records. Full design:
+[`docs/plans/2026-06-24-publish-failed-patches-redesign.md`](../../docs/plans/2026-06-24-publish-failed-patches-redesign.md).
+
+What changed:
+
+- **`publishOrigin`** is sent on the run-job (`'desktop'` for desktop/CLI, `'web'`
+  for the web). It routes a record's **failed** edit: `'desktop'` strips failed
+  paths from the server `dirty` branch (they travel back to the client), `'web'`
+  keeps them on `dirty` (the web has no working tree).
+- **Server scoped reconcile.** After the run, the server reconciles `dirty` via
+  `rebaseDirty` with an **exclude-set** of paths to converge to `main`
+  (`successPaths ∪ no-op paths`, plus failed paths for a desktop publish). A no-op
+  edit converges to `main` instead of re-accumulating — killing the phantom on the
+  web view + the DEV-10316 dirty-gate.
+- **Client `failed-patches.json`.** The desktop/CLI post-publish reconcile
+  (`reconcile_accepted_after_publish` for `files publish`; the new
+  `files reconcile-after-publish` the desktop calls per connection) partitions the
+  re-anchored patches: connector-rejected → `failed-patches.json` (re-surfaced in
+  the worktree as needs-approval, with the connector error); publish-no-op
+  survivors → dropped; everything else → kept accepted. Unreviewed edits are still
+  preserved (DEV-10523).
+
+The mechanics in the sections below (the `re_anchor` drop-on-publish, conflict
+logging, atomic-save-before-ref-bump ordering) still apply — the failed-routing
+and no-op drop are layered on top of them.
+
 ## Two paths that handle the sync
 
 ### CLI: `scratchmd files publish`

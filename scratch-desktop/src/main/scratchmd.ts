@@ -1002,6 +1002,37 @@ export async function reconcilePublishedRecord(
   );
 }
 
+/** Result of `files reconcile-after-publish` (publish redesign, DEV-10048). */
+export interface ReconcileAfterPublishResult {
+  status: string;
+  connection: string;
+  filesCreated: number;
+  filesUpdated: number;
+  filesDeleted: number;
+  failedCount: number;
+}
+
+/**
+ * Post-publish reconcile for one connection (publish redesign, DEV-10048). Run
+ * after a connection's run-job: re-anchors `accepted-patches.json` against the
+ * new `main`, routes connector-rejected records into `failed-patches.json`
+ * (re-surfacing them in the worktree as needs-approval edits), drops publish-no-op
+ * survivors, and preserves unrelated unreviewed edits. `failedOpsJson` is the JSON
+ * string of the run-job's `failedOperations` array (empty/`'[]'` when nothing was
+ * rejected). Replaces the generic post-publish `pullWorkspaceChanges` so the
+ * failed edits are routed back here instead of being lost.
+ */
+export async function reconcileAfterPublish(
+  workspacePath: string,
+  connectionId: string,
+  failedOpsJson: string,
+): Promise<ReconcileAfterPublishResult> {
+  return runScratchmdJson<ReconcileAfterPublishResult>(
+    ['--json', 'files', 'reconcile-after-publish', '--connection', connectionId, '--failed-ops-json', failedOpsJson],
+    workspacePath,
+  );
+}
+
 export type { ReviewStat } from '../shared/review-types';
 export type {
   RerunValidationScope,

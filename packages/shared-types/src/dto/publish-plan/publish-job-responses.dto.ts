@@ -34,4 +34,15 @@ export type PublishFailedOperation = {
   filePath: string;
   phase: string;
   error: string | null;
+  /**
+   * Per-field connector rejection messages, keyed by RFC 6902 JSON Pointer
+   * (e.g. `"/Organization"`). Populated when the connector attributes the
+   * rejection to specific fields; `null`/absent when only a record-level
+   * `error` is available. Drives the per-field "this field failed to publish"
+   * warning in the desktop/web grid (the value is moved into the matching
+   * `failed-patches.json` entry's `fieldErrors`). Publish is per-record atomic,
+   * so a single bad field fails the whole record — `fieldErrors` is attribution,
+   * not partial success.
+   */
+  fieldErrors?: Record<string, string> | null;
 };

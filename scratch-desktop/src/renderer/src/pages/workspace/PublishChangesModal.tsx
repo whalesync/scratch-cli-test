@@ -85,6 +85,13 @@ interface ConnectionPublishState {
   runJobId?: string;
   pipelineId?: string;
   failureMessage?: string;
+  /**
+   * Publish redesign (DEV-10048): the run-job's `failedOperations` (connector
+   * rejections), captured when the run-job reaches a terminal state. Passed to the
+   * per-connection post-publish `reconcileAfterPublish` so the rejected records
+   * land in `failed-patches.json`. Empty/undefined when nothing was rejected.
+   */
+  failedOperations?: PublishFailedOperation[];
 }
 
 interface PublishChangesModalProps {
@@ -1084,15 +1091,24 @@ export function PublishChangesModal({
         updateConn({ runJobId });
         const finalJob = await pollJobToTerminal(runJobId);
 
+        // DEV-10048: capture the run-job's connector rejections so the
+        // per-connection post-publish reconcile can route them to
+        // failed-patches.json. Set on both terminal branches (a "failed"
+        // connection here is one with row-level rejections, which is exactly
+        // when failedOperations is non-empty).
+        const finalProgress = finalJob.publicProgress as PublishPipelineProgress | undefined;
+        const failedOperations = finalProgress?.failedOperations ?? [];
+
         if (finalJob.state !== 'completed' || hasPublishFailures(finalJob)) {
           updateConn({
             status: 'failed',
             failureMessage: getPublishFailureMessage(finalJob),
+            failedOperations,
           });
           return null;
         }
 
-        updateConn({ status: 'completed' });
+        updateConn({ status: 'completed', failedOperations });
         return null;
       } catch (err) {
         updateConn({
@@ -1403,10 +1419,26 @@ export function PublishChangesModal({
     const refreshLocal = async () => {
       if (!localPath) return;
       try {
+        // Publish redesign (DEV-10048): per-connection post-publish reconcile for
+        // every connection that actually ran a run-job. This routes connector
+        // rejections into failed-patches.json (re-surfaced as needs-approval),
+        // clears published/no-op accepted patches, and advances local `main` —
+        // replacing the generic pull for those connections so failures aren't lost.
+        const ranConnections = publishConnections.filter((c) => c.runJobId);
+        for (const conn of ranConnections) {
+          await window.scratchDesktop.reconcileAfterPublish(
+            localPath,
+            conn.connectionId,
+            JSON.stringify(conn.failedOperations ?? []),
+          );
+        }
+        // Bring any connections that did NOT run (e.g. advanced server-side via a
+        // web sync while we published) up to date too. A no-op "up_to_date" for
+        // the connections we just reconciled, since their local main now matches.
         await window.scratchDesktop.pullWorkspaceChanges(localPath);
         invalidateWorkspaceLevelData();
       } catch (err) {
-        console.debug('Post-publish pull failed:', err);
+        console.debug('Post-publish reconcile/pull failed:', err);
       }
     };
 

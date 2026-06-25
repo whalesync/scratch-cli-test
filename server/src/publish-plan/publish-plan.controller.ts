@@ -111,6 +111,7 @@ export class PublishPlanController {
       body.executeSinglePhase,
       initialProgress,
       createRunContext('web'),
+      body.publishOrigin,
     );
     if (job.id === undefined) {
       throw new Error(`Run-pipeline job for pipeline ${body.pipelineId} was enqueued without an id`);

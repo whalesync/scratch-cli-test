@@ -194,6 +194,24 @@ interface ScratchDesktopAPI {
     filePath: string,
   ) => Promise<{ status: string; path: string; patchDropped: boolean; conflicts: number }>;
   /**
+   * DEV-10048 (publish redesign): per-connection post-publish reconcile. Routes
+   * connector-rejected records into `failed-patches.json` (re-surfacing them as
+   * needs-approval), drops publish-no-op survivors, preserves unreviewed edits.
+   * `failedOpsJson` is the run-job's `failedOperations` array as a JSON string.
+   */
+  reconcileAfterPublish: (
+    workspacePath: string,
+    connectionId: string,
+    failedOpsJson: string,
+  ) => Promise<{
+    status: string;
+    connection: string;
+    filesCreated: number;
+    filesUpdated: number;
+    filesDeleted: number;
+    failedCount: number;
+  }>;
+  /**
    * DEV-10523: pull re-applies unreviewed working-tree edits user-wins instead
    * of blocking. `opts.filePath` (single-record "Download and publish") scopes
    * only the failure decision to that record. Returns a structured result; the
@@ -432,6 +450,10 @@ interface ScratchFilesAPI {
         __masterFields: Record<string, unknown>;
         __filename: string;
         __parseError?: string;
+        /** DEV-10048: per-field connector rejection messages from a prior failed publish. */
+        __failedFields?: Record<string, string>;
+        /** DEV-10048: record-level connector rejection message from a prior failed publish. */
+        __failedError?: string;
         __raw: Record<string, unknown>;
       }
     >;
@@ -481,6 +503,10 @@ interface ScratchFilesAPI {
       __masterFields: Record<string, unknown>;
       __filename: string;
       __parseError?: string;
+      /** DEV-10048: per-field connector rejection messages from a prior failed publish. */
+      __failedFields?: Record<string, string>;
+      /** DEV-10048: record-level connector rejection message from a prior failed publish. */
+      __failedError?: string;
       __raw: Record<string, unknown>;
     };
     columns: ColumnDefinition[];

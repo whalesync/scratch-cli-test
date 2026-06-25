@@ -1,4 +1,5 @@
 import type { PlanJobResponse, RunJobResponse } from '../../dto/publish-plan/publish-job-responses.dto';
+import type { PublishPlanRunDto } from '../../dto/publish-plan/publish-plan.dto';
 import type { Http } from '../http';
 
 /**
@@ -53,13 +54,17 @@ export function createPublishViaCliRouteApi(http: Http) {
     /**
      * POST `/cli/v1/workbooks/:id/publish-v2/run-job` — dispatch a previously-built plan through the
      * connector (desktop). Caller polls the returned `jobId` for progress.
+     *
+     * Always sends `publishOrigin: 'desktop'` (publish redesign, DEV-10048): this route is the
+     * desktop/CLI path, which owns a local working tree, so the server strips connector-rejected
+     * paths from its `dirty` branch and the failures travel back to the client (the run-job's
+     * `failedOperations` → `failed-patches.json`) instead of being kept on `dirty`.
      */
     runJob: async (workbookId: string, pipelineId: string): Promise<RunJobResponse> => {
-      const res = await http.post<RunJobResponse>(
-        `/cli/v1/workbooks/${workbookId}/publish-v2/run-job`,
-        { pipelineId },
-        { fallbackMessage: 'Failed to start run job' },
-      );
+      const body: PublishPlanRunDto = { pipelineId, publishOrigin: 'desktop' };
+      const res = await http.post<RunJobResponse>(`/cli/v1/workbooks/${workbookId}/publish-v2/run-job`, body, {
+        fallbackMessage: 'Failed to start run job',
+      });
       return res.data;
     },
   };
