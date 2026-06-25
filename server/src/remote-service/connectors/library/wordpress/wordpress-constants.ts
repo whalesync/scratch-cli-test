@@ -35,6 +35,14 @@ export const WORDPRESS_EXCLUDE_TABLE_SLUGS = [
 // Tables that don't support create operations
 export const WORDPRESS_CREATE_UNSUPPORTED_TABLE_IDS = ['media', 'users'];
 
+// Tables whose WordPress REST route does NOT opt into the batch controller
+// (POST /batch/v1). WordPress only batches routes that register
+// `allow_batch => array('v1' => true)`; the media route (/wp/v2/media) does
+// not, so issuing media update/delete through a batch is rejected with
+// "The requested route does not support batch requests." Publish falls back to
+// individual per-record requests for these tables.
+export const WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS = ['media'];
+
 // Columns to hide from the schema
 export const WORDPRESS_HIDDEN_COLUMN_IDS = [
   'id',

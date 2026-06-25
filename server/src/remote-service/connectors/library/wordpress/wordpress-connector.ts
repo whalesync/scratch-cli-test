@@ -25,6 +25,7 @@ import {
 import { WordPressAuthParser } from './wordpress-auth-parser';
 import {
   WORDPRESS_BATCH_SIZE,
+  WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS,
   WORDPRESS_CREATE_UNSUPPORTED_TABLE_IDS,
   WORDPRESS_ORG_V2_PATH,
   WORDPRESS_POLLING_PAGE_SIZE,
@@ -310,6 +311,10 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
    * Update records in WordPress using the batch API (POST /batch/v1).
    * Uses "require-all-validate" so WordPress rejects the entire batch if any request
    * fails validation. Once past validation, all requests execute and are expected to succeed.
+   *
+   * Tables whose route does not opt into the batch controller (e.g. media) can't
+   * be batched — WordPress rejects them with "route does not support batch
+   * requests" — so they fall back to individual PATCH requests.
    */
   async updateRecords(
     tableSpec: BaseJsonTableSpec,
@@ -317,6 +322,10 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
     changedFields: Record<string, unknown>[],
   ): Promise<ConnectorFile[]> {
     const [tableId] = tableSpec.id.remoteId;
+
+    if (WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS.includes(tableId)) {
+      return this.updateRecordsIndividually(tableId, files, changedFields);
+    }
 
     const requests: WordPressBatchRequestItem[] = files.map((file, i) => ({
       method: 'PATCH' as const,
@@ -343,9 +352,20 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
    * Delete records from WordPress using the batch API (POST /batch/v1).
    * Uses "require-all-validate" so WordPress rejects the entire batch if any request
    * fails validation. Once past validation, all requests execute and are expected to succeed.
+   *
+   * Tables whose route does not opt into the batch controller (e.g. media) can't
+   * be batched — WordPress rejects them with "route does not support batch
+   * requests" — so they fall back to individual DELETE requests.
    */
   async deleteRecords(tableSpec: BaseJsonTableSpec, files: ConnectorFile[]): Promise<void> {
     const [tableId] = tableSpec.id.remoteId;
+
+    if (WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS.includes(tableId)) {
+      for (const file of files) {
+        await this.deleteRecordTolerating404(tableId, String(file.id));
+      }
+      return;
+    }
 
     const requests: WordPressBatchRequestItem[] = files.map((file) => ({
       method: 'DELETE' as const,
@@ -354,6 +374,58 @@ export class WordPressConnector extends Connector<string, WordPressDownloadProgr
 
     const batchResponse = await this.client.batchRequest(requests);
     this.assertBatchValidation(batchResponse, requests);
+  }
+
+  /**
+   * Update records one at a time via PATCH /wp/v2/{table}/{id}, for tables whose
+   * route does not support WordPress's batch controller (e.g. media). Mirrors
+   * the batch path's return contract: a `ConnectorFile[]` parallel to `files`,
+   * each entry the persisted record (falling back to the input file for any
+   * response without an `id`). Requests run sequentially so a mid-list failure
+   * surfaces cleanly to the publish engine rather than racing.
+   *
+   * The loop is not atomic: a mid-list failure leaves earlier rows already
+   * patched, and the publish engine marks the whole slice failed-batch and
+   * retries each row individually — but re-patching an already-updated record
+   * is idempotent (WordPress returns 200 with the same row), so the retry of an
+   * already-succeeded row simply re-confirms it. (Delete is the asymmetric case
+   * — see `deleteRecordTolerating404`.)
+   */
+  private async updateRecordsIndividually(
+    tableId: string,
+    files: ConnectorFile[],
+    changedFields: Record<string, unknown>[],
+  ): Promise<ConnectorFile[]> {
+    const updatedFiles: ConnectorFile[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const record = this.fileToWordPressRecord(changedFields[i] as ConnectorFile);
+      const body = await this.client.updateRecord(tableId, String(file.id), record);
+      updatedFiles.push(body && typeof body === 'object' && 'id' in body ? (body as ConnectorFile) : file);
+    }
+    return updatedFiles;
+  }
+
+  /**
+   * Delete a single record via DELETE /wp/v2/{table}/{id}?force=true, treating a
+   * 404 as success. Media can't be batched (see `deleteRecords`), so a batch
+   * slice is deleted one row at a time and the loop is NOT atomic: if a later
+   * row fails, the publish engine marks the whole slice failed-batch and retries
+   * each row individually — including rows already deleted in the first pass. A
+   * force-delete permanently removes the record (no trash), so re-deleting an
+   * already-gone id returns 404. The record is already in its target (deleted)
+   * state, so we treat that as success rather than a spurious failure, keeping
+   * the delete idempotent across the engine's retry.
+   */
+  private async deleteRecordTolerating404(tableId: string, recordId: string): Promise<void> {
+    try {
+      await this.client.deleteRecord(tableId, recordId);
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return;
+      }
+      throw error;
+    }
   }
 
   /**

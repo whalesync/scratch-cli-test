@@ -102,10 +102,10 @@ Max records (or fields) per API request, **per operation** — services often di
 
 | Operation | Max per request | Mechanism (endpoint / cursor) | Notes |
 |---|---|---|---|
-| Read (list) | <N> records/page | <page/offset/cursor> | <field cap? hard ceiling that needs a bulk API?> |
-| Create | <N> records/request | <endpoint> | |
-| Update | <N> records/request | <endpoint> | |
-| Delete | <N> ids/request | <endpoint> | |
+| Read (list) | 100 records/page | `GET /wp/v2/{type}` offset pagination | `WORDPRESS_POLLING_PAGE_SIZE` |
+| Create | 25 records/request | `POST /batch/v1` (`require-all-validate`) | `media`/`users` not creatable; media is created via `POST /wp/v2/media` (asset upload) |
+| Update | 25 records/request | `POST /batch/v1` (`require-all-validate`) | **`media` can't batch** — its route doesn't opt into `allow_batch`, so it falls back to per-record `PATCH /wp/v2/media/{id}` (`WORDPRESS_BATCH_UNSUPPORTED_TABLE_IDS`) |
+| Delete | 25 ids/request | `POST /batch/v1` (`require-all-validate`) | **`media` can't batch** — falls back to per-record `DELETE /wp/v2/media/{id}?force=true` |
 
 **Batch-breaking fields** — fields whose edit needs its **own dedicated API call** (a separate add/remove or sub-resource endpoint), so they **cannot** be combined into the main (batched) update; a publish that touches one splits into ≥2 calls. Per field ask: *"if I change only this, does it go through the normal update, or a different endpoint?"*
 
