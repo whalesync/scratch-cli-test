@@ -4,7 +4,8 @@
 | --- | --- |
 | **Created** | 2026-06-10 |
 | **Author** | Chris Hoefgen |
-| **Status** | Proposed |
+| **Status** | Resolved |
+| **Resolved** | 2026-06-25 — applied + validated end-to-end in `spv1eu-test` and `spv1eu-production` |
 | **Linear** | [DEV-10366](https://linear.app/whalesync/issue/DEV-10366/define-a-restricted-user-for-scratch-git-vm-access) |
 | **GCP projects** | `spv1eu-test`, `spv1eu-production` |
 | **Origin** | Agent + Workstation Safety meeting (2026-06-09) |
