@@ -237,6 +237,38 @@ function validateEndpointShape(ep: unknown, index: number, apiType: 'rest' | 'gr
     }
   }
 
+  const assetError = validateAssetShape(obj['asset'], index);
+  if (assetError) return assetError;
+
+  return null;
+}
+
+/**
+ * Validate the optional `asset` block on an endpoint (GenericApiAssetMapping).
+ * Only `urlPath` is required; the rest are optional dot-paths / a boolean.
+ * Returns an error message or null. Absent `asset` is valid (most endpoints
+ * aren't file collections).
+ */
+function validateAssetShape(asset: unknown, index: number): string | null {
+  if (asset === undefined) return null;
+  if (asset === null || typeof asset !== 'object' || Array.isArray(asset)) {
+    return `endpoints[${index}].asset must be an object like { "urlPath": "url", "filenamePath": "name" }.`;
+  }
+  const obj = asset as Record<string, unknown>;
+
+  if (typeof obj['urlPath'] !== 'string' || obj['urlPath'] === '') {
+    return `endpoints[${index}].asset.urlPath is required and must be a non-empty string (the dot-path to the file's download URL).`;
+  }
+  for (const key of ['filenamePath', 'mimeTypePath', 'sizePath'] as const) {
+    const value = obj[key];
+    if (value !== undefined && (typeof value !== 'string' || value === '')) {
+      return `endpoints[${index}].asset.${key} must be a non-empty string when provided.`;
+    }
+  }
+  if (obj['urlExpires'] !== undefined && typeof obj['urlExpires'] !== 'boolean') {
+    return `endpoints[${index}].asset.urlExpires must be a boolean when provided.`;
+  }
+
   return null;
 }
 

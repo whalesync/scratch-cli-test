@@ -7,7 +7,7 @@ Status: 🟢 **green** — works well (fetches cleanly, little/no `overrides`, f
 
 | Service | Status | Notes |
 |---|:--:|---|
-| [CompanyCam](./companycam.md) | 🟢 | 9 fetchable entities (incl. **Documents** = the UI "Files" tab), **zero overrides** (page pagination + bare arrays + string `id` auto-detected). 2 unsupported ❌: ChecklistTemplates + Pages (both 302→login, not token-accessible). Pagination walked + verified at `per_page=2` (22/22 ids, no dupes). |
+| [CompanyCam](./companycam.md) | 🟢 | 9 fetchable entities (incl. **Documents** = the UI "Files" tab), **zero overrides** (page pagination + bare arrays + string `id` auto-detected). 2 unsupported ❌: ChecklistTemplates + Pages (both 302→login, not token-accessible). Pagination walked + verified at `per_page=2` (22/22 ids, no dupes). **DEV-10425:** documents support binary download via a per-endpoint `asset` mapping (`urlPath=url`, `filenamePath=name`, `mimeTypePath=content_type`, `sizePath=byte_size` — confirmed from API docs); reaching per-project docs (`/projects/{id}/documents`) still needs fan-out (Axis A, deferred). Live download not yet run. |
 | [Quo (OpenPhone)](./quo.md) | 🟠 | Core entities fetch (phone numbers, users, contacts, conversations, webhooks, custom fields) but **require cursor `overrides`** (`pageToken`/`nextPageToken` not auto-detected). **Messages & Calls can't be listed** — require `phoneNumberId`+`participants` scoping. Auth = `raw`. |
 
 ---

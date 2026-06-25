@@ -124,6 +124,23 @@ doesn't match):
   `{ "overrides": { "paginationType": "cursor", "request": { "cursorParam": "pageToken", "limitParam": "maxResults", "maxPageSize": 50 }, "response": { "cursorPath": "nextPageToken", "dataPath": "data" } } }`
 - POST list endpoint with static body: `{ "method": "POST", "body": { "filter": {} } }`
 
+**Downloadable files (attachments, documents, media):** when an endpoint's
+records each represent a FILE whose actual bytes the user will want (e.g. a
+"Documents" / "Files" / "Attachments" collection where each record has a
+download URL), add an `asset` block so Scratch downloads the binary, not just
+the JSON metadata. Each record is treated as one file.
+
+- `asset.urlPath` (required): lodash dot-path to the file's download URL on the record (e.g. `"url"`, `"download_url"`, `"file.url"`).
+- `asset.filenamePath` (optional): dot-path to a human-readable filename (e.g. `"name"`).
+- `asset.mimeTypePath` (optional): dot-path to the content/MIME type (e.g. `"content_type"`).
+- `asset.sizePath` (optional): dot-path to the file size in bytes.
+- `asset.urlExpires` (optional, boolean): set `true` when the download URL is short-lived / signed (presigned S3, time-limited token) so it's fetched promptly.
+
+Only add `asset` when the records really ARE files to download — not for ordinary
+records that merely contain a `website` or `avatar` URL. Example (a documents
+endpoint):
+`{ "name": "Documents", "method": "GET", "url": "https://api.example.com/v1/documents?page=1&per_page=100", "asset": { "urlPath": "url", "filenamePath": "name", "mimeTypePath": "content_type" } }`
+
 Hard limits — do NOT include endpoints that hit these:
 
 - **OAuth-only services** (Salesforce, Slack, Shopify, QuickBooks, Xero, etc.):

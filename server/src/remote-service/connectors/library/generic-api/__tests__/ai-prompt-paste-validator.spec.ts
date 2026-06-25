@@ -82,6 +82,76 @@ describe('validatePastedConfig — REST happy path', () => {
   });
 });
 
+describe('validatePastedConfig — asset mapping', () => {
+  it('accepts an endpoint with a full asset block', () => {
+    const result = validatePastedConfig(
+      JSON.stringify({
+        authHeader: 'Bearer',
+        endpoints: [
+          {
+            name: 'Documents',
+            method: 'GET',
+            url: 'https://api.example.com/v1/documents',
+            asset: {
+              urlPath: 'url',
+              filenamePath: 'name',
+              mimeTypePath: 'content_type',
+              sizePath: 'size',
+              urlExpires: true,
+            },
+          },
+        ],
+      }),
+      'rest',
+    );
+    if (!result.ok) throw new Error('expected ok, got: ' + result.error.message);
+    expect(result.extras.endpoints[0].asset).toEqual({
+      urlPath: 'url',
+      filenamePath: 'name',
+      mimeTypePath: 'content_type',
+      sizePath: 'size',
+      urlExpires: true,
+    });
+  });
+
+  it('accepts an asset block with only the required urlPath', () => {
+    const result = validatePastedConfig(
+      JSON.stringify({
+        authHeader: 'Bearer',
+        endpoints: [{ method: 'GET', url: 'https://api.example.com/v1/documents', asset: { urlPath: 'download_url' } }],
+      }),
+      'rest',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects an asset block missing urlPath', () => {
+    const result = validatePastedConfig(
+      JSON.stringify({
+        authHeader: 'Bearer',
+        endpoints: [{ method: 'GET', url: 'https://api.example.com/v1/documents', asset: { filenamePath: 'name' } }],
+      }),
+      'rest',
+    );
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error.message).toContain('asset.urlPath');
+  });
+
+  it('rejects a non-boolean asset.urlExpires', () => {
+    const result = validatePastedConfig(
+      JSON.stringify({
+        authHeader: 'Bearer',
+        endpoints: [
+          { method: 'GET', url: 'https://api.example.com/v1/documents', asset: { urlPath: 'url', urlExpires: 'yes' } },
+        ],
+      }),
+      'rest',
+    );
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error.message).toContain('asset.urlExpires');
+  });
+});
+
 describe('validatePastedConfig — GraphQL happy path', () => {
   it('requires `query` field on each endpoint and not `method`', () => {
     const result = validatePastedConfig(

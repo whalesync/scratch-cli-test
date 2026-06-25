@@ -181,6 +181,33 @@ export function parseYouTubeAdditionalChannels(rawAdditionalChannels: string | u
 export type GenericApiAuthHeaderStyle = 'bearer' | 'token' | 'raw' | 'custom-header';
 
 /**
+ * Declares that an endpoint's records ARE downloadable files (e.g. CompanyCam
+ * documents, an "attachments" collection) so Scratch pulls the binary, not just
+ * the JSON metadata. Each record is treated as one file located at `urlPath`.
+ *
+ * The connector stamps this (as `x-scratch-asset-table`) onto the inferred
+ * schema at table-build time; the standard pull → asset-index → "Pull assets"
+ * (download / rehost-to-GCS) pipeline then handles the binary. The frontends and
+ * download pipeline stay connector-agnostic — this is just the user/AI telling
+ * the generic connector which fields carry the file's URL/name/type.
+ *
+ * All paths are lodash dot-paths resolved against each record (e.g.
+ * 'url', 'attachment.download_url', 'media_details.filesize').
+ */
+export interface GenericApiAssetMapping {
+  /** Dot-path to the downloadable file URL on each record. Required — its presence is what makes the connector download the binary. */
+  urlPath: string;
+  /** Dot-path to a human-readable filename (optional; falls back to the URL's last path segment). */
+  filenamePath?: string;
+  /** Dot-path to the file's MIME type (optional; aids media-type classification). */
+  mimeTypePath?: string;
+  /** Dot-path to the file size in bytes (optional). */
+  sizePath?: string;
+  /** Set true when the file URL is short-lived / signed (e.g. a presigned S3 link) so it is downloaded promptly. Default false. */
+  urlExpires?: boolean;
+}
+
+/**
  * A REST endpoint the user has configured for this connection. Each entry
  * shows up as a table the user can pick from the standard table-picker
  * (the connector's listTables returns one TablePreview per entry).
@@ -197,6 +224,8 @@ export interface GenericApiRestEndpoint {
   body?: unknown;
   /** Optional pagination/enrich overrides — apiget auto-detects if absent. */
   overrides?: GenericApiEndpointOverrides;
+  /** When set, this endpoint's records are downloadable files — pull the binary, not just the JSON. */
+  asset?: GenericApiAssetMapping;
 }
 
 /** A GraphQL "endpoint" — one entity to sync, expressed as a single query string. */
@@ -209,6 +238,8 @@ export interface GenericApiGraphqlEndpoint {
   /** The full GraphQL query string for this entity (apiget injects the cursor into variables on subsequent pages). */
   query: string;
   overrides?: GenericApiEndpointOverrides;
+  /** When set, this endpoint's records are downloadable files — pull the binary, not just the JSON. */
+  asset?: GenericApiAssetMapping;
 }
 
 /**

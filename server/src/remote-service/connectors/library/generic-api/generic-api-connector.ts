@@ -18,19 +18,24 @@
  */
 
 import {
+  AssetTableOptions,
   connectorMetadata,
   DataFolderOptions,
+  GenericApiAssetMapping,
   GenericApiConnectorExtras,
   GenericApiCredentials,
   GenericApiFolderOptions,
   GenericApiGraphqlEndpoint,
   GenericApiRestEndpoint,
   isGenericApiConnectorExtras,
+  X_SCRATCH_ASSET_TABLE,
 } from '@spinner/shared-types';
 import { isAxiosError } from 'axios';
+import { ConnectorAssetExtractionInput, ConnectorAssetResult } from 'src/asset/asset.types';
 import { WSLogger } from 'src/logger';
 import { RateLimiter } from 'src/rate-limiter/rate-limiter';
 import { JsonSafeObject } from 'src/utils/objects';
+import { extractStandaloneEntity } from '../../asset-extraction-helpers';
 import { Connector } from '../../connector';
 import { connectorRegistry } from '../../connector-registry';
 import { ConnectorInstantiationError, extractErrorMessageFromAxiosError } from '../../error';
@@ -214,7 +219,7 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
     // "POST" for REST under the current tableId scheme.
     const endpoint = this.extras.endpoints.find((e) => e.id === genericApi.endpointId);
     const displayName = endpoint?.name?.trim() || (endpoint ? slugFromUrl(endpoint.url) : id.wsId);
-    return buildBaseJsonTableSpec(id, genericApi, displayName);
+    return buildBaseJsonTableSpec(id, genericApi, displayName, endpoint?.asset);
   }
 
   /**
@@ -317,6 +322,22 @@ export class GenericApiConnector extends Connector<typeof Service.GENERIC_API, G
   getSuggestedRecordFileNames(records: ConnectorFile[]): (string | undefined)[] {
     // Default to undefined → framework uses the remote ID as the filename.
     return records.map(() => undefined);
+  }
+
+  /**
+   * Surface a record's downloadable file to the asset pipeline. A generic-API
+   * endpoint becomes an "asset table" only when the user declared an `asset`
+   * mapping on it (see GenericApiAssetMapping). That mapping is stamped onto the
+   * table schema as `x-scratch-asset-table` in fetchJsonTableSpec, so here we
+   * just delegate to the same shared standalone-entity extractor that WordPress
+   * media / Webflow assets use — keeping zero connector-specific download logic.
+   *
+   * When no `asset` mapping is set, the annotation is absent and this returns
+   * `[]`, so the connector keeps pulling JSON metadata only (today's behavior).
+   */
+  extractAssets(input: ConnectorAssetExtractionInput): ConnectorAssetResult[] {
+    const standalone = extractStandaloneEntity(input);
+    return standalone ? [standalone] : [];
   }
 
   extractConnectorErrorDetails(error: unknown): ConnectorErrorDetails {
@@ -555,8 +576,17 @@ function buildBaseJsonTableSpec(
   id: EntityId,
   folderOpts: GenericApiFolderOptions,
   displayName?: string,
+  assetMapping?: GenericApiAssetMapping,
 ): BaseJsonTableSpec {
   const schema = inferredSchemaToTableSchema(folderOpts.probe.inferredSchema, 'Generic API record');
+
+  // When the user declared the endpoint as a file collection, mark the whole
+  // record as an asset (same `x-scratch-asset-table` annotation WordPress media
+  // / Webflow assets use). The pull job reads this off `tableSpec.schema` and
+  // indexes the file so "Pull assets" can download/rehost the binary.
+  if (assetMapping) {
+    schema[X_SCRATCH_ASSET_TABLE] = toAssetTableOptions(assetMapping);
+  }
 
   const labelOrFallback = displayName && displayName !== '' ? displayName : id.wsId;
   return {
@@ -566,6 +596,25 @@ function buildBaseJsonTableSpec(
     schema,
     idPath: dotPath(folderOpts.probe.idPath),
     generatedAt: folderOpts.probe.lastProbedAt,
+  };
+}
+
+/**
+ * Translate the user-facing GenericApiAssetMapping into the connector-internal
+ * AssetTableOptions the shared extractor expects. Omitted optional paths become
+ * `null`; width/height/altText aren't exposed in generic config (files, not
+ * images) so they're always `null`.
+ */
+function toAssetTableOptions(mapping: GenericApiAssetMapping): AssetTableOptions {
+  return {
+    urlPath: mapping.urlPath,
+    filenamePath: mapping.filenamePath ?? null,
+    mimeTypePath: mapping.mimeTypePath ?? null,
+    sizePath: mapping.sizePath ?? null,
+    widthPath: null,
+    heightPath: null,
+    altTextPath: null,
+    urlExpires: mapping.urlExpires ?? false,
   };
 }
 

@@ -10,6 +10,7 @@
 ## Metadata
 - **Template version:** 2026-06-12 — reconciled to the current `service-coverage-template.md` (includes the User-notes section, added 2026-06-12).
 - **Last run:** `2026-06-12` · `live fetch` · Tester: `Ivan Dimitrov`
+- **DEV-10425 update:** `2026-06-25` · `docs-only` (no live fetch) · added the [Binary file download (assets)](#binary-file-download-assets) capability; document field shape confirmed from the CompanyCam API reference, not a live pull.
 - **Service:** `CompanyCam` · API type: `rest`
 
 Legend: ✅ fetched & verified · ⬜ not yet · ➖ N/A · ❌ not fetchable (see reason).
@@ -75,7 +76,7 @@ Top-level collections (the generic, no-parent-id endpoints). **Maximized** — e
 | Videos | `GET /v2/videos` | `page` | `id` | ✅ | 0 | fetches (empty); pagination/idPath detected. Records are mobile-app-only — not API-seedable. |
 | Webhooks | `GET /v2/webhooks` | `page` | `id` | ✅ | 0 | fetches (empty); config object, not user content |
 | Checklists | `GET /v2/checklists` | `page` | `id` | ✅ | 0 | fetched 1 on the prior account (refs `project_id`, `creator_id`, `checklist_template_id`); new account has none (created from templates in UI) |
-| Documents | `GET /v2/documents` | `page` | `id` | ✅ | 0 | **This is the UI's "Files" tab.** Global endpoint fetches (200, bare array, currently empty). Also exists per-project (`/projects/{id}/documents`). |
+| Documents | `GET /v2/documents` | `page` | `id` | ✅ | 0 | **This is the UI's "Files" tab.** Global endpoint fetches (200, bare array, currently empty). Also exists per-project (`/projects/{id}/documents`). **Binary download:** declare an `asset` mapping on this endpoint to pull the actual file bytes — see [Binary file download](#binary-file-download-assets). |
 | ChecklistTemplates | `GET /v2/checklist_templates` | `page` | `id` | ❌ | – | **302 → `/users/sign_in` → 401** (see Fetchability); not token-accessible |
 | Pages | `GET /v2/pages` | – | – | ❌ | – | **302 → `/users/sign_in`** — the UI's "Pages" tab is web-only, not exposed to API tokens (global *and* `/projects/{id}/pages`) |
 
@@ -90,6 +91,31 @@ Top-level collections (the generic, no-parent-id endpoints). **Maximized** — e
 | `…/projects/{id}/checklists` | 403 | – | CompanyCam per-endpoint quirk; use top-level `/checklists` instead |
 
 Other documented sub-resources (not separately tested): `…/projects/{id}/videos`, `…/projects/{id}/assigned_users`, `…/projects/{id}/collaborators`, `…/projects/{id}/invitations`, `…/photos/{id}/comments`, `…/photos/{id}/tags`.
+
+## Binary file download (assets)
+DEV-10425 added a per-endpoint **`asset` mapping** to the generic connector: when an endpoint's records each represent a downloadable file, declare where the file URL lives and the connector marks the table as an asset table (`x-scratch-asset-table`). The standard pull → asset-index → **Pull assets** (download / rehost-to-GCS) pipeline then fetches the actual bytes — no connector-specific code. This is how CompanyCam **documents** ("Files" tab) get their binaries into Scratch, not just the JSON metadata.
+
+**Document object shape** — confirmed from the CompanyCam API reference ([List Project Documents](https://companycam.readme.io/reference/listprojectdocuments)). Each document record:
+```jsonc
+{
+  "id": "115", "project_id": "…", "creator_id": "…", "creator_type": "User", "creator_name": "…",
+  "name": "silver-kadabra-measurements.pdf",                                  // → filenamePath
+  "url": "https://static.companycam.com/documents/8374c65e-….pdf",            // → urlPath (download URL)
+  "content_type": "application/pdf",                                          // → mimeTypePath
+  "byte_size": 12345,                                                          // → sizePath
+  "created_at": 1700000000, "updated_at": 1700000000
+}
+```
+So the asset mapping for a documents endpoint is:
+```jsonc
+"asset": { "urlPath": "url", "filenamePath": "name", "mimeTypePath": "content_type", "sizePath": "byte_size" }
+```
+- `urlPath` is the only required field; its presence triggers the binary download.
+- `url` is a `static.companycam.com` link (not signed/expiring) → leave `urlExpires` off (`false`).
+
+**⚠️ Reaching the documents is the open part (Axis A, deferred).** CompanyCam's API documents documents **only per-project**: `GET /v2/projects/{id}/documents`. There is **no documented global `GET /v2/documents`** — the global endpoint Ivan hit returned `200` + empty array, but it's undocumented, so whether it lists documents across all projects (vs. always empty) is **unconfirmed**. Until per-parent **fan-out** (Axis A) lands, fetch project documents by **pinning one endpoint per project** (`…/projects/{id}/documents`) with the `asset` block above — the same pinned-sub-resource pattern used elsewhere in this doc. Binary download (Axis B) is implemented and works on whatever document records you reach; **end-to-end live verification is still pending** (the test account had 0 documents — see the verification log).
+
+> Photos also carry binaries, but under `uris[]` (an array of sized variants) + `photo_url` — an asset **field** shape, not one-file-per-record. Out of scope for the v1 asset-table mapping; revisit if photo binaries are needed.
 
 ## Fetchability
 For every ❌, the reason mapped to the connector's hard limits, plus any `overrides` workaround.

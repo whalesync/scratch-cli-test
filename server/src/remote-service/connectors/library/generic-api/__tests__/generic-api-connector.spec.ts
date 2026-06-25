@@ -18,7 +18,12 @@ jest.mock('undici', () => {
   return { ...actual, fetch: jest.fn() };
 });
 
-import { DataFolderOptions, GenericApiConnectorExtras, GenericApiFolderOptions } from '@spinner/shared-types';
+import {
+  DataFolderOptions,
+  GenericApiConnectorExtras,
+  GenericApiFolderOptions,
+  X_SCRATCH_ASSET_TABLE,
+} from '@spinner/shared-types';
 import { promises as dns } from 'dns';
 import * as undici from 'undici';
 import { BaseJsonTableSpec, ConnectorFile, dotPath } from '../../../types';
@@ -228,6 +233,109 @@ describe('GenericApiConnector — fetchJsonTableSpec', () => {
     expect(spec.id.wsId).toBe('ep_projects');
     expect(spec.idPath).toEqual(dotPath('id'));
     expect(spec.generatedAt).toBe('2026-05-18T20:00:00Z');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Asset mapping — declaring an endpoint's records as downloadable files
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('GenericApiConnector — asset mapping (binary file download)', () => {
+  const EP_REST_DOCS = {
+    id: 'ep_documents',
+    name: 'Documents',
+    method: 'GET' as const,
+    url: 'https://api.example.com/v1/documents',
+    asset: {
+      urlPath: 'url',
+      filenamePath: 'name',
+      mimeTypePath: 'content_type',
+      urlExpires: true,
+    },
+  };
+  const DOCS_EXTRAS: GenericApiConnectorExtras = {
+    apiType: 'rest',
+    authHeader: { style: 'bearer' },
+    endpoints: [EP_REST_DOCS],
+  };
+  const DOCS_FOLDER_OPTS: GenericApiFolderOptions = {
+    endpointId: 'ep_documents',
+    probe: {
+      detectedPagination: null,
+      idPath: 'id',
+      inferredSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          url: { type: 'string' },
+          name: { type: 'string' },
+          content_type: { type: 'string' },
+        },
+      },
+      lastProbedAt: '2026-06-25T00:00:00Z',
+    },
+  };
+
+  function docsConnector() {
+    return buildConnector({
+      extras: DOCS_EXTRAS,
+      folderOptionsByTableId: {
+        [JSON.stringify(['GET', EP_REST_DOCS.url])]: { genericApi: DOCS_FOLDER_OPTS } as DataFolderOptions,
+      },
+    });
+  }
+
+  it('stamps x-scratch-asset-table onto the table schema from the endpoint asset mapping', async () => {
+    const connector = docsConnector();
+    const spec = await connector.fetchJsonTableSpec({ wsId: 'ep_documents', remoteId: ['GET', EP_REST_DOCS.url] });
+    const opts = (spec.schema as Record<string, unknown>)[X_SCRATCH_ASSET_TABLE];
+    expect(opts).toEqual({
+      urlPath: 'url',
+      filenamePath: 'name',
+      mimeTypePath: 'content_type',
+      sizePath: null,
+      widthPath: null,
+      heightPath: null,
+      altTextPath: null,
+      urlExpires: true,
+    });
+  });
+
+  it('extractAssets returns the record as a downloadable file using the stamped schema', async () => {
+    const connector = docsConnector();
+    const spec = await connector.fetchJsonTableSpec({ wsId: 'ep_documents', remoteId: ['GET', EP_REST_DOCS.url] });
+    const results = connector.extractAssets({
+      recordContent: {
+        id: 'doc_1',
+        url: 'https://files.example.com/a.pdf',
+        name: 'a.pdf',
+        content_type: 'application/pdf',
+      },
+      schema: spec.schema as Record<string, unknown>,
+      recordRemoteId: 'doc_1',
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      remoteAssetId: 'doc_1',
+      url: 'https://files.example.com/a.pdf',
+      filename: 'a.pdf',
+      mimeType: 'application/pdf',
+      mediaType: 'document',
+    });
+    // urlExpires: true → a near-future expiry is set so the rehost job downloads promptly.
+    expect(results[0].urlExpiresAt).toBeInstanceOf(Date);
+  });
+
+  it('extractAssets returns [] for an endpoint without an asset mapping (JSON-only, today behavior)', async () => {
+    const connector = buildConnector(); // EXTRAS endpoints carry no asset mapping
+    const spec = await connector.fetchJsonTableSpec({ wsId: 'ep_projects', remoteId: ['GET', EP_REST_1.url] });
+    expect((spec.schema as Record<string, unknown>)[X_SCRATCH_ASSET_TABLE]).toBeUndefined();
+    const results = connector.extractAssets({
+      recordContent: { id: 'p1', url: 'https://example.com/not-a-file' },
+      schema: spec.schema as Record<string, unknown>,
+      recordRemoteId: 'p1',
+    });
+    expect(results).toEqual([]);
   });
 });
 
