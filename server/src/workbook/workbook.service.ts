@@ -56,6 +56,42 @@ export type HardDeleteWorkbookOptions = {
   onProgress?: (progress: HardDeleteWorkbookProgress) => Promise<void>;
 };
 
+/** Cap on the number of cleared file paths reported per connection (matches sync/pull path caps). */
+const MAX_DISCARDED_PATHS_PER_CONNECTION = 100;
+
+/**
+ * Whether a diff path is a user-visible record file rather than internal bookkeeping. Mirrors the
+ * git backend's "visible tree changes" definition (which skips `.scratch/` metadata): a path with
+ * any dot-prefixed segment (e.g. `.scratch/.../schema.json`, a legacy `.schema.json`) is internal.
+ */
+function isVisibleRecordPath(path: string): boolean {
+  return !path.split('/').some((segment) => segment.startsWith('.'));
+}
+
+/** What {@link WorkbookService.discardAllPendingChangesWithStats} cleared from a single connection. */
+export interface DiscardedConnectionStats {
+  connectorAccountId: string;
+  connectionName: string;
+  /** The connection's service (e.g. "AIRTABLE"), or null when unknown. */
+  connector: string | null;
+  /** True counts of the cleared edits, by kind (not capped like the path arrays). */
+  addedCount: number;
+  modifiedCount: number;
+  deletedCount: number;
+  /** Cleared record paths, capped at {@link MAX_DISCARDED_PATHS_PER_CONNECTION} for display. */
+  addedPaths: string[];
+  modifiedPaths: string[];
+  deletedPaths: string[];
+}
+
+/** Aggregate result of clearing every connection's leftover working-set edits before a routine run. */
+export interface DiscardAllPendingChangesResult {
+  /** One entry per connection that HAD pending edits (clean connections are omitted). */
+  connections: DiscardedConnectionStats[];
+  /** Total leftover edits cleared across all connections (added + modified + deleted). */
+  totalDiscarded: number;
+}
+
 @Injectable()
 export class WorkbookService {
   constructor(
@@ -328,6 +364,86 @@ export class WorkbookService {
       entityId: workbookId,
       organizationId: workbook.organizationId,
     });
+  }
+
+  /**
+   * Pre-flight cleanup for a routine run: discard EVERY connection's leftover working-set edits
+   * (reset each `dirty` branch back to its published baseline) and report exactly what was cleared.
+   *
+   * Unlike {@link discardChanges} (fire-and-forget, returns void), this snapshots each repo's pending
+   * status BEFORE resetting it, so the routine's pre-flight step can surface the cleared filenames +
+   * counts in the run detail. It is connection-wide by design — a routine always clears the whole
+   * workbook before syncing, so there is no per-path variant. Only user-visible record changes are
+   * reported (the same "visible" definition as the dirty indicator); `.scratch/` metadata diffs are
+   * still reset on the repo but not counted, so the user isn't shown internal bookkeeping noise.
+   *
+   * The reset is idempotent (resetting an already-clean dirty branch is a no-op), so a crashed or
+   * retried routine re-runs this harmlessly.
+   */
+  async discardAllPendingChangesWithStats(
+    workbookId: WorkbookId,
+    actor: Actor,
+  ): Promise<DiscardAllPendingChangesResult> {
+    const workbook = await this.findOneOrThrow(workbookId, actor);
+
+    const connectorAccounts = await this.db.client.connectorAccount.findMany({
+      where: { workbookId },
+      select: { id: true, displayName: true, service: true },
+    });
+
+    const connections: DiscardedConnectionStats[] = [];
+    for (const connectorAccount of connectorAccounts) {
+      const repoId = await this.scratchGitService.resolveConnectionRepoPath(connectorAccount.id);
+      // Capture what is pending BEFORE the reset so we can report the cleared record files; the reset
+      // then converges the whole `dirty` branch (including any `.scratch/` metadata) back to `main`.
+      const pendingFilesIncludingMetadata = await this.scratchGitService.getRepoStatus(repoId);
+      await this.scratchGitService.discardChanges(repoId);
+
+      const pendingRecordFiles = pendingFilesIncludingMetadata.filter((file) => isVisibleRecordPath(file.path));
+      if (pendingRecordFiles.length === 0) {
+        continue;
+      }
+
+      const addedPaths = pendingRecordFiles.filter((file) => file.status === 'added').map((file) => file.path);
+      const modifiedPaths = pendingRecordFiles.filter((file) => file.status === 'modified').map((file) => file.path);
+      const deletedPaths = pendingRecordFiles.filter((file) => file.status === 'deleted').map((file) => file.path);
+
+      connections.push({
+        connectorAccountId: connectorAccount.id,
+        connectionName: connectorAccount.displayName,
+        connector: connectorAccount.service,
+        addedCount: addedPaths.length,
+        modifiedCount: modifiedPaths.length,
+        deletedCount: deletedPaths.length,
+        addedPaths: addedPaths.slice(0, MAX_DISCARDED_PATHS_PER_CONNECTION),
+        modifiedPaths: modifiedPaths.slice(0, MAX_DISCARDED_PATHS_PER_CONNECTION),
+        deletedPaths: deletedPaths.slice(0, MAX_DISCARDED_PATHS_PER_CONNECTION),
+      });
+    }
+
+    const totalDiscarded = connections.reduce(
+      (sum, connection) => sum + connection.addedCount + connection.modifiedCount + connection.deletedCount,
+      0,
+    );
+
+    // Only emit a real-time event + audit entry when something was actually cleared — a clean-workspace
+    // pre-flight (the common case) should be silent rather than logging a no-op "discard".
+    if (totalDiscarded > 0) {
+      this.workbookEventService.sendWorkbookEvent(workbookId, {
+        type: 'changes-discarded',
+        data: { source: 'job', entityId: workbookId, message: 'Cleared leftover changes before sync' },
+      });
+
+      await this.auditLogService.logEvent({
+        actor,
+        eventType: 'delete',
+        message: `Cleared ${totalDiscarded} leftover change(s) before running a sync routine`,
+        entityId: workbookId,
+        organizationId: workbook.organizationId,
+      });
+    }
+
+    return { connections, totalDiscarded };
   }
 
   async resetWorkbook(id: WorkbookId, actor: Actor): Promise<void> {

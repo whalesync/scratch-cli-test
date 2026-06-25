@@ -26,6 +26,7 @@ import { Actor } from 'src/users/types';
 import { getWorkbookRepoPath } from 'src/workbook/workbook-repo.service';
 import { BullEnqueuerService } from 'src/worker-enqueuer/bull-enqueuer.service';
 import { createRunContext, RunContext } from 'src/worker/jobs/base-types';
+import { DiscardPendingChangesPublicProgress } from 'src/worker/jobs/job-definitions/discard-pending-changes.job';
 import { PublishPublicProgress } from 'src/worker/jobs/job-definitions/publish.job';
 import { PullLinkedFolderFilesPublicProgress } from 'src/worker/jobs/job-definitions/pull-linked-folder-files.job';
 import { SyncDataFoldersPublicProgress } from 'src/worker/jobs/job-definitions/sync-data-folders.job';
@@ -398,6 +399,11 @@ export class RoutineExecutorService {
     const action = step.action as RoutineAction;
 
     switch (action) {
+      case RoutineAction.DISCARD_PENDING_CHANGES: {
+        // Pre-flight cleanup is always workbook-wide (no folder/connection target) — it clears every
+        // connection's leftover working-set edits before the run pulls anything.
+        return this.bullEnqueuer.enqueueDiscardPendingChangesJob(workbookId, actor, runContext);
+      }
       case RoutineAction.PULL: {
         const dataFolderIds = this.resolvePullFolderIds(step, context);
         if (dataFolderIds.length === 0) {
@@ -553,6 +559,12 @@ export class RoutineExecutorService {
       return { kind: 'completed', pipelineId: null, warning: null, summary: result.summary, result };
     }
 
+    if (action === RoutineAction.DISCARD_PENDING_CHANGES) {
+      const publicProgress = this.readDiscardProgress(dbJob.progress);
+      const result = this.deriveStepResult(action, publicProgress);
+      return { kind: 'completed', pipelineId: null, warning: null, summary: result.summary, result };
+    }
+
     return {
       kind: 'completed',
       pipelineId: null,
@@ -565,6 +577,8 @@ export class RoutineExecutorService {
   /** Maps a routine action to the job-type string the shared {@link deriveJobResult} categorizes on. */
   private jobTypeForAction(action: RoutineAction): string {
     switch (action) {
+      case RoutineAction.DISCARD_PENDING_CHANGES:
+        return JobType.DiscardPendingChanges;
       case RoutineAction.PULL:
         return JobType.PullLinkedFolderFiles;
       case RoutineAction.SYNC:
@@ -612,6 +626,14 @@ export class RoutineExecutorService {
   private readPullProgress(progress: unknown): PullLinkedFolderFilesPublicProgress | undefined {
     if (progress && typeof progress === 'object' && 'publicProgress' in progress) {
       return (progress as { publicProgress?: PullLinkedFolderFilesPublicProgress }).publicProgress;
+    }
+    return undefined;
+  }
+
+  /** Safely reads `progress.publicProgress` (a JSON column) as a DiscardPendingChangesPublicProgress, without `as any`. */
+  private readDiscardProgress(progress: unknown): DiscardPendingChangesPublicProgress | undefined {
+    if (progress && typeof progress === 'object' && 'publicProgress' in progress) {
+      return (progress as { publicProgress?: DiscardPendingChangesPublicProgress }).publicProgress;
     }
     return undefined;
   }

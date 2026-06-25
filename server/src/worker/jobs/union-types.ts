@@ -3,6 +3,7 @@ import { Job as BullMQPlainJob } from 'bullmq';
 import { Progress } from './base-types';
 import { ApplyPatchesJobDefinition } from './job-definitions/apply-patches.job';
 import { DeleteWorkbookJobDefinition } from './job-definitions/delete-workbook.job';
+import { DiscardPendingChangesJobDefinition } from './job-definitions/discard-pending-changes.job';
 import { PublishJobDefinition } from './job-definitions/publish.job';
 import { PullFilesJobDefinition } from './job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from './job-definitions/pull-linked-folder-files.job';
@@ -13,6 +14,7 @@ import { TemporarySyncWithPullJobDefinition } from './job-definitions/temporary-
 export type JobDefinition =
   | ApplyPatchesJobDefinition
   | DeleteWorkbookJobDefinition
+  | DiscardPendingChangesJobDefinition
   | PublishJobDefinition
   | PullLinkedFolderFilesJobDefinition
   | PullFilesJobDefinition

@@ -124,7 +124,10 @@ export class MigrationLockService {
       case JobType.SyncDataFolders:
       case JobType.TemporarySyncWithPull:
         return this.connectorAccountIdsForSync(data.syncId);
+      // Workbook-scoped jobs that touch no single connection: the hard delete drains the whole
+      // workbook, and the pre-flight discard clears every connection's working set at once.
       case JobType.DeleteWorkbook:
+      case JobType.DiscardPendingChanges:
         return [];
     }
   }

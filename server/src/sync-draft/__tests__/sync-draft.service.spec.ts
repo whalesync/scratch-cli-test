@@ -783,6 +783,11 @@ describe('SyncDraftService', () => {
       const routine = loadYaml(file.content) as { name: string; steps: Array<Record<string, string>> };
       expect(routine.name).toBe('Run Sync Contacts Sync');
       expect(routine.steps).toEqual([
+        {
+          action: 'discard-pending-changes',
+          name: 'Prepare workspace for sync',
+          comment: 'Pre-flight: clear any leftover unpublished edits so the sync starts from a clean slate.',
+        },
         { action: 'pull', name: 'Pull Source', connection: 'coa_src' },
         { action: 'pull', name: 'Pull Destination', connection: 'coa_dst' },
         { action: 'sync', name: 'Run Sync', sync: 'syn_new' },
@@ -819,6 +824,7 @@ describe('SyncDraftService', () => {
 
       const routine = loadYaml(firstCreateRoutineCall()[1].content) as { steps: Array<Record<string, string>> };
       expect(routine.steps.map((step) => step.name)).toEqual([
+        'Prepare workspace for sync',
         'Pull Destination',
         'Run Sync',
         'Publish to Destination',

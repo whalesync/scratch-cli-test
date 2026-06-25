@@ -18,6 +18,11 @@ export const JobType = {
   SyncDataFolders: 'sync-data-folders',
   RehostAssets: 'rehost-assets',
   DeleteWorkbook: 'delete-workbook',
+  /**
+   * Pre-flight cleanup for a routine run: discard every connection's leftover working-set edits so
+   * the run starts from the published baseline. Backs the `discard-pending-changes` routine action.
+   */
+  DiscardPendingChanges: 'discard-pending-changes',
   // THROWAWAY (no Linear issue): temporary "pull then sync" job used to unblock
   // development of the real job-dependency system. Remove once dependencies land.
   TemporarySyncWithPull: 'temporary-sync-with-pull',

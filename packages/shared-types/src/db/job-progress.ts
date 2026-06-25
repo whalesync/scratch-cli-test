@@ -118,6 +118,41 @@ export type SyncDataFoldersPublicProgress = {
   tables: SyncTableProgress[];
 };
 
+// ── Discard pending changes (discard-pending-changes) ────────────────────────
+
+/**
+ * Per-connection breakdown for a discard-pending-changes (pre-flight cleanup) job. Captures the
+ * leftover working-set edits that were cleared from ONE connection's repo, so the run-step detail
+ * can name exactly which records had pending changes before the run started. The path arrays are
+ * capped server-side (like sync/pull) for UI display; the `*Count` fields hold the true totals.
+ * Declared as a `type` (not `interface`) so it stays structurally assignable to the JSON-safe index
+ * signature that `Job.publicProgress` flows through on the server (BullMQ data / Prisma `Json`).
+ */
+export type DiscardedConnectionProgress = {
+  /** ConnectorAccountId ("coa_...") of the connection whose working set was cleared. */
+  connectorAccountId: string;
+  /** The connection's display name. */
+  connectionName: string;
+  /** The connection's service (e.g. "AIRTABLE"), or null when unknown. */
+  connector: string | null;
+  /** True totals of cleared edits, by kind (not capped like the path arrays). */
+  addedCount: number;
+  modifiedCount: number;
+  deletedCount: number;
+  /** Record paths that had a pending add / modify / delete, cleared back to the published baseline. */
+  addedPaths: string[];
+  modifiedPaths: string[];
+  deletedPaths: string[];
+};
+
+export type DiscardPendingChangesPublicProgress = {
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  /** Total leftover edits cleared across every connection (added + modified + deleted). */
+  totalDiscarded: number;
+  /** Per-connection breakdown of what was cleared. Empty when nothing was pending. */
+  connections: DiscardedConnectionProgress[];
+};
+
 // ── Publish (publish) ────────────────────────────────────────────────────────
 
 export type PublishPublicProgress = {

@@ -53,7 +53,7 @@ export interface RoutineSyncOption {
 
 /** Live data the completion source reads on every keystroke via the getter passed to the factory. */
 export interface RoutineCompletionData {
-  /** RoutineAction wire values: `pull`, `sync`, `publish-plan`, `publish`. */
+  /** RoutineAction wire values: `discard-pending-changes`, `pull`, `sync`, `publish-plan`, `publish`. */
   actions: readonly string[];
   connections: readonly RoutineConnectionOption[];
   folders: readonly RoutineFolderOption[];
@@ -62,6 +62,7 @@ export interface RoutineCompletionData {
 
 /** A one-line description of each action, shown as the completion's dim detail. */
 const ACTION_DETAIL_BY_WIRE_VALUE: Record<string, string> = {
+  'discard-pending-changes': 'Pre-flight: clear leftover unpublished edits before syncing',
   pull: 'Pull records from the connected service',
   sync: 'Copy & transform records between folders',
   'publish-plan': 'Preview changes to publish (no writes)',
@@ -104,7 +105,8 @@ const STEP_FIELD_KEY_SPECS: ReadonlyArray<RoutineKeySpec> = [
     detail: 'Target connection — name or coa_…',
     insert: 'connection: ',
     thenComplete: true,
-    hiddenForActions: ['sync'],
+    // Hidden on sync (targets a sync) and discard (always workbook-wide — it takes no connection).
+    hiddenForActions: ['sync', 'discard-pending-changes'],
   },
   {
     label: 'sync',
@@ -139,6 +141,7 @@ interface RoutineOptionSpec {
  * Actions with an empty list (sync / publish*) have no options today.
  */
 const OPTION_SPECS_BY_ACTION: Record<string, ReadonlyArray<RoutineOptionSpec>> = {
+  'discard-pending-changes': [],
   pull: [{ label: 'fullPull', detail: 'Force a full re-pull instead of the default incremental' }],
   sync: [],
   'publish-plan': [],

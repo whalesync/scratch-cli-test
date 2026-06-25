@@ -30,13 +30,18 @@ interface GeneratedRoutineStep {
   name: string;
   connection?: string;
   sync?: string;
+  comment?: string;
 }
 
 /**
- * Builds the routine that runs a sync end to end: pull every source connection, pull every
- * destination connection, run the sync, then publish to every destination connection. PURE — no
- * DB/git/IO — so it is trivially unit-testable and safe to import anywhere (no Nest DI, no
- * module-graph coupling).
+ * Builds the routine that runs a sync end to end: clear any leftover working-set edits, pull every
+ * source connection, pull every destination connection, run the sync, then publish to every
+ * destination connection. PURE — no DB/git/IO — so it is trivially unit-testable and safe to import
+ * anywhere (no Nest DI, no module-graph coupling).
+ *
+ * The first step is a pre-flight `discard-pending-changes`: it clears any leftover, never-published
+ * working-set edits across the workbook so they can't pollute the pull → sync → publish that follows.
+ * It targets no connection (it always clears the whole workbook) and is safe/idempotent.
  *
  * The file path is keyed on the SyncId (`routines/run-<syncId>.yaml`) so it is guaranteed valid
  * (a single file under `routines/`, no "..", no nested "/") and unique per sync.
@@ -54,6 +59,14 @@ export function buildSyncRoutineFile(spec: SyncRoutineSpec): GeneratedRoutineFil
   const distinctDestinationConnectorAccountIds = [...new Set(spec.destinationConnectorAccountIds)];
 
   const steps: GeneratedRoutineStep[] = [];
+
+  // Pre-flight cleanup runs FIRST: clear any leftover working-set edits so a stray, never-published
+  // edit can't pollute the sync/publish below. Normal preparation — it doesn't touch published data.
+  steps.push({
+    action: RoutineAction.DISCARD_PENDING_CHANGES,
+    name: 'Prepare workspace for sync',
+    comment: 'Pre-flight: clear any leftover unpublished edits so the sync starts from a clean slate.',
+  });
 
   for (const connectorAccountId of distinctSourceConnectorAccountIds) {
     steps.push({

@@ -1,5 +1,6 @@
 import { JobType } from '../job-types';
 import {
+  DiscardPendingChangesPublicProgress,
   PublishPublicProgress,
   PullLinkedFolderFilesPublicProgress,
   SyncDataFoldersPublicProgress,
@@ -89,13 +90,14 @@ export interface RoutineRunStepResult {
 }
 
 /** The broad category a `Job.type` falls into, used to pick a renderer / derivation. */
-export type JobResultKind = 'pull' | 'sync' | 'publish' | 'rehost' | 'unknown';
+export type JobResultKind = 'pull' | 'sync' | 'publish' | 'rehost' | 'discard' | 'unknown';
 
 /**
  * Map a raw `Job.type` string to its broad category. Mirrors the client's `getJobType`, lifted here
  * so the shared derivation (and any frontend) can categorize a job without re-declaring the logic.
  */
 export function categorizeJobType(type: string): JobResultKind {
+  if (type.includes('discard')) return 'discard';
   if (type.includes('sync')) return 'sync';
   if (type.includes('publish') || type.includes('pipeline')) return 'publish';
   if (type.includes('pull') || type === JobType.RefreshRecords) return 'pull';
@@ -256,6 +258,51 @@ function deriveSyncResult(progress: SyncDataFoldersPublicProgress | undefined): 
   return { summary, stats, folders, files, errors, warnings };
 }
 
+// ── Discard pending changes (pre-flight cleanup) ─────────────────────────────
+
+/**
+ * A discard-pending-changes step runs FIRST in a generated sync routine to clear any leftover
+ * working-set edits before the pull → sync → publish. Its result is framed as routine pre-flight
+ * (not data loss): a clean workspace reads "nothing to clear", and when edits were present it
+ * reports how many were cleared plus a per-connection/file breakdown for the drill-down — so the
+ * user can see exactly what stray state was tidied up before the sync.
+ */
+function deriveDiscardResult(progress: DiscardPendingChangesPublicProgress | undefined): JobResult {
+  if (!progress) {
+    return { summary: 'Workspace ready', stats: [], folders: [], files: [], errors: [], warnings: [] };
+  }
+
+  const totalDiscarded = progress.totalDiscarded ?? 0;
+  const summary =
+    totalDiscarded === 0
+      ? 'Workspace ready — no leftover changes to clear'
+      : `Cleared ${pluralize(totalDiscarded, 'leftover change')} so the sync starts from a clean slate`;
+
+  const stats: JobResultStat[] = [{ label: 'Cleared', value: totalDiscarded }];
+
+  // One breakdown row per connection that had pending edits — uniform with pull (folders) and sync
+  // (tables) so the same UI renders it. A pending add/modify/delete maps to Created/Updated/Deleted.
+  const folders: JobResultFolder[] = (progress.connections ?? []).map((connection) => ({
+    id: connection.connectorAccountId,
+    name: connection.connectionName,
+    connector: connection.connector,
+    created: connection.addedCount ?? 0,
+    updated: connection.modifiedCount ?? 0,
+    deleted: connection.deletedCount ?? 0,
+    skipped: 0,
+    errorCount: 0,
+    warningCount: 0,
+    createdPaths: connection.addedPaths ?? [],
+    updatedPaths: connection.modifiedPaths ?? [],
+    deletedPaths: connection.deletedPaths ?? [],
+    status: 'completed',
+  }));
+
+  const files = folders.flatMap(filesFromFolder);
+
+  return { summary, stats, folders, files, errors: [], warnings: [] };
+}
+
 // ── Publish ──────────────────────────────────────────────────────────────────
 
 /**
@@ -355,6 +402,8 @@ export function deriveJobResult(input: DeriveJobResultInput): JobResult {
       return deriveSyncResult(input.publicProgress as SyncDataFoldersPublicProgress | undefined);
     case 'publish':
       return derivePublishResult(input.publicProgress as PublishPublicProgress | undefined, input.publishMode ?? 'run');
+    case 'discard':
+      return deriveDiscardResult(input.publicProgress as DiscardPendingChangesPublicProgress | undefined);
     case 'rehost':
     case 'unknown':
     default:

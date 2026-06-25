@@ -12,6 +12,7 @@ import { RunContext } from 'src/worker/jobs/base-types';
 import { JobData } from 'src/worker/jobs/union-types';
 import { ApplyPatchesJobDefinition } from '../worker/jobs/job-definitions/apply-patches.job';
 import { DeleteWorkbookJobDefinition } from '../worker/jobs/job-definitions/delete-workbook.job';
+import { DiscardPendingChangesJobDefinition } from '../worker/jobs/job-definitions/discard-pending-changes.job';
 import { PublishJobDefinition } from '../worker/jobs/job-definitions/publish.job';
 import { PullFilesJobDefinition } from '../worker/jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobDefinition } from '../worker/jobs/job-definitions/pull-linked-folder-files.job';
@@ -191,6 +192,35 @@ export class BullEnqueuerService implements OnModuleDestroy {
         bullJobId: id,
         workbookId,
         syncId,
+        runId: runContext.runId as RunId,
+        runContext,
+      },
+      data,
+      id,
+    );
+  }
+
+  /**
+   * Enqueue the pre-flight "discard pending changes" job for a routine run (DISCARD_PENDING_CHANGES
+   * step): clears every connection's leftover working-set edits so the run starts from the published
+   * baseline. Workbook-wide — it takes no folder/connection target.
+   */
+  async enqueueDiscardPendingChangesJob(workbookId: WorkbookId, actor: Actor, runContext: RunContext): Promise<Job> {
+    const id = `discard-pending-changes-${workbookId}-${createPlainId()}`;
+    const data: DiscardPendingChangesJobDefinition['data'] = {
+      workbookId,
+      userId: actor.userId,
+      organizationId: actor.organizationId,
+      trigger: runContext.trigger,
+      type: JobType.DiscardPendingChanges,
+    };
+    return await this.createAndEnqueue(
+      {
+        userId: actor.userId,
+        type: data.type,
+        data,
+        bullJobId: id,
+        workbookId,
         runId: runContext.runId as RunId,
         runContext,
       },

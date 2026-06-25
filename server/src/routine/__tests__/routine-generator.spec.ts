@@ -27,6 +27,11 @@ describe('buildSyncRoutineFile', () => {
     expect(loadRoutine(file.content)).toEqual({
       name: 'Run Sync Contacts Sync',
       steps: [
+        {
+          action: 'discard-pending-changes',
+          name: 'Prepare workspace for sync',
+          comment: 'Pre-flight: clear any leftover unpublished edits so the sync starts from a clean slate.',
+        },
         { action: 'pull', name: 'Pull Source', connection: 'coa_123' },
         { action: 'pull', name: 'Pull Destination', connection: 'coa_456' },
         { action: 'sync', name: 'Run Sync', sync: 'syn_111111' },
@@ -48,7 +53,7 @@ describe('buildSyncRoutineFile', () => {
     expect('routine' in parseResult).toBe(true);
     if ('routine' in parseResult) {
       expect(parseResult.routine.name).toBe('Run Sync Contacts Sync');
-      expect(parseResult.routine.steps).toHaveLength(4);
+      expect(parseResult.routine.steps).toHaveLength(5);
     }
   });
 
@@ -62,6 +67,7 @@ describe('buildSyncRoutineFile', () => {
 
     const routine = loadRoutine(file.content);
     expect(routine.steps.map((step) => step.name)).toEqual([
+      'Prepare workspace for sync',
       'Pull Source (coa_a)',
       'Pull Source (coa_b)',
       'Pull Destination',
@@ -82,6 +88,7 @@ describe('buildSyncRoutineFile', () => {
 
     const routine = loadRoutine(file.content);
     expect(routine.steps.map((step) => step.name)).toEqual([
+      'Prepare workspace for sync',
       'Pull Source',
       'Pull Destination (coa_x)',
       'Pull Destination (coa_y)',
@@ -101,7 +108,12 @@ describe('buildSyncRoutineFile', () => {
     });
 
     const routine = loadRoutine(file.content);
-    expect(routine.steps.map((step) => step.name)).toEqual(['Pull Destination', 'Run Sync', 'Publish to Destination']);
+    expect(routine.steps.map((step) => step.name)).toEqual([
+      'Prepare workspace for sync',
+      'Pull Destination',
+      'Run Sync',
+      'Publish to Destination',
+    ]);
   });
 
   it('omits the destination pull and publish steps when the destination is a scratch folder', () => {
@@ -113,7 +125,7 @@ describe('buildSyncRoutineFile', () => {
     });
 
     const routine = loadRoutine(file.content);
-    expect(routine.steps.map((step) => step.name)).toEqual(['Pull Source', 'Run Sync']);
+    expect(routine.steps.map((step) => step.name)).toEqual(['Prepare workspace for sync', 'Pull Source', 'Run Sync']);
   });
 
   it('deduplicates repeated connector account ids into a single step per side', () => {
@@ -126,6 +138,7 @@ describe('buildSyncRoutineFile', () => {
 
     const routine = loadRoutine(file.content);
     expect(routine.steps.map((step) => step.name)).toEqual([
+      'Prepare workspace for sync',
       'Pull Source',
       'Pull Destination',
       'Run Sync',

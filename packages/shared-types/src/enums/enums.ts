@@ -85,6 +85,13 @@ export type ScheduleAction = (typeof ScheduleAction)[keyof typeof ScheduleAction
 
 /** The action a single routine step performs. The wire values match the YAML `action:` field. */
 export enum RoutineAction {
+  /**
+   * Pre-flight cleanup: discard any leftover working-set edits (the `dirty` branch) across the
+   * workbook's connections so the run starts from the published baseline. Targets no folder/
+   * connection — it always clears the whole workbook. Runs first in a generated sync routine so a
+   * stray, never-published edit can't pollute the pull → sync → publish that follows.
+   */
+  DISCARD_PENDING_CHANGES = 'discard-pending-changes',
   PULL = 'pull',
   SYNC = 'sync',
   PUBLISH_PLAN = 'publish-plan',

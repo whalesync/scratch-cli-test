@@ -8,6 +8,8 @@ import { z } from 'zod';
  * (large full pulls take longer).
  */
 export const ROUTINE_STEP_TIMEOUT_MAX_SECONDS: Record<RoutineAction, number> = {
+  // Pre-flight cleanup is a fast local git reset per connection — a tight ceiling is plenty.
+  [RoutineAction.DISCARD_PENDING_CHANGES]: 10 * 60,
   [RoutineAction.PULL]: 60 * 60,
   [RoutineAction.SYNC]: 30 * 60,
   [RoutineAction.PUBLISH_PLAN]: 30 * 60,

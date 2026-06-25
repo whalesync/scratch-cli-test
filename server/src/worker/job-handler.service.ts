@@ -25,6 +25,7 @@ import { ScratchConfigService } from '../config/scratch-config.service';
 import { ScratchGitService } from '../scratch-git/scratch-git.service';
 import { ApplyPatchesJobHandler } from './jobs/job-definitions/apply-patches.job';
 import { DeleteWorkbookJobHandler } from './jobs/job-definitions/delete-workbook.job';
+import { DiscardPendingChangesJobHandler } from './jobs/job-definitions/discard-pending-changes.job';
 import { PublishJobHandler } from './jobs/job-definitions/publish.job';
 import { PullFilesJobHandler } from './jobs/job-definitions/pull-files.job';
 import { PullLinkedFolderFilesJobHandler } from './jobs/job-definitions/pull-linked-folder-files.job';
@@ -126,6 +127,13 @@ export class JobHandlerService {
 
       case JobType.DeleteWorkbook:
         return new DeleteWorkbookJobHandler(this.workbookService) as JobHandler<JobDefinition>;
+
+      case JobType.DiscardPendingChanges:
+        return new DiscardPendingChangesJobHandler(
+          prisma,
+          this.workbookService,
+          this.workbookEventService,
+        ) as JobHandler<JobDefinition>;
 
       case JobType.Publish:
         return new PublishJobHandler(
