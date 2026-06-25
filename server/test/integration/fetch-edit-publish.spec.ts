@@ -142,6 +142,13 @@ function makeCheckpoint() {
 
 // ─── Test Suite ───────────────────────────────────────────────────────────────
 
+// This is a single multi-phase end-to-end scenario (pull → edit → publish) that
+// drives real PostgreSQL + git operations across several phases; it runs serially
+// (jest-integration.json sets maxWorkers: 1) and takes well over jest's 5s default
+// per-test timeout under CI load, so it flaked with "Exceeded timeout of 5000 ms".
+// Raise the budget to 60s — matching the other local DB-backed integration specs.
+jest.setTimeout(60_000);
+
 describe('Fetch → Edit → Publish Integration', () => {
   let prisma: PrismaClient;
   let pool: Pool; // Direct PG pool for source-DB DDL/DML and final state assertions

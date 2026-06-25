@@ -178,6 +178,16 @@ describeIfCreds('GoHighLevelConnector — live API', () => {
       expect(pipelines?.disabledUpdates).toBe(true);
       expect(pipelines?.disabledDeletes).toBe(true);
     });
+
+    it('exposes Calendars as writable (a location-list entity with full CRUD)', () => {
+      const calendars = allTables.find((t) => t.id.wsId === 'calendars');
+      expect(calendars).toBeDefined();
+      // No write flags set → isTableFullyLocked stays false → the picker/grid offers
+      // editing instead of forcing the folder read-only.
+      expect(calendars?.disabledCreates).toBeUndefined();
+      expect(calendars?.disabledUpdates).toBeUndefined();
+      expect(calendars?.disabledDeletes).toBeUndefined();
+    });
   });
 
   describe('fetchJsonTableSpec (contacts)', () => {

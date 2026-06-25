@@ -278,16 +278,29 @@ export class GoHighLevelConnector extends Connector {
       },
     ];
 
-    const locationListEntityTables: TablePreview[] = GOHIGHLEVEL_LOCATION_LIST_ENTITIES.map((entity) => ({
-      id: { wsId: entity.wsId, remoteId: [entity.wsId] },
-      displayName: entity.displayName,
-      parentPath: entity.parentPath,
-      disabledCreates: true,
-      disabledUpdates: true,
-      disabledDeletes: true,
-      disabledReason: WRITES_DISABLED_REASON,
-      metadata: { description: entity.description },
-    }));
+    const locationListEntityTables: TablePreview[] = GOHIGHLEVEL_LOCATION_LIST_ENTITIES.map((entity) => {
+      // Calendars is the one location-list entity with full CRUD (create/update/delete
+      // via the Calendars API — see createRecords/updateRecords/deleteRecords and the
+      // writable spec from buildGenericEntityJsonTableSpec). Leaving its write flags
+      // unset is what keeps `isTableFullyLocked` false, so the table picker offers
+      // editing instead of forcing the folder read-only. Every other location-list
+      // entity stays pull-only.
+      const entityIsWritable = entity.wsId === CALENDARS_TABLE_WS_ID;
+      return {
+        id: { wsId: entity.wsId, remoteId: [entity.wsId] },
+        displayName: entity.displayName,
+        parentPath: entity.parentPath,
+        ...(entityIsWritable
+          ? {}
+          : {
+              disabledCreates: true,
+              disabledUpdates: true,
+              disabledDeletes: true,
+              disabledReason: WRITES_DISABLED_REASON,
+            }),
+        metadata: { description: entity.description },
+      };
+    });
 
     return [...builtInTables, ...locationListEntityTables, ...(await this.listCustomObjectTables())];
   }
